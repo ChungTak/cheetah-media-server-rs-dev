@@ -74,7 +74,7 @@
 - runtime 抽象统一通过 `RuntimeApi` 注入，公共接口使用 runtime-neutral 类型。
 - `RuntimeApi` 采用双通道任务模型：`spawn`（`Send` 主路径）+ `spawn_local`（browser/WASI 附加路径）；不得为了 wasm 目标削弱多线程主路径。
 - 在 `cheetah-runtime-api` / `cheetah-sdk` / `cheetah-engine` / `*-module` 的公共接口中，禁止直接暴露 `tokio::*` 或 `tokio_util::*` 类型。
-- `tokio`/`tokio-util` 仅允许留在 `cheetah-runtime-tokio`、`*-driver-tokio` 和应用层 crate；若其他 runtime 缺少对应原语，只能在该 runtime adapter crate 内封装后再暴露抽象。
+- `tokio`/`tokio-util` 仅允许留在 `cheetah-runtime-tokio`、`*-driver-tokio`、应用层 crate 以及 `cheetah-engine` 的内部实现；`cheetah-engine` 公共接口仍必须保持 runtime-neutral。若其他 runtime 缺少对应原语，只能在该 runtime adapter crate 内封装后再暴露抽象。
 - 收包、发包、分帧、组帧、timer、spawn、channel、backpressure 都在 driver。
 - TCP framing / UDP 收发属于 driver，不属于 core。
 - driver 不应持有业务状态；业务决策应回到 module。
