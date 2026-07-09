@@ -19,11 +19,13 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
+use cheetah_codec::MonoTime;
 use cheetah_sdk::{CancellationToken, EngineContext, RuntimeApi, StreamKey};
 use cheetah_webrtc_core::{
     WebRtcCloseReason, WebRtcOfferDirection, WebRtcOfferSpec, WebRtcSessionId, WebRtcSessionRole,
 };
 use cheetah_webrtc_driver_tokio::{WebRtcDriverCommand, WebRtcDriverHandle};
+use futures::FutureExt;
 use parking_lot::Mutex;
 use serde::Deserialize;
 use thiserror::Error;
@@ -352,12 +354,22 @@ async fn run_supervisor(
             }
         }
 
-        tokio::select! {
-            _ = cancel.cancelled() => {
-                mark(&snapshot, |s| { s.state = WebRtcJobState::Stopped; });
-                return;
-            }
-            _ = tokio::time::sleep(backoff) => {}
+        let backoff_us = u64::try_from(backoff.as_micros()).unwrap_or(u64::MAX);
+        let deadline =
+            MonoTime::from_micros(ctx.runtime_api.now().as_micros().saturating_add(backoff_us));
+        let mut timer = ctx.runtime_api.sleep_until(deadline);
+        let cancelled = cancel.cancelled().fuse();
+        let wait = timer.wait().fuse();
+        futures::pin_mut!(cancelled, wait);
+        let cancelled_during_backoff = futures::select_biased! {
+            _ = cancelled => true,
+            _ = wait => false,
+        };
+        if cancelled_during_backoff {
+            mark(&snapshot, |s| {
+                s.state = WebRtcJobState::Stopped;
+            });
+            return;
         }
         backoff = (backoff * 2).min(max_backoff);
     }
@@ -531,22 +543,29 @@ enum WaitOutcome {
 }
 
 async fn wait_dispatcher(
-    waiter: tokio::sync::oneshot::Receiver<crate::http::AnswerOutcome>,
+    waiter: futures::channel::oneshot::Receiver<crate::http::AnswerOutcome>,
     timeout: Duration,
-    _runtime: &Arc<dyn RuntimeApi>,
+    runtime: &Arc<dyn RuntimeApi>,
     cancel: &CancellationToken,
 ) -> WaitOutcome {
     let timeout = timeout
         .max(Duration::from_secs(1))
         .min(Duration::from_secs(60));
-    tokio::select! {
-        _ = cancel.cancelled() => WaitOutcome::Cancelled,
-        res = tokio::time::timeout(timeout, waiter) => match res {
-            Ok(Ok(crate::http::AnswerOutcome::Sdp(sdp))) => WaitOutcome::Sdp(sdp),
-            Ok(Ok(crate::http::AnswerOutcome::Failed(reason))) => WaitOutcome::Failure(reason),
-            Ok(Err(_)) => WaitOutcome::Failure("dispatcher channel closed".into()),
-            Err(_) => WaitOutcome::Timeout,
+    let timeout_us = u64::try_from(timeout.as_micros()).unwrap_or(u64::MAX);
+    let deadline = MonoTime::from_micros(runtime.now().as_micros().saturating_add(timeout_us));
+    let mut timer = runtime.sleep_until(deadline);
+    let cancelled = cancel.cancelled().fuse();
+    let waiter = waiter.fuse();
+    let wait = timer.wait().fuse();
+    futures::pin_mut!(cancelled, waiter, wait);
+    futures::select_biased! {
+        _ = cancelled => WaitOutcome::Cancelled,
+        res = waiter => match res {
+            Ok(crate::http::AnswerOutcome::Sdp(sdp)) => WaitOutcome::Sdp(sdp),
+            Ok(crate::http::AnswerOutcome::Failed(reason)) => WaitOutcome::Failure(reason),
+            Err(_) => WaitOutcome::Failure("dispatcher channel closed".into()),
         },
+        _ = wait => WaitOutcome::Timeout,
     }
 }
 

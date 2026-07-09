@@ -26,7 +26,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use cheetah_codec::MonoTime;
 use cheetah_runtime_api::{CancellationToken, RuntimeApi};
+use futures::FutureExt;
 
 use super::hub::{KeeperHub, KeeperHubConfig};
 use super::room::{
@@ -220,9 +222,14 @@ async fn pump_until_disconnect<T: P2pTransport>(
     cancel: &CancellationToken,
 ) -> String {
     loop {
-        let event = tokio::select! {
-            _ = cancel.cancelled() => return "supervisor cancelled".into(),
-            res = transport.recv() => res,
+        let event = {
+            let cancelled = cancel.cancelled().fuse();
+            let recv = transport.recv().fuse();
+            futures::pin_mut!(cancelled, recv);
+            futures::select_biased! {
+                _ = cancelled => return "supervisor cancelled".into(),
+                res = recv => res,
+            }
         };
         match event {
             Ok(P2pTransportEvent::Closed) => return "transport closed".into(),
@@ -243,11 +250,17 @@ async fn pump_until_disconnect<T: P2pTransport>(
 async fn sleep_with_cancel(
     dur: Duration,
     cancel: &CancellationToken,
-    _runtime: &Arc<dyn RuntimeApi>,
+    runtime: &Arc<dyn RuntimeApi>,
 ) -> bool {
-    tokio::select! {
-        _ = cancel.cancelled() => false,
-        _ = tokio::time::sleep(dur) => true,
+    let dur_us = u64::try_from(dur.as_micros()).unwrap_or(u64::MAX);
+    let deadline = MonoTime::from_micros(runtime.now().as_micros().saturating_add(dur_us));
+    let mut timer = runtime.sleep_until(deadline);
+    let cancelled = cancel.cancelled().fuse();
+    let wait = timer.wait().fuse();
+    futures::pin_mut!(cancelled, wait);
+    futures::select_biased! {
+        _ = cancelled => false,
+        _ = wait => true,
     }
 }
 
@@ -420,7 +433,7 @@ where
             let snapshot_for_observer = snapshot.clone();
             let hub_for_observer = hub.clone();
             let hub_cancel_for_observer = hub_cancel.clone();
-            tokio::spawn(async move {
+            runtime.spawn(Box::pin(async move {
                 observer
                     .on_hub_ready(
                         snapshot_for_observer,
@@ -428,7 +441,7 @@ where
                         hub_cancel_for_observer,
                     )
                     .await;
-            })
+            }))
         };
 
         // Watchdog: if the keeper is removed from the registry
@@ -438,7 +451,8 @@ where
         let watchdog_handle = {
             let registry = registry.clone();
             let hub_cancel = hub_cancel.clone();
-            tokio::spawn(async move {
+            let watchdog_runtime = runtime.clone();
+            runtime.spawn(Box::pin(async move {
                 loop {
                     if hub_cancel.is_cancelled() {
                         return;
@@ -447,12 +461,20 @@ where
                         hub_cancel.cancel();
                         return;
                     }
-                    tokio::select! {
-                        _ = hub_cancel.cancelled() => return,
-                        _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+                    let poll_us = Duration::from_millis(100).as_micros() as u64;
+                    let deadline = MonoTime::from_micros(
+                        watchdog_runtime.now().as_micros().saturating_add(poll_us),
+                    );
+                    let mut timer = watchdog_runtime.sleep_until(deadline);
+                    let cancelled = hub_cancel.cancelled().fuse();
+                    let wait = timer.wait().fuse();
+                    futures::pin_mut!(cancelled, wait);
+                    futures::select_biased! {
+                        _ = cancelled => return,
+                        _ = wait => {}
                     }
                 }
-            })
+            }))
         };
 
         let dispatch_cancel = hub_cancel.clone();
@@ -461,8 +483,8 @@ where
         hub_cancel.cancel();
         // Wait for the observer to clean up so subsequent reconnect
         // rounds do not race against half-detached bridges.
-        let _ = observer_handle.await;
-        let _ = watchdog_handle.await;
+        let _ = observer_handle.wait().await;
+        let _ = watchdog_handle.wait().await;
         hub.close().await;
 
         if cancel.is_cancelled() {

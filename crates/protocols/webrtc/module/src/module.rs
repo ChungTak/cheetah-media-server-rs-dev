@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use cheetah_codec::MonoTime;
 use cheetah_sdk::{
     CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRouteDescriptor, Module,
     ModuleCapability, ModuleConfigChange, ModuleFactory, ModuleHttpService, ModuleId, ModuleInfo,
@@ -12,6 +13,7 @@ use cheetah_webrtc_core::{
     MidLabel, WebRtcCloseReason, WebRtcRequestKeyframeKind, WebRtcSessionId, WebRtcSessionRole,
 };
 use cheetah_webrtc_driver_tokio::{spawn_driver, WebRtcDriverEvent, WebRtcDriverHandle};
+use futures::FutureExt;
 use parking_lot::Mutex;
 use tracing::{debug, error, info, warn};
 
@@ -230,12 +232,12 @@ impl Module for WebRtcModule {
             let module_cancel_out = module_cancel.clone();
             let cancel_outer = cancel.clone();
             ctx.runtime_api.spawn(Box::pin(async move {
-                let engine = cancel_outer.cancelled();
-                let stop = module_cancel_in.cancelled();
-                tokio::pin!(engine, stop);
-                tokio::select! {
-                    _ = &mut engine => module_cancel_out.cancel(),
-                    _ = &mut stop => {}
+                let engine = cancel_outer.cancelled().fuse();
+                let stop = module_cancel_in.cancelled().fuse();
+                futures::pin_mut!(engine, stop);
+                futures::select_biased! {
+                    _ = engine => module_cancel_out.cancel(),
+                    _ = stop => {}
                 }
             }));
         }
@@ -1003,46 +1005,59 @@ async fn run_periodic_fir_worker(
     if interval.is_zero() {
         return;
     }
-    let mut ticker = tokio::time::interval(interval);
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let interval_us = u64::try_from(interval.as_micros()).unwrap_or(u64::MAX);
     loop {
-        tokio::select! {
-            _ = cancel.cancelled() => break,
-            _ = ticker.tick() => {
-                let connected_sessions: Vec<(WebRtcSessionId, WebRtcSessionRole, StreamKey)> = {
-                    let reg = registry.lock();
-                    reg.sessions
-                        .iter()
-                        .filter_map(|(session_id, session)| {
-                            if !matches!(session.state, WebRtcModuleSessionState::Connected) {
-                                return None;
-                            }
-                            Some((*session_id, session.role, session.stream_key.clone()))
-                        })
-                        .collect()
-                };
-                let targets = {
-                    let guard = bridges.lock();
-                    collect_periodic_fir_targets(&connected_sessions, &guard)
-                };
-                for target in targets {
-                    match target {
-                        PeriodicFirTarget::RemoteWebRtc { session_id, mid } => {
-                            handle
-                                .send_command(
-                                    cheetah_webrtc_driver_tokio::WebRtcDriverCommand::RequestKeyframe {
-                                        session_id,
-                                        mid,
-                                        kind: WebRtcRequestKeyframeKind::Fir,
-                                    },
-                                )
-                                .await;
-                        }
-                        PeriodicFirTarget::UpstreamStream { stream_key } => {
-                            if let Err(err) = ctx.stream_manager_api.request_keyframe(&stream_key).await {
-                                debug!("periodic FIR upstream keyframe request failed for {stream_key}: {err}");
-                            }
-                        }
+        let deadline = MonoTime::from_micros(
+            ctx.runtime_api
+                .now()
+                .as_micros()
+                .saturating_add(interval_us),
+        );
+        let mut timer = ctx.runtime_api.sleep_until(deadline);
+        let cancelled = cancel.cancelled().fuse();
+        let tick = timer.wait().fuse();
+        futures::pin_mut!(cancelled, tick);
+        let ticked = futures::select_biased! {
+            _ = cancelled => false,
+            _ = tick => true,
+        };
+        if !ticked {
+            break;
+        }
+        let connected_sessions: Vec<(WebRtcSessionId, WebRtcSessionRole, StreamKey)> = {
+            let reg = registry.lock();
+            reg.sessions
+                .iter()
+                .filter_map(|(session_id, session)| {
+                    if !matches!(session.state, WebRtcModuleSessionState::Connected) {
+                        return None;
+                    }
+                    Some((*session_id, session.role, session.stream_key.clone()))
+                })
+                .collect()
+        };
+        let targets = {
+            let guard = bridges.lock();
+            collect_periodic_fir_targets(&connected_sessions, &guard)
+        };
+        for target in targets {
+            match target {
+                PeriodicFirTarget::RemoteWebRtc { session_id, mid } => {
+                    handle
+                        .send_command(
+                            cheetah_webrtc_driver_tokio::WebRtcDriverCommand::RequestKeyframe {
+                                session_id,
+                                mid,
+                                kind: WebRtcRequestKeyframeKind::Fir,
+                            },
+                        )
+                        .await;
+                }
+                PeriodicFirTarget::UpstreamStream { stream_key } => {
+                    if let Err(err) = ctx.stream_manager_api.request_keyframe(&stream_key).await {
+                        debug!(
+                            "periodic FIR upstream keyframe request failed for {stream_key}: {err}"
+                        );
                     }
                 }
             }
@@ -1075,138 +1090,325 @@ async fn run_driver_event_worker(
     };
 
     loop {
-        tokio::select! {
-            biased;
-            _ = cancel.cancelled() => break,
-            evt = handle.recv_event() => {
-                match evt {
-                    Some(WebRtcDriverEvent::AnswerReady { session_id, sdp }) => {
-                        debug!("WebRTC driver delivered answer for {session_id}");
-                        let sdp = {
-                            let cfg = config.lock();
-                            rewrite_local_sdp_for_compat(&sdp, &cfg)
-                        };
-                        dispatcher.deliver_sdp(session_id, sdp);
+        let evt = {
+            let cancelled = cancel.cancelled().fuse();
+            let recv = handle.recv_event().fuse();
+            futures::pin_mut!(cancelled, recv);
+            futures::select_biased! {
+                _ = cancelled => break,
+                evt = recv => evt,
+            }
+        };
+        match evt {
+            Some(WebRtcDriverEvent::AnswerReady { session_id, sdp }) => {
+                debug!("WebRTC driver delivered answer for {session_id}");
+                let sdp = {
+                    let cfg = config.lock();
+                    rewrite_local_sdp_for_compat(&sdp, &cfg)
+                };
+                dispatcher.deliver_sdp(session_id, sdp);
+            }
+            Some(WebRtcDriverEvent::OfferReady { session_id, sdp }) => {
+                debug!("WebRTC driver delivered local offer for {session_id}");
+                // Both server-side answers (`AnswerReady`) and
+                // client-side offers (`OfferReady`) are delivered
+                // to the same per-session waiter; the supervisor
+                // / HTTP handler that subscribed for `session_id`
+                // can disambiguate by which command it dispatched.
+                let sdp = {
+                    let cfg = config.lock();
+                    rewrite_local_sdp_for_compat(&sdp, &cfg)
+                };
+                dispatcher.deliver_sdp(session_id, sdp);
+            }
+            Some(WebRtcDriverEvent::SessionClosed { session_id, reason }) => {
+                debug!("WebRTC driver closed session {session_id}: {reason:?}");
+                let mut reg = registry.lock();
+                if let Some(session) = reg.sessions.get_mut(&session_id) {
+                    session.state = WebRtcModuleSessionState::Closed;
+                }
+                let removed = reg.remove(session_id);
+                drop(reg);
+                let mut bridges_guard = bridges.lock();
+                if let Some(bridge) = bridges_guard.remove_publish(session_id) {
+                    bridge.close();
+                }
+                if let Some(cancel) = bridges_guard.remove_play(session_id) {
+                    cancel.cancel();
+                }
+                drop(bridges_guard);
+                if let Some(session) = removed.as_ref() {
+                    let min_duration = {
+                        let cfg = config.lock();
+                        std::time::Duration::from_millis(cfg.play_disconnect_min_duration_ms)
+                    };
+                    let play_reason =
+                        crate::play_disconnect::close_reason_to_play_disconnect_reason(&reason);
+                    crate::play_disconnect::observe_play_session_cleanup(
+                        ctx.event_bus.as_ref(),
+                        metrics.as_ref(),
+                        session,
+                        play_reason,
+                        min_duration,
+                        std::time::Instant::now(),
+                    );
+                }
+                // Drop the cached previous stats snapshot so
+                // a future session id reuse does not leak old
+                // counters into the delta calculation.
+                last_session_stats.lock().remove(&session_id);
+                // If a request was still waiting for an answer at
+                // this point, surface the failure.
+                dispatcher.deliver_failure(
+                    session_id,
+                    format!("session closed before answer: {reason:?}"),
+                );
+            }
+            Some(WebRtcDriverEvent::Core(event)) => {
+                match &event {
+                    WebRtcCoreEvent::Lifecycle { session_id, state } => {
+                        // Phase 05 follow-up: feed `Connected`
+                        // / `Closed` lifecycle transitions to
+                        // any `run_bridge_with_lifecycle`
+                        // subscriber. WHIP/WHEP and SMS-style
+                        // sessions don't subscribe and the
+                        // dispatcher silently drops their
+                        // events.
+                        match state {
+                            WebRtcSessionLifecycle::Connected => {
+                                lifecycle_dispatcher.deliver_connected(*session_id);
+                            }
+                            WebRtcSessionLifecycle::Closed => {
+                                lifecycle_dispatcher.deliver_closed(*session_id, "session closed");
+                            }
+                            WebRtcSessionLifecycle::Failed => {
+                                lifecycle_dispatcher.deliver_closed(*session_id, "session failed");
+                            }
+                            WebRtcSessionLifecycle::Created
+                            | WebRtcSessionLifecycle::LocalDescriptionReady
+                            | WebRtcSessionLifecycle::Disconnected => {
+                                // Intermediate states aren't
+                                // surfaced to bridges yet; the
+                                // job's `Connected` and
+                                // `Failed` transitions are
+                                // driven by the terminal
+                                // events.
+                            }
+                        }
                     }
-                    Some(WebRtcDriverEvent::OfferReady { session_id, sdp }) => {
-                        debug!("WebRTC driver delivered local offer for {session_id}");
-                        // Both server-side answers (`AnswerReady`) and
-                        // client-side offers (`OfferReady`) are delivered
-                        // to the same per-session waiter; the supervisor
-                        // / HTTP handler that subscribed for `session_id`
-                        // can disambiguate by which command it dispatched.
-                        let sdp = {
-                            let cfg = config.lock();
-                            rewrite_local_sdp_for_compat(&sdp, &cfg)
+                    WebRtcCoreEvent::RtcpFeedback {
+                        session_id,
+                        feedback: WebRtcRtcpFeedback::Pli { .. } | WebRtcRtcpFeedback::Fir { .. },
+                    } => {
+                        // Phase 04 §4.8: PLI / FIR bump
+                        // `pli_total` / `fir_total` on the
+                        // aggregator. The per-session
+                        // telemetry tracks the same value
+                        // separately for `/session/{id}` GET.
+                        if matches!(
+                            event,
+                            WebRtcCoreEvent::RtcpFeedback {
+                                feedback: WebRtcRtcpFeedback::Pli { .. },
+                                ..
+                            }
+                        ) {
+                            metrics
+                                .pli
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        } else {
+                            metrics
+                                .fir
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                        let stream_key_opt = {
+                            let reg = registry.lock();
+                            reg.sessions.get(session_id).map(|s| s.stream_key.clone())
                         };
-                        dispatcher.deliver_sdp(session_id, sdp);
+                        if let Some(stream_key) = stream_key_opt {
+                            let stream_manager = ctx.stream_manager_api.clone();
+                            ctx.runtime_api.spawn(Box::pin(async move {
+                                if let Err(err) = stream_manager.request_keyframe(&stream_key).await
+                                {
+                                    debug!("stream_manager.request_keyframe failed: {err}");
+                                }
+                            }));
+                        }
                     }
-                    Some(WebRtcDriverEvent::SessionClosed { session_id, reason }) => {
-                        debug!("WebRTC driver closed session {session_id}: {reason:?}");
+                    WebRtcCoreEvent::RtpExtensionObserved {
+                        session_id,
+                        mappings,
+                    } => {
                         let mut reg = registry.lock();
-                        if let Some(session) = reg.sessions.get_mut(&session_id) {
-                            session.state = WebRtcModuleSessionState::Closed;
+                        if let Some(session) = reg.sessions.get_mut(session_id) {
+                            session.telemetry.record_rtp_extensions(mappings.clone());
                         }
-                        let removed = reg.remove(session_id);
+                    }
+                    WebRtcCoreEvent::RtcpFeedback {
+                        session_id,
+                        feedback: WebRtcRtcpFeedback::SenderReport,
+                    } => {
+                        let mut reg = registry.lock();
+                        if let Some(session) = reg.sessions.get_mut(session_id) {
+                            session.telemetry.inc_rtcp_sr();
+                        }
+                    }
+                    WebRtcCoreEvent::RtcpFeedback {
+                        session_id,
+                        feedback: WebRtcRtcpFeedback::ReceiverReport,
+                    } => {
+                        let mut reg = registry.lock();
+                        if let Some(session) = reg.sessions.get_mut(session_id) {
+                            session.telemetry.inc_rtcp_rr();
+                        }
+                    }
+                    WebRtcCoreEvent::RtcpFeedback {
+                        session_id,
+                        feedback: WebRtcRtcpFeedback::Nack { count, .. },
+                    } => {
+                        let mut reg = registry.lock();
+                        if let Some(session) = reg.sessions.get_mut(session_id) {
+                            session.telemetry.add_rtcp_nack(*count);
+                        }
+                    }
+                    WebRtcCoreEvent::RtcpFeedback {
+                        session_id,
+                        feedback: WebRtcRtcpFeedback::Remb { bitrate_bps, .. },
+                    } => {
+                        let auto_abr = { config.lock().webrtc_auto_abr };
+                        // Phase 04: surface remote REMB so
+                        // operators see the receiver's view of
+                        // the bitrate ceiling alongside the
+                        // local BWE estimate.
+                        let mut reg = registry.lock();
+                        if let Some(session) = reg.sessions.get_mut(session_id) {
+                            session.telemetry.record_remb(*bitrate_bps);
+                        }
                         drop(reg);
-                        let mut bridges_guard = bridges.lock();
-                        if let Some(bridge) = bridges_guard.remove_publish(session_id) {
-                            bridge.close();
+                        // Thread the REMB cap into the publish
+                        // bridge so the adaptive simulcast
+                        // policy uses `min(bwe, remb)` instead
+                        // of silently overshooting the
+                        // receiver-suggested ceiling.
+                        if auto_abr {
+                            bridges
+                                .lock()
+                                .set_publish_remb_cap(*session_id, *bitrate_bps);
                         }
-                        if let Some(cancel) = bridges_guard.remove_play(session_id) {
-                            cancel.cancel();
+                        metrics.record_remb(*bitrate_bps);
+                    }
+                    WebRtcCoreEvent::Stats {
+                        session_id,
+                        snapshot,
+                    } => {
+                        // Phase 04: aggregate ingress/egress
+                        // stats. `core` emits both directions
+                        // separately so we merge instead of
+                        // overwriting.
+                        let mut reg = registry.lock();
+                        if let Some(session) = reg.sessions.get_mut(session_id) {
+                            session.telemetry.merge_stats(snapshot);
                         }
-                        drop(bridges_guard);
-                        if let Some(session) = removed.as_ref() {
-                            let min_duration = {
-                                let cfg = config.lock();
-                                std::time::Duration::from_millis(
-                                    cfg.play_disconnect_min_duration_ms,
-                                )
-                            };
-                            let play_reason =
-                                crate::play_disconnect::close_reason_to_play_disconnect_reason(
-                                    &reason,
-                                );
-                            crate::play_disconnect::observe_play_session_cleanup(
-                                ctx.event_bus.as_ref(),
-                                metrics.as_ref(),
-                                session,
-                                play_reason,
-                                min_duration,
-                                std::time::Instant::now(),
-                            );
+                        drop(reg);
+                        // Compute deltas vs. the previous
+                        // Stats sample for the same session
+                        // and add them to the aggregator. The
+                        // delta is monotonic by construction
+                        // because str0m's per-session counters
+                        // are cumulative.
+                        let delta = {
+                            let mut last = last_session_stats.lock();
+                            let prev = last
+                                .insert(*session_id, snapshot.clone())
+                                .unwrap_or_default();
+                            crate::metrics::WebRtcSessionStatsDelta {
+                                packets_in: snapshot.packets_in.saturating_sub(prev.packets_in),
+                                packets_out: snapshot.packets_out.saturating_sub(prev.packets_out),
+                                nack_in: snapshot.nack_in.saturating_sub(prev.nack_in),
+                                nack_out: snapshot.nack_out.saturating_sub(prev.nack_out),
+                                rtx_sent: snapshot.rtx_sent.saturating_sub(prev.rtx_sent),
+                                rtx_miss: snapshot.rtx_miss.saturating_sub(prev.rtx_miss),
+                                // PLI/FIR are tracked
+                                // separately by the
+                                // RtcpFeedback arm; do not
+                                // double-count here.
+                                pli: 0,
+                                fir: 0,
+                            }
+                        };
+                        metrics.add_stats_delta(&delta);
+                        // Feed the egress NACK counter into
+                        // the publish bridge's storm
+                        // detector. `nack_in` is cumulative
+                        // (str0m emits the running total), so
+                        // the bridge tracks the delta between
+                        // samples to detect a burst. A storm
+                        // pins the simulcast policy to the
+                        // lowest layer for a recovery window.
+                        if snapshot.nack_in != 0 {
+                            let storm_tripped = bridges
+                                .lock()
+                                .record_publish_nack_in(*session_id, snapshot.nack_in);
+                            if storm_tripped {
+                                warn!(
+                                            "WebRTC NACK storm detected on session {}: \
+                                             nack_in={}, simulcast pinned to lowest layer for recovery window",
+                                            session_id, snapshot.nack_in
+                                        );
+                            }
                         }
-                        // Drop the cached previous stats snapshot so
-                        // a future session id reuse does not leak old
-                        // counters into the delta calculation.
-                        last_session_stats.lock().remove(&session_id);
-                        // If a request was still waiting for an answer at
-                        // this point, surface the failure.
-                        dispatcher.deliver_failure(
-                            session_id,
-                            format!("session closed before answer: {reason:?}"),
+                    }
+                    WebRtcCoreEvent::Bwe {
+                        session_id,
+                        snapshot,
+                    } => {
+                        let auto_abr = { config.lock().webrtc_auto_abr };
+                        let mut reg = registry.lock();
+                        if let Some(session) = reg.sessions.get_mut(session_id) {
+                            session.telemetry.merge_bwe(snapshot);
+                        }
+                        drop(reg);
+                        // Thread the estimate into the publish
+                        // bridge so `SimulcastPolicy::Adaptive`
+                        // can re-elect the layer on the next
+                        // inbound frame. We only forward the
+                        // primary `estimated_bitrate_bps`; the
+                        // separate `target_bitrate_bps` is
+                        // surfaced through telemetry already.
+                        if auto_abr {
+                            if let Some(bps) = snapshot.estimated_bitrate_bps {
+                                bridges.lock().set_publish_bwe_estimate(*session_id, bps);
+                            }
+                        }
+                        if let Some(bps) = snapshot.estimated_bitrate_bps {
+                            metrics.record_bwe(bps);
+                        }
+                        // Phase 04 §4.8: TWCC feedback delivery
+                        // counter. `core` emits a `Bwe` event
+                        // for every TWCC-driven estimate
+                        // refresh, so we treat that as a
+                        // feedback delivery sample.
+                        metrics.inc_twcc_feedback();
+                    }
+                    WebRtcCoreEvent::MediaTrackAdded { session_id, track } => {
+                        bridges.lock().record_play_track(
+                            *session_id,
+                            track.mid.clone(),
+                            track.kind,
                         );
                     }
-                    Some(WebRtcDriverEvent::Core(event)) => {
-                        match &event {
-                            WebRtcCoreEvent::Lifecycle { session_id, state } => {
-                                // Phase 05 follow-up: feed `Connected`
-                                // / `Closed` lifecycle transitions to
-                                // any `run_bridge_with_lifecycle`
-                                // subscriber. WHIP/WHEP and SMS-style
-                                // sessions don't subscribe and the
-                                // dispatcher silently drops their
-                                // events.
-                                match state {
-                                    WebRtcSessionLifecycle::Connected => {
-                                        lifecycle_dispatcher.deliver_connected(*session_id);
-                                    }
-                                    WebRtcSessionLifecycle::Closed => {
-                                        lifecycle_dispatcher
-                                            .deliver_closed(*session_id, "session closed");
-                                    }
-                                    WebRtcSessionLifecycle::Failed => {
-                                        lifecycle_dispatcher
-                                            .deliver_closed(*session_id, "session failed");
-                                    }
-                                    WebRtcSessionLifecycle::Created
-                                    | WebRtcSessionLifecycle::LocalDescriptionReady
-                                    | WebRtcSessionLifecycle::Disconnected => {
-                                        // Intermediate states aren't
-                                        // surfaced to bridges yet; the
-                                        // job's `Connected` and
-                                        // `Failed` transitions are
-                                        // driven by the terminal
-                                        // events.
-                                    }
-                                }
-                            }
-                            WebRtcCoreEvent::RtcpFeedback {
-                                session_id,
-                                feedback:
-                                    WebRtcRtcpFeedback::Pli { .. } | WebRtcRtcpFeedback::Fir { .. },
-                            } => {
-                                // Phase 04 §4.8: PLI / FIR bump
-                                // `pli_total` / `fir_total` on the
-                                // aggregator. The per-session
-                                // telemetry tracks the same value
-                                // separately for `/session/{id}` GET.
-                                if matches!(
-                                    event,
-                                    WebRtcCoreEvent::RtcpFeedback {
-                                        feedback: WebRtcRtcpFeedback::Pli { .. },
-                                        ..
-                                    }
-                                ) {
-                                    metrics
-                                        .pli
-                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                } else {
-                                    metrics
-                                        .fir
-                                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                                }
+                    WebRtcCoreEvent::Media {
+                        session_id,
+                        event: media_evt,
+                    } => {
+                        if let WebRtcMediaEvent::Frame { .. } = media_evt {
+                            let mut bridges_guard = bridges.lock();
+                            let _ =
+                                bridges_guard.push_publish_frame(*session_id, media_evt.clone());
+                            // If the adaptive simulcast policy just
+                            // upgraded to a higher layer, request a
+                            // keyframe so the new layer starts with
+                            // a decodable frame (PLI).
+                            if bridges_guard.take_publish_layer_upgrade(*session_id) {
                                 let stream_key_opt = {
                                     let reg = registry.lock();
                                     reg.sessions.get(session_id).map(|s| s.stream_key.clone())
@@ -1214,233 +1416,34 @@ async fn run_driver_event_worker(
                                 if let Some(stream_key) = stream_key_opt {
                                     let stream_manager = ctx.stream_manager_api.clone();
                                     ctx.runtime_api.spawn(Box::pin(async move {
-                                        if let Err(err) =
-                                            stream_manager.request_keyframe(&stream_key).await
-                                        {
-                                            debug!(
-                                                "stream_manager.request_keyframe failed: {err}"
-                                            );
-                                        }
+                                        let _ = stream_manager.request_keyframe(&stream_key).await;
                                     }));
                                 }
                             }
-                            WebRtcCoreEvent::RtpExtensionObserved {
-                                session_id,
-                                mappings,
-                            } => {
-                                let mut reg = registry.lock();
-                                if let Some(session) = reg.sessions.get_mut(session_id) {
-                                    session.telemetry.record_rtp_extensions(mappings.clone());
-                                }
-                            }
-                            WebRtcCoreEvent::RtcpFeedback {
-                                session_id,
-                                feedback: WebRtcRtcpFeedback::SenderReport,
-                            } => {
-                                let mut reg = registry.lock();
-                                if let Some(session) = reg.sessions.get_mut(session_id) {
-                                    session.telemetry.inc_rtcp_sr();
-                                }
-                            }
-                            WebRtcCoreEvent::RtcpFeedback {
-                                session_id,
-                                feedback: WebRtcRtcpFeedback::ReceiverReport,
-                            } => {
-                                let mut reg = registry.lock();
-                                if let Some(session) = reg.sessions.get_mut(session_id) {
-                                    session.telemetry.inc_rtcp_rr();
-                                }
-                            }
-                            WebRtcCoreEvent::RtcpFeedback {
-                                session_id,
-                                feedback: WebRtcRtcpFeedback::Nack { count, .. },
-                            } => {
-                                let mut reg = registry.lock();
-                                if let Some(session) = reg.sessions.get_mut(session_id) {
-                                    session.telemetry.add_rtcp_nack(*count);
-                                }
-                            }
-                            WebRtcCoreEvent::RtcpFeedback {
-                                session_id,
-                                feedback:
-                                    WebRtcRtcpFeedback::Remb {
-                                        bitrate_bps, ..
-                                    },
-                            } => {
-                                let auto_abr = { config.lock().webrtc_auto_abr };
-                                // Phase 04: surface remote REMB so
-                                // operators see the receiver's view of
-                                // the bitrate ceiling alongside the
-                                // local BWE estimate.
-                                let mut reg = registry.lock();
-                                if let Some(session) = reg.sessions.get_mut(session_id) {
-                                    session.telemetry.record_remb(*bitrate_bps);
-                                }
-                                drop(reg);
-                                // Thread the REMB cap into the publish
-                                // bridge so the adaptive simulcast
-                                // policy uses `min(bwe, remb)` instead
-                                // of silently overshooting the
-                                // receiver-suggested ceiling.
-                                if auto_abr {
-                                    bridges
-                                        .lock()
-                                        .set_publish_remb_cap(*session_id, *bitrate_bps);
-                                }
-                                metrics.record_remb(*bitrate_bps);
-                            }
-                            WebRtcCoreEvent::Stats { session_id, snapshot } => {
-                                // Phase 04: aggregate ingress/egress
-                                // stats. `core` emits both directions
-                                // separately so we merge instead of
-                                // overwriting.
-                                let mut reg = registry.lock();
-                                if let Some(session) = reg.sessions.get_mut(session_id) {
-                                    session.telemetry.merge_stats(snapshot);
-                                }
-                                drop(reg);
-                                // Compute deltas vs. the previous
-                                // Stats sample for the same session
-                                // and add them to the aggregator. The
-                                // delta is monotonic by construction
-                                // because str0m's per-session counters
-                                // are cumulative.
-                                let delta = {
-                                    let mut last = last_session_stats.lock();
-                                    let prev = last
-                                        .insert(*session_id, snapshot.clone())
-                                        .unwrap_or_default();
-                                    crate::metrics::WebRtcSessionStatsDelta {
-                                        packets_in: snapshot
-                                            .packets_in
-                                            .saturating_sub(prev.packets_in),
-                                        packets_out: snapshot
-                                            .packets_out
-                                            .saturating_sub(prev.packets_out),
-                                        nack_in: snapshot
-                                            .nack_in
-                                            .saturating_sub(prev.nack_in),
-                                        nack_out: snapshot
-                                            .nack_out
-                                            .saturating_sub(prev.nack_out),
-                                        rtx_sent: snapshot
-                                            .rtx_sent
-                                            .saturating_sub(prev.rtx_sent),
-                                        rtx_miss: snapshot
-                                            .rtx_miss
-                                            .saturating_sub(prev.rtx_miss),
-                                        // PLI/FIR are tracked
-                                        // separately by the
-                                        // RtcpFeedback arm; do not
-                                        // double-count here.
-                                        pli: 0,
-                                        fir: 0,
+                            // MultiStream: check if new RIDs need
+                            // sub-stream sinks acquired. We collect
+                            // pending RIDs under the lock, then
+                            // spawn async acquisition outside.
+                            let pending_rids = bridges_guard.pending_multistream_rids(*session_id);
+                            drop(bridges_guard);
+                            if !pending_rids.is_empty() {
+                                let bridges_clone = bridges.clone();
+                                let sid = *session_id;
+                                // Collect the publisher_api and stream_key
+                                // from the bridge while we have the lock,
+                                // and mark RIDs as in-flight to prevent
+                                // duplicate acquire calls.
+                                let acquire_info = {
+                                    let mut guard = bridges_clone.lock();
+                                    if let Some(b) = guard.publish_mut(sid) {
+                                        b.mark_multistream_inflight(&pending_rids);
+                                        b.publisher_api_and_stream_key()
+                                    } else {
+                                        None
                                     }
                                 };
-                                metrics.add_stats_delta(&delta);
-                                // Feed the egress NACK counter into
-                                // the publish bridge's storm
-                                // detector. `nack_in` is cumulative
-                                // (str0m emits the running total), so
-                                // the bridge tracks the delta between
-                                // samples to detect a burst. A storm
-                                // pins the simulcast policy to the
-                                // lowest layer for a recovery window.
-                                if snapshot.nack_in != 0 {
-                                    let storm_tripped = bridges
-                                        .lock()
-                                        .record_publish_nack_in(*session_id, snapshot.nack_in);
-                                    if storm_tripped {
-                                        warn!(
-                                            "WebRTC NACK storm detected on session {}: \
-                                             nack_in={}, simulcast pinned to lowest layer for recovery window",
-                                            session_id, snapshot.nack_in
-                                        );
-                                    }
-                                }
-                            }
-                            WebRtcCoreEvent::Bwe { session_id, snapshot } => {
-                                let auto_abr = { config.lock().webrtc_auto_abr };
-                                let mut reg = registry.lock();
-                                if let Some(session) = reg.sessions.get_mut(session_id) {
-                                    session.telemetry.merge_bwe(snapshot);
-                                }
-                                drop(reg);
-                                // Thread the estimate into the publish
-                                // bridge so `SimulcastPolicy::Adaptive`
-                                // can re-elect the layer on the next
-                                // inbound frame. We only forward the
-                                // primary `estimated_bitrate_bps`; the
-                                // separate `target_bitrate_bps` is
-                                // surfaced through telemetry already.
-                                if auto_abr {
-                                    if let Some(bps) = snapshot.estimated_bitrate_bps {
-                                        bridges
-                                            .lock()
-                                            .set_publish_bwe_estimate(*session_id, bps);
-                                    }
-                                }
-                                if let Some(bps) = snapshot.estimated_bitrate_bps {
-                                    metrics.record_bwe(bps);
-                                }
-                                // Phase 04 §4.8: TWCC feedback delivery
-                                // counter. `core` emits a `Bwe` event
-                                // for every TWCC-driven estimate
-                                // refresh, so we treat that as a
-                                // feedback delivery sample.
-                                metrics.inc_twcc_feedback();
-                            }
-                            WebRtcCoreEvent::MediaTrackAdded { session_id, track } => {
-                                bridges
-                                    .lock()
-                                    .record_play_track(*session_id, track.mid.clone(), track.kind);
-                            }
-                            WebRtcCoreEvent::Media { session_id, event: media_evt } => {
-                                if let WebRtcMediaEvent::Frame { .. } = media_evt {
-                                    let mut bridges_guard = bridges.lock();
-                                    let _ = bridges_guard
-                                        .push_publish_frame(*session_id, media_evt.clone());
-                                    // If the adaptive simulcast policy just
-                                    // upgraded to a higher layer, request a
-                                    // keyframe so the new layer starts with
-                                    // a decodable frame (PLI).
-                                    if bridges_guard.take_publish_layer_upgrade(*session_id) {
-                                        let stream_key_opt = {
-                                            let reg = registry.lock();
-                                            reg.sessions.get(session_id).map(|s| s.stream_key.clone())
-                                        };
-                                        if let Some(stream_key) = stream_key_opt {
-                                            let stream_manager = ctx.stream_manager_api.clone();
-                                            ctx.runtime_api.spawn(Box::pin(async move {
-                                                let _ = stream_manager.request_keyframe(&stream_key).await;
-                                            }));
-                                        }
-                                    }
-                                    // MultiStream: check if new RIDs need
-                                    // sub-stream sinks acquired. We collect
-                                    // pending RIDs under the lock, then
-                                    // spawn async acquisition outside.
-                                    let pending_rids = bridges_guard
-                                        .pending_multistream_rids(*session_id);
-                                    drop(bridges_guard);
-                                    if !pending_rids.is_empty() {
-                                        let bridges_clone = bridges.clone();
-                                        let sid = *session_id;
-                                        // Collect the publisher_api and stream_key
-                                        // from the bridge while we have the lock,
-                                        // and mark RIDs as in-flight to prevent
-                                        // duplicate acquire calls.
-                                        let acquire_info = {
-                                            let mut guard = bridges_clone.lock();
-                                            if let Some(b) = guard.publish_mut(sid) {
-                                                b.mark_multistream_inflight(&pending_rids);
-                                                b.publisher_api_and_stream_key()
-                                            } else {
-                                                None
-                                            }
-                                        };
-                                        if let Some((pub_api, base_key)) = acquire_info {
-                                            ctx.runtime_api.spawn(Box::pin(async move {
+                                if let Some((pub_api, base_key)) = acquire_info {
+                                    ctx.runtime_api.spawn(Box::pin(async move {
                                                 for rid in pending_rids {
                                                     let sub_key = crate::bridge::derive_multistream_key(&base_key, &rid);
                                                     match pub_api
@@ -1468,129 +1471,135 @@ async fn run_driver_event_worker(
                                                     }
                                                 }
                                             }));
-                                        }
-                                    }
                                 }
                             }
-                            WebRtcCoreEvent::DataChannel { session_id, event: dc_evt } => {
-                                use cheetah_webrtc_core::{
-                                    WebRtcDataChannelEvent, WebRtcDataChannelOut,
+                        }
+                    }
+                    WebRtcCoreEvent::DataChannel {
+                        session_id,
+                        event: dc_evt,
+                    } => {
+                        use cheetah_webrtc_core::{WebRtcDataChannelEvent, WebRtcDataChannelOut};
+                        if let WebRtcDataChannelEvent::Message {
+                            id,
+                            payload,
+                            binary,
+                        } = dc_evt
+                        {
+                            let echo_enabled = {
+                                let reg = registry.lock();
+                                reg.sessions
+                                    .get(session_id)
+                                    .map(|s| s.echo.data_channel)
+                                    .unwrap_or(false)
+                            };
+                            if echo_enabled {
+                                let out = WebRtcDataChannelOut {
+                                    session_id: *session_id,
+                                    channel: *id,
+                                    payload: payload.clone(),
+                                    binary: *binary,
                                 };
-                                if let WebRtcDataChannelEvent::Message { id, payload, binary } =
-                                    dc_evt
-                                {
-                                    let echo_enabled = {
-                                        let reg = registry.lock();
-                                        reg.sessions
-                                            .get(session_id)
-                                            .map(|s| s.echo.data_channel)
-                                            .unwrap_or(false)
-                                    };
-                                    if echo_enabled {
-                                        let out = WebRtcDataChannelOut {
-                                            session_id: *session_id,
-                                            channel: *id,
-                                            payload: payload.clone(),
-                                            binary: *binary,
-                                        };
-                                        let driver_handle = handle.clone();
-                                        ctx.runtime_api.spawn(Box::pin(async move {
+                                let driver_handle = handle.clone();
+                                ctx.runtime_api.spawn(Box::pin(async move {
                                             driver_handle
                                                 .send_command(
                                                     cheetah_webrtc_driver_tokio::WebRtcDriverCommand::SendDataChannel(out),
                                                 )
                                                 .await;
                                         }));
-                                    }
-                                }
                             }
-                            _ => {}
                         }
                     }
-                    Some(WebRtcDriverEvent::RouteUpdated(update)) => {
-                        debug!(
-                            "WebRTC route migration session={} new={}",
-                            update.session_id, update.new_addr
-                        );
-                        metrics.inc_route_migration();
-                    }
-                    Some(WebRtcDriverEvent::TcpAccepted { remote_addr }) => {
-                        debug!("WebRTC TCP peer connected: {remote_addr}");
-                    }
-                    Some(WebRtcDriverEvent::TcpClosed { remote_addr, reason }) => {
-                        debug!("WebRTC TCP peer disconnected: {remote_addr} ({reason:?})");
-                    }
-                    Some(WebRtcDriverEvent::Diagnostic(diag)) => {
-                        if matches!(diag.kind, cheetah_webrtc_driver_tokio::WebRtcDriverDiagnosticKind::Lifecycle) {
-                            // Lifecycle failures with a session id should
-                            // bubble up to any pending HTTP waiter so
-                            // they fail fast instead of timing out. The
-                            // dispatcher silently drops the failure when
-                            // there is no subscriber for that session.
-                            if let Some(session_id) = diag.session_id {
-                                if diag.message.contains("failed") {
-                                    dispatcher.deliver_failure(session_id, diag.message.clone());
-                                }
-                            }
-                        } else {
-                            warn!("WebRTC driver diagnostic: {} {:?}", diag.message, diag.kind);
-                        }
-                    }
-                    Some(WebRtcDriverEvent::Backpressure { queue, pending }) => {
-                        warn!("WebRTC driver backpressure on {queue}: {pending} pending");
-                    }
-                    Some(WebRtcDriverEvent::ShardStopped { shard_id, reason }) => {
-                        // Operators rely on this signal to tell
-                        // graceful drain ("cancelled" / "exited")
-                        // apart from a crashed shard ("panic: ..").
-                        // We log at warn for non-cancellation
-                        // reasons so cancellation noise stays
-                        // low-priority.
-                        if reason.contains("cancelled") || reason.contains("exited") {
-                            debug!("WebRTC shard {shard_id} stopped: {reason}");
-                        } else {
-                            warn!(
-                                "WebRTC shard {shard_id} stopped unexpectedly: {reason}"
-                            );
-                        }
-                    }
-                    Some(WebRtcDriverEvent::LocalCandidateSnapshot {
-                        shard_id,
-                        session_id,
-                        counts,
-                    }) => {
-                        // Phase 02 follow-up §5 / plan-27 task 5.4:
-                        // Record Prometheus counters BEFORE the debug
-                        // log so both metric and log fire on every
-                        // snapshot (dual-write).
-                        metrics.record_local_candidate_snapshot(counts);
-
-                        // Phase 02 follow-up §3 / plan-27 task 3.5:
-                        // the driver emits a candidate snapshot
-                        // alongside each local description. Surface
-                        // the per-type / per-transport / per-family
-                        // counts as a structured `debug` event so
-                        // operators can wire them straight into a
-                        // dashboard. No business logic — logging
-                        // only.
-                        tracing::debug!(
-                            target: "webrtc.driver",
-                            shard_id = %shard_id,
-                            session_id = %session_id,
-                            host = counts.host,
-                            srflx = counts.srflx,
-                            prflx = counts.prflx,
-                            relay = counts.relay,
-                            udp = counts.udp,
-                            tcp = counts.tcp,
-                            ipv4 = counts.ipv4,
-                            ipv6 = counts.ipv6,
-                            "local candidate snapshot",
-                        );
-                    }
-                    None => break,
+                    _ => {}
                 }
             }
+            Some(WebRtcDriverEvent::RouteUpdated(update)) => {
+                debug!(
+                    "WebRTC route migration session={} new={}",
+                    update.session_id, update.new_addr
+                );
+                metrics.inc_route_migration();
+            }
+            Some(WebRtcDriverEvent::TcpAccepted { remote_addr }) => {
+                debug!("WebRTC TCP peer connected: {remote_addr}");
+            }
+            Some(WebRtcDriverEvent::TcpClosed {
+                remote_addr,
+                reason,
+            }) => {
+                debug!("WebRTC TCP peer disconnected: {remote_addr} ({reason:?})");
+            }
+            Some(WebRtcDriverEvent::Diagnostic(diag)) => {
+                if matches!(
+                    diag.kind,
+                    cheetah_webrtc_driver_tokio::WebRtcDriverDiagnosticKind::Lifecycle
+                ) {
+                    // Lifecycle failures with a session id should
+                    // bubble up to any pending HTTP waiter so
+                    // they fail fast instead of timing out. The
+                    // dispatcher silently drops the failure when
+                    // there is no subscriber for that session.
+                    if let Some(session_id) = diag.session_id {
+                        if diag.message.contains("failed") {
+                            dispatcher.deliver_failure(session_id, diag.message.clone());
+                        }
+                    }
+                } else {
+                    warn!("WebRTC driver diagnostic: {} {:?}", diag.message, diag.kind);
+                }
+            }
+            Some(WebRtcDriverEvent::Backpressure { queue, pending }) => {
+                warn!("WebRTC driver backpressure on {queue}: {pending} pending");
+            }
+            Some(WebRtcDriverEvent::ShardStopped { shard_id, reason }) => {
+                // Operators rely on this signal to tell
+                // graceful drain ("cancelled" / "exited")
+                // apart from a crashed shard ("panic: ..").
+                // We log at warn for non-cancellation
+                // reasons so cancellation noise stays
+                // low-priority.
+                if reason.contains("cancelled") || reason.contains("exited") {
+                    debug!("WebRTC shard {shard_id} stopped: {reason}");
+                } else {
+                    warn!("WebRTC shard {shard_id} stopped unexpectedly: {reason}");
+                }
+            }
+            Some(WebRtcDriverEvent::LocalCandidateSnapshot {
+                shard_id,
+                session_id,
+                counts,
+            }) => {
+                // Phase 02 follow-up §5 / plan-27 task 5.4:
+                // Record Prometheus counters BEFORE the debug
+                // log so both metric and log fire on every
+                // snapshot (dual-write).
+                metrics.record_local_candidate_snapshot(counts);
+
+                // Phase 02 follow-up §3 / plan-27 task 3.5:
+                // the driver emits a candidate snapshot
+                // alongside each local description. Surface
+                // the per-type / per-transport / per-family
+                // counts as a structured `debug` event so
+                // operators can wire them straight into a
+                // dashboard. No business logic — logging
+                // only.
+                tracing::debug!(
+                    target: "webrtc.driver",
+                    shard_id = %shard_id,
+                    session_id = %session_id,
+                    host = counts.host,
+                    srflx = counts.srflx,
+                    prflx = counts.prflx,
+                    relay = counts.relay,
+                    udp = counts.udp,
+                    tcp = counts.tcp,
+                    ipv4 = counts.ipv4,
+                    ipv6 = counts.ipv6,
+                    "local candidate snapshot",
+                );
+            }
+            None => break,
         }
     }
     debug!("WebRTC driver event worker terminated");
@@ -1616,7 +1625,7 @@ mod tests {
 
         // Deliver a `Connected` event through the public accessor.
         dispatcher.deliver_connected(session_id);
-        match rx.recv().await {
+        match futures::StreamExt::next(&mut rx).await {
             Some(BridgeLifecycleEvent::Connected) => {}
             other => panic!("expected Connected, got {other:?}"),
         }
@@ -1625,7 +1634,7 @@ mod tests {
         let session_id_b = WebRtcSessionId::new(8);
         let mut rx_b = dispatcher.subscribe(session_id_b).await;
         dispatcher.deliver_closed(session_id_b, "test");
-        match rx_b.recv().await {
+        match futures::StreamExt::next(&mut rx_b).await {
             Some(BridgeLifecycleEvent::Closed { reason }) => assert_eq!(reason, "test"),
             other => panic!("expected Closed, got {other:?}"),
         }

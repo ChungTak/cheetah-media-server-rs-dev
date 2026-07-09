@@ -31,9 +31,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cheetah_runtime_api::CancellationToken;
+use futures::channel::mpsc;
+use futures::lock::Mutex as AsyncMutex;
+use futures::{FutureExt, SinkExt, StreamExt};
 use parking_lot::Mutex;
 use thiserror::Error;
-use tokio::sync::mpsc;
 
 use super::message::{P2pMessage, P2pMessageHeader};
 use super::transport::{P2pTransport, P2pTransportError, P2pTransportEvent};
@@ -167,7 +169,7 @@ impl<T: P2pTransport + 'static> KeeperHub<T> {
         Ok(HubBackedTransport {
             hub: self.clone(),
             key,
-            inbound: tokio::sync::Mutex::new(rx),
+            inbound: AsyncMutex::new(rx),
             detached: std::sync::atomic::AtomicBool::new(false),
         })
     }
@@ -180,16 +182,20 @@ impl<T: P2pTransport + 'static> KeeperHub<T> {
             if self.closed.load(std::sync::atomic::Ordering::Acquire) {
                 break;
             }
-            let event = tokio::select! {
-                biased;
-                _ = cancel.cancelled() => break,
-                res = self.transport.recv() => res,
+            let event = {
+                let cancelled = cancel.cancelled().fuse();
+                let recv = self.transport.recv().fuse();
+                futures::pin_mut!(cancelled, recv);
+                futures::select_biased! {
+                    _ = cancelled => break,
+                    res = recv => res,
+                }
             };
             match event {
                 Ok(P2pTransportEvent::Message(msg)) => {
                     if let Some(key) = PeerKey::from_message(&msg) {
                         let sender = self.inbound.lock().get(&key).cloned();
-                        if let Some(tx) = sender {
+                        if let Some(mut tx) = sender {
                             let _ = tx.send(P2pTransportEvent::Message(msg)).await;
                         }
                         // Otherwise: no bridge listening — drop. The
@@ -220,7 +226,7 @@ impl<T: P2pTransport + 'static> KeeperHub<T> {
     async fn broadcast_closed(&self) {
         let senders: Vec<mpsc::Sender<P2pTransportEvent>> =
             self.inbound.lock().values().cloned().collect();
-        for tx in senders {
+        for mut tx in senders {
             let _ = tx.send(P2pTransportEvent::Closed).await;
         }
     }
@@ -228,7 +234,7 @@ impl<T: P2pTransport + 'static> KeeperHub<T> {
     async fn broadcast_error(&self, reason: &str) {
         let senders: Vec<mpsc::Sender<P2pTransportEvent>> =
             self.inbound.lock().values().cloned().collect();
-        for tx in senders {
+        for mut tx in senders {
             let _ = tx.send(P2pTransportEvent::Error(reason.to_string())).await;
         }
     }
@@ -260,7 +266,7 @@ impl<T: P2pTransport + 'static> KeeperHub<T> {
 pub struct HubBackedTransport<T: P2pTransport + 'static> {
     hub: Arc<KeeperHub<T>>,
     key: PeerKey,
-    inbound: tokio::sync::Mutex<mpsc::Receiver<P2pTransportEvent>>,
+    inbound: AsyncMutex<mpsc::Receiver<P2pTransportEvent>>,
     detached: std::sync::atomic::AtomicBool,
 }
 
@@ -287,7 +293,7 @@ impl<T: P2pTransport + 'static> P2pTransport for HubBackedTransport<T> {
 
     async fn recv(&self) -> Result<P2pTransportEvent, P2pTransportError> {
         let mut guard = self.inbound.lock().await;
-        match guard.recv().await {
+        match guard.next().await {
             Some(event) => Ok(event),
             None => Ok(P2pTransportEvent::Closed),
         }

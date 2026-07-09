@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cheetah_webrtc_core::WebRtcSessionId;
+use futures::channel::mpsc;
 use parking_lot::Mutex;
 
 use super::bridge::{BridgeLifecycleEvent, BridgeLifecycleSource};
@@ -27,7 +28,7 @@ pub struct LifecycleDispatcher {
 
 #[derive(Debug, Default)]
 struct Inner {
-    senders: HashMap<WebRtcSessionId, tokio::sync::mpsc::Sender<BridgeLifecycleEvent>>,
+    senders: HashMap<WebRtcSessionId, mpsc::Sender<BridgeLifecycleEvent>>,
 }
 
 /// Per-session subscription channel size. The bridge only consumes a
@@ -45,7 +46,7 @@ impl LifecycleDispatcher {
     /// sessions that don't use the bridge stack).
     pub fn deliver_connected(&self, session_id: WebRtcSessionId) {
         let sender = self.inner.lock().senders.get(&session_id).cloned();
-        if let Some(tx) = sender {
+        if let Some(mut tx) = sender {
             let _ = tx.try_send(BridgeLifecycleEvent::Connected);
         }
     }
@@ -56,7 +57,7 @@ impl LifecycleDispatcher {
     /// session.
     pub fn deliver_closed(&self, session_id: WebRtcSessionId, reason: impl Into<String>) {
         let mut guard = self.inner.lock();
-        if let Some(tx) = guard.senders.remove(&session_id) {
+        if let Some(mut tx) = guard.senders.remove(&session_id) {
             let _ = tx.try_send(BridgeLifecycleEvent::Closed {
                 reason: reason.into(),
             });
@@ -78,11 +79,8 @@ impl LifecycleDispatcher {
 
 #[async_trait]
 impl BridgeLifecycleSource for LifecycleDispatcher {
-    async fn subscribe(
-        &self,
-        session_id: WebRtcSessionId,
-    ) -> tokio::sync::mpsc::Receiver<BridgeLifecycleEvent> {
-        let (tx, rx) = tokio::sync::mpsc::channel(SUBSCRIBE_CAPACITY);
+    async fn subscribe(&self, session_id: WebRtcSessionId) -> mpsc::Receiver<BridgeLifecycleEvent> {
+        let (tx, rx) = mpsc::channel(SUBSCRIBE_CAPACITY);
         self.inner.lock().senders.insert(session_id, tx);
         rx
     }
@@ -91,6 +89,7 @@ impl BridgeLifecycleSource for LifecycleDispatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use futures::StreamExt;
 
     #[tokio::test(flavor = "current_thread")]
     async fn deliver_connected_routes_to_subscriber() {
@@ -98,7 +97,7 @@ mod tests {
         let id = WebRtcSessionId::new(1);
         let mut rx = dispatcher.subscribe(id).await;
         dispatcher.deliver_connected(id);
-        match rx.recv().await {
+        match rx.next().await {
             Some(BridgeLifecycleEvent::Connected) => {}
             other => panic!("unexpected: {other:?}"),
         }
@@ -111,7 +110,7 @@ mod tests {
         let mut rx = dispatcher.subscribe(id).await;
         assert_eq!(dispatcher.subscription_count(), 1);
         dispatcher.deliver_closed(id, "peer reset");
-        match rx.recv().await {
+        match rx.next().await {
             Some(BridgeLifecycleEvent::Closed { reason }) => assert_eq!(reason, "peer reset"),
             other => panic!("unexpected: {other:?}"),
         }
@@ -134,7 +133,7 @@ mod tests {
         let mut rx = dispatcher.subscribe(id).await;
         dispatcher.forget(id);
         // The sender side dropped; recv yields `None` not an event.
-        let event = tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv()).await;
+        let event = tokio::time::timeout(std::time::Duration::from_millis(50), rx.next()).await;
         assert!(matches!(event, Ok(None)), "expected drop, got {event:?}");
     }
 
@@ -146,7 +145,7 @@ mod tests {
         let mut rx2 = dispatcher.subscribe(id).await;
         dispatcher.deliver_connected(id);
         // Only the second subscriber sees the event.
-        match rx2.recv().await {
+        match rx2.next().await {
             Some(BridgeLifecycleEvent::Connected) => {}
             other => panic!("unexpected: {other:?}"),
         }
