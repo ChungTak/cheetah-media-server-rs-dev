@@ -37,6 +37,7 @@ pub mod audio;
 pub mod compat;
 pub mod egress;
 pub mod flv;
+pub mod flv_egress;
 pub mod fmp4_demux;
 pub mod fmp4_mux;
 pub mod frame;
@@ -95,6 +96,12 @@ pub use egress::{
 pub use flv::{
     build_audio_sequence_header, build_video_sequence_header, FlvDemuxEvent, FlvDemuxer, FlvHeader,
     FlvPreviousTagSizeMismatch, FlvStreamError, FlvTag, FlvTagBody, FlvTagType,
+};
+pub use flv_egress::{
+    build_h265_config, build_h266_config, build_metadata, build_track_bootstrap_payloads,
+    build_video_config_payload, map_frame_to_rtmp_flv_payload, mute_aac_config_payload,
+    mute_aac_frame_payload, rtmp_playback_codec_supported, track_list_has_audio,
+    use_enhanced_video_mode, RtmpFlvPayload, RtmpFlvPayloadKind, RtmpFlvPlayMode,
 };
 pub use fmp4_demux::{
     Fmp4DemuxDiagnostic, Fmp4DemuxEvent, Fmp4DemuxTrack, Fmp4Demuxer, Fmp4DemuxerConfig,

@@ -67,6 +67,12 @@ Current HTTP-FLV crates:
 - `crates/protocols/http-flv/module` (`cheetah-http-flv-module`)
 - `crates/protocols/http-flv/fuzz` (`cheetah-http-flv-fuzz`, standalone cargo-fuzz harness crate)
 
+FLV encapsulation boundary clarification:
+
+- The FLV frame↔payload egress mapping (`map_frame_to_rtmp_flv_payload`, `build_track_bootstrap_payloads`, sequence-header / config / `onMetaData` builders) lives in `cheetah-codec` (`cheetah_codec::flv_egress`) and is shared by both RTMP and HTTP-FLV.
+- `onMetaData` script data is serialized by a minimal self-contained AMF0 encoder inside `cheetah-codec`; the full AMF0 codec (encode + decode for RTMP command messages) stays in `cheetah-rtmp-core`.
+- `cheetah-rtmp-core::flv` re-exports the codec API to preserve its public surface; `cheetah-http-flv-core` / `cheetah-http-flv-module` consume `cheetah-codec` directly and carry no `cheetah-rtmp-core` production dependency.
+
 Property-based test crates use the explicit `property-tests` suffix. The older `pbt` abbreviation meant "property-based testing", but it is intentionally avoided in crate and directory names because it obscures the crate purpose.
 
 Core input/output model:

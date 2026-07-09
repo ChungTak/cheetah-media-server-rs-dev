@@ -585,7 +585,6 @@ dependencies = [
  "base64",
  "bytes",
  "cheetah-codec",
- "cheetah-rtmp-core",
  "sha1",
  "thiserror",
 ]
@@ -616,7 +615,6 @@ dependencies = [
  "cheetah-codec",
  "cheetah-http-flv-core",
  "cheetah-http-flv-driver-tokio",
- "cheetah-rtmp-core",
  "cheetah-runtime-api",
  "cheetah-runtime-tokio",
  "cheetah-sdk",

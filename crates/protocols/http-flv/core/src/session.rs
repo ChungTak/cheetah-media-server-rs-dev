@@ -1,6 +1,6 @@
 use bytes::Bytes;
+use cheetah_codec::RtmpFlvPlayMode;
 use cheetah_codec::{FlvDemuxEvent, FlvDemuxer, FlvTag};
-use cheetah_rtmp_core::RtmpFlvPlayMode;
 
 use crate::request::{
     parse_play_request_target, validate_websocket_upgrade, HttpFlvTransport, HttpMethod,

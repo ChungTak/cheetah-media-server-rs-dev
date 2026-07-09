@@ -1,5 +1,5 @@
 use base64::Engine;
-use cheetah_rtmp_core::RtmpFlvPlayMode;
+use cheetah_codec::RtmpFlvPlayMode;
 use sha1::{Digest, Sha1};
 
 use crate::HttpFlvCoreError;
