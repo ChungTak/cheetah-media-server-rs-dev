@@ -1,0 +1,9 @@
+case	source_pcap	stream_name	media_sig	role	fixture	expect_connected	expect_publish	expect_play	expect_media_min	notes
+h264_aac_publish	from_file_017_source_200kbps_768x320_fc8200c552.pcap	h264_aac_publish	v=h264@768x320;a=aac@ch2	server_publish_c2s	standard/h264_aac_publish.rtmpflow	1	1	0	1	standard h264/aac publish;records=157;payload_bytes=1610003
+h265_aac_publish	from_file_003_bbb_1920x1080_hevc_5d24fd11cc.pcap	h265_aac_publish	v=h265@1920x1080;a=aac@ch2	server_publish_c2s	standard/h265_aac_publish.rtmpflow	1	1	0	1	standard h265/aac publish;records=218;payload_bytes=1167682
+h265_large_publish	from_file_018_spreed_1080p_hevc_ccd40e8693.pcap	h265_large_publish	v=h265@1920x1080;a=aac@ch2	server_publish_c2s	standard/h265_large_publish.rtmpflow	1	1	0	1	standard h265 large publish;records=167;payload_bytes=2231607
+audio_only_publish	from_file_010_fallback_audio_f1932e2a04.pcap	audio_only_publish	v=none@0x0;a=aac@ch2	server_publish_c2s	standard/audio_only_publish.rtmpflow	1	1	0	1	standard audio-only publish;records=293;payload_bytes=102133
+av1_probe	from_file_005_big_buck_bunny_av1_1080_10s_5mb_dd25581306.pcap	av1_probe	v=av1@1920x1080;a=none@ch0	robustness_probe	probes/av1_probe.rtmpflow	0	0	0	0	enhanced/compat probe av1;records=7;payload_bytes=3563
+vp8_probe	from_file_011_fallback_video_vp8_fb9c7e866d.pcap	vp8_probe	v=vp8@320x240;a=none@ch0	robustness_probe	probes/vp8_probe.rtmpflow	0	0	0	0	enhanced/compat probe vp8;records=7;payload_bytes=3537
+vp9_probe	from_file_012_fallback_video_vp9_72cd0a041b.pcap	vp9_probe	v=vp9@320x240;a=none@ch0	robustness_probe	probes/vp9_probe.rtmpflow	0	0	0	0	enhanced/compat probe vp9;records=7;payload_bytes=3537
+h266_probe	from_file_013_arknights_reimei_zensou_01_vvc_1080p_aac_c8237ebd76.pcap	h266_probe	v=h266@1920x1080;a=aac@ch2	robustness_probe	probes/h266_probe.rtmpflow	0	0	0	0	enhanced/compat probe h266/vvc;records=7;payload_bytes=3581

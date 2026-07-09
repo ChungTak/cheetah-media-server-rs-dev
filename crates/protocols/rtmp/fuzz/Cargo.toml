@@ -1,0 +1,93 @@
+[package]
+name = "cheetah-rtmp-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+bytes = "1"
+libfuzzer-sys = "0.4"
+cheetah-rtmp-core = { path = "../core" }
+cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+
+[[bin]]
+name = "fuzz_amf0"
+path = "fuzz_targets/fuzz_amf0.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_amf3"
+path = "fuzz_targets/fuzz_amf3.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_flv"
+path = "fuzz_targets/fuzz_flv.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_handshake"
+path = "fuzz_targets/fuzz_handshake.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtmp_chunk"
+path = "fuzz_targets/fuzz_rtmp_chunk.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtmp_command"
+path = "fuzz_targets/fuzz_rtmp_command.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtmp_message"
+path = "fuzz_targets/fuzz_rtmp_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_user_control"
+path = "fuzz_targets/fuzz_user_control.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_real_capture_server_replay"
+path = "fuzz_targets/fuzz_real_capture_server_replay.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_real_capture_client_post_handshake"
+path = "fuzz_targets/fuzz_real_capture_client_post_handshake.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_transport_faults"
+path = "fuzz_targets/fuzz_transport_faults.rs"
+test = false
+doc = false
+bench = false

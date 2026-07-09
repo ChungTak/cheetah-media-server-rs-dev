@@ -1,0 +1,23 @@
+[package]
+name = "cheetah-rtsp-driver-tokio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+base64.workspace = true
+bytes.workspace = true
+cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+cheetah-rtsp-core = { path = "../core" }
+cheetah-runtime-api = { path = "../../../runtime/cheetah-runtime-api" }
+parking_lot.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tracing.workspace = true
+md5.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+cheetah-runtime-tokio = { path = "../../../runtime/cheetah-runtime-tokio" }

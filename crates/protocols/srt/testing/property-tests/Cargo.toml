@@ -1,0 +1,9 @@
+[package]
+name = "cheetah-srt-property-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cheetah-srt-core = { path = "../../core" }
+proptest = "1"

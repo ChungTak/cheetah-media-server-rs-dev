@@ -1,0 +1,10 @@
+[package]
+name = "cheetah-hls-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+thiserror.workspace = true

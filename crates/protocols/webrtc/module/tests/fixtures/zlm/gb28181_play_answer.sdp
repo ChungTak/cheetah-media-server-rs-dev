@@ -1,0 +1,26 @@
+v=0
+o=- 1681288905 1 IN IP4 0.0.0.0
+s=ZLMediaKit-GB28181
+t=0 0
+a=group:BUNDLE 0
+a=msid-semantic: WMS *
+m=video 9 UDP/TLS/RTP/SAVPF 96
+c=IN IP4 0.0.0.0
+a=rtcp:9 IN IP4 0.0.0.0
+a=ice-ufrag:gbA1
+a=ice-pwd:gbpasswordlongerthan22chars
+a=ice-options:trickle
+a=fingerprint:sha-256 77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66
+a=setup:active
+a=mid:0
+a=sendonly
+a=msid:gb gb28181-video
+a=rtcp-mux
+a=rtcp-rsize
+a=rtpmap:96 H264/90000
+a=rtcp-fb:96 nack
+a=rtcp-fb:96 nack pli
+a=rtcp-fb:96 ccm fir
+a=rtcp-fb:96 transport-cc
+a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f
+a=ssrc:888881 cname:gb28181-video

@@ -1,0 +1,20 @@
+[package]
+name = "cheetah-sdk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["macros"]
+macros = ["dep:cheetah-sdk-macros"]
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+cheetah-codec = { path = "../../foundation/cheetah-codec" }
+cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
+cheetah-sdk-macros = { path = "../cheetah-sdk-macros", optional = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

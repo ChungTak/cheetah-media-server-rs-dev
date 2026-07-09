@@ -1,0 +1,16 @@
+[package]
+name = "cheetah-rtmp-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+complex-handshake = ["dep:hmac", "dep:sha2"]
+
+[dependencies]
+cheetah-codec = { path = "../../../foundation/cheetah-codec", default-features = false }
+bytes = { version = "1", default-features = false }
+hmac = { version = "0.12", optional = true }
+sha2 = { version = "0.10", default-features = false, optional = true }
+thiserror = { version = "2", default-features = false }

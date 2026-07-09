@@ -1,0 +1,37 @@
+[package]
+name = "cheetah-srt-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+cheetah-srt-core = { path = "../core" }
+libfuzzer-sys = "0.4"
+shiguredo_srt = "=2026.1.0-canary.1"
+
+[[bin]]
+name = "fuzz_stream_id"
+path = "fuzz_targets/fuzz_stream_id.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_srt_url"
+path = "fuzz_targets/fuzz_srt_url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_driver_packet"
+path = "fuzz_targets/fuzz_driver_packet.rs"
+test = false
+doc = false
+bench = false
+

@@ -1,0 +1,23 @@
+[package]
+name = "cheetah-hls-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+cheetah-hls-core = { path = "../core" }
+cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+
+[[bin]]
+name = "ts_muxer"
+path = "fuzz_targets/ts_muxer.rs"
+doc = false
+
+[[bin]]
+name = "request_parser"
+path = "fuzz_targets/request_parser.rs"
+doc = false

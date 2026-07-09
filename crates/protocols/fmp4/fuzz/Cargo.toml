@@ -1,0 +1,41 @@
+[package]
+name = "cheetah-fmp4-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+cheetah-fmp4-core = { path = "../core" }
+bytes = "1"
+
+[[bin]]
+name = "fuzz_fmp4_box_parser"
+path = "fuzz_targets/fuzz_fmp4_box_parser.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_fmp4_media_fragment"
+path = "fuzz_targets/fuzz_fmp4_media_fragment.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_fmp4_http_request"
+path = "fuzz_targets/fuzz_fmp4_http_request.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_fmp4_ws_frames"
+path = "fuzz_targets/fuzz_fmp4_ws_frames.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_fmp4_init_segment"
+path = "fuzz_targets/fuzz_fmp4_init_segment.rs"
+doc = false

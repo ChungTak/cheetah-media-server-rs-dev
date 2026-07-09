@@ -1,0 +1,32 @@
+v=0
+o=- 1824000000000000002 2 IN IP4 127.0.0.1
+s=-
+t=0 0
+a=group:BUNDLE 0
+a=extmap-allow-mixed
+a=msid-semantic: WMS ome-h265
+m=video 9 UDP/TLS/RTP/SAVPF 110 111
+c=IN IP4 0.0.0.0
+a=rtcp:9 IN IP4 0.0.0.0
+a=ice-ufrag:om25
+a=ice-pwd:OmeWebRtcCompatPassword0025
+a=ice-options:trickle
+a=fingerprint:sha-256 EE:A8:B9:31:C1:79:44:63:5E:77:FD:70:36:D3:66:4F:04:3F:31:8F:61:E4:8E:90:2A:F1:9D:78:DB:E2:32:FF
+a=setup:actpass
+a=mid:0
+a=extmap:14 urn:ietf:params:rtp-hdrext:toffset
+a=extmap:7 http://www.webrtc.org/experiments/rtp-hdrext/video-timing
+a=extmap:4 urn:ietf:params:rtp-hdrext:sdes:mid
+a=sendonly
+a=msid:ome-h265 video
+a=rtcp-mux
+a=rtcp-rsize
+a=rtpmap:110 H265/90000
+a=rtcp-fb:110 goog-remb
+a=rtcp-fb:110 transport-cc
+a=rtcp-fb:110 ccm fir
+a=rtcp-fb:110 nack
+a=rtcp-fb:110 nack pli
+a=fmtp:110 profile-id=1;tier-flag=0;level-id=120;interop-constraints=B00000000000;sprop-vps=QAEMAf//AWAAAAMAsAAAAwAAAwB4wJg=;sprop-sps=QgEBAWAAAAMAsAAAAwAAAwB4oAKAgC0WNrk=;sprop-pps=RAHBcrRiQA==
+a=rtpmap:111 rtx/90000
+a=fmtp:111 apt=110

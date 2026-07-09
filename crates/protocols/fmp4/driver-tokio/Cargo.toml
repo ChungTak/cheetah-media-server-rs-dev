@@ -1,0 +1,24 @@
+[package]
+name = "cheetah-fmp4-driver-tokio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+cheetah-fmp4-core = { path = "../core" }
+cheetah-runtime-api = { path = "../../../runtime/cheetah-runtime-api" }
+getrandom.workspace = true
+parking_lot.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+sha1 = { version = "0.10", default-features = false }
+base64.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tracing.workspace = true
+webpki-roots.workspace = true
+
+[dev-dependencies]
+cheetah-runtime-tokio = { path = "../../../runtime/cheetah-runtime-tokio" }
+rcgen = "0.13"

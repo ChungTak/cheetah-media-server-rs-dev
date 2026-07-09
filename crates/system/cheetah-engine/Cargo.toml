@@ -1,0 +1,23 @@
+[package]
+name = "cheetah-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+arc-swap.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+dashmap.workspace = true
+parking_lot.workspace = true
+cheetah-codec = { path = "../../foundation/cheetah-codec" }
+cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
+cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+cheetah-config = { path = "../cheetah-config" }
+cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
+serde_json.workspace = true

@@ -1,0 +1,20 @@
+[package]
+name = "cheetah-mp4-module"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+cheetah-mp4-core = { path = "../core" }
+cheetah-mp4-driver-tokio = { path = "../driver-tokio" }
+cheetah-runtime-api = { path = "../../../runtime/cheetah-runtime-api" }
+cheetah-sdk = { path = "../../../sdk/cheetah-sdk" }
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true

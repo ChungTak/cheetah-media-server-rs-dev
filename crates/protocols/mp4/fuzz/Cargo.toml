@@ -1,0 +1,36 @@
+[package]
+name = "cheetah-mp4-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+cheetah-mp4-core = { path = "../core" }
+bytes = "1"
+
+[[bin]]
+name = "fuzz_mp4_box_parser"
+path = "fuzz_targets/fuzz_mp4_box_parser.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_mp4_sample_table"
+path = "fuzz_targets/fuzz_mp4_sample_table.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_mp4_reader_dirty"
+path = "fuzz_targets/fuzz_mp4_reader_dirty.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_mp4_vod_session"
+path = "fuzz_targets/fuzz_mp4_vod_session.rs"
+doc = false

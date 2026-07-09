@@ -1,0 +1,314 @@
+# Cheetah Media Server Architecture
+
+## 1. Layered Model
+
+The project follows a six-layer architecture with one-way downward dependencies:
+
+1. Application layer (`apps/*`)
+2. Engine orchestration layer (`cheetah-engine`, `cheetah-control`)
+3. SDK and contracts layer (`cheetah-sdk`, `cheetah-runtime-api`)
+4. Module integration layer (`cheetah-*-module`)
+5. Driver/runtime adaptation layer (`cheetah-*-driver-tokio`, `cheetah-runtime-tokio`)
+6. Foundation protocol/media layer (`cheetah-*-core`, `cheetah-codec`)
+
+Any cross-layer capability must be exposed via traits or APIs and injected from upper layers.
+
+## 2. Protocol Decomposition Rule
+
+Every protocol must be split into three crates:
+
+- `cheetah-<proto>-core`
+- `cheetah-<proto>-driver-tokio`
+- `cheetah-<proto>-module`
+
+Responsibilities:
+
+- `core`: Sans-I/O protocol state machine only.
+- `driver`: socket, framing, timer, spawning, channel and backpressure handling.
+- `module`: engine integration, authz/authn, resource/session orchestration and routing.
+
+The Cargo package names carry the public architecture boundary. On disk, protocol crates are grouped under `crates/protocols/<proto>/` to keep the workspace readable as more protocols are added.
+
+Recommended protocol directory layout:
+
+```text
+crates/protocols/<proto>/
+  core/                 # cheetah-<proto>-core
+  driver-tokio/         # cheetah-<proto>-driver-tokio
+  module/               # cheetah-<proto>-module
+  bindings/<target>/    # cheetah-<proto>-c-api, cheetah-<proto>-wasm, ...
+  testing/<kind>/       # cheetah-<proto>-property-tests, ...
+  fuzz/                 # standalone cargo-fuzz workspace
+```
+
+Shared crates are grouped by responsibility:
+
+- `crates/foundation/*`
+- `crates/runtime/*`
+- `crates/sdk/*`
+- `crates/system/*`
+
+## 3. RTMP Reference Mapping
+
+Current RTMP crates:
+
+- `crates/protocols/rtmp/core` (`cheetah-rtmp-core`)
+- `crates/protocols/rtmp/driver-tokio` (`cheetah-rtmp-driver-tokio`)
+- `crates/protocols/rtmp/module` (`cheetah-rtmp-module`)
+- `crates/protocols/rtmp/testing/property-tests` (`cheetah-rtmp-property-tests`)
+- `crates/protocols/rtmp/fuzz` (`cheetah-rtmp-fuzz`, standalone cargo-fuzz harness crate)
+- `crates/protocols/rtmp/bindings/c-api` (`cheetah-rtmp-c-api`, core-only C ABI wrapper)
+- `crates/protocols/rtmp/bindings/wasm` (`cheetah-rtmp-wasm`, wasm bridge on top of C ABI)
+
+Current HTTP-FLV crates:
+
+- `crates/protocols/http-flv/core` (`cheetah-http-flv-core`)
+- `crates/protocols/http-flv/driver-tokio` (`cheetah-http-flv-driver-tokio`)
+- `crates/protocols/http-flv/module` (`cheetah-http-flv-module`)
+- `crates/protocols/http-flv/fuzz` (`cheetah-http-flv-fuzz`, standalone cargo-fuzz harness crate)
+
+Property-based test crates use the explicit `property-tests` suffix. The older `pbt` abbreviation meant "property-based testing", but it is intentionally avoided in crate and directory names because it obscures the crate purpose.
+
+Core input/output model:
+
+- `CoreInput::{Bytes, Timeout, Command}`
+- `CoreOutput::{Write, Event, SetTimer, CancelTimer}`
+
+This model keeps runtime and I/O out of protocol-core while preserving explicit timer and event flow.
+
+RTMP boundary clarification:
+
+- `cheetah-rtmp-core` no longer exposes connection façades such as `RtmpServerConnection` / `RtmpMessageChannel` / legacy client-connection wrappers.
+- Runtime wiring is implemented only in `cheetah-rtmp-driver-tokio` (`start_server` for inbound and `start_client` for outbound play/publish).
+- `cheetah-rtmp-module` owns orchestration logic, including static pull/push background jobs, and drives core via driver command/event channels.
+
+`cheetah-rtmp-core` feature policy:
+
+- crate is always `#![no_std]` with `alloc`
+- host and cross-target builds must compile without a `std` feature toggle
+- `property-tests` remains test-surface export only and does not alter protocol behavior
+
+RTMP FFI policy:
+
+- C API/wasm scope is **core-only binding**; no driver/module runtime logic is moved into FFI crates.
+- FFI wrappers must remain boundary adapters only and must not modify `cheetah-rtmp-core` hot-path behavior.
+
+## 3.1 RTSP Reference Mapping
+
+Current RTSP crates:
+
+- `crates/protocols/rtsp/core` (`cheetah-rtsp-core`)
+- `crates/protocols/rtsp/driver-tokio` (`cheetah-rtsp-driver-tokio`)
+- `crates/protocols/rtsp/module` (`cheetah-rtsp-module`)
+- `crates/protocols/rtsp/testing/property-tests` (`cheetah-rtsp-property-tests`)
+- `crates/protocols/rtsp/fuzz` (`cheetah-rtsp-fuzz`, standalone cargo-fuzz harness crate)
+
+RTSP capability snapshot:
+
+- control plane: OPTIONS, DESCRIBE, ANNOUNCE, SETUP, PLAY, PAUSE, RECORD, TEARDOWN, GET_PARAMETER, SET_PARAMETER
+- transport matrix: RTP over UDP unicast, RTP over TCP interleaved, RTP over HTTP tunnel (GET/POST + session cookie + base64 POST), RTP multicast PLAY
+- server path: publish ingest + play egress
+- outbound path: RTSP pull jobs, RTSP push jobs, relay jobs (pull + push)
+- compatibility baseline: standard + non-standard SDP/transport handling with bounded robustness, capture-fixture replay, property tests and fuzz targets
+
+RTSP boundary clarification:
+
+- `cheetah-rtsp-core` remains Sans-I/O and runtime-neutral, covering request/response parsing, interleaved framing, RTP/RTCP packet models, and Transport/Session/Range/RTP-Info/SDP/auth parsing.
+- `cheetah-rtsp-driver-tokio` owns runtime/socket concerns: TCP/UDP I/O, HTTP tunnel connection pairing, multicast endpoint operations, and outbound client driving.
+- `cheetah-rtsp-module` owns engine integration, publish lease orchestration, server session lifecycle, and static pull/push/relay job supervision.
+
+## 3.2 fMP4 Reference Mapping
+
+Current fMP4 crates:
+
+- `crates/protocols/fmp4/core` (`cheetah-fmp4-core`)
+- `crates/protocols/fmp4/driver-tokio` (`cheetah-fmp4-driver-tokio`)
+- `crates/protocols/fmp4/module` (`cheetah-fmp4-module`)
+- `crates/protocols/fmp4/testing/property-tests` (`cheetah-fmp4-property-tests`)
+- `crates/protocols/fmp4/fuzz` (`cheetah-fmp4-fuzz`, standalone cargo-fuzz harness crate)
+
+Shared ISO BMFF/fMP4 container capability in `cheetah-codec`:
+
+- `fmp4_mux.rs`: `Fmp4Muxer` — generates init segments (ftyp+moov) and media segments (styp+moof+mdat)
+- `fmp4_demux.rs`: `Fmp4Demuxer` — streaming demuxer with box reassembly, arbitrary chunk input
+
+fMP4 capability snapshot:
+
+- play egress: HTTP-fMP4 (chunked), WS-fMP4 (binary frames), HTTPS/WSS-fMP4 (TLS)
+- ingest: remote fMP4 pull jobs (http/https/ws/wss sources)
+- codec matrix: H264, H265, H266, VP8, VP9, AV1, MJPEG (video); AAC, G711A, G711U, Opus, MP3, MP2 (audio)
+- URL routing: `/{app}/{stream}.mp4`, `/{app}/{stream}.live.mp4` (SMS compat)
+- multi-track: up to `max_tracks` audio/video tracks in single moov
+
+fMP4 boundary clarification:
+
+- `cheetah-fmp4-core` is Sans-I/O: HTTP request routing (.mp4/.live.mp4), WebSocket upgrade validation, CORS, session state machine.
+- `cheetah-fmp4-driver-tokio` owns TCP bind/accept, HTTP/1.1 parsing, chunked response encoding, WebSocket binary framing, per-connection write queues, and pull client (http/https/ws/wss).
+- `cheetah-fmp4-module` owns engine subscribe/publish, play session lifecycle, pull job supervision with backoff retry, and config validation.
+
+## 3.3 RTP Reference Mapping
+
+Current RTP crates:
+
+- `crates/protocols/rtp/core` (`cheetah-rtp-core`)
+- `crates/protocols/rtp/driver-tokio` (`cheetah-rtp-driver-tokio`)
+- `crates/protocols/rtp/module` (`cheetah-rtp-module`)
+
+RTP capability snapshot:
+
+- transport matrix: RTP over UDP, RTP over TCP (RFC 4571 2-byte length prefix and RTSP-style 4-byte interleaved framing with auto-detect), RTCP (SR/RR reports, RR-timeout sender shutdown, dedicated RTCP UDP socket support)
+- payload formatting: MPEG-TS, PS (Program Stream), ES (Elementary Stream), Ehome, Hikvision XHB, JT/T 1078 — all collapsed into `AVFrame + TrackInfo` by `cheetah-codec`
+- codec matrix: H264, H265, AAC, G711 (PCMA/PCMU), Opus, MP3, VP8, VP9, AV1
+- server ingest: UDP/TCP active/passive server modes, SSRC lock, single-port multi-stream support, bounded TCP context recovery (search-by-SSRC + PS-system-header), dynamic `nMaxRtpLength` learner with bounded cap, ZLM-style `RtpProcess` pre-publish bounded frame cache
+- client egress: active/passive client sending, multi-target `senderInfos`, configurable G711 packet duration (ABL `kRtpG711DurMs`-style), `disableVideo` / `disableAudio` track filters
+- bridge compatibility: bi-directional bridge to and from RTMP, RTSP, HLS, fMP4 inside the cheetah engine
+
+RTP boundary clarification:
+
+- `cheetah-rtp-core` is purely Sans-I/O and runtime-neutral. It defines the core session state (`RtpCore`), mapping SSRC to stream keys, parsing raw RTP/RTCP packets, and integrating demuxers (PS/TS via `cheetah-codec`). Input is passed as `RtpCoreInput` and output is yielded as `RtpCoreOutput` (such as `SendUdp`, `SendTcp`, `SendRtcp`, `Event(RtpCoreEvent)`).
+- `cheetah-rtp-driver-tokio` owns all networking and IO: TCP/UDP bind, read loop, frame assembling, write buffering, timer ticks, and driving the core state machine using active tokio execution loops.
+- `cheetah-rtp-module` handles engine integration, authentication, stream key mapping (e.g. mapping SSRC or predefined paths like `/live/{ssrc}`), API bindings, session lifecycles, and managing static pull/push jobs.
+
+## 3.4 GB28181 Reference Mapping
+
+Current GB28181 crates:
+
+- `crates/protocols/gb28181/core` (`cheetah-gb28181-core`)
+- `crates/protocols/gb28181/driver-tokio` (`cheetah-gb28181-driver-tokio`)
+- `crates/protocols/gb28181/module` (`cheetah-gb28181-module`)
+
+GB28181 capability snapshot:
+
+- control plane (SIP): REGISTER challenge auth (with lenient `\r\n`/`\n`/`\r` line terminators and `,`/`;` Digest parameter parsing), duplicate header tolerance, keepalive, INVITE, ACK, BYE, standard/non-standard SDP negotiation
+- media sessions: GB28181 passive media stream reception, active device stream pull (via INVITE request)
+- audio talkback: bi-directional voice talk (`sendrecv` SDP negotiation)
+- compatibility baseline: robust SIP message parsing (vendored after ABLMediaServer's lenient SIP parse + DigestAuthentication), keepalive offline timeouts, customizable auth challenge, and ZLMediaKit / SMS-compatible REST endpoints.
+
+GB28181 boundary clarification:
+
+- `cheetah-gb28181-core` is purely Sans-I/O. It models SIP requests/responses, device registry, keepalive timeouts, invite/bye dialogs, and SDP parsing (`GbSdp`). Interaction is driven via `Gb28181CoreInput` and yields `Gb28181CoreOutput` (like `SendSip`, `Gb28181Event`).
+- `cheetah-gb28181-driver-tokio` executes the UDP/TCP SIP message loop, handles TCP connection states, manages timer-based ticks for offline checks, and routes outgoing SIP buffers.
+- `cheetah-gb28181-module` manages GB28181 business logic, registering HTTP REST APIs (for triggering manual INVITE, BYE, and talkback), keeping track of active device maps, checking publish leases, and bridging incoming streams to the core media engine.
+
+## 4. Media Model and Unification
+
+All protocol ingest into engine should converge to:
+
+- `AVFrame`
+- `TrackInfo`
+
+Shared media canonicalization belongs to `cheetah-codec`:
+
+- timestamp normalization
+- timebase conversion
+- access-unit assembly
+- parameter-set cache/replay
+
+Unified timing semantics:
+
+- `AVFrame` carries `pts/dts/duration` in both native `timebase` ticks and `*_us` microseconds.
+- `FrameFlags::KEY` represents random-access points; `FrameFlags::DISCONTINUITY` marks reconnect/seek/source-switch boundary.
+- Video frames with `pts < dts` must explicitly carry `FrameFlags::B_FRAME`; otherwise timing validation fails.
+- `TrackInfo::clock_rate` maps to canonical media timebase (`1/clock_rate`) via checked conversion.
+- `AVFrame.pts/dts` always represent **canonical timeline** values and must not be treated as raw protocol timestamps.
+
+Three timeline levels:
+
+- `source timeline`: protocol-native timing context (for example RTP timestamp, RTMP tag timestamp, CTS, wrap/epoch, optional RTCP mapping).
+- `canonical timeline`: engine-internal normalized media timeline used by ring buffer, bootstrap, pacing, recording and cross-protocol conversion.
+- `egress timeline`: protocol-specific export view derived from canonical timeline (for example RTMP timestamp/CTS or RTSP RTP timestamp).
+
+Boundary rules:
+
+- Source timing may be preserved as metadata for compatibility/observability, but must not override canonical ordering semantics.
+- Egress timestamp repair is an output-encapsulation concern and must not mutate canonical media timeline.
+
+Observability and diagnostics baseline:
+
+- Runtime reports must expose `startup_latency_ms`, `first_second_avg_frame_interval_ms`, `average_playback_rate_x`, and `first_keyframe_delay_ms`.
+- Timestamp-repair alerts must be classified by layer:
+  - `source_repair_events`: source timeline reorder/repair observations (including B-frame reorder noise).
+  - `canonical_repair_events`: canonical timeline monotonic repair events.
+  - `egress_repair_events`: protocol-export monotonic repair events.
+- High-frequency warning policy must be layer-aware:
+  - normal B-frame reorder should stay in `source_repair_events` and must not escalate canonical/egress warnings.
+  - `canonical_repair_events` and `egress_repair_events` must be compared against an explicit threshold (for example `REPAIR_WARN_HIGH_FREQUENCY_THRESHOLD`) before raising anomaly.
+- Every repair-class log must include both source and canonical context (at least source timestamp + canonical `pts`/`dts`) to make layer attribution deterministic.
+
+Protocol modules should not duplicate these behaviors.
+
+## 5. Runtime Abstraction Rule
+
+Public interfaces in `cheetah-runtime-api`, `cheetah-sdk`, `cheetah-engine`, and `*-module` must remain runtime-neutral.
+
+- Do not expose `tokio::*` or `tokio_util::*` in those public APIs.
+- Tokio-specific types stay in `cheetah-runtime-tokio`, `*-driver-tokio`, and application crates.
+- CI guard: `dev-scripts/check_runtime_boundaries.sh`
+
+## 6. Testing Strategy
+
+By layer:
+
+- `core`: unit test + property-based test + fuzz (without real network I/O)
+- `driver`: runtime and I/O integration tests
+- `module`: interoperability and end-to-end flow tests
+
+RTMP property tests are placed in `crates/protocols/rtmp/testing/property-tests` and run against `cheetah-rtmp-core` Sans-I/O APIs.
+RTSP property tests are placed in `crates/protocols/rtsp/testing/property-tests` and run against `cheetah-rtsp-core` Sans-I/O APIs.
+HTTP-FLV compatibility/robustness tests are currently staged in `crates/protocols/http-flv/module/tests` and aligned with `.flvstream` fixture + transport fault views.
+
+Fuzz harnesses are placed in `crates/protocols/<proto>/fuzz` and are standalone cargo-fuzz workspaces, not default root workspace members.
+
+CI baseline for RTMP core:
+
+- `cargo clippy -p cheetah-rtmp-core`
+- `cargo test -p cheetah-rtmp-core`
+- `cargo test -p cheetah-rtmp-property-tests`
+- `cargo test -p cheetah-rtmp-c-api`
+- `cargo test -p cheetah-rtmp-wasm`
+- `(cd crates/protocols/rtmp/fuzz && cargo +nightly fuzz build)`
+- `dev-scripts/check_rtmp_core_no_std.sh`
+
+CI/check baseline for HTTP-FLV:
+
+- `cargo clippy -p cheetah-http-flv-core`
+- `cargo test -p cheetah-http-flv-core`
+- `cargo clippy -p cheetah-http-flv-driver-tokio`
+- `cargo test -p cheetah-http-flv-driver-tokio`
+- `cargo clippy -p cheetah-http-flv-module --tests`
+- `cargo test -p cheetah-http-flv-module`
+- `(cd crates/protocols/http-flv/fuzz && cargo +nightly fuzz build)`
+
+fMP4 property tests are placed in `crates/protocols/fmp4/testing/property-tests` and run against `cheetah-codec` fMP4 mux/demux APIs.
+
+CI/check baseline for fMP4:
+
+- `cargo clippy -p cheetah-codec`
+- `cargo test -p cheetah-codec -- fmp4`
+- `cargo clippy -p cheetah-fmp4-core`
+- `cargo test -p cheetah-fmp4-core`
+- `cargo clippy -p cheetah-fmp4-driver-tokio`
+- `cargo test -p cheetah-fmp4-driver-tokio`
+- `cargo clippy -p cheetah-fmp4-module --tests`
+- `cargo test -p cheetah-fmp4-module`
+- `cargo test -p cheetah-fmp4-property-tests`
+- `(cd crates/protocols/fmp4/fuzz && cargo +nightly fuzz build)`
+
+CI/check baseline for RTP:
+
+- `cargo clippy -p cheetah-rtp-core`
+- `cargo test -p cheetah-rtp-core`
+- `cargo clippy -p cheetah-rtp-driver-tokio`
+- `cargo test -p cheetah-rtp-driver-tokio`
+- `cargo clippy -p cheetah-rtp-module --tests`
+- `cargo test -p cheetah-rtp-module`
+
+CI/check baseline for GB28181:
+
+- `cargo clippy -p cheetah-gb28181-core`
+- `cargo test -p cheetah-gb28181-core`
+- `cargo clippy -p cheetah-gb28181-driver-tokio`
+- `cargo test -p cheetah-gb28181-driver-tokio`
+- `cargo clippy -p cheetah-gb28181-module --tests`
+- `cargo test -p cheetah-gb28181-module`
+

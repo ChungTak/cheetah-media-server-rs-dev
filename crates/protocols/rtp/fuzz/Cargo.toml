@@ -1,0 +1,66 @@
+[package]
+name = "cheetah-rtp-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+bytes = "1"
+libfuzzer-sys = "0.4"
+cheetah-rtp-core = { path = "../core" }
+cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+
+[[bin]]
+name = "fuzz_rtp_header"
+path = "fuzz_targets/fuzz_rtp_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtp_tcp_frame"
+path = "fuzz_targets/fuzz_rtp_tcp_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ehome_probe"
+path = "fuzz_targets/fuzz_ehome_probe.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ps_demux"
+path = "fuzz_targets/fuzz_ps_demux.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ts_demux"
+path = "fuzz_targets/fuzz_ts_demux.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_jtt1078_parser"
+path = "fuzz_targets/fuzz_jtt1078_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtp_es_pipeline"
+path = "fuzz_targets/fuzz_rtp_es_pipeline.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,13 @@
+artifacts/
+corpus/*
+!corpus/fuzz_real_capture_server_replay/
+corpus/fuzz_real_capture_server_replay/*
+!corpus/fuzz_real_capture_server_replay/seed_standard_*.rtmpflow
+!corpus/fuzz_real_capture_client_post_handshake/
+corpus/fuzz_real_capture_client_post_handshake/*
+!corpus/fuzz_real_capture_client_post_handshake/seed_standard_*.rtmpflow
+!corpus/fuzz_transport_faults/
+corpus/fuzz_transport_faults/*
+!corpus/fuzz_transport_faults/seed_standard_*.rtmpflow
+coverage/
+target/

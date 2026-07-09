@@ -1,0 +1,32 @@
+v=0
+o=- 9876543210 2 IN IP4 127.0.0.1
+s=-
+t=0 0
+a=group:BUNDLE 0 1
+a=msid-semantic: WMS
+m=video 9 UDP/TLS/RTP/SAVPF 35 99 120
+c=IN IP4 0.0.0.0
+a=rtcp:9 IN IP4 0.0.0.0
+a=ice-ufrag:abl2
+a=ice-pwd:abl2passwordabl2password00
+a=fingerprint:sha-256 AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99
+a=setup:actpass
+a=mid:0
+a=sendrecv
+a=rtpmap:35 H264/90000
+a=fmtp:35 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
+a=rtpmap:99 rtx/90000
+a=fmtp:99 apt=35
+a=rtpmap:120 VP8/90000
+a=rtcp-mux
+m=audio 9 UDP/TLS/RTP/SAVPF 63
+c=IN IP4 0.0.0.0
+a=rtcp:9 IN IP4 0.0.0.0
+a=ice-ufrag:abl2
+a=ice-pwd:abl2passwordabl2password00
+a=fingerprint:sha-256 AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99
+a=setup:actpass
+a=mid:1
+a=sendrecv
+a=rtpmap:63 opus/48000/2
+a=rtcp-mux

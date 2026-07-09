@@ -1,0 +1,104 @@
+[workspace]
+resolver = "2"
+members = [
+  "apps/cheetah-server",
+  "crates/foundation/cheetah-codec",
+  "crates/protocols/rtmp/bindings/c-api",
+  "crates/protocols/rtmp/bindings/wasm",
+  "crates/protocols/rtmp/core",
+  "crates/protocols/rtmp/driver-tokio",
+  "crates/protocols/rtmp/module",
+  "crates/protocols/rtmp/testing/property-tests",
+  "crates/protocols/http-flv/core",
+  "crates/protocols/http-flv/driver-tokio",
+  "crates/protocols/http-flv/module",
+  "crates/protocols/hls/core",
+  "crates/protocols/hls/driver-tokio",
+  "crates/protocols/hls/module",
+  "crates/protocols/hls/testing/property-tests",
+  "crates/protocols/rtsp/core",
+  "crates/protocols/rtsp/driver-tokio",
+  "crates/protocols/rtsp/module",
+  "crates/protocols/rtsp/testing/property-tests",
+  "crates/protocols/ts/core",
+  "crates/protocols/ts/driver-tokio",
+  "crates/protocols/ts/module",
+  "crates/protocols/rtp/core",
+  "crates/protocols/rtp/driver-tokio",
+  "crates/protocols/rtp/module",
+  "crates/protocols/rtp/testing/property-tests",
+  "crates/protocols/srt/core",
+  "crates/protocols/srt/driver-tokio",
+  "crates/protocols/srt/module",
+  "crates/protocols/srt/testing/property-tests",
+  "crates/protocols/gb28181/core",
+  "crates/protocols/gb28181/driver-tokio",
+  "crates/protocols/gb28181/module",
+  "crates/protocols/gb28181/testing/property-tests",
+  "crates/protocols/fmp4/core",
+  "crates/protocols/fmp4/driver-tokio",
+  "crates/protocols/fmp4/module",
+  "crates/protocols/fmp4/testing/property-tests",
+  "crates/protocols/mp4/core",
+  "crates/protocols/mp4/driver-tokio",
+  "crates/protocols/mp4/module",
+  "crates/protocols/mp4/testing/property-tests",
+  "crates/protocols/webrtc/core",
+  "crates/protocols/webrtc/driver-tokio",
+  "crates/protocols/webrtc/module",
+  "crates/protocols/webrtc/testing/property-tests",
+  "crates/runtime/cheetah-runtime-api",
+  "crates/runtime/cheetah-runtime-tokio",
+  "crates/sdk/cheetah-sdk",
+  "crates/sdk/cheetah-sdk-macros",
+  "crates/system/cheetah-config",
+  "crates/system/cheetah-control",
+  "crates/system/cheetah-engine",
+  "crates/system/cheetah-record-module",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+anyhow = "1"
+arc-swap = "1"
+async-trait = "0.1"
+axum = "0.7"
+base64 = "0.22"
+md5 = "0.7"
+sha2 = "0.10"
+bitflags = "2"
+bytes = "1"
+dashmap = "6"
+futures = "0.3"
+getrandom = "0.2"
+parking_lot = "0.12"
+proc-macro2 = "1"
+quote = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+smallvec = "1"
+shiguredo_srt = "=2026.1.0-canary.1"
+str0m = { version = "0.19.0", default-features = false, features = ["rust-crypto"] }
+syn = { version = "2", features = ["full"] }
+thiserror = "2"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-pemfile = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "net", "time", "sync", "io-util"] }
+tokio-rustls = "0.26"
+tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+tracing = "0.1"
+webpki-roots = "0.26"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+[profile.release-wasm]
+inherits = "release"
+lto = true
+codegen-units = 1
+opt-level = "z"
+panic = "abort"
+strip = true

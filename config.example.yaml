@@ -1,0 +1,443 @@
+global:
+  control:
+    listen: 127.0.0.1:8891
+
+modules:
+  rtmp:
+    enabled: true
+    listen: 0.0.0.0:1935
+    write_queue_capacity: 256
+    play_wait_source_timeout_ms: 15000
+    subscriber_queue_capacity: 256
+    subscriber_backpressure: DropUntilNextKeyframe
+    bootstrap_max_frames: 150
+    enable_add_mute: false
+    emit_play_metadata: true
+    # 发布者断连后保活窗口（毫秒），允许重连恢复。0 = 禁用。
+    publish_keepalive_ms: 0
+    # Paced sender 最小发送间隔（毫秒），平滑突发流量。0 = 禁用。
+    paced_sender_ms: 0
+    # 直接代理模式：RTMP→RTMP 转发跳过 demux/remux，降低 CPU 开销。
+    direct_proxy: false
+    # RTMPS (TLS) 配置
+    tls:
+      enabled: false
+      listen: 0.0.0.0:1936
+      cert_path: /path/to/cert.pem
+      key_path: /path/to/key.pem
+      handshake_timeout_ms: 5000
+    # 鉴权配置（基于 URL query 参数 token）
+    auth:
+      enabled: false
+      publish_token: ""
+      play_token: ""
+    # 可观测性告警阈值配置
+    # alert_thresholds:
+    #   startup_timeout_ms: 3000       # 起播等待告警阈值（毫秒）
+    #   timestamp_repair_count: 32     # 时间戳逆序修正计数告警阈值
+    #   queue_drop_count: 64           # 队列回压丢帧计数告警阈值
+    pull_jobs: []
+    push_jobs: []
+    # relay_jobs:
+    #   - name: relay_to_cdn
+    #     enabled: false
+    #     source_url: rtmp://origin.example.com/live/stream
+    #     target_url: rtmp://cdn.example.com/live/stream
+    #     stream_key: ""
+    #     retry_backoff_ms: 1000
+    #     max_retry_backoff_ms: 30000
+
+  # rtsp:
+  #   enabled: true
+  #   listen: 0.0.0.0:554
+  #   session_timeout_secs: 60
+  #   write_queue_capacity: 256
+  #   subscriber_queue_capacity: 256
+  #   subscriber_backpressure: DropUntilNextKeyframe
+  #   start_from_keyframe: true
+  #   bootstrap_max_frames: 150
+  #   rtp_mtu: 1400
+  #   play_wait_source_timeout_ms: 15000
+  #   # DESCRIBE 等待所有 Track 就绪（extradata 填充完成）的超时时长（毫秒）
+  #   track_ready_timeout_ms: 500
+  #   # 推流断开后保持源存活时长（毫秒），允许重连。0 = 立即释放。
+  #   continue_push_ms: 0
+  #   # 纯视频流自动注入静音 AAC 音频
+  #   enable_mute_audio: false
+  #   # Direct Proxy 模式：RTSP→RTSP 零解码 RTP 转发
+  #   enable_direct_proxy: false
+  #   # 可观测性告警阈值配置
+  #   # alert_thresholds:
+  #   #   startup_timeout_ms: 3000       # 起播等待告警阈值（毫秒）
+  #   #   timestamp_repair_count: 32     # 时间戳逆序修正计数告警阈值
+  #   #   queue_drop_count: 64           # 队列回压丢帧计数告警阈值
+  #   # RTSPS (TLS) 配置
+  #   tls:
+  #     enabled: false
+  #     listen: 0.0.0.0:322
+  #     cert_path: /path/to/cert.pem
+  #     key_path: /path/to/key.pem
+  #     handshake_timeout_ms: 10000
+  #   # RTSP 鉴权配置（Digest / Basic）
+  #   auth:
+  #     enabled: false
+  #     require_publish_auth: false
+  #     realm: cheetah
+  #     allow_basic: true
+  #     allow_digest: true
+  #     nonce_ttl_secs: 300
+  #     users:
+  #       - username: admin
+  #         password: admin123
+  #   # RTP over UDP 传输配置
+  #   udp:
+  #     server_port_pool_start: 30000
+  #     server_port_pool_end: 40000
+  #     bind_pair_attempts: 10
+  #     enable_hole_punching_probe: true
+  #     nat_probe_timeout_ms: 3000
+  #     accept_source_change: false
+  #     randomize_ports: true
+  #     enable_reorder_buffer: true
+  #   # RTP multicast PLAY 配置
+  #   multicast:
+  #     enabled: false
+  #     group_start: 239.0.0.1
+  #     group_end: 239.0.0.254
+  #     port_start: 20000
+  #     port_end: 20100
+  #     ttl: 64
+  #     interface: 0.0.0.0
+  #     max_groups: 128
+  #     idle_release_ms: 30000
+  #   pull_jobs:
+  #     - name: ipc_camera_01
+  #       enabled: false
+  #       source_url: rtsp://192.168.1.100:554/live/main
+  #       target_stream_key: live/camera01
+  #       username: admin
+  #       password: admin123
+  #       transport_preference: [tcp_interleaved, udp, http_tunnel]
+  #       heartbeat_mode: get_parameter
+  #       retry_backoff_ms: 1000
+  #       max_retry_backoff_ms: 30000
+  #   push_jobs:
+  #     - name: push_to_cdn
+  #       enabled: false
+  #       source_stream_key: live/camera01
+  #       target_url: rtsp://cdn.example.com:554/live/camera01
+  #       username: publisher
+  #       password: secret
+  #       transport_preference: [tcp_interleaved, udp]
+  #       retry_backoff_ms: 1000
+  #       max_retry_backoff_ms: 30000
+  #   relay_jobs:
+  #     - name: relay_to_backup
+  #       enabled: false
+  #       source_url: rtsp://192.168.1.100:554/live/main
+  #       target_url: rtsp://backup.example.com:554/live/camera01
+  #       local_stream_key: live/relay_camera01
+  #       transport_preference: [tcp_interleaved, udp, http_tunnel]
+  #       retry_backoff_ms: 1000
+  #       max_retry_backoff_ms: 30000
+
+  # http_flv:
+  #   enabled: true
+  #   listen: 0.0.0.0:8080
+  #   write_queue_capacity: 256
+  #   read_buffer_size: 65536
+  #   play_wait_source_timeout_ms: 15000
+  #   subscriber_queue_capacity: 256
+  #   subscriber_backpressure: DropUntilNextKeyframe
+  #   bootstrap_max_frames: 150
+  #   enable_add_mute: false
+  #   emit_play_metadata: true
+  #   # 可观测性告警阈值配置
+  #   # alert_thresholds:
+  #   #   startup_timeout_ms: 3000       # 起播等待告警阈值（毫秒）
+  #   #   queue_drop_count: 64           # 队列回压丢帧计数告警阈值
+  #   # HTTPS-FLV / WSS-FLV TLS 配置
+  #   tls:
+  #     enabled: false
+  #     listen: 0.0.0.0:8443
+  #     cert_path: /path/to/cert.pem
+  #     key_path: /path/to/key.pem
+  #     handshake_timeout_ms: 5000
+  #   pull_jobs:
+  #     - name: remote_http_flv
+  #       enabled: false
+  #       source_url: http://127.0.0.1:8081/live/in.flv
+  #       target_stream_key: live/remote_in
+  #       retry_backoff_ms: 500
+  #       max_retry_backoff_ms: 5000
+
+  # hls:
+  #   enabled: true
+  #   listen: 0.0.0.0:8088
+  #   # 分片时长（毫秒）
+  #   segment_duration_ms: 4000
+  #   # M3U8 中保留的分片数量
+  #   segment_count: 5
+  #   # 开始服务前需要的最少分片数
+  #   ready_threshold: 1
+  #   # 无关键帧时强制切片的超时（毫秒）
+  #   force_segment_after_ms: 12000
+  #   # 播放器 session 超时（秒）
+  #   session_timeout_secs: 10
+  #   # 发布者断开后保留 muxer 的秒数，让晚到的 client 还能拿到 ENDLIST 与已完成 segment
+  #   # 设为 0 时立即清理（仅适合纯透传或测试）。默认 30 秒
+  #   concluded_retention_secs: 30
+  #   # 容器格式: "ts" 或 "fmp4"
+  #   container: fmp4
+  #   # --- Low-Latency HLS (LLHLS) ---
+  #   # ffplay/ffmpeg 对 live fMP4 的 EXT-X-MAP 会反复读取 init.mp4 并打印
+  #   # "Found duplicated MOOV Atom"。传统 fMP4 HLS 可减少 demuxed LL-HLS
+  #   # 下音视频两路 init/chunklist 的重复读取，ffplay 拉流更稳。
+  #   # 浏览器 LL-HLS 场景可改为 true，并按需设置 ll_hls_packaging_mode: demuxed-av。
+  #   ll_hls_enabled: false
+  #   # Part 目标时长（毫秒），默认 200
+  #   part_target_ms: 200
+  #   # LL-HLS 打包模式: "muxed", "demuxed-av", "video-only"
+  #   # ffplay 优先使用 muxed；浏览器 MSE/LL-HLS 可使用 demuxed-av。
+  #   ll_hls_packaging_mode: muxed
+  #   # CDN Bearer Token 密钥（为空则禁用 CDN 认证模式）
+  #   cdn_secret: ""
+  #   # CDN Origin 模式：跳过连接级的会话管理（适用于 CDN 回源）
+  #   origin_mode: false
+  #   # 启用对 segment/part 请求的 stream_key 鉴权校验
+  #   stream_key_validation: false
+  #   # 每个流的最大并发播放 Session 限制，0 = 无限制
+  #   max_sessions_per_stream: 0
+  #   # Cache-Control 响应头微调配置
+  #   # -1 = 不设置，0 = no-cache，>0 = max-age (秒)
+  #   cache_control:
+  #     master_playlist_max_age: 0
+  #     chunklist_max_age: 0
+  #     chunklist_with_directives_max_age: 60
+  #     segment_max_age: -1
+  #     partial_segment_max_age: -1
+  #   # HLS 录制模式（保留所有分片，生成 VOD 播放列表）
+  #   recording:
+  #     enabled: false
+  #     max_duration_secs: 0           # 最大录制时长（秒），0 = 无限制
+  #     max_segments: 0                # 最大保留分片数，0 = 无限制
+  #     generate_vod_playlist: true    # 录制结束时生成带 EXT-X-ENDLIST 的 VOD 列表
+  #   # --- 通用选项 ---
+  #   # 按需生成：无人观看时暂停 muxing
+  #   hls_demand: false
+  #   # 快速注册：首 2 个分片立即在关键帧处切割
+  #   fast_register: true
+  #   # Master playlist 多码率自适应配置（可选）
+  #   # master_playlists:
+  #   #   - name: master_adaptive
+  #   #     variants:
+  #   #       - stream_key: live/stream_1080p
+  #   #         bandwidth: 5000000
+  #   #         resolution: 1920x1080
+  #   #       - stream_key: live/stream_720p
+  #   #         bandwidth: 2500000
+  #   #         resolution: 1280x720
+  #   # 文件输出（磁盘录制）
+  #   file_output:
+  #     enabled: false
+  #     output_dir: /tmp/hls
+  #     storage_mode: memory           # 存储模式："memory" (内存), "disk" (磁盘), "hybrid" (混合)
+  #     max_disk_segments: 20          # 磁盘上为每个流保留的最大分片数
+  #     segment_retain: 2              # 分片从 m3u8 移出后在磁盘上的额外保留个数
+  #     delete_delay_secs: 10          # 断流后延迟清理文件的秒数
+  #     cleanup_on_unpublish: true     # 停止发布时是否清理整个流目录
+  #   # HTTPS/TLS 配置
+  #   tls:
+  #     cert_path: /path/to/cert.pem
+  #     key_path: /path/to/key.pem
+  #   # HLS 拉流任务
+  #   pull_jobs:
+  #     - name: remote_hls
+  #       enabled: false
+  #       source_url: http://example.com/live/stream.m3u8
+  #       target_stream_key: live/remote_hls
+  #       retry_backoff_ms: 1000
+  #       max_retry_backoff_ms: 10000
+
+  # ts:
+  #   enabled: true
+  #   listen: 0.0.0.0:8082
+  #   write_queue_capacity: 256
+  #   read_buffer_size: 65536
+  #   subscriber_queue_capacity: 256
+  #   bootstrap_max_frames: 150
+  #   play_wait_source_timeout_ms: 15000
+  #   max_tracks: 32
+  #   # 启用严格 CRC 校验
+  #   strict_crc: false
+  #   # 最大重组缓冲区大小（字节）
+  #   max_reassembly_bytes: 4194304
+  #   # PAT/PMT 插入间隔（毫秒）
+  #   pat_pmt_interval_ms: 500
+  #   # 按需模式：只有在有订阅者时才启动 muxing
+  #   demand_mode: false
+  #   # TS over TLS (HTTPS/WSS) 配置
+  #   tls:
+  #     enabled: false
+  #     listen: 0.0.0.0:8445
+  #     cert_path: /path/to/cert.pem
+  #     key_path: /path/to/key.pem
+  #     handshake_timeout_ms: 5000
+  #   pull_jobs:
+  #     - name: remote_ts
+  #       enabled: false
+  #       source_url: http://example.com/live/stream.ts
+  #       target_stream_key: live/remote_ts
+  #       retry_backoff_ms: 500
+  #       max_retry_backoff_ms: 5000
+  #       insecure_tls: false
+
+  # fmp4:
+  #   enabled: true
+  #   listen: 0.0.0.0:8083
+  #   write_queue_capacity: 256
+  #   read_buffer_size: 65536
+  #   subscriber_queue_capacity: 256
+  #   bootstrap_max_frames: 150
+  #   play_wait_source_timeout_ms: 15000
+  #   max_tracks: 32
+  #   # 最大 box 字节大小
+  #   max_box_bytes: 4194304
+  #   # 最大 fragment 时长（毫秒）
+  #   max_fragment_duration_ms: 1000
+  #   # 遇到关键帧时强制切片
+  #   force_fragment_on_keyframe: true
+  #   # 包含 styp box
+  #   include_styp: true
+  #   # 包含 sidx box
+  #   include_sidx: true
+  #   # 按需模式：只有在有订阅者时才启动 muxing
+  #   demand_mode: false
+  #   # fMP4 over TLS (HTTPS/WSS) 配置
+  #   tls:
+  #     enabled: false
+  #     listen: 0.0.0.0:8446
+  #     cert_path: /path/to/cert.pem
+  #     key_path: /path/to/key.pem
+  #     handshake_timeout_ms: 5000
+  #   pull_jobs:
+  #     - name: remote_fmp4
+  #       enabled: false
+  #       source_url: http://example.com/live/stream.mp4
+  #       target_stream_key: live/remote_fmp4
+  #       retry_backoff_ms: 500
+  #       max_retry_backoff_ms: 5000
+  #       insecure_tls: false
+
+  # rtp:
+  #   enabled: true
+  #   # UDP/TCP 监听地址及端口
+  #   listen_udp: 0.0.0.0:20000
+  #   listen_tcp: 0.0.0.0:20000
+  #   # RTCP UDP 监听端口
+  #   rtcp_listen_udp: 0.0.0.0:20001
+  #   # 写入队列容量
+  #   write_queue_capacity: 256
+  #   # 读取缓冲区大小（字节）
+  #   read_buffer_size: 65536
+  #   # 最大重组缓冲区大小（字节）
+  #   max_reassembly_bytes: 4194304
+  #   # 最大轨道数量限制
+  #   max_tracks: 32
+  #   # 空闲超时时间（毫秒）
+  #   idle_timeout_ms: 15000
+  #   # 默认 payload 格式 ("ps", "ts", "es", "ehome", "xhb", "jtt1078")
+  #   default_payload: ps
+  #   # 是否允许未对齐 payload 传输
+  #   allow_unaligned_payload: true
+  #   # 视频/音频 RTP MTU（字节）
+  #   video_mtu: 1400
+  #   audio_mtu: 600
+  #   # RTP 发送速率上限 KB/s，0 = 不限制
+  #   max_rtp_kb: 0
+  #   # G711 RTP 包时长（毫秒），ZLM 默认 100
+  #   g711_packet_duration_ms: 100
+  #   # UDP socket 接收缓冲（SO_RCVBUF），0 = 系统默认
+  #   udp_recv_buffer: 4194304
+  #   # 鉴权前帧缓存条数（ZLM 风格 RtpProcess 缓存）
+  #   publish_frame_cache_frames: 300
+  #   # 启用调试落盘（ABL nSaveGB28181Rtp / save_gb28181_rtp）
+  #   save_debug_payload: false
+  #   # TCP RTP 帧格式 (auto, two_byte, interleaved_4byte)
+  #   tcp_header_type: auto
+  #   # 动态最大 RTP 长度学习起点和上限
+  #   max_rtp_len_initial: 2048
+  #   max_rtp_len_cap: 65536
+  #   # 拉流/转推任务列表
+  #   pull_jobs: []
+
+  # gb28181:
+  #   enabled: true
+  #   # UDP/TCP 监听地址及端口（国标 SIP 信令端口）
+  #   listen_udp: 0.0.0.0:5060
+  #   listen_tcp: 0.0.0.0:5060
+  #   # 读取缓冲区大小（字节）
+  #   read_buffer_size: 65536
+  #   # 心跳/状态定时检测间隔（毫秒）
+  #   tick_interval_ms: 1000
+  #   # SDP / SIP Contact / Via 中对外公布的 IP；为空时使用 listen_udp 的 IP
+  #   public_ip: ""
+  #   # 主动 INVITE / 语音对讲默认本地媒体端口
+  #   default_media_port: 30000
+
+
+  # webrtc:
+  #   enabled: true
+  #   # 单端口 UDP 监听地址（ICE host candidate 来源），0.0.0.0:0 让 OS 选端口
+  #   listen_udp: "0.0.0.0:8000"
+  #   # 可选：WebRTC over TCP 单端口（RFC 4571 framing），不设则禁用 TCP
+  #   listen_tcp: null
+  #   enable_udp: true
+  #   enable_tcp: false
+  #   # 对外公布的 host/srflx IP（多 NIC / 内外网映射场景）
+  #   public_ips: []
+  #   # 对外公布的主机名（让 candidate 解析回到该主机名而不是 IP）
+  #   candidate_hostname: null
+  #   # ICE Lite 模式：默认关闭，cheetah 作为完整 ICE agent
+  #   ice_lite: false
+  #   max_sessions: 4096
+  #   shard_count: 0          # 0 = 自动按 CPU 数选择
+  #   read_buffer_size: 65536
+  #   write_queue_capacity: 512
+  #   event_queue_capacity: 1024
+  #   # 会话空闲超时（毫秒），过期会话由 driver 主动关闭
+  #   session_idle_timeout_ms: 30000
+  #   # TCP 空闲超时（毫秒），0 = 不超时
+  #   tcp_idle_timeout_ms: 30000
+  #   # 握手超时（DTLS 完成前），毫秒；0 = 不限制
+  #   handshake_timeout_ms: 10000
+  #   # 连接迁移路由保留 TTL（毫秒），过期后旧地址不再被复用
+  #   migration_route_ttl_ms: 30000
+  #   # codec 配置档：browser（默认）/ device / passthrough
+  #   codec_profile: browser
+  #   prefer_video_codec: h264
+  #   prefer_audio_codec: opus
+  #   # Simulcast：是否启用，及默认层选择策略
+  #   # 取值: highest（默认）/ lowest / adaptive / rid:<name>
+  #   enable_simulcast: true
+  #   simulcast_default_policy: highest
+  #   # BWE / 拥塞控制
+  #   enable_bwe: true
+  #   bwe_initial_bitrate_kbps: 1200
+  #   # adaptive simulcast 阈值（kbps）；0 表示无下界 / 上界
+  #   bwe_low_threshold_kbps: 600
+  #   bwe_high_threshold_kbps: 1800
+  #   # RTX 重传 cache（包数量与最长保留时间）
+  #   rtx_cache_packets: 1024
+  #   rtx_cache_age_ms: 3000
+  #   # str0m reorder buffer 大小（视频 / 音频）
+  #   video_reorder_packets: 30
+  #   audio_reorder_packets: 10
+  #   # GOP 秒开 / WHEP 慢启动等待
+  #   bootstrap_frame_count: 150
+  #   bootstrap_max_age_ms: 5000
+  #   wait_stream_timeout_ms: 3000
+  #   # DataChannel 单条消息最大字节数
+  #   datachannel_max_message_bytes: 262144
+  #   # 自定义 server 标识（出现在 SMS-style API 响应里）
+  #   server_label: null

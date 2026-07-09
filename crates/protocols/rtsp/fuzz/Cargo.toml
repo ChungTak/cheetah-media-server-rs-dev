@@ -1,0 +1,165 @@
+[package]
+name = "cheetah-rtsp-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+bytes = "1"
+libfuzzer-sys = "0.4"
+base64 = "0.22"
+cheetah-rtsp-core = { path = "../core" }
+cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+
+[[bin]]
+name = "fuzz_http_request"
+path = "fuzz_targets/fuzz_http_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_http_response"
+path = "fuzz_targets/fuzz_http_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_interleaved"
+path = "fuzz_targets/fuzz_interleaved.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtp"
+path = "fuzz_targets/fuzz_rtp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtcp"
+path = "fuzz_targets/fuzz_rtcp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_sdp"
+path = "fuzz_targets/fuzz_sdp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtsp_core"
+path = "fuzz_targets/fuzz_rtsp_core.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtsp_limits"
+path = "fuzz_targets/fuzz_rtsp_limits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_real_capture_rtsp_tcp_replay"
+path = "fuzz_targets/fuzz_real_capture_rtsp_tcp_replay.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_real_capture_udp_datagrams"
+path = "fuzz_targets/fuzz_real_capture_udp_datagrams.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_real_capture_mixed_transport"
+path = "fuzz_targets/fuzz_real_capture_mixed_transport.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtp_sequence_faults"
+path = "fuzz_targets/fuzz_rtp_sequence_faults.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtsp_http_tunnel"
+path = "fuzz_targets/fuzz_rtsp_http_tunnel.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtsp_multicast_transport"
+path = "fuzz_targets/fuzz_rtsp_multicast_transport.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtsp_transport_selection"
+path = "fuzz_targets/fuzz_rtsp_transport_selection.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtp_reorder_buffer"
+path = "fuzz_targets/fuzz_rtp_reorder_buffer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtsp_sdp_compat"
+path = "fuzz_targets/fuzz_rtsp_sdp_compat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtsp_client_response"
+path = "fuzz_targets/fuzz_rtsp_client_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtcp_fb"
+path = "fuzz_targets/fuzz_rtcp_fb.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtcp_xr"
+path = "fuzz_targets/fuzz_rtcp_xr.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_compat"
+path = "fuzz_targets/fuzz_compat.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,11 @@
+[package]
+name = "cheetah-mp4-property-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+bytes.workspace = true
+cheetah-codec = { path = "../../../../foundation/cheetah-codec" }
+cheetah-mp4-core = { path = "../../core" }

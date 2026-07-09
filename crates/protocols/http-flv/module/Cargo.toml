@@ -1,0 +1,24 @@
+[package]
+name = "cheetah-http-flv-module"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+cheetah-http-flv-driver-tokio = { path = "../driver-tokio" }
+cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+cheetah-http-flv-core = { path = "../core" }
+cheetah-rtmp-core = { path = "../../rtmp/core" }
+cheetah-runtime-api = { path = "../../../runtime/cheetah-runtime-api" }
+cheetah-sdk = { path = "../../../sdk/cheetah-sdk" }
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
+cheetah-runtime-tokio = { path = "../../../runtime/cheetah-runtime-tokio" }
+tokio.workspace = true

@@ -1,0 +1,30 @@
+[package]
+name = "cheetah-gb28181-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+cheetah-gb28181-core = { path = "../core" }
+serde_json = "1"
+
+[[bin]]
+name = "fuzz_sip_message"
+path = "fuzz_targets/fuzz_sip_message.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_gb28181_rest_json"
+path = "fuzz_targets/fuzz_gb28181_rest_json.rs"
+test = false
+doc = false
+bench = false

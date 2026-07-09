@@ -1,0 +1,17 @@
+v=0
+o=- 2222222222 2 IN IP4 127.0.0.1
+s=-
+t=0 0
+a=group:BUNDLE 0
+a=msid-semantic: WMS
+m=audio 9 UDP/TLS/RTP/SAVPF 111
+c=IN IP4 0.0.0.0
+a=rtcp:9 IN IP4 0.0.0.0
+a=ice-ufrag:abl4
+a=ice-pwd:abl4passwordabl4password00
+a=fingerprint:sha-256 AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99
+a=setup:actpass
+a=mid:0
+a=sendrecv
+a=rtpmap:111 opus/48000/2
+a=rtcp-mux

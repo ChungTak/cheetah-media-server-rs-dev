@@ -1,0 +1,742 @@
+use bytes::{Bytes, BytesMut};
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::sync::{mpsc, Mutex};
+use tokio::time::{self, Duration};
+use tracing::{debug, error, info, warn};
+
+use cheetah_rtp_core::{
+    RtpClientSpec, RtpCore, RtpCoreCommand, RtpCoreEvent, RtpCoreInput, RtpCoreOutput, RtpDatagram,
+    RtpSendFrame, RtpServerSpec, RtpTcpChunk, RtpTransportMode,
+};
+use cheetah_runtime_api::CancellationToken;
+
+#[derive(Debug, Clone)]
+pub struct RtpDriverConfig {
+    pub listen_udp: SocketAddr,
+    pub listen_tcp: SocketAddr,
+    /// Optional separate RTCP listening UDP socket (`rtcpPort` config). When `None`, RTCP is
+    /// expected to flow on the same UDP socket as RTP and gets routed by the core based on
+    /// payload type.
+    pub listen_rtcp_udp: Option<SocketAddr>,
+    pub write_queue_capacity: usize,
+    pub read_buffer_size: usize,
+    pub session_idle_timeout_ms: u64,
+    pub max_sessions: usize,
+    /// Default TCP framing applied by the core when deframing inbound TCP RTP traffic. Defaults
+    /// to `AutoDetect` so we accept both 2-byte length prefixes and 4-byte interleaved frames
+    /// without explicit per-session negotiation.
+    pub tcp_framing: cheetah_rtp_core::RtpTcpFraming,
+    /// Hard upper bound on the dynamic `nMaxRtpLength` learner (defaults to 65 536 bytes).
+    pub max_rtp_len_cap: usize,
+}
+
+impl Default for RtpDriverConfig {
+    fn default() -> Self {
+        Self {
+            listen_udp: "127.0.0.1:20000".parse().unwrap(),
+            listen_tcp: "127.0.0.1:20000".parse().unwrap(),
+            listen_rtcp_udp: None,
+            write_queue_capacity: 256,
+            read_buffer_size: 65536,
+            session_idle_timeout_ms: 30000,
+            max_sessions: 1024,
+            tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
+            max_rtp_len_cap: 65536,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum RtpDriverCommand {
+    CreateServer(RtpServerSpec),
+    CreateClient(RtpClientSpec),
+    SendFrame(Box<RtpSendFrame>),
+    StopSession(String),
+}
+
+pub struct RtpDriverHandle {
+    cmd_tx: mpsc::Sender<RtpDriverCommand>,
+    event_rx: Mutex<mpsc::Receiver<RtpCoreEvent>>,
+}
+
+impl RtpDriverHandle {
+    pub async fn send_command(&self, cmd: RtpDriverCommand) {
+        let _ = self.cmd_tx.send(cmd).await;
+    }
+
+    pub async fn recv_event(&self) -> Option<RtpCoreEvent> {
+        self.event_rx.lock().await.recv().await
+    }
+}
+
+pub fn start_driver(config: RtpDriverConfig, cancel: CancellationToken) -> RtpDriverHandle {
+    let (cmd_tx, cmd_rx) = mpsc::channel(256);
+    let (event_tx, event_rx) = mpsc::channel(256);
+
+    tokio::spawn(run_driver_loop(config, cmd_rx, event_tx, cancel));
+
+    RtpDriverHandle {
+        cmd_tx,
+        event_rx: Mutex::new(event_rx),
+    }
+}
+
+async fn run_driver_loop(
+    config: RtpDriverConfig,
+    cmd_rx: mpsc::Receiver<RtpDriverCommand>,
+    event_tx: mpsc::Sender<RtpCoreEvent>,
+    cancel: CancellationToken,
+) {
+    let udp_socket = match UdpSocket::bind(config.listen_udp).await {
+        Ok(s) => {
+            info!("RTP UDP Driver listening on {}", config.listen_udp);
+            Arc::new(s)
+        }
+        Err(e) => {
+            error!("RTP UDP Driver bind failed on {}: {e}", config.listen_udp);
+            return;
+        }
+    };
+
+    let tcp_listener = match TcpListener::bind(config.listen_tcp).await {
+        Ok(l) => {
+            info!("RTP TCP Driver listening on {}", config.listen_tcp);
+            Some(Arc::new(l))
+        }
+        Err(e) => {
+            error!("RTP TCP Driver bind failed on {}: {e}", config.listen_tcp);
+            None
+        }
+    };
+
+    let (cmd_tx, mut cmd_rx_internal) = mpsc::channel::<RtpDriverCommand>(256);
+    {
+        let cmd_tx_inner = cmd_tx.clone();
+        let cancel_inner = cancel.clone();
+        tokio::spawn(async move {
+            let mut cmd_rx = cmd_rx;
+            loop {
+                tokio::select! {
+                    _ = cancel_inner.cancelled() => break,
+                    cmd = cmd_rx.recv() => {
+                        if let Some(c) = cmd {
+                            if cmd_tx_inner.send(c).await.is_err() {
+                                break;
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    let mut core = RtpCore::new(config.max_sessions, config.session_idle_timeout_ms);
+    core.set_tcp_framing(config.tcp_framing);
+    core.set_max_rtp_len_cap(config.max_rtp_len_cap);
+    let mut interval = time::interval(Duration::from_millis(100));
+    let start_instant = time::Instant::now();
+
+    // Optional separate RTCP UDP socket. When configured, RTCP datagrams arriving on this socket
+    // are dispatched into the core via `RtpCoreInput::RtcpPacket` so that RR-timeout sender
+    // lifecycle can react to peer feedback.
+    let rtcp_socket = match config.listen_rtcp_udp {
+        Some(addr) => match UdpSocket::bind(addr).await {
+            Ok(s) => {
+                info!("RTP RTCP UDP listening on {}", addr);
+                Some(Arc::new(s))
+            }
+            Err(e) => {
+                error!("RTP RTCP UDP bind failed on {}: {e}", addr);
+                None
+            }
+        },
+        None => None,
+    };
+
+    // Channels for async socket read streams to multiplex into the main thread
+    let (udp_rx_tx, mut udp_rx_rx) = mpsc::channel::<RtpDatagram>(256);
+    let (tcp_rx_tx, mut tcp_rx_rx) = mpsc::channel::<RtpTcpChunk>(256);
+    let (rtcp_rx_tx, mut rtcp_rx_rx) = mpsc::channel::<RtpDatagram>(64);
+
+    // Active TCP connection writers: conn_id -> Writer Channel
+    let tcp_writers: Arc<Mutex<HashMap<u64, mpsc::Sender<Bytes>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let next_conn_id = Arc::new(Mutex::new(1u64));
+
+    // Spawn UDP recv task
+    {
+        let udp_socket = udp_socket.clone();
+        let cancel = cancel.clone();
+        let buf_size = config.read_buffer_size;
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; buf_size];
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    res = udp_socket.recv_from(&mut buf) => {
+                        match res {
+                            Ok((len, src)) => {
+                                let data = Bytes::copy_from_slice(&buf[..len]);
+                                if udp_rx_tx.send(RtpDatagram { source: src, data }).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                warn!("UDP receive error: {e}");
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Spawn dedicated RTCP UDP reader if configured.
+    if let Some(rtcp_socket) = rtcp_socket.clone() {
+        let cancel = cancel.clone();
+        let buf_size = config.read_buffer_size;
+        let rtcp_rx_tx = rtcp_rx_tx.clone();
+        tokio::spawn(async move {
+            let mut buf = vec![0u8; buf_size];
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    res = rtcp_socket.recv_from(&mut buf) => {
+                        match res {
+                            Ok((len, src)) => {
+                                let data = Bytes::copy_from_slice(&buf[..len]);
+                                if rtcp_rx_tx.send(RtpDatagram { source: src, data }).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                warn!("RTCP receive error: {e}");
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+    drop(rtcp_rx_tx);
+
+    // Spawn TCP accept task
+    if let Some(tcp_listener) = tcp_listener {
+        let cancel = cancel.clone();
+        let tcp_writers = tcp_writers.clone();
+        let next_conn_id = next_conn_id.clone();
+        let tcp_rx_tx = tcp_rx_tx.clone();
+        let buf_size = config.read_buffer_size;
+        let wq_cap = config.write_queue_capacity;
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    res = tcp_listener.accept() => {
+                        match res {
+                            Ok((stream, addr)) => {
+                                debug!("RTP TCP client connected from {}", addr);
+                                let conn_id = {
+                                    let mut id_guard = next_conn_id.lock().await;
+                                    let id = *id_guard;
+                                    *id_guard += 1;
+                                    id
+                                };
+
+                                let (reader, mut writer) = tokio::io::split(stream);
+                                let (writer_tx, mut writer_rx) = mpsc::channel::<Bytes>(wq_cap);
+                                tcp_writers.lock().await.insert(conn_id, writer_tx);
+
+                                // Spawn TCP Reader task
+                                {
+                                    let tcp_rx_tx = tcp_rx_tx.clone();
+                                    let cancel = cancel.child_token();
+                                    tokio::spawn(async move {
+                                        let mut reader = reader;
+                                        let mut buf = vec![0u8; buf_size];
+                                        let mut remaining = BytesMut::new();
+                                        let mut is_ehome = false;
+                                        let mut checked_ehome = false;
+                                        loop {
+                                            tokio::select! {
+                                                _ = cancel.cancelled() => break,
+                                                res = reader.read(&mut buf) => {
+                                                    match res {
+                                                        Ok(0) => break, // EOF
+                                                        Ok(n) => {
+                                                            remaining.extend_from_slice(&buf[..n]);
+
+                                                            if !checked_ehome {
+                                                                if remaining.len() >= 3 {
+                                                                    // Sticky Ehome detection: only the Ehome2 256-byte prefix
+                                                                    // (0x01 0x00 0x01/0x02 ...) signals an Ehome stream. The
+                                                                    // historical 0x00 0x00 heuristic has been removed because
+                                                                    // it false-positives on RTP-over-TCP frames whose length
+                                                                    // high byte is zero (small audio packets).
+                                                                    if remaining[0] == 0x01
+                                                                        && remaining[1] == 0x00
+                                                                        && (remaining[2] == 0x01 || remaining[2] == 0x02)
+                                                                    {
+                                                                        is_ehome = true;
+                                                                    }
+                                                                    checked_ehome = true;
+                                                                } else {
+                                                                    continue;
+                                                                }
+                                                            }
+
+                                                            if is_ehome {
+                                                                loop {
+                                                                    // Check for Ehome2 256-byte header
+                                                                    if remaining.len() >= 256 && remaining[0] == 0x01 && remaining[1] == 0x00 && (remaining[2] == 0x01 || remaining[2] == 0x02) {
+                                                                        let data = remaining.split_to(256).freeze();
+                                                                        if tcp_rx_tx.send(RtpTcpChunk { conn_id, data }).await.is_err() {
+                                                                            break;
+                                                                        }
+                                                                        continue;
+                                                                    }
+
+                                                                    if remaining.len() >= 4 {
+                                                                        let len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
+                                                                        if remaining.len() >= 4 + len {
+                                                                            let data = remaining.split_to(4 + len).freeze();
+                                                                            if tcp_rx_tx.send(RtpTcpChunk { conn_id, data }).await.is_err() {
+                                                                                break;
+                                                                            }
+                                                                        } else {
+                                                                            break;
+                                                                        }
+                                                                    } else {
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            } else {
+                                                                // Auto-detect 2-byte / 4-byte interleaved framing per chunk. We send each
+                                                                // complete frame to the core which then deframes it via its configured
+                                                                // `RtpTcpFraming`. Picking the right size here keeps the chunk boundary
+                                                                // aligned to a single RTP packet.
+                                                                while !remaining.is_empty() {
+                                                                    if remaining[0] == b'$' {
+                                                                        if remaining.len() < 4 {
+                                                                            break;
+                                                                        }
+                                                                        let len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
+                                                                        if remaining.len() < 4 + len {
+                                                                            break;
+                                                                        }
+                                                                        let data = remaining.split_to(4 + len).freeze();
+                                                                        if tcp_rx_tx.send(RtpTcpChunk { conn_id, data }).await.is_err() {
+                                                                            break;
+                                                                        }
+                                                                    } else if remaining.len() >= 2 {
+                                                                        let len = u16::from_be_bytes([remaining[0], remaining[1]]) as usize;
+                                                                        if remaining.len() < 2 + len {
+                                                                            break;
+                                                                        }
+                                                                        let data = remaining.split_to(2 + len).freeze();
+                                                                        if tcp_rx_tx.send(RtpTcpChunk { conn_id, data }).await.is_err() {
+                                                                            break;
+                                                                        }
+                                                                    } else {
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(_) => break,
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    });
+                                }
+
+                                // Spawn TCP Writer task
+                                {
+                                    let tcp_writers = tcp_writers.clone();
+                                    let cancel = cancel.child_token();
+                                    tokio::spawn(async move {
+                                        loop {
+                                            tokio::select! {
+                                                _ = cancel.cancelled() => break,
+                                                msg = writer_rx.recv() => {
+                                                    match msg {
+                                                        Some(data) => {
+                                                            if writer.write_all(&data).await.is_err() {
+                                                                break;
+                                                            }
+                                                        }
+                                                        None => break,
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        tcp_writers.lock().await.remove(&conn_id);
+                                    });
+                                }
+                            }
+                            Err(e) => {
+                                warn!("TCP accept error: {e}");
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    loop {
+        let mut inputs = Vec::new();
+
+        tokio::select! {
+            _ = cancel.cancelled() => break,
+            _ = interval.tick() => {
+                let now_ms = start_instant.elapsed().as_millis() as u64;
+                inputs.push(RtpCoreInput::Tick { now_ms });
+            }
+            Some(cmd) = cmd_rx_internal.recv() => {
+                match cmd {
+                    RtpDriverCommand::CreateServer(spec) => {
+                        inputs.push(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
+                    }
+                    RtpDriverCommand::CreateClient(spec) => {
+                        // If it's a TCP client connect, we need to spin up the connection first
+                        if spec.tcp_conn_id.is_none() && spec.transport_mode == RtpTransportMode::SendOnly {
+                            // Active TCP Client connect
+                            let dest = spec.destination;
+                            let mut spec_clone = spec.clone();
+                            let tcp_writers_clone = tcp_writers.clone();
+                            let next_conn_id_clone = next_conn_id.clone();
+                            let tcp_rx_tx_clone = tcp_rx_tx.clone();
+                            let cmd_tx_clone = cmd_tx.clone();
+                            let cancel_clone = cancel.clone();
+
+                            tokio::spawn(async move {
+                                match TcpStream::connect(dest).await {
+                                    Ok(stream) => {
+                                        let conn_id = {
+                                            let mut id_guard = next_conn_id_clone.lock().await;
+                                            let id = *id_guard;
+                                            *id_guard += 1;
+                                            id
+                                        };
+
+                                        // Register the connection session in the state machine
+                                        spec_clone.tcp_conn_id = Some(conn_id);
+                                        let _ = cmd_tx_clone.send(RtpDriverCommand::CreateClient(spec_clone)).await;
+
+                                        let (reader, mut writer) = tokio::io::split(stream);
+                                        let (writer_tx, mut writer_rx) = mpsc::channel::<Bytes>(config.write_queue_capacity);
+                                        tcp_writers_clone.lock().await.insert(conn_id, writer_tx);
+
+                                        // Spawn TCP client reader
+                                        let cancel_child = cancel_clone.child_token();
+                                        tokio::spawn(async move {
+                                            let mut reader = reader;
+                                            let mut buf = vec![0u8; config.read_buffer_size];
+                                            let mut remaining = BytesMut::new();
+                                            let mut is_ehome = false;
+                                            let mut checked_ehome = false;
+                                            loop {
+                                                tokio::select! {
+                                                    _ = cancel_child.cancelled() => break,
+                                                    res = reader.read(&mut buf) => {
+                                                        match res {
+                                                            Ok(0) => break,
+                                                            Ok(n) => {
+                                                                remaining.extend_from_slice(&buf[..n]);
+
+                                                                if !checked_ehome {
+                                                                    if remaining.len() >= 3 {
+                                                                        // Sticky Ehome detection — see server-side note above.
+                                                                        if remaining[0] == 0x01
+                                                                            && remaining[1] == 0x00
+                                                                            && (remaining[2] == 0x01 || remaining[2] == 0x02)
+                                                                        {
+                                                                            is_ehome = true;
+                                                                        }
+                                                                        checked_ehome = true;
+                                                                    } else {
+                                                                        continue;
+                                                                    }
+                                                                }
+
+                                                                if is_ehome {
+                                                                    loop {
+                                                                        if remaining.len() >= 256 && remaining[0] == 0x01 && remaining[1] == 0x00 && (remaining[2] == 0x01 || remaining[2] == 0x02) {
+                                                                            let data = remaining.split_to(256).freeze();
+                                                                            let _ = tcp_rx_tx_clone.send(RtpTcpChunk { conn_id, data }).await;
+                                                                            continue;
+                                                                        }
+                                                                        if remaining.len() >= 4 {
+                                                                            let len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
+                                                                            if remaining.len() >= 4 + len {
+                                                                                let data = remaining.split_to(4 + len).freeze();
+                                                                                let _ = tcp_rx_tx_clone.send(RtpTcpChunk { conn_id, data }).await;
+                                                                            } else {
+                                                                                break;
+                                                                            }
+                                                                        } else {
+                                                                            break;
+                                                                        }
+                                                                    }
+                                                                } else {
+                                                                    // Auto-detect 2-byte / 4-byte interleaved framing per chunk on the
+                                                                    // active TCP client read path.
+                                                                    while !remaining.is_empty() {
+                                                                        if remaining[0] == b'$' {
+                                                                            if remaining.len() < 4 {
+                                                                                break;
+                                                                            }
+                                                                            let len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
+                                                                            if remaining.len() < 4 + len {
+                                                                                break;
+                                                                            }
+                                                                            let data = remaining.split_to(4 + len).freeze();
+                                                                            let _ = tcp_rx_tx_clone.send(RtpTcpChunk { conn_id, data }).await;
+                                                                        } else if remaining.len() >= 2 {
+                                                                            let len = u16::from_be_bytes([remaining[0], remaining[1]]) as usize;
+                                                                            if remaining.len() < 2 + len {
+                                                                                break;
+                                                                            }
+                                                                            let data = remaining.split_to(2 + len).freeze();
+                                                                            let _ = tcp_rx_tx_clone.send(RtpTcpChunk { conn_id, data }).await;
+                                                                        } else {
+                                                                            break;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(_) => break,
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        });
+
+                                        // Spawn TCP client writer
+                                        let cancel_child = cancel_clone.child_token();
+                                        tokio::spawn(async move {
+                                            loop {
+                                                tokio::select! {
+                                                    _ = cancel_child.cancelled() => break,
+                                                    msg = writer_rx.recv() => {
+                                                        match msg {
+                                                            Some(data) => {
+                                                                if writer.write_all(&data).await.is_err() {
+                                                                    break;
+                                                                }
+                                                            }
+                                                            None => break,
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to connect TCP to client {dest}: {e}");
+                                    }
+                                }
+                            });
+                        } else {
+                            inputs.push(RtpCoreInput::Command(RtpCoreCommand::CreateClient(spec)));
+                        }
+                    }
+                    RtpDriverCommand::SendFrame(send_frame) => {
+                        inputs.push(RtpCoreInput::Command(RtpCoreCommand::SendFrame(*send_frame)));
+                    }
+                    RtpDriverCommand::StopSession(key) => {
+                        inputs.push(RtpCoreInput::Command(RtpCoreCommand::StopSession(key)));
+                    }
+                }
+            }
+            Some(datagram) = udp_rx_rx.recv() => {
+                inputs.push(RtpCoreInput::UdpPacket(datagram));
+            }
+            Some(chunk) = tcp_rx_rx.recv() => {
+                inputs.push(RtpCoreInput::TcpBytes(chunk));
+            }
+            Some(rtcp) = rtcp_rx_rx.recv() => {
+                inputs.push(RtpCoreInput::RtcpPacket(rtcp));
+            }
+        }
+
+        for input in inputs {
+            let outputs = core.handle_input(input);
+            for output in outputs {
+                match output {
+                    RtpCoreOutput::SendUdp(udp_send) => {
+                        let socket = udp_socket.clone();
+                        tokio::spawn(async move {
+                            let _ = socket.send_to(&udp_send.data, udp_send.destination).await;
+                        });
+                    }
+                    RtpCoreOutput::SendTcp(tcp_send) => {
+                        let writers = tcp_writers.clone();
+                        tokio::spawn(async move {
+                            let map = writers.lock().await;
+                            if let Some(tx) = map.get(&tcp_send.conn_id) {
+                                let _ = tx.send(tcp_send.data).await;
+                            }
+                        });
+                    }
+                    RtpCoreOutput::SendRtcp(rtcp_send) => {
+                        if let Some(conn_id) = rtcp_send.conn_id {
+                            let writers = tcp_writers.clone();
+                            tokio::spawn(async move {
+                                let map = writers.lock().await;
+                                if let Some(tx) = map.get(&conn_id) {
+                                    let _ = tx.send(rtcp_send.data).await;
+                                }
+                            });
+                        } else if let Some(rtcp_socket) = rtcp_socket.clone() {
+                            // Use the dedicated RTCP UDP socket when configured.
+                            tokio::spawn(async move {
+                                let _ = rtcp_socket
+                                    .send_to(&rtcp_send.data, rtcp_send.destination)
+                                    .await;
+                            });
+                        } else {
+                            // Fallback: tunnel RTCP over the same UDP socket as RTP.
+                            let socket = udp_socket.clone();
+                            tokio::spawn(async move {
+                                let _ =
+                                    socket.send_to(&rtcp_send.data, rtcp_send.destination).await;
+                            });
+                        }
+                    }
+                    RtpCoreOutput::Event(ev) => {
+                        let _ = event_tx.send(ev).await;
+                    }
+                    RtpCoreOutput::Diagnostic(diag) => {
+                        debug!("RTP Diagnostic: {:?}", diag);
+                    }
+                    RtpCoreOutput::CloseSession(key) => {
+                        debug!("Closing RTP session key: {key}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cheetah_codec::{RtpHeader, RtpPacket};
+    use cheetah_rtp_core::RtpPayloadMode;
+
+    #[tokio::test]
+    async fn test_rtp_driver_udp_and_tcp_ingress() {
+        let cancel = CancellationToken::new();
+
+        // 1. Choose dynamic port by binding to 127.0.0.1:0
+        let temp_udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let udp_addr = temp_udp.local_addr().unwrap();
+        drop(temp_udp);
+
+        let temp_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let tcp_addr = temp_tcp.local_addr().unwrap();
+        drop(temp_tcp);
+
+        let config = RtpDriverConfig {
+            listen_udp: udp_addr,
+            listen_tcp: tcp_addr,
+            listen_rtcp_udp: None,
+            write_queue_capacity: 10,
+            read_buffer_size: 4096,
+            session_idle_timeout_ms: 5000,
+            max_sessions: 5,
+            tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
+            max_rtp_len_cap: 65536,
+        };
+
+        let handle = start_driver(config, cancel.clone());
+
+        // --- UDP TEST ---
+        // Send a UDP RTP packet
+        let client_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 1,
+                timestamp: 100,
+                ssrc: 8888,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0x01, 0x02, 0x03]),
+        };
+        client_socket
+            .send_to(&rtp.encode(), udp_addr)
+            .await
+            .unwrap();
+
+        // Wait for SessionCreated event
+        let event = tokio::time::timeout(Duration::from_secs(5), handle.recv_event())
+            .await
+            .unwrap()
+            .unwrap();
+
+        match event {
+            RtpCoreEvent::SessionCreated {
+                session_key,
+                ssrc,
+                payload_mode,
+                ..
+            } => {
+                assert_eq!(session_key, "live/8888");
+                assert_eq!(ssrc, 8888);
+                assert_eq!(payload_mode, RtpPayloadMode::Ps);
+            }
+            _ => panic!("Expected SessionCreated event"),
+        }
+
+        // --- TCP TEST ---
+        // Send a TCP RTP packet
+        let mut tcp_stream = tokio::net::TcpStream::connect(tcp_addr).await.unwrap();
+        let rtp_tcp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 1,
+                timestamp: 100,
+                ssrc: 7777,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0x05, 0x06, 0x07]),
+        };
+        let framed = cheetah_codec::encode_tcp_rtp_frame(&rtp_tcp);
+        tcp_stream.write_all(&framed).await.unwrap();
+
+        // Wait for SessionCreated event
+        let event = tokio::time::timeout(Duration::from_secs(5), handle.recv_event())
+            .await
+            .unwrap()
+            .unwrap();
+
+        match event {
+            RtpCoreEvent::SessionCreated {
+                session_key,
+                ssrc,
+                payload_mode,
+                ..
+            } => {
+                assert_eq!(session_key, "live/7777");
+                assert_eq!(ssrc, 7777);
+                assert_eq!(payload_mode, RtpPayloadMode::Ps);
+            }
+            _ => panic!("Expected SessionCreated event for TCP session"),
+        }
+
+        cancel.cancel();
+    }
+}

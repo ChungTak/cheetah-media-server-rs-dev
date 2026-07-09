@@ -1,0 +1,34 @@
+[package]
+name = "cheetah-http-flv-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+cheetah-http-flv-core = { path = "../core" }
+cheetah-http-flv-module = { path = "../module" }
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "fuzz_flv_demux"
+path = "fuzz_targets/fuzz_flv_demux.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_http_flv_transport"
+path = "fuzz_targets/fuzz_http_flv_transport.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "fuzz_ws_flv_frames"
+path = "fuzz_targets/fuzz_ws_flv_frames.rs"
+test = false
+doc = false

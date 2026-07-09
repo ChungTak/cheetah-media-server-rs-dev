@@ -1,0 +1,17 @@
+[package]
+name = "cheetah-gb28181-driver-tokio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+cheetah-gb28181-core = { path = "../core" }
+cheetah-runtime-api = { path = "../../../runtime/cheetah-runtime-api" }
+parking_lot.workspace = true
+tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
+tracing.workspace = true
+
+[dev-dependencies]
+cheetah-runtime-tokio = { path = "../../../runtime/cheetah-runtime-tokio" }

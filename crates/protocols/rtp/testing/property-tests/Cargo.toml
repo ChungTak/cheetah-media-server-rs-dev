@@ -1,0 +1,12 @@
+[package]
+name = "cheetah-rtp-property-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+bytes.workspace = true
+cheetah-codec = { path = "../../../../foundation/cheetah-codec" }
+cheetah-rtp-core = { path = "../../core" }
+proptest = "1.6.0"

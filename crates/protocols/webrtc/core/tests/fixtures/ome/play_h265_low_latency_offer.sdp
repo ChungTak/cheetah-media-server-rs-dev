@@ -1,0 +1,14 @@
+v=0
+o=- 0 0 IN IP4 127.0.0.1
+s=-
+t=0 0
+a=group:BUNDLE 0
+a=extmap-allow-mixed
+m=video 9 UDP/TLS/RTP/SAVPF 110
+c=IN IP4 0.0.0.0
+a=mid:0
+a=recvonly
+a=rtcp-mux
+a=rtpmap:110 H265/90000
+a=fmtp:110 profile-id=1;sprop-vps=QAEMAf//AWAAAAMAsAAAAwAAAwBdoAKAgC0WNrQA
+a=extmap:10 http://www.webrtc.org/experiments/rtp-hdrext/video-timing

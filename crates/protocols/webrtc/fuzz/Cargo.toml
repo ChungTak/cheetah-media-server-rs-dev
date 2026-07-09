@@ -1,0 +1,86 @@
+[package]
+name = "cheetah-webrtc-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+cheetah-webrtc-core = { path = "../core" }
+cheetah-webrtc-driver-tokio = { path = "../driver-tokio" }
+cheetah-webrtc-module = { path = "../module" }
+
+[[bin]]
+name = "fuzz_sdp_compat"
+path = "fuzz_targets/fuzz_sdp_compat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_zlm_rtc_url"
+path = "fuzz_targets/fuzz_zlm_rtc_url.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_tcp_framing"
+path = "fuzz_targets/fuzz_tcp_framing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_trickle_candidates"
+path = "fuzz_targets/fuzz_trickle_candidates.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_url_parse"
+path = "fuzz_targets/fuzz_url_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_http_response"
+path = "fuzz_targets/fuzz_http_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_rtp_ext_mappings"
+path = "fuzz_targets/fuzz_rtp_ext_mappings.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ice_candidate"
+path = "fuzz_targets/fuzz_ice_candidate.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_sdp_ssrc_sim"
+path = "fuzz_targets/fuzz_sdp_ssrc_sim.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_offer_payload"
+path = "fuzz_targets/fuzz_offer_payload.rs"
+test = false
+doc = false
+bench = false

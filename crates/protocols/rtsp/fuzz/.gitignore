@@ -1,0 +1,16 @@
+artifacts/
+corpus/*
+!corpus/fuzz_real_capture_rtsp_tcp_replay/
+corpus/fuzz_real_capture_rtsp_tcp_replay/*
+!corpus/fuzz_real_capture_rtsp_tcp_replay/seed_standard_*.rtspcap
+!corpus/fuzz_real_capture_udp_datagrams/
+corpus/fuzz_real_capture_udp_datagrams/*
+!corpus/fuzz_real_capture_udp_datagrams/seed_standard_*.rtspcap
+!corpus/fuzz_real_capture_mixed_transport/
+corpus/fuzz_real_capture_mixed_transport/*
+!corpus/fuzz_real_capture_mixed_transport/seed_standard_*.rtspcap
+!corpus/fuzz_rtp_sequence_faults/
+corpus/fuzz_rtp_sequence_faults/*
+!corpus/fuzz_rtp_sequence_faults/seed_standard_*.rtspcap
+coverage/
+target/

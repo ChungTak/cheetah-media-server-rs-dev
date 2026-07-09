@@ -1,0 +1,41 @@
+v=0
+o=- 1681288904 1 IN IP4 0.0.0.0
+s=-
+t=0 0
+a=group:BUNDLE 0 1
+a=msid-semantic: WMS *
+m=audio 9 UDP/TLS/RTP/SAVPF 111
+c=IN IP4 0.0.0.0
+a=rtcp:9 IN IP4 0.0.0.0
+a=ice-ufrag:h264A
+a=ice-pwd:h264passwordlongerthan22chars
+a=ice-options:trickle
+a=fingerprint:sha-256 66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55
+a=setup:actpass
+a=mid:0
+a=sendonly
+a=rtcp-mux
+a=rtcp-rsize
+a=rtpmap:111 opus/48000/2
+a=rtcp-fb:111 transport-cc
+a=fmtp:111 minptime=10;useinbandfec=1
+m=video 9 UDP/TLS/RTP/SAVPF 102 103
+c=IN IP4 0.0.0.0
+a=rtcp:9 IN IP4 0.0.0.0
+a=ice-ufrag:h264A
+a=ice-pwd:h264passwordlongerthan22chars
+a=ice-options:trickle
+a=fingerprint:sha-256 66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55
+a=setup:actpass
+a=mid:1
+a=sendonly
+a=rtcp-mux
+a=rtcp-rsize
+a=rtpmap:102 H264/90000
+a=rtcp-fb:102 nack
+a=rtcp-fb:102 nack pli
+a=rtcp-fb:102 ccm fir
+a=rtcp-fb:102 transport-cc
+a=fmtp:102 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f
+a=rtpmap:103 rtx/90000
+a=fmtp:103 apt=102

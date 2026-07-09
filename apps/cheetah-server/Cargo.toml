@@ -1,0 +1,47 @@
+[package]
+name = "cheetah-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = ["rtmp"]
+rtmp = ["dep:cheetah-rtmp-module"]
+rtsp = ["dep:cheetah-rtsp-module"]
+http-flv = ["dep:cheetah-http-flv-module"]
+hls = ["dep:cheetah-hls-module"]
+ts = ["dep:cheetah-ts-module"]
+fmp4 = ["dep:cheetah-fmp4-module"]
+rtp = ["dep:cheetah-rtp-module"]
+mp4 = ["dep:cheetah-mp4-module"]
+record = ["dep:cheetah-record-module"]
+webrtc = ["dep:cheetah-webrtc-module"]
+srt = ["dep:cheetah-srt-module"]
+# GB28181 needs the RTP module at runtime for media delivery (matches the manifest declared
+# `dependencies` in `cheetah-gb28181-module`); enabling `gb28181` therefore implies `rtp`.
+gb28181 = ["dep:cheetah-gb28181-module", "rtp"]
+
+[dependencies]
+anyhow.workspace = true
+cheetah-config = { path = "../../crates/system/cheetah-config" }
+cheetah-control = { path = "../../crates/system/cheetah-control" }
+cheetah-engine = { path = "../../crates/system/cheetah-engine" }
+cheetah-fmp4-module = { path = "../../crates/protocols/fmp4/module", optional = true }
+cheetah-gb28181-module = { path = "../../crates/protocols/gb28181/module", optional = true }
+cheetah-http-flv-module = { path = "../../crates/protocols/http-flv/module", optional = true }
+cheetah-hls-module = { path = "../../crates/protocols/hls/module", optional = true }
+cheetah-rtmp-module = { path = "../../crates/protocols/rtmp/module", optional = true }
+cheetah-rtsp-module = { path = "../../crates/protocols/rtsp/module", optional = true }
+cheetah-ts-module = { path = "../../crates/protocols/ts/module", optional = true }
+cheetah-rtp-module = { path = "../../crates/protocols/rtp/module", optional = true }
+cheetah-mp4-module = { path = "../../crates/protocols/mp4/module", optional = true }
+cheetah-record-module = { path = "../../crates/system/cheetah-record-module", optional = true }
+cheetah-webrtc-module = { path = "../../crates/protocols/webrtc/module", optional = true }
+cheetah-srt-module = { path = "../../crates/protocols/srt/module", optional = true }
+cheetah-runtime-tokio = { path = "../../crates/runtime/cheetah-runtime-tokio" }
+cheetah-sdk = { path = "../../crates/sdk/cheetah-sdk" }
+rustls.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

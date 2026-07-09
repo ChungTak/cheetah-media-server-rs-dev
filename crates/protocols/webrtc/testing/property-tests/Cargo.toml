@@ -1,0 +1,13 @@
+[package]
+name = "cheetah-webrtc-property-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+bytes.workspace = true
+cheetah-webrtc-core = { path = "../../core" }
+cheetah-webrtc-driver-tokio = { path = "../../driver-tokio" }
+cheetah-webrtc-module = { path = "../../module" }
+proptest = "1.6.0"
