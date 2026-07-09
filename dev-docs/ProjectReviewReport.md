@@ -1,4 +1,4 @@
-# Cheetah Media Server 审查报告（P0–P2 已执行，第二轮更新）
+# Cheetah Media Server 审查报告（P0–P3 已执行，第四轮更新）
 
 > 依据 `dev-docs/ProjectReviewPlan.md` 的阶段划分（P0→P5）执行。审查基线：`AGENTS.md`、
 > `SystemArchitecture.md`、README、`config.example.yaml`。
@@ -14,14 +14,14 @@
 |------|------|------|--------|------|
 | F-01 | 工具/CI | `check_runtime_boundaries.sh` 引用旧扁平路径且依赖 PCRE2 → 静默空跑（守卫失效） | 高 | 已修复 |
 | F-02 | 违规 | `cheetah-hls-module` 生产路径直接使用 `tokio::time::timeout` | 中 | 已修复 |
-| F-03 | 环境 | 代码使用 `is_multiple_of`（Rust 1.87+），环境默认 1.83 无法编译 | 高 | 已修复(工具链)+待固化 |
-| F-04 | 违规 | `cheetah-webrtc-module` 生产代码大量直接依赖 `tokio::{net,time,sync}` 与 `tokio::select!` | 高 | 进行中(Stage 1) |
+| F-03 | 环境 | 代码使用 `is_multiple_of`（Rust 1.87+），环境默认 1.83 无法编译 | 高 | 已修复 |
+| F-04 | 违规 | `cheetah-webrtc-module` 生产代码大量直接依赖 `tokio::{net,time,sync}` 与 `tokio::select!` | 高 | 已修复(Stage 1-5) |
 | F-05 | 风险 | `cheetah-http-flv-module` 直接依赖 `cheetah-rtmp-core` 复用 FLV 封装逻辑 | 中 | 已修复 |
 | F-06 | 风险 | mp4 module 用 `tokio::spawn` 且 driver 公共 API 泄漏 tokio 通道类型 | 中 | 已修复 |
 | F-07 | 文档 | `SystemArchitecture.md` 缺 hls/ts/mp4/srt/webrtc 的 Reference Mapping | 中 | 已修复 |
 | F-08 | 测试 | `ts`、`http-flv` 缺 `testing/property-tests`（其余 9 协议均有） | 中 | 已修复 |
 | F-09 | 文档/实现 | SystemArchitecture §4 观测性基线指标在代码中完全缺失 | 中 | 已修复(基线+脚手架) |
-| F-10 | 风险 | `cheetah-engine` 内部直用 `tokio::sync::{mpsc,broadcast,Mutex}`，与 §5 允许清单冲突 | 低 | 待处理 |
+| F-10 | 风险 | `cheetah-engine` 内部直用 `tokio::sync::{mpsc,broadcast,Mutex}`，与 §5 允许清单冲突 | 低 | 已修复 |
 
 ---
 
@@ -71,14 +71,15 @@
 - runtime 抽象：`cheetah-runtime-api` 公共接口 runtime 中立，未见 `pub` 暴露 `tokio::*`；hls 修复后统一走
   `RuntimeApi::{now,sleep_until}` + `futures::select_biased!`（§5 ✓）。
 
-### F-03【已修复(工具链)+待固化｜高】工具链版本要求未被环境满足
+### F-03【已修复｜高】工具链版本要求未被环境满足
 - 证据：`crates/foundation/cheetah-codec/src/egress.rs:123,127`、`rtp.rs:290` 使用
   `u*::is_multiple_of(..)`，该 API 在 **Rust 1.87** 稳定；环境默认 `rustc 1.83.0` 编译报
   `E0658 unstable library feature 'unsigned_is_multiple_of'`，整个 codec 及依赖它的一切无法构建。
-- 处理：本会话 `rustup update stable` 升级至 `rustc 1.96.1` 后全量构建通过（含
-  `cargo build -p cheetah-server --features "rtsp,http-flv,hls,fmp4,ts,rtp,gb28181"`）。
-- 建议（待固化）：仓库未提供 `rust-toolchain.toml`。建议新增 `rust-toolchain.toml` 固定最低 stable
-  版本（≥1.87），并在环境 blueprint 中安装对应工具链，避免新会话/CI 因默认工具链过旧而失败。
+- 修复：本会话 `rustup update stable` 升级至 `rustc 1.96.1` 后全量构建通过；并在仓库根目录新增
+  `rust-toolchain.toml` 固定 `channel = "1.96.1"`（满足 ≥1.87 的最低 stable），同时声明 `rustfmt` 与
+  `clippy` 组件，使新会话/CI 自动安装匹配工具链，避免默认工具链过旧导致编译失败。
+- 验证：`rustup show` 解析 `rust-toolchain.toml`；`cargo build -p cheetah-server --features
+  "rtsp,http-flv,hls,fmp4,ts,rtp,gb28181"` 通过。
 
 ### F-09【已修复(基线+脚手架)｜中】观测性基线指标缺失
 - 证据：`SystemArchitecture.md` §4 要求运行报告暴露 `startup_latency_ms`、
@@ -162,7 +163,7 @@
   playlist 轮询处一致的模式）；同时移除 `cheetah-hls-module` 已不再需要的直接 `tokio` 依赖。
   `cargo clippy -p cheetah-hls-module` 干净、`cargo test -p cheetah-hls-module` 35 passed。
 
-### F-04【进行中 Stage 1｜高】webrtc module 大量直用 tokio 原语
+### F-04【已修复｜高】webrtc module 大量直用 tokio 原语
 - 证据（本轮精确统计，区分 `#[cfg(test)]`）：`cheetah-webrtc-module` **生产代码 78 处**、测试 53 处
   使用 tokio 原语。生产用法分两类：可机械替换(A，通道/锁/select/计时/spawn)与需结构性下沉(B，
   WebSocket/TLS/socket）。逐文件明细与类别见 `dev-docs/F04_WebRTC_Detokio_Plan.md` §1。
@@ -170,13 +171,13 @@
   `src/ome_ws.rs`/`src/p2p/{ws,server}.rs`（`tokio-tungstenite`）、`src/p2p/{bridge,hub,supervisor}.rs`。
 - 依据：`AGENTS.md` §6 + `SystemArchitecture.md` §5（module 必须 runtime 中立，多路等待禁止
   `tokio::select!`）。
-- 影响：这是当前最集中的架构违规，且 WebRTC 亦未在 SystemArchitecture 记录（F-07）。
-- 处置：立项分阶段执行，路线图见 `dev-docs/F04_WebRTC_Detokio_Plan.md`（Stage 1–6）。关键阻塞：
-  (1) 计时/spawn 需先把 `RuntimeApi` 句柄注入调用链；(2) `http.rs` 的 `tokio::sync::broadcast` 无
-  futures 等价物需选型；(3) WebSocket/TLS/`TcpListener` 必须迁入 `cheetah-webrtc-driver-tokio`。
-- **Stage 1（已完成）**：机械替换配方打样——`p2p/transport.rs`（仅测试消费的内存 transport）
-  由 `tokio::sync::{mpsc,Mutex}` 改为 `futures::channel::mpsc` + `futures::lock::Mutex`；
-  `cargo clippy` 干净、`cargo test -p cheetah-webrtc-module` 318+ 用例全绿。
+- 修复：按 `dev-docs/F04_WebRTC_Detokio_Plan.md` 分阶段落地 Stage 1–6：
+  - **Stage 2**：沿 `WebRtc` module → bridge/job/http 调用链注入 `Arc<dyn RuntimeApi>`，为后续计时/spawn 替换提供句柄。
+  - **Stage 3**：A 类机械替换——`tokio::sync::mpsc/oneshot` → `futures::channel::*`；跨 await 的 `tokio::sync::Mutex` → `futures::lock::Mutex`；`tokio::select!` → `futures::select_biased!`；`tokio::time::{sleep,interval,timeout}` → `RuntimeApi::sleep_until` 组合；`tokio::spawn` → `RuntimeApi::spawn`。覆盖 `lifecycle_dispatcher.rs`、`p2p/bridge.rs`、`bridge.rs`、`p2p/hub.rs`、`p2p/supervisor.rs`、`jobs.rs`、`module.rs`。
+  - **Stage 4**：`http.rs` 移除死 `broadcast` 占位；`WebRtcHttpService::wait_answer` 与 OME WS offer 等待改为 `RuntimeApi::sleep_until` + `futures::select_biased!`。
+  - **Stage 5**：B 类结构性下沉——`driver-tokio` 新增 `WsConnection`/`WsConnector`/`WsServerListener` 中立 WebSocket 抽象，裸 HTTP/1.1+TLS 客户端迁入 driver；`module` 侧改为 `bind_ws_server`/`Box<dyn WsConnection>`，消息编解码与 SSRF/URL 策略保留在 module；`module/Cargo.toml` 从 `[dependencies]` 移除 `tokio`/`tokio-rustls`/`tokio-tungstenite`/`rustls`/`rustls-pemfile`/`webpki-roots`。
+  - **Stage 6**：扩展 `dev-scripts/check_runtime_boundaries.sh`，将 `cheetah-webrtc-module/src` 纳入公共 API 中立扫描，`module/Cargo.toml` 加入 `[dependencies]` 禁 tokio 清单。
+- 验证：`cargo fmt/clippy/test -p cheetah-webrtc-module` 全绿；`cargo build -p cheetah-server` 全协议 feature 构建通过；`bash dev-scripts/check_runtime_boundaries.sh` 通过；`module/Cargo.toml` 生产依赖已无 tokio。
 
 ### F-05【已修复｜中】http-flv module 依赖 rtmp-core 复用 FLV 封装
 - 证据（修复前）：`crates/protocols/http-flv/{core,module}/Cargo.toml` 均有 `cheetah-rtmp-core` 生产依赖；
@@ -248,24 +249,26 @@
 1. F-01 修复 `check_runtime_boundaries.sh`（恢复守卫有效性）。
 2. F-02 修复 hls module runtime 中立性违规 + 清理无用 tokio 依赖。
 3. F-03 工具链升级至满足 `is_multiple_of` 的 stable（1.96），全量构建通过。
-4. F-10 统一 `cheetah-engine` tokio 口径：AGENTS.md / SystemArchitecture.md §5 显式纳入 engine，扩展边界守卫并校验公共 API 与 [dependencies] 声明。
+4. F-04 webrtc module 去 tokio 化：分阶段 Stage 1–6 落地，A 类原语机械替换 + B 类 WS/TLS/socket 下沉到 driver。
+5. F-05 将 FLV 封装收敛到 `cheetah-codec`，解除 `http-flv` 对 `rtmp-core` 的生产依赖。
+6. F-06 mp4 桥接 runtime 中立化：`VodEventStream` + `RuntimeApi` 注入，module 生产代码零 tokio。
+7. F-07 补齐 HLS/HTTP-TS/MP4 VOD/SRT 的 Reference Mapping 与能力快照。
+8. F-08 补齐 ts 与 http-flv 的 property-tests。
+9. F-09 观测性基线：三层 repair 分类 + 阈值 + 运行报告 schema 与 `MetricsRegistry` 暴露。
+10. F-10 统一 `cheetah-engine` tokio 口径：AGENTS.md / SystemArchitecture.md §5 显式纳入 engine，扩展边界守卫并校验公共 API 与 [dependencies] 声明。
 
 **第二轮（P2 深入 + 各协议测试/依赖复核）结论：**
 - P2 系统层深入核对全部通过：单发布者租约（CAS + Conflict）、热路径 `try_send` 非阻塞派发与三种
   背压策略下的慢订阅者隔离、RingBuffer/订阅队列有界、module 重启 `Conflict` 语义、config 分层加载与类型
   解析。均记为通过并附 `文件:行`。
 - 新增/细化发现：F-06（mp4 module `tokio::spawn` + driver 公共 API 泄漏 tokio 通道）、F-08（ts 与
-  http-flv 均缺属性测试）、F-10（engine 内部直用 tokio 与 §5 允许清单冲突）。本轮均为需设计决策/跨 crate
-  改造的项，按整洁最小改动原则未强行落地，列入后续立项。
+  http-flv 均缺属性测试）、F-10（engine 内部直用 tokio 与 §5 允许清单冲突）。上述三项均已在第三轮通过
+  F-06/F-08/F-10 对应 PR 闭环落地。
 
 **建议后续立项（按优先级）：**
-- F-04 webrtc module runtime 中立化（工作量最大，已立项分阶段推进，见 `F04_WebRTC_Detokio_Plan.md`；Stage 1 已完成）。
-- F-03 固化：新增 `rust-toolchain.toml`（blueprint 安装新 stable 已提交）。
-- ~~F-05 FLV 封装收敛到 codec，解除 http-flv→rtmp-core 依赖。~~（已完成）
-- F-06 mp4 桥接：SDK 事件流抽象 + `VodApi` 注入 `RuntimeApi`，driver 公共 API 去 tokio 化。
-- F-07 / F-09 文档与实现对齐（补协议映射 / 观测性章节标注）。
-- ~~F-08 补 ts、http-flv 属性测试。~~（已完成）
-- ~~F-10 §5 允许清单口径统一（建议显式纳入 engine）并扩展边界守卫覆盖。~~（已完成）
+- F-03 及 F-04–F-10 均已闭环；P0–P3 审查项与修复已同步到 `ProjectReviewPlan.md`。
+- 当前高/中风险项清零；剩余未解问题是 P3 的 http-flv fixture manifest.tsv 缺失（预存失败）与 webrtc-core 依赖 `vendor-ref/simple-media-server` 外部 fixtures 缺失。
+- 继续按 `ProjectReviewPlan.md` 推进 P4 跨协议一致性、P5 文档同步与收尾。
 
 **复现命令：**
 ```bash
