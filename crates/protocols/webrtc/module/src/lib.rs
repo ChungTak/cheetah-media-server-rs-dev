@@ -20,7 +20,6 @@ pub mod codec_policy;
 pub mod compat;
 pub mod config;
 pub mod http;
-pub mod http_client;
 pub mod jobs;
 pub mod metrics;
 pub mod module;
@@ -30,6 +29,12 @@ pub mod p2p;
 pub mod p2p_jobs;
 pub mod play_disconnect;
 pub mod session;
+
+/// Re-export of the WHIP/WHEP HTTP client, which now lives in the
+/// driver layer (`cheetah-webrtc-driver-tokio`) since it owns TCP/TLS
+/// I/O. Kept at `crate::http_client` so callers and fuzz harnesses that
+/// reference `cheetah_webrtc_module::http_client` keep resolving.
+pub use cheetah_webrtc_driver_tokio::http_client;
 
 pub use bridge::WebRtcPlayBootstrapStats;
 pub use compat::{

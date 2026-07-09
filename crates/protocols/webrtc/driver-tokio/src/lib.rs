@@ -25,6 +25,7 @@
 
 mod config;
 mod directory;
+pub mod http_client;
 mod io_front;
 mod migration;
 mod route;
@@ -33,11 +34,15 @@ mod sdp;
 mod shard;
 mod stun;
 mod tcp;
+mod ws;
 
 pub use config::{UdpPortRange, WebRtcDriverConfig};
 pub use directory::{
     RouteDirectory, RouteDirectoryConfig, RouteDirectoryError, RouteDirectoryEvictionStats,
     RouteDirectoryStats, ShardCandidateTable, ShardId, WebRtcShardCandidateStats, WebRtcShardStats,
+};
+pub use http_client::{
+    HttpClientError, HttpClientRequest, HttpClientResponse, HttpMethod, WhipWhepHttpClient,
 };
 pub use migration::{RouteCandidateDiff, WebRtcRouteUpdate};
 pub use runner::{
@@ -52,6 +57,10 @@ pub use shard::{
     StickyHashShardStrategy, StickyOverRebalanceStrategy,
 };
 pub use tcp::{encode_frame as tcp_encode_frame, Tcp4571Decoder, Tcp4571Error};
+pub use ws::{
+    bind_ws_server, TokioWsConnection, TokioWsConnector, WsConnection, WsConnectionHandler,
+    WsConnector, WsError, WsFrame, WsInbound, WsServerConfig, WsServerError, WsServerListener,
+};
 
 pub use cheetah_webrtc_core::{
     WebRtcCloseReason, WebRtcCoreConfig, WebRtcCoreEvent, WebRtcSessionId, WebRtcSessionRole,

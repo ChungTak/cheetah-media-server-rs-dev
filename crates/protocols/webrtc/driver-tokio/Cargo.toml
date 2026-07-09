@@ -5,13 +5,19 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+async-trait.workspace = true
 bytes.workspace = true
 cheetah-webrtc-core = { path = "../core" }
 cheetah-runtime-api = { path = "../../../runtime/cheetah-runtime-api" }
+futures.workspace = true
 parking_lot.workspace = true
+rustls = { workspace = true }
 thiserror.workspace = true
-tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["io-util", "net", "rt", "sync", "time"] }
+tokio-rustls = { workspace = true }
+tokio-tungstenite = { workspace = true }
 tracing.workspace = true
+webpki-roots = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

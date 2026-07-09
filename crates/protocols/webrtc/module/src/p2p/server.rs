@@ -19,8 +19,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use cheetah_runtime_api::CancellationToken;
+use cheetah_webrtc_driver_tokio::{
+    WsConnectionHandler, WsInbound, WsServerConfig, WsServerError, WsServerListener,
+};
 use thiserror::Error;
-use tokio::net::TcpListener;
 
 use super::message::P2pDecoderConfig;
 use super::ws::WebSocketP2pTransport;
@@ -56,6 +58,15 @@ pub enum SignalingServerError {
     Accept(String),
 }
 
+impl From<WsServerError> for SignalingServerError {
+    fn from(err: WsServerError) -> Self {
+        match err {
+            WsServerError::Bind(msg) => SignalingServerError::Bind(msg),
+            WsServerError::Accept(msg) => SignalingServerError::Accept(msg),
+        }
+    }
+}
+
 /// Information surfaced to the connection handler.
 #[derive(Debug, Clone)]
 pub struct InboundConnection {
@@ -71,95 +82,36 @@ pub type ConnectionHandler = Arc<
         + Sync,
 >;
 
-/// Run the inbound WebSocket signaling server. Returns when the
-/// listener errors or `cancel` fires.
+/// Run the inbound WebSocket signaling server on a driver-bound
+/// listener. Returns when the listener errors or `cancel` fires.
 ///
-/// The server accepts incoming TCP connections, performs a
-/// `tokio-tungstenite` handshake (with timeout), and hands the
-/// resulting transport to `handler`. Each handler runs on its own
-/// task; the server immediately returns to accepting more.
+/// The driver accepts incoming TCP connections and performs the
+/// WebSocket handshake (with timeout); this adapter wraps each upgraded
+/// connection into a [`WebSocketP2pTransport`] and hands it to
+/// `handler`. Each handler runs on its own task.
 pub async fn run_server(
-    listener: TcpListener,
+    listener: WsServerListener,
     config: SignalingServerConfig,
     handler: ConnectionHandler,
     cancel: CancellationToken,
 ) -> Result<(), SignalingServerError> {
-    let connection_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    loop {
-        if cancel.is_cancelled() {
-            return Ok(());
-        }
-
-        let (stream, remote_addr) = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Ok(()),
-            res = listener.accept() => match res {
-                Ok(pair) => pair,
-                Err(err) => return Err(SignalingServerError::Accept(err.to_string())),
-            }
-        };
-
-        // Backpressure: drop the new connection if we're at capacity.
-        // The peer will see a TCP RST and should retry with backoff.
-        if connection_count.load(std::sync::atomic::Ordering::Acquire) >= config.max_connections {
-            drop(stream);
-            continue;
-        }
-        connection_count.fetch_add(1, std::sync::atomic::Ordering::Release);
-
+    let decoder = config.decoder;
+    let ws_handler: WsConnectionHandler = Arc::new(move |inbound: WsInbound, connection| {
         let handler = handler.clone();
-        let connection_count_for_task = connection_count.clone();
-        let accept_timeout = config.accept_timeout;
-        let decoder = config.decoder;
-        tokio::spawn(async move {
-            // Defer the connection-count decrement until the task
-            // exits so capacity is freed even if the handshake fails.
-            let _guard = ConnectionGuard::new(connection_count_for_task);
-
-            let upgrade =
-                match tokio::time::timeout(accept_timeout, tokio_tungstenite::accept_async(stream))
-                    .await
-                {
-                    Ok(Ok(ws)) => ws,
-                    Ok(Err(err)) => {
-                        tracing::debug!(
-                            target: "webrtc::p2p::server",
-                            "ws handshake failed for {remote_addr}: {err}"
-                        );
-                        return;
-                    }
-                    Err(_) => {
-                        tracing::debug!(
-                            target: "webrtc::p2p::server",
-                            "ws handshake for {remote_addr} timed out after {accept_timeout:?}"
-                        );
-                        return;
-                    }
-                };
-
-            let transport = WebSocketP2pTransport::from_server_stream(upgrade, decoder);
-            let info = InboundConnection { remote_addr };
+        Box::pin(async move {
+            let transport = WebSocketP2pTransport::new(connection, decoder);
+            let info = InboundConnection {
+                remote_addr: inbound.remote_addr,
+            };
             handler(info, transport).await;
-        });
-    }
-}
-
-/// Drop-guard that decrements the connection counter on exit.
-struct ConnectionGuard {
-    counter: Arc<std::sync::atomic::AtomicUsize>,
-}
-
-impl ConnectionGuard {
-    fn new(counter: Arc<std::sync::atomic::AtomicUsize>) -> Self {
-        Self { counter }
-    }
-}
-
-impl Drop for ConnectionGuard {
-    fn drop(&mut self) {
-        self.counter
-            .fetch_sub(1, std::sync::atomic::Ordering::Release);
-    }
+        })
+    });
+    let ws_config = WsServerConfig {
+        max_connections: config.max_connections,
+        accept_timeout: config.accept_timeout,
+    };
+    listener.serve(ws_config, ws_handler, cancel).await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -172,8 +124,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn server_accepts_websocket_and_passes_transport_to_handler() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let bound = listener.local_addr().unwrap();
+        let (listener, bound) = cheetah_webrtc_driver_tokio::bind_ws_server("127.0.0.1:0")
+            .await
+            .unwrap();
 
         let (received_tx, received_rx) = tokio::sync::oneshot::channel::<P2pMessage>();
         let received_tx = std::sync::Arc::new(parking_lot::Mutex::new(Some(received_tx)));
@@ -238,8 +191,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn server_drops_when_capacity_exceeded() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let bound = listener.local_addr().unwrap();
+        let (listener, bound) = cheetah_webrtc_driver_tokio::bind_ws_server("127.0.0.1:0")
+            .await
+            .unwrap();
 
         // Handler holds the connection open until the test cancels.
         let parking_cancel = CancellationToken::new();

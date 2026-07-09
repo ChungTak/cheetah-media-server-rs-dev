@@ -122,7 +122,7 @@ async fn udp_port_range_skips_occupied_port() {
         "driver must not bind to the occupied port"
     );
     assert!(
-        bound_port >= 19101 && bound_port <= 19105,
+        (19101..=19105).contains(&bound_port),
         "bound port {bound_port} must be in [19101, 19105]"
     );
 

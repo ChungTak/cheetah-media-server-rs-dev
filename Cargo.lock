@@ -1092,18 +1092,24 @@ dependencies = [
 name = "cheetah-webrtc-driver-tokio"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "bytes",
  "cheetah-runtime-api",
  "cheetah-runtime-tokio",
  "cheetah-webrtc-core",
+ "futures",
  "hmac",
  "libc",
  "parking_lot",
+ "rustls",
  "sha1",
  "str0m",
  "thiserror",
  "tokio",
+ "tokio-rustls",
+ "tokio-tungstenite",
  "tracing",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -1123,16 +1129,12 @@ dependencies = [
  "cheetah-webrtc-driver-tokio",
  "futures",
  "parking_lot",
- "rustls",
- "rustls-pemfile",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
- "tokio-rustls",
  "tokio-tungstenite",
  "tracing",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]
