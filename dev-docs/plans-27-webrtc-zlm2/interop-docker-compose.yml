@@ -1,0 +1,170 @@
+# WebRTC interop one-shot lab.
+#
+# Phase 06 (`dev-docs/plans-27-webrtc-zlm2/phase-06-external-interop-infra.md`).
+#
+# Brings up the entities the cheetah interop suite expects, on a
+# host-local network. The compose file is documentation-grade — it
+# pins images so behaviour is reproducible and lists the env vars
+# that `cargo test --ignored` consumes.
+#
+# Quick start (linux + docker compose v2):
+#
+#   docker compose -f dev-docs/plans-27-webrtc-zlm2/interop-docker-compose.yml up -d
+#   export WEBRTC_INTEROP_ZLM_BASE_URL='http://127.0.0.1'
+#   export WEBRTC_INTEROP_ZLM_WHIP_URL='http://127.0.0.1/index/api/webrtc?app=live&stream=sample&type=push'
+#   export WEBRTC_INTEROP_ZLM_WHEP_URL='http://127.0.0.1/index/api/webrtc?app=live&stream=sample&type=play'
+#   export WEBRTC_INTEROP_ZLM_SIGNALING_URL='ws://127.0.0.1:8800'
+#   cargo test -p cheetah-webrtc-module --test interop -- --ignored
+#   docker compose -f dev-docs/plans-27-webrtc-zlm2/interop-docker-compose.yml down
+#
+# The full env contract lives in `tests/interop_harness.rs`; the
+# command list above sets only the variables this compose file
+# actually backs.
+
+name: cheetah-webrtc-interop
+
+services:
+  zlmediakit:
+    # Pin to a tagged image instead of `master` so reruns are
+    # reproducible. Bump explicitly when validating against newer
+    # ZLM behaviour.
+    image: zlmediakit/zlmediakit:v8.0
+    container_name: cheetah-zlm
+    network_mode: host
+    environment:
+      MK_OPT: "-DRTC_TLS=0 -DRTC_TCP=1"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "curl -fsS http://127.0.0.1/index/api/getServerConfig >/dev/null || exit 1"
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: on-failure
+
+  # Optional Pion-based WHIP/WHEP helper. Disabled by default; flip
+  # the profile on with `--profile pion` to bring it up.
+  #
+  #   docker compose -f .../interop-docker-compose.yml --profile pion up -d
+  pion-helper:
+    profiles:
+      - pion
+    build:
+      # Build the helper image from sources alongside this compose
+      # file so the source is auditable and tied to the cheetah
+      # version. See `interop-pion-helper/README.md` for details.
+      context: ./interop-pion-helper
+      dockerfile: Dockerfile
+    image: cheetah-pion-helper:dev
+    container_name: cheetah-pion
+    network_mode: host
+    environment:
+      WEBRTC_INTEROP_ARTIFACT_DIR: /artifacts
+      WHIP_URL: ${WEBRTC_INTEROP_ZLM_WHIP_URL:-http://127.0.0.1/index/api/webrtc?app=live&stream=sample&type=push}
+      WHEP_URL: ${WEBRTC_INTEROP_ZLM_WHEP_URL:-http://127.0.0.1/index/api/webrtc?app=live&stream=sample&type=play}
+    volumes:
+      - ./interop-pion-helper/artifacts:/artifacts
+    depends_on:
+      zlmediakit:
+        condition: service_healthy
+    restart: on-failure
+
+  # Playwright runner. Mounts the cheetah test specs from
+  # `interop-playwright/` so iteration only requires editing the
+  # specs, not rebuilding the image.
+  #
+  #   docker compose -f .../interop-docker-compose.yml --profile browser up -d
+  #   docker compose ... exec playwright npx playwright test
+  playwright:
+    profiles:
+      - browser
+    image: mcr.microsoft.com/playwright:v1.43.0-jammy
+    container_name: cheetah-playwright
+    network_mode: host
+    working_dir: /work
+    environment:
+      WEBRTC_INTEROP_BROWSER: "1"
+      WEBRTC_INTEROP_ARTIFACT_DIR: /artifacts
+      WEBRTC_INTEROP_ZLM_WHIP_URL: ${WEBRTC_INTEROP_ZLM_WHIP_URL:-}
+      WEBRTC_INTEROP_ZLM_WHEP_URL: ${WEBRTC_INTEROP_ZLM_WHEP_URL:-}
+    volumes:
+      - ./interop-playwright:/work
+      - ./interop-playwright/artifacts:/artifacts
+    command: ["sleep", "infinity"]
+    restart: "no"
+
+  # GStreamer WHIP/WHEP helper. Runs `gst-launch-1.0` with the
+  # `whipclientsink` / `whepclientsrc` plugins. Each invocation
+  # produces a `peer.log` artifact so cheetah can correlate driver
+  # diagnostics with peer-side `GST_DEBUG` output.
+  #
+  #   docker compose -f .../interop-docker-compose.yml --profile gstreamer up -d
+  #   docker compose ... exec gstreamer-helper cheetah-gst-helper whep
+  gstreamer-helper:
+    profiles:
+      - gstreamer
+    build:
+      context: ./interop-gstreamer-helper
+      dockerfile: Dockerfile
+    image: cheetah-gst-helper:dev
+    container_name: cheetah-gst
+    network_mode: host
+    environment:
+      WEBRTC_INTEROP_ARTIFACT_DIR: /artifacts
+      WEBRTC_INTEROP_ZLM_WHIP_URL: ${WEBRTC_INTEROP_ZLM_WHIP_URL:-}
+      WEBRTC_INTEROP_ZLM_WHEP_URL: ${WEBRTC_INTEROP_ZLM_WHEP_URL:-}
+      WEBRTC_INTEROP_TIMEOUT_MS: ${WEBRTC_INTEROP_TIMEOUT_MS:-15000}
+    volumes:
+      - ./interop-gstreamer-helper/artifacts:/artifacts
+    depends_on:
+      zlmediakit:
+        condition: service_healthy
+    command: ["sleep", "infinity"]
+    restart: "no"
+
+  # Janus signaling smoke helper. Drives the minimal create /
+  # attach / message handshake against a Janus REST API and writes
+  # responses to the artifact directory.
+  #
+  #   docker compose -f .../interop-docker-compose.yml --profile janus up -d
+  #   docker compose ... exec janus-helper janus-smoke
+  janus-helper:
+    profiles:
+      - janus
+    build:
+      context: ./interop-janus-helper
+      dockerfile: Dockerfile
+    image: cheetah-janus-helper:dev
+    container_name: cheetah-janus
+    network_mode: host
+    environment:
+      WEBRTC_INTEROP_ARTIFACT_DIR: /artifacts
+      WEBRTC_INTEROP_JANUS_URL: ${WEBRTC_INTEROP_JANUS_URL:-http://127.0.0.1:8088/janus}
+    volumes:
+      - ./interop-janus-helper/artifacts:/artifacts
+    restart: "no"
+
+  # cheetah-server itself. Built from the workspace root so cargo
+  # path dependencies resolve. Brings cheetah's WebRTC stack into
+  # the same host network as ZLM / Pion / GStreamer / Janus so
+  # ignored interop tests can run end-to-end against a real
+  # cheetah instance.
+  #
+  #   docker compose -f .../interop-docker-compose.yml --profile cheetah up -d
+  cheetah-server:
+    profiles:
+      - cheetah
+    build:
+      # The cargo workspace lives at the repo root; we point the
+      # build context up two levels so path dependencies resolve.
+      context: ../..
+      dockerfile: dev-docs/plans-27-webrtc-zlm2/interop-cheetah-server/Dockerfile
+    image: cheetah-server:interop
+    container_name: cheetah-server
+    network_mode: host
+    environment:
+      RUST_LOG: ${CHEETAH_RUST_LOG:-info,cheetah=debug}
+      CHEETAH_CONFIG: /etc/cheetah/config.yaml
+    volumes:
+      - ./interop-cheetah-server/interop.yaml:/etc/cheetah/config.yaml:ro
+    restart: "no"

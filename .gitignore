@@ -2,9 +2,7 @@
 target
 build/
 test_media_files
-dev-*
 vendor-ref
-dev-docs/*
 !dev-scripts/
 dev-scripts/*
 !dev-scripts/check_rtmp_fuzz_smoke.sh

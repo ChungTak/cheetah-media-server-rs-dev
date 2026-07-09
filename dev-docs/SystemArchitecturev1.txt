@@ -1,0 +1,532 @@
+
+
+## 一、核心架构：六层分层设计
+
+采用严格的六层分层架构，每一层都有清晰的职责边界和依赖方向：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    External Clients                         │
+│   Browser · Mobile · FFmpeg/OBS · IoT · GB28181 · Admin     │
+├─────────────────────────────────────────────────────────────┤
+│                  Infrastructure Layer                       │
+│   HTTP Server · gRPC · Database · Config · Event System     │
+│   FFmpeg · Network/QUIC · User System · Admin UI            │
+├─────────────────────────────────────────────────────────────┤
+│                Engine Built-in Services                     │
+│   StreamManager · PluginManager · RoomService               │
+│   TaskSystem · CoreAdapters                                 │
+├─────────────────────────────────────────────────────────────┤
+│             Feature Plugin Crates (26+)                     │
+│   RTMP · RTSP · HLS · FLV · WebRTC · SRT · GB28181          │
+│   WebTransport · MP4 · Snap · Transcode · Cluster · ...     │
+├─────────────────────────────────────────────────────────────┤
+│              cheetah-sdk (Plugin SDK)                      │
+│   Plugin trait · EngineContext · HTTP SDK · EventBus        │
+│   ServiceRegistry · DatabaseApi · ProxyManager              │
+├─────────────────────────────────────────────────────────────┤
+│             cheetah-codec (Foundation)                     │
+│   AVFrame · NALU · RTP · PS · Audio/Video Codecs            │
+│   Trait Interfaces · Zero internal deps                     │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**依赖方向单向向下**：上层依赖下层，下层不感知上层。`cheetah-codec` 是整个系统的基石，零内部依赖；`cheetah-sdk` 定义插件契约；26+ 个独立插件 crate 通过 SDK 与引擎交互。这种设计确保了：
+
+- **编译隔离**：修改一个插件不会触发全量重编译
+- **独立测试**：每个 crate 可以独立编译和测试
+- **灵活组合**：通过 Feature Flag 按需启用插件
+
+* * *
+
+## 二、核心数据引擎：无锁 RingBuffer
+
+流媒体服务器的核心挑战是**一份数据，千人共享**。传统方案要么为每个订阅者 clone 一份数据（O(N) 内存），要么通过 channel 逐一转发（调度开销随 N 线性增长）。cheetah  给出了一个更优雅的答案——**无锁环形缓冲区**。
+
+### 2.1 SPMC 无锁设计
+
+```
+pub struct RingBuffer {
+    slots: Box<[RingSlot]>,           // 环形槽位数组
+    write_pos: AtomicUsize,           // 原子写入位置
+    idr_list: ArcSwap<Vec<IDRNode>>,  // IDR 关键帧索引（无锁读）
+    idr_write_lock: Mutex<()>,        // IDR 写入序列化（COW 模式）
+}
+
+pub struct RingSlot {
+    frame: ArcSwapOption<AVFrame>,    // ArcSwap 无锁原子交换
+    version: AtomicU64,               // 版本号检测覆写
+}
+```
+
+**关键设计决策**：
+
+特性
+
+实现方式
+
+效果
+
+**写入永不阻塞**`AtomicUsize::fetch_add`
+
+ 推进写位置
+
+发布者写入延迟 \~100ns
+
+**读取零拷贝**`ArcSwapOption::load_full`
+
+ 返回 `Arc<AVFrame>`
+
+读取延迟 \~50ns，仅增加引用计数
+
+**版本号验证**
+
+每个槽位维护 `AtomicU64` version
+
+检测帧是否被覆写，保证数据一致性
+
+**IDR 追踪**`ArcSwap<Vec<IDRNode>>`
+
+ + COW 模式
+
+读完全无锁，新订阅者 O(1) 定位最新关键帧
+
+### 2.2 为什么不用 Channel？
+
+| 对比维度     | 传统 Channel 模式   | cheetah RingBuffer |
+|----------|-----------------|---------------------|
+| N 个订阅者内存 | O(N)（每人一份拷贝）    | O(1)（`Arc` 共享同一份）   |
+| 写入开销     | N 次 send        | 1 次原子写入             |
+| 锁竞争      | 高（多 channel 争抢） | 无（原子操作）             |
+| 时间回溯     | 不支持             | 支持（从任意 IDR 开始）      |
+
+当一个直播间有 10,000 个观众时，传统方案需要为每一帧数据执行 10,000 次拷贝和发送操作。而 cheetah 只需要写入一次，所有观众共享同一份 `Arc<AVFrame>`。
+
+* * *
+
+## 三、Dispatcher：一次读取，万人共享
+
+RingBuffer 解决了存储层的零拷贝，但如何将帧高效地通知到所有订阅者？这就是 **Dispatcher** 的工作。
+
+### 3.1 单流微观分发
+
+```
+Publisher → RingBuffer → Dispatcher (单次读取)
+                              │
+           ┌──────┬───────────┼───────────┬──────┐
+        Queue 1  Queue 2  Queue 3  ...  Queue N
+        (bounded)(bounded)(bounded)     (bounded)
+           │        │        │             │
+        Writer 1 Writer 2 Writer 3     Writer N
+        (RTMP)   (WebRTC) (HLS)        (FLV)
+```
+
+Dispatcher 从 RingBuffer **只读取帧 1 次**，然后通过 `Arc::clone`（仅增加引用计数，\~2ns）将帧分发到每个订阅者的独立 bounded channel。
+
+**背压控制**：每个订阅者拥有独立的 bounded channel（默认 150 帧 ≈ 1.8 秒缓冲）。当某个订阅者网络拥塞导致队列满时，`try_send` 非阻塞丢帧——**一个慢订阅者不会拖累其他人**。
+
+### 3.2 无锁订阅者管理
+
+```
+pub struct Dispatcher {
+    subscribers: ArcSwap<Vec<DispatchSubscriber>>,  // COW 无锁读
+}
+
+// 分发时：无锁原子加载
+pub fn dispatch_video(&self, frame: Arc<AVFrame>) {
+    let subs = self.subscribers.load();  // 原子加载，无锁
+    for sub in subs.iter() {
+        sub.try_send(DispatchFrame::Video(frame.clone()));
+    }
+}
+
+// 添加订阅者：COW 模式，不影响正在进行的分发
+pub fn add_subscriber(&self, ...) {
+    self.subscribers.rcu(|old| {
+        let mut new = (**old).clone();
+        new.push(subscriber);
+        new
+    });
+}
+```
+
+在 1000 个订阅者 × 60fps 的高吞吐场景下，分发操作完全无锁：读取订阅者列表是原子 load，添加/移除订阅者通过 COW（Clone-on-Write）模式在后台完成，不影响正在进行的分发循环。
+
+### 3.3 DispatcherPool：海量流分组
+
+当流数量超过 100 路时，为每个流分配一个独立 Task 会产生大量上下文切换开销。**DispatcherPool** 使用固定 N 个 Worker 通过一致性哈希处理 M 个流：
+
+| 配置                      | 模式         | Task 数量   | 适用场景                  |
+|-------------------------|------------|-----------|-----------------------|
+| `dispatcher_workers: 0` | Per-Stream | M 个（每流一个） | 流数量少 (&lt;100)，延迟最低   |
+| `dispatcher_workers: 8` | Pool       | 8 个（固定）   | 流数量多 (&gt;100)，资源开销可控 |
+
+* * *
+
+## 四、AVFrame：多格式懒转换
+
+流媒体协议间最大的差异之一是编码封装格式：RTMP/FLV 使用 AVCC，HLS/RTP 使用 Annex-B。传统做法是在协议切换时实时转换，这在高并发下会成为性能瓶颈。
+
+cheetah  的 `AVFrame` 使用 **OnceLock 懒转换**策略：
+
+```
+pub struct FrameData {
+    source: SourceFormat,              // 源格式标记
+    codec_type: VideoCodecType,        // H264/H265
+    raw: OnceLock<Nalus>,              // 类型化 NAL 单元（中间表示）
+    avcc: OnceLock<Bytes>,             // AVCC 格式（RTMP/FLV/MP4）
+    annexb: OnceLock<Bytes>,           // Annex-B 格式（HLS/TS/RTP）
+}
+```
+
+**设计精髓**：
+
+- **首次访问时转换**：`OnceLock` 保证线程安全的一次性初始化，多线程竞争时只有一个线程执行转换
+- **后续访问零开销**：初始化完成后，`OnceLock::get()` 就是一次普通的指针解引用
+- **按需转换**：如果一个 RTMP 推流只被 RTMP 拉流消费，AVCC → Annex-B 的转换永远不会发生
+
+这意味着当一个 RTMP 推流同时被 WebRTC（Annex-B）和 HTTP-FLV（AVCC）订阅者消费时，Annex-B 格式只在第一个 WebRTC 订阅者接入时转换一次，后续所有 WebRTC 订阅者直接使用缓存结果。
+
+* * *
+
+## 五、层级任务管理：从 goroutine 到 Task Tree
+
+Go 的 goroutine 虽然轻量，但缺乏结构化的父子关系和级联取消机制。cheetah  实现了一套借鉴 v5 gotask 设计的层级任务系统：
+
+```
+pub struct Task {
+    id: u64,
+    task_type: TaskType,        // Task / Job / Work / Channel
+    owner_type: String,         // "RTMPPuller", "TCPListener" 等
+    token: CancellationToken,   // 级联取消令牌
+    children: Mutex<HashMap<u64, Arc<Task>>>,
+    parent_id: Option<u64>,
+    level: u8,
+}
+```
+
+### 5.1 四种任务类型
+
+| 类型          | 行为           | 典型场景                      |
+|-------------|--------------|---------------------------|
+| **Task**    | 基础任务，独立运行    | 单次操作                      |
+| **Job**     | 所有子任务退出时自动停止 | 批处理任务                     |
+| **Work**    | 子任务退出后继续运行   | RTMP Server、StreamManager |
+| **Channel** | 用于通信的任务      | 数据管道                      |
+
+### 5.2 级联取消与调用链追踪
+
+```
+Server (Work)
+  └── StreamManager (Work)
+        ├── RTMPServer (Work)
+        │     └── TCPListener (Work)
+        │           └── RTMPConnection (Task)
+        │                 └── RTMPPublisher (Task)
+        └── Stream "live/room1" (Job)
+              ├── Dispatcher (Task)
+              └── Subscriber-RTMP (Task)
+```
+
+当 `RTMPServer` 被停止时，`CancellationToken` 的父子关系确保所有子任务（TCPListener → RTMPConnection → RTMPPublisher）自动级联取消。通过 `#[track_caller]` 记录每个任务的创建位置，构建完整的调用链（如 `"Server → StreamManager → RTMPPuller"`），极大地简化了生产环境的问题排查。
+
+* * *
+
+## 六、插件系统：26 个独立 Crate 的生态
+
+cheetah  的插件系统不是简单的接口抽象，而是一套完整的**控制反转（IoC）框架**：
+
+### 6.1 Plugin Trait：统一契约
+
+```
+#[async_trait]
+pub trait Plugin: Send + Sync {
+    fn info(&self) -> PluginInfo;
+    fn state(&self) -> PluginState;
+    async fn init(&mut self, manager: Arc<dyn StreamManagerApi>,
+                  config: Arc<dyn ConfigProvider>) -> Result<()>;
+    async fn start(&mut self, cancel: CancellationToken) -> Result<()>;
+    async fn stop(&mut self) -> Result<()>;
+    fn set_engine_context(&mut self, ctx: EngineContext);
+    fn http_routes(&self) -> Vec<HttpRoute>;
+}
+```
+
+### 6.2 EngineContext：能力注入
+
+```
+pub struct EngineContext {
+    pub publisher_api: Option<Arc<dyn PublisherApi>>,
+    pub subscriber_api: Option<Arc<dyn SubscriberApi>>,
+    pub stream_manager_api: Option<Arc<dyn StreamManagerApi>>,
+    pub service_registry: Option<Arc<dyn ServiceRegistry>>,
+    pub database_api: Option<Arc<dyn DatabaseApi>>,
+    // ... 10 个可选能力
+}
+```
+
+插件通过 `EngineContext` 获取核心能力，无需直接依赖引擎内部实现。这意味着：
+
+- **第三方开发者**只需依赖 `cheetah-sdk` 一个 crate 即可开发插件
+- **三种加载方式**：静态编译、动态库（.so/.dylib/.dll）、WASM（预留）
+
+### 6.3 协议生态全景
+
+| 类别        | 插件                                                              | 能力             |
+|-----------|-----------------------------------------------------------------|----------------|
+| **协议**    | RTMP · RTSP · HLS · FLV · WebRTC · SRT · GB28181 · WebTransport | 全协议推拉流         |
+| **录制/媒体** | MP4 · Snap · SEI · Mix · Transcode · Crypto                     | 录制/截图/混流/转码/加密 |
+| **房间扩展**  | Live · Meeting                                                  | 直播间/会议室        |
+| **设备**    | ONVIF · HomeKit · V4L2 · ALSA                                   | 设备发现/采集        |
+| **运维**    | Cluster · Debug · Report · LogRotate · Crontab                  | 集群/调试/监控       |
+
+每个插件都是独立的 Cargo crate，通过 Feature Flag 按需编译：
+
+```
+# 只启用需要的协议
+cargo build --release --features "rtmp,rtsp,webrtc,hls"
+
+# 全功能构建
+cargo build --release --features "rtmp,rtsp,flv,hls,webrtc,srt,gb28181"
+```
+
+* * *
+
+## 七、集群架构：基于 QUIC 的低延迟级联
+
+cheetah  的集群方案选择了 **QUIC 协议**作为节点间通信的基础，这不是一个随意的决定：
+
+```
+         ┌─────────────────────┐
+         │    Origin Cluster   │
+         │  ┌──────┐  ┌──────┐ │
+         │  │Node 1│◄►│Node 2│ │
+         │  └──┬───┘  └──┬───┘ │
+         └─────┼─────────┼─────┘
+               │  QUIC   │
+      ┌────────┼─────────┼────────┐
+      │        ▼         ▼        │
+      │  ┌─────────┐┌─────────┐   │
+      │  │ Edge  1 ││ Edge  2 │   │
+      │  └────┬────┘└────┬────┘   │
+      │       │          │        │
+      │    Clients    Clients     │
+      └───────────────────────────┘
+```
+
+**为什么选择 QUIC？**
+
+- **0-RTT 建连**：节点重连时几乎零延迟
+- **多路复用**：单条连接上并行传输多路流数据，避免队头阻塞
+- **内置加密**：TLS 1.3 开箱即用
+- **拥塞控制**：比 TCP 更适合音视频传输的拥塞算法
+
+* * *
+
+## 八、统一配置管理：五层配置覆盖
+
+生产环境的配置管理往往比开发时复杂得多。cheetah  提供了五层优先级的配置覆盖机制：
+
+```
+运行时 API 修改 (最高)
+    ↓
+数据库配置
+    ↓
+环境变量 (CHMS_ 前缀)
+    ↓
+YAML 配置文件
+    ↓
+插件默认值 (最低)
+```
+
+支持通过 RESTful API 动态修改配置并实时生效，支持 WebSocket 推送配置变更通知，支持 SQLite/MySQL/PostgreSQL 持久化。配置宏 `#[derive(ConfigSchema)]` 自动生成配置的序列化/反序列化和校验逻辑，开发者无需手写样板代码。
+
+* * *
+
+## 九、性能指标
+
+| 指标              | 数值             | 说明                |
+|-----------------|----------------|-------------------|
+| RingBuffer 写入延迟 | **\~100ns/op** | 原子操作 + ArcSwap    |
+| RingBuffer 读取延迟 | **\~50ns/op**  | 仅 Arc 引用计数 +1     |
+| Dispatcher 分发延迟 | **&lt;1ms**    | 单次读取 + 非阻塞广播      |
+| 音频转码延迟          | **&lt;5ms**    | Opus ↔ AAC 原生转码   |
+| 单节点并发流          | **10,000+**    | DispatcherPool 模式 |
+| 单流并发订阅者         | **10,000+**    | 无锁分发 + 零拷贝        |
+
+* * *
+
+## 十、与同类方案对比
+
+维度
+
+cheetah 
+
+传统 Rust 方案
+
+**缓冲模型**
+
+无锁 RingBuffer (SPMC)
+
+mpsc channel
+
+**数据拷贝**
+
+零拷贝 (`Arc<AVFrame>` / `Bytes`)
+
+每个订阅者 clone
+
+**N 订阅者内存**
+
+O(1) 共享
+
+O(N) 独立拷贝
+
+**流存储**`DashMap`
+
+ 分片锁
+
+HashMap + 单线程 event\_loop
+
+**IDR 定位**
+
+维护索引，O(1) + 时间回溯
+
+无专门索引
+
+**丢帧策略**
+
+智能分级（优先丢 P/B 帧）
+
+无差别丢帧
+
+**时间戳**`TimestampTamer`
+
+ 归一化 + 不连续检测
+
+透传
+
+**协议解耦**
+
+core 不依赖 protocol，插件动态加载
+
+耦合较紧
+
+* * *
+
+## 十一、技术栈总览
+
+组件
+
+技术选型
+
+选择理由
+
+异步运行时
+
+**Tokio**
+
+Rust 生态最成熟的异步运行时
+
+无锁原语
+
+**arc-swap**
+
+RingBuffer IDR 列表、Dispatcher 订阅者列表的无锁读
+
+互斥锁
+
+**parking\_lot**
+
+比标准库 Mutex 更小更快
+
+并发 HashMap
+
+**DashMap**
+
+分片锁，多核友好
+
+零拷贝字节
+
+**Bytes**
+
+引用计数的字节缓冲，避免内存拷贝
+
+动态库加载
+
+**libloading**
+
+跨平台插件动态加载
+
+WebRTC
+
+**rustrtc**
+
+纯 Rust WebRTC 实现
+
+QUIC
+
+**quinn**
+
+集群节点间低延迟通信
+
+序列化
+
+**serde**
+
+ + **prost**
+
+JSON/YAML 配置 + Protobuf 高效传输
+
+日志
+
+**tracing**
+
+结构化日志，支持 span 追踪
+
+* * *
+
+## 十二、全栈交付
+
+cheetah  不仅仅是一个流媒体引擎，更是一套完整的流媒体解决方案：
+
+```
+┌───────────────────────────────────────────┐
+│  Rust 核心引擎                             │
+│  高性能流媒体处理 · 26+ 协议/功能插件         │
+├───────────────────────────────────────────┤
+│  React + TypeScript Admin 管理后台         │
+│  实时监控 · 流管理 · 插件配置 · 直播间管理     │
+├───────────────────────────────────────────┤
+│  TypeScript + Web Components SDK          │
+│  浏览器端推拉流 · WebRTC · 直播间 · 互动      │
+├───────────────────────────────────────────┤
+│  Astro 文档网站                            │
+│  概念 · 协议 · 插件 · API · 进阶指南         │
+└───────────────────────────────────────────┘
+```
+
+- **Admin 管理后台**：React + TypeScript + Vite 构建，提供实时流监控、插件管理、直播间管理、GB28181 设备管理等功能
+- **Web SDK**：基于 Web Components 的浏览器端 SDK，支持 WHIP 推流、WHEP 拉流、直播间互动
+- **文档网站**：基于 Astro 构建的完整文档，覆盖从入门到进阶的所有内容
+
+* * *
+
+## 结语
+
+cheetah  的每一个设计决策都围绕一个核心命题：**如何让一台服务器承载尽可能多的流和订阅者，同时保持尽可能低的延迟**。
+
+- 无锁 RingBuffer 让写入永不阻塞
+- Arc 零拷贝让万人共享一份数据
+- Dispatcher 单次读取消除重复 I/O
+- OnceLock 懒转换避免不必要的计算
+- 层级任务系统让复杂的生命周期管理变得清晰可控
+- 26+ 个独立插件 crate 让生态可以并行演进
+
+这不是一个「够用就好」的项目。这是一次对流媒体服务器应该是什么样子的认真回答。
+
+* * *
+
+*cheetah  — 高性能流媒体服务器引擎*
+
+*Rust + Tokio · 零拷贝 · 无锁 · 插件化 · 全协议*

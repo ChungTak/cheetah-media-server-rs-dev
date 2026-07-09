@@ -1,0 +1,73 @@
+# Phase 06 cheetah-server config tuned for the interop docker
+# compose lab. Differences from `config.example.yaml`:
+#   * WebRTC enabled by default (the lab's primary protocol)
+#   * UDP + TCP listeners both on (so RFC 4571 fallback can be tested)
+#   * Lower handshake timeout to surface failures fast
+#   * RTMP / RTSP also enabled because cross-protocol tests use them
+#
+# Mount this over /etc/cheetah/config.yaml in compose:
+#
+#   volumes:
+#     - ./interop-cheetah-server/interop.yaml:/etc/cheetah/config.yaml:ro
+
+global:
+  control:
+    listen: 0.0.0.0:8891
+
+modules:
+  rtmp:
+    enabled: true
+    listen: 0.0.0.0:1935
+    write_queue_capacity: 256
+    play_wait_source_timeout_ms: 15000
+    subscriber_queue_capacity: 256
+    subscriber_backpressure: DropUntilNextKeyframe
+    bootstrap_max_frames: 150
+    enable_add_mute: false
+    emit_play_metadata: true
+    publish_keepalive_ms: 0
+    paced_sender_ms: 0
+    direct_proxy: false
+    tls:
+      enabled: false
+    auth:
+      enabled: false
+    pull_jobs: []
+    push_jobs: []
+
+  webrtc:
+    enabled: true
+    listen_udp: "0.0.0.0:8000"
+    listen_tcp: "0.0.0.0:8088"
+    enable_udp: true
+    enable_tcp: true
+    public_ips: []
+    candidate_hostname: null
+    ice_lite: false
+    max_sessions: 1024
+    shard_count: 0
+    read_buffer_size: 65536
+    write_queue_capacity: 512
+    event_queue_capacity: 1024
+    session_idle_timeout_ms: 30000
+    tcp_idle_timeout_ms: 30000
+    handshake_timeout_ms: 5000
+    migration_route_ttl_ms: 30000
+    codec_profile: browser
+    prefer_video_codec: h264
+    prefer_audio_codec: opus
+    enable_simulcast: true
+    simulcast_default_policy: highest
+    enable_bwe: true
+    bwe_initial_bitrate_kbps: 1200
+    bwe_low_threshold_kbps: 600
+    bwe_high_threshold_kbps: 1800
+    rtx_cache_packets: 1024
+    rtx_cache_age_ms: 3000
+    video_reorder_packets: 30
+    audio_reorder_packets: 10
+    bootstrap_frame_count: 150
+    bootstrap_max_age_ms: 5000
+    wait_stream_timeout_ms: 3000
+    datachannel_max_message_bytes: 262144
+    server_label: "cheetah-interop-lab"

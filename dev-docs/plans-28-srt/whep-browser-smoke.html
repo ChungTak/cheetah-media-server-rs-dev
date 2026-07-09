@@ -1,0 +1,113 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Cheetah WHEP Smoke</title>
+</head>
+<body>
+<pre id="status">starting</pre>
+<video id="video" autoplay muted playsinline></video>
+<script>
+(async () => {
+  const status = document.getElementById("status");
+  const log = (msg) => {
+    status.textContent += "\n" + msg;
+    console.log(msg);
+  };
+  const timeout = (ms, label) => new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(label + " timeout")), ms);
+  });
+  const waitFor = (predicate, ms, label) => new Promise((resolve, reject) => {
+    const deadline = Date.now() + ms;
+    const tick = () => {
+      if (predicate()) {
+        resolve();
+        return;
+      }
+      if (Date.now() > deadline) {
+        reject(new Error(label + " timeout"));
+        return;
+      }
+      setTimeout(tick, 100);
+    };
+    tick();
+  });
+  const waitForInboundPackets = async (pc, ms) => {
+    const deadline = Date.now() + ms;
+    let inboundPackets = 0;
+    while (Date.now() <= deadline) {
+      const stats = await pc.getStats();
+      inboundPackets = 0;
+      stats.forEach((report) => {
+        if (report.type === "inbound-rtp") {
+          inboundPackets += report.packetsReceived || 0;
+        }
+      });
+      if (inboundPackets > 0) {
+        return inboundPackets;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return inboundPackets;
+  };
+
+  try {
+    const params = new URLSearchParams(location.search);
+    const streamName = params.get("stream") || "srt_webrtc_browser";
+    const endpoint = `http://127.0.0.1:8891/api/v1/rtc/whep?app=live&stream=${encodeURIComponent(streamName)}`;
+    const pc = new RTCPeerConnection({iceServers: []});
+    window.pc = pc;
+    let tracks = 0;
+    pc.oniceconnectionstatechange = () => log("ice=" + pc.iceConnectionState);
+    pc.onconnectionstatechange = () => log("pc=" + pc.connectionState);
+    pc.ontrack = (event) => {
+      tracks += 1;
+      document.getElementById("video").srcObject = event.streams[0];
+      log("track=" + event.track.kind);
+    };
+    pc.addTransceiver("video", {direction: "recvonly"});
+    pc.addTransceiver("audio", {direction: "recvonly"});
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await Promise.race([
+      waitFor(() => pc.iceGatheringState === "complete", 5000, "ice gathering"),
+      timeout(5500, "ice gathering")
+    ]).catch(() => log("ice gathering partial"));
+
+    log("local_candidates=" + (pc.localDescription.sdp.match(/^a=candidate:/gm) || []).length);
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {"content-type": "application/sdp"},
+      body: pc.localDescription.sdp
+    });
+    log("whep_status=" + response.status);
+    if (!response.ok) {
+      throw new Error("WHEP failed: " + response.status + " " + await response.text());
+    }
+    let answer = await response.text();
+    if (params.get("eoc") === "1") {
+      answer = answer.replace(/(a=ice-options:trickle\r?\n)/g, "$1a=end-of-candidates\r\n");
+      log("answer_eoc=1");
+    }
+    log("remote_candidates=" + (answer.match(/^a=candidate:/gm) || []).length);
+    await pc.setRemoteDescription({type: "answer", sdp: answer});
+    await waitFor(() => tracks > 0, 5000, "tracks");
+    await waitFor(() => ["connected", "completed", "failed"].includes(pc.iceConnectionState), 15000, "ice");
+    const inboundPackets = await waitForInboundPackets(pc, 20000);
+    log("inbound_packets=" + inboundPackets);
+    log("final_ice=" + pc.iceConnectionState);
+    log("final_pc=" + pc.connectionState);
+    if (inboundPackets <= 0) {
+      throw new Error("no inbound RTP packets");
+    }
+    status.textContent += "\nRESULT: PASS";
+    await pc.close();
+  } catch (err) {
+    console.error(err);
+    status.textContent += "\nRESULT: FAIL " + err.message;
+  }
+})();
+</script>
+</body>
+</html>

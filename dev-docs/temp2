@@ -1,0 +1,55 @@
+
+
+
+
+当前已实现rtmp和rtsp协议，下一步实现http-flv协议
+- 参考c++实现 vendor-ref/simple-media-server/Src ,实现标准协议同时要找出实际落地非标准，提高鲁棒性的实现
+- flv是基于rtmp协议的封装，需要依赖rtmp模块
+- 支持http和websocket传输
+
+参考dev-docs/plans-6的目录结构，需要有一个总索引文件，把flv实现的设计和开发计划保存在dev-docs/plans-7目录下。
+
+
+=============rtsp 对齐 zlm =============
+当前已实现rtsp协议，下一步参考主流流媒体源代码完善rtsp协议：
+- 参考c++实现 vendor-ref/ZLMediaKit/src ,对比分析rtsp协议与本地的实现，补充本地没实现的功能。
+- 除了实现标准规范的rtsp协议，还要实现非标准实现，提高协议兼容性和鲁棒性。
+- 支持 RTSPS
+- 支持RTSP代理，支持生成静音音频
+- 支持 rtp over udp rtp over tcp rtp over http rtp组播 四种RTP传输方式
+- 服务器/客户端完整支持Basic/Digest方式的登录鉴权
+- 服务器支持RTSP推流(包括rtp over udp rtp over tcp方式)
+- 支持H264/H265/AAC/G711/OPUS/MP3/VP8/VP9/AV1编码，其他编码能转发但不能转协议
+
+根据以上需求编写设计和开发计划文档。参考dev-docs/plans-8的目录结构，需要有一个总索引文件，把文档存在dev-docs/plans-10目录下。
+
+
+===============协议转换 对齐 zlm===========
+当前已实现rtmp和rtsp协议，下一步参考主流流媒体源代码完善rtmp和rtsp协议之间的协议转换：
+- 参考c++实现 vendor-ref/ABLMediaServer-src-2026-05-09/ABLMediaServer ,对比分析rtmp和rtsp协议之间的协议转换与本地的实现，补充本地没实现的功能。
+- 除了实现标准规范的多协议转换，还要实现非标准实现，提高协议兼容性和鲁棒性。
+- 不同协议之间的GPO秒开
+- 不同协议之间的时间戳问题
+- 不同协议之间音视频问题
+- 要详细阅读ABLMediaServer发布重要的功能信息文件：vendor-ref/ABLMediaServer-src-2026-05-09/版本信息.txt
+
+根据以上需求编写设计和开发计划文档。参考dev-docs/plans-14的目录结构，需要有一个总索引文件，把文档存在dev-docs/plans-15目录下。
+
+
+
+===============rtmp 对齐 ABLMediaServer===========
+当前已实现rtmp协议，下一步参考主流流媒体源代码完善rtmp协议：
+- 参考c++实现vendor-ref/ABLMediaServer-src-2026-05-09/ABLMediaServer ,对比分析rtmp协议与本地的实现，补充本地没实现的功能。
+- 除了实现标准规范的rtmp协议，还要实现非标准实现，提高协议兼容性和鲁棒性。
+- 要详细阅读ABLMediaServer发布重要的功能信息文件：vendor-ref/ABLMediaServer-src-2026-05-09/版本信息.txt
+
+根据以上需求编写设计和开发计划文档。参考dev-docs/plans-11的目录结构，需要有一个总索引文件，把文档存在dev-docs/plans-13目录下。
+
+
+
+====srt====
+下一步实现srt协议
+- 协议实现参考文档 https://haivision.github.io/srt-rfc/draft-sharabayko-srt.html
+- 集成rust srt库 `shiguredo_srt`[https://crates.io/crates/shiguredo_srt] ，实现库中的所有功能
+- SRT可以转换成RTSP/RTMP/HLS/WEBRTC等协议
+根据以上需求编写设计和开发计划文档。参考plans-27-webrtc-zlm的目录结构，需要有一个总索引文件，把文档存在dev-docs/plans-28-srt目录下。

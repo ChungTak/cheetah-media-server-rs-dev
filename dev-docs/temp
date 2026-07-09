@@ -1,0 +1,63 @@
+#附件SystemArchitecturev1.txt文档是基于rust编写的流媒体服务器初步架构设计，需要参考以下内容，进一步补充方案:#
+### 1、 Sans I/O 协议核心层 ### 
+- 目标：协议逻辑与 I/O 完全解耦。
+- 参考：https://github.com/algesten/str0m
+- Full Control - You control threading, scheduling, and I/O multiplexing
+- Testable - Protocol logic can be tested without real network I/O
+- Zero-cost abstractions
+- Flexible - Easy integration with existing networking code
+
+### 2、### 运行时与 I/O 适配层 ### 
+- 目标：提供 Quinn 风格运行时抽象，屏蔽 Tokio/compio/async-std/tokio-uring/smol/embassy or blocking I/O 甚至 wasm的差异。优先只实现Tokio
+- 参考：https://github.com/webrtc-rs/webrtc
+- 协议核心只能依赖抽象 trait，不依赖具体 runtime。
+- runtime 适配层负责 timer、spawn、socket 包装。
+
+
+###  3.性能优化 ### 
+- 目标：深度分析str0m项目架构，总结出基于rust特性的性能优化
+- 参考：https://github.com/algesten/str0m
+- 彻底的 Sans-I/O 与“去锁化” (Lock-free by Design)：
+-- 使用一个纯粹的同步状态机。内部没有任何锁，也没有任何线程或异步任务 (async/await)。所有的协议逻辑（握手、加密、媒体解析）都在单线程的一条执行流上完成。
+-- 极致的单核榨取：在构建流媒体网关时，你可以采用类似 NGINX 或 Redis 的 Reactor 模式。一个线程持有一个 epoll/mio 事件循环，管理成百上千个 str0m 实例。因为没有锁，CPU 缓存命中率极高，单核处理 RTP 包的吞吐量可以达到惊人的水平。
+-架构解耦：将“网络收发”和“协议处理”彻底分开。你的项目应该允许调用者自己决定是使用 std::net、tokio、io_uring 还是 DPDK 来收发 UDP 包，而不是在库内部写死。
+
+- 内存处理就地修改 (In-place Processing) 与生命周期管理：
+-- 避免过度分配：str0m 尽量避免在内部动态分配内存（如频繁 new 或 Vec::push）。
+-- 就地加解密：WebRTC 需要 SRTP/SRTCP 加解密。str0m 允许调用者传入一个包含密文的可变切片 &mut [u8]，协议栈直接在原内存上进行解密和 header 解析，将修改后的切片作为明文输出。
+-- 所有权转移而非拷贝：当需要向外部输出媒体数据时，它通过事件（Event）将底层处理好的借用（slice）或者拥有所有权的轻量级数据结构移交给上层，最大程度减少 memcpy。
+
+- 时间的“显式注入” (Explicit Time Injection):
+-- 内部绝不主动调用获取系统时间的方法。时间在 str0m 中只是一个普通的输入变量（Input）。调用者需要在主循环中，将当前的 Instant 作为参数“喂”给状态机（例如：rtc.handle_input(Input::Timeout(now))）
+- 缓存管理：被动驱动的 Jitter Buffer 与 NACK:
+-- 缓存（如用于重传历史包的队列）是大小有界的，并且是“被动驱动”的。由于没有后台线程，超时清理死包的动作是在外部主循环调用 poll_output 时，由外部注入的时间戳来触发顺带完成的。
+
+## 3. 第三方库
+### 3.1 SIP（GB28181）
+
+- 采用轻依赖方案：
+  - `rsip`[https://crates.io/crates/rsip] 负责消息解析/构造。
+  - `GB28181` 所需的 transaction/dialog/transport 由项目内自实现最小子集，不引入重型 SIP 栈依赖。
+- 只实现 GB28181 必需能力，不追求完整 SIP RFC 全覆盖：
+  - transaction：`REGISTER`、`MESSAGE`、`INVITE`、`BYE` 及响应关联。
+  - dialog：`Call-ID`、`From/To Tag`、`CSeq` 关联与生命周期管理。
+  - transport：UDP 为主，按实际需求保留 TCP SIP 报文承载。
+- 只用于GB28181的定制SIP协议，名称叫GBSip，以免与标准的SIP冲突。
+
+### 3.2 WebRTC
+
+- 协议核心以 `str0m`[https://crates.io/crates/str0m] 的 Sans I/O 思路为参考。
+
+### 3.3 SRT
+
+- 优先纯 Rust 方案（如 `shiguredo_srt`[https://crates.io/crates/shiguredo_srt]）。
+
+### 3.4 TLS 与加解密，可插件化
+- 参考str0m实现tls插件化，譬如可通过切换依赖 str0m-aws-lc-rs、str0m-openssl实现加密后端的切换
+- TLS：`rustls + rustls-pemfile`
+- 密码学：`ring` 或 RustCrypto
+
+### 3.5 FFmpeg
+
+- Rust 侧通过 `ffmpeg-next`[https://crates.io/crates/ffmpeg-next] 接口接入。
+- 注意：`ffmpeg-next` 仍依赖 FFmpeg 原生库；
