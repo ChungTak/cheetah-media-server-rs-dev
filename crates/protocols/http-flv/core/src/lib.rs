@@ -14,7 +14,7 @@ pub use session::{
 
 #[cfg(test)]
 mod tests {
-    use cheetah_rtmp_core::RtmpFlvPlayMode;
+    use cheetah_codec::RtmpFlvPlayMode;
 
     use super::*;
 

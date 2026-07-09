@@ -8,6 +8,5 @@ license.workspace = true
 base64.workspace = true
 bytes.workspace = true
 cheetah-codec = { path = "../../../foundation/cheetah-codec", default-features = false }
-cheetah-rtmp-core = { path = "../../rtmp/core", default-features = false }
 sha1 = { version = "0.10", default-features = false }
 thiserror.workspace = true

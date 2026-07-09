@@ -9,7 +9,6 @@ async-trait.workspace = true
 cheetah-http-flv-driver-tokio = { path = "../driver-tokio" }
 cheetah-codec = { path = "../../../foundation/cheetah-codec" }
 cheetah-http-flv-core = { path = "../core" }
-cheetah-rtmp-core = { path = "../../rtmp/core" }
 cheetah-runtime-api = { path = "../../../runtime/cheetah-runtime-api" }
 cheetah-sdk = { path = "../../../sdk/cheetah-sdk" }
 futures.workspace = true

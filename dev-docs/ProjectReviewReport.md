@@ -16,7 +16,7 @@
 | F-02 | 违规 | `cheetah-hls-module` 生产路径直接使用 `tokio::time::timeout` | 中 | 已修复 |
 | F-03 | 环境 | 代码使用 `is_multiple_of`（Rust 1.87+），环境默认 1.83 无法编译 | 高 | 已修复(工具链)+待固化 |
 | F-04 | 违规 | `cheetah-webrtc-module` 生产代码大量直接依赖 `tokio::{net,time,sync}` 与 `tokio::select!` | 高 | 进行中(Stage 1) |
-| F-05 | 风险 | `cheetah-http-flv-module` 直接依赖 `cheetah-rtmp-core` 复用 FLV 封装逻辑 | 中 | 待处理 |
+| F-05 | 风险 | `cheetah-http-flv-module` 直接依赖 `cheetah-rtmp-core` 复用 FLV 封装逻辑 | 中 | 已修复 |
 | F-06 | 风险 | mp4 module 用 `tokio::spawn` 且 driver 公共 API 泄漏 tokio 通道类型 | 中 | 待处理 |
 | F-07 | 文档 | `SystemArchitecture.md` 缺 hls/ts/mp4/srt/webrtc 的 Reference Mapping | 中 | 待处理 |
 | F-08 | 测试 | `ts`、`http-flv` 缺 `testing/property-tests`（其余 9 协议均有） | 中 | 待处理 |
@@ -157,14 +157,21 @@
   由 `tokio::sync::{mpsc,Mutex}` 改为 `futures::channel::mpsc` + `futures::lock::Mutex`；
   `cargo clippy` 干净、`cargo test -p cheetah-webrtc-module` 318+ 用例全绿。
 
-### F-05【待处理｜中】http-flv module 依赖 rtmp-core 复用 FLV 封装
-- 证据：`crates/protocols/http-flv/module/Cargo.toml` 有 `cheetah-rtmp-core` 生产依赖；
-  `src/module.rs:14` 导入 `build_track_bootstrap_payloads / map_frame_to_rtmp_flv_payload /
-  track_list_has_audio / RtmpFlvPayloadKind / RtmpFlvPlayMode`。
+### F-05【已修复｜中】http-flv module 依赖 rtmp-core 复用 FLV 封装
+- 证据（修复前）：`crates/protocols/http-flv/{core,module}/Cargo.toml` 均有 `cheetah-rtmp-core` 生产依赖；
+  `module/src/module.rs:14` 导入 `build_track_bootstrap_payloads / map_frame_to_rtmp_flv_payload /
+  track_list_has_audio / RtmpFlvPayloadKind / RtmpFlvPlayMode`，`core/src/{request,session,lib}.rs`
+  导入 `RtmpFlvPlayMode`。
 - 依据：`AGENTS.md` §2（feature module 只应经 `cheetah-sdk`+`cheetah-codec` 交互）、§7（FLV 封装属
-  `cheetah-codec`，已有 `flv.rs`，不应各协议自持）。
-- 建议：把 FLV 帧↔payload 映射与 bootstrap 逻辑收敛到 `cheetah-codec`，rtmp 与 http-flv 共同复用，
-  解除 http-flv→rtmp-core 的跨协议依赖。
+  `cheetah-codec`，不应各协议自持）。
+- 修复：把 FLV 帧↔payload 映射与 bootstrap 逻辑从 `rtmp/core/src/flv.rs`（841 行）下沉到
+  `cheetah-codec` 新模块 `flv_egress.rs`，用一个自包含的最小 AMF0 `onMetaData` 编码器替代对 rtmp-core
+  `amf0` 的依赖（rtmp 的完整 AMF0 仍留在 rtmp-core 供命令消息使用）。`rtmp/core/src/flv.rs` 改为薄
+  re-export 以保留其公共 API；`http-flv/{core,module}` 改为直接消费 `cheetah_codec`，从两个 `Cargo.toml`
+  删除 `cheetah-rtmp-core` 生产依赖。字节兼容由 rtmp-core 中 `build_metadata` → `decode_all` 的回归测试
+  保证。验证：`cargo test -p cheetah-codec -p cheetah-rtmp-core -p cheetah-http-flv-core -p
+  cheetah-http-flv-module -p cheetah-rtmp-module`（除 1 项 main 上即缺失 `manifest.tsv` fixture 的
+  预存失败外全绿）、clippy 干净、全 feature 服务端构建通过、边界守卫通过。
 
 ### F-06【待处理｜中】mp4 module/driver 桥接未 runtime 中立（第二轮补充证据）
 - 证据（module 侧）：
@@ -216,7 +223,7 @@
 **建议后续立项（按优先级）：**
 - F-04 webrtc module runtime 中立化（工作量最大，已立项分阶段推进，见 `F04_WebRTC_Detokio_Plan.md`；Stage 1 已完成）。
 - F-03 固化：新增 `rust-toolchain.toml`（blueprint 安装新 stable 已提交）。
-- F-05 FLV 封装收敛到 codec，解除 http-flv→rtmp-core 依赖。
+- ~~F-05 FLV 封装收敛到 codec，解除 http-flv→rtmp-core 依赖。~~（已完成）
 - F-06 mp4 桥接：SDK 事件流抽象 + `VodApi` 注入 `RuntimeApi`，driver 公共 API 去 tokio 化。
 - F-07 / F-09 文档与实现对齐（补协议映射 / 观测性章节标注）。
 - F-08 补 ts、http-flv 属性测试。
