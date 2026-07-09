@@ -374,6 +374,7 @@ Public interfaces in `cheetah-runtime-api`, `cheetah-sdk`, `cheetah-engine`, and
 
 - Do not expose `tokio::*` or `tokio_util::*` in those public APIs.
 - Tokio-specific types stay in `cheetah-runtime-tokio`, `*-driver-tokio`, and application crates.
+- `cheetah-engine` may also use Tokio primitives internally as an orchestration layer implementation detail, but must not expose them in its public API.
 - CI guard: `dev-scripts/check_runtime_boundaries.sh`
 
 ## 6. Testing Strategy

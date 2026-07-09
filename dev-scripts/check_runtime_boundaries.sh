@@ -8,10 +8,19 @@ cd "${ROOT_DIR}"
 PUB_API_CRATES=(
   "crates/runtime/cheetah-runtime-api/src"
   "crates/sdk/cheetah-sdk/src"
-  "crates/system/cheetah-engine/src"
   "crates/protocols/rtmp/module/src"
   "crates/protocols/webrtc/module/src"
   "crates/protocols/mp4/module/src"
+)
+
+# System orchestration crates that may use tokio/tokio-util internally as an
+# implementation detail, but must not expose them in public APIs.
+INTERNAL_TOKIO_ORCHESTRATION_SRCS=(
+  "crates/system/cheetah-engine/src"
+)
+
+INTERNAL_TOKIO_ORCHESTRATION_MANIFESTS=(
+  "crates/system/cheetah-engine/Cargo.toml"
 )
 
 DRIVER_CRATES=(
@@ -39,7 +48,7 @@ TOKIO_FREE_MODULE_MANIFESTS=(
 
 # Fail loudly if a checked path disappears (e.g. after a crate move) instead of
 # silently scanning nothing and reporting success.
-for path in "${PUB_API_CRATES[@]}" "${DRIVER_CRATES[@]}" "${MODULE_CRATES[@]}"; do
+for path in "${PUB_API_CRATES[@]}" "${INTERNAL_TOKIO_ORCHESTRATION_SRCS[@]}" "${DRIVER_CRATES[@]}" "${MODULE_CRATES[@]}"; do
   if [[ ! -d "${path}" ]]; then
     echo "[boundary] expected source dir missing: ${path}" >&2
     echo "[boundary] update dev-scripts/check_runtime_boundaries.sh after crate moves" >&2
@@ -47,7 +56,7 @@ for path in "${PUB_API_CRATES[@]}" "${DRIVER_CRATES[@]}" "${MODULE_CRATES[@]}"; 
   fi
 done
 
-for manifest in "${TOKIO_FREE_MODULE_MANIFESTS[@]}"; do
+for manifest in "${TOKIO_FREE_MODULE_MANIFESTS[@]}" "${INTERNAL_TOKIO_ORCHESTRATION_MANIFESTS[@]}"; do
   if [[ ! -f "${manifest}" ]]; then
     echo "[boundary] expected manifest missing: ${manifest}" >&2
     echo "[boundary] update dev-scripts/check_runtime_boundaries.sh after crate moves" >&2
@@ -60,6 +69,7 @@ done
 # negative-lookbehind word boundary so identifiers like `my_tokio::` do not match.
 pub_tokio_pattern='^[[:space:]]*pub([[:space:]]*\([^)]*\))?[[:space:]].*(^|[^A-Za-z0-9_])(tokio|tokio_util)::'
 module_forbidden_pattern='(^|[^A-Za-z0-9_])tokio::(net|time|sync)::|(^|[^A-Za-z0-9_])tokio_util::sync::|(^|[^A-Za-z0-9_])tokio::select!'
+orchestration_tokio_dep_pattern='^[[:space:]]*(tokio|tokio-util)[[:space:]]*(=|\.|\{)'
 
 echo "[boundary] checking public APIs do not expose tokio/tokio_util types"
 if rg -n "${pub_tokio_pattern}" "${PUB_API_CRATES[@]}"; then
@@ -78,6 +88,21 @@ if rg -n "${pub_tokio_pattern}" "${DRIVER_CRATES[@]}"; then
   echo "[boundary] found tokio/tokio_util type leakage in driver public API" >&2
   exit 1
 fi
+
+echo "[boundary] checking system orchestration crates do not leak tokio in public APIs"
+if rg -n "${pub_tokio_pattern}" "${INTERNAL_TOKIO_ORCHESTRATION_SRCS[@]}"; then
+  echo "[boundary] found tokio/tokio_util type leakage in public API of orchestration crate" >&2
+  exit 1
+fi
+
+echo "[boundary] checking system orchestration crates declare tokio in [dependencies]"
+for manifest in "${INTERNAL_TOKIO_ORCHESTRATION_MANIFESTS[@]}"; do
+  deps_section="$(awk '/^\[dependencies\]/{f=1;next} /^\[/{f=0} f' "${manifest}")"
+  if ! printf '%s\n' "${deps_section}" | rg -q "${orchestration_tokio_dep_pattern}"; then
+    echo "[boundary] expected ${manifest} to declare tokio/tokio-util in [dependencies] for internal orchestration use" >&2
+    exit 1
+  fi
+done
 
 # The `[dependencies]` section runs until the next top-level `[` table header.
 # A module that only lists tokio under `[dev-dependencies]` cannot compile

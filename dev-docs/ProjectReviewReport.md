@@ -130,16 +130,21 @@
   `M7S_GLOBAL__` / `M7S_MODULE__<module>__`、`__` 分隔、`env_value_to_json` 按 bool/i64/f64/string 解析
   （`lib.rs:99-127,469-483`）。与 README §2 一致。
 
-### F-10【待处理｜风险】cheetah-engine 内部直用 tokio 原语与文档允许清单冲突
+### F-10【已修复｜风险】cheetah-engine 内部直用 tokio 原语与文档允许清单冲突
 - 证据：生产代码 `stream.rs:16 use tokio::sync::mpsc`、`event.rs:3 use tokio::sync::broadcast`、
   `module_manager.rs:13 use tokio::sync::Mutex`（另有 `core_adapters.rs:283/286`、`task.rs:350`、
   `stream.rs:1002` 位于测试）。
 - 依据：`AGENTS.md` §5 明确“`tokio`/`tokio-util` 仅允许留在 `cheetah-runtime-tokio`、`*-driver-tokio` 和
   应用层 crate”，`cheetah-engine`（system 层）不在允许清单内。这些用法未泄漏到公共接口，故边界守卫
   （只查 `pub` 泄漏）不报警，属**文档 vs 实现**的口径分歧。
-- 建议：二选一——(a) 若有意允许 engine 内部使用 tokio，则在 §5 显式把 `cheetah-engine` 纳入允许清单；
-  (b) 否则将 engine 的 channel/lock/broadcast 收敛到 `RuntimeApi`/SDK 抽象。建议采 (a)（engine 作为编排
-  中枢，强行去 tokio 收益低、风险高），并同步扩展边界守卫覆盖以固化该口径。
+- 修复：按建议采 (a)。`AGENTS.md` §5 与 `SystemArchitecture.md` §5 已明确把 `cheetah-engine` 纳入
+  `tokio`/`tokio-util` 内部使用允许清单，但保留“公共接口不得暴露 tokio 类型”的约束；
+  `dev-scripts/check_runtime_boundaries.sh` 新增 `INTERNAL_TOKIO_ORCHESTRATION` 检查，将
+  `crates/system/cheetah-engine` 作为系统编排层单独校验：
+  - 公共 API 仍通过 `pub_tokio_pattern` 扫描，防止 `tokio` 类型泄漏；
+  - `[dependencies]` 必须显式声明 `tokio`/`tokio-util`，使内部使用异常依赖清单化、可守卫。
+- 验证：`bash dev-scripts/check_runtime_boundaries.sh` 通过；`cheetah-engine` 公共接口未暴露
+  `tokio`/`tokio_util` 类型；`cargo clippy -p cheetah-engine` / `cargo test -p cheetah-engine` 无新增失败。
 
 ---
 
@@ -243,6 +248,7 @@
 1. F-01 修复 `check_runtime_boundaries.sh`（恢复守卫有效性）。
 2. F-02 修复 hls module runtime 中立性违规 + 清理无用 tokio 依赖。
 3. F-03 工具链升级至满足 `is_multiple_of` 的 stable（1.96），全量构建通过。
+4. F-10 统一 `cheetah-engine` tokio 口径：AGENTS.md / SystemArchitecture.md §5 显式纳入 engine，扩展边界守卫并校验公共 API 与 [dependencies] 声明。
 
 **第二轮（P2 深入 + 各协议测试/依赖复核）结论：**
 - P2 系统层深入核对全部通过：单发布者租约（CAS + Conflict）、热路径 `try_send` 非阻塞派发与三种
@@ -259,7 +265,7 @@
 - F-06 mp4 桥接：SDK 事件流抽象 + `VodApi` 注入 `RuntimeApi`，driver 公共 API 去 tokio 化。
 - F-07 / F-09 文档与实现对齐（补协议映射 / 观测性章节标注）。
 - ~~F-08 补 ts、http-flv 属性测试。~~（已完成）
-- F-10 §5 允许清单口径统一（建议显式纳入 engine）并扩展边界守卫覆盖。
+- ~~F-10 §5 允许清单口径统一（建议显式纳入 engine）并扩展边界守卫覆盖。~~（已完成）
 
 **复现命令：**
 ```bash
