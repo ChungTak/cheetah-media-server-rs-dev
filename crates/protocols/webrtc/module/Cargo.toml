@@ -15,20 +15,15 @@ cheetah-runtime-api = { path = "../../../runtime/cheetah-runtime-api" }
 cheetah-sdk = { path = "../../../sdk/cheetah-sdk" }
 futures.workspace = true
 parking_lot.workspace = true
-rustls = { workspace = true }
-rustls-pemfile = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["macros", "rt", "sync", "time"] }
-tokio-rustls = { workspace = true }
-tokio-tungstenite = { workspace = true }
 tracing.workspace = true
-webpki-roots = { workspace = true }
 
 [dev-dependencies]
 cheetah-config = { path = "../../../system/cheetah-config" }
 cheetah-engine = { path = "../../../system/cheetah-engine" }
 cheetah-runtime-tokio = { path = "../../../runtime/cheetah-runtime-tokio" }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
+tokio-tungstenite = { workspace = true }

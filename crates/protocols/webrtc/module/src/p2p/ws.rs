@@ -30,13 +30,9 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use futures::{SinkExt, StreamExt};
+use cheetah_webrtc_driver_tokio::{TokioWsConnector, WsConnection, WsConnector, WsError, WsFrame};
 use parking_lot::Mutex;
 use thiserror::Error;
-use tokio::sync::Mutex as AsyncMutex;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
-use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
 use super::message::{self, P2pDecoderConfig, P2pMessage};
 use super::room::P2pRoomKeeperSnapshot;
@@ -101,15 +97,39 @@ impl From<WebSocketTransportError> for P2pTransportError {
 }
 
 /// Factory that builds [`WebSocketP2pTransport`] instances. Used by
-/// `run_supervisor_with_hub`.
-#[derive(Debug, Clone)]
+/// `run_supervisor_with_hub`. The actual WebSocket/TLS I/O is delegated
+/// to a driver-provided [`WsConnector`] (defaulting to
+/// [`TokioWsConnector`]); this factory only owns the SSRF/URL policy and
+/// the P2P decoder limits.
+#[derive(Clone)]
 pub struct WebSocketTransportFactory {
     config: WebSocketTransportConfig,
+    connector: Arc<dyn WsConnector>,
+}
+
+impl std::fmt::Debug for WebSocketTransportFactory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WebSocketTransportFactory")
+            .field("config", &self.config)
+            .finish_non_exhaustive()
+    }
 }
 
 impl WebSocketTransportFactory {
     pub fn new(config: WebSocketTransportConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            connector: Arc::new(TokioWsConnector),
+        }
+    }
+
+    /// Build a factory with a custom [`WsConnector`] (e.g. a test
+    /// double or an alternate runtime's connector).
+    pub fn with_connector(
+        config: WebSocketTransportConfig,
+        connector: Arc<dyn WsConnector>,
+    ) -> Self {
+        Self { config, connector }
     }
 
     /// Build the signaling URL the supervisor should connect to. Pure
@@ -142,49 +162,26 @@ impl KeeperTransportFactory for WebSocketTransportFactory {
         let url = self
             .signaling_url(snapshot)
             .map_err(WebSocketTransportError::Url)?;
-        let request = url
-            .render()
-            .into_client_request()
-            .map_err(|e| WebSocketTransportError::InvalidRequest(e.to_string()))?;
-        let (stream, _resp) =
-            match tokio::time::timeout(self.config.connect_timeout, connect_async(request)).await {
-                Ok(Ok(pair)) => pair,
-                Ok(Err(err)) => {
-                    return Err(WebSocketTransportError::WebSocket(err.to_string()).into());
-                }
-                Err(_) => {
-                    return Err(WebSocketTransportError::ConnectTimeout(
-                        self.config.connect_timeout,
-                    )
-                    .into());
-                }
-            };
-        Ok(WebSocketP2pTransport::new(stream, self.config.decoder))
+        let connection = self
+            .connector
+            .connect(&url.render(), self.config.connect_timeout)
+            .await
+            .map_err(|err| match err {
+                WsError::ConnectTimeout(d) => WebSocketTransportError::ConnectTimeout(d),
+                WsError::InvalidRequest(msg) => WebSocketTransportError::InvalidRequest(msg),
+                other => WebSocketTransportError::WebSocket(other.to_string()),
+            })?;
+        Ok(WebSocketP2pTransport::new(connection, self.config.decoder))
     }
 }
 
-/// Type alias for the type-erased outbound sink shared by the
-/// client- and server-side transports.
-type BoxedSink =
-    Box<dyn futures::Sink<WsMessage, Error = tokio_tungstenite::tungstenite::Error> + Send + Unpin>;
-
-/// Type alias for the type-erased inbound stream shared by the
-/// client- and server-side transports.
-type BoxedStream = Box<
-    dyn futures::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
-        + Send
-        + Unpin,
->;
-
-/// `tokio-tungstenite`-backed transport that satisfies the workspace
-/// `P2pTransport` trait. Uses type-erased sink + stream halves so the
-/// same struct can wrap both client (`MaybeTlsStream<TcpStream>`) and
-/// server (`TcpStream`) WebSocket connections.
+/// Transport that satisfies the workspace `P2pTransport` trait by
+/// wrapping a runtime-neutral driver [`WsConnection`] and layering the
+/// P2P signaling encode/decode on top. WebSocket framing + TLS live in
+/// the driver.
 pub struct WebSocketP2pTransport {
-    sink: AsyncMutex<BoxedSink>,
-    stream: AsyncMutex<BoxedStream>,
+    connection: Box<dyn WsConnection>,
     decoder: P2pDecoderConfig,
-    closed: Arc<std::sync::atomic::AtomicBool>,
     /// Per-instance counters for tests / diagnostics.
     pub counters: Arc<WebSocketCounters>,
 }
@@ -199,37 +196,29 @@ pub struct WebSocketCounters {
 }
 
 impl WebSocketP2pTransport {
-    /// Wrap an existing client-side WebSocket stream produced by
-    /// `tokio_tungstenite::connect_async`.
-    pub fn new(
-        stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
-        decoder: P2pDecoderConfig,
-    ) -> Self {
-        let (sink, stream) = stream.split();
-        Self::from_split(Box::new(sink), Box::new(stream), decoder)
-    }
-
-    /// Wrap an existing server-side WebSocket stream produced by
-    /// `tokio_tungstenite::accept_async`. The stream type differs
-    /// from the client side (plain `TcpStream` vs.
-    /// `MaybeTlsStream<TcpStream>`), so we expose a separate
-    /// constructor that erases both into `dyn` traits and shares the
-    /// rest of the transport plumbing.
-    pub fn from_server_stream(
-        stream: WebSocketStream<tokio::net::TcpStream>,
-        decoder: P2pDecoderConfig,
-    ) -> Self {
-        let (sink, stream) = stream.split();
-        Self::from_split(Box::new(sink), Box::new(stream), decoder)
-    }
-
-    fn from_split(sink: BoxedSink, stream: BoxedStream, decoder: P2pDecoderConfig) -> Self {
+    /// Wrap a runtime-neutral driver [`WsConnection`].
+    pub fn new(connection: Box<dyn WsConnection>, decoder: P2pDecoderConfig) -> Self {
         Self {
-            sink: AsyncMutex::new(sink),
-            stream: AsyncMutex::new(stream),
+            connection,
             decoder,
-            closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             counters: Arc::new(WebSocketCounters::default()),
+        }
+    }
+
+    fn decode_frame(&self, raw: &str) -> P2pTransportEvent {
+        match message::parse(raw, self.decoder) {
+            Ok(parsed) => {
+                self.counters
+                    .messages_received
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                P2pTransportEvent::Message(parsed)
+            }
+            Err(err) => {
+                self.counters
+                    .decode_errors
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                P2pTransportEvent::Error(err.to_string())
+            }
         }
     }
 }
@@ -237,15 +226,15 @@ impl WebSocketP2pTransport {
 #[async_trait]
 impl P2pTransport for WebSocketP2pTransport {
     async fn send(&self, message: P2pMessage) -> Result<(), P2pTransportError> {
-        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-            return Err(P2pTransportError::Closed);
-        }
         let payload =
             message::render(&message).map_err(|e| P2pTransportError::Encode(e.to_string()))?;
-        let mut sink = self.sink.lock().await;
-        sink.send(WsMessage::Text(payload.into()))
+        self.connection
+            .send_text(payload)
             .await
-            .map_err(|e| P2pTransportError::Io(e.to_string()))?;
+            .map_err(|e| match e {
+                WsError::Closed => P2pTransportError::Closed,
+                other => P2pTransportError::Io(other.to_string()),
+            })?;
         self.counters
             .messages_sent
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -253,88 +242,31 @@ impl P2pTransport for WebSocketP2pTransport {
     }
 
     async fn recv(&self) -> Result<P2pTransportEvent, P2pTransportError> {
-        loop {
-            let next = {
-                let mut stream = self.stream.lock().await;
-                stream.next().await
-            };
-            match next {
-                None => {
-                    self.closed
-                        .store(true, std::sync::atomic::Ordering::Release);
-                    return Ok(P2pTransportEvent::Closed);
+        match self.connection.recv().await {
+            Ok(WsFrame::Text(raw)) => Ok(self.decode_frame(&raw)),
+            Ok(WsFrame::Binary(bytes)) => {
+                // Some signaling deployments send text-as-binary.
+                // Try to decode as UTF-8 + JSON; fall back to a
+                // diagnostic if either fails.
+                match std::str::from_utf8(&bytes) {
+                    Ok(text) => Ok(self.decode_frame(text)),
+                    Err(_) => {
+                        self.counters
+                            .decode_errors
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        Ok(P2pTransportEvent::Error(
+                            "received non-utf8 binary frame".into(),
+                        ))
+                    }
                 }
-                Some(Err(err)) => {
-                    self.closed
-                        .store(true, std::sync::atomic::Ordering::Release);
-                    return Ok(P2pTransportEvent::Error(err.to_string()));
-                }
-                Some(Ok(WsMessage::Text(raw))) => {
-                    self.counters
-                        .messages_received
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let parsed = match message::parse(&raw, self.decoder) {
-                        Ok(m) => m,
-                        Err(err) => {
-                            self.counters
-                                .decode_errors
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            return Ok(P2pTransportEvent::Error(err.to_string()));
-                        }
-                    };
-                    return Ok(P2pTransportEvent::Message(parsed));
-                }
-                Some(Ok(WsMessage::Binary(bytes))) => {
-                    // Some signaling deployments send text-as-binary.
-                    // Try to decode as UTF-8 + JSON; fall back to a
-                    // diagnostic if either fails.
-                    let text = match std::str::from_utf8(&bytes) {
-                        Ok(t) => t.to_string(),
-                        Err(_) => {
-                            self.counters
-                                .decode_errors
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            return Ok(P2pTransportEvent::Error(
-                                "received non-utf8 binary frame".into(),
-                            ));
-                        }
-                    };
-                    let parsed = match message::parse(&text, self.decoder) {
-                        Ok(m) => m,
-                        Err(err) => {
-                            self.counters
-                                .decode_errors
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            return Ok(P2pTransportEvent::Error(err.to_string()));
-                        }
-                    };
-                    self.counters
-                        .messages_received
-                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    return Ok(P2pTransportEvent::Message(parsed));
-                }
-                Some(Ok(WsMessage::Ping(payload))) => {
-                    let mut sink = self.sink.lock().await;
-                    let _ = sink.send(WsMessage::Pong(payload)).await;
-                    continue;
-                }
-                Some(Ok(WsMessage::Pong(_))) => continue,
-                Some(Ok(WsMessage::Close(_))) => {
-                    self.closed
-                        .store(true, std::sync::atomic::Ordering::Release);
-                    return Ok(P2pTransportEvent::Closed);
-                }
-                Some(Ok(WsMessage::Frame(_))) => continue,
             }
+            Ok(WsFrame::Closed) => Ok(P2pTransportEvent::Closed),
+            Err(err) => Ok(P2pTransportEvent::Error(err.to_string())),
         }
     }
 
     async fn close(&self) {
-        self.closed
-            .store(true, std::sync::atomic::Ordering::Release);
-        let mut sink = self.sink.lock().await;
-        let _ = sink.send(WsMessage::Close(None)).await;
-        let _ = sink.close().await;
+        self.connection.close().await;
     }
 }
 

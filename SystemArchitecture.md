@@ -190,6 +190,28 @@ GB28181 boundary clarification:
 - `cheetah-gb28181-driver-tokio` executes the UDP/TCP SIP message loop, handles TCP connection states, manages timer-based ticks for offline checks, and routes outgoing SIP buffers.
 - `cheetah-gb28181-module` manages GB28181 business logic, registering HTTP REST APIs (for triggering manual INVITE, BYE, and talkback), keeping track of active device maps, checking publish leases, and bridging incoming streams to the core media engine.
 
+### 3.x WebRTC
+
+Current WebRTC crates:
+
+- `crates/protocols/webrtc/core` (`cheetah-webrtc-core`)
+- `crates/protocols/webrtc/driver-tokio` (`cheetah-webrtc-driver-tokio`)
+- `crates/protocols/webrtc/module` (`cheetah-webrtc-module`)
+
+WebRTC capability snapshot:
+
+- signaling: WHIP/WHEP (HTTP), OME-compatible WebSocket signaling, and P2P mesh signaling (client + inbound server).
+- session lifecycle: offer/answer negotiation, ICE candidate exchange (host/srflx/relay, TCP fallback), data channel bridging, keyframe requests, per-session supervision.
+
+WebRTC boundary clarification:
+
+- `cheetah-webrtc-core` is purely Sans-I/O SDP/ICE/session state.
+- `cheetah-webrtc-driver-tokio` owns all runtime and I/O concerns and exposes them behind runtime-neutral abstractions:
+  - WebSocket: `WsFrame`/`WsError`, `trait WsConnection` (`send_text`/`recv`/`close`), `trait WsConnector` (`connect(url, timeout)`), plus the inbound server `bind_ws_server(addr) -> (WsServerListener, SocketAddr)` and `WsServerListener::serve(cfg, handler, cancel)`. The accept loop, handshake timeout, ping/pong, capacity backpressure, and connection counting all live here; `tokio-tungstenite` never leaks into the module.
+  - HTTP/TLS client: `WhipWhepHttpClient` (raw HTTP/1.1 over `tokio-rustls`) for WHIP/WHEP egress.
+  - The tokio driver task, UDP/ICE transport, and `WebRtcDriverHandle`/`WebRtcDriverCommand` command channel.
+- `cheetah-webrtc-module` holds engine wiring plus WebRTC business/signaling logic: WHIP/WHEP + OME + P2P route handling, SDP munging/compat, SSRF/URL policy, `OmeWsMessage`/`P2pMessage` encode/decode, publish leases, and session bookkeeping. It consumes the driver's neutral `WsConnection`/`WsConnector`/`WsServerListener` handles and injects `RuntimeApi` for timers/tasks. The module's production code carries **no direct `tokio` dependency** (tokio is a dev-dependency for tests only); `dev-scripts/check_runtime_boundaries.sh` enforces this at the manifest level.
+
 ## 4. Media Model and Unification
 
 All protocol ingest into engine should converge to:

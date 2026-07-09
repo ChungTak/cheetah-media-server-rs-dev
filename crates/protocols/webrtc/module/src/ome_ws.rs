@@ -1,26 +1,21 @@
 //! OvenMediaEngine-compatible WebSocket transport adapter.
+//!
+//! The WebSocket framing / TCP accept loop lives in the driver
+//! (`cheetah_webrtc_driver_tokio::ws`); this module is a thin adapter
+//! that wraps a runtime-neutral [`WsConnection`] and layers OME
+//! signaling encode/decode on top.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use cheetah_runtime_api::CancellationToken;
-use futures::{SinkExt, StreamExt};
+use cheetah_webrtc_driver_tokio::{
+    WsConnection, WsConnectionHandler, WsError, WsFrame, WsInbound, WsServerConfig, WsServerError,
+    WsServerListener,
+};
 use thiserror::Error;
-use tokio::net::TcpListener;
-use tokio::sync::Mutex as AsyncMutex;
-use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
-use tokio_tungstenite::WebSocketStream;
 
 use crate::ome_signaling::{parse_ome_ws_message, OmeWsDecoderConfig, OmeWsMessage};
-
-type BoxedSink =
-    Box<dyn futures::Sink<WsMessage, Error = tokio_tungstenite::tungstenite::Error> + Send + Unpin>;
-
-type BoxedStream = Box<
-    dyn futures::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
-        + Send
-        + Unpin,
->;
 
 #[derive(Debug, Error)]
 pub enum WebSocketOmeTransportError {
@@ -63,170 +58,93 @@ pub type OmeWsConnectionHandler = Arc<
 
 #[derive(Debug, Error)]
 pub enum OmeWsServerError {
+    #[error("bind failed: {0}")]
+    Bind(String),
     #[error("accept failed: {0}")]
     Accept(String),
 }
 
+/// OME signaling transport over a runtime-neutral [`WsConnection`].
 pub struct WebSocketOmeTransport {
-    sink: AsyncMutex<BoxedSink>,
-    stream: AsyncMutex<BoxedStream>,
+    connection: Box<dyn WsConnection>,
     decoder: OmeWsDecoderConfig,
-    closed: Arc<std::sync::atomic::AtomicBool>,
 }
 
-#[allow(clippy::result_large_err)]
+/// Run the OME WebSocket signaling server on a driver-bound listener.
+///
+/// Wraps each accepted [`WsConnection`] into a [`WebSocketOmeTransport`]
+/// and forwards it to `handler`. Returns when the listener errors or
+/// `cancel` fires.
 pub async fn run_ome_ws_server(
-    listener: TcpListener,
+    listener: WsServerListener,
     config: OmeWsServerConfig,
     handler: OmeWsConnectionHandler,
     cancel: CancellationToken,
 ) -> Result<(), OmeWsServerError> {
-    let connection_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    loop {
-        if cancel.is_cancelled() {
-            return Ok(());
-        }
-        let (stream, remote_addr) = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => return Ok(()),
-            result = listener.accept() => result.map_err(|err| OmeWsServerError::Accept(err.to_string()))?,
-        };
-
-        if connection_count.load(std::sync::atomic::Ordering::Acquire) >= config.max_connections {
-            drop(stream);
-            continue;
-        }
-        connection_count.fetch_add(1, std::sync::atomic::Ordering::Release);
-
+    let decoder = config.decoder;
+    let ws_handler: WsConnectionHandler = Arc::new(move |inbound: WsInbound, connection| {
         let handler = handler.clone();
-        let connection_count_for_task = connection_count.clone();
-        let decoder = config.decoder;
-        let accept_timeout = config.accept_timeout;
-        tokio::spawn(async move {
-            let _guard = ConnectionGuard::new(connection_count_for_task);
-            let path_and_query = Arc::new(parking_lot::Mutex::new(String::from("/")));
-            let path_and_query_for_callback = path_and_query.clone();
-            let ws = match tokio::time::timeout(
-                accept_timeout,
-                tokio_tungstenite::accept_hdr_async(
-                    stream,
-                    move |request: &tokio_tungstenite::tungstenite::handshake::server::Request,
-                          response| {
-                        let target = request
-                            .uri()
-                            .path_and_query()
-                            .map(|value| value.as_str().to_string())
-                            .unwrap_or_else(|| "/".to_string());
-                        *path_and_query_for_callback.lock() = target;
-                        Ok(response)
-                    },
-                ),
-            )
-            .await
-            {
-                Ok(Ok(ws)) => ws,
-                Ok(Err(err)) => {
-                    tracing::debug!("OME WebSocket handshake failed for {remote_addr}: {err}");
-                    return;
-                }
-                Err(_) => {
-                    tracing::debug!(
-                        "OME WebSocket handshake for {remote_addr} timed out after {accept_timeout:?}"
-                    );
-                    return;
-                }
-            };
-            let path_and_query = path_and_query.lock().clone();
-            let transport = WebSocketOmeTransport::from_server_stream(ws, decoder);
+        Box::pin(async move {
+            let transport = WebSocketOmeTransport::new(connection, decoder);
             handler(
                 OmeWsInboundConnection {
-                    remote_addr,
-                    path_and_query,
+                    remote_addr: inbound.remote_addr,
+                    path_and_query: inbound.path_and_query,
                 },
                 transport,
             )
             .await;
-        });
-    }
-}
-
-struct ConnectionGuard {
-    counter: Arc<std::sync::atomic::AtomicUsize>,
-}
-
-impl ConnectionGuard {
-    fn new(counter: Arc<std::sync::atomic::AtomicUsize>) -> Self {
-        Self { counter }
-    }
-}
-
-impl Drop for ConnectionGuard {
-    fn drop(&mut self) {
-        self.counter
-            .fetch_sub(1, std::sync::atomic::Ordering::Release);
-    }
+        })
+    });
+    let ws_config = WsServerConfig {
+        max_connections: config.max_connections,
+        accept_timeout: config.accept_timeout,
+    };
+    listener
+        .serve(ws_config, ws_handler, cancel)
+        .await
+        .map_err(|err| match err {
+            WsServerError::Bind(msg) => OmeWsServerError::Bind(msg),
+            WsServerError::Accept(msg) => OmeWsServerError::Accept(msg),
+        })
 }
 
 impl WebSocketOmeTransport {
-    pub fn from_server_stream(
-        stream: WebSocketStream<tokio::net::TcpStream>,
-        decoder: OmeWsDecoderConfig,
-    ) -> Self {
-        let (sink, stream) = stream.split();
+    /// Wrap a neutral [`WsConnection`] with OME signaling codec.
+    pub fn new(connection: Box<dyn WsConnection>, decoder: OmeWsDecoderConfig) -> Self {
         Self {
-            sink: AsyncMutex::new(Box::new(sink)),
-            stream: AsyncMutex::new(Box::new(stream)),
+            connection,
             decoder,
-            closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
     pub async fn recv_message(&self) -> Result<Option<OmeWsMessage>, WebSocketOmeTransportError> {
-        loop {
-            let next = {
-                let mut stream = self.stream.lock().await;
-                stream.next().await
-            };
-            match next {
-                Some(Ok(WsMessage::Text(text))) => {
-                    let message = parse_ome_ws_message(&text, self.decoder)
-                        .map_err(|err| WebSocketOmeTransportError::Decode(err.to_string()))?;
-                    return Ok(Some(message));
-                }
-                Some(Ok(WsMessage::Close(_))) | None => {
-                    self.closed
-                        .store(true, std::sync::atomic::Ordering::Release);
-                    return Ok(None);
-                }
-                Some(Ok(WsMessage::Ping(_))) | Some(Ok(WsMessage::Pong(_))) => continue,
-                Some(Ok(WsMessage::Binary(_))) => {
-                    return Err(WebSocketOmeTransportError::Decode(
-                        "OME signaling expects text JSON frames".into(),
-                    ));
-                }
-                Some(Ok(_)) => continue,
-                Some(Err(err)) => {
-                    return Err(WebSocketOmeTransportError::WebSocket(err.to_string()))
-                }
+        match self.connection.recv().await {
+            Ok(WsFrame::Text(text)) => {
+                let message = parse_ome_ws_message(&text, self.decoder)
+                    .map_err(|err| WebSocketOmeTransportError::Decode(err.to_string()))?;
+                Ok(Some(message))
             }
+            Ok(WsFrame::Binary(_)) => Err(WebSocketOmeTransportError::Decode(
+                "OME signaling expects text JSON frames".into(),
+            )),
+            Ok(WsFrame::Closed) => Ok(None),
+            Err(err) => Err(WebSocketOmeTransportError::WebSocket(err.to_string())),
         }
     }
 
     pub async fn send_text(&self, text: String) -> Result<(), WebSocketOmeTransportError> {
-        if self.closed.load(std::sync::atomic::Ordering::Acquire) {
-            return Err(WebSocketOmeTransportError::Closed);
-        }
-        let mut sink = self.sink.lock().await;
-        sink.send(WsMessage::Text(text.into()))
+        self.connection
+            .send_text(text)
             .await
-            .map_err(|err| WebSocketOmeTransportError::WebSocket(err.to_string()))
+            .map_err(|err| match err {
+                WsError::Closed => WebSocketOmeTransportError::Closed,
+                other => WebSocketOmeTransportError::WebSocket(other.to_string()),
+            })
     }
 
     pub async fn close(&self) {
-        self.closed
-            .store(true, std::sync::atomic::Ordering::Release);
-        let mut sink = self.sink.lock().await;
-        let _ = sink.send(WsMessage::Close(None)).await;
+        self.connection.close().await;
     }
 }
 
@@ -250,8 +168,8 @@ mod tests {
         let server = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             let ws = tokio_tungstenite::accept_async(stream).await.unwrap();
-            let transport = WebSocketOmeTransport::from_server_stream(
-                ws,
+            let transport = WebSocketOmeTransport::new(
+                Box::new(cheetah_webrtc_driver_tokio::TokioWsConnection::from_server_stream(ws)),
                 crate::ome_signaling::OmeWsDecoderConfig::default(),
             );
             let message = transport.recv_message().await.unwrap().unwrap();
@@ -295,8 +213,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn ome_ws_server_accepts_connection_and_invokes_handler() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let bound = listener.local_addr().unwrap();
+        let (listener, bound) = cheetah_webrtc_driver_tokio::bind_ws_server("127.0.0.1:0")
+            .await
+            .unwrap();
         let cancel = cheetah_runtime_api::CancellationToken::new();
 
         let (seen_tx, seen_rx) = tokio::sync::oneshot::channel::<OmeWsMessage>();

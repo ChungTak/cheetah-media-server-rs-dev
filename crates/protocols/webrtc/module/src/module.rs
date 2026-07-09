@@ -261,14 +261,11 @@ impl Module for WebRtcModule {
         *self.driver.lock() = Some(handle.clone());
 
         if let Some(listen) = cfg.ome_ws_listen.clone() {
-            let listener = tokio::net::TcpListener::bind(&listen)
+            let (listener, local_addr) = cheetah_webrtc_driver_tokio::bind_ws_server(&listen)
                 .await
                 .map_err(|err| {
                     SdkError::Internal(format!("OME WebSocket bind failed on {listen}: {err}"))
                 })?;
-            let local_addr = listener.local_addr().map_err(|err| {
-                SdkError::Internal(format!("OME WebSocket local_addr failed: {err}"))
-            })?;
             let handler = build_ome_ws_connection_handler(
                 handle.clone(),
                 self.answer_dispatcher.clone(),
