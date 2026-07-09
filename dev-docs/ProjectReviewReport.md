@@ -19,7 +19,7 @@
 | F-05 | 风险 | `cheetah-http-flv-module` 直接依赖 `cheetah-rtmp-core` 复用 FLV 封装逻辑 | 中 | 已修复 |
 | F-06 | 风险 | mp4 module 用 `tokio::spawn` 且 driver 公共 API 泄漏 tokio 通道类型 | 中 | 已修复 |
 | F-07 | 文档 | `SystemArchitecture.md` 缺 hls/ts/mp4/srt/webrtc 的 Reference Mapping | 中 | 已修复 |
-| F-08 | 测试 | `ts`、`http-flv` 缺 `testing/property-tests`（其余 9 协议均有） | 中 | 待处理 |
+| F-08 | 测试 | `ts`、`http-flv` 缺 `testing/property-tests`（其余 9 协议均有） | 中 | 已修复 |
 | F-09 | 文档/实现 | SystemArchitecture §4 观测性基线指标在代码中完全缺失 | 中 | 待处理 |
 | F-10 | 风险 | `cheetah-engine` 内部直用 `tokio::sync::{mpsc,broadcast,Mutex}`，与 §5 允许清单冲突 | 低 | 待处理 |
 
@@ -199,12 +199,20 @@
 - 验证：`cargo fmt/clippy(--tests)/test -p cheetah-mp4-core -p cheetah-mp4-driver-tokio -p cheetah-mp4-module`
   全绿；`cargo build -p cheetah-server --features "...,mp4,..."` 通过；边界守卫通过。行为不变。
 
-### F-08【待处理｜中】ts、http-flv 协议缺属性测试
+### F-08【已修复｜中】ts、http-flv 协议缺属性测试
 - 证据（第二轮逐协议核对）：11 协议中仅 **ts** 与 **http-flv** 无 `testing/property-tests`
   （rtmp/rtsp/hls/fmp4/mp4/rtp/gb28181/srt/webrtc 均有）。
 - 依据：`AGENTS.md` §11 + `SystemArchitecture.md` §6（core 应有属性测试）。
-- 建议：补 `crates/protocols/ts/testing/property-tests`（覆盖 TS 包解析/PAT-PMT/重组上界）与
-  `crates/protocols/http-flv/testing/property-tests`（覆盖 FLV tag 解析/时间戳/分帧上界）。
+- 修复：新增 `crates/protocols/ts/testing/property-tests`（`cheetah-ts-property-tests`，7 项）
+  与 `crates/protocols/http-flv/testing/property-tests`（`cheetah-http-flv-property-tests`，7 项），
+  并加入根 workspace members。属性覆盖：
+  - TS：MPEG-TS 188B 对齐 + 0x47 同步字节、mux→demux roundtrip 恢复 track/frame、任意分块投喂不变量、
+    `parse_ts_request_target` roundtrip/忽略 query/拒绝路径穿越、`websocket_accept_key` 确定性。
+  - HTTP-FLV：`map_frame_to_rtmp_flv_payload` 的 H264 tag 头（关键帧 0x17 / 非关键帧 0x27 + AVC 0x01）、
+    时间戳=DTS(ms)、`build_track_bootstrap_payloads` 元数据领头且唯一、`parse_play_request_target`
+    roundtrip + `type=` 模式、拒绝非 `.flv`、`websocket_accept_key` 确定性。
+- 验证：两 crate `cargo fmt/clippy(--tests)/test` 全绿（各 7 项通过），边界守卫通过；同步 §3.6 crate 清单与
+  §6 测试策略/CI 基线。（`cheetah-ts-core` 现存 1 条 `rtp_ts.rs` clippy 提示与本次无关，未纳入本 PR。）
 
 ---
 
@@ -238,7 +246,7 @@
 - ~~F-05 FLV 封装收敛到 codec，解除 http-flv→rtmp-core 依赖。~~（已完成）
 - F-06 mp4 桥接：SDK 事件流抽象 + `VodApi` 注入 `RuntimeApi`，driver 公共 API 去 tokio 化。
 - F-07 / F-09 文档与实现对齐（补协议映射 / 观测性章节标注）。
-- F-08 补 ts、http-flv 属性测试。
+- ~~F-08 补 ts、http-flv 属性测试。~~（已完成）
 - F-10 §5 允许清单口径统一（建议显式纳入 engine）并扩展边界守卫覆盖。
 
 **复现命令：**

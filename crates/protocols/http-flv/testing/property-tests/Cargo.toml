@@ -1,0 +1,12 @@
+[package]
+name = "cheetah-http-flv-property-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dev-dependencies]
+bytes.workspace = true
+cheetah-codec = { path = "../../../../foundation/cheetah-codec" }
+cheetah-http-flv-core = { path = "../../core" }
+proptest = "1.6.0"
