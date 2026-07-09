@@ -16,13 +16,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use cheetah_codec::{
-    AVFrame, CodecExtradata, CodecId, FrameFlags, FrameFormat, FrameSideData, MediaKind, Timebase,
-    TrackId, TrackInfo,
+    AVFrame, CodecExtradata, CodecId, FrameFlags, FrameFormat, FrameSideData, MediaKind, MonoTime,
+    Timebase, TrackId, TrackInfo,
 };
 use cheetah_sdk::{
-    PublishLease, PublisherApi, PublisherOptions, PublisherSink, SdkError, StreamKey,
+    PublishLease, PublisherApi, PublisherOptions, PublisherSink, RuntimeApi, SdkError, StreamKey,
 };
 use cheetah_webrtc_core::{MidLabel, WebRtcCodecKind, WebRtcMediaEvent, WebRtcSessionId};
+use futures::FutureExt;
 use parking_lot::Mutex;
 use tracing::{debug, warn};
 
@@ -1148,7 +1149,7 @@ impl PlaybackTimingState {
         )
     }
 
-    async fn apply(&mut self, pts_us: i64) -> u64 {
+    async fn apply(&mut self, pts_us: i64, runtime: &Arc<dyn RuntimeApi>) -> u64 {
         if self.effective_delay.is_zero() {
             return 0;
         }
@@ -1165,7 +1166,7 @@ impl PlaybackTimingState {
         if delta_us > 2_000_000 {
             self.anchor_pts_us = Some(pts_us);
             self.anchor_instant = Some(now);
-            tokio::time::sleep(self.effective_delay).await;
+            sleep_for_duration(runtime, self.effective_delay).await;
             return self.effective_delay.as_micros() as u64;
         }
         let media_delta = if delta_us > 0 {
@@ -1178,9 +1179,16 @@ impl PlaybackTimingState {
             return 0;
         }
         let sleep_for = target.duration_since(now);
-        tokio::time::sleep(sleep_for).await;
+        sleep_for_duration(runtime, sleep_for).await;
         sleep_for.as_micros() as u64
     }
+}
+
+/// Sleep for a relative duration using the injected runtime timer.
+async fn sleep_for_duration(runtime: &Arc<dyn RuntimeApi>, dur: std::time::Duration) {
+    let dur_us = u64::try_from(dur.as_micros()).unwrap_or(u64::MAX);
+    let deadline = MonoTime::from_micros(runtime.now().as_micros().saturating_add(dur_us));
+    runtime.sleep_until(deadline).wait().await;
 }
 
 /// Spawn an engine subscriber that forwards `AVFrame`s to a WebRTC
@@ -1259,7 +1267,7 @@ pub async fn spawn_play_subscriber(
                         "play subscriber cancelled before stream became available".into(),
                     ));
                 }
-                tokio::time::sleep(retry_interval).await;
+                sleep_for_duration(&ctx.runtime_api, retry_interval).await;
                 continue;
             }
             Err(err @ SdkError::NotFound(_)) => {
@@ -1282,6 +1290,7 @@ pub async fn spawn_play_subscriber(
         }
     };
     let runtime_api = ctx.runtime_api.clone();
+    let timing_runtime = ctx.runtime_api.clone();
     let (mut timing_state, effective_delay_ms) = PlaybackTimingState::new(timing_policy);
     bridges
         .lock()
@@ -1290,10 +1299,16 @@ pub async fn spawn_play_subscriber(
         let mut bootstrap_view = crate::bootstrap::PlayBootstrapView::new();
         let mut skipped_audio_codecs: Vec<cheetah_codec::CodecId> = Vec::new();
         loop {
-            tokio::select! {
-                biased;
-                _ = cancel.cancelled() => break,
-                frame = subscriber.recv() => match frame {
+            let frame = {
+                let cancelled = cancel.cancelled().fuse();
+                let recv = subscriber.recv().fuse();
+                futures::pin_mut!(cancelled, recv);
+                futures::select_biased! {
+                    _ = cancelled => break,
+                    frame = recv => frame,
+                }
+            };
+            match frame {
                     Ok(Some(frame)) => {
                         let codec_mapping =
                             match playback_codec_for_frame(frame.codec, frame.media_kind, audio_policy) {
@@ -1395,7 +1410,8 @@ pub async fn spawn_play_subscriber(
                                 samples_per_frame: cheetah_codec::codec_default_samples_per_frame(frame.codec),
                             },
                         );
-                        let delayed_micros = timing_state.apply(frame.pts_us).await;
+                        let delayed_micros =
+                            timing_state.apply(frame.pts_us, &timing_runtime).await;
                         let now_micros = std::time::Instant::now()
                             .saturating_duration_since(start_instant)
                             .as_micros() as u64;
@@ -1440,7 +1456,6 @@ pub async fn spawn_play_subscriber(
                     }
                     Ok(None) => break,
                     Err(_) => break,
-                }
             }
         }
         // Emit diagnostic if the subscriber never received a decodable

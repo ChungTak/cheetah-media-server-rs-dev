@@ -22,9 +22,10 @@ use cheetah_webrtc_core::{WebRtcCloseReason, WebRtcSessionRole};
 use cheetah_webrtc_driver_tokio::{
     CandidateTransportPolicy, WebRtcDriverCommand, WebRtcDriverHandle, WebRtcSessionSpec,
 };
+use futures::channel::oneshot;
 use parking_lot::Mutex;
 use serde_json::Value;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::broadcast;
 use tracing::warn;
 
 use crate::bridge::{WebRtcBridgeRegistry, WebRtcPublishBridge};
@@ -2431,30 +2432,26 @@ impl AnswerDispatcher {
     /// shape so the P2P bridge code stays free of `pub(crate)`
     /// types.
     pub(crate) fn subscribe_p2p(
-        self: &Arc<Self>,
+        &self,
         session_id: cheetah_webrtc_core::WebRtcSessionId,
-    ) -> oneshot::Receiver<crate::p2p::DispatcherOfferOutcome> {
+    ) -> futures::future::BoxFuture<'static, crate::p2p::DispatcherOfferOutcome> {
         let inner = self.subscribe(session_id);
-        let (tx, rx) = oneshot::channel::<crate::p2p::DispatcherOfferOutcome>();
-        // The conversion is one-shot; spawn a tiny task that awaits
-        // the inner receiver and forwards the outcome. Cancelling
-        // either side drops the task without blocking.
-        tokio::spawn(async move {
+        // Runtime-neutral adapter: await the inner receiver inline and
+        // map the internal `AnswerOutcome` enum onto the public
+        // `DispatcherOfferOutcome` shape. No task is spawned — the
+        // returned future carries the conversion so the P2P bridge
+        // stays free of `pub(crate)` types and of a runtime handle.
+        Box::pin(async move {
             match inner.await {
-                Ok(AnswerOutcome::Sdp(sdp)) => {
-                    let _ = tx.send(crate::p2p::DispatcherOfferOutcome::Sdp(sdp));
-                }
+                Ok(AnswerOutcome::Sdp(sdp)) => crate::p2p::DispatcherOfferOutcome::Sdp(sdp),
                 Ok(AnswerOutcome::Failed(reason)) => {
-                    let _ = tx.send(crate::p2p::DispatcherOfferOutcome::Failed(reason));
+                    crate::p2p::DispatcherOfferOutcome::Failed(reason)
                 }
                 Err(_) => {
-                    let _ = tx.send(crate::p2p::DispatcherOfferOutcome::Failed(
-                        "driver offer channel closed".into(),
-                    ));
+                    crate::p2p::DispatcherOfferOutcome::Failed("driver offer channel closed".into())
                 }
             }
-        });
-        rx
+        })
     }
 }
 

@@ -23,14 +23,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use cheetah_codec::MonoTime;
 use cheetah_runtime_api::{CancellationToken, RuntimeApi};
 use cheetah_webrtc_core::{
     WebRtcCloseReason, WebRtcOfferDirection, WebRtcOfferSpec, WebRtcSessionId, WebRtcSessionRole,
 };
 use cheetah_webrtc_driver_tokio::{WebRtcDriverCommand, WebRtcDriverHandle};
+use futures::channel::mpsc;
+use futures::future::BoxFuture;
+use futures::{FutureExt, StreamExt};
 use parking_lot::Mutex;
 use thiserror::Error;
-use tokio::sync::oneshot;
 
 use super::buffer::PendingCandidate;
 use super::job::{P2pJob, P2pJobAction, P2pJobConfig, P2pJobInput, P2pJobKind, P2pJobState};
@@ -78,12 +81,12 @@ impl<T: P2pDriverSink + ?Sized> P2pDriverSink for Arc<T> {
 /// `AnswerDispatcher`-backed waiter. Production code constructs this
 /// directly from the module-owned dispatcher.
 pub struct DispatcherOfferWaiter {
-    /// Per-session subscription factory.
+    /// Per-session subscription factory. Returns a future that
+    /// resolves once the driver produces an offer (or the underlying
+    /// channel is dropped, surfaced as `Failed`).
     subscribe:
-        Box<dyn Fn(WebRtcSessionId) -> oneshot::Receiver<DispatcherOfferOutcome> + Send + Sync>,
-    /// Runtime handle for the offer-wait timeout. Consumed by
-    /// `wait_for_offer` once the timeout is made runtime-neutral.
-    #[allow(dead_code)]
+        Box<dyn Fn(WebRtcSessionId) -> BoxFuture<'static, DispatcherOfferOutcome> + Send + Sync>,
+    /// Runtime handle for the offer-wait timeout.
     runtime: Arc<dyn RuntimeApi>,
 }
 
@@ -98,7 +101,10 @@ pub enum DispatcherOfferOutcome {
 impl DispatcherOfferWaiter {
     pub fn new<F>(runtime: Arc<dyn RuntimeApi>, subscribe: F) -> Self
     where
-        F: Fn(WebRtcSessionId) -> oneshot::Receiver<DispatcherOfferOutcome> + Send + Sync + 'static,
+        F: Fn(WebRtcSessionId) -> BoxFuture<'static, DispatcherOfferOutcome>
+            + Send
+            + Sync
+            + 'static,
     {
         Self {
             subscribe: Box::new(subscribe),
@@ -114,12 +120,19 @@ impl P2pOfferWaiter for DispatcherOfferWaiter {
         session_id: WebRtcSessionId,
         timeout: Duration,
     ) -> Result<String, String> {
-        let waiter = (self.subscribe)(session_id);
-        match tokio::time::timeout(timeout, waiter).await {
-            Ok(Ok(DispatcherOfferOutcome::Sdp(sdp))) => Ok(sdp),
-            Ok(Ok(DispatcherOfferOutcome::Failed(reason))) => Err(reason),
-            Ok(Err(_)) => Err("driver offer channel closed".into()),
-            Err(_) => Err("driver did not produce an offer in time".into()),
+        let timeout_us = u64::try_from(timeout.as_micros()).unwrap_or(u64::MAX);
+        let deadline =
+            MonoTime::from_micros(self.runtime.now().as_micros().saturating_add(timeout_us));
+        let mut timer = self.runtime.sleep_until(deadline);
+        let waiter = (self.subscribe)(session_id).fuse();
+        let wait = timer.wait().fuse();
+        futures::pin_mut!(waiter, wait);
+        futures::select_biased! {
+            outcome = waiter => match outcome {
+                DispatcherOfferOutcome::Sdp(sdp) => Ok(sdp),
+                DispatcherOfferOutcome::Failed(reason) => Err(reason),
+            },
+            _ = wait => Err("driver did not produce an offer in time".into()),
         }
     }
 }
@@ -139,10 +152,7 @@ pub trait BridgeLifecycleSource: Send + Sync {
     /// Subscribe to lifecycle events for the given session. The
     /// returned channel must yield at most one event per state and
     /// is closed when the source has nothing more to deliver.
-    async fn subscribe(
-        &self,
-        session_id: WebRtcSessionId,
-    ) -> tokio::sync::mpsc::Receiver<BridgeLifecycleEvent>;
+    async fn subscribe(&self, session_id: WebRtcSessionId) -> mpsc::Receiver<BridgeLifecycleEvent>;
 }
 
 /// Lifecycle events the bridge cares about.
@@ -211,16 +221,24 @@ where
     .await
 }
 
-/// Helper used inside `run_bridge_with_lifecycle`'s `tokio::select!`
-/// to make the lifecycle arm pend forever when no receiver is held
-/// (or after the channel closed). Returning `Option<...>` lets the
-/// select arm distinguish "real event" / "channel closed" without a
-/// busy loop on an empty channel.
+/// Outcome of the bridge main-loop multi-wait, resolved before any arm
+/// side effect runs so the borrow on `lifecycle_rx` is released.
+enum BridgeStep {
+    Cancelled,
+    Lifecycle(Option<BridgeLifecycleEvent>),
+    Transport(Result<P2pTransportEvent, P2pTransportError>),
+}
+
+/// Helper used inside `run_bridge_with_lifecycle`'s multi-wait to make
+/// the lifecycle arm pend forever when no receiver is held (or after
+/// the channel closed). Returning `Option<...>` lets the select arm
+/// distinguish "real event" / "channel closed" without a busy loop on
+/// an empty channel.
 async fn recv_lifecycle(
-    rx: &mut Option<tokio::sync::mpsc::Receiver<BridgeLifecycleEvent>>,
+    rx: &mut Option<mpsc::Receiver<BridgeLifecycleEvent>>,
 ) -> Option<BridgeLifecycleEvent> {
     match rx.as_mut() {
-        Some(channel) => channel.recv().await,
+        Some(channel) => channel.next().await,
         None => std::future::pending().await,
     }
 }
@@ -233,12 +251,12 @@ impl BridgeLifecycleSource for NoopLifecycleSource {
     async fn subscribe(
         &self,
         _session_id: WebRtcSessionId,
-    ) -> tokio::sync::mpsc::Receiver<BridgeLifecycleEvent> {
+    ) -> mpsc::Receiver<BridgeLifecycleEvent> {
         // Empty channel: the sender is dropped immediately so
-        // `recv()` returns `None`. The bridge handles this by
+        // `next()` returns `None`. The bridge handles this by
         // dropping the receiver and falling back to a never-ready
         // future — see `take_lifecycle_rx` in `run_bridge_with_lifecycle`.
-        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        let (_tx, rx) = mpsc::channel(1);
         rx
     }
 }
@@ -280,11 +298,10 @@ where
     // is supplied we use `None` and skip the lifecycle arm; when the
     // source closes its channel we also drop the receiver so the
     // select arm stops waking up on a perpetual `None`.
-    let mut lifecycle_rx: Option<tokio::sync::mpsc::Receiver<BridgeLifecycleEvent>> =
-        match lifecycle.as_ref() {
-            Some(source) => Some(source.subscribe(session_id).await),
-            None => None,
-        };
+    let mut lifecycle_rx: Option<mpsc::Receiver<BridgeLifecycleEvent>> = match lifecycle.as_ref() {
+        Some(source) => Some(source.subscribe(session_id).await),
+        None => None,
+    };
 
     // Phase 1: ask the driver for an offer.
     let role = match config.job.kind {
@@ -366,64 +383,81 @@ where
             break;
         }
 
-        let event = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => {
-                let _ = job.apply(P2pJobInput::LocalBye { reason: Some("cancelled".into()) });
+        // Runtime-neutral multi-wait: pin each arm's future, fuse it,
+        // and let `select_biased!` poll cancel → lifecycle → transport
+        // in priority order (matching the previous `biased` select).
+        // The chosen arm is reduced to a `BridgeStep` before any arm
+        // body runs so the borrow on `lifecycle_rx` is released and we
+        // can reassign it in the `None` case.
+        let step = {
+            let cancelled = cancel.cancelled().fuse();
+            let life = recv_lifecycle(&mut lifecycle_rx).fuse();
+            let recv = transport.recv().fuse();
+            futures::pin_mut!(cancelled, life, recv);
+            futures::select_biased! {
+                _ = cancelled => BridgeStep::Cancelled,
+                ev = life => BridgeStep::Lifecycle(ev),
+                res = recv => BridgeStep::Transport(res),
+            }
+        };
+        let event = match step {
+            BridgeStep::Cancelled => {
+                let _ = job.apply(P2pJobInput::LocalBye {
+                    reason: Some("cancelled".into()),
+                });
                 break;
             }
-            lifecycle_event = recv_lifecycle(&mut lifecycle_rx) => {
-                match lifecycle_event {
-                    Some(BridgeLifecycleEvent::Connected) => {
-                        let actions = match job.apply(P2pJobInput::DriverConnected) {
-                            Ok(a) => a,
-                            Err(err) => {
-                                tracing::debug!(target: "webrtc::p2p::bridge", "job rejected DriverConnected: {err}");
-                                continue;
-                            }
-                        };
-                        if let Err(err) = execute_actions(&actions, &transport, &driver, session_id).await {
-                            transport.close().await;
-                            return err;
+            BridgeStep::Lifecycle(lifecycle_event) => match lifecycle_event {
+                Some(BridgeLifecycleEvent::Connected) => {
+                    let actions = match job.apply(P2pJobInput::DriverConnected) {
+                        Ok(a) => a,
+                        Err(err) => {
+                            tracing::debug!(target: "webrtc::p2p::bridge", "job rejected DriverConnected: {err}");
+                            continue;
                         }
-                        continue;
-                    }
-                    Some(BridgeLifecycleEvent::Closed { reason }) => {
-                        let _ = job.apply(P2pJobInput::TransportError(reason.clone()));
-                        driver
-                            .send_command(WebRtcDriverCommand::StopSession {
-                                session_id,
-                                reason: WebRtcCloseReason::Internal(reason.clone()),
-                            })
-                            .await;
+                    };
+                    if let Err(err) =
+                        execute_actions(&actions, &transport, &driver, session_id).await
+                    {
                         transport.close().await;
-                        return P2pBridgeOutcome::TransportError {
-                            reason: P2pTransportError::Io(reason),
-                        };
+                        return err;
                     }
-                    None => {
-                        // Source closed — drop the receiver so this
-                        // arm never wakes again.
-                        lifecycle_rx = None;
-                        continue;
-                    }
+                    continue;
                 }
-            }
-            res = transport.recv() => res,
-        };
-        let event = match event {
-            Ok(e) => e,
-            Err(err) => {
-                let _ = job.apply(P2pJobInput::TransportError(err.to_string()));
-                driver
-                    .send_command(WebRtcDriverCommand::StopSession {
-                        session_id,
-                        reason: WebRtcCloseReason::Internal(err.to_string()),
-                    })
-                    .await;
-                transport.close().await;
-                return P2pBridgeOutcome::TransportError { reason: err };
-            }
+                Some(BridgeLifecycleEvent::Closed { reason }) => {
+                    let _ = job.apply(P2pJobInput::TransportError(reason.clone()));
+                    driver
+                        .send_command(WebRtcDriverCommand::StopSession {
+                            session_id,
+                            reason: WebRtcCloseReason::Internal(reason.clone()),
+                        })
+                        .await;
+                    transport.close().await;
+                    return P2pBridgeOutcome::TransportError {
+                        reason: P2pTransportError::Io(reason),
+                    };
+                }
+                None => {
+                    // Source closed — drop the receiver so this arm
+                    // never wakes again.
+                    lifecycle_rx = None;
+                    continue;
+                }
+            },
+            BridgeStep::Transport(res) => match res {
+                Ok(e) => e,
+                Err(err) => {
+                    let _ = job.apply(P2pJobInput::TransportError(err.to_string()));
+                    driver
+                        .send_command(WebRtcDriverCommand::StopSession {
+                            session_id,
+                            reason: WebRtcCloseReason::Internal(err.to_string()),
+                        })
+                        .await;
+                    transport.close().await;
+                    return P2pBridgeOutcome::TransportError { reason: err };
+                }
+            },
         };
 
         let inputs = match event {
@@ -805,9 +839,10 @@ mod tests {
         use crate::p2p::bridge::{
             run_bridge_with_lifecycle, BridgeLifecycleEvent, BridgeLifecycleSource,
         };
+        use futures::SinkExt;
 
         struct OneShotLifecycle {
-            tx: tokio::sync::Mutex<Option<tokio::sync::mpsc::Sender<BridgeLifecycleEvent>>>,
+            tx: tokio::sync::Mutex<Option<mpsc::Sender<BridgeLifecycleEvent>>>,
         }
 
         #[async_trait]
@@ -815,8 +850,8 @@ mod tests {
             async fn subscribe(
                 &self,
                 _session_id: WebRtcSessionId,
-            ) -> tokio::sync::mpsc::Receiver<BridgeLifecycleEvent> {
-                let (tx, rx) = tokio::sync::mpsc::channel(1);
+            ) -> mpsc::Receiver<BridgeLifecycleEvent> {
+                let (tx, rx) = mpsc::channel(1);
                 *self.tx.lock().await = Some(tx);
                 rx
             }
@@ -868,7 +903,7 @@ mod tests {
                     .unwrap();
                 // The bridge subscribes before issuing CreateOffer,
                 // so the tx slot is already populated.
-                let lifecycle_tx = lifecycle.tx.lock().await.clone().expect("subscribed");
+                let mut lifecycle_tx = lifecycle.tx.lock().await.clone().expect("subscribed");
                 lifecycle_tx
                     .send(BridgeLifecycleEvent::Connected)
                     .await
