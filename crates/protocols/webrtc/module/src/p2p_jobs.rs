@@ -42,7 +42,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use cheetah_runtime_api::CancellationToken;
-use cheetah_sdk::EngineContext;
+use cheetah_sdk::{EngineContext, RuntimeApi};
 use cheetah_webrtc_core::WebRtcSessionId;
 use cheetah_webrtc_driver_tokio::WebRtcDriverHandle;
 use parking_lot::Mutex;
@@ -311,6 +311,7 @@ pub fn spawn(
     let policy = policy.clone();
     let connect_timeout = request.connect_timeout;
     let snapshot_for_task = snapshot.clone();
+    let runtime_api_for_task = runtime_api.clone();
 
     runtime_api.spawn(Box::pin(async move {
         run_job(
@@ -328,6 +329,7 @@ pub fn spawn(
             signaling_override,
             connect_timeout,
             supervisor_config,
+            runtime_api_for_task,
         )
         .await;
     }));
@@ -351,6 +353,7 @@ async fn run_job(
     signaling_override: Option<String>,
     connect_timeout: Duration,
     supervisor_config: KeeperSupervisorConfig,
+    runtime_api: Arc<dyn RuntimeApi>,
 ) {
     let factory = WebSocketTransportFactory::new(WebSocketTransportConfig {
         url_policy: policy,
@@ -371,6 +374,7 @@ async fn run_job(
         answer_dispatcher: answer_dispatcher.clone(),
         bridge_outcome: bridge_outcome.clone(),
         snapshot: snapshot.clone(),
+        runtime_api: runtime_api.clone(),
     });
 
     {
@@ -385,6 +389,7 @@ async fn run_job(
         KeeperHubConfig::default(),
         factory,
         observer,
+        runtime_api,
         cancel,
     )
     .await;
@@ -424,6 +429,7 @@ struct P2pClientObserver {
     answer_dispatcher: Arc<crate::http::AnswerDispatcher>,
     bridge_outcome: Arc<Mutex<Option<P2pBridgeOutcome>>>,
     snapshot: Arc<Mutex<P2pClientJobSnapshot>>,
+    runtime_api: Arc<dyn RuntimeApi>,
 }
 
 #[async_trait]
@@ -455,9 +461,10 @@ impl KeeperHubObserver for P2pClientObserver {
         // crate-private `AnswerOutcome` to the public
         // `DispatcherOfferOutcome` shape the bridge consumes.
         let dispatcher = self.answer_dispatcher.clone();
-        let waiter = Arc::new(crate::p2p::DispatcherOfferWaiter::new(move |session_id| {
-            dispatcher.subscribe_p2p(session_id)
-        }));
+        let waiter = Arc::new(crate::p2p::DispatcherOfferWaiter::new(
+            self.runtime_api.clone(),
+            move |session_id| dispatcher.subscribe_p2p(session_id),
+        ));
 
         let outcome = crate::p2p::run_bridge_with_lifecycle::<
             _,

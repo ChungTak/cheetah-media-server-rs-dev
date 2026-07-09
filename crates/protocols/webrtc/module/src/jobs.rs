@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use cheetah_sdk::{CancellationToken, EngineContext, StreamKey};
+use cheetah_sdk::{CancellationToken, EngineContext, RuntimeApi, StreamKey};
 use cheetah_webrtc_core::{
     WebRtcCloseReason, WebRtcOfferDirection, WebRtcOfferSpec, WebRtcSessionId, WebRtcSessionRole,
 };
@@ -256,7 +256,7 @@ async fn run_supervisor(
     driver: Arc<WebRtcDriverHandle>,
     dispatcher: Arc<AnswerDispatcher>,
     allocator: Arc<WebRtcSessionIdAllocator>,
-    _ctx: EngineContext,
+    ctx: EngineContext,
     cancel: CancellationToken,
 ) {
     let max_retries = if spec.retry {
@@ -285,6 +285,7 @@ async fn run_supervisor(
             &driver,
             &dispatcher,
             &allocator,
+            &ctx.runtime_api,
             &cancel,
         )
         .await;
@@ -382,6 +383,7 @@ async fn run_attempt(
     driver: &Arc<WebRtcDriverHandle>,
     dispatcher: &Arc<AnswerDispatcher>,
     allocator: &Arc<WebRtcSessionIdAllocator>,
+    runtime: &Arc<dyn RuntimeApi>,
     cancel: &CancellationToken,
 ) -> AttemptOutcome {
     let session_id = allocator.allocate();
@@ -413,7 +415,7 @@ async fn run_attempt(
         .await;
 
     // Wait for the driver to surface the local SDP offer.
-    let offer_sdp = match wait_dispatcher(waiter, spec.timeout, cancel).await {
+    let offer_sdp = match wait_dispatcher(waiter, spec.timeout, runtime, cancel).await {
         WaitOutcome::Sdp(sdp) => sdp,
         WaitOutcome::Failure(reason) => {
             // The driver couldn't produce an offer; treat as transient
@@ -531,6 +533,7 @@ enum WaitOutcome {
 async fn wait_dispatcher(
     waiter: tokio::sync::oneshot::Receiver<crate::http::AnswerOutcome>,
     timeout: Duration,
+    _runtime: &Arc<dyn RuntimeApi>,
     cancel: &CancellationToken,
 ) -> WaitOutcome {
     let timeout = timeout
