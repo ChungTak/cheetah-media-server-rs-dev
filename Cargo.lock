@@ -627,6 +627,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cheetah-http-flv-property-tests"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "cheetah-codec",
+ "cheetah-http-flv-core",
+ "proptest",
+]
+
+[[package]]
 name = "cheetah-mp4-core"
 version = "0.1.0"
 dependencies = [
@@ -1073,6 +1083,16 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "cheetah-ts-property-tests"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "cheetah-codec",
+ "cheetah-ts-core",
+ "proptest",
 ]
 
 [[package]]

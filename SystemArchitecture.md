@@ -227,6 +227,7 @@ Current TS crates:
 - `crates/protocols/ts/core` (`cheetah-ts-core`)
 - `crates/protocols/ts/driver-tokio` (`cheetah-ts-driver-tokio`)
 - `crates/protocols/ts/module` (`cheetah-ts-module`)
+- `crates/protocols/ts/testing/property-tests` (`cheetah-ts-property-tests`)
 
 Shared MPEG-TS mux/demux capability lives in `cheetah-codec` (`ts_mux`/`ts_demux`); the TS core consumes those views rather than reimplementing container logic.
 
@@ -378,7 +379,8 @@ By layer:
 
 RTMP property tests are placed in `crates/protocols/rtmp/testing/property-tests` and run against `cheetah-rtmp-core` Sans-I/O APIs.
 RTSP property tests are placed in `crates/protocols/rtsp/testing/property-tests` and run against `cheetah-rtsp-core` Sans-I/O APIs.
-HTTP-FLV compatibility/robustness tests are currently staged in `crates/protocols/http-flv/module/tests` and aligned with `.flvstream` fixture + transport fault views.
+HTTP-FLV compatibility/robustness tests are staged in `crates/protocols/http-flv/module/tests` (aligned with `.flvstream` fixture + transport fault views); property tests live in `crates/protocols/http-flv/testing/property-tests` and run against `cheetah-codec` FLV egress mapping plus `cheetah-http-flv-core` request parsing.
+TS property tests are placed in `crates/protocols/ts/testing/property-tests` and run against `cheetah-codec` MPEG-TS mux/demux plus `cheetah-ts-core` request parsing.
 
 Fuzz harnesses are placed in `crates/protocols/<proto>/fuzz` and are standalone cargo-fuzz workspaces, not default root workspace members.
 
@@ -400,7 +402,18 @@ CI/check baseline for HTTP-FLV:
 - `cargo test -p cheetah-http-flv-driver-tokio`
 - `cargo clippy -p cheetah-http-flv-module --tests`
 - `cargo test -p cheetah-http-flv-module`
+- `cargo test -p cheetah-http-flv-property-tests`
 - `(cd crates/protocols/http-flv/fuzz && cargo +nightly fuzz build)`
+
+CI/check baseline for TS:
+
+- `cargo clippy -p cheetah-ts-core`
+- `cargo test -p cheetah-ts-core`
+- `cargo clippy -p cheetah-ts-driver-tokio`
+- `cargo test -p cheetah-ts-driver-tokio`
+- `cargo clippy -p cheetah-ts-module --tests`
+- `cargo test -p cheetah-ts-module`
+- `cargo test -p cheetah-ts-property-tests`
 
 fMP4 property tests are placed in `crates/protocols/fmp4/testing/property-tests` and run against `cheetah-codec` fMP4 mux/demux APIs.
 
