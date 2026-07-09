@@ -152,11 +152,6 @@ fMP4 boundary clarification:
 - `cheetah-fmp4-driver-tokio` owns TCP bind/accept, HTTP/1.1 parsing, chunked response encoding, WebSocket binary framing, per-connection write queues, and pull client (http/https/ws/wss).
 - `cheetah-fmp4-module` owns engine subscribe/publish, play session lifecycle, pull job supervision with backoff retry, and config validation.
 
-MP4 VOD boundary clarification:
-
-- `cheetah-mp4-driver-tokio` owns file I/O, the schedule-tick loop, and command dispatch on internal tokio channels. Its public surface stays runtime-neutral: `VodDriverHandle::take_events()` yields a `VodEventStream` (`impl futures::Stream`), not a `tokio::sync::mpsc::Receiver`.
-- `cheetah-mp4-module` carries no `tokio` production dependency. `VodApi` receives an `Arc<dyn RuntimeApi>` from `EngineContext` and drives the VOD→engine `bridge_events` task via `RuntimeApi::spawn`, consuming the driver's neutral event stream.
-
 ## 3.3 RTP Reference Mapping
 
 Current RTP crates:
@@ -201,7 +196,102 @@ GB28181 boundary clarification:
 - `cheetah-gb28181-driver-tokio` executes the UDP/TCP SIP message loop, handles TCP connection states, manages timer-based ticks for offline checks, and routes outgoing SIP buffers.
 - `cheetah-gb28181-module` manages GB28181 business logic, registering HTTP REST APIs (for triggering manual INVITE, BYE, and talkback), keeping track of active device maps, checking publish leases, and bridging incoming streams to the core media engine.
 
-### 3.x WebRTC
+## 3.5 HLS Reference Mapping
+
+Current HLS crates:
+
+- `crates/protocols/hls/core` (`cheetah-hls-core`)
+- `crates/protocols/hls/driver-tokio` (`cheetah-hls-driver-tokio`)
+- `crates/protocols/hls/module` (`cheetah-hls-module`)
+- `crates/protocols/hls/testing/property-tests` (`cheetah-hls-property-tests`)
+- `crates/protocols/hls/fuzz` (`cheetah-hls-fuzz`, standalone cargo-fuzz harness crate)
+
+HLS capability snapshot:
+
+- containers: MPEG-TS segments (`.ts`, default) and fMP4 segments (`.m4s` + `init.mp4`).
+- Low-Latency HLS (fMP4 container): partial segments (`EXT-X-PART`), `EXT-X-SERVER-CONTROL` blocking reload, `EXT-X-PART-INF`, `EXT-X-PRELOAD-HINT`, `EXT-X-PROGRAM-DATE-TIME`, rendition reports.
+- play egress: master + media playlists (`/{app}/{stream}.m3u8`, `/{app}/{stream}/index.m3u8`), segment/part fetch, embedded hls.js player page, HTTPS/TLS.
+- session identity: `HLS_SESSION` cookie or `?session=` query; CDN Bearer-token auth mode via `cdn_secret`.
+- codec matrix: H264, H265, VP8, VP9, AV1 (video); AAC, G711A, G711U, MP3, Opus (audio).
+
+HLS boundary clarification:
+
+- `cheetah-hls-core` is Sans-I/O: playlist building (`PlaylistBuilder`), LL-HLS part/segment state (`ll_hls`), TS/fMP4 mux+demux views (delegating container work to `cheetah-codec`), playback pacing (`HlsPlaybackPacer`), request routing, and playlist parsing. No socket/timer/runtime.
+- `cheetah-hls-driver-tokio` owns the HTTP(S) server (`start_server`/`start_tls_server`), connection command channel, and optional on-disk segment writer (`HlsFileWriter`).
+- `cheetah-hls-module` owns engine subscribe, per-stream muxer lifecycle, segment ring buffer, remote pull, and config validation; timers go through `RuntimeApi` (runtime-neutral, see §5).
+
+## 3.6 HTTP-TS Reference Mapping
+
+Current TS crates:
+
+- `crates/protocols/ts/core` (`cheetah-ts-core`)
+- `crates/protocols/ts/driver-tokio` (`cheetah-ts-driver-tokio`)
+- `crates/protocols/ts/module` (`cheetah-ts-module`)
+
+Shared MPEG-TS mux/demux capability lives in `cheetah-codec` (`ts_mux`/`ts_demux`); the TS core consumes those views rather than reimplementing container logic.
+
+TS capability snapshot:
+
+- play egress: HTTP-TS (`/{app}/{stream}.ts`), WS-TS (binary frames), ZLM-compatible `.live.ts`, HTTPS/WSS-TS (TLS).
+- 188-byte TS packetization with periodic PAT/PMT injection (`pat_pmt_interval_ms`) so late joiners recover track topology.
+- bootstrap GOP catch-up (`bootstrap_max_frames`) for fast first-frame.
+- ingest: RTP-encapsulated MPEG-TS demux via `RtpTsIngest` → engine tracks; remote TS pull jobs with backoff retry.
+
+TS boundary clarification:
+
+- `cheetah-ts-core` is Sans-I/O: HTTP request routing, WebSocket upgrade validation, CORS, session state (`TsCore`), and RTP-TS ingest state (`RtpTsIngest`).
+- `cheetah-ts-driver-tokio` owns the HTTP(S)/WS server (`start_server`), per-connection command channel, and the pull client (`TsPullClient`).
+- `cheetah-ts-module` owns engine subscribe/publish, play session lifecycle, pull job supervision, and config validation.
+
+## 3.7 MP4 VOD Reference Mapping
+
+Current MP4 crates:
+
+- `crates/protocols/mp4/core` (`cheetah-mp4-core`)
+- `crates/protocols/mp4/driver-tokio` (`cheetah-mp4-driver-tokio`)
+- `crates/protocols/mp4/module` (`cheetah-mp4-module`)
+- `crates/protocols/mp4/testing/property-tests` (`cheetah-mp4-property-tests`)
+- `crates/protocols/mp4/fuzz` (`cheetah-mp4-fuzz`, standalone cargo-fuzz harness crate)
+
+MP4 file parsing/reading capability lives in `cheetah-codec` (`Mp4Reader`); the VOD core consumes it via explicit `ReadAt` requests rather than performing I/O itself.
+
+MP4 VOD capability snapshot:
+
+- on-demand playback of local MP4 files as a live engine stream (`file/<stream>`), consumable by RTSP/RTMP/HTTP-FLV/etc subscribers.
+- session control: seek, pause, scale (playback rate), stop; ABL-style `read_count` (play once / repeat `n` / infinite loop).
+- multi-file playlists (ZLM `;`-separated URI lists) concatenated into one timeline; high-speed keyframe-only gating above a configurable scale threshold.
+- ZLM compatibility: `loadMP4File` / `seekRecordStamp` / `setRecordSpeed` REST endpoints, `mp4:`/`flv:` URI prefixes, path-traversal-safe resolution under the configured root.
+
+MP4 VOD boundary clarification:
+
+- `cheetah-mp4-core` is Sans-I/O: the `VodSession` state machine (`Start`/`Tick`/`Seek`/`Pause`/`Scale`/`Stop`) that emits `ReadAt`/`EmitFrame`/`ScheduleTick` outputs; no file I/O, sockets, or `Instant::now()`.
+- `cheetah-mp4-driver-tokio` owns file I/O, the schedule-tick loop, and command dispatch on internal tokio channels. Its public surface stays runtime-neutral: `VodDriverHandle::take_events()` yields a `VodEventStream` (`impl futures::Stream`), not a `tokio::sync::mpsc::Receiver`.
+- `cheetah-mp4-module` carries no `tokio` production dependency. `VodApi` receives an `Arc<dyn RuntimeApi>` from `EngineContext` and drives the VOD→engine `bridge_events` task via `RuntimeApi::spawn`, consuming the driver's neutral event stream. It owns URI resolution, session registry, and the ZLM-compat HTTP surface.
+
+## 3.8 SRT Reference Mapping
+
+Current SRT crates:
+
+- `crates/protocols/srt/core` (`cheetah-srt-core`)
+- `crates/protocols/srt/driver-tokio` (`cheetah-srt-driver-tokio`)
+- `crates/protocols/srt/module` (`cheetah-srt-module`)
+- `crates/protocols/srt/testing/property-tests` (`cheetah-srt-property-tests`)
+- `crates/protocols/srt/fuzz` (`cheetah-srt-fuzz`, standalone cargo-fuzz harness crate)
+
+SRT capability snapshot:
+
+- roles: listener (inbound) and caller (outbound); stream modes publish / request / play.
+- `streamid` parsing (`#!::` key/value form) resolving stream key, mode, user/host/session, and vendor extras.
+- payload: MPEG-TS carried over SRT, demuxed into engine tracks via `cheetah-codec`.
+- encryption: AES-128 / AES-256 passphrase (optional); configurable latency window.
+
+SRT boundary clarification:
+
+- `cheetah-srt-core` is Sans-I/O: session options, `streamid`/URL parsing, and the `SrtCore` input/output/event model; no socket or handshake execution.
+- `cheetah-srt-driver-tokio` owns the UDP transport and SRT handshake/ARQ via the vendored `shiguredo_srt` engine (`spawn_driver`), surfacing peers through `SrtDriverHandle`/`SrtDriverCommand`/`SrtDriverEvent`.
+- `cheetah-srt-module` owns engine publish/subscribe wiring, listener/caller session binding, metrics, HTTP surface, and config validation.
+
+## 3.9 WebRTC Reference Mapping
 
 Current WebRTC crates:
 
