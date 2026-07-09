@@ -686,6 +686,7 @@ async fn run_ome_ws_connection(
     } else {
         None
     };
+    let waiter = crate::http::OmeAnswerWaiter::new(answer_dispatcher, engine.runtime_api.clone());
     let outcome = match handle_request_offer(
         OmeWsRequestOfferInput {
             target: &target,
@@ -697,7 +698,7 @@ async fn run_ome_ws_connection(
             offer_timeout,
         },
         &driver,
-        &answer_dispatcher,
+        &waiter,
     )
     .await
     {

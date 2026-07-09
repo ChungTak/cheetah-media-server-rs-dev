@@ -14,18 +14,19 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use cheetah_codec::MonoTime;
 use cheetah_sdk::{
-    EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse, ModuleHttpService, SdkError,
-    StreamKey,
+    EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse, ModuleHttpService,
+    RuntimeApi, SdkError, StreamKey,
 };
 use cheetah_webrtc_core::{WebRtcCloseReason, WebRtcSessionRole};
 use cheetah_webrtc_driver_tokio::{
     CandidateTransportPolicy, WebRtcDriverCommand, WebRtcDriverHandle, WebRtcSessionSpec,
 };
 use futures::channel::oneshot;
+use futures::FutureExt;
 use parking_lot::Mutex;
 use serde_json::Value;
-use tokio::sync::broadcast;
 use tracing::warn;
 
 use crate::bridge::{WebRtcBridgeRegistry, WebRtcPublishBridge};
@@ -1593,13 +1594,20 @@ impl WebRtcHttpService {
             let cfg = self.config.lock();
             cfg.wait_stream_timeout_ms.max(500)
         };
-        let timeout = tokio::time::Duration::from_millis(timeout_ms.min(60_000));
-        match tokio::time::timeout(timeout, waiter).await {
-            Ok(Ok(AnswerOutcome::Sdp(sdp))) => Ok(sdp),
-            Ok(Ok(AnswerOutcome::Failed(reason))) => Err(reason),
-            Ok(Err(_)) => Err("driver answer channel closed".into()),
-            Err(_) => Err("driver answer timeout".into()),
-        }
+        let timeout = std::time::Duration::from_millis(timeout_ms.min(60_000));
+        let runtime = self
+            .engine
+            .as_ref()
+            .map(|e| e.runtime_api.clone())
+            .ok_or_else(|| "webrtc runtime unavailable".to_string())?;
+        await_answer_with_timeout(
+            &runtime,
+            waiter,
+            timeout,
+            "driver answer channel closed",
+            "driver answer timeout",
+        )
+        .await
     }
 
     fn check_codec_policy(&self, body: &Value) -> Option<String> {
@@ -2371,11 +2379,6 @@ pub(crate) struct AnswerDispatcher {
             oneshot::Sender<AnswerOutcome>,
         >,
     >,
-    /// Broadcast for diagnostic listeners that don't have a per-session
-    /// oneshot. Phase 04 wires this up to a metrics worker; today it
-    /// simply provides the shape so callers can subscribe.
-    #[allow(dead_code)]
-    pub diagnostics: broadcast::Sender<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -2386,10 +2389,8 @@ pub(crate) enum AnswerOutcome {
 
 impl AnswerDispatcher {
     pub(crate) fn new() -> Self {
-        let (tx, _rx) = broadcast::channel(64);
         Self {
             waiters: Mutex::new(std::collections::HashMap::new()),
-            diagnostics: tx,
         }
     }
 
@@ -2455,20 +2456,69 @@ impl AnswerDispatcher {
     }
 }
 
-impl OmeWsOfferWaiter for Arc<AnswerDispatcher> {
+/// Await a per-session SDP delivery, bounded by a runtime-neutral timer.
+///
+/// Shared by the WHIP/WHEP HTTP path ([`WebRtcHttpService::wait_answer`])
+/// and the OME WebSocket offer path ([`OmeAnswerWaiter`]). The timeout is
+/// driven by the injected [`RuntimeApi`] rather than `tokio::time` so the
+/// module stays runtime-neutral.
+async fn await_answer_with_timeout(
+    runtime: &Arc<dyn RuntimeApi>,
+    waiter: oneshot::Receiver<AnswerOutcome>,
+    timeout: std::time::Duration,
+    channel_closed_msg: &'static str,
+    timeout_msg: &'static str,
+) -> Result<String, String> {
+    let timeout_us = u64::try_from(timeout.as_micros()).unwrap_or(u64::MAX);
+    let deadline = MonoTime::from_micros(runtime.now().as_micros().saturating_add(timeout_us));
+    let mut timer = runtime.sleep_until(deadline);
+    let waiter = waiter.fuse();
+    let wait = timer.wait().fuse();
+    futures::pin_mut!(waiter, wait);
+    futures::select_biased! {
+        res = waiter => match res {
+            Ok(AnswerOutcome::Sdp(sdp)) => Ok(sdp),
+            Ok(AnswerOutcome::Failed(reason)) => Err(reason),
+            Err(_) => Err(channel_closed_msg.into()),
+        },
+        _ = wait => Err(timeout_msg.into()),
+    }
+}
+
+/// OME WebSocket offer waiter: pairs the shared [`AnswerDispatcher`] with a
+/// [`RuntimeApi`] handle so the offer wait can be bounded without pulling
+/// `tokio::time` into the module.
+pub(crate) struct OmeAnswerWaiter {
+    dispatcher: Arc<AnswerDispatcher>,
+    runtime: Arc<dyn RuntimeApi>,
+}
+
+impl OmeAnswerWaiter {
+    pub(crate) fn new(dispatcher: Arc<AnswerDispatcher>, runtime: Arc<dyn RuntimeApi>) -> Self {
+        Self {
+            dispatcher,
+            runtime,
+        }
+    }
+}
+
+impl OmeWsOfferWaiter for OmeAnswerWaiter {
     fn wait_for_offer(
         &self,
         session_id: cheetah_webrtc_core::WebRtcSessionId,
         timeout: std::time::Duration,
     ) -> futures::future::BoxFuture<'_, Result<String, String>> {
-        let waiter = self.subscribe(session_id);
+        let waiter = self.dispatcher.subscribe(session_id);
+        let runtime = self.runtime.clone();
         Box::pin(async move {
-            match tokio::time::timeout(timeout, waiter).await {
-                Ok(Ok(AnswerOutcome::Sdp(sdp))) => Ok(sdp),
-                Ok(Ok(AnswerOutcome::Failed(reason))) => Err(reason),
-                Ok(Err(_)) => Err("driver offer channel closed".into()),
-                Err(_) => Err("timed out waiting for local offer".into()),
-            }
+            await_answer_with_timeout(
+                &runtime,
+                waiter,
+                timeout,
+                "driver offer channel closed",
+                "timed out waiting for local offer",
+            )
+            .await
         })
     }
 }
