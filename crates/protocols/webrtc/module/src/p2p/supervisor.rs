@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cheetah_runtime_api::CancellationToken;
+use cheetah_runtime_api::{CancellationToken, RuntimeApi};
 
 use super::hub::{KeeperHub, KeeperHubConfig};
 use super::room::{
@@ -87,6 +87,7 @@ pub async fn run_supervisor<F>(
     key: P2pRoomKeeperKey,
     config: KeeperSupervisorConfig,
     factory: F,
+    runtime: Arc<dyn RuntimeApi>,
     cancel: CancellationToken,
 ) -> KeeperSupervisorOutcome
 where
@@ -144,7 +145,7 @@ where
                     last_error.clone(),
                     attempts,
                 );
-                if !sleep_with_cancel(backoff, &cancel).await {
+                if !sleep_with_cancel(backoff, &cancel, &runtime).await {
                     update_status(
                         &registry,
                         key,
@@ -200,7 +201,7 @@ where
             last_error.clone(),
             attempts,
         );
-        if !sleep_with_cancel(backoff, &cancel).await {
+        if !sleep_with_cancel(backoff, &cancel, &runtime).await {
             update_status(
                 &registry,
                 key,
@@ -239,7 +240,11 @@ async fn pump_until_disconnect<T: P2pTransport>(
     }
 }
 
-async fn sleep_with_cancel(dur: Duration, cancel: &CancellationToken) -> bool {
+async fn sleep_with_cancel(
+    dur: Duration,
+    cancel: &CancellationToken,
+    _runtime: &Arc<dyn RuntimeApi>,
+) -> bool {
     tokio::select! {
         _ = cancel.cancelled() => false,
         _ = tokio::time::sleep(dur) => true,
@@ -321,6 +326,7 @@ pub trait KeeperHubObserver: Send + Sync {
 ///    observer's `on_hub_ready` future is awaited so its bridges can
 ///    finish their teardown.
 /// 5. Standard reconnect / give-up logic kicks in.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_supervisor_with_hub<F, O>(
     registry: Arc<P2pRoomKeeperRegistry>,
     key: P2pRoomKeeperKey,
@@ -328,6 +334,7 @@ pub async fn run_supervisor_with_hub<F, O>(
     hub_config: KeeperHubConfig,
     factory: F,
     observer: Arc<O>,
+    runtime: Arc<dyn RuntimeApi>,
     cancel: CancellationToken,
 ) -> KeeperSupervisorOutcome
 where
@@ -385,7 +392,7 @@ where
                     last_error.clone(),
                     attempts,
                 );
-                if !sleep_with_cancel(backoff, &cancel).await {
+                if !sleep_with_cancel(backoff, &cancel, &runtime).await {
                     update_status(
                         &registry,
                         key,
@@ -492,7 +499,7 @@ where
             last_error.clone(),
             attempts,
         );
-        if !sleep_with_cancel(backoff, &cancel).await {
+        if !sleep_with_cancel(backoff, &cancel, &runtime).await {
             update_status(
                 &registry,
                 key,
@@ -513,6 +520,10 @@ mod tests {
     use crate::p2p::transport::InMemoryTransport;
     use parking_lot::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn test_runtime() -> Arc<dyn RuntimeApi> {
+        Arc::new(cheetah_runtime_tokio::TokioRuntime::new())
+    }
 
     fn cfg(room: &str) -> P2pRoomKeeperConfig {
         P2pRoomKeeperConfig {
@@ -588,6 +599,7 @@ mod tests {
                     max_attempts: 3,
                 },
                 factory,
+                test_runtime(),
                 cancel_for_task,
             )
             .await
@@ -661,6 +673,7 @@ mod tests {
                     max_attempts: 3,
                 },
                 factory,
+                test_runtime(),
                 cancel_for_task,
             )
             .await
@@ -705,6 +718,7 @@ mod tests {
                 key,
                 KeeperSupervisorConfig::default(),
                 factory,
+                test_runtime(),
                 cancel_for_task,
             )
             .await

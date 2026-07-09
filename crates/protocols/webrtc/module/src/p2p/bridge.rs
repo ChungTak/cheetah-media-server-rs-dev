@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cheetah_runtime_api::CancellationToken;
+use cheetah_runtime_api::{CancellationToken, RuntimeApi};
 use cheetah_webrtc_core::{
     WebRtcCloseReason, WebRtcOfferDirection, WebRtcOfferSpec, WebRtcSessionId, WebRtcSessionRole,
 };
@@ -81,6 +81,10 @@ pub struct DispatcherOfferWaiter {
     /// Per-session subscription factory.
     subscribe:
         Box<dyn Fn(WebRtcSessionId) -> oneshot::Receiver<DispatcherOfferOutcome> + Send + Sync>,
+    /// Runtime handle for the offer-wait timeout. Consumed by
+    /// `wait_for_offer` once the timeout is made runtime-neutral.
+    #[allow(dead_code)]
+    runtime: Arc<dyn RuntimeApi>,
 }
 
 /// Dispatcher-side outcome. Mirrors the existing [`crate::http::AnswerOutcome`]
@@ -92,12 +96,13 @@ pub enum DispatcherOfferOutcome {
 }
 
 impl DispatcherOfferWaiter {
-    pub fn new<F>(subscribe: F) -> Self
+    pub fn new<F>(runtime: Arc<dyn RuntimeApi>, subscribe: F) -> Self
     where
         F: Fn(WebRtcSessionId) -> oneshot::Receiver<DispatcherOfferOutcome> + Send + Sync + 'static,
     {
         Self {
             subscribe: Box::new(subscribe),
+            runtime,
         }
     }
 }

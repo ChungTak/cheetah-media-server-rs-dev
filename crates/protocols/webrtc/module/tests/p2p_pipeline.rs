@@ -152,6 +152,7 @@ async fn supervisor_drives_hub_drives_bridge_pull_lifecycle() {
                 KeeperHubConfig::default(),
                 factory,
                 observer,
+                Arc::new(cheetah_runtime_tokio::TokioRuntime::new()),
                 cancel,
             )
             .await

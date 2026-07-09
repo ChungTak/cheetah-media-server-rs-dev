@@ -181,6 +181,7 @@ async fn supervisor_drives_real_websocket_transport_end_to_end() {
                 Default::default(),
                 factory,
                 observer,
+                Arc::new(cheetah_runtime_tokio::TokioRuntime::new()),
                 cancel,
             )
             .await
