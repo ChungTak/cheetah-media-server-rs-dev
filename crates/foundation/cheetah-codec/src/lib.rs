@@ -46,6 +46,7 @@ pub mod ingress;
 pub mod jtt1078;
 pub mod mp4;
 pub mod mute_audio;
+pub mod observability;
 pub mod ps;
 pub mod record;
 pub mod rtp;
@@ -127,6 +128,10 @@ pub use mp4::{
     SampleTable,
 };
 pub use mute_audio::MuteAudioMaker;
+pub use observability::{
+    classify_timestamp_alert, RepairEventCounters, RepairLayer, RuntimeObservabilityReport,
+    RuntimeReportBuilder, REPAIR_WARN_HIGH_FREQUENCY_THRESHOLD,
+};
 pub use ps::{
     PesPacket, PsDemuxDiagnostic, PsDemuxEvent, PsDemuxer, PsDemuxerConfig, PsMuxer, PsPacket,
     PsStreamKind,

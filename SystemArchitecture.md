@@ -361,6 +361,13 @@ Observability and diagnostics baseline:
 
 Protocol modules should not duplicate these behaviors.
 
+Implementation status: the Sans-I/O baseline lives in `cheetah-codec::observability`:
+
+- `RepairLayer` + `classify_timestamp_alert` map each `TimestampAlert` to the source/canonical layer (pure discontinuity/reset markers are not repairs); `RepairEventCounters` accumulate per-layer totals and expose `is_high_frequency_anomaly`, where the source layer never escalates and canonical/egress escalate at `REPAIR_WARN_HIGH_FREQUENCY_THRESHOLD`.
+- `RuntimeReportBuilder` computes the runtime-report schema (`RuntimeObservabilityReport`) from injected wall-clock (`now_us`) and canonical `pts_us` samples — it reads no clock and performs no I/O.
+- `cheetah-engine::MetricsRegistry` publishes these through `MetricsApi`: `record_repair_events` adds the layer counters and `record_runtime_report` sets the timing gauges (`startup_latency_ms`, `first_second_avg_frame_interval_ms`, `average_playback_rate_x`, `first_keyframe_delay_ms`).
+- Per-frame wiring of drivers/modules into `RuntimeReportBuilder` on the live egress path is staged (the metric feed points are defined; hot-path integration lands incrementally per protocol).
+
 ## 5. Runtime Abstraction Rule
 
 Public interfaces in `cheetah-runtime-api`, `cheetah-sdk`, `cheetah-engine`, and `*-module` must remain runtime-neutral.

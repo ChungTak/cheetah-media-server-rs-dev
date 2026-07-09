@@ -20,7 +20,7 @@
 | F-06 | 风险 | mp4 module 用 `tokio::spawn` 且 driver 公共 API 泄漏 tokio 通道类型 | 中 | 已修复 |
 | F-07 | 文档 | `SystemArchitecture.md` 缺 hls/ts/mp4/srt/webrtc 的 Reference Mapping | 中 | 已修复 |
 | F-08 | 测试 | `ts`、`http-flv` 缺 `testing/property-tests`（其余 9 协议均有） | 中 | 已修复 |
-| F-09 | 文档/实现 | SystemArchitecture §4 观测性基线指标在代码中完全缺失 | 中 | 待处理 |
+| F-09 | 文档/实现 | SystemArchitecture §4 观测性基线指标在代码中完全缺失 | 中 | 已修复(基线+脚手架) |
 | F-10 | 风险 | `cheetah-engine` 内部直用 `tokio::sync::{mpsc,broadcast,Mutex}`，与 §5 允许清单冲突 | 低 | 待处理 |
 
 ---
@@ -80,15 +80,27 @@
 - 建议（待固化）：仓库未提供 `rust-toolchain.toml`。建议新增 `rust-toolchain.toml` 固定最低 stable
   版本（≥1.87），并在环境 blueprint 中安装对应工具链，避免新会话/CI 因默认工具链过旧而失败。
 
-### F-09【待处理｜中】观测性基线指标缺失
+### F-09【已修复(基线+脚手架)｜中】观测性基线指标缺失
 - 证据：`SystemArchitecture.md` §4 要求运行报告暴露 `startup_latency_ms`、
   `first_second_avg_frame_interval_ms`、`average_playback_rate_x`、`first_keyframe_delay_ms`，
   并按层输出 `source_repair_events`/`canonical_repair_events`/`egress_repair_events` 及
-  `REPAIR_WARN_HIGH_FREQUENCY_THRESHOLD`。全仓 grep 这些标识符命中数均为 **0**。
+  `REPAIR_WARN_HIGH_FREQUENCY_THRESHOLD`。修复前全仓 grep 这些标识符命中数均为 **0**。
 - 现状：`cheetah-codec` 存在时间戳/参数集修复逻辑（如 `egress.rs` 的 `repair_count`、
   `repair_h26x_keyframe_frame`），但没有文档所述的三层分类与命名指标。
 - 依据：`SystemArchitecture.md` §4 + `AGENTS.md` §13。
-- 建议：要么实现该观测性基线，要么把该章节标记为路线图/未实现，保持文档与实现一致。
+- 修复（方案 B：落地可确定性部分 + schema 脚手架）：
+  - 新增 Sans-I/O 模块 `cheetah-codec::observability`：
+    - `RepairLayer` + `classify_timestamp_alert` 把 `TimestampAlert` 分类到 source/canonical
+      层（纯 discontinuity/reset 不计为 repair）；`RepairEventCounters` 按层累计并提供
+      `is_high_frequency_anomaly`——source 永不升级，canonical/egress 达到
+      `REPAIR_WARN_HIGH_FREQUENCY_THRESHOLD` 才告警。
+    - `RuntimeReportBuilder`/`RuntimeObservabilityReport` 由注入的 `now_us` + 规范 `pts_us`
+      样本计算四项运行报告指标（不读时钟、无 I/O）。
+  - `cheetah-engine::MetricsRegistry` 经 `MetricsApi` 暴露：`record_repair_events`（累加层计数器）
+    与 `record_runtime_report`（设置时间 gauge），`render()` 同时输出 counters + gauges。
+  - 属性测试覆盖：层分类总数守恒、source 不升级、canonical/egress 阈值语义、报告时延非负。
+- 分阶段：driver/module 在实时 egress 热路径逐帧喂入 `RuntimeReportBuilder` 的接入按协议增量落地
+  （计量接入点已定义），故记为「基线+脚手架」。
 
 ---
 
