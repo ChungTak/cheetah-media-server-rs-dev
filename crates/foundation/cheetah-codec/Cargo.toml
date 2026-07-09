@@ -14,3 +14,6 @@ bitflags = { version = "2", default-features = false }
 bytes = { version = "1", default-features = false }
 smallvec = { version = "1", default-features = false }
 thiserror = { version = "2", default-features = false }
+
+[dev-dependencies]
+proptest = "1.6.0"

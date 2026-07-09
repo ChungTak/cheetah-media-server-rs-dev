@@ -355,6 +355,7 @@ dependencies = [
  "base64",
  "bitflags",
  "bytes",
+ "proptest",
  "smallvec",
  "thiserror",
 ]
