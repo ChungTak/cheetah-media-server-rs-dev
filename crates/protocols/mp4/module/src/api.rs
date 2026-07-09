@@ -4,8 +4,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use cheetah_mp4_core::VodControlCommand;
-use cheetah_mp4_driver_tokio::{open_file, open_files, VodDriverConfig, VodDriverEvent};
-use cheetah_sdk::{CoreAdaptersApi, StreamKey};
+use cheetah_mp4_driver_tokio::{
+    open_file, open_files, VodDriverConfig, VodDriverEvent, VodEventStream,
+};
+use cheetah_sdk::{CoreAdaptersApi, RuntimeApi, StreamKey};
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
@@ -86,6 +89,9 @@ pub struct VodApi {
     /// When `Some`, every started session's frames are bridged to RTSP/RTMP/etc
     /// subscribers via the engine stream key `file/<session_id>`.
     core_adapters: Option<Arc<dyn CoreAdaptersApi>>,
+    /// Runtime handle used to spawn the event-bridge task. Required whenever
+    /// `core_adapters` is set; the module obtains it from `EngineContext`.
+    runtime_api: Option<Arc<dyn RuntimeApi>>,
 }
 
 impl VodApi {
@@ -94,6 +100,7 @@ impl VodApi {
             registry,
             config,
             core_adapters: None,
+            runtime_api: None,
         }
     }
 
@@ -101,11 +108,13 @@ impl VodApi {
         registry: Arc<VodSessionRegistry>,
         config: Arc<Mp4ModuleConfig>,
         core_adapters: Arc<dyn CoreAdaptersApi>,
+        runtime_api: Arc<dyn RuntimeApi>,
     ) -> Self {
         Self {
             registry,
             config,
             core_adapters: Some(core_adapters),
+            runtime_api: Some(runtime_api),
         }
     }
 
@@ -203,10 +212,12 @@ impl VodApi {
         // If an engine bridge is configured, drain VOD events into the engine
         // stream so RTSP/RTMP/HTTP-FLV subscribers can play the file as if it
         // were a live source.
-        if let Some(core_adapters) = self.core_adapters.clone() {
+        if let (Some(core_adapters), Some(runtime_api)) =
+            (self.core_adapters.clone(), self.runtime_api.clone())
+        {
             if let Some(events) = driver_arc.take_events() {
                 let stream_key = StreamKey::new("file", &engine_path);
-                tokio::spawn(bridge_events(events, core_adapters, stream_key));
+                runtime_api.spawn(Box::pin(bridge_events(events, core_adapters, stream_key)));
             }
         }
         Ok(StartVodResponse {
@@ -290,11 +301,11 @@ fn short_id(input: &str) -> String {
 /// subscribers can play the VOD source through their existing live-stream code
 /// paths. This is the cross-protocol bridge required by Phase 04.
 async fn bridge_events(
-    mut events: tokio::sync::mpsc::Receiver<VodDriverEvent>,
+    mut events: VodEventStream,
     core_adapters: Arc<dyn CoreAdaptersApi>,
     stream_key: StreamKey,
 ) {
-    while let Some(event) = events.recv().await {
+    while let Some(event) = events.next().await {
         match event {
             VodDriverEvent::Tracks(tracks) => {
                 if let Err(e) = core_adapters

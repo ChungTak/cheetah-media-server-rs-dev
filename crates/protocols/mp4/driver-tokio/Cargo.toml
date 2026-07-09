@@ -10,6 +10,7 @@ bytes.workspace = true
 cheetah-codec = { path = "../../../foundation/cheetah-codec" }
 cheetah-mp4-core = { path = "../core" }
 cheetah-runtime-api = { path = "../../../runtime/cheetah-runtime-api" }
+futures.workspace = true
 parking_lot.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["fs"] }

@@ -101,6 +101,7 @@ impl Module for Mp4Module {
             self.registry.clone(),
             Arc::new(self.config.clone()),
             ctx.engine.core_adapters_api.clone(),
+            ctx.engine.runtime_api.clone(),
         );
         self.api = Some(Arc::new(api));
         self.state = ModuleState::Initialized;
