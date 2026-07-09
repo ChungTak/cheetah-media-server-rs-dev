@@ -633,7 +633,17 @@ fn push_publish_frame(
     connection_id: RtspConnectionId,
     frame: cheetah_codec::AVFrame,
 ) {
+    let is_key = frame.flags.contains(cheetah_codec::FrameFlags::KEY);
     let fields = frame_observability_fields(&frame);
+    tracing::info!(
+        connection_id,
+        stream_key = %publish.lease.stream_key,
+        track_id = fields.track_id,
+        pts = fields.pts,
+        dts = fields.dts,
+        key = is_key,
+        "rtsp publish push frame"
+    );
     match publish.sink.push_frame(Arc::new(frame)) {
         Ok(cheetah_sdk::DispatchResult::Accepted) => {
             publish.queue_drop_counts.remove(&TrackId(fields.track_id));

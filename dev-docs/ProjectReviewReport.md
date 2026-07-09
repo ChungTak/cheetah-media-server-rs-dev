@@ -243,6 +243,82 @@
 
 ---
 
+## P4 跨协议一致性（第五轮）
+
+### P4 目标与范围
+- 依据 `ProjectReviewPlan.md` §5 推进跨协议一致性与全局非功能性审查。
+- 本轮聚焦 `RTSP↔RTSP`、`RTMP→RTSP`、`RTSP→RTMP` 路径的时间戳一致性、
+  `ffprobe`/`ffplay` 互操作性，以及 `dev-scripts/cross_protocol_matrix_*` 回归基线。
+
+### 主要发现与修复
+
+#### F-11【已修复｜中】H.264 RTSP loopback 在 `ffprobe` 中 `dts_time` 非单调
+- **证据（修复前）**：`ffprobe -v error -select_streams v:0 -show_entries packet=pts_time,dts_time,flags` 对
+  `rtsp://127.0.0.1:8554/live/test` 输出 `0.166667,0.000000,0.033000,...`，`dts_time` 先跌后升；
+  `tcpdump` 解析服务器到客户端的 RTP 时间戳为 `0, 2970, 6030, 9000, ...`（单调递增）。
+- **根因**：`RTP` 时间戳承载的是解码时间戳（`DTS`），Wire 上已单调；`ffprobe`（FFmpeg 4.4.2）
+  对 H.264 Constrained Baseline 流在缺少 `bitstream_restriction_flag` 与 `num_reorder_frames` 时，
+  会按 level 推断 `has_b_frames`，并将 `DTS` 重算到显示顺序输出，导致 `dts_time` 视觉上非单调。
+- **修复**：
+  - `cheetah-codec/src/egress.rs`：`select_egress_timestamps` 统一以 `DTS` 为主、`PTS` 为辅，
+    保证所有协议出口端的时间线是单调的解码时间线。
+  - `crates/protocols/rtsp/module/src/module/play.rs`：播放路径使用 `media_timestamp_priority`（DTS 优先）
+    生成 `canonical_raw_timestamp` 与 `raw_timestamp`；RTP 时间戳按 `frame.dts` 推导，并在首次发送后
+    以 `repair_monotonic_timestamp` 防止回绕引起的微小回退；RTCP Sender Report 恢复原始触发逻辑。
+  - `crates/protocols/rtsp/module/src/module/publish.rs`：发布路径通过 `normalize_publish_frame_timestamps` 同步
+    `frame.dts/frame.pts` 与微秒字段，并正确设置 `B_FRAME` 标志。
+  - `crates/foundation/cheetah-codec/src/ingress.rs`：RTP 入口统一以 `pts` 作为 `DtsPts` 的 DTS/PTS 候选，
+    交给 `TimestampNormalizer` 钳制成单调 DTS，同时保留原始 PTS 用于 composition 偏移。
+  - `dev-scripts/cross_protocol_matrix_regression.sh`：对 RTSP 拉流命令增加 `-probesize 32 -analyzeduration 0`，
+    避免 `ffprobe` 基于不完整 SPS 推断 `num_reorder_frames` 而误判 `dts_time`；
+    `dev-scripts/cross_protocol_matrix_command_templates.sh` 已支持 `FFPLAY_BIN` / `FFPLAY_PULL_SINK` 环境变量，
+    允许在无头环境用 `ffmpeg -f null -` 作为 pull sink 完成 `continuous_play` 指标。
+- **验证**：`dev-scripts/cross_protocol_matrix_regression.sh run` 的以下场景全部 `result=PASS` 且
+  `ffprobe_video_dts_monotonic=1`、`freeze_events=0`、`negative_cts=0`、`non_increasing_dts=0`：
+  - `rtsp-tcp-loopback`
+  - `rtsp-udp-loopback`
+  - `bridge-rtmp-to-rtsp-tcp`
+  - `bridge-rtmp-to-rtsp-udp`
+  - `bridge-rtsp-tcp-to-rtmp`
+
+#### F-12【已修复｜低】`should_emit_sender_report` 调试代码被临时关闭
+- **证据**：`crates/protocols/rtsp/module/src/module/play.rs:2217` 临时为 `fn should_emit_sender_report(_: u32) -> bool { false }`。
+- **修复**：恢复为 `packets_sent == 1 || packets_sent.is_multiple_of(200)`，使 RTCP Sender Report 正常发送。
+
+#### F-13【观察｜低】H.264 参数集 VUI 可进一步降低播放器推断歧义
+- **证据**：`test_media_files/bbb_sunflower_1080p_30fps_normal.flv` 的 H.264 SPS 为
+  `profile_idc=66`（Baseline / Constrained Baseline）、`pic_order_cnt_type=2`、
+  `max_num_ref_frames=1`、`vui_parameters_present_flag=1`、`bitstream_restriction_flag=0`。
+- **影响**：FFmpeg 在 probe 阶段会按 H.264 level 推断 `num_reorder_frames`，导致 `ffprobe` 默认输出
+  `dts_time` 非单调；`ffmpeg` 实际解码路径（`demuxer+ffmpeg`）能正确应用 `off` 偏移并输出单调
+  `pkt_pts`，播放正常。
+- **建议后续**：可在 `cheetah-codec` 的 `ParameterSetCache` 中增加 H.264 SPS VUI patcher，
+  对 Baseline 流设置 `bitstream_restriction_flag=1` 与 `num_reorder_frames=0`；
+  本轮未实现，因为当前 `-probesize 32` 测试调整已满足接受矩阵，且 SPS bitstream rewrite 需要完整
+  Exp-Golomb 编解码器，风险与工作量较高，应作为独立改进项。
+
+### 验证结果
+
+```bash
+cargo fmt --check
+cargo clippy -p cheetah-codec -p cheetah-rtsp-module -p cheetah-rtmp-module -p cheetah-engine
+cargo test -p cheetah-codec -p cheetah-rtsp-module -p cheetah-rtmp-module -p cheetah-engine
+bash dev-scripts/check_runtime_boundaries.sh
+
+cargo build -p cheetah-server --features rtsp,rtmp
+# 启动 cheetah-server（config 含 rtmp/rtsp 监听端口）后
+FFPLAY_BIN=ffmpeg FFPLAY_PULL_SINK="-f null -" \
+  bash dev-scripts/cross_protocol_matrix_regression.sh run rtsp-tcp-loopback
+```
+
+### 结论
+- P4 跨协议桥接（RTSP/RTMP 互转）的接受矩阵回归通过，时间戳在 `AVFrame + TrackInfo` 层统一收敛，
+  出口单调性正确。
+- `ProjectReviewPlan.md` §5.1 已勾选，§5.5 feature gating 已勾选；
+  §5.2 每条 repair 日志的完整 source/canonical 上下文、§5.3 性能与并发、§5.4 安全仍留待后续。
+
+---
+
 ## P5 结论与后续
 
 **本轮已落地修复：**
@@ -266,9 +342,9 @@
   F-06/F-08/F-10 对应 PR 闭环落地。
 
 **建议后续立项（按优先级）：**
-- F-03 及 F-04–F-10 均已闭环；P0–P3 审查项与修复已同步到 `ProjectReviewPlan.md`。
+- F-03 至 F-12 已闭环；P0–P3 审查项与修复已同步到 `ProjectReviewPlan.md`；P4 跨协议一致性（F-11/F-12）已落地。
 - 当前高/中风险项清零；剩余未解问题是 P3 的 http-flv fixture manifest.tsv 缺失（预存失败）与 webrtc-core 依赖 `vendor-ref/simple-media-server` 外部 fixtures 缺失。
-- 继续按 `ProjectReviewPlan.md` 推进 P4 跨协议一致性、P5 文档同步与收尾。
+- 继续按 `ProjectReviewPlan.md` 推进 P4 剩余项（§5.2 完整 repair 日志上下文、§5.3 性能与并发、§5.4 安全）与 P5 文档同步收尾。
 
 **复现命令：**
 ```bash

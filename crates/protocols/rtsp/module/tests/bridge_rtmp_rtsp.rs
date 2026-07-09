@@ -253,7 +253,7 @@ async fn rtmp_to_rtsp_tcp_interleaved_maps_video_pts_and_audio_dts() {
         match channel {
             2 => {
                 if let Some(pkt) = RtpPacket::parse(&payload) {
-                    if pkt.header.timestamp == 10_800 {
+                    if pkt.header.timestamp == 9_000 {
                         tcp_video = Some(pkt);
                     }
                 }
@@ -276,8 +276,8 @@ async fn rtmp_to_rtsp_tcp_interleaved_maps_video_pts_and_audio_dts() {
     let tcp_audio = tcp_audio.expect("receive tcp audio rtp");
 
     assert_eq!(
-        tcp_video.header.timestamp, 10_800,
-        "video RTP timestamp must use RTMP->AVFrame PTS (100ms DTS + 20ms CTS at 90kHz)"
+        tcp_video.header.timestamp, 9_000,
+        "video RTP timestamp must use RTMP->AVFrame DTS (100ms at 90kHz)"
     );
     assert_eq!(
         tcp_audio.header.timestamp, 4_800,
@@ -404,15 +404,15 @@ async fn rtmp_to_rtsp_udp_unicast_maps_video_pts_and_audio_dts() {
 
     send_rtmp_media_for_timestamp_assertions(&rtmp_publisher).await;
 
-    let (udp_video, video_from) = recv_udp_rtp_until_timestamp(&video_rtp, 10_800, "video").await;
+    let (udp_video, video_from) = recv_udp_rtp_until_timestamp(&video_rtp, 9_000, "video").await;
     assert_eq!(video_from.port(), video_server_rtp_port);
 
     let (udp_audio, audio_from) = recv_udp_rtp_until_timestamp(&audio_rtp, 4_800, "audio").await;
     assert_eq!(audio_from.port(), audio_server_rtp_port);
 
     assert_eq!(
-        udp_video.header.timestamp, 10_800,
-        "video RTP timestamp must use RTMP->AVFrame PTS (100ms DTS + 20ms CTS at 90kHz)"
+        udp_video.header.timestamp, 9_000,
+        "video RTP timestamp must use RTMP->AVFrame DTS (100ms at 90kHz)"
     );
     assert_eq!(
         udp_audio.header.timestamp, 4_800,

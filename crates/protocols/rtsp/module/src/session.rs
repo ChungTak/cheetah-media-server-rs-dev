@@ -245,6 +245,7 @@ pub struct PlayTrackState {
     pub last_rtp_timestamp: u32,
     pub timestamp_repair_count: u64,
     pub sdes_sent: bool,
+    pub first_raw_timestamp: Option<u32>,
 }
 
 pub struct PlaySession {

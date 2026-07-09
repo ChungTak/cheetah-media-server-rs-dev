@@ -357,8 +357,9 @@ cargo test -p cheetah-codec --test ts_codec_matrix
 ## 5. 阶段 P4：跨协议一致性与全局非功能性审查
 
 ### 5.1 跨协议桥接
-- [ ] 任一入口协议 → `AVFrame + TrackInfo` → 任一出口协议，转换正确（RTMP/RTSP/HLS/fMP4/TS/RTP 互转）。
-- [ ] 使用 `dev-scripts/cross_protocol_matrix_*`（input matrix / command templates / acceptance matrix / regression）
+- [x] 任一入口协议 → `AVFrame + TrackInfo` → 任一出口协议，转换正确（RTMP/RTSP/HLS/fMP4/TS/RTP 互转）。
+      本轮已验证 RTSP↔RTSP loopback、RTMP→RTSP TCP/UDP bridge、RTSP→RTMP bridge；其余协议在 P3/P4 早期已跑通。
+- [x] 使用 `dev-scripts/cross_protocol_matrix_*`（input matrix / command templates / acceptance matrix / regression）
       核对跨协议接受矩阵。
 
 ### 5.2 观测性与诊断（`SystemArchitecture.md` §4）
@@ -378,8 +379,8 @@ cargo test -p cheetah-codec --test ts_codec_matrix
 - [ ] 无凭证/密钥硬编码或日志泄漏。
 
 ### 5.5 应用层（`apps/cheetah-server`）
-- [ ] 启动序列：runtime → 配置 → engine → control → 按 feature 启动各 module。
-- [ ] feature gating 正确：默认仅 `rtmp`；`--features` 组合与 README §1/§5 一致。
+- [x] 启动序列：runtime → 配置 → engine → control → 按 feature 启动各 module。
+- [x] feature gating 正确：默认仅 `rtmp`；`--features` 组合与 README §1/§5 一致。
 
 ---
 

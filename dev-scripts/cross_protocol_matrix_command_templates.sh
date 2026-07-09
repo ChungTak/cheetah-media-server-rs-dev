@@ -17,6 +17,10 @@ FFMPEG_BIN="${FFMPEG_BIN:-ffmpeg}"
 FFPLAY_BIN="${FFPLAY_BIN:-ffplay}"
 FFMPEG_LOG_LEVEL="${FFMPEG_LOG_LEVEL:-debug}"
 FFPLAY_LOG_LEVEL="${FFPLAY_LOG_LEVEL:-debug}"
+# Extra flags / sink for the pull command. For headless ffmpeg sink mode set:
+#   FFPLAY_BIN=ffmpeg FFPLAY_PULL_EXTRA_FLAGS=-debug_ts FFPLAY_PULL_SINK="-f null -"
+FFPLAY_PULL_EXTRA_FLAGS="${FFPLAY_PULL_EXTRA_FLAGS:-}"
+FFPLAY_PULL_SINK="${FFPLAY_PULL_SINK:-}"
 
 log() {
   echo "[cross-protocol-matrix] $*"
@@ -426,55 +430,55 @@ show_scenario() {
       print_header "${scenario}"
       echo "${FFMPEG_BIN} -v ${FFMPEG_LOG_LEVEL} -debug_ts -re -stream_loop -1 -i \"${selected_input_file}\" -c copy -rtsp_transport tcp -f rtsp ${rtsp}"
       echo "# Terminal B (pull):"
-      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} -debug_ts -stats -fflags nobuffer -flags low_delay -rtsp_transport tcp ${rtsp}"
+      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} ${FFPLAY_PULL_EXTRA_FLAGS} -stats -fflags nobuffer -flags low_delay -rtsp_transport tcp -i ${rtsp} ${FFPLAY_PULL_SINK}"
       ;;
     rtsp-udp-loopback)
       print_header "${scenario}"
       echo "${FFMPEG_BIN} -v ${FFMPEG_LOG_LEVEL} -debug_ts -re -stream_loop -1 -i \"${selected_input_file}\" -c copy -rtsp_transport udp -f rtsp ${rtsp}"
       echo "# Terminal B (pull):"
-      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} -debug_ts -stats -fflags nobuffer -flags low_delay -rtsp_transport udp ${rtsp}"
+      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} ${FFPLAY_PULL_EXTRA_FLAGS} -stats -fflags nobuffer -flags low_delay -rtsp_transport udp -i ${rtsp} ${FFPLAY_PULL_SINK}"
       ;;
     rtsp-tcp-to-rtsp-udp)
       print_header "${scenario}"
       echo "${FFMPEG_BIN} -v ${FFMPEG_LOG_LEVEL} -debug_ts -re -stream_loop -1 -i \"${selected_input_file}\" -c copy -rtsp_transport tcp -f rtsp ${rtsp}"
       echo "# Terminal B (pull):"
-      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} -debug_ts -stats -fflags nobuffer -flags low_delay -rtsp_transport udp ${rtsp}"
+      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} ${FFPLAY_PULL_EXTRA_FLAGS} -stats -fflags nobuffer -flags low_delay -rtsp_transport udp -i ${rtsp} ${FFPLAY_PULL_SINK}"
       ;;
     rtsp-udp-to-rtsp-tcp)
       print_header "${scenario}"
       echo "${FFMPEG_BIN} -v ${FFMPEG_LOG_LEVEL} -debug_ts -re -stream_loop -1 -i \"${selected_input_file}\" -c copy -rtsp_transport udp -f rtsp ${rtsp}"
       echo "# Terminal B (pull):"
-      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} -debug_ts -stats -fflags nobuffer -flags low_delay -rtsp_transport tcp ${rtsp}"
+      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} ${FFPLAY_PULL_EXTRA_FLAGS} -stats -fflags nobuffer -flags low_delay -rtsp_transport tcp -i ${rtsp} ${FFPLAY_PULL_SINK}"
       ;;
     rtmp-loopback)
       print_header "${scenario}"
       echo "${FFMPEG_BIN} -v ${FFMPEG_LOG_LEVEL} -debug_ts -re -stream_loop -1 -i \"${selected_input_file}\" -c copy -f flv ${rtmp}"
       echo "# Terminal B (pull):"
-      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} -debug_ts -stats -fflags nobuffer ${rtmp}"
+      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} ${FFPLAY_PULL_EXTRA_FLAGS} -stats -fflags nobuffer -i ${rtmp} ${FFPLAY_PULL_SINK}"
       ;;
     bridge-rtsp-tcp-to-rtmp)
       print_header "${scenario}"
       echo "${FFMPEG_BIN} -v ${FFMPEG_LOG_LEVEL} -debug_ts -re -stream_loop -1 -i \"${selected_input_file}\" -c copy -rtsp_transport tcp -f rtsp ${rtsp}"
       echo "# Terminal B (pull):"
-      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} -debug_ts -stats -fflags nobuffer ${rtmp}"
+      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} ${FFPLAY_PULL_EXTRA_FLAGS} -stats -fflags nobuffer -i ${rtmp} ${FFPLAY_PULL_SINK}"
       ;;
     bridge-rtsp-udp-to-rtmp)
       print_header "${scenario}"
       echo "${FFMPEG_BIN} -v ${FFMPEG_LOG_LEVEL} -debug_ts -re -stream_loop -1 -i \"${selected_input_file}\" -c copy -rtsp_transport udp -f rtsp ${rtsp}"
       echo "# Terminal B (pull):"
-      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} -debug_ts -stats -fflags nobuffer ${rtmp}"
+      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} ${FFPLAY_PULL_EXTRA_FLAGS} -stats -fflags nobuffer -i ${rtmp} ${FFPLAY_PULL_SINK}"
       ;;
     bridge-rtmp-to-rtsp-tcp)
       print_header "${scenario}"
       echo "${FFMPEG_BIN} -v ${FFMPEG_LOG_LEVEL} -debug_ts -re -stream_loop -1 -i \"${selected_input_file}\" -c copy -f flv ${rtmp}"
       echo "# Terminal B (pull):"
-      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} -debug_ts -stats -fflags nobuffer -flags low_delay -rtsp_transport tcp ${rtsp}"
+      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} ${FFPLAY_PULL_EXTRA_FLAGS} -stats -fflags nobuffer -flags low_delay -rtsp_transport tcp -i ${rtsp} ${FFPLAY_PULL_SINK}"
       ;;
     bridge-rtmp-to-rtsp-udp)
       print_header "${scenario}"
       echo "${FFMPEG_BIN} -v ${FFMPEG_LOG_LEVEL} -debug_ts -re -stream_loop -1 -i \"${selected_input_file}\" -c copy -f flv ${rtmp}"
       echo "# Terminal B (pull):"
-      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} -debug_ts -stats -fflags nobuffer -flags low_delay -rtsp_transport udp ${rtsp}"
+      echo "${FFPLAY_BIN} -v ${FFPLAY_LOG_LEVEL} ${FFPLAY_PULL_EXTRA_FLAGS} -stats -fflags nobuffer -flags low_delay -rtsp_transport udp -i ${rtsp} ${FFPLAY_PULL_SINK}"
       ;;
     *)
       fail "unknown scenario '${scenario}'. Run '${SCRIPT_NAME} list' to inspect supported scenarios."

@@ -148,6 +148,12 @@ impl RingBuffer {
                 out.push(frame);
             }
         }
+        tracing::info!(
+            bootstrap_start = start,
+            bootstrap_end = end,
+            bootstrap_count = out.len(),
+            "ring bootstrap frames"
+        );
         out
     }
 

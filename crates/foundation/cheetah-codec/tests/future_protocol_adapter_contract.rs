@@ -252,7 +252,8 @@ fn webrtc_egress_contract_view_uses_exported_rtp_timestamp_only() {
     };
 
     assert_eq!(webrtc.track_id, track.track_id);
-    assert_eq!(webrtc.rtp_timestamp_ticks, 9_900);
+    // Egress now prefers DTS for video to keep the RTP timeline monotonic.
+    assert_eq!(webrtc.rtp_timestamp_ticks, 9_000);
     assert!(webrtc.random_access);
     assert!(webrtc.discontinuity);
     assert!(webrtc.fragment_boundary.start_of_access_unit);
