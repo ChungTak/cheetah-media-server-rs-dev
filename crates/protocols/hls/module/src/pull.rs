@@ -160,22 +160,31 @@ async fn http_get_with_timeout(
         .await
         .map_err(|e| format!("write failed: {e}"))?;
 
-    // Read response with per-read timeout
-    let read_timeout = std::time::Duration::from_micros(timeout_us);
+    // Read response with per-read timeout via runtime-neutral timer.
     let mut buf = Vec::with_capacity(64 * 1024);
     let mut chunk = vec![0u8; 32 * 1024];
 
     loop {
-        match tokio::time::timeout(read_timeout, stream.read(&mut chunk)).await {
-            Ok(Ok(0)) => break,
-            Ok(Ok(n)) => {
+        let read_result = {
+            let deadline = MonoTime::from_micros(runtime_api.now().as_micros() + timeout_us);
+            let mut timer = runtime_api.sleep_until(deadline);
+            let read = stream.read(&mut chunk).fuse();
+            let timeout = timer.wait().fuse();
+            pin_mut!(read, timeout);
+            select_biased! {
+                r = read => r,
+                _ = timeout => return Err("timeout".to_string()),
+            }
+        };
+        match read_result {
+            Ok(0) => break,
+            Ok(n) => {
                 buf.extend_from_slice(&chunk[..n]);
                 if buf.len() > 50 * 1024 * 1024 {
                     return Err("response too large".to_string());
                 }
             }
-            Ok(Err(e)) => return Err(format!("read failed: {e}")),
-            Err(_) => return Err("timeout".to_string()),
+            Err(e) => return Err(format!("read failed: {e}")),
         }
     }
 
