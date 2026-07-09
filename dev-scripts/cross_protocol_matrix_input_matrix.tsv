@@ -1,0 +1,3 @@
+# profile|b_frames|relative_path|description
+b-frame-h264|yes|test_media_files/bbb_sunflower_1080p_30fps_normal.flv|H264 FLV sample with B-frames (baseline e2e stress)
+non-b-hevc|no|test_media_files/camera_h265.mp4|H265 camera sample without B-frames (low-latency baseline)

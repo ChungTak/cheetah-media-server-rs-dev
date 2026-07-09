@@ -3,10 +3,6 @@ target
 build/
 test_media_files
 vendor-ref
-!dev-scripts/
-dev-scripts/*
-!dev-scripts/check_rtmp_fuzz_smoke.sh
-!dev-scripts/rtmp_extract_capture_fixtures.py
 crates/cheetah-rtmp-fuzz/corpus/*
 !crates/cheetah-rtmp-fuzz/corpus/fuzz_real_capture_server_replay/
 crates/cheetah-rtmp-fuzz/corpus/fuzz_real_capture_server_replay/*

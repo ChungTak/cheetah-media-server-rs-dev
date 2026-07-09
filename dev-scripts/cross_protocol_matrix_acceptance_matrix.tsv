@@ -1,0 +1,17 @@
+# check_key|required|threshold|unit|description
+startup_latency|yes|3000|ms|first frame should be visible within 3 seconds from pull start
+first_keyframe_delay_ms|yes|2000|ms|first keyframe should arrive within 2 seconds from first sampled video packet
+continuous_play|yes|300|seconds|playback should stay continuous for at least 5 minutes without manual restart
+freeze_events|yes|0|count|playback freeze or long stutter events must be zero during the observation window
+dts_out_of_order|yes|0|count|ffmpeg and server logs must not report DTS out of order errors
+invalid_timestamps|yes|0|count|ffmpeg and ffplay logs must not report Invalid timestamps errors
+non_increasing_dts|yes|0|count|ffmpeg and ffplay logs must not report Non-increasing DTS errors
+negative_cts|yes|0|count|ffmpeg and ffplay logs must not report Negative cts errors
+ffprobe_first_video_keyframe|yes|1|bool|ffprobe first video packet must be a keyframe
+ffprobe_first_video_pts_near_zero|yes|1|bool|ffprobe first video packet pts must start at 0 or near 0
+ffprobe_video_dts_monotonic|yes|1|bool|ffprobe sampled video packets must keep non-decreasing dts
+source_repair_events|no|0|count|source timeline repair and reorder events are observed for debugging only
+canonical_repair_events|no|0|count|canonical timeline repairs are observed for debugging only
+egress_repair_events|no|0|count|egress monotonic repairs are observed for debugging only
+repair_warn_high_frequency|yes|0|bool|high-frequency canonical or egress repair warnings must remain disabled
+repair_context_complete|yes|1|bool|repair logs must include source timestamp and canonical pts or dts context
