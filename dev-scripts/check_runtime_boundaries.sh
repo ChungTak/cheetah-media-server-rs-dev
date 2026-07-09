@@ -11,14 +11,22 @@ PUB_API_CRATES=(
   "crates/system/cheetah-engine/src"
   "crates/protocols/rtmp/module/src"
   "crates/protocols/webrtc/module/src"
+  "crates/protocols/mp4/module/src"
 )
 
 DRIVER_CRATES=(
   "crates/protocols/rtmp/driver-tokio/src"
   "crates/protocols/webrtc/driver-tokio/src"
+  "crates/protocols/mp4/driver-tokio/src"
 )
 
-MODULE_CRATE="crates/protocols/rtmp/module/src"
+# Module source dirs whose production code must not touch forbidden tokio
+# primitives directly. Inline `#[cfg(test)]` code is covered too, so these
+# modules must keep tokio out of `[dependencies]` (see manifest check below).
+MODULE_CRATES=(
+  "crates/protocols/rtmp/module/src"
+  "crates/protocols/mp4/module/src"
+)
 
 # Module manifests whose `[dependencies]` section must stay tokio-free. A module
 # that keeps tokio only as a dev-dependency cannot compile production code
@@ -26,11 +34,12 @@ MODULE_CRATE="crates/protocols/rtmp/module/src"
 # avoids false positives from inline `#[cfg(test)]` modules).
 TOKIO_FREE_MODULE_MANIFESTS=(
   "crates/protocols/webrtc/module/Cargo.toml"
+  "crates/protocols/mp4/module/Cargo.toml"
 )
 
 # Fail loudly if a checked path disappears (e.g. after a crate move) instead of
 # silently scanning nothing and reporting success.
-for path in "${PUB_API_CRATES[@]}" "${DRIVER_CRATES[@]}" "${MODULE_CRATE}"; do
+for path in "${PUB_API_CRATES[@]}" "${DRIVER_CRATES[@]}" "${MODULE_CRATES[@]}"; do
   if [[ ! -d "${path}" ]]; then
     echo "[boundary] expected source dir missing: ${path}" >&2
     echo "[boundary] update dev-scripts/check_runtime_boundaries.sh after crate moves" >&2
@@ -58,9 +67,9 @@ if rg -n "${pub_tokio_pattern}" "${PUB_API_CRATES[@]}"; then
   exit 1
 fi
 
-echo "[boundary] checking rtmp-module does not depend on forbidden tokio primitives"
-if rg -n "${module_forbidden_pattern}" "${MODULE_CRATE}"; then
-  echo "[boundary] found forbidden tokio usage in rtmp-module" >&2
+echo "[boundary] checking modules do not depend on forbidden tokio primitives"
+if rg -n "${module_forbidden_pattern}" "${MODULE_CRATES[@]}"; then
+  echo "[boundary] found forbidden tokio usage in a module crate" >&2
   exit 1
 fi
 

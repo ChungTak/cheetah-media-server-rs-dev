@@ -5,11 +5,14 @@
 //! schedule-tick loop to a `tokio::time::sleep` cadence.
 
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use bytes::Bytes;
 use cheetah_codec::{Mp4ReadResult, Mp4ReaderConfig};
 use cheetah_mp4_core::{VodControlCommand, VodCoreInput, VodOutput, VodSession};
+use futures::Stream;
 use parking_lot::Mutex;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
@@ -65,6 +68,23 @@ impl Default for VodDriverConfig {
     }
 }
 
+/// Runtime-neutral event stream handed to the module/protocol layer.
+///
+/// The driver keeps its internal plumbing on tokio channels (driver crates may
+/// use tokio directly), but the public surface exposes only a `futures::Stream`
+/// so consumers never depend on a `tokio::sync::mpsc` type. See `AGENTS.md` §5.
+pub struct VodEventStream {
+    rx: mpsc::Receiver<VodDriverEvent>,
+}
+
+impl Stream for VodEventStream {
+    type Item = VodDriverEvent;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.rx.poll_recv(cx)
+    }
+}
+
 /// Command channel handle exposed to the module/protocol layer.
 #[derive(Clone)]
 pub struct VodDriverHandle {
@@ -77,9 +97,9 @@ impl VodDriverHandle {
         self.cmd_tx.send(cmd).map_err(|_| VodDriverError::Closed)
     }
 
-    /// Take ownership of the event receiver. Only the first caller succeeds.
-    pub fn take_events(&self) -> Option<mpsc::Receiver<VodDriverEvent>> {
-        self.event_rx.lock().take()
+    /// Take ownership of the event stream. Only the first caller succeeds.
+    pub fn take_events(&self) -> Option<VodEventStream> {
+        self.event_rx.lock().take().map(|rx| VodEventStream { rx })
     }
 }
 
@@ -445,6 +465,7 @@ mod tests {
         CodecExtradata, CodecId, MediaKind, Mp4WriteEvent, Mp4Writer, Mp4WriterConfig, TrackId,
         TrackInfo,
     };
+    use futures::StreamExt;
     use std::path::PathBuf;
     use tokio::io::AsyncWriteExt;
 
@@ -510,7 +531,7 @@ mod tests {
         let mut frames = 0;
         // Take up to 50 events to bound test time
         for _ in 0..50 {
-            match tokio::time::timeout(std::time::Duration::from_millis(500), events.recv()).await {
+            match tokio::time::timeout(std::time::Duration::from_millis(500), events.next()).await {
                 Ok(Some(VodDriverEvent::Tracks(_))) => got_tracks = true,
                 Ok(Some(VodDriverEvent::Frame(_))) => frames += 1,
                 Ok(Some(VodDriverEvent::Closed { .. })) => break,
@@ -534,7 +555,7 @@ mod tests {
         let mut tracks_count = 0;
         let mut frames = 0;
         for _ in 0..200 {
-            match tokio::time::timeout(std::time::Duration::from_millis(500), events.recv()).await {
+            match tokio::time::timeout(std::time::Duration::from_millis(500), events.next()).await {
                 Ok(Some(VodDriverEvent::Tracks(_))) => tracks_count += 1,
                 Ok(Some(VodDriverEvent::Frame(_))) => frames += 1,
                 Ok(Some(VodDriverEvent::Closed { .. })) => break,
@@ -585,7 +606,7 @@ mod tests {
         let mut events = handle.take_events().unwrap();
         let mut frames = 0;
         for _ in 0..200 {
-            match tokio::time::timeout(std::time::Duration::from_millis(500), events.recv()).await {
+            match tokio::time::timeout(std::time::Duration::from_millis(500), events.next()).await {
                 Ok(Some(VodDriverEvent::Frame(_))) => frames += 1,
                 Ok(Some(VodDriverEvent::Closed { .. })) => break,
                 Ok(Some(_)) => {}
@@ -606,7 +627,7 @@ mod tests {
         };
         let handle = open_files(vec![path.clone()], config).await.unwrap();
         let mut events = handle.take_events().unwrap();
-        let first = tokio::time::timeout(std::time::Duration::from_millis(500), events.recv())
+        let first = tokio::time::timeout(std::time::Duration::from_millis(500), events.next())
             .await
             .ok()
             .and_then(|o| o);

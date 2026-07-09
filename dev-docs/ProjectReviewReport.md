@@ -17,7 +17,7 @@
 | F-03 | 环境 | 代码使用 `is_multiple_of`（Rust 1.87+），环境默认 1.83 无法编译 | 高 | 已修复(工具链)+待固化 |
 | F-04 | 违规 | `cheetah-webrtc-module` 生产代码大量直接依赖 `tokio::{net,time,sync}` 与 `tokio::select!` | 高 | 进行中(Stage 1) |
 | F-05 | 风险 | `cheetah-http-flv-module` 直接依赖 `cheetah-rtmp-core` 复用 FLV 封装逻辑 | 中 | 已修复 |
-| F-06 | 风险 | mp4 module 用 `tokio::spawn` 且 driver 公共 API 泄漏 tokio 通道类型 | 中 | 待处理 |
+| F-06 | 风险 | mp4 module 用 `tokio::spawn` 且 driver 公共 API 泄漏 tokio 通道类型 | 中 | 已修复 |
 | F-07 | 文档 | `SystemArchitecture.md` 缺 hls/ts/mp4/srt/webrtc 的 Reference Mapping | 中 | 待处理 |
 | F-08 | 测试 | `ts`、`http-flv` 缺 `testing/property-tests`（其余 9 协议均有） | 中 | 待处理 |
 | F-09 | 文档/实现 | SystemArchitecture §4 观测性基线指标在代码中完全缺失 | 中 | 待处理 |
@@ -173,19 +173,27 @@
   cheetah-http-flv-module -p cheetah-rtmp-module`（除 1 项 main 上即缺失 `manifest.tsv` fixture 的
   预存失败外全绿）、clippy 干净、全 feature 服务端构建通过、边界守卫通过。
 
-### F-06【待处理｜中】mp4 module/driver 桥接未 runtime 中立（第二轮补充证据）
-- 证据（module 侧）：
+### F-06【已修复｜中】mp4 module/driver 桥接未 runtime 中立（第二轮补充证据）
+- 证据（修复前，module 侧）：
   - `mp4/module/src/api.rs:293` `async fn bridge_events(mut events: tokio::sync::mpsc::Receiver<VodDriverEvent>, ..)`。
   - `api.rs:209` `tokio::spawn(bridge_events(..))` —— module 直接用 `tokio::spawn`，应走 `RuntimeApi::spawn`。
-- 证据（driver 公共接口泄漏）：`mp4/driver-tokio/src/lib.rs` 的 `VodDriverHandle`
-  `cmd_tx: mpsc::UnboundedSender<..>` / `event_rx: ..mpsc::Receiver<..>`（:70-72），且 `pub fn take_events()
-  -> Option<mpsc::Receiver<VodDriverEvent>>`（:81）在 driver **公共 API** 直接暴露 tokio 通道类型。
+- 证据（修复前，driver 公共接口泄漏）：`mp4/driver-tokio/src/lib.rs` 的 `pub fn take_events()
+  -> Option<mpsc::Receiver<VodDriverEvent>>` 在 driver **公共 API** 直接暴露 tokio 通道类型。
 - 依据：`AGENTS.md` §5（driver 公共接口用 runtime-neutral 类型；module 公共接口禁暴露 tokio）+ §6
   （module 不得直用 `tokio::sync`/`tokio::spawn`）。
-- 影响：非单点，需跨 `driver-tokio` 公共 API + `module` 改造；`VodApi` 当前不持有 `RuntimeApi`
-  （仅 `registry/config/core_adapters`），需先注入。故非本轮可安全落地的小修，列为后续立项。
-- 建议：在 SDK 层提供 runtime-neutral 事件流抽象（如 `Box<dyn Stream>` 或 trait 接收端），driver 以该抽象
-  暴露事件，`VodApi` 注入 `RuntimeApi` 并以 `runtime_api.spawn` 驱动 `bridge_events`。
+- 修复：
+  - driver 新增 runtime-neutral 的 `VodEventStream`（`impl futures::Stream<Item = VodDriverEvent>`，内部仍
+    持有 tokio `mpsc::Receiver`——driver 层允许直用 tokio），`take_events()` 返回类型改为 `Option<VodEventStream>`，
+    公共 API 不再出现 tokio 类型。命令通道 `cmd_tx` 仍为 driver 内部私有实现。
+  - `VodApi` 注入 `Arc<dyn RuntimeApi>`（`with_engine_bridge` 新增入参，`Mp4Module::init` 从
+    `EngineContext.runtime_api` 传入）；`bridge_events` 改消费 `VodEventStream`（`StreamExt::next`），
+    spawn 改为 `runtime_api.spawn(Box::pin(bridge_events(..)))`。
+  - 从 `mp4/module/Cargo.toml` 的 `[dependencies]` 删除 `tokio`（module 生产代码零 tokio 命中），driver/module
+    加 `futures`。
+  - 扩展 `dev-scripts/check_runtime_boundaries.sh`：将 mp4 module/driver 纳入公共 API + 驱动中立性 + module
+    禁用清单扫描，并把 `mp4/module/Cargo.toml` 加入“`[dependencies]` 禁 tokio”清单。
+- 验证：`cargo fmt/clippy(--tests)/test -p cheetah-mp4-core -p cheetah-mp4-driver-tokio -p cheetah-mp4-module`
+  全绿；`cargo build -p cheetah-server --features "...,mp4,..."` 通过；边界守卫通过。行为不变。
 
 ### F-08【待处理｜中】ts、http-flv 协议缺属性测试
 - 证据（第二轮逐协议核对）：11 协议中仅 **ts** 与 **http-flv** 无 `testing/property-tests`

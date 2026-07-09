@@ -152,6 +152,11 @@ fMP4 boundary clarification:
 - `cheetah-fmp4-driver-tokio` owns TCP bind/accept, HTTP/1.1 parsing, chunked response encoding, WebSocket binary framing, per-connection write queues, and pull client (http/https/ws/wss).
 - `cheetah-fmp4-module` owns engine subscribe/publish, play session lifecycle, pull job supervision with backoff retry, and config validation.
 
+MP4 VOD boundary clarification:
+
+- `cheetah-mp4-driver-tokio` owns file I/O, the schedule-tick loop, and command dispatch on internal tokio channels. Its public surface stays runtime-neutral: `VodDriverHandle::take_events()` yields a `VodEventStream` (`impl futures::Stream`), not a `tokio::sync::mpsc::Receiver`.
+- `cheetah-mp4-module` carries no `tokio` production dependency. `VodApi` receives an `Arc<dyn RuntimeApi>` from `EngineContext` and drives the VOD→engine `bridge_events` task via `RuntimeApi::spawn`, consuming the driver's neutral event stream.
+
 ## 3.3 RTP Reference Mapping
 
 Current RTP crates:
