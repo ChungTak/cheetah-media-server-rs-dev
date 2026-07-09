@@ -1,4 +1,4 @@
-# Cheetah Media Server 审查报告（首轮执行）
+# Cheetah Media Server 审查报告（P0–P2 已执行，第二轮更新）
 
 > 依据 `dev-docs/ProjectReviewPlan.md` 的阶段划分（P0→P5）执行。审查基线：`AGENTS.md`、
 > `SystemArchitecture.md`、README、`config.example.yaml`。
@@ -17,10 +17,11 @@
 | F-03 | 环境 | 代码使用 `is_multiple_of`（Rust 1.87+），环境默认 1.83 无法编译 | 高 | 已修复(工具链)+待固化 |
 | F-04 | 违规 | `cheetah-webrtc-module` 生产代码大量直接依赖 `tokio::{net,time,sync}` 与 `tokio::select!` | 高 | 待处理 |
 | F-05 | 风险 | `cheetah-http-flv-module` 直接依赖 `cheetah-rtmp-core` 复用 FLV 封装逻辑 | 中 | 待处理 |
-| F-06 | 风险 | `cheetah-mp4-module` 生产函数签名暴露 `tokio::sync::mpsc::Receiver` | 中 | 待处理 |
+| F-06 | 风险 | mp4 module 用 `tokio::spawn` 且 driver 公共 API 泄漏 tokio 通道类型 | 中 | 待处理 |
 | F-07 | 文档 | `SystemArchitecture.md` 缺 hls/ts/mp4/srt/webrtc 的 Reference Mapping | 中 | 待处理 |
-| F-08 | 测试 | `ts` 协议缺 `testing/property-tests`（其他协议均有） | 中 | 待处理 |
+| F-08 | 测试 | `ts`、`http-flv` 缺 `testing/property-tests`（其余 9 协议均有） | 中 | 待处理 |
 | F-09 | 文档/实现 | SystemArchitecture §4 观测性基线指标在代码中完全缺失 | 中 | 待处理 |
+| F-10 | 风险 | `cheetah-engine` 内部直用 `tokio::sync::{mpsc,broadcast,Mutex}`，与 §5 允许清单冲突 | 低 | 待处理 |
 
 ---
 
@@ -94,11 +95,35 @@
   等 runtime-neutral 抽象；HTTP module 契约未绑定具体 Web 框架（§2/§5 ✓）。
 - `cheetah-record-module` 未见直接 `tokio::{net,time,sync}` 使用（0 命中）。
 
-### 待深入项（本轮未逐行确认，列为下一轮重点）
-- `cheetah-engine/src/stream.rs`(1770 行)：单发布者租约独占语义、Dispatcher/RingBuffer/subscriber queue
-  的“慢订阅者隔离”与上界（`AGENTS.md` §6/§9），建议逐行核对。
-- `module_manager.rs`：`restart_module/restart_modules` 仅接受 `Running`、否则 `Conflict`（§6）。
-- `cheetah-config`：加载顺序（默认→`CHEETAH_CONFIG`→`M7S_`）与 `config.example.yaml` 字段一致性。
+### 深入核对结论（第二轮已逐行确认，均通过）
+- **单发布者租约**：`StreamManager::acquire_publisher` 用 `active_lease.compare_exchange(0, lease_id,..)`
+  实现独占；已被占用返回 `SdkError::Conflict("stream .. already has an active publisher")`；
+  `release_lease` 校验 `lease_id` 不匹配亦 `Conflict`（`stream.rs:812-819,616-631`）。符合 §6 单发布者独占。
+- **热路径非阻塞 + 慢订阅者隔离**：`dispatch_frame` 对每个订阅者用 `tx.try_send`（非阻塞），队列满时按
+  `BackpressurePolicy`（`DropDroppableFirst` / `DropUntilNextKeyframe` / `DisconnectOnOverflow`）丢帧或
+  摘除该订阅者，绝不阻塞派发线程或其他订阅者（`stream.rs:312-372`）。符合 §9“慢订阅者不拖累其他订阅者/
+  热路径禁止阻塞”。
+- **有界缓冲**：RingBuffer 容量 `next_power_of_two`、`ring_capacity.max(128)`；订阅队列
+  `mpsc::channel(queue_capacity.max(1))`，且拒绝 `queue_capacity==0`、`max_bootstrap_frames>queue_capacity`
+  （`stream.rs:56-66,283,655-669,858-863`）。IDR 索引在冷路径 `idr_write_lock` 下维护并按容量裁剪，未把锁带入
+  每帧热路径。符合 §9 上界要求。
+- **module 生命周期**：`module_manager` 的 `restart_module/restart_modules` 仅接受 `Running`，否则
+  `Conflict`；`ModuleRestartRequired` 由基础层 `rebuild_module`（create→init→start）执行；依赖环检测
+  返回 `Conflict`（`module_manager.rs:655-678,584-593,124-127`）。符合 §6。
+- **config 加载顺序**：`default → file → env → runtime` 逐层 `merge_value`（`lib.rs:129-153`）；env 前缀
+  `M7S_GLOBAL__` / `M7S_MODULE__<module>__`、`__` 分隔、`env_value_to_json` 按 bool/i64/f64/string 解析
+  （`lib.rs:99-127,469-483`）。与 README §2 一致。
+
+### F-10【待处理｜风险】cheetah-engine 内部直用 tokio 原语与文档允许清单冲突
+- 证据：生产代码 `stream.rs:16 use tokio::sync::mpsc`、`event.rs:3 use tokio::sync::broadcast`、
+  `module_manager.rs:13 use tokio::sync::Mutex`（另有 `core_adapters.rs:283/286`、`task.rs:350`、
+  `stream.rs:1002` 位于测试）。
+- 依据：`AGENTS.md` §5 明确“`tokio`/`tokio-util` 仅允许留在 `cheetah-runtime-tokio`、`*-driver-tokio` 和
+  应用层 crate”，`cheetah-engine`（system 层）不在允许清单内。这些用法未泄漏到公共接口，故边界守卫
+  （只查 `pub` 泄漏）不报警，属**文档 vs 实现**的口径分歧。
+- 建议：二选一——(a) 若有意允许 engine 内部使用 tokio，则在 §5 显式把 `cheetah-engine` 纳入允许清单；
+  (b) 否则将 engine 的 channel/lock/broadcast 收敛到 `RuntimeApi`/SDK 抽象。建议采 (a)（engine 作为编排
+  中枢，强行去 tokio 收益低、风险高），并同步扩展边界守卫覆盖以固化该口径。
 
 ---
 
@@ -136,18 +161,26 @@
 - 建议：把 FLV 帧↔payload 映射与 bootstrap 逻辑收敛到 `cheetah-codec`，rtmp 与 http-flv 共同复用，
   解除 http-flv→rtmp-core 的跨协议依赖。
 
-### F-06【待处理｜中】mp4 module 暴露 tokio 通道类型
-- 证据：`crates/protocols/mp4/module/src/api.rs:293`
-  `async fn bridge_events(mut events: tokio::sync::mpsc::Receiver<VodDriverEvent>, ..)`。
-- 依据：`AGENTS.md` §6。
-- 建议：driver 侧以 runtime-neutral 接收端（SDK 抽象 / trait 对象）暴露事件流，module 不直接持有
-  `tokio::sync::mpsc::Receiver`。
+### F-06【待处理｜中】mp4 module/driver 桥接未 runtime 中立（第二轮补充证据）
+- 证据（module 侧）：
+  - `mp4/module/src/api.rs:293` `async fn bridge_events(mut events: tokio::sync::mpsc::Receiver<VodDriverEvent>, ..)`。
+  - `api.rs:209` `tokio::spawn(bridge_events(..))` —— module 直接用 `tokio::spawn`，应走 `RuntimeApi::spawn`。
+- 证据（driver 公共接口泄漏）：`mp4/driver-tokio/src/lib.rs` 的 `VodDriverHandle`
+  `cmd_tx: mpsc::UnboundedSender<..>` / `event_rx: ..mpsc::Receiver<..>`（:70-72），且 `pub fn take_events()
+  -> Option<mpsc::Receiver<VodDriverEvent>>`（:81）在 driver **公共 API** 直接暴露 tokio 通道类型。
+- 依据：`AGENTS.md` §5（driver 公共接口用 runtime-neutral 类型；module 公共接口禁暴露 tokio）+ §6
+  （module 不得直用 `tokio::sync`/`tokio::spawn`）。
+- 影响：非单点，需跨 `driver-tokio` 公共 API + `module` 改造；`VodApi` 当前不持有 `RuntimeApi`
+  （仅 `registry/config/core_adapters`），需先注入。故非本轮可安全落地的小修，列为后续立项。
+- 建议：在 SDK 层提供 runtime-neutral 事件流抽象（如 `Box<dyn Stream>` 或 trait 接收端），driver 以该抽象
+  暴露事件，`VodApi` 注入 `RuntimeApi` 并以 `runtime_api.spawn` 驱动 `bridge_events`。
 
-### F-08【待处理｜中】ts 协议缺属性测试
-- 证据：`crates/protocols/ts/` 下无 `testing/property-tests`（其余协议均有；workspace members 也无
-  `cheetah-ts-property-tests`）。
+### F-08【待处理｜中】ts、http-flv 协议缺属性测试
+- 证据（第二轮逐协议核对）：11 协议中仅 **ts** 与 **http-flv** 无 `testing/property-tests`
+  （rtmp/rtsp/hls/fmp4/mp4/rtp/gb28181/srt/webrtc 均有）。
 - 依据：`AGENTS.md` §11 + `SystemArchitecture.md` §6（core 应有属性测试）。
-- 建议：补 `crates/protocols/ts/testing/property-tests`，覆盖 TS 包解析/PAT-PMT/重组上界。
+- 建议：补 `crates/protocols/ts/testing/property-tests`（覆盖 TS 包解析/PAT-PMT/重组上界）与
+  `crates/protocols/http-flv/testing/property-tests`（覆盖 FLV tag 解析/时间戳/分帧上界）。
 
 ---
 
@@ -167,13 +200,22 @@
 2. F-02 修复 hls module runtime 中立性违规 + 清理无用 tokio 依赖。
 3. F-03 工具链升级至满足 `is_multiple_of` 的 stable（1.96），全量构建通过。
 
+**第二轮（P2 深入 + 各协议测试/依赖复核）结论：**
+- P2 系统层深入核对全部通过：单发布者租约（CAS + Conflict）、热路径 `try_send` 非阻塞派发与三种
+  背压策略下的慢订阅者隔离、RingBuffer/订阅队列有界、module 重启 `Conflict` 语义、config 分层加载与类型
+  解析。均记为通过并附 `文件:行`。
+- 新增/细化发现：F-06（mp4 module `tokio::spawn` + driver 公共 API 泄漏 tokio 通道）、F-08（ts 与
+  http-flv 均缺属性测试）、F-10（engine 内部直用 tokio 与 §5 允许清单冲突）。本轮均为需设计决策/跨 crate
+  改造的项，按整洁最小改动原则未强行落地，列入后续立项。
+
 **建议后续立项（按优先级）：**
 - F-04 webrtc module runtime 中立化（工作量最大，单独 PR）。
-- F-03 固化：新增 `rust-toolchain.toml` + blueprint 安装新 stable。
+- F-03 固化：新增 `rust-toolchain.toml`（blueprint 安装新 stable 已提交）。
 - F-05 FLV 封装收敛到 codec，解除 http-flv→rtmp-core 依赖。
+- F-06 mp4 桥接：SDK 事件流抽象 + `VodApi` 注入 `RuntimeApi`，driver 公共 API 去 tokio 化。
 - F-07 / F-09 文档与实现对齐（补协议映射 / 观测性章节标注）。
-- F-06 mp4 桥接通道去 tokio 化；F-08 补 ts 属性测试。
-- P2 engine 租约/队列上界逐行核对（下一轮重点）。
+- F-08 补 ts、http-flv 属性测试。
+- F-10 §5 允许清单口径统一（建议显式纳入 engine）并扩展边界守卫覆盖。
 
 **复现命令：**
 ```bash
