@@ -18,7 +18,7 @@
 | F-04 | 违规 | `cheetah-webrtc-module` 生产代码大量直接依赖 `tokio::{net,time,sync}` 与 `tokio::select!` | 高 | 进行中(Stage 1) |
 | F-05 | 风险 | `cheetah-http-flv-module` 直接依赖 `cheetah-rtmp-core` 复用 FLV 封装逻辑 | 中 | 已修复 |
 | F-06 | 风险 | mp4 module 用 `tokio::spawn` 且 driver 公共 API 泄漏 tokio 通道类型 | 中 | 已修复 |
-| F-07 | 文档 | `SystemArchitecture.md` 缺 hls/ts/mp4/srt/webrtc 的 Reference Mapping | 中 | 待处理 |
+| F-07 | 文档 | `SystemArchitecture.md` 缺 hls/ts/mp4/srt/webrtc 的 Reference Mapping | 中 | 已修复 |
 | F-08 | 测试 | `ts`、`http-flv` 缺 `testing/property-tests`（其余 9 协议均有） | 中 | 待处理 |
 | F-09 | 文档/实现 | SystemArchitecture §4 观测性基线指标在代码中完全缺失 | 中 | 待处理 |
 | F-10 | 风险 | `cheetah-engine` 内部直用 `tokio::sync::{mpsc,broadcast,Mutex}`，与 §5 允许清单冲突 | 低 | 待处理 |
@@ -50,11 +50,15 @@
   报错退出”的自检，避免以后 crate 移动再次静默空跑。修复后对 rtmp 实测通过，并验证能检出 hls 的
   `tokio::time` 违规（守卫恢复有效）。
 
-### F-07【待处理｜中】架构文档缺协议映射
+### F-07【已修复｜中】架构文档缺协议映射
 - 证据：`SystemArchitecture.md` §3–§3.4 仅覆盖 RTMP/RTSP/HTTP-FLV/fMP4/RTP/GB28181；workspace 与 README
   已含 `hls`、`ts`、`mp4`、`srt`、`webrtc`，但无对应 Reference Mapping。
 - 依据：`AGENTS.md` §13（feature/crate 变更须同步文档）。
-- 建议：补 hls/ts/mp4/srt/webrtc 的 crate 映射、capability snapshot、boundary clarification。
+- 修复：WebRTC 映射已在 F-04 Stage 5 补齐并规范化为 §3.9；本轮补齐 §3.5 HLS / §3.6 HTTP-TS /
+  §3.7 MP4 VOD / §3.8 SRT，每节含 crate 映射（含 testing/property-tests + fuzz）、capability snapshot、
+  boundary clarification（core/driver/module 职责 + `cheetah-codec` 容器能力归属）。内容对照源码核对：
+  HLS 容器/LLHLS 标签/编码矩阵、TS PAT/PMT+RtpTsIngest+pull、MP4 VOD 的 `/zlm/{loadMP4File,seekRecordStamp,
+  setRecordSpeed}` 与 `VodEventStream` 中立事件流、SRT roles/modes/streamid/AES 加密（`shiguredo_srt`）。
 
 ---
 
