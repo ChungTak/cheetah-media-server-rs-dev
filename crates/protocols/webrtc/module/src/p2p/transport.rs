@@ -18,9 +18,11 @@
 //! to their runtime.
 
 use async_trait::async_trait;
+use futures::channel::mpsc;
+use futures::lock::Mutex;
+use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::Mutex;
 
 use super::message::P2pMessage;
 
@@ -63,8 +65,8 @@ pub trait P2pTransport: Send + Sync {
 /// on one side surface on the other side's `recv`.
 #[derive(Debug)]
 pub struct InMemoryTransport {
-    inbound: Arc<Mutex<tokio::sync::mpsc::Receiver<P2pTransportEvent>>>,
-    outbound: tokio::sync::mpsc::Sender<P2pTransportEvent>,
+    inbound: Arc<Mutex<mpsc::Receiver<P2pTransportEvent>>>,
+    outbound: mpsc::Sender<P2pTransportEvent>,
     /// Mirror of the *peer's* outbound. Used by tests to inspect what
     /// the local end emitted, without blocking on `recv`.
     pub recorder: Arc<Mutex<Vec<P2pMessage>>>,
@@ -77,8 +79,8 @@ impl InMemoryTransport {
     /// sends becomes a message that `remote.recv()` returns and vice
     /// versa.
     pub fn pair(capacity: usize) -> (Self, Self) {
-        let (a_tx, a_rx) = tokio::sync::mpsc::channel(capacity.max(4));
-        let (b_tx, b_rx) = tokio::sync::mpsc::channel(capacity.max(4));
+        let (a_tx, a_rx) = mpsc::channel(capacity.max(4));
+        let (b_tx, b_rx) = mpsc::channel(capacity.max(4));
         let recorder_a = Arc::new(Mutex::new(Vec::new()));
         let recorder_b = Arc::new(Mutex::new(Vec::new()));
         let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -106,6 +108,7 @@ impl P2pTransport for InMemoryTransport {
         }
         self.recorder.lock().await.push(message.clone());
         self.outbound
+            .clone()
             .send(P2pTransportEvent::Message(message))
             .await
             .map_err(|_| P2pTransportError::Closed)
@@ -113,7 +116,7 @@ impl P2pTransport for InMemoryTransport {
 
     async fn recv(&self) -> Result<P2pTransportEvent, P2pTransportError> {
         let mut guard = self.inbound.lock().await;
-        match guard.recv().await {
+        match guard.next().await {
             Some(event) => Ok(event),
             None => Ok(P2pTransportEvent::Closed),
         }
@@ -123,7 +126,7 @@ impl P2pTransport for InMemoryTransport {
         self.closed
             .store(true, std::sync::atomic::Ordering::Release);
         // Best-effort: notify the peer.
-        let _ = self.outbound.send(P2pTransportEvent::Closed).await;
+        let _ = self.outbound.clone().send(P2pTransportEvent::Closed).await;
     }
 }
 
