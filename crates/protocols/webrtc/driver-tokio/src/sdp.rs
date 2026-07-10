@@ -7,6 +7,12 @@
 //! to feed `WebRtcDriverDiagnosticKind` style events, for example.
 //! These helpers are kept stand-alone (no `str0m` dependency) so
 //! they stay cheap and quick to call from the hot path.
+//!
+//! 在 driver 边界使用的轻量级 SDP candidate / 扩展实用程序。
+//!
+//! `cheetah-webrtc-core` 通过 `str0m` 进行繁重的 SDP 解析。
+//! driver 只需要一些可观察性的摘要指标 - 例如，在生成的 answer 中计算 candidate 类型来提供 `WebRtcDriverDiagnosticKind` 样式事件。
+//! 这些助手保持独立（无 `str0m` 依赖性），因此它们可以便宜且快速地从热路径调用。
 
 use std::net::IpAddr;
 
@@ -14,29 +20,51 @@ use std::net::IpAddr;
 /// the harness `assertions::CandidateCounts` shape but lives in the
 /// driver crate so module / runtime callers can use it without
 /// pulling the test target into their dep graph.
+///
+/// 从单个 SDP 中提取的每种类型 candidate 计数。
+/// 镜像线束 `assertions::CandidateCounts` 形状，但位于 driver crate 中，因此模块/运行时调用者可以使用它，而无需将测试目标拉入其依赖关系图中。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct LocalCandidateCounts {
     /// Number of `typ host` candidates.
+    ///
+    /// `typ host` candidates 的数量。
     pub host: usize,
     /// Number of `typ srflx` candidates.
+    ///
+    /// `typ srflx` candidates 的数量。
     pub srflx: usize,
     /// Number of `typ prflx` candidates (peer-reflexive; rare in
     /// generated SDPs but present in some str0m configurations).
+    ///
+    /// `typ prflx` candidates 的数量（对等自反；
+    /// 在生成的 SDP 中很少见，但存在于某些 str0m 配置中）。
     pub prflx: usize,
     /// Number of `typ relay` candidates.
+    ///
+    /// `typ relay` candidates 的数量。
     pub relay: usize,
     /// Number of UDP-transport candidates.
+    ///
+    /// UDP-运输 candidates 的数量。
     pub udp: usize,
     /// Number of TCP-transport candidates.
+    ///
+    /// TCP-运输 candidates 的数量。
     pub tcp: usize,
     /// Number of IPv4 (or mDNS) candidates.
+    ///
+    /// IPv4（或 mDNS）数量 candidates。
     pub ipv4: usize,
     /// Number of IPv6 candidates.
+    ///
+    /// IPv6 candidates 的数量。
     pub ipv6: usize,
 }
 
 impl LocalCandidateCounts {
     /// Total candidate count summed across the four types.
+    ///
+    /// 四种类型的总 candidate 计数相加。
     pub fn total(&self) -> usize {
         self.host + self.srflx + self.prflx + self.relay
     }
@@ -46,12 +74,32 @@ impl LocalCandidateCounts {
 ///
 /// OME exposes this through `?transport=`. The driver applies it to
 /// generated SDP immediately before emitting `AnswerReady`/`OfferReady`.
+///
+/// 每个会话本地 candidate 输出策略。
+///
+/// OME 通过 `?transport=` 公开这一点。
+/// driver 在发出 `AnswerReady`/`OfferReady` 之前立即将其应用于生成的 SDP。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CandidateTransportPolicy {
+    /// Generate UDP, TCP, and relay candidates.
+    ///
+    /// 生成 UDP、TCP 并中继 candidates。
     All,
+    /// Generate only UDP candidates.
+    ///
+    /// 仅生成 UDP candidates。
     UdpOnly,
+    /// Generate only TCP candidates.
+    ///
+    /// 仅生成 TCP candidates。
     TcpOnly,
+    /// Generate only relay candidates, if configured.
+    ///
+    /// 仅生成继电器 candidates（如果已配置）。
     RelayOnly,
+    /// Generate UDP and TCP candidates.
+    ///
+    /// 生成 UDP 和 TCP candidates。
     UdpTcp,
 }
 
@@ -65,6 +113,12 @@ pub enum CandidateTransportPolicy {
 /// the presence of `:` in the address field. mDNS hostnames
 /// (ending in `.local`) are counted as `ipv4` since they resolve
 /// at runtime to a host candidate.
+///
+/// 计算生成的 SDP 中的 `a=candidate:` 行，并按 candidate 类型和传输对它们进行存储。
+/// 操作员使用它来观察当地 candidate 收集结果，而无需从 `str0m` 事件的消防水管中喝水。
+///
+/// 解析器是故意允许的：格式错误的行会被默默地跳过，并且 IPv4 / IPv6 分割由地址字段中是否存在 `:` 来确定。
+/// mDNS 主机名（以 `.local` 结尾）被计为 `ipv4`，因为它们在运行时解析为主机 candidate。
 pub fn count_local_candidates(sdp: &str) -> LocalCandidateCounts {
     let mut c = LocalCandidateCounts::default();
     for line in sdp.lines() {
@@ -111,6 +165,9 @@ pub fn count_local_candidates(sdp: &str) -> LocalCandidateCounts {
 
 /// Filter local `a=candidate:` lines in SDP according to a transport
 /// policy. Non-candidate SDP attributes are preserved verbatim.
+///
+/// 根据交通政策过滤 SDP 中的本地 `a=candidate:` 线路。
+/// 非 candidate SDP 属性将逐字保留。
 pub fn filter_local_candidates(sdp: &str, policy: CandidateTransportPolicy) -> String {
     if policy == CandidateTransportPolicy::All {
         return sdp.to_string();
@@ -134,6 +191,9 @@ pub fn filter_local_candidates(sdp: &str, policy: CandidateTransportPolicy) -> S
 /// non-trickle HTTP answers/offers. Some browser WHEP clients keep ICE in
 /// checking without sending connectivity checks when a full SDP answer has
 /// candidates but no `a=end-of-candidates` marker.
+///
+/// 确保每个媒体部分宣传非 trickle HTTP answers/offers 的 ICE 聚会完成情况。
+/// 当完整的 SDP answer 具有 candidates 但没有 `a=end-of-candidates` 标记时，某些浏览器 WHEP 客户端会保留 ICE 检查而不发送连接检查。
 pub fn ensure_end_of_candidates(sdp: &str) -> String {
     let mut out = String::with_capacity(sdp.len() + 64);
     let mut media_section = Vec::new();

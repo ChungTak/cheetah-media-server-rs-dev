@@ -1,5 +1,7 @@
 //! Driver runtime: owns the UDP listener, the [`WebRtcCore`] instance,
 //! and dispatches commands and events.
+//!
+//! driver 运行时：拥有 UDP 侦听器、[`WebRtcCore`] 实例，并调度命令和事件。
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -34,11 +36,25 @@ use crate::shard::{ShardLoadTable, ShardSelector};
 use crate::tcp::{encode_frame, Tcp4571Decoder};
 
 /// Spec for creating a new session inside the driver.
+///
+/// 在 driver 中创建新会话的规范。
 #[derive(Debug, Clone)]
 pub struct WebRtcSessionSpec {
+    /// Session identifier assigned by the caller.
+    ///
+    /// 由调用者分配的会话标识符。
     pub session_id: WebRtcSessionId,
+    /// Whether this endpoint offers or answers.
+    ///
+    /// 此端点是 offers 还是 answers。
     pub role: WebRtcSessionRole,
+    /// Remote SDP offer to accept.
+    ///
+    /// 远程 SDP offer 接受。
     pub remote_sdp_offer: String,
+    /// Policy controlling which local candidates are generated.
+    ///
+    /// 控制生成哪些本地 candidates 的策略。
     pub candidate_transport_policy: CandidateTransportPolicy,
 }
 
@@ -48,23 +64,39 @@ pub struct WebRtcSessionSpec {
 /// the target session. We wrap the public `WebRtcDriverCommand` enum
 /// rather than expose a separate type so the multi-shard plumbing
 /// stays an internal concern of the driver crate.
+///
+/// 多 shard 拓扑中使用的每 shard 命令包络。
+///
+/// I/O 前端将 driver 命令转发到拥有目标会话的 shard。
+/// 我们包装公共 `WebRtcDriverCommand` 枚举，而不是公开单独的类型，因此多 shard 管道仍然是 driver crate 的内部关注点。
 #[derive(Debug, Clone)]
 pub(crate) enum ShardCommand {
     /// A driver command targeted at this shard.
+    ///
+    /// 针对此 shard 的 driver 命令。
     Driver(WebRtcDriverCommand),
     /// Test-only: force the shard loop to panic so the supervisor's
     /// auto-eviction path can be exercised from integration tests.
+    ///
+    /// 仅测试：强制 shard 循环发生恐慌，以便可以从集成测试中执行主管的自动驱逐路径。
     Panic,
 }
 
 /// Boundary commands accepted by the driver.
+///
+/// driver 接受的边界命令。
 #[derive(Debug, Clone)]
 pub enum WebRtcDriverCommand {
     /// Create a session and accept a remote offer.
+    ///
+    /// 创建一个会话并接受远程 offer。
     AcceptOffer(WebRtcSessionSpec),
     /// Create a session in offering mode and produce a local SDP offer.
     /// The resulting offer is delivered as a `LocalDescription` core
     /// output and surfaced via [`WebRtcDriverEvent::OfferReady`].
+    ///
+    /// 在提供模式下创建会话并生成本地 SDP offer。
+    /// 生成的 offer 作为 `LocalDescription` 核心输出提供并通过 [`WebRtcDriverEvent::OfferReady`] 呈现。
     CreateOffer {
         session_id: WebRtcSessionId,
         role: WebRtcSessionRole,
@@ -72,6 +104,8 @@ pub enum WebRtcDriverCommand {
         candidate_transport_policy: CandidateTransportPolicy,
     },
     /// Trickle a remote ICE candidate into an existing session.
+    ///
+    /// trickle 将远程 ICE candidate 插入现有会话。
     AddRemoteCandidate {
         session_id: WebRtcSessionId,
         candidate: String,
@@ -80,26 +114,39 @@ pub enum WebRtcDriverCommand {
     /// fresh local SDP offer with rotated ICE credentials. The new
     /// offer is delivered via [`WebRtcDriverEvent::OfferReady`] just
     /// like a `CreateOffer` result.
+    ///
+    /// 在现有会话上触发 ICE 重新启动，生成具有轮换 ICE 凭据的新本地 SDP offer。
+    /// 新的 offer 通过 [`WebRtcDriverEvent::OfferReady`] 传递，就像 `CreateOffer` 结果一样。
     IceRestart {
         session_id: WebRtcSessionId,
         keep_local_candidates: bool,
     },
     /// Apply an SDP answer to a previously sent local offer.
+    ///
+    /// 将 SDP answer 应用到先前发送的本地 offer。
     ApplyRemoteAnswer {
         session_id: WebRtcSessionId,
         remote_sdp: String,
     },
     /// Send a media frame to a player session.
+    ///
+    /// 将媒体帧发送到播放器会话。
     SendFrame(Box<cheetah_webrtc_core::WebRtcSendFrame>),
     /// Send DataChannel data on a previously opened channel.
+    ///
+    /// 在先前打开的通道上发送 DataChannel 数据。
     SendDataChannel(cheetah_webrtc_core::WebRtcDataChannelOut),
     /// Ask the remote sender to emit a keyframe for an existing track.
+    ///
+    /// 要求远程发送者为现有轨道发出关键帧。
     RequestKeyframe {
         session_id: WebRtcSessionId,
         mid: cheetah_webrtc_core::MidLabel,
         kind: WebRtcRequestKeyframeKind,
     },
     /// Close the session and release its resources.
+    ///
+    /// 关闭会话并释放其资源。
     StopSession {
         session_id: WebRtcSessionId,
         reason: WebRtcCloseReason,
@@ -107,43 +154,65 @@ pub enum WebRtcDriverCommand {
     /// Test-only: inject a panic on the target shard so the
     /// supervisor's auto-eviction path can be exercised from
     /// integration tests. Not intended for production use.
+    ///
+    /// 仅测试：在目标 shard 上注入恐慌，以便可以从集成测试中执行主管的自动驱逐路径。
+    /// 不适合生产用途。
     #[doc(hidden)]
     PanicShard { shard_id: ShardId },
 }
 
 /// Events surfaced by the driver to the module layer.
+///
+/// 事件由 driver 呈现到模块层。
 #[derive(Debug, Clone)]
 pub enum WebRtcDriverEvent {
     /// Session was created and an SDP answer is ready.
+    ///
+    /// 会话已创建，并且 SDP answer 已准备就绪。
     AnswerReady {
         session_id: WebRtcSessionId,
         sdp: String,
     },
     /// Session was created and a local SDP offer is ready (`CreateOffer`).
+    ///
+    /// 会话已创建，本地 SDP offer 已准备就绪 (`CreateOffer`)。
     OfferReady {
         session_id: WebRtcSessionId,
         sdp: String,
     },
     /// Plain core event surfaced to the module.
+    ///
+    /// 普通核心事件出现在模块中。
     Core(WebRtcCoreEvent),
     /// Session has been closed by the driver.
+    ///
+    /// 会议已于 driver 结束。
     SessionClosed {
         session_id: WebRtcSessionId,
         reason: WebRtcCloseReason,
     },
     /// Connection migration detected.
+    ///
+    /// 检测到连接迁移。
     RouteUpdated(WebRtcRouteUpdate),
     /// A remote peer opened a TCP connection. Surfaced before any
     /// frames are delivered so observers can correlate STUN binding
     /// requests with the source TCP peer.
+    ///
+    /// 远程对等点打开了 TCP 连接。
+    /// 在传递任何帧之前浮出水面，以便观察者可以将 STUN 绑定请求与源 TCP 对等方关联起来。
     TcpAccepted { remote_addr: SocketAddr },
     /// A previously-accepted TCP connection has been closed (graceful
     /// EOF, peer reset, framing error, or driver shutdown).
+    ///
+    /// 先前接受的 TCP 连接已关闭（正常 EOF、对等重置、帧错误或 driver 关闭）。
     TcpClosed {
         remote_addr: SocketAddr,
         reason: WebRtcTcpCloseReason,
     },
     /// Diagnostic record from the driver layer.
+    ///
+    /// 来自 driver 层的诊断记录。
     Diagnostic(WebRtcDriverDiagnostic),
     /// Outbound packet/event queue is approaching capacity. The
     /// `queue` field identifies which queue is congested:
@@ -155,6 +224,14 @@ pub enum WebRtcDriverEvent {
     ///
     /// `pending` is the current observed depth at the time the
     /// backpressure was detected.
+    ///
+    /// 出站数据包/事件队列已接近容量。
+    /// `queue` 字段标识哪个队列拥塞：
+    ///
+    /// - `"events"`：driver→模块事件通道已满，诊断事件正在被丢弃。
+    /// - `"packets"`：driver→套接字 UDP 发送队列已满，媒体数据包被延迟或丢弃。
+    ///
+    /// `pending` 是检测到背压时当前观测到的深度。
     Backpressure { queue: String, pending: usize },
     /// A shard task exited. `reason` describes why (`"cancelled"`,
     /// `"panic"`, or a free-form message). Surfaced by the supervisor
@@ -163,6 +240,12 @@ pub enum WebRtcDriverEvent {
     /// auto-restart the shard; sessions on that shard are
     /// effectively orphaned and the operator should restart the
     /// driver.
+    ///
+    /// shard 任务已退出。
+    /// `reason` 描述了原因（`"cancelled"`、`"panic"` 或自由格式消息）。
+    /// 由主管以多 shard 模式显示，以便操作员可以判断 shard 是否意外死亡。
+    /// 在此事件之后，driver 将不会自动重新启动 shard；
+    /// shard 上的会话实际上是孤立的，操作员应重新启动 driver。
     ShardStopped { shard_id: ShardId, reason: String },
     /// Snapshot of the local ICE candidate counts for a session,
     /// emitted alongside [`WebRtcDriverEvent::AnswerReady`] /
@@ -171,6 +254,9 @@ pub enum WebRtcDriverEvent {
     /// shard that owns the session so multi-shard observers can
     /// attribute candidate gathering results to a specific shard
     /// (single-shard mode reports `ShardId(0)`).
+    ///
+    /// 本地 ICE candidate 的快照计入一个会话，每次 driver 生成新的本地描述时，与 [`WebRtcDriverEvent::AnswerReady`] / [`WebRtcDriverEvent::OfferReady`] 一起发出。
+    /// `shard_id` 标识拥有会话的 shard，因此多 shard 观察者可以将 candidate 收集结果归因于特定的 shard（单 shard 模式报告 `ShardId(0)`）。
     LocalCandidateSnapshot {
         shard_id: ShardId,
         session_id: WebRtcSessionId,
@@ -179,50 +265,94 @@ pub enum WebRtcDriverEvent {
 }
 
 /// Reason a TCP connection ended.
+///
+/// TCP 连接结束的原因。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WebRtcTcpCloseReason {
     /// Remote peer closed the connection cleanly.
+    ///
+    /// 远程对等点干净地关闭了连接。
     PeerEof,
     /// Read or write returned an error.
+    ///
+    /// 读取或写入返回错误。
     Io { message: String },
     /// Decoder rejected an oversize / malformed frame.
+    ///
+    /// 解码器拒绝了过大/格式错误的帧。
     FramingError { message: String },
     /// Connection received no bytes for `tcp_idle_timeout_ms`.
+    ///
+    /// 连接未收到 `tcp_idle_timeout_ms` 的字节。
     IdleTimeout,
     /// Driver was cancelled or shutting down.
+    ///
+    /// driver 被取消或关闭。
     Shutdown,
 }
 
 /// Driver-level diagnostic.
+///
+/// driver 级诊断。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcDriverDiagnostic {
     pub session_id: Option<WebRtcSessionId>,
     pub kind: WebRtcDriverDiagnosticKind,
     pub message: String,
 }
-
+/// Categories of diagnostic records emitted by the driver.
+///
+/// driver 发出的诊断记录的类别。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WebRtcDriverDiagnosticKind {
+    /// A packet arrived with no matching session or ufrag.
+    ///
+    /// 数据包到达时没有匹配的会话或 ufrag。
     UnroutedPacket,
+    /// A UDP send/recv or TCP accept/write failed.
+    ///
+    /// UDP 发送/recv 或 TCP 接受/写入失败。
     SocketError,
+    /// A bounded queue dropped a command or datagram.
+    ///
+    /// 有界队列丢弃了命令或数据报。
     QueueFull,
+    /// A command variant is not yet implemented for the current topology.
+    ///
+    /// 当前拓扑尚未实现命令变体。
     UnsupportedCommand,
+    /// A session or shard lifecycle event worth logging.
+    ///
+    /// 值得记录的会话或 shard 生命周期事件。
     Lifecycle,
     /// A stale route entry expired after the migration TTL elapsed.
     /// The session is still active on its new address; this is purely
     /// informational for operators monitoring migration behaviour.
+    ///
+    /// 过时的路由条目在迁移 TTL 结束后过期。
+    /// 该会话在新地址上仍然活跃；
+    /// 这纯粹是为监测迁移行为的运营商提供信息。
     RouteExpired,
     /// A session migration attempt was rejected because the route
     /// table is at hard capacity. The session continues on its
     /// previous address; the new packet is dropped.
+    ///
+    /// 由于路由表已达到硬容量，会话迁移尝试被拒绝。
+    /// 会议继续之前的地址；
+    /// 新数据包被丢弃。
     MigrationRejected,
     /// The global route directory rejected a new binding because it
     /// hit `route_directory_capacity`. Surfaced by the front-end so
     /// operators can grow the cap before sessions start failing.
+    ///
+    /// 全局路由目录拒绝新绑定，因为它命中了 `route_directory_capacity`。
+    /// 由前端显示，以便操作员可以在会话开始失败之前增加上限。
     RouteDirectoryFull,
 }
 
 /// Handle to a running driver task.
+///
+/// 正在运行的 driver 任务的句柄。
 pub struct WebRtcDriverHandle {
     cmd_tx: mpsc::Sender<WebRtcDriverCommand>,
     event_rx: tokio::sync::Mutex<mpsc::Receiver<WebRtcDriverEvent>>,
@@ -232,31 +362,56 @@ pub struct WebRtcDriverHandle {
     /// Cumulative count of commands accepted by the driver task.
     /// Incremented on every successful pop from the command channel.
     /// Used by `stats_snapshot()` for operator-facing observability.
+    ///
+    /// driver 任务接受的命令的累积计数。
+    /// 每次从命令通道成功弹出时都会增加。
+    /// 由 `stats_snapshot()` 用于面向操作员的可观察性。
     commands_accepted: Arc<std::sync::atomic::AtomicU64>,
     /// Cumulative count of events surfaced via `recv_event`.
+    ///
+    /// 通过 `recv_event` 出现的事件累积计数。
     events_emitted: Arc<std::sync::atomic::AtomicU64>,
     /// Cumulative count of unrouted UDP packets dropped at the
     /// driver boundary (no session matched).
+    ///
+    /// 在 driver 边界丢弃的未路由 UDP 数据包的累积计数（没有匹配的会话）。
     unrouted_packets: Arc<std::sync::atomic::AtomicU64>,
     /// Effective shard count. The current driver task owns one shard
     /// internally; this value is exposed so downstream code can plan
     /// for the multi-shard front-end without churning when it lands.
+    ///
+    /// 有效 shard 计数。
+    /// 当前 driver 任务内部拥有一个 shard；
+    /// 该值被公开，以便下游代码可以规划多 shard 前端，而不会在落地时发生混乱。
     shard_count: usize,
     /// Global route directory. Currently populated by a single shard
     /// but cloneable so the upcoming multi-shard front-end can share
     /// it across shards.
+    ///
+    /// 全局路由目录。
+    /// 目前由单个 shard 填充，但可克隆，因此即将推出的多 shard 前端可以在 shards 之间共享它。
     route_directory: Arc<RouteDirectory>,
     /// Per-shard load counts. Selected via [`ShardSelector`] on
     /// session creation; the multi-shard front-end will consume this
     /// table directly to decide where to deliver inbound packets.
+    ///
+    /// 每个 shard 负载计数。
+    /// 在会话创建时通过 [`ShardSelector`] 选择；
+    /// multi-shard 前端将直接使用该表来决定将入站数据包传递到何处。
     shard_loads: Arc<ShardLoadTable>,
     /// Per-shard candidate gathering snapshots. Each shard updates
     /// its slot in this table on every `LocalCandidateSnapshot` event
     /// emission so dashboards can read the latest gathering result
     /// per shard without accumulating events themselves.
+    ///
+    /// 每 shard candidate 收集快照。
+    /// 每个 shard 在每次 `LocalCandidateSnapshot` 事件发射时都会更新此表中的槽位，因此仪表板可以读取每个 shard 的最新收集结果，
+    /// 而无需累积事件本身。
     shard_candidates: Arc<ShardCandidateTable>,
     /// Shard selector — exposed so tests and integration code can
     /// pre-compute the owner shard for a session id.
+    ///
+    /// shard 选择器 — 公开，以便测试和集成代码可以预先计算会话 ID 的所有者 shard。
     shard_selector: ShardSelector,
     /// Driver-wide TCP writer registry. Cloned from the same
     /// `Arc<TcpWriterRegistry>` the front-end / shard tasks
@@ -264,6 +419,11 @@ pub struct WebRtcDriverHandle {
     /// can cascade an operator-driven shard eviction into the
     /// registry, freeing every TCP connection the dead shard
     /// owned without waiting for per-connection idle timeouts.
+    ///
+    /// driver 范围 TCP 写入器注册表。
+    /// 从相同的 `Arc<TcpWriterRegistry>` 克隆前端/shard 任务在热路径上进行咨询。
+    /// 保存在这里，以便 [`Self::evict_shard`] 可以将操作员驱动的 shard 驱逐级联到注册表中，释放死 shard 拥有的每个 TCP 连接，
+    /// 而无需等待每个连接空闲超时。
     tcp_writers: Arc<TcpWriterRegistry>,
 }
 
@@ -274,29 +434,66 @@ pub struct WebRtcDriverHandle {
 /// compute deltas between snapshots if they need rate-of-change
 /// metrics. The snapshot is intentionally cheap to take (a few
 /// atomic loads) so dashboards can poll it without contention.
+///
+/// driver 级计数器和绑定地址的快照。
+///
+/// 由 [`WebRtcDriverHandle::stats_snapshot`] 返回。
+/// 自 driver 开始以来，计数器单调递增；
+/// 如果消费者需要变化率指标，则可以计算快照之间的增量。
+/// 快照的获取成本故意较低（一些原子负载），因此仪表板可以轮询它而不会发生争用。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcDriverStats {
+    /// UDP listen address.
+    ///
+    /// UDP 监听地址。
     pub local_udp_addr: SocketAddr,
+    /// TCP listen address, if configured and bound.
+    ///
+    /// TCP 监听地址（如果已配置并绑定）。
     pub local_tcp_addr: Option<SocketAddr>,
+    /// Current number of active sessions.
+    ///
+    /// 当前活动会话数。
     pub session_count: usize,
+    /// Cumulative commands accepted since start.
+    ///
+    /// 自启动以来接受的累积命令。
     pub commands_accepted_total: u64,
+    /// Cumulative events emitted since start.
+    ///
+    /// 自启动以来发出的累积事件。
     pub events_emitted_total: u64,
+    /// Cumulative packets that could not be routed to a session.
+    ///
+    /// 无法路由到会话的累积数据包。
     pub unrouted_packets_total: u64,
     /// Number of session-owner shards. `1` for the current default
     /// driver topology; will grow once the multi-shard front-end is
     /// wired in.
+    ///
+    /// 会话所有者的数量 shards。
+    /// `1` 表示当前默认的 driver 拓扑；
+    /// 一旦连接了多 shard 前端，就会增长。
     pub shard_count: usize,
     /// Snapshot of the global route directory.
+    ///
+    /// 全局路由目录的快照。
     pub route_directory: RouteDirectoryStats,
 }
 
 impl WebRtcDriverHandle {
+    /// Send a command to the driver, waiting for channel capacity.
+    ///
+    /// 发送命令到 driver，等待通道容量。
     pub async fn send_command(&self, cmd: WebRtcDriverCommand) {
         if let Err(err) = self.cmd_tx.send(cmd).await {
             warn!("WebRTC driver command channel closed: {err}");
         }
     }
-
+    /// Try to send a command without waiting; fails if the channel is full or closed.
+    ///
+    /// 尝试不等待地发送命令；
+    /// 如果通道已满或关闭，则失败。
     pub async fn try_send_command(&self, cmd: WebRtcDriverCommand) -> Result<(), WebRtcSendError> {
         match self.cmd_tx.try_send(cmd) {
             Ok(()) => Ok(()),
@@ -304,7 +501,9 @@ impl WebRtcDriverHandle {
             Err(mpsc::error::TrySendError::Closed(_)) => Err(WebRtcSendError::Closed),
         }
     }
-
+    /// Wait for the next driver event and update the emitted counter.
+    ///
+    /// 等待下一个 driver 事件并更新发出的计数器。
     pub async fn recv_event(&self) -> Option<WebRtcDriverEvent> {
         let evt = self.event_rx.lock().await.recv().await;
         if evt.is_some() {
@@ -313,17 +512,23 @@ impl WebRtcDriverHandle {
         }
         evt
     }
-
+    /// Address the UDP listener is bound to.
+    ///
+    /// UDP 侦听器绑定的地址。
     pub fn local_udp_addr(&self) -> SocketAddr {
         self.local_udp_addr
     }
 
     /// Bound TCP address, if [`WebRtcDriverConfig::listen_tcp`] was set
     /// and the listener bound successfully.
+    ///
+    /// 绑定 TCP 地址，如果设置了 [`WebRtcDriverConfig::listen_tcp`] 并且侦听器绑定成功。
     pub fn local_tcp_addr(&self) -> Option<SocketAddr> {
         self.local_tcp_addr
     }
-
+    /// Current number of registered sessions.
+    ///
+    /// 当前注册会话数。
     pub fn session_count(&self) -> usize {
         self.session_count
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -338,6 +543,12 @@ impl WebRtcDriverHandle {
     /// into the registry. Exposed for integration tests and
     /// operator dashboards that want a black-box view of the TCP
     /// writer registry without having to drain shard stats.
+    ///
+    /// 当前注册的 TCP 作者条目数。
+    /// 这计算了每个已接受的 RFC-4571 TCP 连接，该连接在 driver 中仍然有一半的实时写入器。
+    /// 在 [`WebRtcDriverHandle::evict_shard`] 针对每个 shard 运行之后、在 `tcp_connection_loop` 注意到对等点关闭之后、或者当主管的自动逐出路径级联到注册表中时
+    /// ，该值会降至零。
+    /// 暴露于集成测试和操作员仪表板，这些测试和操作员仪表板需要 TCP 编写器注册表的黑盒视图，而不必耗尽 shard 统计信息。
     pub fn tcp_writer_count(&self) -> usize {
         self.tcp_writers.len()
     }
@@ -349,6 +560,12 @@ impl WebRtcDriverHandle {
     /// across snapshots to derive rates. The snapshot is cheap
     /// (a few `Ordering::Relaxed` loads) and does not lock the
     /// command or event channel.
+    ///
+    /// 快照 driver 级计数器和绑定地址。
+    ///
+    /// 所有计数器都是原子的，自 driver 开始以来单调递增。
+    /// 仪表板式消费者计算快照之间的增量来得出费率。
+    /// 快照很便宜（一些 `Ordering::Relaxed` 加载）并且不会锁定命令或事件通道。
     pub fn stats_snapshot(&self) -> WebRtcDriverStats {
         use std::sync::atomic::Ordering;
         WebRtcDriverStats {
@@ -365,6 +582,8 @@ impl WebRtcDriverHandle {
 
     /// Effective shard count (matches `WebRtcDriverConfig::driver_shards`
     /// when non-zero, otherwise the runtime auto-detected value).
+    ///
+    /// 有效 shard 计数（非零时匹配 `WebRtcDriverConfig::driver_shards`，否则为运行时自动检测到的值）。
     pub fn shard_count(&self) -> usize {
         self.shard_count
     }
@@ -375,6 +594,10 @@ impl WebRtcDriverHandle {
     /// single-shard mode (`shard_count == 1`) the global directory's
     /// counts are reported on shard 0 because the legacy
     /// `run_driver_core` path doesn't publish per-shard metrics.
+    ///
+    /// 每个 shard 可观察性快照。
+    /// 在多 shard 模式下，每个条目报告拥有 shard 已通过 `ShardLoadTable::record_route_counts` 提交的实际路由计数。
+    /// 在单 shard 模式 (`shard_count == 1`) 中，全局目录的计数在 shard 0 上报告，因为旧版 `run_driver_core` 路径不发布 per-shard 指标。
     pub fn shard_stats(&self) -> Vec<WebRtcShardStats> {
         let dir = self.route_directory.stats_snapshot();
         let loads = self.shard_loads.snapshot();
@@ -402,6 +625,9 @@ impl WebRtcDriverHandle {
     /// code that wants to pre-compute the owning shard of a session
     /// id (e.g. when dispatching commands to a future per-shard
     /// command channel).
+    ///
+    /// 正在运行的 driver 的 shard 选择器。
+    /// 对于想要预先计算会话 ID 的所属 shard 的上游代码很有用（例如，当将命令分派到未来的每 shard 命令通道时）。
     pub fn shard_selector(&self) -> ShardSelector {
         self.shard_selector.clone()
     }
@@ -414,6 +640,12 @@ impl WebRtcDriverHandle {
     /// auto-evict path resets a shard's slot to zero when the shard
     /// panics. This is a cheap read — one `RwLock::read` plus a
     /// `Vec` copy proportional to `shard_count`.
+    ///
+    /// 每 shard candidate 收集快照。
+    /// 每个条目都按 shard-id 顺序公开 shard 的事件循环报告的最新 [`LocalCandidateCounts`]。
+    /// 对于尚未发出 [`WebRtcDriverEvent::LocalCandidateSnapshot`] 的 shards ，条目默认为全零；
+    /// 当 shard 发生恐慌时，主管自动驱逐路径将 shard 的插槽重置为零。
+    /// 这是一本廉价的读物——一个 `RwLock::read` 加上一个 `Vec` 副本，与 `shard_count` 成比例。
     pub fn shard_candidate_stats(&self) -> Vec<WebRtcShardCandidateStats> {
         self.shard_candidates.snapshot()
     }
@@ -432,6 +664,16 @@ impl WebRtcDriverHandle {
     ///
     /// Returns `true` when all sessions drained cleanly, `false` when
     /// the timeout fired with sessions still active.
+    ///
+    /// 尽力优雅地排水。
+    /// 一旦 [`Self::session_count`] 达到零或 `timeout` 过去（以先发生者为准），则返回。
+    /// 调用者应在取消 driver 令牌之前使用此命令，以便正在进行的会话有机会发出最终的 RTCP 和 DTLS 关闭数据包。
+    ///
+    /// 实现说明：driver 尚未公开活动会话 ID 列表，因此我们轮询 `session_count()` 而不是每个会话的承诺。
+    /// 轮询节奏为 25 毫秒，对于操作员驱动的排水来说足够快，并且足够慢以避免热旋转 CPU。
+    ///
+    /// 当所有会话都完全耗尽时，返回 `true`；
+    /// 当超时触发但会话仍处于活动状态时，返回 `false`。
     pub async fn drain_within(&self, timeout: std::time::Duration) -> bool {
         let deadline = std::time::Instant::now() + timeout;
         let poll = std::time::Duration::from_millis(25);
@@ -449,6 +691,9 @@ impl WebRtcDriverHandle {
     /// Borrow the global route directory. Useful for tests and
     /// for any front-end code that needs to observe directory state
     /// without going through `stats_snapshot`.
+    ///
+    /// 借用全局路由目录。
+    /// 对于测试和任何需要观察目录状态而不通过 `stats_snapshot` 的前端代码很有用。
     pub fn route_directory(&self) -> Arc<RouteDirectory> {
         self.route_directory.clone()
     }
@@ -465,6 +710,14 @@ impl WebRtcDriverHandle {
     /// follow-up. Until then, after evicting, operators bring up a
     /// fresh driver instance via `spawn_driver` to recover full
     /// shard count.
+    ///
+    /// 逐出 `shard` 拥有的每个目录条目并重置 shard 的加载计数器。
+    /// 操作员在观察到非优雅的 [`WebRtcDriverEvent::ShardStopped`]（恐慌/意外退出）释放会话、地址、ufrag 和失效的 shard 拥有的过时路由之后
+    /// ，将此称为**。
+    /// 返回驱逐统计信息，以便仪表板可以记录清理情况。
+    ///
+    /// 这**不会**重新启动 shard 任务——这是未来的后续任务。
+    /// 在此之前，在驱逐后，操作员将通过 `spawn_driver` 调出一个新的 driver 实例，以恢复完整的 shard 计数。
     pub fn evict_shard(&self, shard: ShardId) -> crate::directory::RouteDirectoryEvictionStats {
         let mut evicted = self.route_directory.forget_shard(shard);
         // Cascade into the TCP writer registry so connections owned
@@ -491,11 +744,19 @@ impl WebRtcDriverHandle {
         evicted
     }
 }
-
+/// Reasons a command could not be submitted to the driver.
+///
+/// 命令无法提交到 driver 的原因。
 #[derive(Debug, thiserror::Error)]
 pub enum WebRtcSendError {
+    /// The driver command channel is at capacity.
+    ///
+    /// driver 命令通道已满。
     #[error("driver command queue is full")]
     QueueFull,
+    /// The driver task has exited and the channel is closed.
+    ///
+    /// driver 任务已退出并且通道已关闭。
     #[error("driver command channel closed")]
     Closed,
 }
@@ -505,6 +766,11 @@ pub enum WebRtcSendError {
 /// Returns `Err` if the UDP socket cannot be bound. Other failures during
 /// the lifetime of the driver are surfaced as
 /// [`WebRtcDriverEvent::Diagnostic`] records on the event channel.
+///
+/// 生成 driver 并返回一个句柄。
+///
+/// 如果无法绑定 UDP 套接字，则返回 `Err`。
+/// driver 生命周期内的其他故障在事件通道上显示为 [`WebRtcDriverEvent::Diagnostic`] 记录。
 pub async fn spawn_driver(
     config: WebRtcDriverConfig,
     cancel: CancellationToken,
@@ -676,7 +942,9 @@ pub async fn spawn_driver(
 
     Ok(handle)
 }
-
+/// UDP payload received from the listener.
+///
+/// 从侦听器接收的 UDP 有效负载。
 #[derive(Debug, Clone)]
 pub(crate) struct UdpDatagram {
     pub(crate) source: SocketAddr,
@@ -685,12 +953,16 @@ pub(crate) struct UdpDatagram {
 }
 
 /// Payload arriving from either the UDP listener or a TCP connection.
+///
+/// 来自 UDP 侦听器或 TCP 连接的有效负载。
 #[derive(Debug, Clone)]
 pub(crate) enum NetDatagram {
     Udp(UdpDatagram),
     Tcp(TcpDatagram),
 }
-
+/// TCP payload received after RFC 4571 deframing.
+///
+/// RFC 4571 解帧后收到 TCP 有效负载。
 #[derive(Debug, Clone)]
 pub(crate) struct TcpDatagram {
     pub(crate) source: SocketAddr,
@@ -728,6 +1000,9 @@ impl NetDatagram {
     /// decide whether the source `SocketAddr` corresponds to an
     /// entry in [`TcpWriterRegistry`] and therefore needs an
     /// owner-shard reassignment after STUN binding-request parsing.
+    ///
+    /// `true` 当通过 TCP 连接接收到此数据报时（RFC 4571 帧）。
+    /// 由入站数据报处理程序用来确定源 `SocketAddr` 是否对应于 [`TcpWriterRegistry`] 中的条目，因此在 STUN 绑定请求解析后需要重新分配所有者 shard 。
     pub(crate) fn is_tcp(&self) -> bool {
         matches!(self, Self::Tcp(_))
     }
@@ -752,6 +1027,19 @@ impl NetDatagram {
 /// `evict_shard` / supervisor auto-evict paths and not consulted on
 /// the per-packet send path. Both maps are mutated under the same
 /// lock so they cannot drift.
+///
+/// 由远程 SocketAddr 键入的活动 TCP 连接的注册表。
+///
+/// 每个连接任务都拥有读取的一半。
+/// 写入部分被包装在 `tokio::sync::Mutex` 中，因此 driver 核心循环可以构建出站数据包并将其发送回同一对等点，而无需竞争每个连接的任务。
+/// 关闭入口表示连接已经消失；
+/// 如果会话已迁移，driver 核心的后续发送尝试将回退到 UDP。
+///
+/// 注册表由 I/O 前端拥有，因此多个 shards 可以共享一个 TCP 侦听器/编写器池，而无需每个 shard 重复簿记。
+///
+/// 并行 `SocketAddr → ShardId` 索引记录哪个 shard 当前“拥有”每个连接。
+/// `get` 签名仅保留为写入者，因为 shard 所有者正在为 `evict_shard` / 主管自动逐出路径进行簿记，并且不会在每个数据包发送路径上进行咨询。
+/// 两张地图都在同一个锁下发生变异，因此它们无法漂移。
 #[derive(Default)]
 pub(crate) struct TcpWriterRegistry {
     inner: parking_lot::Mutex<TcpWriterRegistryInner>,
@@ -795,6 +1083,10 @@ impl TcpWriterRegistry {
     /// writer entries removed; the parallel owner index is cleaned
     /// in the same critical section so observers cannot see a half
     /// state.
+    ///
+    /// 删除 `shard` 拥有的所有 writer。
+    /// 返回删除的写入器条目数；
+    /// 并行所有者索引在同一关键部分中被清理，因此观察者看不到半状态。
     pub(crate) fn forget_shard(&self, shard: ShardId) -> usize {
         let mut guard = self.inner.lock();
         let to_remove: Vec<SocketAddr> = guard
@@ -812,6 +1104,9 @@ impl TcpWriterRegistry {
     /// Number of currently active writers. Useful for diagnostics
     /// and for asserting that `forget_shard` / `evict_shard` paths
     /// fully drained their owned connections.
+    ///
+    /// 当前活跃作家的数量。
+    /// 对于诊断和断言 `forget_shard` / `evict_shard` 路径完全耗尽其拥有的连接很有用。
     pub(crate) fn len(&self) -> usize {
         self.inner.lock().writers.len()
     }
@@ -825,6 +1120,12 @@ impl TcpWriterRegistry {
     /// `false` when there is no writer for `addr`, in which case the
     /// caller does not need to take action — the writer was likely
     /// already removed by `remove` / `forget_shard`.
+    ///
+    /// 重新分配现有写入器条目的所有者。
+    /// 当已知新接受的 TCP 连接的基于哈希的临时所有者与实际会话所有者 shard 不同时使用（例如，在 STUN 绑定请求解析显示 ufrag 之后）。
+    ///
+    /// 找到并更新条目后返回 `true`。
+    /// 当 `addr` 没有写入器时，返回 `false`，在这种情况下，调用者不需要采取操作 - 写入器可能已被 `remove` / `forget_shard` 删除。
     pub(crate) fn reassign_shard(&self, addr: &SocketAddr, shard: ShardId) -> bool {
         let mut guard = self.inner.lock();
         if guard.writers.contains_key(addr) {
@@ -847,6 +1148,14 @@ impl TcpWriterRegistry {
 ///
 /// `shard_count <= 1` collapses to [`ShardId::new(0)`] so the
 /// single-shard topology stays a no-op.
+///
+/// 为新接受的 TCP 连接选择所有者 shard。
+///
+/// 对 `addr` 的 `(IpAddr, u16 port)` 字节表示形式使用 splitmix64 样式折叠。
+/// 故意独立于基于会话 ID 的 [`ShardSelector`]：在接受 TCP 连接时，我们还不知道它属于哪个会话（STUN 尚未解析）。
+/// 一旦 ufrag 已知，子任务 1.3 将重新分配所有者。
+///
+/// `shard_count <= 1` 折叠为 [`ShardId::new(0)`]，因此单 shard 拓扑保持无操作状态。
 pub(crate) fn shard_for_remote_addr(addr: SocketAddr, shard_count: usize) -> ShardId {
     if shard_count <= 1 {
         return ShardId::new(0);
@@ -880,6 +1189,11 @@ pub(crate) fn shard_for_remote_addr(addr: SocketAddr, shard_count: usize) -> Sha
 /// succeeds. On exhaustion, returns the last bind error. When no range
 /// is configured, falls back to the address in `config.listen_udp`
 /// (which may use port 0 for OS-assigned ephemeral ports).
+///
+/// 绑定 UDP 侦听器套接字。
+/// 配置端口范围后，driver 会按顺序尝试 `[min, max]` 中的每个端口，直到成功为止。
+/// 耗尽时，返回最后一个绑定错误。
+/// 如果未配置范围，则回退到 `config.listen_udp` 中的地址（可能使用端口 0 作为操作系统分配的临时端口）。
 async fn bind_udp_socket(config: &WebRtcDriverConfig) -> std::io::Result<UdpSocket> {
     match &config.udp_port_range {
         Some(range) => {
@@ -908,7 +1222,9 @@ async fn bind_udp_socket(config: &WebRtcDriverConfig) -> std::io::Result<UdpSock
         None => UdpSocket::bind(config.listen_udp).await,
     }
 }
-
+/// Generate host candidate lines for the bound UDP address, public IPs, and hostname.
+///
+/// 为绑定的 UDP 地址、公共 IP 和主机名生成主机 candidate 行。
 fn build_local_candidate_sdps(
     local_udp_addr: Option<SocketAddr>,
     public_ips: &[IpAddr],
@@ -947,7 +1263,9 @@ fn build_local_candidate_sdps(
 
     candidates
 }
-
+/// Append a unique host candidate string, deduplicated by address:port.
+///
+/// 附加一个唯一的主机 candidate 字符串，按地址：端口进行重复数据删除。
 fn push_host_candidate(
     candidates: &mut Vec<String>,
     seen: &mut std::collections::HashSet<String>,
@@ -963,7 +1281,9 @@ fn push_host_candidate(
         "candidate:{foundation} 1 UDP 2130706431 {address} {port} typ host"
     ));
 }
-
+/// Loop reading UDP datagrams and forwarding them to the packet channel.
+///
+/// 循环读取 UDP 数据报并将其转发到数据包通道。
 async fn udp_recv_loop(
     socket: Arc<UdpSocket>,
     packet_tx: mpsc::Sender<NetDatagram>,
@@ -999,7 +1319,9 @@ async fn udp_recv_loop(
         }
     }
 }
-
+/// Accept incoming TCP connections and spawn per-connection framing loops.
+///
+/// 接受传入的 TCP 连接并生成每个连接的帧循环。
 #[allow(clippy::too_many_arguments)]
 async fn tcp_accept_loop(
     listener: TcpListener,
@@ -1109,7 +1431,9 @@ async fn tcp_accept_loop(
         }
     }
 }
-
+/// Read RFC 4571 frames from one TCP peer and forward complete packets.
+///
+/// 从一个 TCP 对等方读取 RFC 4571 帧并转发完整的数据包。
 #[allow(clippy::too_many_arguments)]
 async fn tcp_connection_loop(
     mut read_half: tokio::net::tcp::OwnedReadHalf,
@@ -1201,7 +1525,9 @@ async fn tcp_connection_loop(
         })
         .await;
 }
-
+/// Single-shard driver core: owns the WebRtcCore, routes commands, datagrams, and timers.
+///
+/// Single-shard driver 核心：拥有 WebRtcCore、路由命令、数据报和计时器。
 #[allow(clippy::too_many_arguments)]
 async fn run_driver_core(
     config: WebRtcDriverConfig,
@@ -1503,6 +1829,9 @@ async fn run_driver_core(
 /// to the shard that generated this SDP. Returns `None` if the SDP
 /// does not contain the attribute (which would indicate a malformed
 /// SDP — the caller treats it as a non-fatal warning).
+///
+/// 从本地 SDP offer/answer 中提取 `a=ice-ufrag:` 值，以便 multi-shard 前端可以将初始 STUN 绑定请求路由到生成此 SDP 的 shard。
+/// 如果 SDP 不包含该属性，则返回 `None` （这将指示格式错误的 SDP — 调用者将其视为非致命警告）。
 fn extract_local_ufrag_from_sdp(sdp: &str) -> Option<String> {
     for line in sdp.lines() {
         let line = line.trim();
@@ -1526,6 +1855,13 @@ fn extract_local_ufrag_from_sdp(sdp: &str) -> Option<String> {
 /// * once a session produces its `LocalDescription`, the shard
 ///   registers the local ufrag with the directory so the front-end
 ///   can route initial STUN binding requests by ufrag.
+///
+/// 多 shard 拓扑中使用的每 shard 事件循环。
+///
+/// 与 [`run_driver_core`] 相同的协议状态管道，但是：
+/// * 命令和数据包到达 per-shard mpsc 通道（I/O 前端已经路由它们），
+/// * 会话被固定到 `shard_id` （没有通过选择器重新计算 - 在会漂移的最小加载策略下），
+/// * 一旦会话生成其 `LocalDescription`，shard 就会向目录注册本地 ufrag，以便前端可以通过 ufrag 路由初始 STUN 绑定请求。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_shard_loop(
     shard_id: ShardId,
@@ -1791,7 +2127,9 @@ pub(crate) async fn run_shard_loop(
     }
     info!("WebRTC shard {shard_id} loop terminated");
 }
-
+/// Route one inbound datagram to a session and update per-shard state.
+///
+/// 将一个入站数据报路由到会话并更新每个 shard 状态。
 #[allow(clippy::too_many_arguments)]
 async fn handle_datagram_for_shard(
     shard_id: ShardId,
@@ -1968,7 +2306,9 @@ async fn handle_datagram_for_shard(
         }
     }
 }
-
+/// Empty the core output queue and emit events, timers, and network sends.
+///
+/// 清空核心输出队列并发出事件、计时器和网络发送。
 #[allow(clippy::too_many_arguments)]
 async fn drain_shard_outputs(
     shard_id: ShardId,
@@ -2169,7 +2509,9 @@ async fn drain_shard_outputs(
     }
     next_deadline
 }
-
+/// Apply a driver command to the core, creating or mutating sessions.
+///
+/// 将 driver 命令应用于核心，创建或改变会话。
 async fn handle_command(
     core: &Arc<Mutex<WebRtcCore>>,
     cmd: WebRtcDriverCommand,
@@ -2400,7 +2742,9 @@ async fn handle_command(
         }
     }
 }
-
+/// Process one routed datagram through the core, binding or migrating addresses.
+///
+/// 通过核心处理一个路由数据报，绑定或迁移地址。
 #[allow(clippy::too_many_arguments)]
 async fn handle_datagram(
     core: &Arc<Mutex<WebRtcCore>>,
@@ -2605,7 +2949,9 @@ async fn handle_datagram(
         }
     }
 }
-
+/// Drain all pending core outputs in the single-shard core loop.
+///
+/// 耗尽单 shard 核心循环中的所有待处理核心输出。
 #[allow(clippy::too_many_arguments)]
 async fn drain_core_outputs(
     core: &Arc<Mutex<WebRtcCore>>,
@@ -2818,7 +3164,9 @@ async fn drain_core_outputs(
     }
     next_deadline
 }
-
+/// Convert an Instant to monotonic microseconds since driver start.
+///
+/// 将 Instant 转换为自 driver 开始以来的单调微秒。
 fn now_micros(start: Instant) -> u64 {
     Instant::now().saturating_duration_since(start).as_micros() as u64
 }
@@ -2834,6 +3182,13 @@ fn now_micros(start: Instant) -> u64 {
 /// The vecs are tiny in practice (typically a single addr each) so we
 /// just sort and dedup after extending; this keeps the merge stable
 /// and idempotent without pulling in a dedicated set type.
+///
+/// 将两个 [`RouteCandidateDiff`] 值合并为一个。
+///
+/// 由发出 [`WebRtcDriverEvent::RouteUpdated`] 的迁移代码路径使用，因此该事件携带 `RouteTable::unbind_address` （对于旧的活动地址）生成的 diff 和 `RouteTable::bind` / `RouteTable::try_bind_migration` （对于新的活动地址）生成的 diff 的并集。
+///
+/// 在实践中，vec 很小（通常每个地址只有一个地址），因此我们只需在扩展后进行排序和去重即可；
+/// 这可以保持合并的稳定性和幂等性，而无需引入专用的集合类型。
 fn merge_route_diffs(
     mut left: RouteCandidateDiff,
     right: RouteCandidateDiff,

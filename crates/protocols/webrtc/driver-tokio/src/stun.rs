@@ -12,6 +12,15 @@
 //! cares about `local-ufrag` (the first part, before the colon)
 //! because that is what the owner shard registered with the
 //! [`crate::directory::RouteDirectory`].
+//!
+//! 多 shard 前端使用的最小 STUN 解析器。
+//!
+//! 我们只需要从传入的 STUN 绑定请求中提取 *local* ICE ufrag ，以便前端可以将数据包分派到拥有该 ufrag 的 shard 。
+//! 我们**不**验证消息完整性——这是所有者 shard 内部 `str0m` 的工作。
+//! 解析器有意避免拉出完整的 STUN crate，以保持 driver 依赖面较小。
+//!
+//! ICE STUN 绑定请求携带一个 `USERNAME` 属性，其值为 `<local-ufrag>:<remote-ufrag>` (RFC 8445 §7.2.2)。
+//! 前端关心 `local-ufrag` （第一部分，冒号之前），因为这是所有者 shard 在 [`crate::directory::RouteDirectory`] 中注册的内容。
 
 const STUN_MAGIC_COOKIE: u32 = 0x2112_A442;
 const STUN_HEADER_LEN: usize = 20;
@@ -29,6 +38,14 @@ const STUN_ATTR_USERNAME: u16 = 0x0006;
 /// `<local-ufrag>:<remote-ufrag>` where "local" is the receiver's
 /// ICE ufrag (the one the shard registered with the directory) and
 /// "remote" is the sender's ICE ufrag.
+///
+/// 尝试从 STUN 绑定请求中提取本地 ICE ufrag。
+///
+/// 如果有效负载不是 STUN 绑定请求、缺少 USERNAME 属性或用户名不包含 `:` 分隔符，则返回 `None`。
+/// 绑定到最坏情况的 STUN 消息长度，因此病态数据包无法在解析时固定前端。
+///
+/// RFC 8445 §7.2.2：绑定请求中的 USERNAME 属性是 `<local-ufrag>:<remote-ufrag>`，其中“本地”是接收方的 ICE ufrag（shard 在目录中注册的）
+/// ，“远程”是发送方的 ICE ufrag。
 pub(crate) fn extract_local_ufrag(bytes: &[u8]) -> Option<String> {
     if bytes.len() < STUN_HEADER_LEN {
         return None;

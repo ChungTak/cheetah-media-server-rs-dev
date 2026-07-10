@@ -22,6 +22,22 @@
 //!   as the rest of the workspace.
 //! * SSRF protection lives in the caller: `WebRtcModuleConfig` exposes
 //!   the host/scheme allowlists used before the URL is handed over.
+//!
+//! 客户端拉/推作业使用的最小 WHIP/WHEP HTTP/1.1 客户端。
+//!
+//! 范围故意缩小：WebRTC 客户端作业只需要 HTTP 语义的一小部分 - `POST` 和 SDP offer 来接收 SDP answer 和 `DELETE` 停止时的资源。
+//! 我们在 `tokio::net::TcpStream` 上手动滚动 HTTP/1.1 客户端（对于 HTTPS 具有可选的 `tokio_rustls`），以避免引入 `hyper` 或 `reqwest`。
+//!
+//! 行为有界：
+//! * 连接/读/写超时由外部提供，由调用者限制为 60 秒。
+//! * 响应正文以 `max_response_bytes` 为界，以防止来自敌对或有问题的服务器的失控分配。
+//! * 没有 HTTP 重定向；
+//!   WHIP/WHEP `Location` 标头通过 [`HttpClientResponse`] 呈现给调用者，但不会自动跟随。
+//! * 无代理，无压缩，无超出分块主体所需最低限度的分块尾部解析（接受将 SDP answer 包装在 `Transfer-Encoding: chunked` 中的服务器）。
+//!
+//! 安全：
+//! * HTTPS 使用与工作空间的其余部分相同的 `webpki_roots` 支持的 `rustls::ClientConfig`。
+//! * SSRF 保护存在于调用者中：`WebRtcModuleConfig` 公开在移交 URL 之前使用的主机/方案允许列表。
 
 use std::io;
 use std::net::IpAddr;
@@ -35,11 +51,22 @@ use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
-
+/// HTTP verbs used by the WHIP/WHEP client.
+///
+/// WHIP/WHEP 客户端使用的 HTTP 动词。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
+    /// POST a resource or SDP offer/answer.
+    ///
+    /// POST 资源或 SDP offer/answer。
     Post,
+    /// DELETE a resource, used for WHIP/WHEP session teardown.
+    ///
+    /// DELETE 资源，用于 WHIP/WHEP 会话拆卸。
     Delete,
+    /// PATCH a resource when the server supports partial updates.
+    ///
+    /// PATCH 当服务器支持部分更新时的资源。
     Patch,
 }
 
@@ -52,27 +79,59 @@ impl HttpMethod {
         }
     }
 }
-
+/// Errors returned by the HTTP client at connect, TLS, or response-parse time.
+///
+/// HTTP 客户端在连接、TLS 或响应解析时返回的错误。
 #[derive(Debug, Error)]
 pub enum HttpClientError {
+    /// The request URL could not be parsed.
+    ///
+    /// 无法解析请求 URL。
     #[error("invalid url: {0}")]
     InvalidUrl(String),
+    /// The URL scheme is not in the caller allow list.
+    ///
+    /// URL 方案不在调用者允许列表中。
     #[error("unsupported scheme: {0}")]
     UnsupportedScheme(String),
+    /// The remote host name could not be resolved.
+    ///
+    /// 无法解析远程主机名。
     #[error("network address resolution failed: {0}")]
     DnsFailure(String),
+    /// The resolved address is private or otherwise blocked by policy.
+    ///
+    /// 解析的地址是私有的或被策略阻止。
     #[error("network address blocked by policy: {0}")]
     AddressBlocked(String),
+    /// The TCP/TLS handshake exceeded the configured timeout.
+    ///
+    /// TCP/TLS 握手超出了配置的超时时间。
     #[error("connect timed out")]
     ConnectTimeout,
+    /// A low-level socket or stream error occurred.
+    ///
+    /// 发生低级套接字或流错误。
     #[error("io error: {0}")]
     Io(String),
+    /// The TLS handshake or certificate validation failed.
+    ///
+    /// TLS 握手或证书验证失败。
     #[error("tls error: {0}")]
     Tls(String),
+    /// The server returned an HTTP response the parser could not consume.
+    ///
+    /// 服务器返回解析器无法使用的 HTTP 响应。
     #[error("invalid http response: {0}")]
     BadResponse(String),
+    /// The response body exceeded the configured maximum size.
+    ///
+    /// 响应正文超出了配置的最大大小。
     #[error("response body exceeds {0} bytes")]
     BodyTooLarge(usize),
+    /// The complete request/response exchange exceeded the timeout.
+    ///
+    /// 完整的请求/响应交换超出了超时时间。
     #[error("request timed out")]
     RequestTimeout,
 }
@@ -82,7 +141,9 @@ impl From<io::Error> for HttpClientError {
         Self::Io(err.to_string())
     }
 }
-
+/// Parsed HTTP response returned by the WHIP/WHEP client.
+///
+/// 已解析的 WHIP/WHEP 客户端返回的 HTTP 响应。
 #[derive(Debug, Clone)]
 pub struct HttpClientResponse {
     pub status: u16,
@@ -91,6 +152,9 @@ pub struct HttpClientResponse {
 }
 
 impl HttpClientResponse {
+    /// Look up a response header case-insensitively.
+    ///
+    /// 查找响应标头时不区分大小写。
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -100,6 +164,8 @@ impl HttpClientResponse {
 }
 
 /// Configuration for an outbound HTTP request.
+///
+/// 出站 HTTP 请求的配置。
 #[derive(Debug, Clone)]
 pub struct HttpClientRequest {
     pub url: String,
@@ -113,6 +179,9 @@ pub struct HttpClientRequest {
 }
 
 impl HttpClientRequest {
+    /// Build a POST request carrying an SDP body with WHIP/WHEP content types.
+    ///
+    /// 构建一个 POST 请求，携带 SDP 主体和 WHIP/WHEP 内容类型。
     pub fn new_post_sdp(url: impl Into<String>, sdp: impl Into<Bytes>) -> Self {
         Self {
             url: url.into(),
@@ -129,6 +198,9 @@ impl HttpClientRequest {
         }
     }
 
+    /// Build a DELETE request with no body and a short timeout.
+    ///
+    /// 构建一个没有正文且超时时间很短的 DELETE 请求。
     pub fn new_delete(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
@@ -145,12 +217,18 @@ impl HttpClientRequest {
 
 /// Reusable HTTP client. Holds a shared rustls config so we do not
 /// rebuild the trust store per request.
+///
+/// 可重复使用的 HTTP 客户端。
+/// 保存共享的 rustls 配置，因此我们不会根据请求重建信任存储。
 #[derive(Clone)]
 pub struct WhipWhepHttpClient {
     tls_config: Arc<ClientConfig>,
 }
 
 impl WhipWhepHttpClient {
+    /// Create a client with a rustls trust store and process-default crypto provider.
+    ///
+    /// 创建一个具有 rustls 信任存储和进程默认加密提供程序的客户端。
     pub fn new() -> Self {
         // Install the process-default rustls crypto provider lazily.
         // Production deployments call this from `main.rs` before any
@@ -168,6 +246,8 @@ impl WhipWhepHttpClient {
     }
 
     /// Send a single request and return the parsed response.
+    ///
+    /// 发送单个请求并返回解析后的响应。
     pub async fn send(
         &self,
         req: HttpClientRequest,
@@ -661,6 +741,10 @@ fn find_crlf(buf: &[u8]) -> Option<usize> {
 /// not expose the internal scheme enum: fuzzers should treat this as
 /// an opaque structure whose only contract is that the parser never
 /// panics on arbitrary inputs.
+///
+/// [`fuzz_parse_url_for_testing`] 的结果，仅针对模糊线束公开。
+///
+/// 这些字段镜像私有 `ParsedUrl` 但我们故意不公开内部方案枚举：模糊器应该将其视为不透明的结构，其唯一的契约是解析器永远不会对任意输入感到恐慌。
 #[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct ParsedUrlForTesting {
@@ -674,6 +758,10 @@ pub struct ParsedUrlForTesting {
 /// Public wrapper around the internal URL parser, intended for the
 /// `cheetah-webrtc-fuzz::fuzz_url_parse` target. **Not** part of the
 /// stable API; production callers should use `WhipWhepHttpClient`.
+///
+/// 围绕内部 URL 解析器的公共包装器，用于 `cheetah-webrtc-fuzz::fuzz_url_parse` 目标。
+/// **不是**稳定 API 的一部分；
+/// 生产调用者应使用 `WhipWhepHttpClient`。
 #[doc(hidden)]
 pub fn fuzz_parse_url_for_testing(input: &str) -> Result<ParsedUrlForTesting, HttpClientError> {
     let parsed = ParsedUrl::parse(input)?;
@@ -689,6 +777,9 @@ pub fn fuzz_parse_url_for_testing(input: &str) -> Result<ParsedUrlForTesting, Ht
 /// Public wrapper around the internal HTTP response parser, intended
 /// for the `cheetah-webrtc-fuzz::fuzz_http_response` target. **Not**
 /// part of the stable API.
+///
+/// 围绕内部 HTTP 响应解析器的公共包装器，用于 `cheetah-webrtc-fuzz::fuzz_http_response` 目标。
+/// **不是**稳定 API 的一部分。
 #[doc(hidden)]
 pub fn fuzz_parse_http_response_for_testing(
     buf: &[u8],

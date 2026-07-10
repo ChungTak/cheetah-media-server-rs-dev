@@ -20,6 +20,21 @@
 //! The single-shard fast path stays in `runner.rs::run_driver_core`
 //! to preserve existing test guarantees and simplify the control flow
 //! when no horizontal scaling is needed.
+//!
+//! 多 shard driver 拓扑的 I/O 前端。
+//!
+//! 第 02 阶段后续行动 (`plans-27-webrtc-zlm2/phase-02-driver-multithread-shard.md`)。
+//!
+//! 当 `WebRtcDriverConfig::effective_shard_count() > 1` 时，driver 被拆分为：
+//!
+//! * 一个 `WebRtcIoFront` 任务，拥有 UDP/TCP 监听器、命令接收器和路由目录；
+//! * `N` `run_shard_loop` 任务，每个任务拥有一个 `WebRtcCore` 加上 shard-local `RouteTable`、看门狗状态、命令和数据包接收器。
+//!
+//! 前端将入站数据报转发到拥有源地址（通过目录）的 shard，或者对于未绑定的数据包，转发到 ufrag 解析的或首先接受的 shard。
+//! 命令被路由到所有者 shard （`AcceptOffer`/`CreateOffer` 使用 `ShardSelector`；
+//! 其他所有内容都使用该目录）。
+//!
+//! 单 shard 快速路径保留在`runner.rs::run_driver_core` 中，以保留现有的测试保证并在不需要水平扩展时简化控制流程。
 
 use std::sync::Arc;
 
@@ -44,6 +59,12 @@ use crate::stun::extract_local_ufrag;
 /// (rare) supervisor write is bounded; tests show the read lock
 /// adds <100 ns per send relative to the previous unsynchronised
 /// `mpsc::Sender` clone.
+///
+/// 前端拥有的 Per-shard 通道句柄。
+///
+/// 发件人被包裹在 [`parking_lot::RwLock`] 中，因此主管可以在重生恐慌的 shard 时交换它们。
+/// 前端的调度路径每次发送都会获取读锁，因此与（罕见的）主管写入的争用是有限的；
+/// 测试显示，相对于先前未同步的 `mpsc::Sender` 克隆，读锁每次发送增加 <100 ns。
 pub(crate) struct ShardChannels {
     pub(crate) cmd_tx: parking_lot::RwLock<mpsc::Sender<ShardCommand>>,
     pub(crate) packet_tx: parking_lot::RwLock<mpsc::Sender<NetDatagram>>,
@@ -91,6 +112,13 @@ impl ShardChannels {
 /// point the ufrag is already in the directory). So a STUN binding
 /// request that doesn't match any registered ufrag is, by
 /// construction, not for any active session.
+///
+/// 将数据报转发到拥有其源地址的 shard。
+/// 返回到基于 ufrag 的查找。
+/// 当两者都无法解决时，前端会发出 `UnroutedPacket` 诊断并增加未路由计数器 - 没有 shard 可以接受数据包，因为目录尚未看到此对等点或此 ufrag。
+///
+/// 在多 shard 拓扑中，shards 在远程对等方可以了解其本地 ufrag 之前将其注册到目录（包含 ufrag 的 SDP 由 shard 生成，并且仅在 `LocalDescription` 耗尽后才表面到远程 - 此时 ufrag 已经在目录中）。
+/// 因此，与任何已注册的 ufrag 不匹配的 STUN 绑定请求在构造上不适用于任何活动会话。
 pub(crate) async fn dispatch_datagram(
     datagram: NetDatagram,
     shards: &[Arc<ShardChannels>],
@@ -136,7 +164,9 @@ pub(crate) async fn dispatch_datagram(
         }))
         .await;
 }
-
+/// Try to send a datagram into a shard packet channel, falling back to diagnostics.
+///
+/// 尝试将数据报发送到 shard 数据包通道，然后返回诊断。
 async fn send_or_drop(
     shard: &ShardChannels,
     datagram: NetDatagram,
@@ -170,6 +200,12 @@ async fn send_or_drop(
 /// configured [`ShardSelector`]. All other commands look up the
 /// owner via the directory; when a session is unknown we surface a
 /// diagnostic and drop the command rather than guessing.
+///
+/// 将命令转发到拥有目标会话的 shard。
+///
+/// 新会话命令 (`AcceptOffer`/`CreateOffer`) 使用配置的 [`ShardSelector`]。
+/// 所有其他命令通过目录查找所有者；
+/// 当会话未知时，我们会进行诊断并放弃命令而不是猜测。
 pub(crate) async fn dispatch_command(
     cmd: WebRtcDriverCommand,
     shards: &[Arc<ShardChannels>],
@@ -341,7 +377,9 @@ pub(crate) async fn dispatch_command(
         );
     }
 }
-
+/// Forward a command to the shard owning a session, surfacing diagnostics on failure.
+///
+/// 将命令转发到拥有会话的 shard，显示故障诊断。
 async fn forward_for_session(
     session_id: WebRtcSessionId,
     shard: Option<ShardId>,
@@ -381,6 +419,8 @@ async fn forward_for_session(
 }
 
 /// Configuration passed from `spawn_driver` into the front-end task.
+///
+/// 配置从 `spawn_driver` 传递到前端任务。
 pub(crate) struct IoFrontConfig {
     pub(crate) shards: Vec<Arc<ShardChannels>>,
     pub(crate) directory: Arc<RouteDirectory>,
@@ -395,6 +435,8 @@ pub(crate) struct IoFrontConfig {
 
 /// Run the I/O front-end: route inbound datagrams and commands to
 /// shards, surface backpressure diagnostics, and exit on cancellation.
+///
+/// 运行 I/O 前端：将入站数据报和命令路由到 shards、表面背压诊断，并在取消时退出。
 pub(crate) async fn run_io_front(mut cfg: IoFrontConfig, cancel: CancellationToken) {
     info!(
         "WebRTC multi-shard front-end running with {} shards",
@@ -470,6 +512,16 @@ pub(crate) async fn run_io_front(mut cfg: IoFrontConfig, cancel: CancellationTok
 /// operation: new sessions selector-routed to the dead shard will
 /// see `QueueFull` (sender stale) and the operator can decide
 /// whether to bring up a fresh driver instance.
+///
+/// 构建 per-shard 通道并生成 `N` shard 任务。
+/// 返回前端通道，以便 `spawn_driver` 可以将它们连接起来。
+///
+/// 每个 shard 任务都包装在一个监督程序中，当内部未来退出时（通过优雅取消或恐慌），该监督程序会发出 [`WebRtcDriverEvent::ShardStopped`]。
+///
+/// 当 `config.shard_restart_on_panic` 是 `true` 时，主管也会在恐慌后运行 [`WebRtcDriverHandle::evict_shard`] 的等效项：删除已死亡 shard 拥有的目录条目
+/// ，级联 TCP 写入器注册表，以便已死亡 shard 拥有的写入器立即释放其套接字，每个 shard 负载计数器重置，并且 `Lifecycle` 诊断显示逐出统计信息（包括已清理的写入器计数） `tcp_writers={N}`)。
+/// shard 任务本身**不**自动重生 - 将前端的发送器重新绑定到新的接收器需要侵入性管道，这超出了这里的范围。
+/// 自动驱逐足以解锁进一步的 driver 操作：选择器路由到死亡 shard 的新会话将看到 `QueueFull` （发送者陈旧），并且操作员可以决定是否启动新的 driver 实例。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_shards(
     config: &WebRtcDriverConfig,

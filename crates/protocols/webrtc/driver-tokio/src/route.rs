@@ -4,6 +4,11 @@
 //! is rebuilt as `WebRtcCore` accepts packets, so we keep it small and
 //! transparent — no fancy LRU, just a `HashMap` with a soft cap and the
 //! same address replacing entries when a session migrates.
+//!
+//! 单端口 UDP 路由表。
+//!
+//! 通过有界驱逐将远程 `SocketAddr` 映射到会话 id。
+//! 该表是在 `WebRtcCore` 接受数据包时重建的，因此我们保持它小而透明 - 没有花哨的 LRU，只是一个具有软上限的 `HashMap` 以及会话迁移时替换条目的相同地址。
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -12,7 +17,9 @@ use std::time::Duration;
 use cheetah_webrtc_core::WebRtcSessionId;
 
 use crate::migration::RouteCandidateDiff;
-
+/// Per-shard active and stale address-to-session routing table.
+///
+/// Per-shard 活动和过时的地址到会话路由表。
 #[derive(Default, Debug)]
 pub(crate) struct RouteTable {
     by_addr: HashMap<SocketAddr, WebRtcSessionId>,
@@ -20,12 +27,18 @@ pub(crate) struct RouteTable {
     /// Whenever a session re-binds to a new address we move the old entry
     /// here so reorderd packets from the old path do not panic the
     /// `WebRtcCore` (it just rejects them).
+    ///
+    /// 在连接迁移期间，陈旧路由会短暂保留 TTL。
+    /// 每当会话重新绑定到新地址时，我们都会将旧条目移至此处，以便来自旧路径的重新排序的数据包不会引起 `WebRtcCore` 恐慌（它只是拒绝它们）。
     stale: HashMap<SocketAddr, (WebRtcSessionId, std::time::Instant)>,
     soft_cap: usize,
     stale_ttl: Duration,
 }
 
 impl RouteTable {
+    /// Create an empty route table with soft/hard capacity and stale TTL.
+    ///
+    /// 创建一个具有软/硬容量和陈旧 TTL 的空路由表。
     pub(crate) fn new(soft_cap: usize, stale_ttl: Duration) -> Self {
         Self {
             by_addr: HashMap::new(),
@@ -35,6 +48,9 @@ impl RouteTable {
         }
     }
 
+    /// Resolve an address to a session, consulting the active table then stale.
+    ///
+    /// 解析会话的地址，查询活动表然后陈旧。
     pub(crate) fn lookup(&self, addr: &SocketAddr) -> Option<WebRtcSessionId> {
         self.by_addr
             .get(addr)
@@ -42,6 +58,9 @@ impl RouteTable {
             .or_else(|| self.stale.get(addr).map(|(id, _)| *id))
     }
 
+    /// Bind a remote address to a session and return the prior binding diff.
+    ///
+    /// 将远程地址绑定到会话并返回先前的绑定差异。
     pub(crate) fn bind(
         &mut self,
         addr: SocketAddr,
@@ -85,6 +104,11 @@ impl RouteTable {
     /// migration-detected packets where rebinding could push the table
     /// past safe limits. Returns `Ok((prior, diff))` on success or
     /// `Err(())` if migration was rejected.
+    ///
+    /// 尝试迁移绑定，但如果活动路由表处于硬容量 (`hard_cap = soft_cap * 4`)，则拒绝。
+    /// 用于迁移检测到的数据包，其中重新绑定可能会使表超出安全限制。
+    /// 如果成功，则返回 `Ok((prior, diff))`；
+    /// 如果迁移被拒绝，则返回 `Err(())`。
     pub(crate) fn try_bind_migration(
         &mut self,
         addr: SocketAddr,
@@ -108,6 +132,9 @@ impl RouteTable {
         Ok(self.bind(addr, session, now))
     }
 
+    /// Remove all active and stale bindings for a session.
+    ///
+    /// 删除会话的所有活动和陈旧绑定。
     pub(crate) fn forget_session(&mut self, session: WebRtcSessionId) -> RouteCandidateDiff {
         let mut removed = Vec::new();
         let mut stale_addrs = Vec::new();
@@ -140,6 +167,9 @@ impl RouteTable {
     /// migrates to a new remote address: the old address binding must
     /// not stay active in the primary table because new sessions might
     /// reuse it.
+    ///
+    /// 将 `addr` 处的绑定（如果有）移至过时集中，以便来自该地址的落后数据包仍解析为 `stale_ttl` 的同一会话，然后过期。
+    /// 当会话迁移到新的远程地址时使用：旧地址绑定不得在主表中保持活动状态，因为新会话可能会重用它。
     pub(crate) fn unbind_address(
         &mut self,
         addr: &SocketAddr,
@@ -157,6 +187,9 @@ impl RouteTable {
         }
     }
 
+    /// Drop stale entries whose TTL has elapsed.
+    ///
+    /// 删除 TTL 已过期的过时条目。
     pub(crate) fn compact(&mut self, now: std::time::Instant) {
         self.stale
             .retain(|_, (_, recorded)| now.duration_since(*recorded) < self.stale_ttl);
@@ -164,6 +197,9 @@ impl RouteTable {
 
     /// Compact stale routes and return the list of expired entries.
     /// Used by the driver to emit `RouteExpired` diagnostics.
+    ///
+    /// 压缩陈旧路由并返回过期条目列表。
+    /// 由 driver 用于发出 `RouteExpired` 诊断信息。
     pub(crate) fn compact_expired(
         &mut self,
         now: std::time::Instant,
@@ -188,6 +224,9 @@ impl RouteTable {
     /// Snapshot the route table's active and stale counts. Used by
     /// the shard event loop to publish per-shard metrics through
     /// `ShardLoadTable::record_route_counts`.
+    ///
+    /// 快照路由表的活动和过时计数。
+    /// 由 shard 事件循环使用，通过 `ShardLoadTable::record_route_counts` 发布每个 shard 指标。
     pub(crate) fn route_counts(&self) -> (usize, usize) {
         (self.by_addr.len(), self.stale.len())
     }
