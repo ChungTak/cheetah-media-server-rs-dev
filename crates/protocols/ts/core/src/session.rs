@@ -1,4 +1,6 @@
-//! Sans-I/O session state machine for TS protocol.
+//! Sans-I/O session state machine for the TS protocol.
+//!
+//! TS 协议的 Sans-I/O 会话状态机。
 
 use bytes::Bytes;
 
@@ -8,12 +10,18 @@ use crate::request::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Command sent into the TS core from the driver.
+///
+/// 驱动层发送给 TS core 的命令。
 pub enum TsCoreCommand {
     SendTsBytes(Bytes),
     Close,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Input events fed into the TS core state machine.
+///
+/// 输入到 TS core 状态机的事件。
 pub enum TsCoreInput {
     RequestHead(HttpRequestHead),
     WebSocketMessage(WebSocketMessage),
@@ -21,6 +29,9 @@ pub enum TsCoreInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Reason for closing the TS session.
+///
+/// 关闭 TS 会话的原因。
 pub enum CloseReason {
     Normal,
     BadRequest,
@@ -29,6 +40,9 @@ pub enum CloseReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Outbound events from the TS core to the module.
+///
+/// TS core 向模块发送的出站事件。
 pub enum TsCoreEvent {
     PlayRequested {
         stream_key: StreamKeyParts,
@@ -38,6 +52,9 @@ pub enum TsCoreEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Output actions produced by the TS core after processing input.
+///
+/// TS core 处理输入后产生的输出动作。
 pub enum TsCoreOutput {
     SendHttpResponse(HttpResponseHead),
     SendBytes(Bytes),
@@ -48,6 +65,9 @@ pub enum TsCoreOutput {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Internal session state for HTTP/WS TS playback.
+///
+/// HTTP/WS TS 播放的内部会话状态。
 enum SessionState {
     Idle,
     HttpStreaming,
@@ -56,24 +76,38 @@ enum SessionState {
 }
 
 /// Sans-I/O TS protocol session state machine.
+///
+/// TS 协议的 Sans-I/O 会话状态机。
 #[derive(Debug)]
 pub struct TsCore {
     state: SessionState,
 }
 
+/// Default `TsCore` starts in the idle state.
+///
+/// 默认 `TsCore` 从空闲状态开始。
 impl Default for TsCore {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// `TsCore` input handling and state transition API.
+///
+/// `TsCore` 输入处理与状态转换 API。
 impl TsCore {
+    /// Create a new idle TS core session.
+    ///
+    /// 创建一个新的空闲 TS core 会话。
     pub fn new() -> Self {
         Self {
             state: SessionState::Idle,
         }
     }
 
+    /// Dispatch an input to the current state handler and return outputs.
+    ///
+    /// 将输入分派到当前状态处理器并返回输出。
     pub fn handle_input(&mut self, input: TsCoreInput) -> Vec<TsCoreOutput> {
         match input {
             TsCoreInput::RequestHead(head) => self.handle_request_head(head),
@@ -82,6 +116,9 @@ impl TsCore {
         }
     }
 
+    /// Process the HTTP request head and transition to streaming or closed.
+    ///
+    /// 处理 HTTP 请求头并切换到流式或关闭状态。
     fn handle_request_head(&mut self, head: HttpRequestHead) -> Vec<TsCoreOutput> {
         if self.state != SessionState::Idle {
             return vec![TsCoreOutput::Close {
@@ -181,6 +218,9 @@ impl TsCore {
         }
     }
 
+    /// Handle a WebSocket message while in WS streaming state.
+    ///
+    /// 在 WS 流式状态下处理 WebSocket 消息。
     fn handle_websocket_message(&mut self, msg: WebSocketMessage) -> Vec<TsCoreOutput> {
         match msg {
             WebSocketMessage::Close => {
@@ -210,6 +250,9 @@ impl TsCore {
         }
     }
 
+    /// Process a driver command and return the appropriate output action.
+    ///
+    /// 处理驱动命令并返回相应的输出动作。
     fn handle_command(&mut self, cmd: TsCoreCommand) -> Vec<TsCoreOutput> {
         match cmd {
             TsCoreCommand::Close => {
@@ -228,6 +271,9 @@ impl TsCore {
         }
     }
 
+    /// Return a 400 Bad Request response and close the session.
+    ///
+    /// 返回 400 Bad Request 响应并关闭会话。
     fn bad_request(&mut self) -> Vec<TsCoreOutput> {
         self.state = SessionState::Closed;
         vec![
@@ -243,6 +289,9 @@ impl TsCore {
     }
 }
 
+/// Build the standard HTTP 200 response head for TS streams.
+///
+/// 构建 TS 流的标准 HTTP 200 响应头。
 fn ts_response_head() -> HttpResponseHead {
     HttpResponseHead {
         status_code: 200,
