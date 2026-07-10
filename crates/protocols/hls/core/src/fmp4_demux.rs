@@ -1,12 +1,15 @@
 //! Fragmented MP4 (fMP4) demuxer for HLS pull scenarios.
 //!
-//! This is a thin wrapper over `cheetah_codec::Fmp4Demuxer` that preserves the
-//! HLS-specific API (ms-based timestamps, separate parse_init/parse_segment).
+//! fMP4（Fragmented MP4）解复用器，用于 HLS 拉流场景。
+//! 包装 `cheetah_codec::Fmp4Demuxer` 并维护 HLS 专用接口：毫秒时间戳、
+//! 独立的 init 分段解析与 segment 分段解析。
 
 use bytes::Bytes;
 use cheetah_codec::{CodecId, MediaKind};
 
-/// Track info extracted from init segment.
+/// Track info extracted from an init segment (ftyp + moov).
+///
+/// 从 init 分段（ftyp + moov）中提取的轨道信息。
 #[derive(Debug, Clone)]
 pub struct Fmp4DemuxTrack {
     pub track_id: u32,
@@ -17,9 +20,17 @@ pub struct Fmp4DemuxTrack {
 }
 
 /// Events produced by the fMP4 demuxer.
+///
+/// fMP4 解复用器产生的事件。
 #[derive(Debug, Clone)]
 pub enum Fmp4DemuxEvent {
+    /// Track metadata discovered from the init segment.
+    ///
+    /// 从 init 分段发现的轨道元数据。
     TrackInfo(Vec<Fmp4DemuxTrack>),
+    /// A decoded media frame with timing and keyframe information.
+    ///
+    /// 携带时间戳与关键帧信息的解码媒体帧。
     Frame {
         track_id: u32,
         media_kind: MediaKind,
@@ -31,21 +42,40 @@ pub enum Fmp4DemuxEvent {
 }
 
 /// Error from fMP4 demuxing.
+///
+/// fMP4 解复用错误。
 #[derive(Debug, Clone)]
 pub enum Fmp4DemuxError {
+    /// A box could not be parsed (size/type mismatch).
+    ///
+    /// Box 解析失败（大小/类型不匹配）。
     InvalidBox,
+    /// No `moov` box found in the init segment.
+    ///
+    /// init 分段中未找到 `moov` box。
     NoMoov,
+    /// No `mdat` box found in the media segment.
+    ///
+    /// 媒体分段中未找到 `mdat` box。
     NoMdat,
+    /// `parse_segment` was called before `parse_init`.
+    ///
+    /// 在 `parse_init` 之前调用了 `parse_segment`。
     InitNotParsed,
 }
 
 /// fMP4 demuxer state — delegates to `cheetah_codec::Fmp4Demuxer`.
+///
+/// fMP4 解复用器状态 — 委托给 `cheetah_codec::Fmp4Demuxer`。
 pub struct Fmp4Demuxer {
     inner: cheetah_codec::Fmp4Demuxer,
     init_parsed: bool,
 }
 
 impl Fmp4Demuxer {
+    /// Create a new demuxer with default codec configuration.
+    ///
+    /// 使用默认编解码器配置创建新的解复用器。
     pub fn new() -> Self {
         Self {
             inner: cheetah_codec::Fmp4Demuxer::new(cheetah_codec::Fmp4DemuxerConfig::default()),
@@ -54,6 +84,13 @@ impl Fmp4Demuxer {
     }
 
     /// Parse init segment (ftyp + moov) to extract track info.
+    ///
+    /// The codec-level demuxer emits track metadata once the moov box is seen.
+    /// We translate the raw track descriptors into the HLS-specific `Fmp4DemuxTrack`.
+    ///
+    /// 解析 init 分段（ftyp + moov）以提取轨道信息。
+    /// 当看到 moov box 时，codec 层解复用器会输出轨道元数据；
+    /// 我们将其转换为 HLS 专用的 `Fmp4DemuxTrack`。
     pub fn parse_init(&mut self, data: &[u8]) -> Result<Vec<Fmp4DemuxEvent>, Fmp4DemuxError> {
         let events = self.inner.push(data);
         let mut result = Vec::new();
@@ -74,6 +111,12 @@ impl Fmp4Demuxer {
     }
 
     /// Parse media segment (moof + mdat) to extract frames.
+    ///
+    /// Requires that the init segment has already been parsed. The actual moof/mdat
+    /// parsing is done against the track list from the init segment.
+    ///
+    /// 解析媒体分段（moof + mdat）以提取帧。
+    /// 要求已经解析过 init 分段；实际的 moof/mdat 解析基于 init 中的轨道列表。
     pub fn parse_segment(&self, data: &[u8]) -> Result<Vec<Fmp4DemuxEvent>, Fmp4DemuxError> {
         if !self.init_parsed {
             return Err(Fmp4DemuxError::InitNotParsed);
@@ -89,6 +132,9 @@ impl Default for Fmp4Demuxer {
     }
 }
 
+/// Convert a codec-level track descriptor into the HLS wrapper type.
+///
+/// 将 codec 层轨道描述符转换为 HLS 包装类型。
 fn convert_track(t: cheetah_codec::Fmp4DemuxTrack) -> Fmp4DemuxTrack {
     Fmp4DemuxTrack {
         track_id: t.track_id,
@@ -99,7 +145,13 @@ fn convert_track(t: cheetah_codec::Fmp4DemuxTrack) -> Fmp4DemuxTrack {
     }
 }
 
-/// Parse a media segment given known tracks (for the &self parse_segment API).
+/// Parse a media segment given known tracks (for the `&self` `parse_segment` API).
+///
+/// Walks the top-level boxes to locate the `moof` and `mdat` boxes, then delegates
+/// per-fragment parsing to `parse_traf_boxes`.
+///
+/// 在已知轨道列表的前提下解析媒体分段（供 `parse_segment` 调用）。
+/// 遍历顶层 box 定位 `moof` 与 `mdat`，再按每个 fragment 委托给 `parse_traf_boxes`。
 fn parse_segment_with_tracks(
     data: &[u8],
     tracks: &[cheetah_codec::Fmp4DemuxTrack],
@@ -141,6 +193,13 @@ fn parse_segment_with_tracks(
     events
 }
 
+/// Parse every `traf` box inside a `moof`.
+///
+/// A `moof` may contain multiple `traf` boxes (one per track). This function iterates
+/// over all of them and forwards each to `parse_single_traf`.
+///
+/// 解析 `moof` 中的所有 `traf` box。
+/// 一个 `moof` 可能包含多个 `traf`（每轨道一个），此处遍历并逐个转发给 `parse_single_traf`。
 fn parse_traf_boxes(
     moof: &[u8],
     mdat: &[u8],
@@ -172,6 +231,15 @@ fn parse_traf_boxes(
     }
 }
 
+/// Parse a single `traf` (track fragment) into frame events.
+///
+/// The algorithm reads `tfhd` (track id), `tfdt` (base decode time), and `trun`
+/// (sample runs) to compute each sample's byte offset within `mdat`, then extracts
+/// the bytes and converts decode/compose timestamps to milliseconds.
+///
+/// 将单个 `traf`（轨道 fragment）解析为帧事件。
+/// 算法读取 `tfhd`（轨道 id）、`tfdt`（基准解码时间）和 `trun`（sample run），
+/// 计算每个 sample 在 `mdat` 中的字节偏移，提取数据并将 DTS/CTS 转换为毫秒。
 fn parse_single_traf(
     data: &[u8],
     mdat: &[u8],
@@ -262,6 +330,14 @@ fn parse_single_traf(
     }
 }
 
+/// Parse an `trun` box in a compatibility manner.
+///
+/// `trun` carries per-sample flags for data offset, duration, size, flags, and CTS.
+/// The returned tuple is `(data_offset, Vec<(duration, size, flags, cts)>)`.
+///
+/// 以兼容方式解析 `trun` box。
+/// `trun` 携带每个 sample 的数据偏移、时长、大小、标志和 CTS 标志。
+/// 返回 `(data_offset, Vec<(duration, size, flags, cts)>)`。
 fn parse_trun_compat(data: &[u8]) -> (i32, Vec<(u32, u32, u32, i32)>) {
     if data.len() < 8 {
         return (0, Vec::new());
@@ -334,6 +410,15 @@ fn parse_trun_compat(data: &[u8]) -> (i32, Vec<(u32, u32, u32, i32)>) {
     (data_offset, samples)
 }
 
+/// Determine whether sample flags indicate a keyframe.
+///
+/// For fMP4, the upper two bits of `sample_flags` give `sample_depends_on`:
+/// 2 means this sample does not depend on others (sync sample). When `depends_on` is 0,
+/// the `sample_is_non_sync_sample` bit must be 0 for it to be a keyframe.
+///
+/// 判断 sample flags 是否表示关键帧。
+/// 对 fMP4，`sample_flags` 的高两位表示 `sample_depends_on`：
+/// 2 表示不依赖其他 sample（同步样本）。若 `depends_on` 为 0，则 `sample_is_non_sync_sample` 位为 0 时才是关键帧。
 fn is_keyframe_flags(flags: u32) -> bool {
     let depends_on = (flags >> 24) & 0x03;
     let is_non_sync = (flags >> 16) & 0x01;

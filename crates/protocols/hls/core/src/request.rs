@@ -1,7 +1,14 @@
+//! HLS request routing and query parameter parsing.
+//!
+//! HLS 请求路由与查询参数解析。
+//! 将 URL 路径与查询字符串映射为类型化的 `HlsRequestKind`，用于 core 状态机分派。
+
 use crate::error::HlsCoreError;
 use crate::ll_hls::TrackLane;
 
 /// Parsed stream key parts from URL.
+///
+/// 从 URL 解析的流密钥部分。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamKeyParts {
     pub namespace: String,
@@ -9,65 +16,105 @@ pub struct StreamKeyParts {
 }
 
 /// Blocking Playlist Reload parameters (LL-HLS).
+///
+/// 阻塞式播放列表重载参数（LL-HLS）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BlockingParams {
     /// `_HLS_msn` — target Media Sequence Number.
+    ///
+    /// `_HLS_msn` — 目标媒体序列号。
     pub msn: u64,
     /// `_HLS_part` — target Part Index (optional).
+    ///
+    /// `_HLS_part` — 目标 Part 索引（可选）。
     pub part: Option<u64>,
 }
 
 /// Delta Update mode (LL-HLS).
+///
+/// 增量更新模式（LL-HLS）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkipMode {
     /// `_HLS_skip=YES`
+    ///
+    /// `_HLS_skip=YES`
     Yes,
     /// `_HLS_skip=v2` (includes Rendition Report)
+    ///
+    /// `_HLS_skip=v2`（包含 Rendition Report）
     V2,
 }
 
 /// What kind of HLS resource is being requested.
+///
+/// 正在请求的 HLS 资源类型。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HlsRequestKind {
-    /// Master playlist: /{namespace}/{stream}.m3u8
+    /// Master playlist: `/{namespace}/{stream}.m3u8`
+    ///
+    /// 主播放列表：`/{namespace}/{stream}.m3u8`
     MasterPlaylist { stream_key: StreamKeyParts },
-    /// Media playlist: /{namespace}/{stream}/{stream}.m3u8?uid={uid}
+    /// Media playlist: `/{namespace}/{stream}/{stream}.m3u8?uid={uid}`
+    ///
+    /// 媒体播放列表：`/{namespace}/{stream}/{stream}.m3u8?uid={uid}`
     MediaPlaylist {
         stream_key: StreamKeyParts,
         session_id: Option<u64>,
-        /// LL-HLS blocking parameters (if _HLS_msn present).
+        /// LL-HLS blocking parameters (if `_HLS_msn` present).
+        ///
+        /// LL-HLS 阻塞参数（若存在 `_HLS_msn`）。
         blocking: Option<BlockingParams>,
-        /// LL-HLS delta update mode (if _HLS_skip present).
+        /// LL-HLS delta update mode (if `_HLS_skip` present).
+        ///
+        /// LL-HLS 增量更新模式（若存在 `_HLS_skip`）。
         skip: Option<SkipMode>,
         /// Legacy mode: strip all LL-HLS tags, output traditional HLS only.
+        ///
+        /// 传统模式：去掉所有 LL-HLS 标签，仅输出传统 HLS。
         legacy: bool,
         /// Rewind mode: output all available segments (DVR/timeshift).
+        ///
+        /// 回退模式：输出所有可用分片（DVR/时移）。
         rewind: bool,
     },
-    /// TS/fMP4 segment: /{namespace}/{stream}/{segment_name}.ts or .m4s
+    /// TS/fMP4 segment: `/{namespace}/{stream}/{segment_name}.ts` or `.m4s`
+    ///
+    /// TS/fMP4 分片：`/{namespace}/{stream}/{segment_name}.ts` 或 `.m4s`
     Segment {
         stream_key: StreamKeyParts,
         segment_name: String,
         session_id: Option<u64>,
-        /// Stream key validation token (from ?k= param).
+        /// Stream key validation token (from `?k=` param).
+        ///
+        /// 流密钥校验 token（来自 `?k=` 参数）。
         key_token: Option<String>,
     },
-    /// fMP4 init segment: /{namespace}/{stream}/init.mp4
+    /// fMP4 init segment: `/{namespace}/{stream}/init.mp4`
+    ///
+    /// fMP4 init 分段：`/{namespace}/{stream}/init.mp4`
     InitSegment {
         stream_key: StreamKeyParts,
         session_id: Option<u64>,
-        /// Stream key validation token (from ?k= param).
+        /// Stream key validation token (from `?k=` param).
+        ///
+        /// 流密钥校验 token（来自 `?k=` 参数）。
         key_token: Option<String>,
     },
-    /// LL-HLS part: /{namespace}/{stream}/part_{seq}.m4s
+    /// LL-HLS part: `/{namespace}/{stream}/part_{seq}.m4s`
+    ///
+    /// LL-HLS part：`/{namespace}/{stream}/part_{seq}.m4s`
     Part {
         stream_key: StreamKeyParts,
         part_name: String,
         session_id: Option<u64>,
-        /// Stream key validation token (from ?k= param).
+        /// Stream key validation token (from `?k=` param).
+        ///
+        /// 流密钥校验 token（来自 `?k=` 参数）。
         key_token: Option<String>,
     },
-    /// Per-track media playlist: /{ns}/{stream}/chunklist_video.m3u8 or chunklist_audio.m3u8
+    /// Per-track media playlist: `/{ns}/{stream}/chunklist_video.m3u8` or `chunklist_audio.m3u8`
+    ///
+    /// 按轨道媒体播放列表：`/{ns}/{stream}/chunklist_video.m3u8` 或 `chunklist_audio.m3u8`
     TrackMediaPlaylist {
         stream_key: StreamKeyParts,
         lane: TrackLane,
@@ -76,14 +123,18 @@ pub enum HlsRequestKind {
         skip: Option<SkipMode>,
         key_token: Option<String>,
     },
-    /// Per-track init segment: /{ns}/{stream}/init_video.mp4 or init_audio.mp4
+    /// Per-track init segment: `/{ns}/{stream}/init_video.mp4` or `init_audio.mp4`
+    ///
+    /// 按轨道 init 分段：`/{ns}/{stream}/init_video.mp4` 或 `init_audio.mp4`
     TrackInitSegment {
         stream_key: StreamKeyParts,
         lane: TrackLane,
         session_id: Option<u64>,
         key_token: Option<String>,
     },
-    /// Per-track part: /{ns}/{stream}/video_part_N.m4s or audio_part_N.m4s
+    /// Per-track part: `/{ns}/{stream}/video_part_N.m4s` or `audio_part_N.m4s`
+    ///
+    /// 按轨道 part：`/{ns}/{stream}/video_part_N.m4s` 或 `audio_part_N.m4s`
     TrackPart {
         stream_key: StreamKeyParts,
         lane: TrackLane,
@@ -91,7 +142,9 @@ pub enum HlsRequestKind {
         session_id: Option<u64>,
         key_token: Option<String>,
     },
-    /// Per-track segment: /{ns}/{stream}/video_seg_N.m4s or audio_seg_N.m4s
+    /// Per-track segment: `/{ns}/{stream}/video_seg_N.m4s` or `audio_seg_N.m4s`
+    ///
+    /// 按轨道分片：`/{ns}/{stream}/video_seg_N.m4s` 或 `audio_seg_N.m4s`
     TrackSegment {
         stream_key: StreamKeyParts,
         lane: TrackLane,
@@ -99,11 +152,23 @@ pub enum HlsRequestKind {
         session_id: Option<u64>,
         key_token: Option<String>,
     },
-    /// Embedded hls.js player page: /{namespace}/{stream}/
+    /// Embedded hls.js player page: `/{namespace}/{stream}/`
+    ///
+    /// 嵌入式 hls.js 播放器页面：`/{namespace}/{stream}/`
     PlayerPage { stream_key: StreamKeyParts },
 }
 
 /// Parse an HLS request target into a typed request.
+///
+/// Splits the path from the query string. The path is split into components and routed by
+/// depth and file extension. Query parameters are parsed into `uid`, LL-HLS blocking params,
+/// skip mode, legacy/rewind flags, and optional key token. This is the central routing table
+/// that maps HTTP targets to the core protocol events.
+///
+/// 将 HLS 请求目标解析为类型化请求。
+/// 将路径与查询字符串分离。按路径深度和文件扩展名路由；查询参数解析为 uid、
+/// LL-HLS 阻塞参数、skip 模式、legacy/rewind 标志与可选 key token。
+/// 这是将 HTTP 目标映射到 core 协议事件的核心路由表。
 pub fn parse_hls_request(target: &str) -> Result<HlsRequestKind, HlsCoreError> {
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
     let params = QueryParams::parse(query);
@@ -266,7 +331,9 @@ pub fn parse_hls_request(target: &str) -> Result<HlsRequestKind, HlsCoreError> {
     }
 }
 
-/// Parse lane from chunklist filename: "chunklist_video" -> Video, "chunklist_audio" -> Audio.
+/// Parse lane from chunklist filename: `chunklist_video` -> `Video`, `chunklist_audio` -> `Audio`.
+///
+/// 从 chunklist 文件名解析通道：`chunklist_video` -> `Video`，`chunklist_audio` -> `Audio`。
 fn parse_chunklist_lane(base: &str) -> Option<TrackLane> {
     match base {
         "chunklist_video" => Some(TrackLane::Video),
@@ -276,6 +343,8 @@ fn parse_chunklist_lane(base: &str) -> Option<TrackLane> {
 }
 
 /// Parsed query parameters.
+///
+/// 解析后的查询参数。
 struct QueryParams {
     uid: Option<u64>,
     blocking: Option<BlockingParams>,
@@ -286,6 +355,9 @@ struct QueryParams {
 }
 
 impl QueryParams {
+    /// Parse an HLS query string into structured parameters.
+    ///
+    /// 将 HLS 查询字符串解析为结构化参数。
     fn parse(query: &str) -> Self {
         let mut uid = None;
         let mut msn = None;

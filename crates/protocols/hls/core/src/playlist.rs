@@ -1,20 +1,35 @@
+//! M3U8 playlist builder for live, VOD, and Low-Latency HLS.
+//!
+//! M3U8 播放列表构建器，支持直播、点播与低延迟 HLS。
+//! 将 `SegmentRing` 与 `LowLatencyState` 转换为符合 HLS 规范的文本。
+
 use crate::ll_hls::LowLatencyState;
 use crate::segment::SegmentRing;
 
 /// Container mode for playlist generation.
+///
+/// 播放列表生成的容器模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HlsContainer {
     /// MPEG-TS segments (.ts)
+    ///
+    /// MPEG-TS 分片（.ts）。
     Ts,
     /// Fragmented MP4 segments (.m4s) with init segment
+    ///
+    /// 带 init 分段的 fMP4 分片（.m4s）。
     Fmp4,
 }
 
 /// Lightweight M3U8 playlist builder for live HLS.
+///
+/// 轻量级直播 HLS 用 M3U8 播放列表构建器。
 pub struct PlaylistBuilder;
 
 impl PlaylistBuilder {
     /// Generate a master playlist that redirects to the media playlist with a session UID.
+    ///
+    /// 生成主播放列表，重定向到带会话 UID 的媒体播放列表。
     pub fn build_master(stream_name: &str, session_id: u64) -> String {
         format!(
             "#EXTM3U\n\
@@ -24,11 +39,20 @@ impl PlaylistBuilder {
     }
 
     /// Generate a live media playlist from the current segment ring (TS mode).
+    ///
+    /// 从当前分片环生成直播媒体播放列表（TS 模式）。
     pub fn build_media(ring: &SegmentRing, session_id: Option<u64>) -> String {
         Self::build_media_with_container(ring, session_id, HlsContainer::Ts)
     }
 
     /// Generate a live media playlist with specified container format.
+    ///
+    /// Picks the larger version number and the correct extension for TS (3/.ts) or fMP4
+    /// (7/.m4s). For fMP4, an `#EXT-X-MAP` reference to the init segment is emitted.
+    ///
+    /// 使用指定容器格式生成直播媒体播放列表。
+    /// 根据 TS（3/.ts）或 fMP4（7/.m4s）选择版本号与扩展名。
+    /// fMP4 会输出指向 init 分段的 `#EXT-X-MAP`。
     pub fn build_media_with_container(
         ring: &SegmentRing,
         session_id: Option<u64>,
@@ -87,6 +111,8 @@ impl PlaylistBuilder {
     }
 
     /// Generate a live playlist from a list of segment file entries (for disk-based mode).
+    ///
+    /// 从分片文件条目列表生成直播播放列表（用于磁盘模式）。
     pub fn build_live_file(
         segments: &[SegmentFileEntry],
         media_sequence: u64,
@@ -125,7 +151,9 @@ impl PlaylistBuilder {
         out
     }
 
-    /// Generate a VOD playlist with EXT-X-ENDLIST.
+    /// Generate a VOD playlist with `#EXT-X-ENDLIST`.
+    ///
+    /// 生成带 `#EXT-X-ENDLIST` 的点播播放列表。
     pub fn build_vod(segments: &[SegmentFileEntry], container: HlsContainer) -> String {
         let mut out = Self::build_live_file(segments, 0, container);
         out.push_str("#EXT-X-ENDLIST\n");
@@ -133,22 +161,30 @@ impl PlaylistBuilder {
     }
 
     /// Generate a delayed playlist that includes extra segments beyond the normal window.
-    /// `ring` contains all available segments; `normal_window` is how many the normal
-    /// playlist would show. The delayed playlist shows all segments in the ring.
+    /// `ring` contains all available segments; the delayed playlist shows all segments.
+    ///
+    /// 生成延迟播放列表，包含超出常规窗口的额外分片。
+    /// `ring` 包含所有可用分片；延迟播放列表显示全部分片。
     pub fn build_media_delayed(ring: &SegmentRing, session_id: Option<u64>) -> String {
         // Delayed playlist shows all segments in the ring (same as build_media but explicitly named)
         Self::build_media_with_container(ring, session_id, HlsContainer::Ts)
     }
 
-    /// Generate a Low-Latency HLS media playlist with EXT-X-PART tags.
+    /// Generate a Low-Latency HLS media playlist with `#EXT-X-PART` tags.
     ///
-    /// Includes: EXT-X-SERVER-CONTROL, EXT-X-PART-INF, EXT-X-PART per segment,
-    /// and EXT-X-PRELOAD-HINT for the next expected part.
+    /// Includes: `EXT-X-SERVER-CONTROL`, `EXT-X-PART-INF`, `EXT-X-PART` per segment,
+    /// and `EXT-X-PRELOAD-HINT` for the next expected part.
     ///
-    /// When `legacy` is true, all LL-HLS tags are stripped and only completed
-    /// segments are output (traditional HLS compatibility mode).
+    /// When `legacy` is true, all LL-HLS tags are stripped and only completed segments
+    /// are output (traditional HLS compatibility mode).
     ///
     /// When `concluded` is true, `#EXT-X-ENDLIST` is appended (stream ended).
+    ///
+    /// 生成带 `#EXT-X-PART` 标签的低延迟 HLS 媒体播放列表。
+    /// 包含：`EXT-X-SERVER-CONTROL`、`EXT-X-PART-INF`、每个分段的 `EXT-X-PART`，
+    /// 以及下一个预期 part 的 `EXT-X-PRELOAD-HINT`。
+    /// 当 `legacy` 为 true 时，去掉所有 LL-HLS 标签，仅输出已完成分段（传统 HLS 兼容模式）。
+    /// 当 `concluded` 为 true 时，追加 `#EXT-X-ENDLIST`（流已结束）。
     pub fn build_media_ll(
         ring: &SegmentRing,
         ll_state: &LowLatencyState,
@@ -238,7 +274,16 @@ impl PlaylistBuilder {
 }
 
 /// Format Unix milliseconds as ISO 8601 date-time string.
+///
 /// Output: "2006-01-02T15:04:05.000Z"
+///
+/// 将 Unix 毫秒格式化为 ISO 8601 日期时间字符串。
+/// 输出："2006-01-02T15:04:05.000Z"。
+///
+/// This implementation uses a Euclidean algorithm to convert days since the epoch into
+/// a civil calendar date without pulling in a chrono dependency.
+///
+/// 本实现使用欧几里得算法将自纪元以来的天数转换为公历日期，无需引入 chrono 依赖。
 pub fn format_iso8601(unix_ms: i64) -> String {
     let secs = unix_ms / 1000;
     let millis = (unix_ms % 1000).unsigned_abs() as u32;
@@ -268,6 +313,8 @@ pub fn format_iso8601(unix_ms: i64) -> String {
 }
 
 /// A segment entry for file-based playlist generation.
+///
+/// 基于文件的播放列表生成所用的分片条目。
 #[derive(Debug, Clone)]
 pub struct SegmentFileEntry {
     pub filename: String,
@@ -275,6 +322,8 @@ pub struct SegmentFileEntry {
 }
 
 /// Info about a media rendition for demuxed master playlist generation.
+///
+/// 用于解复用主播放列表生成的媒体 rendition 信息。
 #[derive(Debug, Clone)]
 pub struct MediaRenditionInfo {
     pub codecs: String,
@@ -286,12 +335,17 @@ pub struct MediaRenditionInfo {
 }
 
 /// Builder for demuxed LLHLS master playlist with independent audio rendition.
+///
+/// 生成独立音频 rendition 的解复用 LLHLS 主播放列表构建器。
 pub struct DemuxedMasterPlaylist;
 
 impl DemuxedMasterPlaylist {
     /// Generate a demuxed master playlist.
     ///
     /// Output includes `EXT-X-MEDIA:TYPE=AUDIO` and `EXT-X-STREAM-INF` with `AUDIO="audio"`.
+    ///
+    /// 生成解复用主播放列表。
+    /// 输出包含 `EXT-X-MEDIA:TYPE=AUDIO` 与带 `AUDIO="audio"` 的 `EXT-X-STREAM-INF`。
     pub fn build(
         video: Option<&MediaRenditionInfo>,
         audio: Option<&MediaRenditionInfo>,
@@ -339,7 +393,10 @@ impl DemuxedMasterPlaylist {
                 if video_info.codecs.is_empty() && audio_info.codecs.is_empty() {
                     String::new()
                 } else {
-                    format!("{},{}", video_info.codecs, audio_info.codecs)
+                    let mut codecs = video_info.codecs.clone();
+                    codecs.push(',');
+                    codecs.push_str(&audio_info.codecs);
+                    codecs
                 }
             } else {
                 video_info.codecs.clone()

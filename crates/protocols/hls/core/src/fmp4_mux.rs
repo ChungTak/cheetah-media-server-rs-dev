@@ -1,12 +1,15 @@
 //! Fragmented MP4 (fMP4) muxer for HLS segment generation.
 //!
-//! This is a thin wrapper over `cheetah_codec::Fmp4Muxer` that preserves the
-//! HLS-specific API (ms-based timestamps, `Fmp4TrackDesc`/`Fmp4Sample` types).
+//! fMP4 复用器，用于 HLS 分片生成。
+//! 包装 `cheetah_codec::Fmp4Muxer` 并维护 HLS 专用接口：毫秒时间戳、
+//! `Fmp4TrackDesc`/`Fmp4Sample` 类型，以及 init/segment/part 三种输出。
 
 use bytes::Bytes;
 use cheetah_codec::{CodecId, MediaKind};
 
 /// fMP4 track description (HLS-specific wrapper).
+///
+/// fMP4 轨道描述（HLS 专用包装）。
 #[derive(Debug, Clone)]
 pub struct Fmp4TrackDesc {
     pub track_id: u32,
@@ -14,6 +17,8 @@ pub struct Fmp4TrackDesc {
     pub media_kind: MediaKind,
     pub timescale: u32,
     /// Codec-specific extradata (avcC for H264, hvcC for H265, esds for AAC, etc.)
+    ///
+    /// 编解码器专用 extradata（H264 为 avcC，H265 为 hvcC，AAC 为 esds 等）。
     pub extradata: Bytes,
     pub width: u16,
     pub height: u16,
@@ -22,6 +27,8 @@ pub struct Fmp4TrackDesc {
 }
 
 /// A single sample to be written into a media segment.
+///
+/// 要写入媒体分段的单个 sample。
 #[derive(Debug, Clone)]
 pub struct Fmp4Sample {
     pub track_id: u32,
@@ -32,11 +39,20 @@ pub struct Fmp4Sample {
 }
 
 /// fMP4 muxer for HLS — delegates to `cheetah_codec::Fmp4Muxer`.
+///
+/// HLS 用 fMP4 复用器 — 委托给 `cheetah_codec::Fmp4Muxer`。
 pub struct Fmp4Muxer {
     inner: cheetah_codec::Fmp4Muxer,
 }
 
 impl Fmp4Muxer {
+    /// Create a muxer for the given track descriptions.
+    ///
+    /// Converts each `Fmp4TrackDesc` into the codec's `TrackInfo` and enables `styp`
+    /// (segment type) boxes for full segments.
+    ///
+    /// 根据给定轨道描述创建复用器。
+    /// 将每个 `Fmp4TrackDesc` 转换为 codec 的 `TrackInfo`，并启用完整分段的 `styp` box。
     pub fn new(tracks: Vec<Fmp4TrackDesc>) -> Self {
         let track_infos: Vec<_> = tracks.iter().map(desc_to_track_info).collect();
         let inner = cheetah_codec::Fmp4Muxer::new(
@@ -51,6 +67,8 @@ impl Fmp4Muxer {
     }
 
     /// Generate (or return cached) init segment: ftyp + moov.
+    ///
+    /// 生成（或返回缓存的）init 分段：ftyp + moov。
     pub fn init_segment(&mut self) -> Bytes {
         let events = self.inner.init_segment();
         match &events[0] {
@@ -60,6 +78,8 @@ impl Fmp4Muxer {
     }
 
     /// Generate a media segment: styp + moof + mdat.
+    ///
+    /// 生成媒体分段：styp + moof + mdat。
     pub fn write_segment(&mut self, samples: &[Fmp4Sample]) -> Bytes {
         let mux_samples = self.convert_samples(samples);
         let events = self.inner.write_segment(&mux_samples);
@@ -70,6 +90,8 @@ impl Fmp4Muxer {
     }
 
     /// Generate a partial segment (part) for LL-HLS: moof + mdat only (no styp).
+    ///
+    /// 为 LL-HLS 生成部分分段（part）：仅 moof + mdat（无 styp）。
     pub fn write_part(&mut self, samples: &[Fmp4Sample]) -> Bytes {
         let mux_samples = self.convert_samples(samples);
         let events = self.inner.write_part(&mux_samples);
@@ -80,10 +102,15 @@ impl Fmp4Muxer {
     }
 
     /// Current sequence number (incremented per segment).
+    ///
+    /// 当前序列号（每生成一个 segment 递增）。
     pub fn sequence_number(&self) -> u32 {
         self.inner.sequence_number()
     }
 
+    /// Convert HLS samples into codec samples (ms -> microseconds).
+    ///
+    /// 将 HLS sample 转换为 codec sample（毫秒转微秒）。
     fn convert_samples(&self, samples: &[Fmp4Sample]) -> Vec<cheetah_codec::Fmp4MuxSample> {
         samples
             .iter()
@@ -98,6 +125,14 @@ impl Fmp4Muxer {
     }
 }
 
+/// Convert an `Fmp4TrackDesc` into a codec `TrackInfo` with proper extradata.
+///
+/// The `codec_config` is stored inside the codec-specific `CodecExtradata` variant.
+/// For H.264/H.265 this is the raw avcC/hvcC box; for AAC it is the AudioSpecificConfig.
+///
+/// 将 `Fmp4TrackDesc` 转换为 codec `TrackInfo` 并设置正确的 extradata。
+/// codec 配置存放在对应 `CodecExtradata` 变体中；
+/// H.264/H.265 为原始 avcC/hvcC box，AAC 为 AudioSpecificConfig。
 fn desc_to_track_info(desc: &Fmp4TrackDesc) -> cheetah_codec::TrackInfo {
     use cheetah_codec::track::{CodecExtradata, TrackId};
 

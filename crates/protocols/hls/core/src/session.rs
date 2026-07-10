@@ -1,7 +1,7 @@
 //! HLS core Sans-I/O state machine.
 //!
-//! Handles HTTP request routing and response generation for HLS.
-//! Does NOT manage segment creation (that's driven by the module layer feeding frames).
+//! HLS core Sans-I/O 状态机。
+//! 处理 HTTP 请求路由与响应生成，不管理分片创建（分片由模块层喂帧驱动）。
 
 use bytes::Bytes;
 
@@ -9,25 +9,42 @@ use crate::error::HlsCoreError;
 use crate::ll_hls::TrackLane;
 use crate::request::{parse_hls_request, BlockingParams, HlsRequestKind, SkipMode, StreamKeyParts};
 
+/// Session identifier for an HLS playback session.
+///
+/// HLS 播放会话的标识符。
 pub type HlsSessionId = u64;
 
 /// Extracted HTTP request headers relevant to HLS.
+///
+/// 与 HLS 相关的 HTTP 请求头提取。
 #[derive(Debug, Clone, Default)]
 pub struct HlsRequestHeaders {
     /// Authorization header value (e.g., "Bearer <token>").
+    ///
+    /// Authorization 头值（例如 "Bearer <token>"）。
     pub authorization: Option<String>,
     /// User-Agent header value.
+    ///
+    /// User-Agent 头值。
     pub user_agent: Option<String>,
     /// If-None-Match header value (for conditional requests).
+    ///
+    /// If-None-Match 头值（用于条件请求）。
     pub if_none_match: Option<String>,
     /// Whether client accepts gzip encoding.
+    ///
+    /// 客户端是否接受 gzip 编码。
     pub accept_gzip: bool,
 }
 
 /// Input to the HLS core state machine.
+///
+/// HLS core 状态机的输入。
 #[derive(Debug)]
 pub enum HlsCoreInput {
     /// An HTTP request arrived.
+    ///
+    /// HTTP 请求到达。
     HttpRequest {
         method: HttpMethod,
         target: String,
@@ -35,10 +52,14 @@ pub enum HlsCoreInput {
         headers: HlsRequestHeaders,
     },
     /// Command from module layer.
+    ///
+    /// 来自模块层的命令。
     Command(HlsCoreCommand),
 }
 
 /// HTTP method (simplified for HLS — only GET and OPTIONS matter).
+///
+/// HTTP 方法（HLS 中仅 GET 与 OPTIONS 常用）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
     Get,
@@ -48,13 +69,21 @@ pub enum HttpMethod {
 }
 
 /// Commands from module to core.
+///
+/// 模块发送给 core 的命令。
 #[derive(Debug)]
 pub enum HlsCoreCommand {
     /// Provide playlist content for a pending request.
+    ///
+    /// 为待处理请求提供播放列表内容。
     SendPlaylist { connection_id: u64, content: String },
     /// Provide segment data for a pending request.
+    ///
+    /// 为待处理请求提供分片数据。
     SendSegment { connection_id: u64, data: Bytes },
     /// Report an error for a pending request.
+    ///
+    /// 报告待处理请求的错误。
     SendError {
         connection_id: u64,
         error: HlsCoreError,
@@ -62,9 +91,13 @@ pub enum HlsCoreCommand {
 }
 
 /// Output from the HLS core state machine.
+///
+/// HLS core 状态机的输出。
 #[derive(Debug)]
 pub enum HlsCoreOutput {
     /// Send an HTTP response.
+    ///
+    /// 发送 HTTP 响应。
     SendResponse {
         connection_id: u64,
         status: u16,
@@ -73,19 +106,27 @@ pub enum HlsCoreOutput {
         headers: Vec<(&'static str, String)>,
     },
     /// Event for the module layer.
+    ///
+    /// 发送给模块层的事件。
     Event(HlsCoreEvent),
 }
 
 /// Events bubbled up to the module layer.
+///
+/// 冒泡到模块层的事件。
 #[derive(Debug, Clone)]
 pub enum HlsCoreEvent {
     /// A master playlist was requested — module should assign a session UID.
+    ///
+    /// 主播放列表被请求 — 模块应分配会话 UID。
     MasterPlaylistRequested {
         connection_id: u64,
         stream_key: StreamKeyParts,
         headers: HlsRequestHeaders,
     },
     /// A media playlist was requested (non-blocking).
+    ///
+    /// 媒体播放列表被请求（非阻塞）。
     MediaPlaylistRequested {
         connection_id: u64,
         stream_key: StreamKeyParts,
@@ -94,7 +135,9 @@ pub enum HlsCoreEvent {
         rewind: bool,
         headers: HlsRequestHeaders,
     },
-    /// A blocking media playlist was requested (LL-HLS _HLS_msn/_HLS_part).
+    /// A blocking media playlist was requested (LL-HLS `_HLS_msn`/`_HLS_part`).
+    ///
+    /// 阻塞式媒体播放列表被请求（LL-HLS `_HLS_msn`/`_HLS_part`）。
     BlockingPlaylistRequested {
         connection_id: u64,
         stream_key: StreamKeyParts,
@@ -106,6 +149,8 @@ pub enum HlsCoreEvent {
         headers: HlsRequestHeaders,
     },
     /// A TS/fMP4 segment was requested.
+    ///
+    /// TS/fMP4 分片被请求。
     SegmentRequested {
         connection_id: u64,
         stream_key: StreamKeyParts,
@@ -114,6 +159,8 @@ pub enum HlsCoreEvent {
         key_token: Option<String>,
     },
     /// An fMP4 init segment was requested.
+    ///
+    /// fMP4 init 分段被请求。
     InitSegmentRequested {
         connection_id: u64,
         stream_key: StreamKeyParts,
@@ -121,6 +168,8 @@ pub enum HlsCoreEvent {
         key_token: Option<String>,
     },
     /// An LL-HLS part was requested.
+    ///
+    /// LL-HLS part 被请求。
     PartRequested {
         connection_id: u64,
         stream_key: StreamKeyParts,
@@ -129,6 +178,8 @@ pub enum HlsCoreEvent {
         key_token: Option<String>,
     },
     /// Per-track media playlist requested (demuxed LLHLS).
+    ///
+    /// 按轨道媒体播放列表被请求（解复用 LLHLS）。
     TrackMediaPlaylistRequested {
         connection_id: u64,
         stream_key: StreamKeyParts,
@@ -140,6 +191,8 @@ pub enum HlsCoreEvent {
         headers: HlsRequestHeaders,
     },
     /// Per-track init segment requested (demuxed LLHLS).
+    ///
+    /// 按轨道 init 分段被请求（解复用 LLHLS）。
     TrackInitSegmentRequested {
         connection_id: u64,
         stream_key: StreamKeyParts,
@@ -148,6 +201,8 @@ pub enum HlsCoreEvent {
         key_token: Option<String>,
     },
     /// Per-track part requested (demuxed LLHLS).
+    ///
+    /// 按轨道 part 被请求（解复用 LLHLS）。
     TrackPartRequested {
         connection_id: u64,
         stream_key: StreamKeyParts,
@@ -157,6 +212,8 @@ pub enum HlsCoreEvent {
         key_token: Option<String>,
     },
     /// Per-track segment requested (demuxed LLHLS).
+    ///
+    /// 按轨道分片被请求（解复用 LLHLS）。
     TrackSegmentRequested {
         connection_id: u64,
         stream_key: StreamKeyParts,
@@ -168,16 +225,30 @@ pub enum HlsCoreEvent {
 }
 
 /// The HLS core state machine.
+///
+/// HLS core 状态机。
+///
+/// This is a pure stateless dispatcher: each input is routed to the appropriate
+/// HTTP method or command handler, producing `HlsCoreOutput` actions. It does not
+/// store connection state or manage timers (those live in the driver/module layers).
+///
+/// 这是一个纯无状态分发器：每个输入被路由到对应的 HTTP 方法或命令处理器，
+/// 产生 `HlsCoreOutput` 动作。它不保存连接状态或管理定时器（这些在驱动/模块层）。
 pub struct HlsCore {
     _private: (),
 }
 
 impl HlsCore {
+    /// Create a new HLS core state machine.
+    ///
+    /// 创建新的 HLS core 状态机。
     pub fn new() -> Self {
         Self { _private: () }
     }
 
     /// Process an input and produce outputs.
+    ///
+    /// 处理输入并产生输出。
     pub fn handle_input(&mut self, input: HlsCoreInput) -> Vec<HlsCoreOutput> {
         match input {
             HlsCoreInput::HttpRequest {
@@ -190,6 +261,16 @@ impl HlsCore {
         }
     }
 
+    /// Handle an HTTP request: validate method, parse target, and dispatch.
+    ///
+    /// `OPTIONS` returns a CORS preflight response directly. Non-GET/HEAD methods return 405.
+    /// Valid GET/HEAD targets are parsed by `parse_hls_request` and mapped to core events.
+    /// The player page is the only path that is answered directly from the core.
+    ///
+    /// 处理 HTTP 请求：校验方法、解析目标并分派。
+    /// `OPTIONS` 直接返回 CORS 预检响应；非 GET/HEAD 方法返回 405。
+    /// 有效 GET/HEAD 目标由 `parse_hls_request` 解析并映射为 core 事件。
+    /// 播放器页面是唯一由 core 直接响应的路径。
     fn handle_http_request(
         &mut self,
         method: HttpMethod,
@@ -396,6 +477,14 @@ impl HlsCore {
         }
     }
 
+    /// Handle a module command and turn it into an HTTP response.
+    ///
+    /// `SendPlaylist` and `SendSegment` are wrapped with the appropriate MIME type and CORS
+    /// headers. `SendError` is mapped to a status code based on the `HlsCoreError` variant.
+    ///
+    /// 处理模块命令并转换为 HTTP 响应。
+    /// `SendPlaylist` 与 `SendSegment` 包装为正确的 MIME 类型与 CORS 头。
+    /// `SendError` 根据 `HlsCoreError` 变体映射为状态码。
     fn handle_command(&mut self, cmd: HlsCoreCommand) -> Vec<HlsCoreOutput> {
         match cmd {
             HlsCoreCommand::SendPlaylist {
@@ -451,6 +540,8 @@ impl Default for HlsCore {
 }
 
 /// Standard CORS headers for cross-origin HLS playback.
+///
+/// 跨域 HLS 播放的标准 CORS 头。
 fn cors_headers() -> Vec<(&'static str, String)> {
     vec![
         ("Access-Control-Allow-Origin", "*".to_string()),
@@ -470,6 +561,9 @@ fn cors_headers() -> Vec<(&'static str, String)> {
     ]
 }
 
+/// Standard CORS headers with an additional `Cache-Control` directive.
+///
+/// 带额外 `Cache-Control` 指令的标准 CORS 头。
 fn cors_headers_with_cache_control(directive: &str) -> Vec<(&'static str, String)> {
     let mut h = cors_headers();
     h.push(("Cache-Control", directive.to_string()));
@@ -477,6 +571,14 @@ fn cors_headers_with_cache_control(directive: &str) -> Vec<(&'static str, String
 }
 
 /// Generate an embedded hls.js player HTML page.
+///
+/// 生成嵌入式 hls.js 播放器 HTML 页面。
+///
+/// The stream name and playlist URL are HTML-escaped to avoid injection. The page loads
+/// hls.js from a CDN and configures low-latency playback with live sync/back-buffer settings.
+///
+/// 流名称与播放列表 URL 经过 HTML 转义以防止注入。
+/// 页面从 CDN 加载 hls.js，并配置低延迟播放、live sync 与 back-buffer。
 fn generate_player_html(stream_name: &str, playlist_url: &str) -> String {
     // Minimal HTML escape for stream_name (defense in depth; URL validator already rejects special chars)
     let safe_name = stream_name

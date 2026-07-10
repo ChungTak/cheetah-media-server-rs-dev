@@ -1,36 +1,74 @@
 //! HLS player state machine for pull scenarios.
 //!
-//! Manages playlist refresh timing, segment deduplication, and adaptive bitrate selection.
+//! HLS 拉流场景播放器状态机。
+//! 管理播放列表刷新时机、分片去重与自适应码率选择。
 
 use crate::parser::{ParsedMasterPlaylist, ParsedMediaPlaylist, ParsedVariant};
 
 /// Adaptive bitrate selection strategy.
+///
+/// 自适应码率选择策略。
 #[derive(Debug, Clone, Copy)]
 pub enum BandwidthStrategy {
+    /// Always pick the highest bandwidth variant.
+    ///
+    /// 始终选择最高码率变体。
     Highest,
+    /// Always pick the lowest bandwidth variant.
+    ///
+    /// 始终选择最低码率变体。
     Lowest,
+    /// Pick the highest variant whose bandwidth is within a safety factor of the estimate.
+    ///
+    /// 选择码率不超过估计带宽乘以安全系数（safety factor）的最高变体。
     Auto { safety_factor: f64 },
 }
 
 /// HLS player state — tracks playlist refresh, segment dedup, and ABR.
+///
+/// HLS 播放器状态 — 跟踪播放列表刷新、分片去重与 ABR。
+///
+/// Maintains the selected variant, media sequence cursor, a URI dedup set, and an
+/// EWMA bandwidth estimate. The public fields are updated by the driver as the player
+/// consumes playlists.
+///
+/// 维护已选变体、媒体序列游标、URI 去重集合与 EWMA 带宽估计。
+/// 公共字段由驱动层在播放器消费播放列表时更新。
 pub struct HlsPlayerState {
     /// Selected variant URI (from master playlist).
+    ///
+    /// 已选变体 URI（来自主播放列表）。
     pub selected_variant_uri: Option<String>,
     /// Last seen media sequence number.
+    ///
+    /// 上次看到的媒体序列号。
     pub last_sequence: i64,
     /// Set of segment URIs already downloaded (dedup).
+    ///
+    /// 已下载分片 URI 的集合（去重）。
     seen_uris: std::collections::HashSet<String>,
     /// Estimated bandwidth in bytes/sec (EWMA).
+    ///
+    /// 估计带宽（字节/秒，EWMA）。
     estimated_bandwidth: u64,
     /// Target duration from playlist (ms).
+    ///
+    /// 播放列表目标时长（毫秒）。
     pub target_duration_ms: u64,
     /// Consecutive unchanged playlist reloads.
+    ///
+    /// 连续未变化的播放列表重载次数。
     unchanged_count: u8,
     /// Whether the stream is live.
+    ///
+    /// 是否为直播流。
     pub is_live: bool,
 }
 
 impl HlsPlayerState {
+    /// Create a new player state with default live assumptions.
+    ///
+    /// 创建带有默认直播假设的新播放器状态。
     pub fn new() -> Self {
         Self {
             selected_variant_uri: None,
@@ -44,6 +82,17 @@ impl HlsPlayerState {
     }
 
     /// Select a variant from a master playlist based on bandwidth strategy.
+    ///
+    /// - `Highest` picks the maximum bandwidth variant.
+    /// - `Lowest` picks the minimum.
+    /// - `Auto` filters variants below `estimated_bandwidth * safety_factor` and picks the
+    ///   highest among those, falling back to the lowest if none qualify.
+    ///
+    /// 根据带宽策略从主播放列表中选择变体。
+    /// - `Highest` 选择最高码率变体。
+    /// - `Lowest` 选择最低码率变体。
+    /// - `Auto` 过滤掉码率超过 `estimated_bandwidth * safety_factor` 的变体，
+    ///   在符合条件的变体中选择最高码率；若无一符合则回退到最低码率。
     pub fn select_variant<'a>(
         &mut self,
         master: &'a ParsedMasterPlaylist,
@@ -72,6 +121,15 @@ impl HlsPlayerState {
     }
 
     /// Process a newly fetched media playlist. Returns new segment URIs to download.
+    ///
+    /// Updates `target_duration_ms` and `is_live`, compares the media sequence to the
+    /// previous one, and deduplicates segments by URI (ignoring query parameters). If the
+    /// seen set grows beyond 1024 entries, it is rebuilt from the current playlist to bound
+    /// memory usage.
+    ///
+    /// 处理新获取的媒体播放列表，返回需要下载的新分片 URI。
+    /// 更新 `target_duration_ms` 与 `is_live`；比较媒体序列号；按 URI 去重（忽略查询参数）。
+    /// 若 seen 集合超过 1024 条，则从当前播放列表重建以限制内存。
     pub fn on_playlist(&mut self, playlist: &ParsedMediaPlaylist) -> Vec<String> {
         self.target_duration_ms = playlist.target_duration as u64 * 1000;
         self.is_live = !playlist.end_list;
@@ -108,6 +166,14 @@ impl HlsPlayerState {
     }
 
     /// Compute the delay before next playlist refresh (ms).
+    ///
+    /// VOD streams need no refresh. For live, the delay is half the target duration after a
+    /// changed playlist, and it backs off by `unchanged_count + 1` up to a multiplier of 5
+    /// when the playlist is unchanged.
+    ///
+    /// 计算下一次播放列表刷新前的延迟（毫秒）。
+    /// VOD 不需要刷新。直播中，播放列表变化后延迟为 `target_duration_ms / 2`；
+    /// 未变化时按 `unchanged_count + 1` 退避，最大乘数为 5。
     pub fn refresh_delay_ms(&self) -> u64 {
         if !self.is_live {
             return 0; // VOD: no refresh needed
@@ -123,6 +189,12 @@ impl HlsPlayerState {
     }
 
     /// Update bandwidth estimate after a segment download.
+    ///
+    /// Computes the instantaneous byte rate and updates the EWMA with a 7/8 weight on
+    /// history and 1/8 on the new sample.
+    ///
+    /// 分片下载后更新带宽估计。
+    /// 计算瞬时字节率，并以历史 7/8、新采样 1/8 的权重更新 EWMA。
     pub fn update_bandwidth(&mut self, bytes: u64, duration_ms: u64) {
         if duration_ms == 0 {
             return;
@@ -137,11 +209,15 @@ impl HlsPlayerState {
     }
 
     /// Current estimated bandwidth (bytes/sec).
+    ///
+    /// 当前估计带宽（字节/秒）。
     pub fn bandwidth(&self) -> u64 {
         self.estimated_bandwidth
     }
 
     /// Number of consecutive unchanged playlist reloads.
+    ///
+    /// 连续未变化的播放列表重载次数。
     pub fn unchanged_count(&self) -> u8 {
         self.unchanged_count
     }
