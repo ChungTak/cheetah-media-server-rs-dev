@@ -1,4 +1,6 @@
 //! MP4 VOD module — `cheetah-sdk::Module` integration & HTTP routing.
+//!
+//! MP4 VOD 模块 —— `cheetah-sdk::Module` 集成与 HTTP 路由。
 
 use std::sync::Arc;
 
@@ -17,8 +19,14 @@ use crate::zlm_compat::{ZlmLoadMp4, ZlmSeekRecord, ZlmSetSpeed, ZlmVodCompat};
 
 const MODULE_ID: &str = "mp4";
 
+/// Factory for creating `Mp4Module` instances.
+///
+/// 创建 `Mp4Module` 实例的工厂。
 pub struct Mp4ModuleFactory;
 
+/// `ModuleFactory` implementation for MP4 VOD.
+///
+/// MP4 VOD 的 `ModuleFactory` 实现。
 impl ModuleFactory for Mp4ModuleFactory {
     fn manifest(&self) -> ModuleManifest {
         ModuleManifest {
@@ -52,6 +60,9 @@ impl ModuleFactory for Mp4ModuleFactory {
     }
 }
 
+/// MP4 VOD module state.
+///
+/// MP4 VOD 模块状态。
 pub struct Mp4Module {
     state: ModuleState,
     config: Mp4ModuleConfig,
@@ -60,7 +71,13 @@ pub struct Mp4Module {
     api: Option<Arc<VodApi>>,
 }
 
+/// `Mp4Module` constructor and helpers.
+///
+/// `Mp4Module` 构造与辅助。
 impl Mp4Module {
+    /// Create a new MP4 module instance.
+    ///
+    /// 创建新的 MP4 模块实例。
     pub fn new() -> Self {
         Self {
             state: ModuleState::Created,
@@ -72,12 +89,18 @@ impl Mp4Module {
     }
 }
 
+/// `Default` delegates to `new()`.
+///
+/// `Default` 委托给 `new()`。
 impl Default for Mp4Module {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// `Module` lifecycle and HTTP routing for MP4 VOD.
+///
+/// MP4 VOD 的 `Module` 生命周期与 HTTP 路由。
 #[async_trait]
 impl Module for Mp4Module {
     fn info(&self) -> ModuleInfo {
@@ -134,6 +157,9 @@ impl Module for Mp4Module {
         Ok(ConfigEffect::Immediate)
     }
 
+    /// Register HTTP routes for start/control/stop and ZLM compat endpoints.
+    ///
+    /// 注册 start/control/stop 及 ZLM 兼容端点的 HTTP 路由。
     fn http_routes(&self) -> Vec<HttpRouteDescriptor> {
         vec![
             HttpRouteDescriptor {
@@ -164,6 +190,9 @@ impl Module for Mp4Module {
         ]
     }
 
+    /// Return the HTTP service handler for the module.
+    ///
+    /// 返回模块的 HTTP 服务处理器。
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
         let api = self.api.as_ref()?.clone();
         let zlm = ZlmVodCompat::new(api.clone());
@@ -171,11 +200,17 @@ impl Module for Mp4Module {
     }
 }
 
+/// HTTP service implementation for VOD routes.
+///
+/// VOD 路由的 HTTP 服务实现。
 struct VodHttpService {
     api: Arc<VodApi>,
     zlm: ZlmVodCompat,
 }
 
+/// Route incoming HTTP requests to the appropriate `VodApi` or `ZlmVodCompat` handler.
+///
+/// 将入站 HTTP 请求路由到对应的 `VodApi` 或 `ZlmVodCompat` 处理器。
 #[async_trait]
 impl ModuleHttpService for VodHttpService {
     async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {

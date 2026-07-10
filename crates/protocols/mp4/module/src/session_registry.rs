@@ -1,4 +1,6 @@
 //! VOD session registry.
+//!
+//! VOD 会话注册表。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -7,6 +9,9 @@ use cheetah_mp4_driver_tokio::VodDriverHandle;
 use parking_lot::RwLock;
 
 #[derive(Debug, Clone)]
+/// Record stored in the session registry for a VOD session.
+///
+/// 会话注册表中的 VOD 会话记录。
 pub struct VodSessionRecord {
     pub session_id: String,
     pub source_uri: String,
@@ -25,12 +30,18 @@ pub struct VodSessionRecord {
     pub params: Option<String>,
 }
 
+/// In-memory registry of active VOD sessions.
+///
+/// 活跃 VOD 会话的内存注册表。
 pub struct VodSessionRegistry {
     sessions: RwLock<HashMap<String, (VodSessionRecord, Arc<VodDriverHandle>)>>,
     capacity: usize,
 }
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+/// Registry-level errors for session management.
+///
+/// 会话管理的注册表层错误。
 pub enum SessionError {
     #[error("session not found: {0}")]
     NotFound(String),
@@ -40,6 +51,9 @@ pub enum SessionError {
     CapacityExceeded(usize),
 }
 
+/// `VodSessionRegistry` constructors and accessors.
+///
+/// `VodSessionRegistry` 构造与访问。
 impl VodSessionRegistry {
     pub fn new(capacity: usize) -> Self {
         Self {

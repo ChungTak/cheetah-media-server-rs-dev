@@ -1,8 +1,13 @@
 //! MP4 VOD module configuration.
+//!
+//! MP4 VOD 模块配置。
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Configuration for the MP4 VOD module.
+///
+/// MP4 VOD 模块配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mp4ModuleConfig {
     #[serde(default = "default_enabled")]
@@ -19,6 +24,9 @@ pub struct Mp4ModuleConfig {
     pub idle_timeout_ms: u64,
 }
 
+/// `Default` implementation for `Mp4ModuleConfig`.
+///
+/// `Mp4ModuleConfig` 的 `Default` 实现。
 impl Default for Mp4ModuleConfig {
     fn default() -> Self {
         Self {
@@ -56,6 +64,9 @@ fn default_idle_timeout_ms() -> u64 {
     15_000
 }
 
+/// `Mp4ModuleConfig` constructors and validation.
+///
+/// `Mp4ModuleConfig` 构造与校验。
 impl Mp4ModuleConfig {
     pub fn from_value(value: Value) -> Result<Self, serde_json::Error> {
         if value.is_null() {

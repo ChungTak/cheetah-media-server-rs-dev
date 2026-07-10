@@ -1,4 +1,6 @@
 //! SMS-style VOD HTTP API request/response shapes.
+//!
+//! SMS 风格 VOD HTTP API 请求/响应结构。
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -16,6 +18,9 @@ use crate::config::Mp4ModuleConfig;
 use crate::session_registry::{SessionError, VodSessionRecord, VodSessionRegistry};
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+/// Errors returned by the VOD API layer.
+///
+/// VOD API 层返回的错误。
 pub enum VodApiError {
     #[error("invalid request: {0}")]
     InvalidRequest(String),
@@ -28,6 +33,9 @@ pub enum VodApiError {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+/// Request body to start a VOD session.
+///
+/// 启动 VOD 会话的请求体。
 pub struct StartVodRequest {
     pub uri: String,
     #[serde(rename = "format", default)]
@@ -43,6 +51,9 @@ pub struct StartVodRequest {
 }
 
 #[derive(Debug, Clone, Serialize)]
+/// Response returned by `start`.
+///
+/// `start` 返回的响应。
 pub struct StartVodResponse {
     pub code: u16,
     pub msg: String,
@@ -51,6 +62,9 @@ pub struct StartVodResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+/// Request body to control a running VOD session.
+///
+/// 控制运行中 VOD 会话的请求体。
 pub struct ControlVodRequest {
     #[serde(rename = "sessionId")]
     pub session_id: String,
@@ -63,24 +77,35 @@ pub struct ControlVodRequest {
 }
 
 #[derive(Debug, Clone, Serialize)]
+/// Response returned by `control`.
+///
+/// `control` 返回的响应。
 pub struct ControlVodResponse {
     pub code: u16,
     pub msg: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
+/// Request body to stop a VOD session.
+///
+/// 停止 VOD 会话的请求体。
 pub struct StopVodRequest {
     #[serde(rename = "sessionId")]
     pub session_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
+/// Response returned by `stop`.
+///
+/// `stop` 返回的响应。
 pub struct StopVodResponse {
     pub code: u16,
     pub msg: String,
 }
 
 /// Bundles a session registry + module config for HTTP handlers.
+///
+/// 为 HTTP 处理器封装会话注册表与模块配置。
 #[derive(Clone)]
 pub struct VodApi {
     registry: Arc<VodSessionRegistry>,
@@ -94,6 +119,9 @@ pub struct VodApi {
     runtime_api: Option<Arc<dyn RuntimeApi>>,
 }
 
+/// `VodApi` constructors and request handlers.
+///
+/// `VodApi` 构造与请求处理器。
 impl VodApi {
     pub fn new(registry: Arc<VodSessionRegistry>, config: Arc<Mp4ModuleConfig>) -> Self {
         Self {
@@ -118,10 +146,16 @@ impl VodApi {
         }
     }
 
+    /// Return a clone of the session registry.
+    ///
+    /// 返回会话注册表的克隆。
     pub fn registry(&self) -> Arc<VodSessionRegistry> {
         self.registry.clone()
     }
 
+    /// Start a VOD session, optionally bridging events into the engine.
+    ///
+    /// 启动 VOD 会话，可选择将事件桥接到引擎。
     pub async fn start(&self, req: StartVodRequest) -> Result<StartVodResponse, VodApiError> {
         if req.uri.is_empty() {
             return Err(VodApiError::InvalidRequest("uri must not be empty".into()));
@@ -227,6 +261,9 @@ impl VodApi {
         })
     }
 
+    /// Send seek/pause/scale commands to a running session.
+    ///
+    /// 向运行中的会话发送 seek/pause/scale 命令。
     pub fn control(&self, req: ControlVodRequest) -> Result<ControlVodResponse, VodApiError> {
         let handle = self
             .registry
@@ -255,6 +292,9 @@ impl VodApi {
         })
     }
 
+    /// Stop a VOD session and remove it from the registry.
+    ///
+    /// 停止 VOD 会话并从注册表移除。
     pub fn stop(&self, req: StopVodRequest) -> Result<StopVodResponse, VodApiError> {
         // Send Stop *before* removing the registry record so the driver
         // task gracefully unwinds. Dropping the registry's Arc would also
@@ -270,6 +310,9 @@ impl VodApi {
         })
     }
 
+    /// Resolve a URI against the configured root, rejecting path traversal.
+    ///
+    /// 将 URI 解析到配置根目录，拒绝路径遍历。
     fn resolve_path(&self, uri: &str) -> Result<PathBuf, VodApiError> {
         // Accept ZLM-style `mp4:` / `flv:` prefixes, plus the cheetah
         // `file/` and `record/` namespace prefixes, before resolving against
@@ -290,6 +333,9 @@ impl VodApi {
     }
 }
 
+/// Generate a short hash ID for an input string.
+///
+/// 为输入字符串生成短哈希 ID。
 fn short_id(input: &str) -> String {
     use std::hash::{DefaultHasher, Hash, Hasher};
     let mut h = DefaultHasher::new();
@@ -300,6 +346,9 @@ fn short_id(input: &str) -> String {
 /// Drains driver events into engine streams so RTSP/RTMP/HTTP-FLV/WS-FLV
 /// subscribers can play the VOD source through their existing live-stream code
 /// paths. This is the cross-protocol bridge required by Phase 04.
+///
+/// 将驱动事件消耗到引擎流，使 RTSP/RTMP/HTTP-FLV/WS-FLV 订阅者可以通过现有直播流代码路径播放 VOD 源。
+/// 这是 Phase 04 要求的跨协议桥接。
 async fn bridge_events(
     mut events: VodEventStream,
     core_adapters: Arc<dyn CoreAdaptersApi>,
