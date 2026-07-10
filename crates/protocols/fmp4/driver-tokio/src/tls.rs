@@ -1,6 +1,10 @@
-//! TLS support for fMP4 driver (HTTPS/WSS).
+//! TLS support for the fMP4 driver (HTTPS/WSS).
+//!
+//! fMP4 驱动（HTTPS/WSS）的 TLS 支持。
 
 /// Load TLS certificate and key from files.
+///
+/// 从文件加载 TLS 证书与密钥。
 pub fn load_tls_config(cert_path: &str, key_path: &str) -> Result<rustls::ServerConfig, String> {
     let cert_data = std::fs::read(cert_path).map_err(|e| format!("read cert {cert_path}: {e}"))?;
     let key_data = std::fs::read(key_path).map_err(|e| format!("read key {key_path}: {e}"))?;

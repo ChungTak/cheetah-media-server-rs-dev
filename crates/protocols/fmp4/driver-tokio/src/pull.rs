@@ -1,4 +1,6 @@
 //! HTTP(S)/WS(S)-fMP4 pull client.
+//!
+//! HTTP(S)/WS(S) fMP4 拉取客户端。
 
 use std::sync::Arc;
 
@@ -9,6 +11,8 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
 /// Configuration for the pull client.
+///
+/// 拉取客户端配置。
 #[derive(Debug, Clone)]
 pub struct Fmp4PullClientConfig {
     pub url: String,
@@ -17,6 +21,8 @@ pub struct Fmp4PullClientConfig {
 }
 
 /// Events from the pull client.
+///
+/// 拉取客户端事件。
 #[derive(Debug)]
 pub enum Fmp4PullEvent {
     Bytes(Bytes),
@@ -24,6 +30,8 @@ pub enum Fmp4PullEvent {
 }
 
 /// Connect to a remote fMP4 source and return a receiver of pull events.
+///
+/// 连接远程 fMP4 源并返回拉取事件接收器。
 pub async fn connect_pull(
     config: Fmp4PullClientConfig,
 ) -> Result<tokio::sync::mpsc::Receiver<Fmp4PullEvent>, String> {
@@ -36,6 +44,9 @@ pub async fn connect_pull(
     Ok(rx)
 }
 
+/// Run the pull loop by scheme (HTTP(S) or WS(S)).
+///
+/// 按 scheme 运行拉取循环（HTTP(S) 或 WS(S)）。
 async fn run_pull(
     config: &Fmp4PullClientConfig,
     tx: &tokio::sync::mpsc::Sender<Fmp4PullEvent>,
@@ -48,6 +59,9 @@ async fn run_pull(
 }
 
 #[derive(Clone, Copy)]
+/// URL scheme variants supported by the pull client.
+///
+/// 拉取客户端支持的 URL scheme 变体。
 enum Scheme {
     Http,
     Https,
@@ -55,12 +69,21 @@ enum Scheme {
     Wss,
 }
 
+/// `Scheme` helpers.
+///
+/// `Scheme` 辅助。
 impl Scheme {
+    /// Return true if the scheme uses TLS.
+    ///
+    /// 返回该 scheme 是否使用 TLS。
     fn is_secure(self) -> bool {
         matches!(self, Scheme::Https | Scheme::Wss)
     }
 }
 
+/// Detect the URL scheme from a string prefix.
+///
+/// 从字符串前缀识别 URL scheme。
 fn detect_scheme(url: &str) -> Result<Scheme, String> {
     if url.starts_with("http://") {
         Ok(Scheme::Http)
@@ -75,9 +98,18 @@ fn detect_scheme(url: &str) -> Result<Scheme, String> {
     }
 }
 
+/// Trait alias for async TCP/TLS streams used by the pull client.
+///
+/// 拉取客户端使用的异步 TCP/TLS 流 trait 别名。
 trait AsyncStream: AsyncRead + AsyncWrite + Unpin + Send {}
+/// Blanket impl for types that satisfy `AsyncStream` bounds.
+///
+/// 为符合 `AsyncStream` 约束的类型提供统一实现。
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> AsyncStream for T {}
 
+/// Connect a TCP socket and optionally wrap it with TLS.
+///
+/// 连接 TCP 套接字，并可选择用 TLS 包装。
 async fn connect_stream(
     host: &str,
     port: u16,
@@ -101,6 +133,9 @@ async fn connect_stream(
     Ok(Box::new(tls))
 }
 
+/// Build a TLS connector with optional insecure certificate verification.
+///
+/// 构建可选不安全证书校验的 TLS 连接器。
 fn tls_connector(insecure: bool) -> TlsConnector {
     let config = if insecure {
         rustls::ClientConfig::builder()
@@ -117,6 +152,9 @@ fn tls_connector(insecure: bool) -> TlsConnector {
     TlsConnector::from(Arc::new(config))
 }
 
+/// Pull fMP4 data over HTTP(S) with chunked or raw body handling.
+///
+/// 通过 HTTP(S) 拉取 fMP4 数据，支持分块或原始体。
 async fn run_http_pull(
     config: &Fmp4PullClientConfig,
     scheme: Scheme,
@@ -176,6 +214,9 @@ async fn run_http_pull(
     }
 }
 
+/// Read HTTP chunked transfer encoding and emit chunks as events.
+///
+/// 读取 HTTP 分块传输编码并将每个 chunk 作为事件发出。
 async fn read_chunked_body(
     stream: &mut Box<dyn AsyncStream>,
     tx: &tokio::sync::mpsc::Sender<Fmp4PullEvent>,
@@ -263,6 +304,9 @@ async fn read_chunked_body(
     }
 }
 
+/// Read the HTTP body as a stream of fixed-size buffers.
+///
+/// 以固定大小缓冲区流式读取 HTTP 体。
 async fn read_raw_body(
     stream: &mut Box<dyn AsyncStream>,
     tx: &tokio::sync::mpsc::Sender<Fmp4PullEvent>,
@@ -292,6 +336,9 @@ async fn read_raw_body(
     }
 }
 
+/// Pull fMP4 data over WebSocket(S) with RFC 6455 frame handling.
+///
+/// 通过 WebSocket(S) 拉取 fMP4 数据，处理 RFC 6455 帧。
 async fn run_ws_pull(
     config: &Fmp4PullClientConfig,
     scheme: Scheme,
@@ -471,6 +518,9 @@ async fn run_ws_pull(
     }
 }
 
+/// Build a masked WebSocket client frame with the given opcode and payload.
+///
+/// 用指定 opcode 与负载构建带 mask 的 WebSocket 客户端帧。
 fn build_ws_client_frame(opcode: u8, data: &[u8]) -> Vec<u8> {
     let len = data.len();
     let mut mask_key = [0u8; 4];
@@ -493,6 +543,9 @@ fn build_ws_client_frame(opcode: u8, data: &[u8]) -> Vec<u8> {
     frame
 }
 
+/// Compute the RFC 6455 `Sec-WebSocket-Accept` key.
+///
+/// 计算 RFC 6455 `Sec-WebSocket-Accept` key。
 fn compute_ws_accept_key(client_key: &str) -> String {
     use sha1::Digest;
     const MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
@@ -503,6 +556,9 @@ fn compute_ws_accept_key(client_key: &str) -> String {
     base64::Engine::encode(&base64::engine::general_purpose::STANDARD, digest)
 }
 
+/// Parse an http/https/ws/wss URL into (host, port, path).
+///
+/// 将 http/https/ws/wss URL 解析为 (host, port, path)。
 fn parse_url(url: &str) -> Result<(String, u16, String), String> {
     // Strip scheme
     let without_scheme = url
@@ -533,6 +589,9 @@ fn parse_url(url: &str) -> Result<(String, u16, String), String> {
     Ok((host, port, path.to_string()))
 }
 
+/// Insecure TLS certificate verifier that accepts any server certificate.
+///
+/// 不安全的 TLS 证书校验器，接受任何服务器证书。
 #[derive(Debug)]
 struct NoVerifier;
 
