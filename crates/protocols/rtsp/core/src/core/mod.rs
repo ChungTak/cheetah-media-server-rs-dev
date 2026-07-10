@@ -166,24 +166,25 @@ impl RtspCore {
             return Ok(Vec::new());
         }
 
-        let mut out = Vec::new();
         match input {
             CoreInput::Bytes(bytes) => {
                 self.limits
                     .validate_buffer_growth(self.buffer.len(), bytes.len())?;
                 self.buffer.extend_from_slice(&bytes);
+                let mut out = Vec::new();
                 self.drain_messages(&mut out)?;
+                Ok(out)
             }
             CoreInput::Command(command) => {
+                let mut out = Vec::with_capacity(1);
                 self.apply_command(command, &mut out)?;
+                Ok(out)
             }
             CoreInput::PeerClosed => {
-                out.push(CoreOutput::Event(RtspEvent::PeerClosed));
                 self.closed = true;
+                Ok(vec![CoreOutput::Event(RtspEvent::PeerClosed)])
             }
         }
-
-        Ok(out)
     }
 
     fn drain_messages(&mut self, out: &mut Vec<CoreOutput>) -> Result<(), RtspCoreError> {
