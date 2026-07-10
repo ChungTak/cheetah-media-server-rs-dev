@@ -1,4 +1,6 @@
 //! RTP module factory and implementation.
+//!
+//! RTP 模块工厂与实现。
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -28,8 +30,14 @@ use crate::config::{RtpClientJobConfig, RtpModuleConfig};
 
 const MODULE_ID: &str = "rtp";
 
+/// Factory for creating RTP modules.
+///
+/// RTP 模块工厂。
 pub struct RtpModuleFactory;
 
+/// `RtpModuleFactory` implementation.
+///
+/// `RtpModuleFactory` 实现。
 impl ModuleFactory for RtpModuleFactory {
     fn manifest(&self) -> ModuleManifest {
         ModuleManifest {
@@ -65,6 +73,9 @@ impl ModuleFactory for RtpModuleFactory {
     }
 }
 
+/// RTP module runtime state.
+///
+/// RTP 模块运行时状态。
 pub struct RtpModule {
     state: ModuleState,
     config: RtpModuleConfig,
@@ -78,7 +89,13 @@ pub struct RtpModule {
     client_targets: Arc<Mutex<HashMap<String, Vec<String>>>>,
 }
 
+/// `RtpModule` constructor.
+///
+/// `RtpModule` 构造器。
 impl RtpModule {
+    /// Create a new RTP module instance.
+    ///
+    /// 创建新的 RTP 模块实例。
     pub fn new() -> Self {
         Self {
             state: ModuleState::Created,
@@ -92,12 +109,18 @@ impl RtpModule {
     }
 }
 
+/// `Default` forward to `RtpModule::new`.
+///
+/// `Default` 转发到 `RtpModule::new`。
 impl Default for RtpModule {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// `Module` lifecycle and HTTP control API implementation for RTP.
+///
+/// RTP 的 `Module` 生命周期与 HTTP 控制 API 实现。
 #[async_trait]
 impl Module for RtpModule {
     fn info(&self) -> ModuleInfo {
@@ -316,6 +339,9 @@ impl Module for RtpModule {
     }
 }
 
+/// Per-session state for an RTP ingress publisher.
+///
+/// RTP 入站发布者的每个会话状态。
 struct ActiveIngressSession {
     _lease: PublishLease,
     sink: Box<dyn PublisherSink>,
@@ -327,6 +353,9 @@ struct ActiveIngressSession {
     publisher_ready: bool,
 }
 
+/// Drive the RTP driver event loop, translating ingress events into engine publishes.
+///
+/// 驱动 RTP 驱动事件循环，将入站事件转换为引擎发布。
 async fn run_ingress_worker(
     ctx: EngineContext,
     handle: Arc<RtpDriverHandle>,
@@ -424,6 +453,9 @@ async fn run_ingress_worker(
     }
 }
 
+/// Parse `session_key` into a `StreamKey` (namespace/path), defaulting to `live`.
+///
+/// 将 `session_key` 解析为 `StreamKey`（命名空间/路径），默认命名空间为 `live`。
 fn parse_session_key(key: &str) -> StreamKey {
     if let Some(pos) = key.find('/') {
         let (ns, path) = key.split_at(pos);
@@ -433,6 +465,9 @@ fn parse_session_key(key: &str) -> StreamKey {
     }
 }
 
+/// Supervise a configured RTP pull job with exponential retry backoff.
+///
+/// 以指数退避重试监督配置的 RTP 拉流任务。
 async fn run_pull_job_supervisor(
     ctx: EngineContext,
     handle: Arc<RtpDriverHandle>,
@@ -486,6 +521,9 @@ async fn run_pull_job_supervisor(
     }
 }
 
+/// HTTP control API for the RTP module.
+///
+/// RTP 模块的 HTTP 控制 API。
 struct RtpHttpService {
     engine: EngineContext,
     /// Shared with `RtpModule`. Populated by `start()` and read on every HTTP request; if
@@ -500,7 +538,13 @@ struct RtpHttpService {
     module_cancel: CancellationToken,
 }
 
+/// `RtpHttpService` helpers.
+///
+/// `RtpHttpService` 辅助。
 impl RtpHttpService {
+    /// Retrieve the driver handle, returning `Unavailable` if not started.
+    ///
+    /// 获取驱动句柄；若未启动则返回 `Unavailable`。
     fn driver(&self) -> Result<Arc<RtpDriverHandle>, SdkError> {
         self.driver_handle
             .lock()
@@ -509,6 +553,9 @@ impl RtpHttpService {
     }
 }
 
+/// `ModuleHttpService` implementation for RTP REST endpoints.
+///
+/// RTP REST 端点的 `ModuleHttpService` 实现。
 #[async_trait]
 impl ModuleHttpService for RtpHttpService {
     async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
@@ -909,6 +956,9 @@ impl ModuleHttpService for RtpHttpService {
     }
 }
 
+/// Parse SMS/ZLM-style `socketType` field into a normalized string.
+///
+/// 将 SMS/ZLM 风格的 `socketType` 字段解析为规范字符串。
 fn parse_socket_type(val: &serde_json::Value) -> Option<String> {
     match val {
         serde_json::Value::String(s) => Some(s.clone()),
@@ -928,6 +978,9 @@ fn parse_socket_type(val: &serde_json::Value) -> Option<String> {
     }
 }
 
+/// Parse `transportMode` string or numeric value into `RtpTransportMode`.
+///
+/// 将 `transportMode` 字符串或数字值解析为 `RtpTransportMode`。
 fn parse_transport_mode(val: &serde_json::Value) -> Option<RtpTransportMode> {
     match val {
         serde_json::Value::String(s) => match s.to_lowercase().as_str() {
@@ -952,6 +1005,9 @@ fn parse_transport_mode(val: &serde_json::Value) -> Option<RtpTransportMode> {
     }
 }
 
+/// Parse `payloadType` string or numeric value into `RtpPayloadMode`.
+///
+/// 将 `payloadType` 字符串或数字值解析为 `RtpPayloadMode`。
 fn parse_payload_mode(val: &serde_json::Value) -> Option<RtpPayloadMode> {
     match val {
         serde_json::Value::String(s) => match s.to_lowercase().as_str() {
@@ -970,6 +1026,8 @@ fn parse_payload_mode(val: &serde_json::Value) -> Option<RtpPayloadMode> {
 /// Resolve the canonical `(app, stream)` pair from an inbound REST body, accepting all the
 /// alias spellings used by SMS / ZLM / ABL deployments. Returns `None` if no stream can be
 /// identified at all (caller should produce an `InvalidArgument` error in that case).
+///
+/// 从 REST 请求体中解析规范 `(app, stream)` 对，兼容 SMS/ZLM/ABL 的多种字段别名。
 fn extract_app_stream_aliases(body: &serde_json::Value) -> (String, Option<String>) {
     let app = body
         .get("appName")
@@ -1033,6 +1091,8 @@ fn extract_app_stream_aliases(body: &serde_json::Value) -> (String, Option<Strin
 /// Accepts string aliases (`tcp_active`, `tcp_passive`, `udp_active`, `udp_passive`,
 /// `voice_talk`) and ZLM numeric values (0=tcp_active, 1=udp_active, 2=tcp_passive,
 /// 3=udp_passive, 4=voice_talk).
+///
+/// 解析 SMS/ZLM 风格的 `conType` 字段。
 fn parse_connection_type(val: &serde_json::Value) -> Option<RtpConnectionType> {
     match val {
         serde_json::Value::String(s) => match s.to_lowercase().as_str() {
@@ -1065,6 +1125,8 @@ fn parse_connection_type(val: &serde_json::Value) -> Option<RtpConnectionType> {
 /// - boolean: true => OnlyAudio, false => All
 /// - integer 0/1: 1 => OnlyAudio, 0 => All
 /// - string `audio`/`video`/`all`
+///
+/// 将 `onlyAudio` JSON 字段解析为 `RtpTrackFilter`。
 fn parse_only_audio_to_filter(val: &serde_json::Value) -> RtpTrackFilter {
     match val {
         serde_json::Value::Bool(true) => RtpTrackFilter::OnlyAudio,
@@ -1085,6 +1147,9 @@ fn parse_only_audio_to_filter(val: &serde_json::Value) -> RtpTrackFilter {
 #[allow(dead_code)]
 fn _parse_payload_mode_replaced_marker_to_avoid_dup() {}
 
+/// Wait for a stream to appear in the engine, respecting timeout and cancellation.
+///
+/// 等待引擎中的流出现，遵守超时与取消。
 async fn wait_for_stream(
     ctx: &EngineContext,
     stream_key: &StreamKey,
@@ -1111,6 +1176,9 @@ async fn wait_for_stream(
     }
 }
 
+/// Sleep until `duration` or cancellation, returning true if cancelled.
+///
+/// 睡眠直到 `duration` 或取消，若被取消返回 true。
 async fn sleep_or_cancel(
     runtime_api: &dyn cheetah_runtime_api::RuntimeApi,
     cancel: &CancellationToken,
@@ -1129,6 +1197,9 @@ async fn sleep_or_cancel(
     }
 }
 
+/// Subscribe to an engine stream and fan out frames to one or more RTP target sessions.
+///
+/// 订阅引擎流并将每帧扇出到一个或多个 RTP 目标会话。
 async fn run_egress_session(
     engine: EngineContext,
     driver_handle: Arc<RtpDriverHandle>,

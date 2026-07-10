@@ -1,8 +1,13 @@
 //! RTP module configuration.
+//!
+//! RTP 模块配置。
 
 use cheetah_rtp_core::RtpPayloadMode;
 use serde::{Deserialize, Serialize};
 
+/// Configuration for the RTP module.
+///
+/// RTP 模块配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RtpModuleConfig {
     pub enabled: bool,
@@ -28,44 +33,67 @@ pub struct RtpModuleConfig {
     #[serde(default = "default_true")]
     pub allow_unaligned_payload: bool,
     /// Video RTP MTU in bytes. Default 1400 to leave room for IP/UDP headers.
+    ///
+    /// 视频 RTP MTU（字节）。默认 1400，为 IP/UDP 头留出空间。
     #[serde(default = "default_video_mtu")]
     pub video_mtu: usize,
     /// Audio RTP MTU in bytes. Defaults to a smaller value to keep audio packets small.
+    ///
+    /// 音频 RTP MTU（字节）。默认较小，以保持音频包较小。
     #[serde(default = "default_audio_mtu")]
     pub audio_mtu: usize,
     /// Maximum RTP send rate in KB/s applied at the egress layer. 0 disables the cap.
+    ///
+    /// 出站层 RTP 最大发送速率（KB/s）。0 表示不限制。
     #[serde(default)]
     pub max_rtp_kb: u32,
     /// G711 RTP packet duration in milliseconds. ZLM defaults to 100ms for GB28181 interop.
+    ///
+    /// G711 RTP 包时长（毫秒）。ZLM 为 GB28181 互操作默认 100ms。
     #[serde(default = "default_g711_packet_duration_ms")]
     pub g711_packet_duration_ms: u32,
     /// UDP socket receive buffer (`SO_RCVBUF`). 0 keeps the OS default.
+    ///
+    /// UDP 套接字接收缓冲区（SO_RCVBUF）。0 保持 OS 默认。
     #[serde(default = "default_udp_recv_buffer")]
     pub udp_recv_buffer: usize,
     /// Bounded ingress frame buffer size used while waiting for publish auth (ZLM
     /// `RtpProcess` behaviour). 0 disables the cache and starts publishing immediately.
+    ///
+    /// 等待发布授权时使用的有界入站帧缓存（ZLM `RtpProcess` 行为）。0 表示禁用缓存并立即发布。
     #[serde(default = "default_publish_frame_cache")]
     pub publish_frame_cache_frames: usize,
     /// Persist raw RTP payload to disk for debugging purposes (ABL `nSaveGB28181Rtp` /
     /// `save_gb28181_rtp`). Path defaults to OS temp dir / `cheetah_rtp/{session}.rtp` when
     /// enabled. Disabled by default in production.
+    ///
+    /// 将原始 RTP 负载落盘用于调试（ABL `nSaveGB28181Rtp`）。生产环境默认禁用。
     #[serde(default)]
     pub save_debug_payload: bool,
     /// Default TCP framing applied when reading inbound TCP RTP traffic (`auto`, `two_byte`,
     /// `interleaved_4byte`). Defaults to `auto`.
+    ///
+    /// 读取入站 TCP RTP 时使用的默认分帧模式（auto/two_byte/interleaved_4byte）。默认 `auto`。
     #[serde(default = "default_tcp_header_type")]
     pub tcp_header_type: String,
     /// Initial guess for the maximum RTP packet size; the driver may grow this up to
     /// `max_rtp_len_cap` as it observes larger I-frames.
+    ///
+    /// RTP 包最大尺寸的初始猜测值；驱动在观察到更大的 I 帧时可增长到 `max_rtp_len_cap`。
     #[serde(default = "default_max_rtp_len_initial")]
     pub max_rtp_len_initial: usize,
     /// Hard upper bound for the dynamic `nMaxRtpLength` learner.
+    ///
+    /// 动态 `nMaxRtpLength` 学习器的硬上限。
     #[serde(default = "default_max_rtp_len_cap")]
     pub max_rtp_len_cap: usize,
     #[serde(default)]
     pub pull_jobs: Vec<RtpClientJobConfig>,
 }
 
+/// Configuration for a pull/egress RTP client job.
+///
+/// 拉流/出站 RTP 客户端任务配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RtpClientJobConfig {
     pub name: String,
@@ -123,6 +151,9 @@ impl RtpModuleConfig {
         serde_json::from_value(value)
     }
 
+    /// Validate the RTP module config and return any errors as a single string.
+    ///
+    /// 校验 RTP 模块配置，并将错误合并为一个字符串返回。
     pub fn validate(&self) -> Result<(), String> {
         let mut errors = Vec::new();
 
@@ -190,67 +221,122 @@ impl RtpModuleConfig {
     }
 }
 
+/// Default write queue capacity for RTP sockets.
+///
+/// RTP 套接字默认写队列容量。
 fn default_write_queue_capacity() -> usize {
     256
 }
+/// Default TCP/UDP read buffer size.
+///
+/// 默认 TCP/UDP 读缓冲区大小。
 fn default_read_buffer_size() -> usize {
     65536
 }
+/// Default maximum reassembly bytes for the RTP depacketizer.
+///
+/// RTP 拆包重组缓冲区默认最大值。
 fn default_max_reassembly_bytes() -> usize {
     4 * 1024 * 1024
 }
+/// Default maximum number of tracks to publish.
+///
+/// 默认最大发布轨道数。
 fn default_max_tracks() -> usize {
     32
 }
+/// Default session idle timeout in milliseconds.
+///
+/// 默认会话空闲超时（毫秒）。
 fn default_idle_timeout_ms() -> u64 {
     15000
 }
+/// Default RTP payload mode.
+///
+/// 默认 RTP 负载模式。
 fn default_payload_mode() -> RtpPayloadMode {
     RtpPayloadMode::Ps
 }
+/// Default `true` for serde `#[serde(default)]`.
+///
+/// 用于 serde `#[serde(default)]` 的默认 `true`。
 fn default_true() -> bool {
     true
 }
+/// Default retry backoff for pull jobs.
+///
+/// 拉流任务默认重试退避（毫秒）。
 fn default_retry_backoff_ms() -> u64 {
     500
 }
+/// Default maximum retry backoff for pull jobs.
+///
+/// 拉流任务默认最大重试退避（毫秒）。
 fn default_max_retry_backoff_ms() -> u64 {
     5000
 }
 
+/// Default video RTP MTU.
+///
+/// 默认视频 RTP MTU。
 fn default_video_mtu() -> usize {
     1400
 }
 
+/// Default audio RTP MTU.
+///
+/// 默认音频 RTP MTU。
 fn default_audio_mtu() -> usize {
     600
 }
 
+/// Default G711 packet duration in milliseconds.
+///
+/// 默认 G711 包时长（毫秒）。
 fn default_g711_packet_duration_ms() -> u32 {
     100
 }
 
+/// Default UDP socket receive buffer size.
+///
+/// 默认 UDP 套接字接收缓冲区大小。
 fn default_udp_recv_buffer() -> usize {
     4 * 1024 * 1024
 }
 
+/// Default publish frame cache size.
+///
+/// 默认发布帧缓存大小。
 fn default_publish_frame_cache() -> usize {
     // 10 seconds of frames at ~30fps for a single video track. Bounded to avoid memory blowups.
+    // 以单路视频约 30fps 缓存 10 秒帧，设置上限以避免内存爆增。
     300
 }
 
+/// Default TCP framing type string.
+///
+/// 默认 TCP 分帧类型字符串。
 fn default_tcp_header_type() -> String {
     "auto".to_string()
 }
 
+/// Default initial guess for the maximum RTP packet size.
+///
+/// 默认 RTP 包最大尺寸初始猜测值。
 fn default_max_rtp_len_initial() -> usize {
     2048
 }
 
+/// Default hard upper bound for `nMaxRtpLength`.
+///
+/// 默认 `nMaxRtpLength` 硬上限。
 fn default_max_rtp_len_cap() -> usize {
     65536
 }
 
+/// Serialize `RtpPayloadMode` as a string alias.
+///
+/// 将 `RtpPayloadMode` 序列化为字符串别名。
 fn serialize_payload_mode<S>(mode: &RtpPayloadMode, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
@@ -269,6 +355,9 @@ where
     serializer.serialize_str(s)
 }
 
+/// Deserialize `RtpPayloadMode` from a string or numeric alias.
+///
+/// 从字符串或数字别名反序列化 `RtpPayloadMode`。
 fn deserialize_payload_mode<'de, D>(deserializer: D) -> Result<RtpPayloadMode, D::Error>
 where
     D: serde::Deserializer<'de>,
