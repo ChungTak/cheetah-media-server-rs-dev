@@ -1,12 +1,31 @@
 use crate::prelude::*;
 use bytes::Bytes;
 
+/// Layout of audio samples in a multi-channel frame.
+///
+/// `Interleaved` stores samples from all channels in one contiguous stream, while
+/// `Planar` keeps each channel in its own buffer. The codec layer uses this to
+/// decide whether `payload` can be interpreted as a single slice or must be split.
+///
+/// 多声道帧中音频样本的排布方式。
+///
+/// `Interleaved` 将所有声道样本连续存放；`Planar` 每个声道独立存放。
+/// codec 层据此判断 `payload` 能否作为单一切片处理还是必须拆分。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioSampleLayout {
     Interleaved,
     Planar,
 }
 
+/// Basic audio characteristics used by the codec layer and protocol modules.
+///
+/// `sample_rate` is the decoded sample rate in Hz, `channels` is the channel count,
+/// and `samples_per_frame` is the expected number of samples per codec frame.
+///
+/// codec 层和协议模块使用的基本音频特征。
+///
+/// `sample_rate` 为解码后的采样率（Hz），`channels` 为声道数，
+/// `samples_per_frame` 为每个编解码器帧的预期样本数。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AudioParams {
     pub sample_rate: u32,
@@ -14,6 +33,16 @@ pub struct AudioParams {
     pub samples_per_frame: u16,
 }
 
+/// MPEG-4 Audio Specific Config (ASC) for AAC.
+///
+/// Encapsulates the audio object type, sampling frequency index and channel
+/// configuration, which are the minimum fields needed to parse or build an AAC
+/// elementary stream.
+///
+/// AAC 的 MPEG-4 Audio Specific Config（ASC）。
+///
+/// 封装音频对象类型、采样频率索引和声道配置，是解析或构建 AAC 基本流所需的
+/// 最小字段集合。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AacAudioSpecificConfig {
     pub audio_object_type: u8,
@@ -22,6 +51,14 @@ pub struct AacAudioSpecificConfig {
 }
 
 impl AacAudioSpecificConfig {
+    /// Parse the first 2 bytes of an AudioSpecificConfig.
+    ///
+    /// The 2-byte layout is the most common configuration header; it does not
+    /// support extension sampling frequencies or `channel_configuration == 0`.
+    ///
+    /// 解析 AudioSpecificConfig 的前 2 字节。
+    ///
+    /// 2 字节布局是最常见的配置头；不支持扩展采样频率和 `channel_configuration == 0`。
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < 2 {
             return None;
@@ -38,6 +75,9 @@ impl AacAudioSpecificConfig {
         })
     }
 
+    /// Serialize the ASC into the canonical 2-byte header.
+    ///
+    /// 将 ASC 序列化为标准的 2 字节头。
     pub fn to_bytes(self) -> [u8; 2] {
         let b0 = (self.audio_object_type << 3) | ((self.sampling_frequency_index >> 1) & 0x07);
         let b1 = ((self.sampling_frequency_index & 0x01) << 7)
@@ -46,6 +86,15 @@ impl AacAudioSpecificConfig {
     }
 }
 
+/// Convert an AAC `channel_configuration` value to a channel count.
+///
+/// Values follow ISO/IEC 14496-3: 1=mono, 2=stereo, 3-7=3.0-7.1, 11=6.1,
+/// 12/14=7.1 variants. Unsupported values return `None`.
+///
+/// 将 AAC `channel_configuration` 值转换为声道数。
+///
+/// 值遵循 ISO/IEC 14496-3：1=单声道、2=立体声、3-7=3.0-7.1、11=6.1、
+/// 12/14=7.1 变体。不支持的值返回 `None`。
 pub fn aac_channel_count_from_config(channel_configuration: u8) -> Option<u8> {
     match channel_configuration {
         1 => Some(1),
@@ -61,6 +110,16 @@ pub fn aac_channel_count_from_config(channel_configuration: u8) -> Option<u8> {
     }
 }
 
+/// Extract channel count from a full MPEG-4 AudioSpecificConfig bitstream.
+///
+/// Reads the audio object type, sampling frequency, and channel configuration. If the
+/// value is 0 or uses a `channel_configuration` not in the simple table, it falls back
+/// to the Program Config Element (PCE) parsing for explicit speaker layouts.
+///
+/// 从完整 MPEG-4 AudioSpecificConfig 比特流中提取声道数。
+///
+/// 读取音频对象类型、采样频率和声道配置。若值为 0 或 `channel_configuration` 不在
+/// 简单表中，则回退到 Program Config Element（PCE）解析显式扬声器布局。
 pub fn aac_channel_count_from_asc(bytes: &[u8]) -> Option<u8> {
     let mut reader = BitReader::new(bytes);
     let mut audio_object_type = read_aac_audio_object_type(&mut reader)?;
@@ -94,6 +153,15 @@ pub fn aac_channel_count_from_asc(bytes: &[u8]) -> Option<u8> {
     parse_ga_specific_config_channel_count(&mut reader, audio_object_type)
 }
 
+/// Parsed fields of an AAC ADTS (Audio Data Transport Stream) fixed header.
+///
+/// ADTS encapsulates raw AAC frames with a 7-byte header that carries the profile,
+/// sample rate index, channel configuration and frame length needed for demuxing.
+///
+/// AAC ADTS 固定头解析字段。
+///
+/// ADTS 用 7 字节头封装原始 AAC 帧，包含解复用所需的 profile、采样率索引、
+/// 声道配置和帧长度。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AdtsHeader {
     pub profile: u8,
@@ -103,6 +171,14 @@ pub struct AdtsHeader {
 }
 
 impl AdtsHeader {
+    /// Parse a 7-byte ADTS fixed header.
+    ///
+    /// Validates the sync word (`0xFFF`) and extracts the profile, sampling frequency
+    /// index, channel configuration and full frame length.
+    ///
+    /// 解析 7 字节 ADTS 固定头。
+    ///
+    /// 校验同步字（`0xFFF`）并提取 profile、采样率索引、声道配置和完整帧长度。
     pub fn parse(data: &[u8]) -> Option<Self> {
         if data.len() < 7 {
             return None;
@@ -124,6 +200,16 @@ impl AdtsHeader {
         })
     }
 
+    /// Build the 7-byte ADTS fixed header for this frame.
+    ///
+    /// The channel configuration is split across two bytes and must be saturated to
+    /// 3 bits because ADTS can only represent values 0..=7. The `frame_length` field
+    /// includes the 7 header bytes plus the raw AAC payload.
+    ///
+    /// 为当前帧构建 7 字节 ADTS 固定头。
+    ///
+    /// 声道配置跨两个字节拆分，且必须饱和到 3 位，因为 ADTS 只能表示 0..=7。
+    /// `frame_length` 字段包含 7 字节头加原始 AAC 负载。
     pub fn build(self) -> [u8; 7] {
         let mut out = [0u8; 7];
         out[0] = 0xff;
@@ -152,6 +238,16 @@ impl AdtsHeader {
     }
 }
 
+/// Wrap a raw AAC frame with an ADTS header derived from an ASC.
+///
+/// Computes the ADTS profile from the ASC audio object type (`profile = AOT - 1`)
+/// and uses the ASC sample rate and channel configuration. The frame length is capped
+/// at `u16::MAX` to avoid malformed headers.
+///
+/// 用从 ASC 派生的 ADTS 头包装原始 AAC 帧。
+///
+/// ADTS profile 由 ASC 音频对象类型计算（`profile = AOT - 1`），
+/// 并使用 ASC 采样率和声道配置。帧长度限制在 `u16::MAX` 以内以避免畸形头。
 pub fn adts_wrap(raw_aac: &[u8], asc: AacAudioSpecificConfig) -> Bytes {
     let frame_len = raw_aac.len().saturating_add(7).min(usize::from(u16::MAX)) as u16;
     let header = AdtsHeader {
@@ -167,6 +263,14 @@ pub fn adts_wrap(raw_aac: &[u8], asc: AacAudioSpecificConfig) -> Bytes {
     Bytes::from(out)
 }
 
+/// Strip the ADTS header from a frame and return the header plus raw payload.
+///
+/// Verifies that the declared frame length is at least 7 bytes and fits within the
+/// provided buffer before returning the payload slice.
+///
+/// 从帧中剥离 ADTS 头并返回头和原始负载。
+///
+/// 在返回负载切片前，校验声明的帧长度至少为 7 字节且不超过提供的缓冲区。
 pub fn adts_strip(frame: &[u8]) -> Option<(AdtsHeader, &[u8])> {
     let header = AdtsHeader::parse(frame)?;
     if usize::from(header.frame_length) < 7 || frame.len() < usize::from(header.frame_length) {

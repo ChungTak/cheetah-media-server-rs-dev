@@ -2,6 +2,9 @@ use crate::prelude::*;
 use crate::{AVFrame, CodecId, MediaKind, Timebase};
 use alloc::collections::VecDeque;
 
+/// Rounds an integer division away from zero to avoid systematic bias.
+///
+/// 将整数除法从零方向舍入，避免系统性偏差。
 fn round_half_away_from_zero(value: i128, divisor: i128) -> i128 {
     let half = divisor / 2;
     if value >= 0 {
@@ -11,6 +14,9 @@ fn round_half_away_from_zero(value: i128, divisor: i128) -> i128 {
     }
 }
 
+/// Convert a value in `tb` ticks to milliseconds, rounding away from zero.
+///
+/// 将 `tb` 刻度值转换为毫秒，从零方向舍入。
 fn timebase_value_to_millis(tb: Timebase, value: i64) -> i64 {
     if value == 0 {
         return 0;
@@ -21,6 +27,14 @@ fn timebase_value_to_millis(tb: Timebase, value: i64) -> i64 {
     round_half_away_from_zero(scaled, den) as i64
 }
 
+/// Clamp a millisecond value to the unsigned 32-bit RTMP timestamp range.
+///
+/// Negative values are clamped to 0 and values above `u32::MAX` are clamped to
+/// `u32::MAX`.
+///
+/// 将毫秒值限制到 RTMP 无符号 32 位时间戳范围。
+///
+/// 负值限制为 0，超过 `u32::MAX` 限制为 `u32::MAX`。
 pub fn millis_to_rtmp_timestamp_ms(millis: i64) -> u32 {
     if millis <= 0 {
         return 0;
@@ -28,15 +42,30 @@ pub fn millis_to_rtmp_timestamp_ms(millis: i64) -> u32 {
     millis.min(i64::from(u32::MAX)) as u32
 }
 
+/// Convert a decode timestamp to the RTMP 32-bit millisecond timestamp.
+///
+/// 将解码时间戳转换为 RTMP 32 位毫秒时间戳。
 pub fn dts_to_rtmp_timestamp_ms(dts: i64, timebase: Timebase) -> u32 {
     let dts_ms = timebase_value_to_millis(timebase, dts);
     millis_to_rtmp_timestamp_ms(dts_ms)
 }
 
+/// Convenience wrapper that extracts the RTMP timestamp from a frame.
+///
+/// 从帧中提取 RTMP 时间戳的便捷包装。
 pub fn frame_dts_to_rtmp_timestamp_ms(frame: &AVFrame) -> u32 {
     dts_to_rtmp_timestamp_ms(frame.dts, frame.timebase)
 }
 
+/// Compute the RTMP video composition time offset (CTS) in milliseconds.
+///
+/// CTS is `pts_ms - dts_ms` clamped to the signed 24-bit range. Negative values are
+/// valid for B-frames; the clamp prevents overflow on extreme inputs.
+///
+/// 计算 RTMP 视频合成时间偏移（CTS），单位为毫秒。
+///
+/// CTS 为 `pts_ms - dts_ms`，限制在有符号 24 位范围。负值对 B 帧有效；
+/// 钳制防止极端输入溢出。
 pub fn frame_composition_time_ms(frame: &AVFrame) -> i32 {
     let pts_ms = timebase_value_to_millis(frame.timebase, frame.pts);
     let dts_ms = timebase_value_to_millis(frame.timebase, frame.dts);
@@ -53,6 +82,15 @@ pub fn select_egress_timestamps(_media_kind: MediaKind, pts: i64, dts: i64) -> (
     (dts, pts)
 }
 
+/// Convert a media timestamp to RTP clock-rate ticks.
+///
+/// Prefers `primary` (DTS) over `secondary` (PTS) when the primary is non-negative.
+/// The result is a 32-bit unsigned value wrapped at the RTP timestamp boundary.
+///
+/// 将媒体时间戳转换为 RTP 时钟率刻度。
+///
+/// 当 `primary`（DTS）非负时优先使用 `primary` 而非 `secondary`（PTS）。
+/// 结果为 32 位无符号值，按 RTP 时间戳边界回绕。
 pub fn media_ts_to_rtp_ticks(
     primary: i64,
     secondary: i64,
@@ -83,11 +121,29 @@ pub fn media_ts_to_rtp_ticks(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Result of attempting to repair a non-monotonic timestamp.
+///
+/// `timestamp` is the value to use, and `repaired` indicates whether it was
+/// adjusted to maintain monotonicity.
+///
+/// 尝试修复非单调时间戳的结果。
+///
+/// `timestamp` 为应使用的值，`repaired` 表示是否为保持单调性而调整。
 pub struct TimestampRepairResult {
     pub timestamp: u32,
     pub repaired: bool,
 }
 
+/// Repair a raw timestamp to preserve monotonic order.
+///
+/// If the raw timestamp equals the last one, or is a small backward jump (within
+/// `backward_repair_threshold`), it is bumped to `last + 1`. Large backward jumps
+/// and genuine wraparound are left unchanged so they can be interpreted as resets.
+///
+/// 修复 raw 时间戳以保持单调顺序。
+///
+/// 若 raw 时间戳等于上一个，或为较小向后跳变（在 `backward_repair_threshold` 内），
+/// 则将其调整为 `last + 1`。大向后跳变和真实回绕保持不变，以便解释为重置。
 pub fn repair_monotonic_timestamp(
     raw_timestamp: u32,
     last_timestamp: Option<u32>,
@@ -122,10 +178,25 @@ pub fn repair_monotonic_timestamp(
     }
 }
 
+/// Decides whether a timestamp repair should be sampled for logging/metrics.
+///
+/// Samples the first three repairs, then every power-of-two and every 1024th,
+/// to avoid log spam while keeping visibility.
+///
+/// 判断是否应该对时间戳修复进行采样以用于日志/指标。
+///
+/// 前三次修复采样，之后每个 2 的幂和每 1024 次采样，避免日志风暴同时保持可见性。
 pub fn should_sample_timestamp_repair(repair_count: u64) -> bool {
     repair_count <= 3 || repair_count.is_power_of_two() || repair_count.is_multiple_of(1024)
 }
 
+/// Determine if a counter has crossed or repeated a sampling threshold.
+///
+/// Emits once at the threshold and then every multiple of it.
+///
+/// 判断计数器是否跨越或重复采样阈值。
+///
+/// 在阈值处触发一次，之后每达到其倍数触发一次。
 pub fn should_emit_alert_threshold(count: u64, threshold: u64) -> bool {
     threshold > 0 && count >= threshold && (count == threshold || count.is_multiple_of(threshold))
 }
@@ -141,6 +212,9 @@ pub struct AvSyncAligner {
 }
 
 impl AvSyncAligner {
+    /// Create a new aligner with no epoch observed.
+    ///
+    /// 创建未观察到 epoch 的新 aligner。
     pub fn new() -> Self {
         Self {
             video_epoch_us: None,
@@ -152,6 +226,14 @@ impl AvSyncAligner {
 
     /// Record the first frame's DTS for each media kind. Once both are known,
     /// compute the sync offset.
+    /// Record the first frame for each media kind to compute the A/V offset.
+    ///
+    /// Once both video and audio epochs are known, the offset is `audio - video`
+    /// and the aligner is considered synced.
+    ///
+    /// 记录每种媒体类型的首帧以计算音视频偏移。
+    ///
+    /// 一旦已知视频和音频 epoch，偏移为 `audio - video`，aligner 视为已同步。
     pub fn on_frame(&mut self, media_kind: MediaKind, dts_us: i64) {
         if self.synced {
             return;
@@ -183,10 +265,16 @@ impl AvSyncAligner {
         }
     }
 
+    /// Returns `true` once both audio and video epochs have been observed.
+    ///
+    /// 一旦已观察到音频和视频 epoch 则返回 `true`。
     pub fn is_synced(&self) -> bool {
         self.synced
     }
 
+    /// Returns the audio offset relative to video in microseconds.
+    ///
+    /// 返回音频相对于视频的偏移（微秒）。
     pub fn offset_us(&self) -> i64 {
         self.sync_offset_us
     }
@@ -210,6 +298,9 @@ pub struct SortingWindowDtsGenerator {
 }
 
 impl SortingWindowDtsGenerator {
+    /// Create a generator with the given sorting window size.
+    ///
+    /// 使用给定的排序窗口大小创建生成器。
     pub fn new(window_size: usize) -> Self {
         Self {
             window: VecDeque::with_capacity(window_size.max(1)),
@@ -221,6 +312,15 @@ impl SortingWindowDtsGenerator {
 
     /// Feed a PTS value and get back a DTS. Returns `None` while the window
     /// is still filling up (buffering phase).
+    /// Feed a PTS and return the DTS for the oldest frame in the window.
+    ///
+    /// Returns `None` while the window is still filling. The returned DTS is the
+    /// minimum PTS in the window, forced to be at least `last_output_dts + 1`.
+    ///
+    /// 输入一个 PTS 并返回窗口中最旧帧的 DTS。
+    ///
+    /// 窗口尚未填满时返回 `None`。返回的 DTS 为窗口中最小 PTS，强制至少为
+    /// `last_output_dts + 1`。
     pub fn push(&mut self, pts: i64) -> Option<i64> {
         self.window.push_back(pts);
         if self.window.len() < self.window_size {
@@ -239,6 +339,9 @@ impl SortingWindowDtsGenerator {
     }
 
     /// Flush remaining buffered frames (call at end-of-stream or discontinuity).
+    /// Flush the remaining window as the stream ends or on a discontinuity.
+    ///
+    /// 在流结束或不连续时刷新剩余窗口。
     pub fn flush(&mut self) -> Vec<i64> {
         let mut out = Vec::with_capacity(self.window.len());
         while !self.window.is_empty() {
@@ -261,6 +364,9 @@ impl SortingWindowDtsGenerator {
         out
     }
 
+    /// Reset the window and DTS history.
+    ///
+    /// 重置窗口和 DTS 历史。
     pub fn reset(&mut self) {
         self.window.clear();
         self.last_output_dts = 0;
@@ -289,6 +395,9 @@ pub struct IncrementalRtpTimestampGenerator {
 }
 
 impl IncrementalRtpTimestampGenerator {
+    /// Create a generator for the given RTP clock rate.
+    ///
+    /// 为指定 RTP 时钟率创建生成器。
     pub fn new(clock_rate: u32) -> Self {
         Self {
             last_dts_us: 0,
@@ -300,6 +409,9 @@ impl IncrementalRtpTimestampGenerator {
     }
 
     /// Reset the generator (e.g., on discontinuity).
+    /// Reset the generator state at a discontinuity or new source.
+    ///
+    /// 在不连续或新源处重置生成器状态。
     pub fn reset(&mut self, dts_us: i64) {
         self.last_dts_us = dts_us;
         self.fractional_ticks = 0.0;
@@ -307,6 +419,16 @@ impl IncrementalRtpTimestampGenerator {
 
     /// Generate next RTP timestamp from media microsecond timestamps.
     /// Returns both DTS-based and PTS-based RTP timestamps.
+    /// Generate the next RTP timestamp pair from microsecond DTS/PTS.
+    ///
+    /// The DTS timestamp is incremented by the integer number of RTP ticks since the
+    /// previous frame; the fractional remainder is accumulated to avoid long-term drift.
+    /// The PTS timestamp is then `rtp_timestamp` plus the rounded PTS-DTS offset.
+    ///
+    /// 从微秒 DTS/PTS 生成下一对 RTP 时间戳。
+    ///
+    /// DTS 时间戳增加自上一帧以来整数个 RTP 刻度；小数余数累积以避免长期漂移。
+    /// PTS 时间戳为 `rtp_timestamp` 加上四舍五入的 PTS-DTS 偏移。
     pub fn next(&mut self, dts_us: i64, pts_us: i64) -> RtpEgressTimestamp {
         if !self.initialized {
             self.initialized = true;
@@ -356,6 +478,9 @@ pub struct FrameRateEstimator {
 }
 
 impl FrameRateEstimator {
+    /// Create an estimator with a bounded sample window.
+    ///
+    /// 使用有界采样窗口创建估计器。
     pub fn new(max_samples: usize) -> Self {
         Self {
             samples: VecDeque::with_capacity(max_samples.max(1)),
@@ -369,6 +494,9 @@ impl FrameRateEstimator {
     }
 
     /// Create with ABL-style defaults: 15 warmup frames, 120 max fps.
+    /// Create an estimator with ABL-style defaults (15 warmup frames, 120 FPS max).
+    ///
+    /// 使用 ABL 风格默认值创建估计器（15 帧预热、最大 120 FPS）。
     pub fn with_abl_defaults(max_samples: usize) -> Self {
         Self {
             warmup_frames: 15,
@@ -379,11 +507,17 @@ impl FrameRateEstimator {
     }
 
     /// Set warmup frames count.
+    /// Set the number of initial frames to skip before collecting samples.
+    ///
+    /// 设置收集样本前需要跳过的初始帧数。
     pub fn set_warmup_frames(&mut self, n: usize) {
         self.warmup_frames = n;
     }
 
     /// Set min/max FPS clamp.
+    /// Set the lower and upper FPS bounds for estimated values.
+    ///
+    /// 设置估计 FPS 的上下限。
     pub fn set_fps_clamp(&mut self, min: f64, max: f64) {
         self.min_fps = min;
         self.max_fps = max;
@@ -422,6 +556,9 @@ impl FrameRateEstimator {
         Some(clamp_f64(fps, self.min_fps, self.max_fps))
     }
 
+    /// Reset the estimator and discard all samples.
+    ///
+    /// 重置估计器并丢弃所有样本。
     pub fn reset(&mut self) {
         self.samples.clear();
         self.last_pts_us = None;

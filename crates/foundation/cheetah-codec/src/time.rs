@@ -3,6 +3,15 @@ use crate::prelude::*;
 use core::fmt;
 use smallvec::SmallVec;
 
+/// Rational timebase for converting ticks to and from microseconds.
+///
+/// A timebase `num/den` means `value` ticks equals `value * num / den` seconds.
+/// The codec layer uses microsecond (`1_000_000`) conversion as the neutral format.
+///
+/// 用于将刻度转换为微秒以及反向转换的有理 timebase。
+///
+/// `num/den` 表示 `value` 个刻度等于 `value * num / den` 秒。
+/// codec 层以微秒（`1_000_000`）作为中性格式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timebase {
     pub num: u32,
@@ -10,10 +19,20 @@ pub struct Timebase {
 }
 
 impl Timebase {
+    /// Create a new timebase with `num` seconds per `den` ticks.
+    ///
+    /// 创建新的 timebase，表示 `den` 个刻度对应 `num` 秒。
     pub const fn new(num: u32, den: u32) -> Self {
         Self { num, den }
     }
 
+    /// Convert `value` ticks in `tb` to microseconds.
+    ///
+    /// Uses 128-bit intermediate arithmetic to avoid overflow during the multiply.
+    ///
+    /// 将 `tb` 中的 `value` 个刻度转换为微秒。
+    ///
+    /// 使用 128 位中间运算避免乘法溢出。
     pub fn to_micros(tb: Timebase, value: i64) -> i64 {
         let num = i128::from(tb.num);
         let den = i128::from(tb.den.max(1));
@@ -21,6 +40,9 @@ impl Timebase {
         ((v * num * 1_000_000_i128) / den) as i64
     }
 
+    /// Convert microseconds back to `tb` ticks.
+    ///
+    /// 将微秒转换回 `tb` 刻度。
     pub fn from_micros(tb: Timebase, micros: i64) -> i64 {
         let num = i128::from(tb.num.max(1));
         let den = i128::from(tb.den);
@@ -29,6 +51,14 @@ impl Timebase {
     }
 }
 
+/// Opaque monotonic timestamp in microseconds.
+///
+/// Used for arrival-time based stamping and for scheduling that does not depend
+/// on wall-clock or media timeline.
+///
+/// 以微秒为单位的单调时间戳。
+///
+/// 用于基于到达时间的打戳和调度，不依赖墙上时间或媒体时间线。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MonoTime {
     micros: u64,
@@ -44,12 +74,27 @@ impl MonoTime {
     }
 }
 
+/// Errors raised by timestamp unwrap or configuration construction.
+///
+/// 时间戳解绕或配置构造时产生的错误。
 #[derive(Debug, thiserror::Error)]
 pub enum TimestampError {
     #[error("invalid wrap width: {0}")]
     InvalidWrapWidth(u8),
 }
 
+/// Stateful unwrapper for timestamps that wrap around at a fixed bit width.
+///
+/// Tracks a high-order counter (`high`) and the last raw value. When a new raw
+/// value jumps backward by more than half the wrap range, the counter is incremented
+/// by one full period; when it jumps forward by more than half the range, it is
+/// decremented. This correctly handles RTP/RTMP 32-bit wraparound and small jitters.
+///
+/// 在固定位宽回绕的时间戳的有状态解绕器。
+///
+/// 跟踪高位计数器（`high`）和上一个 raw 值。当新的 raw 值向后跳跃超过半周期时，
+/// 计数器增加一个完整周期；向前跳跃超过半周期时减少。正确处理 RTP/RTMP 32 位回绕
+/// 和轻微抖动。
 #[derive(Clone)]
 pub struct WrapUnwrapper {
     mask: u64,
@@ -70,6 +115,9 @@ impl fmt::Debug for WrapUnwrapper {
 }
 
 impl WrapUnwrapper {
+    /// Create an unwrapper for `bits`-wide timestamps.
+    ///
+    /// 为 `bits` 位宽的时间戳创建解绕器。
     pub fn new(bits: u8) -> Result<Self, TimestampError> {
         if bits == 0 || bits > 63 {
             return Err(TimestampError::InvalidWrapWidth(bits));
@@ -84,6 +132,9 @@ impl WrapUnwrapper {
         })
     }
 
+    /// Unwrap a raw timestamp into a monotonically increasing 64-bit value.
+    ///
+    /// 将 raw 时间戳解绕为单调递增的 64 位值。
     pub fn unwrap(&mut self, raw: u64) -> u64 {
         let raw = raw & self.mask;
         if let Some(last) = self.last_raw {
@@ -97,12 +148,24 @@ impl WrapUnwrapper {
         self.high + raw
     }
 
+    /// Reset the unwrapper state, discarding the high counter and previous raw value.
+    ///
+    /// 重置解绕器状态，丢弃高位计数器和上一个 raw 值。
     pub fn reset(&mut self) {
         self.high = 0;
         self.last_raw = None;
     }
 }
 
+/// Strategy used to fill in missing timestamps.
+///
+/// `Source` prefers the original source PTS; `Arrival` uses the wall/monotonic time
+/// of arrival; `SampleCount` and `FrameRateGuess` increment by `step_us` each frame.
+///
+/// 用于填补缺失时间戳的策略。
+///
+/// `Source` 优先使用原始源 PTS；`Arrival` 使用到达时的单调/墙上时间；
+/// `SampleCount` 与 `FrameRateGuess` 每帧按 `step_us` 递增。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StampAdjustMode {
     Source,
@@ -111,6 +174,14 @@ pub enum StampAdjustMode {
     FrameRateGuess,
 }
 
+/// Generates monotonic presentation timestamps when the source timestamp is missing.
+///
+/// The generated value is never smaller than the previous one, so it is safe to use
+/// for streams that lack explicit timing or that contain non-monotonic source stamps.
+///
+/// 在源时间戳缺失时生成单调的展示时间戳。
+///
+/// 生成的值不会小于上一个值，因此可用于缺少显式时间或源时间戳非单调的流。
 #[derive(Debug, Clone)]
 pub struct StampAdjust {
     mode: StampAdjustMode,
@@ -119,6 +190,9 @@ pub struct StampAdjust {
 }
 
 impl StampAdjust {
+    /// Create a new adjuster with the given mode and per-frame step.
+    ///
+    /// 使用指定模式和每帧步长创建新的 adjuster。
     pub fn new(mode: StampAdjustMode, step_us: i64) -> Self {
         Self {
             mode,
@@ -127,6 +201,14 @@ impl StampAdjust {
         }
     }
 
+    /// Produce the next timestamp in microseconds.
+    ///
+    /// The selected mode determines the base value; if it would not advance past the
+    /// previous timestamp, it is bumped by `step_us` to preserve monotonicity.
+    ///
+    /// 生成下一个微秒时间戳。
+    ///
+    /// 所选模式决定基础值；若其未超过上一时间戳，则按 `step_us` 递增以保持单调性。
     pub fn adjust(&mut self, source_pts_us: Option<i64>, now: MonoTime) -> i64 {
         let mut value = match self.mode {
             StampAdjustMode::Source => source_pts_us.unwrap_or_else(|| now.as_micros() as i64),
@@ -146,6 +228,18 @@ impl StampAdjust {
     }
 }
 
+/// Generates monotonic decode timestamps when the source only provides PTS.
+///
+/// For streams with both DTS and PTS, `generate_monotonic_from_pts` ensures the
+/// output DTS never decreases. For `PtsOnly` streams, `generate_from_pts_only`
+/// estimates frame cadence by smoothing inter-frame gaps and detects reordering
+/// and discontinuities.
+///
+/// 在源只提供 PTS 时生成单调解码时间戳。
+///
+/// 对于同时有 DTS 和 PTS 的流，`generate_monotonic_from_pts` 保证输出 DTS 不递减。
+/// 对于 `PtsOnly` 流，`generate_from_pts_only` 通过平滑帧间间隔估算帧节奏，并检测
+/// 重排和不连续。
 #[derive(Debug, Default, Clone)]
 pub struct DtsGenerator {
     last_dts: Option<i64>,
@@ -154,6 +248,15 @@ pub struct DtsGenerator {
     pts_reorder_seen: bool,
 }
 
+/// Internal result of deriving a DTS from a single PTS-only sample.
+///
+/// `reordered` means the new PTS is behind the previous one; `discontinuity`
+/// means the gap is large enough to reset the cadence estimator.
+///
+/// 从单一样本 PTS 推导 DTS 的内部结果。
+///
+/// `reordered` 表示新 PTS 位于前一个 PTS 之前；`discontinuity` 表示间隔足够大，
+/// 需要重置节奏估算器。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PtsOnlyDtsGeneration {
     dts: i64,
@@ -162,6 +265,16 @@ struct PtsOnlyDtsGeneration {
 }
 
 impl DtsGenerator {
+    /// Ensures the returned DTS is strictly greater than the previous one.
+    ///
+    /// If the supplied PTS is not greater than the last DTS, the next value is
+    /// `last + 1`. This is used when the source already provides a usable PTS but
+    /// a monotonic DTS is required.
+    ///
+    /// 确保返回的 DTS 严格大于上一个 DTS。
+    ///
+    /// 若提供的 PTS 不大于上一 DTS，则返回 `last + 1`。
+    /// 用于源已提供可用 PTS 但需要单调 DTS 的场景。
     pub fn generate_monotonic_from_pts(&mut self, pts: i64) -> i64 {
         let mut dts = pts;
         if let Some(last) = self.last_dts {
@@ -173,6 +286,16 @@ impl DtsGenerator {
         dts
     }
 
+    /// Derive a DTS from a stream that only provides PTS.
+    ///
+    /// This is the most complex path: it detects large jumps (discontinuities),
+    /// negative deltas (reorders), and smooths the observed frame step. It uses the
+    /// provided `frame_duration` as the highest-priority cadence hint when available.
+    ///
+    /// 从只提供 PTS 的流中推导 DTS。
+    ///
+    /// 这是最复杂的路径：检测大跳跃（不连续）、负增量（重排）并平滑观察到的帧步长。
+    /// 当提供 `frame_duration` 时，它作为最高优先级的节奏提示。
     fn generate_from_pts_only(
         &mut self,
         pts: i64,
@@ -254,6 +377,9 @@ impl DtsGenerator {
         }
     }
 
+    /// Reset the generator state, discarding history and smoothed step.
+    ///
+    /// 重置生成器状态，丢弃历史和平滑步长。
     pub fn reset(&mut self) {
         self.last_dts = None;
         self.last_source_pts = None;
@@ -262,15 +388,36 @@ impl DtsGenerator {
     }
 }
 
+/// Stateless helper for converting a value between two timebases.
+///
+/// It converts to microseconds first, then from microseconds to the destination
+/// timebase. This keeps the conversion simple and avoids per-codec factors.
+///
+/// 用于在两个 timebase 之间转换值的无状态辅助函数。
+///
+/// 先转换为微秒，再从微秒转换到目标 timebase。保持转换简单并避免每个编解码器的因子。
 pub struct TimebaseConverter;
 
 impl TimebaseConverter {
+    /// Convert `value` from `src` timebase to `dst` timebase.
+    ///
+    /// 将 `value` 从 `src` timebase 转换到 `dst` timebase。
     pub fn convert(value: i64, src: Timebase, dst: Timebase) -> i64 {
         let us = Timebase::to_micros(src, value);
         Timebase::from_micros(dst, us)
     }
 }
 
+/// Detects timeline discontinuities based on PTS gaps.
+///
+/// A discontinuity is declared when the current PTS is before the previous one or
+/// when the forward gap exceeds `max_gap_us`. This is used by ingress to reset
+/// decode state and signal downstream consumers.
+///
+/// 基于 PTS 间隔检测时间线不连续。
+///
+/// 当当前 PTS 早于上一个 PTS，或正向间隔超过 `max_gap_us` 时，声明不连续。
+/// 入口侧用它重置解码状态并通知下游消费者。
 #[derive(Debug, Clone)]
 pub struct DiscontinuityJudge {
     max_gap_us: i64,
@@ -278,6 +425,9 @@ pub struct DiscontinuityJudge {
 }
 
 impl DiscontinuityJudge {
+    /// Create a judge with the given maximum forward gap in microseconds.
+    ///
+    /// 用指定的最大正向间隔（微秒）创建 judge。
     pub fn new(max_gap_us: i64) -> Self {
         Self {
             max_gap_us: max_gap_us.max(0),
@@ -285,6 +435,9 @@ impl DiscontinuityJudge {
         }
     }
 
+    /// Observe a new PTS and return whether it represents a discontinuity.
+    ///
+    /// 观察新的 PTS 并返回其是否表示不连续。
     pub fn observe(&mut self, pts_us: i64) -> bool {
         let is_discontinuity = match self.last_pts_us {
             Some(last) => pts_us < last || (pts_us - last) > self.max_gap_us,
@@ -295,12 +448,30 @@ impl DiscontinuityJudge {
     }
 }
 
+/// A timestamp that may be already unwrapped or still wrapped.
+///
+/// Wrapped values are passed through the `WrapUnwrapper` configured in the
+/// normalizer. Unwrapped values are used directly.
+///
+/// 可能已经解绕或仍包裹的时间戳。
+///
+/// 包裹值通过 normalizer 中配置的 `WrapUnwrapper` 解绕；解绕值直接使用。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampValue {
     Unwrapped(i64),
     Wrapped(u64),
 }
 
+/// Configuration for the timestamp normalizer.
+///
+/// Defines input/output timebases, optional wrap width, the maximum forward gap
+/// that is considered a discontinuity, and whether negative composition times
+/// (`pts < dts`) are allowed for video.
+///
+/// 时间戳归一化器配置。
+///
+/// 定义输入/输出 timebase、可选回绕位宽、被视为不连续的最大正向间隔，
+/// 以及是否允许视频出现负合成时间（`pts < dts`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimestampNormalizerConfig {
     pub input_timebase: Timebase,
@@ -312,6 +483,14 @@ pub struct TimestampNormalizerConfig {
 }
 
 impl TimestampNormalizerConfig {
+    /// Create a validated normalizer config.
+    ///
+    /// Rejects zero timebases and invalid wrap widths. Defaults to a 2-second forward
+    /// gap threshold and a 1-tick fallback step.
+    ///
+    /// 创建经过校验的归一化器配置。
+    ///
+    /// 拒绝零 timebase 和无效回绕位宽。默认 2 秒正向间隔阈值和 1 刻度回退步长。
     pub fn new(
         input_timebase: Timebase,
         output_timebase: Timebase,
@@ -360,6 +539,9 @@ impl TimestampNormalizerConfig {
     }
 }
 
+/// Errors from constructing `TimestampNormalizerConfig`.
+///
+/// 构造 `TimestampNormalizerConfig` 时产生的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum TimestampNormalizerConfigError {
     #[error("invalid input timebase {num}/{den}")]
@@ -370,6 +552,9 @@ pub enum TimestampNormalizerConfigError {
     InvalidWrapWidth(u8),
 }
 
+/// Errors returned by `TimestampNormalizer::normalize`.
+///
+/// `TimestampNormalizer::normalize` 返回的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum TimestampNormalizeError {
     #[error("wrapped timestamp provided without configured wrap_bits")]
@@ -378,6 +563,14 @@ pub enum TimestampNormalizeError {
     UnwrappedTimestampOverflow { value: u64 },
 }
 
+/// Signals emitted by the normalizer when it repairs or adjusts timestamps.
+///
+/// Alerts are advisory and do not fail normalization, but they let callers observe
+/// fallback behavior, reordering, discontinuities and clamping.
+///
+/// 归一化器修复或调整时间戳时发出的信号。
+///
+/// 告警是建议性的，不会导致归一化失败，但让调用方观察回退行为、重排、不连续和裁剪。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampAlert {
     MissingDtsUsedFallback,
@@ -389,6 +582,15 @@ pub enum TimestampAlert {
     ResetApplied,
 }
 
+/// Input shape accepted by the timestamp normalizer.
+///
+/// `NoTimestamp` produces fallback values; `DtsPts` provides both; `DtsWithCompositionOffset`
+/// provides DTS plus a relative composition offset; `PtsOnly` requires DTS generation.
+///
+/// 时间戳归一器接受的输入形态。
+///
+/// `NoTimestamp` 生成回退值；`DtsPts` 同时提供 DTS 和 PTS；
+/// `DtsWithCompositionOffset` 提供 DTS 加相对合成偏移；`PtsOnly` 需要生成 DTS。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampNormalizeMode {
     NoTimestamp,
@@ -405,6 +607,14 @@ pub enum TimestampNormalizeMode {
     },
 }
 
+/// One input sample to `TimestampNormalizer::normalize`.
+///
+/// Carries the timestamp mode, optional frame duration, optional fallback step,
+/// whether the frame is video, and an explicit discontinuity flag.
+///
+/// `TimestampNormalizer::normalize` 的单个输入样本。
+///
+/// 携带时间戳模式、可选帧时长、可选回退步长、是否为视频帧以及显式不连续标志。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimestampNormalizeInput {
     pub mode: TimestampNormalizeMode,
@@ -418,6 +628,14 @@ pub struct TimestampNormalizeInput {
     pub force_discontinuity: bool,
 }
 
+/// Normalized timestamp result for one frame.
+///
+/// Contains PTS/DTS in output timebase and microseconds, a discontinuity flag, and
+/// any alerts raised during normalization.
+///
+/// 单帧的归一化时间戳结果。
+///
+/// 包含输出 timebase 和微秒下的 PTS/DTS、不连续标志以及归一化期间产生的告警。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimestampNormalizeOutput {
     pub pts: i64,
@@ -428,6 +646,16 @@ pub struct TimestampNormalizeOutput {
     pub alerts: SmallVec<[TimestampAlert; 4]>,
 }
 
+/// Converts protocol-specific timestamps into a normalized timeline.
+///
+/// Handles timebase conversion, timestamp unwrap, DTS generation from PTS-only
+/// sources, monotonicity repair, discontinuity detection, and composition-time
+/// clamping. It is the central place where all ingress timing becomes comparable.
+///
+/// 将协议特定时间戳转换为归一化时间线的组件。
+///
+/// 处理 timebase 转换、时间戳解绕、从仅 PTS 源生成 DTS、单调性修复、不连续检测
+/// 以及合成时间裁剪。所有入口时间戳在此变得可比较。
 #[derive(Debug, Clone)]
 pub struct TimestampNormalizer {
     config: TimestampNormalizerConfig,
@@ -441,6 +669,9 @@ pub struct TimestampNormalizer {
 }
 
 impl TimestampNormalizer {
+    /// Construct a normalizer from a validated config.
+    ///
+    /// 从已校验的配置构造归一化器。
     pub fn new(config: TimestampNormalizerConfig) -> Self {
         let dts_unwrapper = config.wrap_bits.map(|bits| match WrapUnwrapper::new(bits) {
             Ok(unwrapper) => unwrapper,
@@ -462,10 +693,20 @@ impl TimestampNormalizer {
         }
     }
 
+    /// Return a reference to the underlying config.
+    ///
+    /// 返回底层配置的引用。
     pub fn config(&self) -> &TimestampNormalizerConfig {
         &self.config
     }
 
+    /// Reset all internal state so the next sample starts a new timeline.
+    ///
+    /// The next `normalize` call will set `discontinuity` and emit `ResetApplied`.
+    ///
+    /// 重置所有内部状态，使下一个样本开始新的时间线。
+    ///
+    /// 下一次 `normalize` 调用会设置 `discontinuity` 并发出 `ResetApplied`。
     pub fn reset(&mut self) {
         self.epoch_offset = None;
         self.last_dts = None;
@@ -480,6 +721,23 @@ impl TimestampNormalizer {
         }
     }
 
+    /// Normalize one frame's timestamps into the configured output timebase.
+    ///
+    /// The pipeline is:
+    /// 1. Resolve wrapped/unwrapped source timestamps and convert to output timebase.
+    /// 2. If DTS is missing, derive it from PTS using `DtsGenerator`.
+    /// 3. Subtract an epoch offset so the timeline starts near zero.
+    /// 4. Enforce monotonic DTS and detect forward gaps.
+    /// 5. Compute PTS from DTS + composition offset if needed, clamping for video.
+    ///
+    /// 将单帧时间戳归一化到配置的输出 timebase。
+    ///
+    /// 流程：
+    /// 1. 解析包裹/解绕源时间戳并转换到输出 timebase。
+    /// 2. 若 DTS 缺失，使用 `DtsGenerator` 从 PTS 推导。
+    /// 3. 减去 epoch 偏移，使时间线从接近零处开始。
+    /// 4. 强制 DTS 单调并检测正向间隔。
+    /// 5. 需要时从 DTS + 合成偏移计算 PTS，并对视频进行裁剪。
     pub fn normalize(
         &mut self,
         input: TimestampNormalizeInput,
@@ -616,6 +874,9 @@ impl TimestampNormalizer {
         })
     }
 
+    /// Convert a `TimestampValue` into output timebase ticks, unwrapping if needed.
+    ///
+    /// 将 `TimestampValue` 转换为输出 timebase 刻度，需要时解绕。
     fn resolve_ticks(
         &mut self,
         value: Option<TimestampValue>,

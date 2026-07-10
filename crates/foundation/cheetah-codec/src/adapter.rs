@@ -8,18 +8,39 @@ use crate::{
     TimestampNormalizeOutput, TrackId, TrackInfo, TrackInfoError,
 };
 
+/// Origin of the timeline used by an ingress frame.
+///
+/// `TimestampNormalizer` means the frame went through `TimestampNormalizer` and has
+/// a canonical timeline. `PassthroughLegacy` is the legacy path where normalization
+/// is skipped and the caller promises the values are already compatible.
+///
+/// 入口帧所使用的时间线来源。
+///
+/// `TimestampNormalizer` 表示帧经过 `TimestampNormalizer` 并具有标准时间线。
+/// `PassthroughLegacy` 是跳过归一化的旧路径，调用方保证值已兼容。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimelineSource {
     TimestampNormalizer,
     PassthroughLegacy,
 }
 
+/// Target protocol for the future adapter contract checks.
+///
+/// SRT and WebRTC have additional ingress/egress contract requirements beyond the
+/// generic `AVFrame` contract.
+///
+/// 未来适配器契约检查的目标协议。
+///
+/// SRT 和 WebRTC 在通用 `AVFrame` 契约之外还有额外的入口/出口契约要求。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FutureProtocolKind {
     SrtTransport,
     WebRtcRtpRtcp,
 }
 
+/// Errors returned when an ingress/egress frame violates the adapter contract.
+///
+/// 入口/出口帧违反适配器契约时返回的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum AdapterContractError {
     #[error("track/frame mismatch for {field}: track={track}, frame={frame}")]
@@ -57,6 +78,16 @@ pub enum AdapterContractError {
     WebRtcVideoMissingAccessUnitBoundary { track_id: TrackId },
 }
 
+/// Ingress-side adapter frame that pairs a `TrackInfo` with a normalized `AVFrame`.
+///
+/// This type is the boundary between protocol modules and the codec layer. It
+/// captures whether the frame went through the timestamp normalizer and whether it
+/// marks a random-access or discontinuity point.
+///
+/// 入口侧适配器帧，将 `TrackInfo` 与归一化的 `AVFrame` 配对。
+///
+/// 该类型是协议模块与 codec 层之间的边界。它捕获帧是否经过时间戳归一化，
+/// 以及是否标记随机访问或不连续点。
 #[derive(Debug, Clone)]
 pub struct IngressAdapterFrame {
     track: TrackInfo,
@@ -67,6 +98,16 @@ pub struct IngressAdapterFrame {
 }
 
 impl IngressAdapterFrame {
+    /// Build an ingress frame from a timestamp-normalized output.
+    ///
+    /// Verifies that the frame's `pts`, `dts`, `pts_us`, `dts_us` match the normalized
+    /// values and that the discontinuity flag is consistent. This guarantees the codec
+    /// layer and the normalizer agree on the timeline.
+    ///
+    /// 从时间戳归一化输出构建入口帧。
+    ///
+    /// 校验帧的 `pts`、`dts`、`pts_us`、`dts_us` 与归一化值一致，且不连续标志一致。
+    /// 保证 codec 层与归一化器在时间线上达成一致。
     pub fn from_normalized(
         track: TrackInfo,
         frame: AVFrame,
@@ -96,6 +137,13 @@ impl IngressAdapterFrame {
         })
     }
 
+    /// Build an ingress frame from a legacy passthrough path.
+    ///
+    /// Performs track/frame validation but does not require normalized timestamp values.
+    ///
+    /// 从旧直通路径构建入口帧。
+    ///
+    /// 执行轨道/帧校验，但不要求归一化时间戳值。
     pub fn from_passthrough(
         track: TrackInfo,
         frame: AVFrame,
@@ -151,12 +199,29 @@ impl IngressAdapterFrame {
     }
 }
 
+/// Marks whether a frame is at the start or end of an access unit.
+///
+/// Some protocols (e.g. WebRTC) require complete access units and use these flags
+/// to detect packet boundaries.
+///
+/// 标记帧是否处于 access unit 的起始或结束。
+///
+/// 某些协议（如 WebRTC）需要完整 access unit，使用这些标志检测包边界。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FragmentBoundary {
     pub start_of_access_unit: bool,
     pub end_of_access_unit: bool,
 }
 
+/// Pre-computed timestamps in the wire formats used by RTMP and RTP.
+///
+/// These are derived from the canonical `AVFrame` timing so each protocol egress can
+/// read them directly without re-doing timebase conversions.
+///
+/// RTMP 和 RTP 使用的线格式预计算时间戳。
+///
+/// 它们从标准 `AVFrame` 时间派生，因此每个协议出口可以直接读取，无需重新进行
+/// timebase 转换。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EncapsulationTimestamps {
     pub rtmp_timestamp_ms: u32,
@@ -164,12 +229,30 @@ pub struct EncapsulationTimestamps {
     pub rtp_timestamp_ticks: u32,
 }
 
+/// Parameter-set status and payload needed for a keyframe at egress.
+///
+/// Carries the `ParameterSetRequirement` and, if present, the cached SPS/PPS/VPS
+/// that should be prepended before the keyframe payload.
+///
+/// 关键帧出口所需的参数集状态和负载。
+///
+/// 携带 `ParameterSetRequirement` 以及若存在应前置到关键帧负载前的缓存 SPS/PPS/VPS。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParameterSetReplay {
     pub requirement: ParameterSetRequirement,
     pub units: Vec<Bytes>,
 }
 
+/// Egress-side view of a frame, with all protocol-relevant timestamps and metadata.
+///
+/// This is the canonical payload produced by the codec layer for consumption by
+/// protocol modules. It includes the codec config, parameter-set replay, fragment
+/// boundary flags and pre-computed RTMP/RTP timestamps.
+///
+/// 出口侧帧视图，包含所有协议相关时间戳和元数据。
+///
+/// 这是 codec 层为协议模块消费生成的标准负载。包含编解码器配置、参数集重放、
+/// 分片边界标志以及预计算的 RTMP/RTP 时间戳。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EgressAdapterView {
     track_id: TrackId,
@@ -188,6 +271,15 @@ pub struct EgressAdapterView {
 }
 
 impl EgressAdapterView {
+    /// Build an egress view from a track, frame, and cached parameter sets.
+    ///
+    /// Validates the track/frame, computes random-access status, selects parameter-set
+    /// replay units, extracts codec config, and computes the RTMP/RTP encapsulation timestamps.
+    ///
+    /// 从轨道、帧和缓存参数集构建出口视图。
+    ///
+    /// 校验轨道/帧、计算随机访问状态、选择参数集重放单元、提取编解码器配置，
+    /// 并计算 RTMP/RTP 封装时间戳。
     pub fn build(
         track: &TrackInfo,
         frame: &AVFrame,
@@ -299,6 +391,14 @@ impl EgressAdapterView {
     }
 }
 
+/// Egress contract view for SRT encapsulation.
+///
+/// Contains RTMP-style millisecond timestamps and composition time, which the SRT module
+/// uses for its wire format.
+///
+/// SRT 封装的出口契约视图。
+///
+/// 包含 RTMP 风格的毫秒时间戳和合成时间，SRT 模块用于其线格式。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SrtEgressContractView {
     pub track_id: TrackId,
@@ -312,6 +412,14 @@ pub struct SrtEgressContractView {
     pub parameter_set_replay: ParameterSetReplay,
 }
 
+/// Egress contract view for WebRTC RTP/RTCP encapsulation.
+///
+/// Contains RTP timestamp and access-unit boundary flags, which the WebRTC module uses
+/// when packetizing frames for RTP.
+///
+/// WebRTC RTP/RTCP 封装的出口契约视图。
+///
+/// 包含 RTP 时间戳和 access unit 边界标志，WebRTC 模块用于将帧打包为 RTP。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcEgressContractView {
     pub track_id: TrackId,
@@ -351,6 +459,15 @@ pub enum FutureProtocolEgressContractView {
     WebRtc(WebRtcEgressContractView),
 }
 
+/// Enforce protocol-specific ingress contract requirements.
+///
+/// SRT and WebRTC ingress must pass through `TimestampNormalizer`. WebRTC video must
+/// also have both start and end access-unit boundary markers.
+///
+/// 强制执行协议特定的入口契约要求。
+///
+/// SRT 和 WebRTC 入口必须经过 `TimestampNormalizer`。WebRTC 视频还必须同时具有
+/// access unit 起始和结束边界标记。
 pub fn enforce_future_protocol_ingress(
     protocol: FutureProtocolKind,
     ingress: &IngressAdapterFrame,
@@ -371,6 +488,13 @@ pub fn enforce_future_protocol_ingress(
     Ok(())
 }
 
+/// Enforce protocol-specific egress contract requirements.
+///
+/// WebRTC video egress requires complete access units (`START_OF_AU` and `END_OF_AU`).
+///
+/// 强制执行协议特定的出口契约要求。
+///
+/// WebRTC 视频出口需要完整 access unit（`START_OF_AU` 和 `END_OF_AU`）。
 pub fn enforce_future_protocol_egress(
     protocol: FutureProtocolKind,
     egress: &EgressAdapterView,
@@ -387,6 +511,9 @@ pub fn enforce_future_protocol_egress(
     Ok(())
 }
 
+/// Build the protocol-specific egress contract view from a generic egress view.
+///
+/// 从通用出口视图构建协议特定的出口契约视图。
 pub fn build_future_protocol_egress_contract_view(
     protocol: FutureProtocolKind,
     egress: &EgressAdapterView,
@@ -451,6 +578,14 @@ fn ensure_normalized_match(
     Ok(())
 }
 
+/// Validate that a `TrackInfo` and `AVFrame` describe the same logical track.
+///
+/// Checks `track_id`, `media_kind`, `codec`, and verifies the track has a valid
+/// timebase and the frame has valid timing.
+///
+/// 校验 `TrackInfo` 和 `AVFrame` 描述同一逻辑轨道。
+///
+/// 检查 `track_id`、`media_kind`、`codec`，并验证轨道具有有效 timebase、帧具有有效时间。
 fn validate_track_and_frame(
     track: &TrackInfo,
     frame: &AVFrame,
@@ -491,6 +626,9 @@ fn ensure_track_frame_match(
     Ok(())
 }
 
+/// Collect the cached parameter-set units for a codec in egress order.
+///
+/// 按出口顺序收集某编解码器的缓存参数集单元。
 fn parameter_set_units_for_codec(parameter_sets: &ParameterSetCache, codec: CodecId) -> Vec<Bytes> {
     let mut units = Vec::new();
     match codec {
