@@ -5,6 +5,9 @@ use crate::error::{SrtCoreError, SrtCoreResult};
 use crate::stream_id::percent_decode;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Parsed SRT URL including host, port, mode, and query parameters.
+///
+/// 解析后的 SRT URL，包含主机、端口、模式与查询参数。
 pub struct ParsedSrtUrl {
     pub host: Option<String>,
     pub port: u16,
@@ -16,6 +19,9 @@ pub struct ParsedSrtUrl {
     pub extras: BTreeMap<String, String>,
 }
 
+/// Parse an `srt://` URL into its components.
+///
+/// 将 `srt://` URL 解析为各组成部分。
 pub fn parse_srt_url(input: &str) -> SrtCoreResult<ParsedSrtUrl> {
     let rest = input
         .strip_prefix("srt://")
@@ -87,6 +93,9 @@ pub fn parse_srt_url(input: &str) -> SrtCoreResult<ParsedSrtUrl> {
     })
 }
 
+/// Percent-decode a URL query value, wrapping errors in `InvalidUrl`.
+///
+/// 对 URL 查询值进行百分号解码，并将错误包装为 `InvalidUrl`。
 fn percent_decode_url(input: &str) -> SrtCoreResult<String> {
     percent_decode(input).map_err(|err| SrtCoreError::InvalidUrl(err.to_string()))
 }
