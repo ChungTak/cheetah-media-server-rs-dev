@@ -15,8 +15,6 @@ use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc;
 
-/// Mode selecting `Dispatcher` behavior.
-/// 选择 `Dispatcher` 行为的模式。
 #[derive(Debug, Clone, Copy, Default)]
 pub enum DispatcherMode {
     #[default]
@@ -651,15 +649,11 @@ impl StreamManagerInner {
     }
 }
 
-/// `StreamManager` data structure.
-/// `StreamManager` 数据结构。
 pub struct StreamManager {
     inner: Arc<StreamManagerInner>,
 }
 
 impl StreamManager {
-    /// Creates a new `StreamManager` instance.
-    /// 创建新的 `StreamManager` 实例。
     pub fn new(
         mode: DispatcherMode,
         ring_capacity: usize,
@@ -685,8 +679,6 @@ impl StreamManager {
         }
     }
 
-    /// Sets the `event bus` value.
-    /// 设置 `event bus` 的值。
     pub fn set_event_bus(&self, event_bus: Arc<dyn EventBus>) {
         *self.inner.event_bus.write() = Some(event_bus);
     }

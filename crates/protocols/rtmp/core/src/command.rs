@@ -9,8 +9,6 @@ use crate::timestamp::RtmpTimestamp;
 // 从格式（AMF）的表现力来说应该用 f64，
 // 但 RTMP 规范不推荐使用小数，而且实际上也不会用到，
 // 因此内部用整数来保存
-/// Identifier for `Transaction`.
-/// `Transaction` 的标识符。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TransactionId(i64);
 
@@ -19,20 +17,14 @@ impl TransactionId {
     pub const CONNECT: Self = Self(1);
     pub const NON_RESERVED_START: Self = Self(2);
 
-    /// Creates `f 64` from input.
-    /// 从输入创建 `f 64`。
     pub fn from_f64(id: f64) -> Self {
         Self(round_f64_to_i64(id))
     }
 
-    /// Returns the value.
-    /// 返回值。
     pub const fn get(self) -> i64 {
         self.0
     }
 
-    /// `increment` function of `TransactionId`.
-    /// `TransactionId` 的 `increment` 函数。
     pub fn increment(&mut self) {
         self.0 += 1
     }
@@ -54,8 +46,6 @@ fn round_f64_to_i64(value: f64) -> i64 {
     }
 }
 
-/// Command for `RTMP`.
-/// `RTMP` 的命令。
 #[derive(Debug, Clone)]
 pub enum RtmpCommand {
     Connect(RtmpConnectCommand),
@@ -76,8 +66,6 @@ pub enum RtmpCommand {
 }
 
 impl RtmpCommand {
-    /// `name` function of `RtmpCommand`.
-    /// `RtmpCommand` 的 `name` 函数。
     pub fn name(&self) -> &str {
         match self {
             RtmpCommand::Connect(_) => "connect",
@@ -92,8 +80,6 @@ impl RtmpCommand {
         }
     }
 
-    /// `into_message` function of `RtmpCommand`.
-    /// `RtmpCommand` 的 `into_message` 函数。
     pub fn into_message(self, header: RtmpMessageHeader) -> Result<RtmpMessage, Error> {
         match self {
             RtmpCommand::Ignore { .. } => {
@@ -205,8 +191,6 @@ impl RtmpCommand {
         }
     }
 
-    /// `into_pcm_message` function of `RtmpCommand`.
-    /// `RtmpCommand` 的 `into_pcm_message` 函数。
     pub fn into_pcm_message(self) -> Result<RtmpMessage, Error> {
         self.into_message(RtmpMessageHeader {
             stream_id: RtmpMessageStreamId::PCM,
@@ -214,8 +198,6 @@ impl RtmpCommand {
         })
     }
 
-    /// Creates `message` from input.
-    /// 从输入创建 `message`。
     pub fn from_message(
         name: &str,
         transaction_id: TransactionId,
@@ -256,8 +238,6 @@ impl RtmpCommand {
     }
 }
 
-/// Command for `RTMP Connect`.
-/// `RTMP Connect` 的命令。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtmpConnectCommand {
     pub app: String,
@@ -296,8 +276,6 @@ impl RtmpConnectCommand {
         })
     }
 
-    /// Accepts an incoming connection.
-    /// 接受一个入站连接。
     pub fn accept(&self) -> Result<RtmpMessage, Error> {
         let properties = AmfValue::amf0_object([
             ("fmsVer", Amf0Value::String("FMS/4,5,0,297".to_string())),
@@ -325,8 +303,6 @@ impl RtmpConnectCommand {
     }
 }
 
-/// Command for `RTMP Create Stream`.
-/// `RTMP Create Stream` 的命令。
 #[derive(Debug, Clone)]
 pub struct RtmpCreateStreamCommand {
     pub transaction_id: TransactionId,
@@ -338,8 +314,6 @@ impl RtmpCreateStreamCommand {
     }
 }
 
-/// Command for `RTMP Publish`.
-/// `RTMP Publish` 的命令。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtmpPublishCommand {
     pub transaction_id: TransactionId,
@@ -374,8 +348,6 @@ impl RtmpPublishCommand {
         })
     }
 
-    /// Accepts an incoming connection.
-    /// 接受一个入站连接。
     pub fn accept(
         transaction_id: TransactionId,
         stream_id: RtmpMessageStreamId,
@@ -404,8 +376,6 @@ impl RtmpPublishCommand {
     }
 }
 
-/// Command for `RTMP Play`.
-/// `RTMP Play` 的命令。
 #[derive(Debug, Clone)]
 pub struct RtmpPlayCommand {
     pub transaction_id: TransactionId,
@@ -435,8 +405,6 @@ impl RtmpPlayCommand {
         })
     }
 
-    /// Accepts an incoming connection.
-    /// 接受一个入站连接。
     pub fn accept(
         transaction_id: TransactionId,
         stream_id: RtmpMessageStreamId,
@@ -465,8 +433,6 @@ impl RtmpPlayCommand {
     }
 }
 
-/// Command for `RTMP Delete Stream`.
-/// `RTMP Delete Stream` 的命令。
 #[derive(Debug, Clone)]
 pub struct RtmpDeleteStreamCommand {
     pub transaction_id: TransactionId,
@@ -490,8 +456,6 @@ impl RtmpDeleteStreamCommand {
     }
 }
 
-/// Command for `RTMP Get Stream Length`.
-/// `RTMP Get Stream Length` 的命令。
 #[derive(Debug, Clone)]
 pub struct RtmpGetStreamLengthCommand {
     pub transaction_id: TransactionId,
@@ -516,8 +480,6 @@ impl RtmpGetStreamLengthCommand {
     }
 }
 
-/// Command for `RTMP Result`.
-/// `RTMP Result` 的命令。
 #[derive(Debug, Clone)]
 pub struct RtmpResultCommand {
     pub transaction_id: TransactionId,
@@ -526,8 +488,6 @@ pub struct RtmpResultCommand {
 }
 
 impl RtmpResultCommand {
-    /// Returns the `stream length result` value.
-    /// 返回 `stream length result` 的值。
     pub fn get_stream_length_result(transaction_id: TransactionId, length: f64) -> Self {
         Self {
             transaction_id,
@@ -553,8 +513,6 @@ impl RtmpResultCommand {
         })
     }
 
-    /// Returns `true` if `error` is true.
-    /// 当 `error` 为真时返回 `true`。
     pub fn is_error(&self) -> bool {
         self.information
             .expect_object_member("code")
@@ -563,8 +521,6 @@ impl RtmpResultCommand {
             .unwrap_or(false)
     }
 
-    /// Creates the `stream result`.
-    /// 创建 `stream result`。
     pub fn create_stream_result(
         transaction_id: TransactionId,
         stream_id: RtmpMessageStreamId,
@@ -577,8 +533,6 @@ impl RtmpResultCommand {
     }
 }
 
-/// Command for `RTMP On Status`.
-/// `RTMP On Status` 的命令。
 #[derive(Debug, Clone)]
 pub struct RtmpOnStatusCommand {
     pub level: String,
@@ -626,20 +580,14 @@ impl RtmpOnStatusCommand {
         })
     }
 
-    /// Returns `true` if `publish start` is true.
-    /// 当 `publish start` 为真时返回 `true`。
     pub fn is_publish_start(&self) -> bool {
         self.code == "NetStream.Publish.Start"
     }
 
-    /// Returns `true` if `play start` is true.
-    /// 当 `play start` 为真时返回 `true`。
     pub fn is_play_start(&self) -> bool {
         self.code == "NetStream.Play.Start"
     }
 
-    /// Publishes `start` to subscribers.
-    /// 将 `start` 发布给订阅者。
     pub fn publish_start() -> Self {
         Self {
             level: "status".to_string(),
@@ -649,8 +597,6 @@ impl RtmpOnStatusCommand {
         }
     }
 
-    /// `play_start` function of `RtmpOnStatusCommand`.
-    /// `RtmpOnStatusCommand` 的 `play_start` 函数。
     pub fn play_start() -> Self {
         Self {
             level: "status".to_string(),
@@ -660,8 +606,6 @@ impl RtmpOnStatusCommand {
         }
     }
 
-    /// Publishes `bad name` to subscribers.
-    /// 将 `bad name` 发布给订阅者。
     pub fn publish_bad_name(reason: &str) -> Self {
         Self {
             level: "error".to_string(),
@@ -671,8 +615,6 @@ impl RtmpOnStatusCommand {
         }
     }
 
-    /// `play_stream_not_found` function of `RtmpOnStatusCommand`.
-    /// `RtmpOnStatusCommand` 的 `play_stream_not_found` 函数。
     pub fn play_stream_not_found(reason: &str) -> Self {
         Self {
             level: "error".to_string(),

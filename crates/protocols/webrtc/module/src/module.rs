@@ -35,8 +35,6 @@ use crate::session::{WebRtcModuleSessionState, WebRtcSessionIdAllocator, WebRtcS
 const MODULE_ID: &str = "webrtc";
 const ROUTES_PREFIX: &str = "/api/v1/rtc";
 
-/// `WebRtcModuleFactory` data structure.
-/// `WebRtcModuleFactory` 数据结构。
 pub struct WebRtcModuleFactory;
 
 impl ModuleFactory for WebRtcModuleFactory {
@@ -73,8 +71,6 @@ impl ModuleFactory for WebRtcModuleFactory {
     }
 }
 
-/// `WebRtcModule` data structure.
-/// `WebRtcModule` 数据结构。
 pub struct WebRtcModule {
     state: ModuleState,
     config: Arc<Mutex<WebRtcModuleConfig>>,
@@ -119,8 +115,6 @@ pub struct WebRtcModule {
 }
 
 impl WebRtcModule {
-    /// Creates a new `WebRtcModule` instance.
-    /// 创建新的 `WebRtcModule` 实例。
     pub fn new() -> Self {
         Self {
             state: ModuleState::Created,

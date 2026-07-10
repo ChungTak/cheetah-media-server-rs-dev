@@ -2,8 +2,6 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, DeriveInput};
 
-/// `derive_config_schema` function.
-/// `derive_config_schema` 函数。
 #[proc_macro_derive(ConfigSchema)]
 pub fn derive_config_schema(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);

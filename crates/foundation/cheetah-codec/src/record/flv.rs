@@ -31,8 +31,6 @@ pub struct FlvFileWriter {
 }
 
 impl FlvFileWriter {
-    /// Creates a new `FlvFileWriter` instance.
-    /// 创建新的 `FlvFileWriter` 实例。
     pub fn new(config: FlvFileWriterConfig) -> Self {
         Self {
             config,

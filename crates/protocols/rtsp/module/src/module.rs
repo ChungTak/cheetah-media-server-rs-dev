@@ -49,8 +49,6 @@ struct PauseRequestMeta {
     requested_range: Option<String>,
 }
 
-/// `RtspModuleFactory` data structure.
-/// `RtspModuleFactory` 数据结构。
 pub struct RtspModuleFactory;
 
 impl ModuleFactory for RtspModuleFactory {
@@ -87,8 +85,6 @@ impl ModuleFactory for RtspModuleFactory {
     }
 }
 
-/// `RtspModule` data structure.
-/// `RtspModule` 数据结构。
 pub struct RtspModule {
     info: ModuleInfo,
     state: ModuleState,
@@ -99,8 +95,6 @@ pub struct RtspModule {
 }
 
 impl RtspModule {
-    /// Creates a new `RtspModule` instance.
-    /// 创建新的 `RtspModule` 实例。
     pub fn new() -> Self {
         Self {
             info: ModuleInfo {

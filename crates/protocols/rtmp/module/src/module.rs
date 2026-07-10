@@ -70,8 +70,6 @@ const H264_RELEASE_GRACE_MS: u64 = 800;
 const RTMP_EGRESS_BACKWARD_REPAIR_THRESHOLD_MS: u32 = 3_000;
 const RTMP_PLAY_PACING_MAX_FORWARD_DELTA_MS: u32 = 30_000;
 
-/// `RtmpModuleFactory` data structure.
-/// `RtmpModuleFactory` 数据结构。
 pub struct RtmpModuleFactory;
 
 impl ModuleFactory for RtmpModuleFactory {
@@ -109,8 +107,6 @@ impl ModuleFactory for RtmpModuleFactory {
     }
 }
 
-/// `RtmpModule` data structure.
-/// `RtmpModule` 数据结构。
 pub struct RtmpModule {
     info: ModuleInfo,
     state: ModuleState,
@@ -121,8 +117,6 @@ pub struct RtmpModule {
 }
 
 impl RtmpModule {
-    /// Creates a new `RtmpModule` instance.
-    /// 创建新的 `RtmpModule` 实例。
     pub fn new() -> Self {
         Self {
             info: ModuleInfo {

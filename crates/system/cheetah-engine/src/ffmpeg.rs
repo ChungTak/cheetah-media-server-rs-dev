@@ -1,8 +1,6 @@
 use cheetah_sdk::{FfmpegApi, FfmpegJob, SdkError};
 use dashmap::DashMap;
 
-/// Service contract for `Local Ffmpeg`.
-/// `Local Ffmpeg` 的服务契约。
 #[derive(Default)]
 pub struct LocalFfmpegService {
     jobs: DashMap<String, FfmpegJob>,

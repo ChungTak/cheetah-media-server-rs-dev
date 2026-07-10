@@ -150,8 +150,6 @@ pub fn publish_play_disconnect_event(event_bus: &dyn EventBus, event: &WebRtcPla
     }));
 }
 
-/// Closes the `reason to play disconnect reason`.
-/// 关闭 `reason to play disconnect reason`。
 pub fn close_reason_to_play_disconnect_reason(
     reason: &cheetah_webrtc_core::WebRtcCloseReason,
 ) -> PlayDisconnectReason {

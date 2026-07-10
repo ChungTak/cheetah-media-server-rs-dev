@@ -11,13 +11,9 @@ use crate::track::TrackInfo;
 
 use super::{RecordContainerWriter, RecordDiagnostic, RecordError, RecordFormat, RecordWriteEvent};
 
-/// Configuration for `Ps File Writer`.
-/// `Ps File Writer` 的配置。
 #[derive(Debug, Clone, Default)]
 pub struct PsFileWriterConfig {}
 
-/// `PsFileWriter` data structure.
-/// `PsFileWriter` 数据结构。
 pub struct PsFileWriter {
     inner: PsMuxer,
     initialized: bool,
@@ -25,8 +21,6 @@ pub struct PsFileWriter {
 }
 
 impl PsFileWriter {
-    /// Creates a new `PsFileWriter` instance.
-    /// 创建新的 `PsFileWriter` 实例。
     pub fn new(_config: PsFileWriterConfig) -> Self {
         Self {
             inner: PsMuxer::new(),

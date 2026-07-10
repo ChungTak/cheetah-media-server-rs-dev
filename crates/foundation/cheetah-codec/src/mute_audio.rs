@@ -81,20 +81,14 @@ impl MuteAudioMaker {
         self.asc.to_bytes()
     }
 
-    /// `sample_rate` function of `MuteAudioMaker`.
-    /// `MuteAudioMaker` 的 `sample_rate` 函数。
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
-    /// `channels` function of `MuteAudioMaker`.
-    /// `MuteAudioMaker` 的 `channels` 函数。
     pub fn channels(&self) -> u8 {
         self.channels
     }
 
-    /// `track_id` function of `MuteAudioMaker`.
-    /// `MuteAudioMaker` 的 `track_id` 函数。
     pub fn track_id(&self) -> TrackId {
         self.track_id
     }

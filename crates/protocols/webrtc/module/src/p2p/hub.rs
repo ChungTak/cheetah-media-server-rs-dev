@@ -49,8 +49,6 @@ pub struct PeerKey {
 }
 
 impl PeerKey {
-    /// Creates a new `PeerKey` instance.
-    /// 创建新的 `PeerKey` 实例。
     pub fn new(
         room_id: impl Into<String>,
         peer_id: impl Into<String>,
@@ -136,8 +134,6 @@ pub struct KeeperHub<T: P2pTransport + 'static> {
 }
 
 impl<T: P2pTransport + 'static> KeeperHub<T> {
-    /// Creates a new instance.
-    /// 创建新实例。
     pub fn new(transport: T, config: KeeperHubConfig) -> Arc<Self> {
         Arc::new(Self {
             transport: Arc::new(transport),
@@ -147,14 +143,10 @@ impl<T: P2pTransport + 'static> KeeperHub<T> {
         })
     }
 
-    /// `config` function.
-    /// `config` 函数。
     pub fn config(&self) -> &KeeperHubConfig {
         &self.config
     }
 
-    /// `peer_count` function.
-    /// `peer_count` 函数。
     pub fn peer_count(&self) -> usize {
         self.inbound.lock().len()
     }

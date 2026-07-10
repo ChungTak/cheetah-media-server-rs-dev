@@ -8,24 +8,18 @@ use crate::{
     TimestampNormalizeOutput, TrackId, TrackInfo, TrackInfoError,
 };
 
-/// Source that produces `Timeline`.
-/// 产生 `Timeline` 的 Source。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimelineSource {
     TimestampNormalizer,
     PassthroughLegacy,
 }
 
-/// Kind of `Future Protocol`.
-/// `Future Protocol` 的种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FutureProtocolKind {
     SrtTransport,
     WebRtcRtpRtcp,
 }
 
-/// Error returned by `Adapter Contract` operations.
-/// `Adapter Contract` 操作返回的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum AdapterContractError {
     #[error("track/frame mismatch for {field}: track={track}, frame={frame}")]
@@ -63,8 +57,6 @@ pub enum AdapterContractError {
     WebRtcVideoMissingAccessUnitBoundary { track_id: TrackId },
 }
 
-/// Frame for `Ingress Adapter`.
-/// `Ingress Adapter` 的帧。
 #[derive(Debug, Clone)]
 pub struct IngressAdapterFrame {
     track: TrackInfo,
@@ -75,8 +67,6 @@ pub struct IngressAdapterFrame {
 }
 
 impl IngressAdapterFrame {
-    /// Creates `normalized` from input.
-    /// 从输入创建 `normalized`。
     pub fn from_normalized(
         track: TrackInfo,
         frame: AVFrame,
@@ -106,8 +96,6 @@ impl IngressAdapterFrame {
         })
     }
 
-    /// Creates `passthrough` from input.
-    /// 从输入创建 `passthrough`。
     pub fn from_passthrough(
         track: TrackInfo,
         frame: AVFrame,
@@ -122,77 +110,53 @@ impl IngressAdapterFrame {
         })
     }
 
-    /// `track` function of `IngressAdapterFrame`.
-    /// `IngressAdapterFrame` 的 `track` 函数。
     pub fn track(&self) -> &TrackInfo {
         &self.track
     }
 
-    /// `frame` function of `IngressAdapterFrame`.
-    /// `IngressAdapterFrame` 的 `frame` 函数。
     pub fn frame(&self) -> &AVFrame {
         &self.frame
     }
 
-    /// `codec` function of `IngressAdapterFrame`.
-    /// `IngressAdapterFrame` 的 `codec` 函数。
     pub fn codec(&self) -> CodecId {
         self.frame.codec
     }
 
-    /// `timebase` function of `IngressAdapterFrame`.
-    /// `IngressAdapterFrame` 的 `timebase` 函数。
     pub fn timebase(&self) -> Timebase {
         self.frame.timebase
     }
 
-    /// `pts` function of `IngressAdapterFrame`.
-    /// `IngressAdapterFrame` 的 `pts` 函数。
     pub fn pts(&self) -> i64 {
         self.frame.pts
     }
 
-    /// `dts` function of `IngressAdapterFrame`.
-    /// `IngressAdapterFrame` 的 `dts` 函数。
     pub fn dts(&self) -> i64 {
         self.frame.dts
     }
 
-    /// `duration` function of `IngressAdapterFrame`.
-    /// `IngressAdapterFrame` 的 `duration` 函数。
     pub fn duration(&self) -> i64 {
         self.frame.duration
     }
 
-    /// `random_access` function of `IngressAdapterFrame`.
-    /// `IngressAdapterFrame` 的 `random_access` 函数。
     pub fn random_access(&self) -> bool {
         self.random_access
     }
 
-    /// `discontinuity` function of `IngressAdapterFrame`.
-    /// `IngressAdapterFrame` 的 `discontinuity` 函数。
     pub fn discontinuity(&self) -> bool {
         self.discontinuity
     }
 
-    /// `timeline_source` function of `IngressAdapterFrame`.
-    /// `IngressAdapterFrame` 的 `timeline_source` 函数。
     pub fn timeline_source(&self) -> TimelineSource {
         self.timeline_source
     }
 }
 
-/// `FragmentBoundary` data structure.
-/// `FragmentBoundary` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FragmentBoundary {
     pub start_of_access_unit: bool,
     pub end_of_access_unit: bool,
 }
 
-/// `EncapsulationTimestamps` data structure.
-/// `EncapsulationTimestamps` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EncapsulationTimestamps {
     pub rtmp_timestamp_ms: u32,
@@ -200,16 +164,12 @@ pub struct EncapsulationTimestamps {
     pub rtp_timestamp_ticks: u32,
 }
 
-/// `ParameterSetReplay` data structure.
-/// `ParameterSetReplay` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParameterSetReplay {
     pub requirement: ParameterSetRequirement,
     pub units: Vec<Bytes>,
 }
 
-/// View of `Egress Adapter`.
-/// `Egress Adapter` 的视图。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EgressAdapterView {
     track_id: TrackId,
@@ -228,8 +188,6 @@ pub struct EgressAdapterView {
 }
 
 impl EgressAdapterView {
-    /// Builds the output from the accumulated state.
-    /// 从累积状态构建输出。
     pub fn build(
         track: &TrackInfo,
         frame: &AVFrame,
@@ -288,87 +246,59 @@ impl EgressAdapterView {
         })
     }
 
-    /// `track_id` function of `EgressAdapterView`.
-    /// `EgressAdapterView` 的 `track_id` 函数。
     pub fn track_id(&self) -> TrackId {
         self.track_id
     }
 
-    /// `media_kind` function of `EgressAdapterView`.
-    /// `EgressAdapterView` 的 `media_kind` 函数。
     pub fn media_kind(&self) -> MediaKind {
         self.media_kind
     }
 
-    /// `codec` function of `EgressAdapterView`.
-    /// `EgressAdapterView` 的 `codec` 函数。
     pub fn codec(&self) -> CodecId {
         self.codec
     }
 
-    /// `timebase` function of `EgressAdapterView`.
-    /// `EgressAdapterView` 的 `timebase` 函数。
     pub fn timebase(&self) -> Timebase {
         self.timebase
     }
 
-    /// `random_access` function of `EgressAdapterView`.
-    /// `EgressAdapterView` 的 `random_access` 函数。
     pub fn random_access(&self) -> bool {
         self.random_access
     }
 
-    /// `discontinuity` function of `EgressAdapterView`.
-    /// `EgressAdapterView` 的 `discontinuity` 函数。
     pub fn discontinuity(&self) -> bool {
         self.discontinuity
     }
 
-    /// `pts` function of `EgressAdapterView`.
-    /// `EgressAdapterView` 的 `pts` 函数。
     pub fn pts(&self) -> i64 {
         self.pts
     }
 
-    /// `dts` function of `EgressAdapterView`.
-    /// `EgressAdapterView` 的 `dts` 函数。
     pub fn dts(&self) -> i64 {
         self.dts
     }
 
-    /// `duration` function of `EgressAdapterView`.
-    /// `EgressAdapterView` 的 `duration` 函数。
     pub fn duration(&self) -> i64 {
         self.duration
     }
 
-    /// `fragment_boundary` function of `EgressAdapterView`.
-    /// `EgressAdapterView` 的 `fragment_boundary` 函数。
     pub fn fragment_boundary(&self) -> FragmentBoundary {
         self.fragment_boundary
     }
 
-    /// `encapsulation_timestamps` function of `EgressAdapterView`.
-    /// `EgressAdapterView` 的 `encapsulation_timestamps` 函数。
     pub fn encapsulation_timestamps(&self) -> EncapsulationTimestamps {
         self.encapsulation_timestamps
     }
 
-    /// `codec_config` function of `EgressAdapterView`.
-    /// `EgressAdapterView` 的 `codec_config` 函数。
     pub fn codec_config(&self) -> &CodecConfigView {
         &self.codec_config
     }
 
-    /// `parameter_set_replay` function of `EgressAdapterView`.
-    /// `EgressAdapterView` 的 `parameter_set_replay` 函数。
     pub fn parameter_set_replay(&self) -> &ParameterSetReplay {
         &self.parameter_set_replay
     }
 }
 
-/// View of `SRT Egress Contract`.
-/// `SRT Egress Contract` 的视图。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SrtEgressContractView {
     pub track_id: TrackId,
@@ -382,8 +312,6 @@ pub struct SrtEgressContractView {
     pub parameter_set_replay: ParameterSetReplay,
 }
 
-/// View of `Web Rtc Egress Contract`.
-/// `Web Rtc Egress Contract` 的视图。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcEgressContractView {
     pub track_id: TrackId,
@@ -417,16 +345,12 @@ pub struct WebRtcIngressContractView {
     pub twcc_sequence: Option<u16>,
 }
 
-/// View of `Future Protocol Egress Contract`.
-/// `Future Protocol Egress Contract` 的视图。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FutureProtocolEgressContractView {
     Srt(SrtEgressContractView),
     WebRtc(WebRtcEgressContractView),
 }
 
-/// `enforce_future_protocol_ingress` function.
-/// `enforce_future_protocol_ingress` 函数。
 pub fn enforce_future_protocol_ingress(
     protocol: FutureProtocolKind,
     ingress: &IngressAdapterFrame,
@@ -447,8 +371,6 @@ pub fn enforce_future_protocol_ingress(
     Ok(())
 }
 
-/// `enforce_future_protocol_egress` function.
-/// `enforce_future_protocol_egress` 函数。
 pub fn enforce_future_protocol_egress(
     protocol: FutureProtocolKind,
     egress: &EgressAdapterView,
@@ -465,8 +387,6 @@ pub fn enforce_future_protocol_egress(
     Ok(())
 }
 
-/// Builds the `future protocol egress contract view`.
-/// 构建 `future protocol egress contract view`。
 pub fn build_future_protocol_egress_contract_view(
     protocol: FutureProtocolKind,
     egress: &EgressAdapterView,

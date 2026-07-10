@@ -1,7 +1,5 @@
 use crate::error::Gb28181CoreError;
 
-/// `GbSdp` data structure.
-/// `GbSdp` 数据结构。
 #[derive(Debug, Clone, Default)]
 pub struct GbSdp {
     pub ip: String,
@@ -12,8 +10,6 @@ pub struct GbSdp {
 }
 
 impl GbSdp {
-    /// Parses the input into a structured value, returning an error if malformed.
-    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(text: &str) -> Result<Self, Gb28181CoreError> {
         let mut sdp = GbSdp::default();
         for line in text.lines() {
@@ -72,8 +68,6 @@ impl GbSdp {
         Ok(sdp)
     }
 
-    /// Returns a string representation of the value.
-    /// 返回值的字符串表示。
     pub fn to_string(
         session_id: &str,
         ip: &str,

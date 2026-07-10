@@ -149,8 +149,6 @@ pub struct AacToG711Transcoder {
 }
 
 impl AacToG711Transcoder {
-    /// Creates a new `AacToG711Transcoder` instance.
-    /// 创建新的 `AacToG711Transcoder` 实例。
     pub fn new(
         decoder: Box<dyn AacDecoder>,
         target_codec: CodecId,
@@ -243,8 +241,6 @@ pub struct G711ToAacTranscoder {
 }
 
 impl G711ToAacTranscoder {
-    /// Creates a new `G711ToAacTranscoder` instance.
-    /// 创建新的 `G711ToAacTranscoder` 实例。
     pub fn new(
         source_codec: CodecId,
         source_sample_rate: u32,
@@ -312,8 +308,6 @@ impl G711ToAacTranscoder {
         output
     }
 
-    /// Resets the state to its initial value.
-    /// 将状态重置为初始值。
     pub fn reset(&mut self) {
         self.pcm_buffer.clear();
         self.output_pts = 0;
@@ -367,8 +361,6 @@ pub struct OpusToAacTranscoder {
 }
 
 impl OpusToAacTranscoder {
-    /// Creates a new `OpusToAacTranscoder` instance.
-    /// 创建新的 `OpusToAacTranscoder` 实例。
     pub fn new(
         output_track_id: TrackId,
         decoder: Box<dyn OpusDecoder>,
@@ -434,8 +426,6 @@ impl OpusToAacTranscoder {
         output
     }
 
-    /// Resets the state to its initial value.
-    /// 将状态重置为初始值。
     pub fn reset(&mut self) {
         self.pcm_buffer.clear();
         self.output_pts = 0;
@@ -456,8 +446,6 @@ pub struct AacToOpusTranscoder {
 }
 
 impl AacToOpusTranscoder {
-    /// Creates a new `AacToOpusTranscoder` instance.
-    /// 创建新的 `AacToOpusTranscoder` 实例。
     pub fn new(
         output_track_id: TrackId,
         decoder: Box<dyn AacDecoder>,
@@ -523,8 +511,6 @@ impl AacToOpusTranscoder {
         output
     }
 
-    /// Resets the state to its initial value.
-    /// 将状态重置为初始值。
     pub fn reset(&mut self) {
         self.pcm_buffer.clear();
         self.output_pts = 0;
@@ -547,8 +533,6 @@ pub struct G711ToOpusTranscoder {
 }
 
 impl G711ToOpusTranscoder {
-    /// Creates a new `G711ToOpusTranscoder` instance.
-    /// 创建新的 `G711ToOpusTranscoder` 实例。
     pub fn new(
         source_codec: CodecId,
         source_sample_rate: u32,
@@ -616,8 +600,6 @@ impl G711ToOpusTranscoder {
         output
     }
 
-    /// Resets the state to its initial value.
-    /// 将状态重置为初始值。
     pub fn reset(&mut self) {
         self.pcm_buffer.clear();
         self.output_pts = 0;

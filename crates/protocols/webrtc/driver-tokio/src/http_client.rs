@@ -36,8 +36,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
-/// `HttpMethod` enumeration.
-/// `HttpMethod` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
     Post,
@@ -55,8 +53,6 @@ impl HttpMethod {
     }
 }
 
-/// Error returned by `HTTP Client` operations.
-/// `HTTP Client` 操作返回的错误。
 #[derive(Debug, Error)]
 pub enum HttpClientError {
     #[error("invalid url: {0}")]
@@ -87,8 +83,6 @@ impl From<io::Error> for HttpClientError {
     }
 }
 
-/// Response for `HTTP Client`.
-/// `HTTP Client` 的响应。
 #[derive(Debug, Clone)]
 pub struct HttpClientResponse {
     pub status: u16,
@@ -97,8 +91,6 @@ pub struct HttpClientResponse {
 }
 
 impl HttpClientResponse {
-    /// `header` function of `HttpClientResponse`.
-    /// `HttpClientResponse` 的 `header` 函数。
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -121,8 +113,6 @@ pub struct HttpClientRequest {
 }
 
 impl HttpClientRequest {
-    /// Creates a new `post SDP` instance.
-    /// 创建新的 `post SDP` 实例。
     pub fn new_post_sdp(url: impl Into<String>, sdp: impl Into<Bytes>) -> Self {
         Self {
             url: url.into(),
@@ -139,8 +129,6 @@ impl HttpClientRequest {
         }
     }
 
-    /// Creates a new `delete` instance.
-    /// 创建新的 `delete` 实例。
     pub fn new_delete(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
@@ -163,8 +151,6 @@ pub struct WhipWhepHttpClient {
 }
 
 impl WhipWhepHttpClient {
-    /// Creates a new `WhipWhepHttpClient` instance.
-    /// 创建新的 `WhipWhepHttpClient` 实例。
     pub fn new() -> Self {
         // Install the process-default rustls crypto provider lazily.
         // Production deployments call this from `main.rs` before any

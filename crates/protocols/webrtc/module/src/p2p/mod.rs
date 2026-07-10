@@ -30,44 +30,18 @@
 //! * `job.rs` — pull/push job state machine bridging the client to
 //!   `WebRtcDriverHandle`.
 
-/// Module for `bridge`.
-/// `bridge` 相关模块。
 pub mod bridge;
-/// Module for `buffer`.
-/// `buffer` 相关模块。
 pub mod buffer;
-/// Module for `entrypoint`.
-/// `entrypoint` 相关模块。
 pub mod entrypoint;
-/// Module for `hub`.
-/// `hub` 相关模块。
 pub mod hub;
-/// Module for `job`.
-/// `job` 相关模块。
 pub mod job;
-/// Module for `lifecycle_dispatcher`.
-/// `lifecycle_dispatcher` 相关模块。
 pub mod lifecycle_dispatcher;
-/// Module for `message`.
-/// `message` 相关模块。
 pub mod message;
-/// Module for `room`.
-/// `room` 相关模块。
 pub mod room;
-/// Module for `server`.
-/// `server` 相关模块。
 pub mod server;
-/// Module for `supervisor`.
-/// `supervisor` 相关模块。
 pub mod supervisor;
-/// Module for `transport`.
-/// `transport` 相关模块。
 pub mod transport;
-/// Module for `url`.
-/// `url` 相关模块。
 pub mod url;
-/// Module for `ws`.
-/// `ws` 相关模块。
 pub mod ws;
 
 pub use bridge::{

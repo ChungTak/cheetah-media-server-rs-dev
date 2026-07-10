@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// Configuration for `HLS Module`.
-/// `HLS Module` 的配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HlsModuleConfig {
     pub enabled: bool,
@@ -279,14 +277,10 @@ impl Default for HlsModuleConfig {
 }
 
 impl HlsModuleConfig {
-    /// Creates `value` from input.
-    /// 从输入创建 `value`。
     pub fn from_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
     }
 
-    /// `default_json` function of `HlsModuleConfig`.
-    /// `HlsModuleConfig` 的 `default_json` 函数。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap()
     }

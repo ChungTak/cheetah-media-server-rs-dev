@@ -5,8 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::route::{parse_stream_key_spec, validate_pull_source_url};
 
-/// Configuration for `HTTP FLV Module`.
-/// `HTTP FLV Module` 的配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct HttpFlvModuleConfig {
@@ -48,8 +46,6 @@ impl Default for HttpFlvTlsConfig {
     }
 }
 
-/// Configuration for `HTTP FLV Pull Job`.
-/// `HTTP FLV Pull Job` 的配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct HttpFlvPullJobConfig {
@@ -61,8 +57,6 @@ pub struct HttpFlvPullJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
-/// `HttpFlvAlertThresholds` data structure.
-/// `HttpFlvAlertThresholds` 数据结构。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct HttpFlvAlertThresholds {
@@ -113,8 +107,6 @@ impl Default for HttpFlvAlertThresholds {
 }
 
 impl HttpFlvModuleConfig {
-    /// Creates `value` from input.
-    /// 从输入创建 `value`。
     pub fn from_value(value: serde_json::Value) -> Result<Self, SdkError> {
         let cfg: Self = serde_json::from_value(value)
             .map_err(|err| SdkError::InvalidArgument(format!("invalid http_flv config: {err}")))?;
@@ -122,8 +114,6 @@ impl HttpFlvModuleConfig {
         Ok(cfg)
     }
 
-    /// Validates the input and returns an error if invalid.
-    /// 验证输入，无效时返回错误。
     pub fn validate(&self) -> Result<(), SdkError> {
         self.listen
             .parse::<SocketAddr>()
@@ -210,8 +200,6 @@ impl HttpFlvModuleConfig {
         Ok(())
     }
 
-    /// `default_json` function of `HttpFlvModuleConfig`.
-    /// `HttpFlvModuleConfig` 的 `default_json` 函数。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).expect("serialize default http_flv config")
     }

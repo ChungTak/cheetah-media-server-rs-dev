@@ -20,8 +20,6 @@ pub use udp::{
     RtspClientPortRange, RtspClientUdpEndpoint, RtspClientUdpRemote,
 };
 
-/// Configuration for `RTSP Client`.
-/// `RTSP Client` 的配置。
 #[derive(Debug, Clone)]
 pub struct RtspClientConfig {
     pub command_queue_capacity: usize,
@@ -45,8 +43,6 @@ impl Default for RtspClientConfig {
     }
 }
 
-/// Events produced by the `RTSP Client` subsystem.
-/// `RTSP Client` 子系统产生的事件。
 #[derive(Debug, Clone)]
 pub enum RtspClientEvent {
     Connected {
@@ -74,8 +70,6 @@ pub enum RtspClientEvent {
     },
 }
 
-/// Error returned by `RTSP Client Send` operations.
-/// `RTSP Client Send` 操作返回的错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtspClientSendError {
     ChannelClosed,
@@ -91,8 +85,6 @@ impl std::fmt::Display for RtspClientSendError {
 
 impl std::error::Error for RtspClientSendError {}
 
-/// Handle to a `RTSP Client` resource.
-/// `RTSP Client` 资源的句柄。
 pub struct RtspClientHandle {
     events_rx: mpsc::Receiver<RtspClientEvent>,
     event_tx: mpsc::Sender<RtspClientEvent>,
@@ -102,14 +94,10 @@ pub struct RtspClientHandle {
 }
 
 impl RtspClientHandle {
-    /// Receives `event` from the peer.
-    /// 从对端接收 `event`。
     pub async fn recv_event(&mut self) -> Option<RtspClientEvent> {
         self.events_rx.recv().await
     }
 
-    /// Sends `command` to the peer.
-    /// 向对端发送 `command`。
     pub async fn send_command(
         &self,
         command: RtspClientCommand,
@@ -117,33 +105,23 @@ impl RtspClientHandle {
         self.cmd_tx.send(command).await
     }
 
-    /// `command_sender` function of `RtspClientHandle`.
-    /// `RtspClientHandle` 的 `command_sender` 函数。
     pub fn command_sender(&self) -> RtspClientCommandSender {
         self.cmd_tx.clone()
     }
 
-    /// `event_sender` function of `RtspClientHandle`.
-    /// `RtspClientHandle` 的 `event_sender` 函数。
     pub fn event_sender(&self) -> mpsc::Sender<RtspClientEvent> {
         self.event_tx.clone()
     }
 
-    /// Shuts down the send or receive side of the stream.
-    /// 关闭流的发送或接收端。
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
-    /// `wait` function of `RtspClientHandle`.
-    /// `RtspClientHandle` 的 `wait` 函数。
     pub async fn wait(self) -> Result<(), TaskJoinError> {
         self.join.wait().await
     }
 }
 
-/// Starts the `TCP client`.
-/// 启动 `TCP client`。
 pub fn start_tcp_client(
     runtime_api: Arc<dyn RuntimeApi>,
     peer: SocketAddr,
@@ -277,8 +255,6 @@ impl cheetah_runtime_api::AsyncTcpStream for TlsClientStreamWrapper {
     }
 }
 
-/// Starts the `HTTP tunnel client`.
-/// 启动 `HTTP tunnel client`。
 pub fn start_http_tunnel_client(
     runtime_api: Arc<dyn RuntimeApi>,
     peer: SocketAddr,

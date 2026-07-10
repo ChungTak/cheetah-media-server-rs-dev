@@ -9,18 +9,12 @@ use cheetah_codec::{
 
 use crate::{Amf0Value as WireAmf0Value, Amf3Value, AmfValue, AmfValueRef};
 
-/// `RTMP_VIDEO_RAW_SIDEDATA_MAGIC` constant.
-/// `RTMP_VIDEO_RAW_SIDEDATA_MAGIC` 常量。
 pub const RTMP_VIDEO_RAW_SIDEDATA_MAGIC: &[u8] = b"rtmp-video-raw:";
-/// `RTMP_AUDIO_RAW_SIDEDATA_MAGIC` constant.
-/// `RTMP_AUDIO_RAW_SIDEDATA_MAGIC` 常量。
 pub const RTMP_AUDIO_RAW_SIDEDATA_MAGIC: &[u8] = b"rtmp-audio-raw:";
 
 const RTMP_TIMESTAMP_BACKWARD_JITTER_MS: u32 = 3_000;
 const RTMP_TIMESTAMP_WRAP_FORWARD_MAX_MS: u32 = 300_000;
 
-/// Applies the `FLV metadata to tracks` change and returns the effect.
-/// 应用 `FLV metadata to tracks` 的更改并返回效果。
 pub fn apply_flv_metadata_to_tracks(
     video_track: &mut Option<TrackInfo>,
     audio_track: &mut Option<TrackInfo>,
@@ -86,8 +80,6 @@ pub fn apply_flv_metadata_to_tracks(
     }
 }
 
-/// Applies the `FLV video config` change and returns the effect.
-/// 应用 `FLV video config` 的更改并返回效果。
 pub fn apply_flv_video_config(
     video_track: &mut Option<TrackInfo>,
     codec: CodecId,
@@ -146,8 +138,6 @@ pub fn apply_flv_video_config(
     *video_track = Some(track);
 }
 
-/// Parses `FLV hvcc parameter sets` from input.
-/// 从输入解析 `FLV hvcc parameter sets`。
 pub fn parse_flv_hvcc_parameter_sets(
     payload: &[u8],
     codec: CodecId,
@@ -159,8 +149,6 @@ pub fn parse_flv_hvcc_parameter_sets(
     }
 }
 
-/// Parses `FLV avcc parameter sets` from input.
-/// 从输入解析 `FLV avcc parameter sets`。
 pub fn parse_flv_avcc_parameter_sets(avcc: &[u8]) -> (Vec<Bytes>, Vec<Bytes>) {
     if avcc.len() < 7 {
         return (Vec::new(), Vec::new());
@@ -207,8 +195,6 @@ pub fn parse_flv_avcc_parameter_sets(avcc: &[u8]) -> (Vec<Bytes>, Vec<Bytes>) {
     (sps, pps)
 }
 
-/// `attach_raw_rtmp_video_payload` function.
-/// `attach_raw_rtmp_video_payload` 函数。
 pub fn attach_raw_rtmp_video_payload(frame: &mut AVFrame, payload: &[u8]) {
     let mut tagged = BytesMut::with_capacity(RTMP_VIDEO_RAW_SIDEDATA_MAGIC.len() + payload.len());
     tagged.extend_from_slice(RTMP_VIDEO_RAW_SIDEDATA_MAGIC);
@@ -216,8 +202,6 @@ pub fn attach_raw_rtmp_video_payload(frame: &mut AVFrame, payload: &[u8]) {
     frame.side_data.push(FrameSideData::Opaque(tagged.freeze()));
 }
 
-/// `attach_raw_rtmp_audio_payload` function.
-/// `attach_raw_rtmp_audio_payload` 函数。
 pub fn attach_raw_rtmp_audio_payload(frame: &mut AVFrame, payload: &[u8]) {
     let mut tagged = BytesMut::with_capacity(RTMP_AUDIO_RAW_SIDEDATA_MAGIC.len() + payload.len());
     tagged.extend_from_slice(RTMP_AUDIO_RAW_SIDEDATA_MAGIC);
@@ -225,8 +209,6 @@ pub fn attach_raw_rtmp_audio_payload(frame: &mut AVFrame, payload: &[u8]) {
     frame.side_data.push(FrameSideData::Opaque(tagged.freeze()));
 }
 
-/// `length_prefixed_to_annexb_with_size` function.
-/// `length_prefixed_to_annexb_with_size` 函数。
 pub fn length_prefixed_to_annexb_with_size(payload: &[u8], nal_length_size: usize) -> Bytes {
     let nal_length_size = normalize_nal_length_size(nal_length_size);
     let mut out = BytesMut::with_capacity(payload.len() + 16);
@@ -248,8 +230,6 @@ pub fn length_prefixed_to_annexb_with_size(payload: &[u8], nal_length_size: usiz
     }
 }
 
-/// `source_timestamp_from_rtmp_ms` function.
-/// `source_timestamp_from_rtmp_ms` 函数。
 pub fn source_timestamp_from_rtmp_ms(raw_timestamp_ms: u32) -> SourceTimestamp {
     SourceTimestamp::Rtmp(RtmpTimestamp::new(
         raw_timestamp_ms,
@@ -257,8 +237,6 @@ pub fn source_timestamp_from_rtmp_ms(raw_timestamp_ms: u32) -> SourceTimestamp {
     ))
 }
 
-/// `maybe_reset_rtmp_timestamp_normalizer` function.
-/// `maybe_reset_rtmp_timestamp_normalizer` 函数。
 pub fn maybe_reset_rtmp_timestamp_normalizer(
     normalizer: &mut TimestampNormalizer,
     repair_count: &mut u64,
@@ -282,8 +260,6 @@ pub fn maybe_reset_rtmp_timestamp_normalizer(
     }
 }
 
-/// Updates the `timestamp repair counter`.
-/// 更新 `timestamp repair counter`。
 pub fn update_timestamp_repair_counter(
     normalized: &TimestampNormalizeOutput,
     repair_count: &mut u64,

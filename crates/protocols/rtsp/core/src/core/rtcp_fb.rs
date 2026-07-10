@@ -10,8 +10,6 @@ pub const RTPFB_FMT_NACK: u8 = 1;
 
 /// FMT values for PSFB (PT=206).
 pub const PSFB_FMT_PLI: u8 = 1;
-/// `PSFB_FMT_FIR` constant.
-/// `PSFB_FMT_FIR` 常量。
 pub const PSFB_FMT_FIR: u8 = 4;
 
 /// RFC 4585 §6.2.1 — Generic NACK.

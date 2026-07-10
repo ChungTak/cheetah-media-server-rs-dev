@@ -69,8 +69,6 @@ enum PartRequestDecision {
     NotFound,
 }
 
-/// `HlsModuleFactory` data structure.
-/// `HlsModuleFactory` 数据结构。
 pub struct HlsModuleFactory;
 
 impl ModuleFactory for HlsModuleFactory {

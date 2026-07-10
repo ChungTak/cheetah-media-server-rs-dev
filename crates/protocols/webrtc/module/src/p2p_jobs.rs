@@ -88,8 +88,6 @@ pub struct P2pClientJobSnapshot {
     pub stream_key: String,
 }
 
-/// Error returned by `2 p Client Job` operations.
-/// `2 p Client Job` 操作返回的错误。
 #[derive(Debug, Error)]
 pub enum P2pClientJobError {
     #[error("invalid url: {0}")]
@@ -150,14 +148,10 @@ struct P2pClientJobEntry {
 }
 
 impl P2pClientJobRegistry {
-    /// Creates a new `P2pClientJobRegistry` instance.
-    /// 创建新的 `P2pClientJobRegistry` 实例。
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
 
-    /// `list` function of `P2pClientJobRegistry`.
-    /// `P2pClientJobRegistry` 的 `list` 函数。
     pub fn list(&self) -> Vec<P2pClientJobSnapshot> {
         self.inner
             .lock()
@@ -166,8 +160,6 @@ impl P2pClientJobRegistry {
             .collect()
     }
 
-    /// Stops the service or background task.
-    /// 停止服务或后台任务。
     pub fn stop(&self, session_id: WebRtcSessionId) -> bool {
         let entry = self.inner.lock().remove(&session_id);
         match entry {
@@ -179,8 +171,6 @@ impl P2pClientJobRegistry {
         }
     }
 
-    /// Stops the `all`.
-    /// 停止 `all`。
     pub fn stop_all(&self) {
         let entries: Vec<_> = self.inner.lock().drain().collect();
         for (_, entry) in entries {

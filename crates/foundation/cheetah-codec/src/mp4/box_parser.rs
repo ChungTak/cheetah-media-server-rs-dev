@@ -18,14 +18,10 @@ pub struct BoxHeader {
 }
 
 impl BoxHeader {
-    /// `type_str` function of `BoxHeader`.
-    /// `BoxHeader` 的 `type_str` 函数。
     pub fn type_str(&self) -> String {
         String::from_utf8_lossy(&self.fourcc).into_owned()
     }
 
-    /// `payload_size` function of `BoxHeader`.
-    /// `BoxHeader` 的 `payload_size` 函数。
     pub fn payload_size(&self) -> u64 {
         self.size.saturating_sub(self.header_size as u64)
     }
@@ -157,8 +153,6 @@ pub struct BoxIter<'a> {
 }
 
 impl<'a> BoxIter<'a> {
-    /// Creates a new instance.
-    /// 创建新实例。
     pub fn new(buf: &'a [u8], offset: usize, parent_end: usize, max_box_size: u64) -> Self {
         Self {
             buf,
@@ -169,8 +163,6 @@ impl<'a> BoxIter<'a> {
     }
 }
 
-/// `ChildBox` data structure.
-/// `ChildBox` 数据结构。
 #[derive(Debug, Clone)]
 pub struct ChildBox<'a> {
     pub header: BoxHeader,
@@ -220,8 +212,6 @@ pub fn read_u32(buf: &[u8], offset: usize) -> Result<u32, Mp4Error> {
     ]))
 }
 
-/// Reads `u 64` from the stream.
-/// 从流中读取 `u 64`。
 pub fn read_u64(buf: &[u8], offset: usize) -> Result<u64, Mp4Error> {
     if offset + 8 > buf.len() {
         return Err(Mp4Error::InvalidBox {
@@ -241,8 +231,6 @@ pub fn read_u64(buf: &[u8], offset: usize) -> Result<u64, Mp4Error> {
     ]))
 }
 
-/// Reads `u 16` from the stream.
-/// 从流中读取 `u 16`。
 pub fn read_u16(buf: &[u8], offset: usize) -> Result<u16, Mp4Error> {
     if offset + 2 > buf.len() {
         return Err(Mp4Error::InvalidBox {

@@ -10,8 +10,6 @@ use parking_lot::RwLock;
 
 use crate::metadata::{RecordFileMetadata, RecordFileQuery, RecordTaskMetadata, RecordTaskState};
 
-/// Error returned by `Registry` operations.
-/// `Registry` 操作返回的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum RegistryError {
     #[error("task not found: {0}")]
@@ -34,8 +32,6 @@ pub struct RecordRegistry {
 }
 
 impl RecordRegistry {
-    /// Creates a new `RecordRegistry` instance.
-    /// 创建新的 `RecordRegistry` 实例。
     pub fn new(capacity: usize) -> Self {
         Self {
             tasks: RwLock::new(HashMap::new()),
@@ -44,26 +40,18 @@ impl RecordRegistry {
         }
     }
 
-    /// `capacity` function of `RecordRegistry`.
-    /// `RecordRegistry` 的 `capacity` 函数。
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 
-    /// `task_count` function of `RecordRegistry`.
-    /// `RecordRegistry` 的 `task_count` 函数。
     pub fn task_count(&self) -> usize {
         self.tasks.read().len()
     }
 
-    /// `file_count` function of `RecordRegistry`.
-    /// `RecordRegistry` 的 `file_count` 函数。
     pub fn file_count(&self) -> usize {
         self.files.read().len()
     }
 
-    /// Inserts `task` into the collection.
-    /// 将 `task` 插入集合。
     pub fn insert_task(&self, task: RecordTaskMetadata) -> Result<(), RegistryError> {
         let mut tasks = self.tasks.write();
         if tasks.contains_key(&task.task_id) {
@@ -76,8 +64,6 @@ impl RecordRegistry {
         Ok(())
     }
 
-    /// Updates the `task state`.
-    /// 更新 `task state`。
     pub fn update_task_state(
         &self,
         task_id: &str,
@@ -91,8 +77,6 @@ impl RecordRegistry {
         Ok(())
     }
 
-    /// Removes `task` from the collection.
-    /// 从集合中移除 `task`。
     pub fn remove_task(&self, task_id: &str) -> Result<RecordTaskMetadata, RegistryError> {
         self.tasks
             .write()
@@ -100,27 +84,19 @@ impl RecordRegistry {
             .ok_or_else(|| RegistryError::TaskNotFound(task_id.to_string()))
     }
 
-    /// `list_tasks` function of `RecordRegistry`.
-    /// `RecordRegistry` 的 `list_tasks` 函数。
     pub fn list_tasks(&self) -> Vec<RecordTaskMetadata> {
         self.tasks.read().values().cloned().collect()
     }
 
-    /// Returns the `task` value.
-    /// 返回 `task` 的值。
     pub fn get_task(&self, task_id: &str) -> Option<RecordTaskMetadata> {
         self.tasks.read().get(task_id).cloned()
     }
 
-    /// Inserts `file` into the collection.
-    /// 将 `file` 插入集合。
     pub fn insert_file(&self, file: RecordFileMetadata) -> Result<(), RegistryError> {
         self.files.write().insert(file.file_id.clone(), file);
         Ok(())
     }
 
-    /// Removes `file` from the collection.
-    /// 从集合中移除 `file`。
     pub fn remove_file(&self, file_id: &str) -> Result<RecordFileMetadata, RegistryError> {
         self.files
             .write()
@@ -128,8 +104,6 @@ impl RecordRegistry {
             .ok_or_else(|| RegistryError::FileNotFound(file_id.to_string()))
     }
 
-    /// Queries `files` and returns the result.
-    /// 查询 `files` 并返回结果。
     pub fn query_files(&self, query: &RecordFileQuery) -> Vec<RecordFileMetadata> {
         let files = self.files.read();
         let mut filtered: Vec<RecordFileMetadata> = files

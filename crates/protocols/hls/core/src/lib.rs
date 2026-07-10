@@ -1,44 +1,16 @@
-/// Module for `error`.
-/// `error` 相关模块。
 pub mod error;
-/// Module for `fmp4_demux`.
-/// `fmp4_demux` 相关模块。
 pub mod fmp4_demux;
-/// Module for `fmp4_mux`.
-/// `fmp4_mux` 相关模块。
 pub mod fmp4_mux;
-/// Module for `ll_hls`.
-/// `ll_hls` 相关模块。
 pub mod ll_hls;
-/// Module for `marker`.
-/// `marker` 相关模块。
 pub mod marker;
-/// Module for `pacer`.
-/// `pacer` 相关模块。
 pub mod pacer;
-/// Module for `parser`.
-/// `parser` 相关模块。
 pub mod parser;
-/// Module for `player`.
-/// `player` 相关模块。
 pub mod player;
-/// Module for `playlist`.
-/// `playlist` 相关模块。
 pub mod playlist;
-/// Module for `request`.
-/// `request` 相关模块。
 pub mod request;
-/// Module for `segment`.
-/// `segment` 相关模块。
 pub mod segment;
-/// Module for `session`.
-/// `session` 相关模块。
 pub mod session;
-/// Module for `ts_demux`.
-/// `ts_demux` 相关模块。
 pub mod ts_demux;
-/// Module for `ts_mux`.
-/// `ts_mux` 相关模块。
 pub mod ts_mux;
 
 pub use error::HlsCoreError;

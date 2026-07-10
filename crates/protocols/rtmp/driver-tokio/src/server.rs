@@ -16,14 +16,10 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::warn;
 
-/// Identifier for `RTMP Connection`.
-/// `RTMP Connection` 的标识符。
 pub type RtmpConnectionId = u64;
 
 const MAX_CONSECUTIVE_WRITE_ERRORS: u32 = 30;
 
-/// Configuration for `Driver`.
-/// `Driver` 的配置。
 #[derive(Debug, Clone)]
 pub struct DriverConfig {
     pub write_queue_capacity: usize,
@@ -43,8 +39,6 @@ impl Default for DriverConfig {
     }
 }
 
-/// Events produced by the `Driver` subsystem.
-/// `Driver` 子系统产生的事件。
 #[derive(Debug)]
 pub enum DriverEvent {
     ConnectionOpened {
@@ -61,8 +55,6 @@ pub enum DriverEvent {
     },
 }
 
-/// Command for `RTMP Driver`.
-/// `RTMP Driver` 的命令。
 #[derive(Debug, Clone)]
 pub enum RtmpDriverCommand {
     Core {
@@ -75,23 +67,17 @@ pub enum RtmpDriverCommand {
     Shutdown,
 }
 
-/// `RtmpCoreCommandSender` data structure.
-/// `RtmpCoreCommandSender` 数据结构。
 #[derive(Clone)]
 pub struct RtmpCoreCommandSender {
     tx: mpsc::Sender<RtmpDriverCommand>,
 }
 
-/// Error returned by `Driver Send` operations.
-/// `Driver Send` 操作返回的错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverSendError {
     ChannelClosed,
 }
 
 impl RtmpCoreCommandSender {
-    /// Sends data to the peer.
-    /// 向对端发送数据。
     pub async fn send(&self, command: RtmpDriverCommand) -> Result<(), DriverSendError> {
         self.tx
             .send(command)
@@ -99,8 +85,6 @@ impl RtmpCoreCommandSender {
             .map_err(|_| DriverSendError::ChannelClosed)
     }
 
-    /// Sends `core` to the peer.
-    /// 向对端发送 `core`。
     pub async fn send_core(
         &self,
         connection_id: RtmpConnectionId,
@@ -113,8 +97,6 @@ impl RtmpCoreCommandSender {
         .await
     }
 
-    /// Closes the `connection`.
-    /// 关闭 `connection`。
     pub async fn close_connection(
         &self,
         connection_id: RtmpConnectionId,
@@ -130,8 +112,6 @@ enum ConnectionCommand {
     Close,
 }
 
-/// Handle to a `RTMP Server` resource.
-/// `RTMP Server` 资源的句柄。
 pub struct RtmpServerHandle {
     events_rx: mpsc::Receiver<DriverEvent>,
     cmd_tx: RtmpCoreCommandSender,
@@ -140,14 +120,10 @@ pub struct RtmpServerHandle {
 }
 
 impl RtmpServerHandle {
-    /// Receives `event` from the peer.
-    /// 从对端接收 `event`。
     pub async fn recv_event(&mut self) -> Option<DriverEvent> {
         self.events_rx.recv().await
     }
 
-    /// Sends `driver command` to the peer.
-    /// 向对端发送 `driver command`。
     pub async fn send_driver_command(
         &self,
         command: RtmpDriverCommand,
@@ -155,27 +131,19 @@ impl RtmpServerHandle {
         self.cmd_tx.send(command).await
     }
 
-    /// `core_command_sender` function of `RtmpServerHandle`.
-    /// `RtmpServerHandle` 的 `core_command_sender` 函数。
     pub fn core_command_sender(&self) -> RtmpCoreCommandSender {
         self.cmd_tx.clone()
     }
 
-    /// Shuts down the send or receive side of the stream.
-    /// 关闭流的发送或接收端。
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
-    /// `wait` function of `RtmpServerHandle`.
-    /// `RtmpServerHandle` 的 `wait` 函数。
     pub async fn wait(self) -> Result<(), TaskJoinError> {
         self.join.wait().await
     }
 }
 
-/// Starts the `server`.
-/// 启动 `server`。
 pub fn start_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,

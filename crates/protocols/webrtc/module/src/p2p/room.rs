@@ -56,8 +56,6 @@ pub struct P2pRoomKeeperConfig {
 }
 
 impl P2pRoomKeeperConfig {
-    /// Validates the input and returns an error if invalid.
-    /// 验证输入，无效时返回错误。
     pub fn validate(&self) -> Result<(), P2pRoomKeeperError> {
         if self.room_id.is_empty() || self.room_id.len() > P2P_MAX_FIELD_BYTES {
             return Err(P2pRoomKeeperError::InvalidRoomId(self.room_id.clone()));
@@ -97,8 +95,6 @@ pub enum P2pKeeperState {
 }
 
 impl P2pKeeperState {
-    /// `as_str` function of `P2pKeeperState`.
-    /// `P2pKeeperState` 的 `as_str` 函数。
     pub fn as_str(self) -> &'static str {
         match self {
             P2pKeeperState::Pending => "pending",
@@ -153,8 +149,6 @@ impl Default for P2pRoomKeeperRegistry {
 }
 
 impl P2pRoomKeeperRegistry {
-    /// Returns a copy with `capacity` set.
-    /// 返回将 `capacity` 设置后的副本。
     pub fn with_capacity(max_keepers: usize) -> Self {
         Self {
             inner: Mutex::new(RegistryInner::default()),
@@ -232,8 +226,6 @@ impl P2pRoomKeeperRegistry {
         self.inner.lock().keepers.len()
     }
 
-    /// Returns true when there are no elements.
-    /// 没有元素时返回 true。
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

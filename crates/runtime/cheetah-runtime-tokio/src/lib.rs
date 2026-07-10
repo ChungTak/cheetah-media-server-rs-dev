@@ -45,8 +45,6 @@ fn apply_low_latency_tcp_options(stream: &TcpStream) {
     }
 }
 
-/// `TokioRuntime` data structure.
-/// `TokioRuntime` 数据结构。
 #[derive(Clone, Debug)]
 pub struct TokioRuntime {
     start: Instant,
@@ -54,8 +52,6 @@ pub struct TokioRuntime {
 }
 
 impl TokioRuntime {
-    /// Creates a new `TokioRuntime` instance.
-    /// 创建新的 `TokioRuntime` 实例。
     pub fn new() -> Self {
         Self {
             start: Instant::now(),
@@ -74,8 +70,6 @@ impl Default for TokioRuntime {
     }
 }
 
-/// Handle to a `Tokio Join` resource.
-/// `Tokio Join` 资源的句柄。
 #[derive(Debug)]
 pub struct TokioJoinHandle {
     handle: tokio::task::JoinHandle<()>,
@@ -102,8 +96,6 @@ impl JoinHandle for TokioJoinHandle {
     }
 }
 
-/// `TokioUdpSocket` data structure.
-/// `TokioUdpSocket` 数据结构。
 #[derive(Debug)]
 pub struct TokioUdpSocket {
     socket: UdpSocket,
@@ -141,8 +133,6 @@ impl AsyncUdpSocket for TokioUdpSocket {
     }
 }
 
-/// `TokioTcpStream` data structure.
-/// `TokioTcpStream` 数据结构。
 #[derive(Debug)]
 pub struct TokioTcpStream {
     stream: TcpStream,
@@ -186,8 +176,6 @@ impl AsyncTcpStream for TokioTcpStream {
     }
 }
 
-/// `TokioTcpListener` data structure.
-/// `TokioTcpListener` 数据结构。
 #[derive(Debug)]
 pub struct TokioTcpListener {
     listener: TcpListener,
@@ -206,8 +194,6 @@ impl AsyncTcpListener for TokioTcpListener {
     }
 }
 
-/// `TokioTimer` data structure.
-/// `TokioTimer` 数据结构。
 pub struct TokioTimer {
     deadline: MonoTime,
     sleep: Pin<Box<Sleep>>,

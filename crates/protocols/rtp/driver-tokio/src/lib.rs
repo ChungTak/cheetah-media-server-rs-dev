@@ -14,8 +14,6 @@ use cheetah_rtp_core::{
 };
 use cheetah_runtime_api::CancellationToken;
 
-/// Configuration for `RTP Driver`.
-/// `RTP Driver` 的配置。
 #[derive(Debug, Clone)]
 pub struct RtpDriverConfig {
     pub listen_udp: SocketAddr,
@@ -52,8 +50,6 @@ impl Default for RtpDriverConfig {
     }
 }
 
-/// Command for `RTP Driver`.
-/// `RTP Driver` 的命令。
 #[derive(Debug, Clone)]
 pub enum RtpDriverCommand {
     CreateServer(RtpServerSpec),
@@ -62,29 +58,21 @@ pub enum RtpDriverCommand {
     StopSession(String),
 }
 
-/// Handle to a `RTP Driver` resource.
-/// `RTP Driver` 资源的句柄。
 pub struct RtpDriverHandle {
     cmd_tx: mpsc::Sender<RtpDriverCommand>,
     event_rx: Mutex<mpsc::Receiver<RtpCoreEvent>>,
 }
 
 impl RtpDriverHandle {
-    /// Sends `command` to the peer.
-    /// 向对端发送 `command`。
     pub async fn send_command(&self, cmd: RtpDriverCommand) {
         let _ = self.cmd_tx.send(cmd).await;
     }
 
-    /// Receives `event` from the peer.
-    /// 从对端接收 `event`。
     pub async fn recv_event(&self) -> Option<RtpCoreEvent> {
         self.event_rx.lock().await.recv().await
     }
 }
 
-/// Starts the `driver`.
-/// 启动 `driver`。
 pub fn start_driver(config: RtpDriverConfig, cancel: CancellationToken) -> RtpDriverHandle {
     let (cmd_tx, cmd_rx) = mpsc::channel(256);
     let (event_tx, event_rx) = mpsc::channel(256);

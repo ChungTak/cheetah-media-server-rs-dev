@@ -51,8 +51,6 @@ impl ActivePlaySessions {
     }
 }
 
-/// `Fmp4ModuleFactory` data structure.
-/// `Fmp4ModuleFactory` 数据结构。
 pub struct Fmp4ModuleFactory;
 
 impl ModuleFactory for Fmp4ModuleFactory {

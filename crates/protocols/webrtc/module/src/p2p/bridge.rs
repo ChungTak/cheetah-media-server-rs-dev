@@ -99,8 +99,6 @@ pub enum DispatcherOfferOutcome {
 }
 
 impl DispatcherOfferWaiter {
-    /// Creates a new `DispatcherOfferWaiter` instance.
-    /// 创建新的 `DispatcherOfferWaiter` 实例。
     pub fn new<F>(runtime: Arc<dyn RuntimeApi>, subscribe: F) -> Self
     where
         F: Fn(WebRtcSessionId) -> BoxFuture<'static, DispatcherOfferOutcome>
@@ -192,8 +190,6 @@ pub enum P2pBridgeOutcome {
     Encode { reason: P2pMessageError },
 }
 
-/// Error returned by `2 p Bridge` operations.
-/// `2 p Bridge` 操作返回的错误。
 #[derive(Debug, Clone, Error)]
 pub enum P2pBridgeError {
     #[error("bridge already finished")]

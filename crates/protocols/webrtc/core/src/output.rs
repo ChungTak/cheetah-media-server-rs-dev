@@ -10,8 +10,6 @@ use crate::event::WebRtcCoreEvent;
 use crate::input::WebRtcCloseReason;
 use crate::types::WebRtcSessionId;
 
-/// `WebRtcCoreOutput` enumeration.
-/// `WebRtcCoreOutput` 枚举。
 #[derive(Debug, Clone)]
 pub enum WebRtcCoreOutput {
     /// Network packet to deliver via the driver socket.
@@ -37,16 +35,12 @@ pub enum WebRtcCoreOutput {
     },
 }
 
-/// Kind of `Web Rtc Local Description`.
-/// `Web Rtc Local Description` 的种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WebRtcLocalDescriptionKind {
     Offer,
     Answer,
 }
 
-/// `WebRtcPacketOut` data structure.
-/// `WebRtcPacketOut` 数据结构。
 #[derive(Debug, Clone)]
 pub struct WebRtcPacketOut {
     pub session_id: WebRtcSessionId,
@@ -55,8 +49,6 @@ pub struct WebRtcPacketOut {
     pub data: Bytes,
 }
 
-/// `WebRtcTimer` data structure.
-/// `WebRtcTimer` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WebRtcTimer {
     pub session_id: WebRtcSessionId,

@@ -1,7 +1,5 @@
 use std::fmt;
 
-/// Error returned by `SDP` operations.
-/// `SDP` 操作返回的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SdpError {
     #[error("missing required SDP field `{field}`")]
@@ -121,8 +119,6 @@ pub enum SdpAttribute {
 }
 
 impl Sdp {
-    /// Parses the input into a structured value, returning an error if malformed.
-    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(text: &str) -> Result<Self, SdpError> {
         let mut version = None;
         let mut origin = None;
@@ -234,8 +230,6 @@ impl Sdp {
         })
     }
 
-    /// `builder` function of `Sdp`.
-    /// `Sdp` 的 `builder` 函数。
     pub fn builder() -> SdpBuilder {
         SdpBuilder::new()
     }
@@ -419,8 +413,6 @@ impl Default for SdpBuilder {
 }
 
 impl SdpBuilder {
-    /// Creates a new `SdpBuilder` instance.
-    /// 创建新的 `SdpBuilder` 实例。
     pub fn new() -> Self {
         Self {
             version: 0,
@@ -438,22 +430,16 @@ impl SdpBuilder {
         }
     }
 
-    /// `version` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `version` 函数。
     pub fn version(mut self, version: u8) -> Self {
         self.version = version;
         self
     }
 
-    /// `origin` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `origin` 函数。
     pub fn origin(mut self, origin: SdpOrigin) -> Self {
         self.origin = Some(origin);
         self
     }
 
-    /// `origin_simple` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `origin_simple` 函数。
     pub fn origin_simple(mut self, session_id: &str, address: &str) -> Self {
         self.origin = Some(SdpOrigin {
             username: "-".to_string(),
@@ -466,50 +452,36 @@ impl SdpBuilder {
         self
     }
 
-    /// `session_name` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `session_name` 函数。
     pub fn session_name(mut self, name: &str) -> Self {
         self.session_name = Some(name.to_string());
         self
     }
 
-    /// `session_info` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `session_info` 函数。
     pub fn session_info(mut self, info: &str) -> Self {
         self.session_info = Some(info.to_string());
         self
     }
 
-    /// `uri` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `uri` 函数。
     pub fn uri(mut self, uri: &str) -> Self {
         self.uri = Some(uri.to_string());
         self
     }
 
-    /// `email` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `email` 函数。
     pub fn email(mut self, email: &str) -> Self {
         self.email = Some(email.to_string());
         self
     }
 
-    /// `phone` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `phone` 函数。
     pub fn phone(mut self, phone: &str) -> Self {
         self.phone = Some(phone.to_string());
         self
     }
 
-    /// `connection` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `connection` 函数。
     pub fn connection(mut self, connection: SdpConnection) -> Self {
         self.connection = Some(connection);
         self
     }
 
-    /// `connection_simple` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `connection_simple` 函数。
     pub fn connection_simple(mut self, address: &str) -> Self {
         self.connection = Some(SdpConnection {
             net_type: "IN".to_string(),
@@ -519,8 +491,6 @@ impl SdpBuilder {
         self
     }
 
-    /// `bandwidth` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `bandwidth` 函数。
     pub fn bandwidth(mut self, bwtype: &str, bandwidth: u64) -> Self {
         self.bandwidth.push(SdpBandwidth {
             bwtype: bwtype.to_string(),
@@ -529,41 +499,29 @@ impl SdpBuilder {
         self
     }
 
-    /// `timing` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `timing` 函数。
     pub fn timing(mut self, start: u64, stop: u64) -> Self {
         self.timing = Some(SdpTiming { start, stop });
         self
     }
 
-    /// `attribute` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `attribute` 函数。
     pub fn attribute(mut self, attr: SdpAttribute) -> Self {
         self.attributes.push(attr);
         self
     }
 
-    /// `control` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `control` 函数。
     pub fn control(self, url: &str) -> Self {
         self.attribute(SdpAttribute::Control(url.to_string()))
     }
 
-    /// `range` function of `SdpBuilder`.
-    /// `SdpBuilder` 的 `range` 函数。
     pub fn range(self, range: &str) -> Self {
         self.attribute(SdpAttribute::Range(range.to_string()))
     }
 
-    /// Adds `media`.
-    /// 增加 `media`。
     pub fn add_media(mut self, media: SdpMedia) -> Self {
         self.media.push(media);
         self
     }
 
-    /// Builds the output from the accumulated state.
-    /// 从累积状态构建输出。
     pub fn build(self) -> Result<Sdp, SdpError> {
         Ok(Sdp {
             version: self.version,
@@ -603,8 +561,6 @@ pub struct SdpMediaBuilder {
 }
 
 impl SdpMediaBuilder {
-    /// Creates a new `SdpMediaBuilder` instance.
-    /// 创建新的 `SdpMediaBuilder` 实例。
     pub fn new(media_type: &str, port: u16, protocol: &str) -> Self {
         Self {
             media_type: media_type.to_string(),
@@ -619,48 +575,34 @@ impl SdpMediaBuilder {
         }
     }
 
-    /// `video` function of `SdpMediaBuilder`.
-    /// `SdpMediaBuilder` 的 `video` 函数。
     pub fn video(port: u16) -> Self {
         Self::new("video", port, "RTP/AVP")
     }
 
-    /// `audio` function of `SdpMediaBuilder`.
-    /// `SdpMediaBuilder` 的 `audio` 函数。
     pub fn audio(port: u16) -> Self {
         Self::new("audio", port, "RTP/AVP")
     }
 
-    /// `num_ports` function of `SdpMediaBuilder`.
-    /// `SdpMediaBuilder` 的 `num_ports` 函数。
     pub fn num_ports(mut self, num_ports: u16) -> Self {
         self.num_ports = Some(num_ports);
         self
     }
 
-    /// `format` function of `SdpMediaBuilder`.
-    /// `SdpMediaBuilder` 的 `format` 函数。
     pub fn format(mut self, format: &str) -> Self {
         self.formats.push(format.to_string());
         self
     }
 
-    /// `title` function of `SdpMediaBuilder`.
-    /// `SdpMediaBuilder` 的 `title` 函数。
     pub fn title(mut self, title: &str) -> Self {
         self.title = Some(title.to_string());
         self
     }
 
-    /// `connection` function of `SdpMediaBuilder`.
-    /// `SdpMediaBuilder` 的 `connection` 函数。
     pub fn connection(mut self, connection: SdpConnection) -> Self {
         self.connection = Some(connection);
         self
     }
 
-    /// `bandwidth` function of `SdpMediaBuilder`.
-    /// `SdpMediaBuilder` 的 `bandwidth` 函数。
     pub fn bandwidth(mut self, bwtype: &str, bandwidth: u64) -> Self {
         self.bandwidth.push(SdpBandwidth {
             bwtype: bwtype.to_string(),
@@ -669,15 +611,11 @@ impl SdpMediaBuilder {
         self
     }
 
-    /// `attribute` function of `SdpMediaBuilder`.
-    /// `SdpMediaBuilder` 的 `attribute` 函数。
     pub fn attribute(mut self, attr: SdpAttribute) -> Self {
         self.attributes.push(attr);
         self
     }
 
-    /// `rtpmap` function of `SdpMediaBuilder`.
-    /// `SdpMediaBuilder` 的 `rtpmap` 函数。
     pub fn rtpmap(self, payload_type: u8, encoding: &str, clock_rate: u32) -> Self {
         self.attribute(SdpAttribute::Rtpmap {
             payload_type,
@@ -687,8 +625,6 @@ impl SdpMediaBuilder {
         })
     }
 
-    /// `fmtp` function of `SdpMediaBuilder`.
-    /// `SdpMediaBuilder` 的 `fmtp` 函数。
     pub fn fmtp(self, payload_type: u8, parameters: &str) -> Self {
         self.attribute(SdpAttribute::Fmtp {
             payload_type,
@@ -696,20 +632,14 @@ impl SdpMediaBuilder {
         })
     }
 
-    /// `control` function of `SdpMediaBuilder`.
-    /// `SdpMediaBuilder` 的 `control` 函数。
     pub fn control(self, url: &str) -> Self {
         self.attribute(SdpAttribute::Control(url.to_string()))
     }
 
-    /// `range` function of `SdpMediaBuilder`.
-    /// `SdpMediaBuilder` 的 `range` 函数。
     pub fn range(self, range: &str) -> Self {
         self.attribute(SdpAttribute::Range(range.to_string()))
     }
 
-    /// Builds the output from the accumulated state.
-    /// 从累积状态构建输出。
     pub fn build(self) -> SdpMedia {
         SdpMedia {
             media_type: self.media_type,

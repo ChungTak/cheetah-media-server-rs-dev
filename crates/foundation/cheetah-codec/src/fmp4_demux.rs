@@ -84,8 +84,6 @@ pub struct Fmp4Demuxer {
 }
 
 impl Fmp4Demuxer {
-    /// Creates a new `Fmp4Demuxer` instance.
-    /// 创建新的 `Fmp4Demuxer` 实例。
     pub fn new(config: Fmp4DemuxerConfig) -> Self {
         Self {
             config,

@@ -17,14 +17,10 @@ use serde::{Deserialize, Serialize};
 pub struct WebRtcSessionId(pub u64);
 
 impl WebRtcSessionId {
-    /// Creates a new `WebRtcSessionId` instance.
-    /// 创建新的 `WebRtcSessionId` 实例。
     pub const fn new(value: u64) -> Self {
         Self(value)
     }
 
-    /// `value` function of `WebRtcSessionId`.
-    /// `WebRtcSessionId` 的 `value` 函数。
     pub const fn value(self) -> u64 {
         self.0
     }
@@ -45,14 +41,10 @@ impl fmt::Display for WebRtcSessionId {
 pub struct MidLabel(pub String);
 
 impl MidLabel {
-    /// Creates a new `MidLabel` instance.
-    /// 创建新的 `MidLabel` 实例。
     pub fn new(label: impl Into<String>) -> Self {
         Self(label.into())
     }
 
-    /// `as_str` function of `MidLabel`.
-    /// `MidLabel` 的 `as_str` 函数。
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -72,14 +64,10 @@ impl fmt::Display for MidLabel {
 pub struct DataChannelId(pub u32);
 
 impl DataChannelId {
-    /// Creates a new `DataChannelId` instance.
-    /// 创建新的 `DataChannelId` 实例。
     pub const fn new(value: u32) -> Self {
         Self(value)
     }
 
-    /// `value` function of `DataChannelId`.
-    /// `DataChannelId` 的 `value` 函数。
     pub const fn value(self) -> u32 {
         self.0
     }

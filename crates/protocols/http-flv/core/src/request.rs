@@ -6,8 +6,6 @@ use crate::HttpFlvCoreError;
 
 const WEBSOCKET_ACCEPT_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
-/// `HttpMethod` enumeration.
-/// `HttpMethod` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
     Get,
@@ -16,16 +14,12 @@ pub enum HttpMethod {
     Other,
 }
 
-/// `HttpFlvTransport` enumeration.
-/// `HttpFlvTransport` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpFlvTransport {
     Http,
     WebSocket,
 }
 
-/// Mode selecting `HTTP FLV Query` behavior.
-/// 选择 `HTTP FLV Query` 行为的模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpFlvQueryMode {
     Normal,
@@ -34,8 +28,6 @@ pub enum HttpFlvQueryMode {
 }
 
 impl HttpFlvQueryMode {
-    /// Converts to `RTMP play mode` representation.
-    /// 转换为 `RTMP play mode` 表示。
     pub fn to_rtmp_play_mode(self) -> RtmpFlvPlayMode {
         match self {
             Self::Enhanced => RtmpFlvPlayMode::Enhanced,
@@ -44,24 +36,18 @@ impl HttpFlvQueryMode {
     }
 }
 
-/// `StreamKeyParts` data structure.
-/// `StreamKeyParts` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamKeyParts {
     pub namespace: String,
     pub stream_path: String,
 }
 
-/// Request for `Parsed Play`.
-/// `Parsed Play` 的请求。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedPlayRequest {
     pub stream_key: StreamKeyParts,
     pub mode: HttpFlvQueryMode,
 }
 
-/// `HttpRequestHead` data structure.
-/// `HttpRequestHead` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpRequestHead {
     pub method: HttpMethod,
@@ -71,8 +57,6 @@ pub struct HttpRequestHead {
 }
 
 impl HttpRequestHead {
-    /// `header` function of `HttpRequestHead`.
-    /// `HttpRequestHead` 的 `header` 函数。
     pub fn header(&self, key: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -80,8 +64,6 @@ impl HttpRequestHead {
             .map(|(_, value)| value.as_str())
     }
 
-    /// Returns `true` if `websocket upgrade` is true.
-    /// 当 `websocket upgrade` 为真时返回 `true`。
     pub fn is_websocket_upgrade(&self) -> bool {
         let Some(connection) = self.header("Connection") else {
             return false;
@@ -96,8 +78,6 @@ impl HttpRequestHead {
     }
 }
 
-/// `HttpResponseHead` data structure.
-/// `HttpResponseHead` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpResponseHead {
     pub status_code: u16,
@@ -105,8 +85,6 @@ pub struct HttpResponseHead {
     pub headers: Vec<(String, String)>,
 }
 
-/// Message used by `Web Socket`.
-/// `Web Socket` 使用的消息。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WebSocketMessage {
     Binary(bytes::Bytes),
@@ -116,8 +94,6 @@ pub enum WebSocketMessage {
     Text(String),
 }
 
-/// Parses `play request target` from input.
-/// 从输入解析 `play request target`。
 pub fn parse_play_request_target(target: &str) -> Result<ParsedPlayRequest, HttpFlvCoreError> {
     let (path, query) = split_target_query(target);
     if !path.ends_with(".flv") {
@@ -158,8 +134,6 @@ pub fn parse_play_request_target(target: &str) -> Result<ParsedPlayRequest, Http
     })
 }
 
-/// Validates the `websocket upgrade` and returns errors if invalid.
-/// 验证 `websocket upgrade`，无效时返回错误。
 pub fn validate_websocket_upgrade(head: &HttpRequestHead) -> Result<String, HttpFlvCoreError> {
     let Some(version) = head.header("Sec-WebSocket-Version") else {
         return Err(HttpFlvCoreError::InvalidWebSocketVersion);
@@ -173,8 +147,6 @@ pub fn validate_websocket_upgrade(head: &HttpRequestHead) -> Result<String, Http
     websocket_accept_key(key)
 }
 
-/// `websocket_accept_key` function.
-/// `websocket_accept_key` 函数。
 pub fn websocket_accept_key(client_key: &str) -> Result<String, HttpFlvCoreError> {
     let key = client_key.trim();
     if key.is_empty() {

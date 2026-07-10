@@ -20,8 +20,6 @@ use crate::audio::{adts_wrap, AacAudioSpecificConfig};
 use crate::frame::AVFrame;
 use crate::track::CodecId;
 
-/// Kind of `Frame View`.
-/// `Frame View` 的种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameViewKind {
     Native,
@@ -31,8 +29,6 @@ pub enum FrameViewKind {
     Adts,
 }
 
-/// `FrameViewCache` data structure.
-/// `FrameViewCache` 数据结构。
 #[derive(Debug, Default)]
 pub struct FrameViewCache {
     annexb: LazyCell<Bytes>,
@@ -41,14 +37,10 @@ pub struct FrameViewCache {
 }
 
 impl FrameViewCache {
-    /// `native` function of `FrameViewCache`.
-    /// `FrameViewCache` 的 `native` 函数。
     pub fn native(frame: &AVFrame) -> Bytes {
         frame.payload.clone()
     }
 
-    /// `annexb` function of `FrameViewCache`.
-    /// `FrameViewCache` 的 `annexb` 函数。
     pub fn annexb(&self, frame: &AVFrame) -> Bytes {
         if !matches!(frame.codec, CodecId::H264 | CodecId::H265 | CodecId::H266) {
             return frame.payload.clone();
@@ -58,14 +50,10 @@ impl FrameViewCache {
             .clone()
     }
 
-    /// `avcc` function of `FrameViewCache`.
-    /// `FrameViewCache` 的 `avcc` 函数。
     pub fn avcc(&self, frame: &AVFrame) -> Bytes {
         self.h26x_length_prefixed(frame)
     }
 
-    /// `h26x_length_prefixed` function of `FrameViewCache`.
-    /// `FrameViewCache` 的 `h26x_length_prefixed` 函数。
     pub fn h26x_length_prefixed(&self, frame: &AVFrame) -> Bytes {
         if !matches!(frame.codec, CodecId::H264 | CodecId::H265 | CodecId::H266) {
             return frame.payload.clone();
@@ -75,8 +63,6 @@ impl FrameViewCache {
             .clone()
     }
 
-    /// `adts` function of `FrameViewCache`.
-    /// `FrameViewCache` 的 `adts` 函数。
     pub fn adts(&self, frame: &AVFrame, asc: Option<AacAudioSpecificConfig>) -> Bytes {
         if frame.codec != CodecId::AAC {
             return frame.payload.clone();
@@ -90,14 +76,10 @@ impl FrameViewCache {
     }
 }
 
-/// `h26x_length_prefixed_from_payload` function.
-/// `h26x_length_prefixed_from_payload` 函数。
 pub fn h26x_length_prefixed_from_payload(payload: Bytes) -> Bytes {
     convert_to_h26x_length_prefixed(payload)
 }
 
-/// `annexb_from_payload` function.
-/// `annexb_from_payload` 函数。
 pub fn annexb_from_payload(payload: Bytes) -> Bytes {
     convert_to_annexb(payload)
 }

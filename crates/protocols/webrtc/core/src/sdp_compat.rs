@@ -35,8 +35,6 @@ pub struct SdpCompatReport {
 }
 
 impl SdpCompatReport {
-    /// Returns `true` if `modified` is true.
-    /// 当 `modified` 为真时返回 `true`。
     pub fn is_modified(&self) -> bool {
         self.trimmed_trailing_whitespace
             || self.normalized_line_endings

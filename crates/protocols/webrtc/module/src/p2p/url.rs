@@ -51,8 +51,6 @@ impl SignalingUrl {
     }
 }
 
-/// Error returned by `Signaling URL` operations.
-/// `Signaling URL` 操作返回的错误。
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum SignalingUrlError {
     #[error("signaling url exceeds {max} bytes")]

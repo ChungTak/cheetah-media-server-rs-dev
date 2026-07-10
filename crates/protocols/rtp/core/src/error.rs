@@ -1,8 +1,6 @@
 use std::net::SocketAddr;
 use thiserror::Error;
 
-/// Error returned by `RTP Core` operations.
-/// `RTP Core` 操作返回的错误。
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum RtpCoreError {
     #[error("Session limit reached: {limit}")]
@@ -18,8 +16,6 @@ pub enum RtpCoreError {
     TcpConnectionAlreadyExists { conn_id: u64 },
 }
 
-/// `RtpCoreDiagnostic` enumeration.
-/// `RtpCoreDiagnostic` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtpCoreDiagnostic {
     InvalidRtpVersion {

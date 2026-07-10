@@ -5,17 +5,9 @@ use bytes::{BufMut, BytesMut};
 
 use crate::track::CodecId;
 
-/// `TS_PACKET_SIZE` constant.
-/// `TS_PACKET_SIZE` 常量。
 pub const TS_PACKET_SIZE: usize = 188;
-/// `SYNC_BYTE` constant.
-/// `SYNC_BYTE` 常量。
 pub const SYNC_BYTE: u8 = 0x47;
-/// Identifier for `PAT P`.
-/// `PAT P` 的标识符。
 pub const PAT_PID: u16 = 0x0000;
-/// Identifier for `PMT P`.
-/// `PMT P` 的标识符。
 pub const PMT_PID: u16 = 0x1000;
 
 /// H.264 Access Unit Delimiter: 00 00 00 01 09 F0

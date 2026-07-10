@@ -21,8 +21,6 @@ fn timebase_value_to_millis(tb: Timebase, value: i64) -> i64 {
     round_half_away_from_zero(scaled, den) as i64
 }
 
-/// `millis_to_rtmp_timestamp_ms` function.
-/// `millis_to_rtmp_timestamp_ms` 函数。
 pub fn millis_to_rtmp_timestamp_ms(millis: i64) -> u32 {
     if millis <= 0 {
         return 0;
@@ -30,21 +28,15 @@ pub fn millis_to_rtmp_timestamp_ms(millis: i64) -> u32 {
     millis.min(i64::from(u32::MAX)) as u32
 }
 
-/// `dts_to_rtmp_timestamp_ms` function.
-/// `dts_to_rtmp_timestamp_ms` 函数。
 pub fn dts_to_rtmp_timestamp_ms(dts: i64, timebase: Timebase) -> u32 {
     let dts_ms = timebase_value_to_millis(timebase, dts);
     millis_to_rtmp_timestamp_ms(dts_ms)
 }
 
-/// `frame_dts_to_rtmp_timestamp_ms` function.
-/// `frame_dts_to_rtmp_timestamp_ms` 函数。
 pub fn frame_dts_to_rtmp_timestamp_ms(frame: &AVFrame) -> u32 {
     dts_to_rtmp_timestamp_ms(frame.dts, frame.timebase)
 }
 
-/// `frame_composition_time_ms` function.
-/// `frame_composition_time_ms` 函数。
 pub fn frame_composition_time_ms(frame: &AVFrame) -> i32 {
     let pts_ms = timebase_value_to_millis(frame.timebase, frame.pts);
     let dts_ms = timebase_value_to_millis(frame.timebase, frame.dts);
@@ -61,8 +53,6 @@ pub fn select_egress_timestamps(_media_kind: MediaKind, pts: i64, dts: i64) -> (
     (dts, pts)
 }
 
-/// `media_ts_to_rtp_ticks` function.
-/// `media_ts_to_rtp_ticks` 函数。
 pub fn media_ts_to_rtp_ticks(
     primary: i64,
     secondary: i64,
@@ -92,16 +82,12 @@ pub fn media_ts_to_rtp_ticks(
     }
 }
 
-/// Result type for `Timestamp Repair` operations.
-/// `Timestamp Repair` 操作的结果类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimestampRepairResult {
     pub timestamp: u32,
     pub repaired: bool,
 }
 
-/// `repair_monotonic_timestamp` function.
-/// `repair_monotonic_timestamp` 函数。
 pub fn repair_monotonic_timestamp(
     raw_timestamp: u32,
     last_timestamp: Option<u32>,
@@ -136,14 +122,10 @@ pub fn repair_monotonic_timestamp(
     }
 }
 
-/// `should_sample_timestamp_repair` function.
-/// `should_sample_timestamp_repair` 函数。
 pub fn should_sample_timestamp_repair(repair_count: u64) -> bool {
     repair_count <= 3 || repair_count.is_power_of_two() || repair_count.is_multiple_of(1024)
 }
 
-/// `should_emit_alert_threshold` function.
-/// `should_emit_alert_threshold` 函数。
 pub fn should_emit_alert_threshold(count: u64, threshold: u64) -> bool {
     threshold > 0 && count >= threshold && (count == threshold || count.is_multiple_of(threshold))
 }
@@ -159,8 +141,6 @@ pub struct AvSyncAligner {
 }
 
 impl AvSyncAligner {
-    /// Creates a new `AvSyncAligner` instance.
-    /// 创建新的 `AvSyncAligner` 实例。
     pub fn new() -> Self {
         Self {
             video_epoch_us: None,
@@ -203,14 +183,10 @@ impl AvSyncAligner {
         }
     }
 
-    /// Returns `true` if `synced` is true.
-    /// 当 `synced` 为真时返回 `true`。
     pub fn is_synced(&self) -> bool {
         self.synced
     }
 
-    /// `offset_us` function of `AvSyncAligner`.
-    /// `AvSyncAligner` 的 `offset_us` 函数。
     pub fn offset_us(&self) -> i64 {
         self.sync_offset_us
     }
@@ -234,8 +210,6 @@ pub struct SortingWindowDtsGenerator {
 }
 
 impl SortingWindowDtsGenerator {
-    /// Creates a new `SortingWindowDtsGenerator` instance.
-    /// 创建新的 `SortingWindowDtsGenerator` 实例。
     pub fn new(window_size: usize) -> Self {
         Self {
             window: VecDeque::with_capacity(window_size.max(1)),
@@ -287,8 +261,6 @@ impl SortingWindowDtsGenerator {
         out
     }
 
-    /// Resets the state to its initial value.
-    /// 将状态重置为初始值。
     pub fn reset(&mut self) {
         self.window.clear();
         self.last_output_dts = 0;
@@ -317,8 +289,6 @@ pub struct IncrementalRtpTimestampGenerator {
 }
 
 impl IncrementalRtpTimestampGenerator {
-    /// Creates a new `IncrementalRtpTimestampGenerator` instance.
-    /// 创建新的 `IncrementalRtpTimestampGenerator` 实例。
     pub fn new(clock_rate: u32) -> Self {
         Self {
             last_dts_us: 0,
@@ -386,8 +356,6 @@ pub struct FrameRateEstimator {
 }
 
 impl FrameRateEstimator {
-    /// Creates a new `FrameRateEstimator` instance.
-    /// 创建新的 `FrameRateEstimator` 实例。
     pub fn new(max_samples: usize) -> Self {
         Self {
             samples: VecDeque::with_capacity(max_samples.max(1)),
@@ -454,8 +422,6 @@ impl FrameRateEstimator {
         Some(clamp_f64(fps, self.min_fps, self.max_fps))
     }
 
-    /// Resets the state to its initial value.
-    /// 将状态重置为初始值。
     pub fn reset(&mut self) {
         self.samples.clear();
         self.last_pts_us = None;

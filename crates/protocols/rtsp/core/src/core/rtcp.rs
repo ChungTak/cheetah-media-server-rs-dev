@@ -1,42 +1,16 @@
-/// `RTCP_PT_SR` constant.
-/// `RTCP_PT_SR` 常量。
 pub const RTCP_PT_SR: u8 = 200;
-/// `RTCP_PT_RR` constant.
-/// `RTCP_PT_RR` 常量。
 pub const RTCP_PT_RR: u8 = 201;
-/// `RTCP_PT_SDES` constant.
-/// `RTCP_PT_SDES` 常量。
 pub const RTCP_PT_SDES: u8 = 202;
-/// `RTCP_PT_BYE` constant.
-/// `RTCP_PT_BYE` 常量。
 pub const RTCP_PT_BYE: u8 = 203;
-/// `RTCP_PT_APP` constant.
-/// `RTCP_PT_APP` 常量。
 pub const RTCP_PT_APP: u8 = 204;
 
-/// `SDES_CNAME` constant.
-/// `SDES_CNAME` 常量。
 pub const SDES_CNAME: u8 = 1;
-/// `SDES_NAME` constant.
-/// `SDES_NAME` 常量。
 pub const SDES_NAME: u8 = 2;
-/// `SDES_EMAIL` constant.
-/// `SDES_EMAIL` 常量。
 pub const SDES_EMAIL: u8 = 3;
-/// `SDES_PHONE` constant.
-/// `SDES_PHONE` 常量。
 pub const SDES_PHONE: u8 = 4;
-/// `SDES_LOC` constant.
-/// `SDES_LOC` 常量。
 pub const SDES_LOC: u8 = 5;
-/// `SDES_TOOL` constant.
-/// `SDES_TOOL` 常量。
 pub const SDES_TOOL: u8 = 6;
-/// `SDES_NOTE` constant.
-/// `SDES_NOTE` 常量。
 pub const SDES_NOTE: u8 = 7;
-/// `SDES_PRIV` constant.
-/// `SDES_PRIV` 常量。
 pub const SDES_PRIV: u8 = 8;
 
 const RTCP_COMMON_HEADER_SIZE: usize = 4;
@@ -46,8 +20,6 @@ const RTCP_REPORT_BLOCK_SIZE: usize = 24;
 const RTCP_MAX_REPORT_COUNT: usize = 31;
 const RTCP_CUMULATIVE_LOST_MAX: u32 = 0x00FF_FFFF;
 
-/// Error returned by `RTCP` operations.
-/// `RTCP` 操作返回的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtcpError {
     #[error("unsupported rtcp version: {actual}")]
@@ -160,8 +132,6 @@ pub enum RtcpSdesItem {
 }
 
 impl RtcpSdesItem {
-    /// `item_type` function of `RtcpSdesItem`.
-    /// `RtcpSdesItem` 的 `item_type` 函数。
     pub fn item_type(&self) -> u8 {
         match self {
             RtcpSdesItem::Cname(_) => SDES_CNAME,

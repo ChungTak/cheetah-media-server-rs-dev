@@ -50,8 +50,6 @@ impl Default for SignalingServerConfig {
     }
 }
 
-/// Error returned by `Signaling Server` operations.
-/// `Signaling Server` 操作返回的错误。
 #[derive(Debug, Error)]
 pub enum SignalingServerError {
     #[error("bind failed: {0}")]

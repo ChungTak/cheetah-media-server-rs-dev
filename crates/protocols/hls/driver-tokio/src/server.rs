@@ -12,12 +12,8 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
-/// Identifier for `HLS Connection`.
-/// `HLS Connection` 的标识符。
 pub type HlsConnectionId = u64;
 
-/// Configuration for `HLS Driver`.
-/// `HLS Driver` 的配置。
 #[derive(Debug, Clone)]
 pub struct HlsDriverConfig {
     pub read_buffer_size: usize,
@@ -47,8 +43,6 @@ impl Default for HlsDriverConfig {
     }
 }
 
-/// Events produced by the `HLS Driver` subsystem.
-/// `HLS Driver` 子系统产生的事件。
 #[derive(Debug)]
 pub enum HlsDriverEvent {
     ConnectionOpened {
@@ -64,8 +58,6 @@ pub enum HlsDriverEvent {
     },
 }
 
-/// Command for `HLS Driver`.
-/// `HLS Driver` 的命令。
 #[derive(Debug)]
 pub enum HlsDriverCommand {
     /// Send a complete HTTP response to a connection.
@@ -82,15 +74,11 @@ pub enum HlsDriverCommand {
     Shutdown,
 }
 
-/// `HlsCommandSender` data structure.
-/// `HlsCommandSender` 数据结构。
 #[derive(Clone)]
 pub struct HlsCommandSender {
     tx: mpsc::Sender<HlsDriverCommand>,
 }
 
-/// Error returned by `Driver Send` operations.
-/// `Driver Send` 操作返回的错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverSendError {
     ChannelClosed,
@@ -101,8 +89,6 @@ impl HlsCommandSender {
         Self { tx }
     }
 
-    /// Sends data to the peer.
-    /// 向对端发送数据。
     pub async fn send(&self, command: HlsDriverCommand) -> Result<(), DriverSendError> {
         self.tx
             .send(command)
@@ -111,8 +97,6 @@ impl HlsCommandSender {
     }
 }
 
-/// Handle to a `HLS Server` resource.
-/// `HLS Server` 资源的句柄。
 pub struct HlsServerHandle {
     listen: SocketAddr,
     events_rx: mpsc::Receiver<HlsDriverEvent>,
@@ -138,32 +122,22 @@ impl HlsServerHandle {
         }
     }
 
-    /// Receives `event` from the peer.
-    /// 从对端接收 `event`。
     pub async fn recv_event(&mut self) -> Option<HlsDriverEvent> {
         self.events_rx.recv().await
     }
 
-    /// `local_addr` function of `HlsServerHandle`.
-    /// `HlsServerHandle` 的 `local_addr` 函数。
     pub fn local_addr(&self) -> SocketAddr {
         self.listen
     }
 
-    /// `command_sender` function of `HlsServerHandle`.
-    /// `HlsServerHandle` 的 `command_sender` 函数。
     pub fn command_sender(&self) -> HlsCommandSender {
         self.cmd_tx.clone()
     }
 
-    /// Shuts down the send or receive side of the stream.
-    /// 关闭流的发送或接收端。
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
-    /// `wait` function of `HlsServerHandle`.
-    /// `HlsServerHandle` 的 `wait` 函数。
     pub async fn wait(self) -> Result<(), TaskJoinError> {
         self.join.wait().await
     }
@@ -181,8 +155,6 @@ pub(crate) struct HttpResponseData {
     pub(crate) headers: Vec<(&'static str, String)>,
 }
 
-/// Starts the `server`.
-/// 启动 `server`。
 pub fn start_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,

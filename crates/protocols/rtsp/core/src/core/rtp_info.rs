@@ -1,7 +1,5 @@
 use std::fmt;
 
-/// Error returned by `RTSP RTP Info` operations.
-/// `RTSP RTP Info` 操作返回的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspRtpInfoError {
     #[error("empty rtp-info header")]
@@ -24,16 +22,12 @@ pub struct RtspRtpInfo {
 }
 
 impl RtspRtpInfo {
-    /// Creates a new `RtspRtpInfo` instance.
-    /// 创建新的 `RtspRtpInfo` 实例。
     pub fn new() -> Self {
         Self {
             streams: Vec::new(),
         }
     }
 
-    /// Parses the input into a structured value, returning an error if malformed.
-    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(header_value: &str) -> Result<Self, RtspRtpInfoError> {
         let value = header_value.trim();
         if value.is_empty() {
@@ -54,14 +48,10 @@ impl RtspRtpInfo {
         Ok(Self { streams })
     }
 
-    /// Adds `stream`.
-    /// 增加 `stream`。
     pub fn add_stream(&mut self, stream: RtspRtpInfoStream) {
         self.streams.push(stream);
     }
 
-    /// Finds the first matching `by URL`.
-    /// 查找第一个匹配的 `by URL`。
     pub fn find_by_url(&self, url: &str) -> Option<&RtspRtpInfoStream> {
         self.streams.iter().find(|stream| stream.url == url)
     }
@@ -83,8 +73,6 @@ pub struct RtspRtpInfoStream {
 }
 
 impl RtspRtpInfoStream {
-    /// Creates a new `RtspRtpInfoStream` instance.
-    /// 创建新的 `RtspRtpInfoStream` 实例。
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
@@ -93,15 +81,11 @@ impl RtspRtpInfoStream {
         }
     }
 
-    /// Returns a copy with `seq` set.
-    /// 返回将 `seq` 设置后的副本。
     pub fn with_seq(mut self, seq: u16) -> Self {
         self.seq = Some(seq);
         self
     }
 
-    /// Returns a copy with `rtptime` set.
-    /// 返回将 `rtptime` 设置后的副本。
     pub fn with_rtptime(mut self, rtptime: u32) -> Self {
         self.rtptime = Some(rtptime);
         self

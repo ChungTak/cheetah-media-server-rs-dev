@@ -18,8 +18,6 @@ pub struct RecordTaskMetadata {
     pub segment_count_limit: u32,
 }
 
-/// State used by `Record Task`.
-/// `Record Task` 使用的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RecordTaskState {
@@ -76,8 +74,6 @@ pub struct RecordFileMetadata {
     pub track_summary: Vec<RecordTrackSummary>,
 }
 
-/// `RecordTrackSummary` data structure.
-/// `RecordTrackSummary` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordTrackSummary {
     pub kind: String,

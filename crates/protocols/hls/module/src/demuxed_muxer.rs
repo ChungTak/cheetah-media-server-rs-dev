@@ -37,8 +37,6 @@ pub struct DemuxedStreamMuxer {
 }
 
 impl DemuxedStreamMuxer {
-    /// Creates a new `DemuxedStreamMuxer` instance.
-    /// 创建新的 `DemuxedStreamMuxer` 实例。
     pub fn new(config: DemuxedMuxerConfig) -> Self {
         Self {
             config,
@@ -227,8 +225,6 @@ impl DemuxedStreamMuxer {
         self.concluded = true;
     }
 
-    /// Returns `true` if `concluded` is true.
-    /// 当 `concluded` 为真时返回 `true`。
     pub fn is_concluded(&self) -> bool {
         self.concluded
     }
@@ -243,26 +239,18 @@ impl DemuxedStreamMuxer {
         self.video.is_some() && self.audio.is_some()
     }
 
-    /// `video` function of `DemuxedStreamMuxer`.
-    /// `DemuxedStreamMuxer` 的 `video` 函数。
     pub fn video(&self) -> Option<&TrackMuxer> {
         self.video.as_ref()
     }
 
-    /// `audio` function of `DemuxedStreamMuxer`.
-    /// `DemuxedStreamMuxer` 的 `audio` 函数。
     pub fn audio(&self) -> Option<&TrackMuxer> {
         self.audio.as_ref()
     }
 
-    /// `video_mut` function of `DemuxedStreamMuxer`.
-    /// `DemuxedStreamMuxer` 的 `video_mut` 函数。
     pub fn video_mut(&mut self) -> Option<&mut TrackMuxer> {
         self.video.as_mut()
     }
 
-    /// `audio_mut` function of `DemuxedStreamMuxer`.
-    /// `DemuxedStreamMuxer` 的 `audio_mut` 函数。
     pub fn audio_mut(&mut self) -> Option<&mut TrackMuxer> {
         self.audio.as_mut()
     }

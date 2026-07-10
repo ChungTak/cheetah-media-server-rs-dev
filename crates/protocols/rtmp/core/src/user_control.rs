@@ -14,8 +14,6 @@ const EVENT_PING_RESPONSE: u16 = 7;
 const EVENT_BUFFER_EMPTY: u16 = 31;
 const EVENT_BUFFER_READY: u16 = 32;
 
-/// Events produced by the `RTMP User Control` subsystem.
-/// `RTMP User Control` 子系统产生的事件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtmpUserControlEvent {
     StreamBegin {
@@ -49,8 +47,6 @@ pub enum RtmpUserControlEvent {
 }
 
 impl RtmpUserControlEvent {
-    /// `name` function of `RtmpUserControlEvent`.
-    /// `RtmpUserControlEvent` 的 `name` 函数。
     pub fn name(&self) -> &'static str {
         match self {
             Self::StreamBegin { .. } => "StreamBegin",
@@ -65,8 +61,6 @@ impl RtmpUserControlEvent {
         }
     }
 
-    /// Encodes the value into the output buffer.
-    /// 将值编码到输出缓冲区。
     pub fn encode(&self, buf: &mut Vec<u8>) {
         match self {
             Self::StreamBegin { stream_id } => {
@@ -109,8 +103,6 @@ impl RtmpUserControlEvent {
         }
     }
 
-    /// Decodes the value from the input buffer.
-    /// 从输入缓冲区解码值。
     pub fn decode(mut buf: &[u8]) -> Result<Self, Error> {
         let event_type = buf.read_u16()?;
         let event = match event_type {

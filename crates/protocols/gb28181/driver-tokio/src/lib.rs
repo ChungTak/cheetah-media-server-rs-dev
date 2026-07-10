@@ -14,8 +14,6 @@ use cheetah_gb28181_core::{
 };
 use cheetah_runtime_api::{CancellationToken, RuntimeApi};
 
-/// Command for `Gb Driver`.
-/// `Gb Driver` 的命令。
 #[derive(Debug, Clone)]
 pub enum GbDriverCommand {
     StartInvite(GbInviteSpec),
@@ -32,8 +30,6 @@ pub enum GbDriverCommand {
     },
 }
 
-/// Configuration for `Gb 28181 Driver`.
-/// `Gb 28181 Driver` 的配置。
 #[derive(Debug, Clone)]
 pub struct Gb28181DriverConfig {
     pub listen_udp: SocketAddr,
@@ -53,8 +49,6 @@ impl Default for Gb28181DriverConfig {
     }
 }
 
-/// Handle to a `Gb 28181 Driver` resource.
-/// `Gb 28181 Driver` 资源的句柄。
 pub struct Gb28181DriverHandle {
     cmd_tx: mpsc::Sender<GbDriverCommand>,
     event_rx: Arc<Mutex<mpsc::Receiver<Gb28181Event>>>,
@@ -62,27 +56,19 @@ pub struct Gb28181DriverHandle {
 }
 
 impl Gb28181DriverHandle {
-    /// Sends `command` to the peer.
-    /// 向对端发送 `command`。
     pub async fn send_command(&self, cmd: GbDriverCommand) -> Result<(), &'static str> {
         self.cmd_tx.send(cmd).await.map_err(|_| "driver stopped")
     }
 
-    /// Receives `event` from the peer.
-    /// 从对端接收 `event`。
     pub async fn recv_event(&self) -> Option<Gb28181Event> {
         self.event_rx.lock().await.recv().await
     }
 
-    /// Receives `diagnostic` from the peer.
-    /// 从对端接收 `diagnostic`。
     pub async fn recv_diagnostic(&self) -> Option<Gb28181Diagnostic> {
         self.diag_rx.lock().await.recv().await
     }
 }
 
-/// Starts the `driver`.
-/// 启动 `driver`。
 pub fn start_driver(
     config: Gb28181DriverConfig,
     runtime: Arc<dyn RuntimeApi>,

@@ -2,8 +2,6 @@ use bytes::Bytes;
 use cheetah_rtsp_core::RtspRequestMessage;
 use tokio::sync::mpsc;
 
-/// Command for `RTSP Client`.
-/// `RTSP Client` 的命令。
 #[derive(Debug, Clone)]
 pub enum RtspClientCommand {
     SendRequest(RtspRequestMessage),
@@ -11,8 +9,6 @@ pub enum RtspClientCommand {
     Close,
 }
 
-/// `RtspClientCommandSender` data structure.
-/// `RtspClientCommandSender` 数据结构。
 #[derive(Debug, Clone)]
 pub struct RtspClientCommandSender {
     tx: mpsc::Sender<RtspClientCommand>,
@@ -23,8 +19,6 @@ impl RtspClientCommandSender {
         Self { tx }
     }
 
-    /// Sends data to the peer.
-    /// 向对端发送数据。
     pub async fn send(&self, command: RtspClientCommand) -> Result<(), super::RtspClientSendError> {
         self.tx
             .send(command)

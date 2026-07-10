@@ -9,8 +9,6 @@ use crate::error::HlsCoreError;
 use crate::ll_hls::TrackLane;
 use crate::request::{parse_hls_request, BlockingParams, HlsRequestKind, SkipMode, StreamKeyParts};
 
-/// Identifier for `HLS Session`.
-/// `HLS Session` 的标识符。
 pub type HlsSessionId = u64;
 
 /// Extracted HTTP request headers relevant to HLS.
@@ -175,8 +173,6 @@ pub struct HlsCore {
 }
 
 impl HlsCore {
-    /// Creates a new `HlsCore` instance.
-    /// 创建新的 `HlsCore` 实例。
     pub fn new() -> Self {
         Self { _private: () }
     }

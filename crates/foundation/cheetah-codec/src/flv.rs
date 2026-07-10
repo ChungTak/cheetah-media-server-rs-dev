@@ -10,8 +10,6 @@ const FLV_TAG_HEADER_BYTES: usize = 11;
 const FLV_TAG_DATA_LEN_MAX: usize = 0xFF_FFFF;
 const FLV_DEMUX_DEFAULT_MAX_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 
-/// Type of `FLV Tag`.
-/// `FLV Tag` 的类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlvTagType {
     Audio,
@@ -38,8 +36,6 @@ impl FlvTagType {
     }
 }
 
-/// Header for `FLV`.
-/// `FLV` 的头。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlvHeader {
     pub has_audio: bool,
@@ -47,8 +43,6 @@ pub struct FlvHeader {
 }
 
 impl FlvHeader {
-    /// Encodes the value into the output buffer.
-    /// 将值编码到输出缓冲区。
     pub fn encode(&self) -> Bytes {
         let mut out = Vec::with_capacity(FLV_FULL_HEADER_BYTES);
         out.extend_from_slice(b"FLV");
@@ -66,8 +60,6 @@ impl FlvHeader {
         Bytes::from(out)
     }
 
-    /// Parses the input into a structured value, returning an error if malformed.
-    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(raw: &[u8]) -> Result<Self, FlvStreamError> {
         let (header, _) = Self::parse_prefix(raw)?;
         Ok(header)
@@ -114,8 +106,6 @@ impl FlvHeader {
     }
 }
 
-/// `FlvTag` data structure.
-/// `FlvTag` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlvTag {
     pub tag_type: FlvTagType,
@@ -124,8 +114,6 @@ pub struct FlvTag {
 }
 
 impl FlvTag {
-    /// Encodes the value into the output buffer.
-    /// 将值编码到输出缓冲区。
     pub fn encode(&self) -> Bytes {
         let data_len = self.payload.len().min(FLV_TAG_DATA_LEN_MAX);
         let mut out = Vec::with_capacity(FLV_TAG_HEADER_BYTES + data_len);
@@ -146,8 +134,6 @@ impl FlvTag {
         Bytes::from(out)
     }
 
-    /// Encodes `with previous tag size` into the output buffer.
-    /// 将 `with previous tag size` 编码到输出缓冲区。
     pub fn encode_with_previous_tag_size(&self) -> Bytes {
         let tag = self.encode();
         let mut out = Vec::with_capacity(tag.len() + FLV_PREVIOUS_TAG_SIZE_BYTES);
@@ -156,8 +142,6 @@ impl FlvTag {
         Bytes::from(out)
     }
 
-    /// Parses the input into a structured value, returning an error if malformed.
-    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(raw: &[u8]) -> Option<Self> {
         if raw.len() < FLV_TAG_HEADER_BYTES {
             return None;
@@ -181,20 +165,14 @@ impl FlvTag {
     }
 }
 
-/// `FlvTagBody` type alias.
-/// `FlvTagBody` 类型别名。
 pub type FlvTagBody = FlvTag;
 
-/// `FlvPreviousTagSizeMismatch` data structure.
-/// `FlvPreviousTagSizeMismatch` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlvPreviousTagSizeMismatch {
     pub expected: u32,
     pub actual: u32,
 }
 
-/// Events produced by the `FLV Demux` subsystem.
-/// `FLV Demux` 子系统产生的事件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlvDemuxEvent {
     Header(FlvHeader),
@@ -202,8 +180,6 @@ pub enum FlvDemuxEvent {
     PreviousTagSizeMismatch(FlvPreviousTagSizeMismatch),
 }
 
-/// Error returned by `FLV Stream` operations.
-/// `FLV Stream` 操作返回的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum FlvStreamError {
     #[error("invalid FLV header signature: expected \"FLV\"")]
@@ -226,8 +202,6 @@ pub enum FlvStreamError {
     DemuxBufferTooLarge { buffered: usize, max_allowed: usize },
 }
 
-/// `FlvDemuxer` data structure.
-/// `FlvDemuxer` 数据结构。
 #[derive(Debug, Clone)]
 pub struct FlvDemuxer {
     buffer: Vec<u8>,
@@ -242,8 +216,6 @@ impl Default for FlvDemuxer {
 }
 
 impl FlvDemuxer {
-    /// Creates a new `FlvDemuxer` instance.
-    /// 创建新的 `FlvDemuxer` 实例。
     pub fn new(max_buffer_bytes: usize) -> Self {
         Self {
             buffer: Vec::new(),
@@ -252,15 +224,11 @@ impl FlvDemuxer {
         }
     }
 
-    /// Resets the state to its initial value.
-    /// 将状态重置为初始值。
     pub fn reset(&mut self) {
         self.buffer.clear();
         self.header_parsed = false;
     }
 
-    /// Pushes the value onto the collection.
-    /// 将值压入集合。
     pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<FlvDemuxEvent>, FlvStreamError> {
         let next_len = self.buffer.len().saturating_add(chunk.len());
         if next_len > self.max_buffer_bytes {
@@ -356,8 +324,6 @@ impl FlvDemuxer {
     }
 }
 
-/// Builds the `video sequence header`.
-/// 构建 `video sequence header`。
 pub fn build_video_sequence_header(track: &TrackInfo) -> Option<FlvTagBody> {
     let payload = match (&track.codec, &track.extradata) {
         (CodecId::H264, CodecExtradata::H264 { avcc, sps, pps }) => {
@@ -530,8 +496,6 @@ impl<'a> H264BitReader<'a> {
     }
 }
 
-/// Builds the `audio sequence header`.
-/// 构建 `audio sequence header`。
 pub fn build_audio_sequence_header(track: &TrackInfo) -> Option<FlvTagBody> {
     let payload = match (&track.codec, &track.extradata) {
         (CodecId::AAC, CodecExtradata::AAC { asc }) => {

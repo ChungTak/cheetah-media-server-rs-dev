@@ -35,8 +35,6 @@ use crate::http::AnswerDispatcher;
 use crate::http_client::{HttpClientRequest, WhipWhepHttpClient};
 use crate::session::WebRtcSessionIdAllocator;
 
-/// Kind of `Web Rtc Job`.
-/// `Web Rtc Job` 的种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcJobKind {
     Pull,
@@ -44,8 +42,6 @@ pub enum WebRtcJobKind {
 }
 
 impl WebRtcJobKind {
-    /// `label` function of `WebRtcJobKind`.
-    /// `WebRtcJobKind` 的 `label` 函数。
     pub fn label(self) -> &'static str {
         match self {
             WebRtcJobKind::Pull => "pull",
@@ -54,8 +50,6 @@ impl WebRtcJobKind {
     }
 }
 
-/// `WebRtcSignalingProtocol` enumeration.
-/// `WebRtcSignalingProtocol` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WebRtcSignalingProtocol {
@@ -63,8 +57,6 @@ pub enum WebRtcSignalingProtocol {
     Whep,
 }
 
-/// `WebRtcClientJobSpec` data structure.
-/// `WebRtcClientJobSpec` 数据结构。
 #[derive(Debug, Clone)]
 pub struct WebRtcClientJobSpec {
     pub kind: WebRtcJobKind,
@@ -80,8 +72,6 @@ pub struct WebRtcClientJobSpec {
     pub allow_private_ips: bool,
 }
 
-/// State used by `Web Rtc Job`.
-/// `Web Rtc Job` 使用的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcJobState {
     Pending,
@@ -91,8 +81,6 @@ pub enum WebRtcJobState {
     Stopped,
 }
 
-/// Error returned by `Web Rtc Job` operations.
-/// `Web Rtc Job` 操作返回的错误。
 #[derive(Debug, Error)]
 pub enum WebRtcJobError {
     #[error("job already exists for stream {0}")]
@@ -120,8 +108,6 @@ pub struct WebRtcJobSnapshot {
     pub local_session_id: Option<WebRtcSessionId>,
 }
 
-/// `WebRtcJobRegistry` data structure.
-/// `WebRtcJobRegistry` 数据结构。
 #[derive(Default)]
 pub struct WebRtcJobRegistry {
     pull: HashMap<String, JobEntry>,
@@ -134,8 +120,6 @@ struct JobEntry {
 }
 
 impl WebRtcJobRegistry {
-    /// `list` function of `WebRtcJobRegistry`.
-    /// `WebRtcJobRegistry` 的 `list` 函数。
     pub fn list(&self, kind: WebRtcJobKind) -> Vec<WebRtcJobSnapshot> {
         let map = match kind {
             WebRtcJobKind::Pull => &self.pull,
@@ -144,8 +128,6 @@ impl WebRtcJobRegistry {
         map.values().map(|e| e.snapshot.lock().clone()).collect()
     }
 
-    /// Cancels the `all`.
-    /// 取消 `all`。
     pub fn cancel_all(&mut self) {
         for (_, entry) in self.pull.drain() {
             entry.cancel.cancel();
@@ -155,8 +137,6 @@ impl WebRtcJobRegistry {
         }
     }
 
-    /// Stops the service or background task.
-    /// 停止服务或后台任务。
     pub fn stop(&mut self, kind: WebRtcJobKind, stream_key: &str) -> bool {
         let map = match kind {
             WebRtcJobKind::Pull => &mut self.pull,

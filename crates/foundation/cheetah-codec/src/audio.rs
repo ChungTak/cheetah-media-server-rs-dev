@@ -1,16 +1,12 @@
 use crate::prelude::*;
 use bytes::Bytes;
 
-/// `AudioSampleLayout` enumeration.
-/// `AudioSampleLayout` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioSampleLayout {
     Interleaved,
     Planar,
 }
 
-/// `AudioParams` data structure.
-/// `AudioParams` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AudioParams {
     pub sample_rate: u32,
@@ -18,8 +14,6 @@ pub struct AudioParams {
     pub samples_per_frame: u16,
 }
 
-/// Configuration for `AAC Audio Specific`.
-/// `AAC Audio Specific` 的配置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AacAudioSpecificConfig {
     pub audio_object_type: u8,
@@ -28,8 +22,6 @@ pub struct AacAudioSpecificConfig {
 }
 
 impl AacAudioSpecificConfig {
-    /// Creates `bytes` from input.
-    /// 从输入创建 `bytes`。
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < 2 {
             return None;
@@ -46,8 +38,6 @@ impl AacAudioSpecificConfig {
         })
     }
 
-    /// Converts to `bytes` representation.
-    /// 转换为 `bytes` 表示。
     pub fn to_bytes(self) -> [u8; 2] {
         let b0 = (self.audio_object_type << 3) | ((self.sampling_frequency_index >> 1) & 0x07);
         let b1 = ((self.sampling_frequency_index & 0x01) << 7)
@@ -56,8 +46,6 @@ impl AacAudioSpecificConfig {
     }
 }
 
-/// `aac_channel_count_from_config` function.
-/// `aac_channel_count_from_config` 函数。
 pub fn aac_channel_count_from_config(channel_configuration: u8) -> Option<u8> {
     match channel_configuration {
         1 => Some(1),
@@ -73,8 +61,6 @@ pub fn aac_channel_count_from_config(channel_configuration: u8) -> Option<u8> {
     }
 }
 
-/// `aac_channel_count_from_asc` function.
-/// `aac_channel_count_from_asc` 函数。
 pub fn aac_channel_count_from_asc(bytes: &[u8]) -> Option<u8> {
     let mut reader = BitReader::new(bytes);
     let mut audio_object_type = read_aac_audio_object_type(&mut reader)?;
@@ -108,8 +94,6 @@ pub fn aac_channel_count_from_asc(bytes: &[u8]) -> Option<u8> {
     parse_ga_specific_config_channel_count(&mut reader, audio_object_type)
 }
 
-/// Header for `Adts`.
-/// `Adts` 的头。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AdtsHeader {
     pub profile: u8,
@@ -119,8 +103,6 @@ pub struct AdtsHeader {
 }
 
 impl AdtsHeader {
-    /// Parses the input into a structured value, returning an error if malformed.
-    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(data: &[u8]) -> Option<Self> {
         if data.len() < 7 {
             return None;
@@ -142,8 +124,6 @@ impl AdtsHeader {
         })
     }
 
-    /// Builds the output from the accumulated state.
-    /// 从累积状态构建输出。
     pub fn build(self) -> [u8; 7] {
         let mut out = [0u8; 7];
         out[0] = 0xff;
@@ -172,8 +152,6 @@ impl AdtsHeader {
     }
 }
 
-/// `adts_wrap` function.
-/// `adts_wrap` 函数。
 pub fn adts_wrap(raw_aac: &[u8], asc: AacAudioSpecificConfig) -> Bytes {
     let frame_len = raw_aac.len().saturating_add(7).min(usize::from(u16::MAX)) as u16;
     let header = AdtsHeader {
@@ -189,8 +167,6 @@ pub fn adts_wrap(raw_aac: &[u8], asc: AacAudioSpecificConfig) -> Bytes {
     Bytes::from(out)
 }
 
-/// `adts_strip` function.
-/// `adts_strip` 函数。
 pub fn adts_strip(frame: &[u8]) -> Option<(AdtsHeader, &[u8])> {
     let header = AdtsHeader::parse(frame)?;
     if usize::from(header.frame_length) < 7 || frame.len() < usize::from(header.frame_length) {

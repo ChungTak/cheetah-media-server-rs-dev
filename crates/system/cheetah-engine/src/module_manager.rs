@@ -29,8 +29,6 @@ enum RebuildTarget {
     Running,
 }
 
-/// `ModuleManager` data structure.
-/// `ModuleManager` 数据结构。
 #[derive(Default)]
 pub struct ModuleManager {
     factories: RwLock<HashMap<ModuleId, Arc<dyn ModuleFactory>>>,
@@ -42,8 +40,6 @@ pub struct ModuleManager {
 }
 
 impl ModuleManager {
-    /// Registers `factory` with the registry.
-    /// 将 `factory` 注册到注册表。
     pub fn register_factory(&self, factory: Arc<dyn ModuleFactory>) -> Result<(), SdkError> {
         let manifest = factory.manifest();
         let module_id = manifest.module_id.clone();
@@ -400,8 +396,6 @@ impl ModuleManager {
         Ok(())
     }
 
-    /// Initializes the `all`.
-    /// 初始化 `all`。
     pub async fn init_all(
         &self,
         context: EngineContext,
@@ -451,8 +445,6 @@ impl ModuleManager {
         Ok(())
     }
 
-    /// Starts the `all`.
-    /// 启动 `all`。
     pub async fn start_all(
         &self,
         context: &EngineContext,
@@ -506,8 +498,6 @@ impl ModuleManager {
         Ok(())
     }
 
-    /// Stops the `all`.
-    /// 停止 `all`。
     pub async fn stop_all(&self, context: &EngineContext) {
         let mut order = match self.topo_order() {
             Ok(v) => v,

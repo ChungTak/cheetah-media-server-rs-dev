@@ -31,8 +31,6 @@ use crate::metrics::SrtModuleMetrics;
 
 const MODULE_ID: &str = "srt";
 
-/// `SrtModuleFactory` data structure.
-/// `SrtModuleFactory` 数据结构。
 pub struct SrtModuleFactory;
 
 impl ModuleFactory for SrtModuleFactory {

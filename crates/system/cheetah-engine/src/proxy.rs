@@ -1,8 +1,6 @@
 use cheetah_sdk::{ProxyManager, ProxyRoute, SdkError};
 use dashmap::DashMap;
 
-/// `LocalProxyManager` data structure.
-/// `LocalProxyManager` 数据结构。
 #[derive(Default)]
 pub struct LocalProxyManager {
     routes: DashMap<String, ProxyRoute>,

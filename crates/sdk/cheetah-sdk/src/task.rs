@@ -3,8 +3,6 @@ use crate::ids::TaskId;
 pub use cheetah_runtime_api::CancellationToken;
 use serde::{Deserialize, Serialize};
 
-/// Kind of `Task`.
-/// `Task` 的种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskKind {
     Task,
@@ -13,8 +11,6 @@ pub enum TaskKind {
     Channel,
 }
 
-/// State used by `Task`.
-/// `Task` 使用的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskState {
     Running,
@@ -24,8 +20,6 @@ pub enum TaskState {
     Failed,
 }
 
-/// `TaskOutcome` enumeration.
-/// `TaskOutcome` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskOutcome {
     Succeeded,
@@ -33,8 +27,6 @@ pub enum TaskOutcome {
     Cancelled(Option<String>),
 }
 
-/// `TaskTerminalOutcome` enumeration.
-/// `TaskTerminalOutcome` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskTerminalOutcome {
     Succeeded,
@@ -42,8 +34,6 @@ pub enum TaskTerminalOutcome {
     Cancelled,
 }
 
-/// `TaskSnapshot` data structure.
-/// `TaskSnapshot` 数据结构。
 #[derive(Debug, Clone)]
 pub struct TaskSnapshot {
     pub id: TaskId,
@@ -63,8 +53,6 @@ pub struct TaskSnapshot {
     pub spawn_site: String,
 }
 
-/// API surface for `Task System`.
-/// `Task System` 的 API 接口。
 pub trait TaskSystemApi: Send + Sync {
     #[track_caller]
     fn create_task(

@@ -4,8 +4,6 @@ use std::net::{Ipv4Addr, SocketAddr};
 use cheetah_sdk::{BackpressurePolicy, SdkError};
 use serde::{Deserialize, Serialize};
 
-/// Configuration for `RTSP Module`.
-/// `RTSP Module` 的配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspModuleConfig {
@@ -56,8 +54,6 @@ pub struct RtspModuleConfig {
     pub relay_jobs: Vec<RtspRelayJobConfig>,
 }
 
-/// Configuration for `RTSP Auth`.
-/// `RTSP Auth` 的配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspAuthConfig {
@@ -70,16 +66,12 @@ pub struct RtspAuthConfig {
     pub nonce_ttl_secs: u32,
 }
 
-/// Configuration for `RTSP Auth User`.
-/// `RTSP Auth User` 的配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RtspAuthUserConfig {
     pub username: String,
     pub password: String,
 }
 
-/// Configuration for `RTSP TLS`.
-/// `RTSP TLS` 的配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspTlsConfig {
@@ -103,8 +95,6 @@ impl Default for RtspTlsConfig {
 }
 
 impl RtspTlsConfig {
-    /// Validates the input and returns an error if invalid.
-    /// 验证输入，无效时返回错误。
     pub fn validate(&self) -> Result<(), SdkError> {
         if !self.enabled {
             return Ok(());
@@ -126,8 +116,6 @@ impl RtspTlsConfig {
     }
 }
 
-/// Mode selecting `RTSP Heartbeat` behavior.
-/// 选择 `RTSP Heartbeat` 行为的模式。
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum RtspHeartbeatMode {
@@ -136,8 +124,6 @@ pub enum RtspHeartbeatMode {
     Options,
 }
 
-/// `RtspAlertThresholds` data structure.
-/// `RtspAlertThresholds` 数据结构。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspAlertThresholds {
@@ -149,8 +135,6 @@ pub struct RtspAlertThresholds {
     pub queue_drop_count: u64,
 }
 
-/// Configuration for `RTSP UDP`.
-/// `RTSP UDP` 的配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspUdpConfig {
@@ -172,8 +156,6 @@ pub struct RtspUdpConfig {
     pub enable_reorder_buffer: bool,
 }
 
-/// Configuration for `RTSP Multicast`.
-/// `RTSP Multicast` 的配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspMulticastConfig {
@@ -197,8 +179,6 @@ pub struct RtspMulticastConfig {
     pub idle_release_ms: u64,
 }
 
-/// `RtspPullTransport` enumeration.
-/// `RtspPullTransport` 枚举。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum RtspPullTransport {
@@ -208,8 +188,6 @@ pub enum RtspPullTransport {
     Multicast,
 }
 
-/// Configuration for `RTSP Pull Job`.
-/// `RTSP Pull Job` 的配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspPullJobConfig {
@@ -235,8 +213,6 @@ pub struct RtspPullJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
-/// `RtspPushTransport` enumeration.
-/// `RtspPushTransport` 枚举。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum RtspPushTransport {
@@ -245,8 +221,6 @@ pub enum RtspPushTransport {
     HttpTunnel,
 }
 
-/// Configuration for `RTSP Push Job`.
-/// `RTSP Push Job` 的配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspPushJobConfig {
@@ -270,8 +244,6 @@ pub struct RtspPushJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
-/// Configuration for `RTSP Relay Job`.
-/// `RTSP Relay Job` 的配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspRelayJobConfig {
@@ -439,8 +411,6 @@ impl Default for RtspRelayJobConfig {
 }
 
 impl RtspModuleConfig {
-    /// Creates `value` from input.
-    /// 从输入创建 `value`。
     pub fn from_value(value: serde_json::Value) -> Result<Self, SdkError> {
         let cfg: Self = serde_json::from_value(value)
             .map_err(|err| SdkError::InvalidArgument(format!("invalid rtsp config: {err}")))?;
@@ -448,8 +418,6 @@ impl RtspModuleConfig {
         Ok(cfg)
     }
 
-    /// Validates the input and returns an error if invalid.
-    /// 验证输入，无效时返回错误。
     pub fn validate(&self) -> Result<(), SdkError> {
         self.listen
             .parse::<SocketAddr>()
@@ -765,8 +733,6 @@ impl RtspModuleConfig {
         Ok(())
     }
 
-    /// `default_json` function of `RtspModuleConfig`.
-    /// `RtspModuleConfig` 的 `default_json` 函数。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).expect("serialize default rtsp config")
     }

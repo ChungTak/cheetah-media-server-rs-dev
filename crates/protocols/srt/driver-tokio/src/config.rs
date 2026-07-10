@@ -2,8 +2,6 @@ use std::net::SocketAddr;
 
 use cheetah_srt_core::SrtKeyLength;
 
-/// Configuration for `SRT Driver`.
-/// `SRT Driver` 的配置。
 #[derive(Debug, Clone)]
 pub struct SrtDriverConfig {
     pub listen: SocketAddr,
@@ -17,8 +15,6 @@ pub struct SrtDriverConfig {
     pub encryption: SrtDriverEncryption,
 }
 
-/// `SrtDriverEncryption` data structure.
-/// `SrtDriverEncryption` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SrtDriverEncryption {
     pub enabled: bool,

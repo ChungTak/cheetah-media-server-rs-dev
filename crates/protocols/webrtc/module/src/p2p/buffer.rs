@@ -63,8 +63,6 @@ pub struct PendingCandidateBuffer {
     cap: usize,
 }
 
-/// Error returned by `Pending Buffer` operations.
-/// `Pending Buffer` 操作返回的错误。
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum PendingBufferError {
     #[error("buffer cap must be > 0")]
@@ -72,8 +70,6 @@ pub enum PendingBufferError {
 }
 
 impl PendingCandidateBuffer {
-    /// Creates a new `PendingCandidateBuffer` instance.
-    /// 创建新的 `PendingCandidateBuffer` 实例。
     pub fn new(cap: usize) -> Result<Self, PendingBufferError> {
         if cap == 0 {
             return Err(PendingBufferError::InvalidCap);
@@ -86,20 +82,14 @@ impl PendingCandidateBuffer {
         })
     }
 
-    /// `state` function of `PendingCandidateBuffer`.
-    /// `PendingCandidateBuffer` 的 `state` 函数。
     pub fn state(&self) -> BufferState {
         self.state
     }
 
-    /// Returns the number of elements.
-    /// 返回元素数量。
     pub fn len(&self) -> usize {
         self.queue.len()
     }
 
-    /// Returns true when there are no elements.
-    /// 没有元素时返回 true。
     pub fn is_empty(&self) -> bool {
         self.queue.is_empty()
     }

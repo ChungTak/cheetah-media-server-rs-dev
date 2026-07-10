@@ -4,8 +4,6 @@ use base64::Engine;
 
 use crate::track::{CodecExtradata, CodecId, MediaKind, TrackInfo};
 
-/// `SdpMediaDescription` data structure.
-/// `SdpMediaDescription` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdpMediaDescription {
     pub media: String,
@@ -16,8 +14,6 @@ pub struct SdpMediaDescription {
     pub fmtp: Option<String>,
 }
 
-/// `export_media_description` function.
-/// `export_media_description` 函数。
 pub fn export_media_description(track: &TrackInfo) -> Option<SdpMediaDescription> {
     let payload_type = track
         .payload_type
@@ -42,8 +38,6 @@ pub fn export_media_description(track: &TrackInfo) -> Option<SdpMediaDescription
     })
 }
 
-/// `export_fmtp` function.
-/// `export_fmtp` 函数。
 pub fn export_fmtp(track: &TrackInfo) -> Option<String> {
     if track.codec == CodecId::AV1 {
         let (profile, level_idx, tier) = match &track.extradata {

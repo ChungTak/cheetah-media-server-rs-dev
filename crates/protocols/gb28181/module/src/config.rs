@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-/// Configuration for `Gb 28181 Module`.
-/// `Gb 28181 Module` 的配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Gb28181ModuleConfig {
     pub enabled: bool,
@@ -58,20 +56,14 @@ impl Default for Gb28181ModuleConfig {
 }
 
 impl Gb28181ModuleConfig {
-    /// `default_json` function of `Gb28181ModuleConfig`.
-    /// `Gb28181ModuleConfig` 的 `default_json` 函数。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap_or_default()
     }
 
-    /// Creates `value` from input.
-    /// 从输入创建 `value`。
     pub fn from_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
     }
 
-    /// Validates the input and returns an error if invalid.
-    /// 验证输入，无效时返回错误。
     pub fn validate(&self) -> Result<(), String> {
         if self.listen_udp.parse::<std::net::SocketAddr>().is_err() {
             return Err(format!("invalid listen_udp: {}", self.listen_udp));

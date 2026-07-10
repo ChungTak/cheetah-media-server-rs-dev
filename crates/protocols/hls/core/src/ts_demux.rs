@@ -48,8 +48,6 @@ struct TsTrackState {
 }
 
 impl TsDemuxer {
-    /// Creates a new `TsDemuxer` instance.
-    /// 创建新的 `TsDemuxer` 实例。
     pub fn new() -> Self {
         Self {
             pmt_pid: None,

@@ -71,8 +71,6 @@ pub enum WebRtcCoreEvent {
     },
 }
 
-/// `WebRtcSessionLifecycle` enumeration.
-/// `WebRtcSessionLifecycle` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WebRtcSessionLifecycle {
     /// Session has been created in the core.
@@ -89,8 +87,6 @@ pub enum WebRtcSessionLifecycle {
     Failed,
 }
 
-/// State used by `Web Rtc ICE`.
-/// `Web Rtc ICE` 使用的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WebRtcIceState {
     New,
@@ -111,16 +107,12 @@ pub struct WebRtcMediaTrack {
     pub simulcast_recv: Vec<String>,
 }
 
-/// Kind of `Web Rtc Media`.
-/// `Web Rtc Media` 的种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WebRtcMediaKind {
     Audio,
     Video,
 }
 
-/// `WebRtcMediaDirection` enumeration.
-/// `WebRtcMediaDirection` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WebRtcMediaDirection {
     SendOnly,
@@ -205,8 +197,6 @@ pub enum WebRtcCodecKind {
     Unknown,
 }
 
-/// Events produced by the `Web Rtc Data Channel` subsystem.
-/// `Web Rtc Data Channel` 子系统产生的事件。
 #[derive(Debug, Clone)]
 pub enum WebRtcDataChannelEvent {
     Opened {
@@ -223,8 +213,6 @@ pub enum WebRtcDataChannelEvent {
     },
 }
 
-/// `WebRtcRtcpFeedback` enumeration.
-/// `WebRtcRtcpFeedback` 枚举。
 #[derive(Debug, Clone)]
 pub enum WebRtcRtcpFeedback {
     SenderReport,

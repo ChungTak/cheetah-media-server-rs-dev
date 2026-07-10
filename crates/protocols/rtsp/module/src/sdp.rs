@@ -24,8 +24,6 @@ struct MediaSection {
     control: Option<String>,
 }
 
-/// Parses `announce SDP` from input.
-/// 从输入解析 `announce SDP`。
 pub fn parse_announce_sdp(
     body: &str,
 ) -> Result<(Vec<TrackInfo>, HashMap<String, TrackId>), String> {
@@ -245,8 +243,6 @@ fn parse_payload_attribute(rest: &str) -> Option<(u8, &str)> {
     Some((payload_type, value.trim_start()))
 }
 
-/// Builds the `describe SDP`.
-/// 构建 `describe SDP`。
 pub fn build_describe_sdp(
     base_uri: &str,
     tracks: &[TrackInfo],
@@ -323,8 +319,6 @@ fn extract_rtsp_host(uri: &str) -> Option<&str> {
     Some(host_port.split(':').next().unwrap_or(host_port))
 }
 
-/// Normalizes the input into `control`.
-/// 将输入归一化为 `control`。
 pub fn normalize_control(control: &str) -> String {
     let trimmed = control.trim();
     let trimmed = trimmed

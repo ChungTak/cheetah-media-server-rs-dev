@@ -3,8 +3,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Configuration for `Record Module`.
-/// `Record Module` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordModuleConfig {
     #[serde(default = "default_enabled")]
@@ -43,8 +41,6 @@ fn default_metadata_flush_interval_ms() -> u32 {
     1000
 }
 
-/// Configuration for `Record Formats`.
-/// `Record Formats` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RecordFormatsConfig {
     #[serde(default)]
@@ -57,8 +53,6 @@ pub struct RecordFormatsConfig {
     pub ps: PsRecordConfig,
 }
 
-/// Configuration for `HLS Record`.
-/// `HLS Record` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HlsRecordConfig {
     #[serde(default = "default_hls_container")]
@@ -84,8 +78,6 @@ impl Default for HlsRecordConfig {
     }
 }
 
-/// Configuration for `Mp 4 Record`.
-/// `Mp 4 Record` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct Mp4RecordConfig {
     /// Whether to rewrite the file with `moov` at the front after closing.
@@ -96,8 +88,6 @@ pub struct Mp4RecordConfig {
     pub faststart_on_close: bool,
 }
 
-/// Configuration for `FLV Record`.
-/// `FLV Record` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FlvRecordConfig {
     #[serde(default = "default_compat_mode")]
@@ -116,8 +106,6 @@ impl Default for FlvRecordConfig {
     }
 }
 
-/// Configuration for `Ps Record`.
-/// `Ps Record` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PsRecordConfig {
     #[serde(default = "default_max_ps_tracks")]
@@ -151,8 +139,6 @@ impl Default for RecordModuleConfig {
 }
 
 impl RecordModuleConfig {
-    /// Creates `value` from input.
-    /// 从输入创建 `value`。
     pub fn from_value(value: Value) -> Result<Self, serde_json::Error> {
         if value.is_null() {
             return Ok(Self::default());
@@ -160,14 +146,10 @@ impl RecordModuleConfig {
         serde_json::from_value(value)
     }
 
-    /// `default_json` function of `RecordModuleConfig`.
-    /// `RecordModuleConfig` 的 `default_json` 函数。
     pub fn default_json() -> Value {
         serde_json::to_value(Self::default()).expect("default config serializes")
     }
 
-    /// Validates the input and returns an error if invalid.
-    /// 验证输入，无效时返回错误。
     pub fn validate(&self) -> Result<(), String> {
         if self.max_tasks == 0 {
             return Err("max_tasks must be > 0".into());

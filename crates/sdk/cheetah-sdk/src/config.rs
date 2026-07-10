@@ -6,8 +6,6 @@ use serde_json::Value;
 use crate::error::SdkError;
 use crate::ids::ModuleId;
 
-/// `ConfigEffect` enumeration.
-/// `ConfigEffect` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ConfigEffect {
     /// 立即生效，不要求会话或模块重建。
@@ -20,8 +18,6 @@ pub enum ConfigEffect {
     EngineRestartRequired,
 }
 
-/// Result type for `Config Apply` operations.
-/// `Config Apply` 操作的结果类型。
 #[derive(Debug, Clone)]
 pub struct ConfigApplyResult {
     /// 配置应用后的版本号。
@@ -30,8 +26,6 @@ pub struct ConfigApplyResult {
     pub effect: ConfigEffect,
 }
 
-/// `ConfigValueChange` data structure.
-/// `ConfigValueChange` 数据结构。
 #[derive(Debug, Clone)]
 pub struct ConfigValueChange {
     /// 变更前值。
@@ -40,8 +34,6 @@ pub struct ConfigValueChange {
     pub next: Value,
 }
 
-/// `ModuleConfigChange` data structure.
-/// `ModuleConfigChange` 数据结构。
 #[derive(Debug, Clone)]
 pub struct ModuleConfigChange {
     /// 发生变更的 module 标识。
@@ -56,8 +48,6 @@ pub struct ModuleConfigChange {
     pub next_global: Option<Value>,
 }
 
-/// `ConfigApplyOutcome` data structure.
-/// `ConfigApplyOutcome` 数据结构。
 #[derive(Debug, Clone)]
 pub struct ConfigApplyOutcome {
     /// 配置应用后的版本号。
@@ -72,8 +62,6 @@ pub struct ConfigApplyOutcome {
     pub rollback_token: Option<ConfigRollbackToken>,
 }
 
-/// `RegisteredSchema` data structure.
-/// `RegisteredSchema` 数据结构。
 #[derive(Debug, Clone)]
 pub struct RegisteredSchema {
     /// schema 注册作用域（global 或 module:<id>）。
@@ -82,8 +70,6 @@ pub struct RegisteredSchema {
     pub schema_name: String,
 }
 
-/// `ModuleSchemaRegistration` data structure.
-/// `ModuleSchemaRegistration` 数据结构。
 #[derive(Clone)]
 pub struct ModuleSchemaRegistration {
     /// 目标 module 标识。
@@ -96,8 +82,6 @@ pub struct ModuleSchemaRegistration {
     pub validator: Option<ConfigValidator>,
 }
 
-/// `ConfigRollbackToken` data structure.
-/// `ConfigRollbackToken` 数据结构。
 #[derive(Debug, Clone)]
 pub struct ConfigRollbackToken {
     /// 变更前全局运行时配置快照。
@@ -106,12 +90,8 @@ pub struct ConfigRollbackToken {
     pub previous_module_runtime: Vec<(ModuleId, Option<Value>)>,
 }
 
-/// `ConfigValidator` type alias.
-/// `ConfigValidator` 类型别名。
 pub type ConfigValidator = Arc<dyn Fn(&Value) -> Result<(), String> + Send + Sync>;
 
-/// `ConfigSchema` trait.
-/// `ConfigSchema` trait。
 pub trait ConfigSchema:
     Default + serde::Serialize + for<'de> serde::Deserialize<'de> + Send + Sync + 'static
 {
@@ -124,16 +104,12 @@ pub trait ConfigSchema:
     }
 }
 
-/// `ConfigProvider` trait.
-/// `ConfigProvider` trait。
 pub trait ConfigProvider: Send + Sync {
     fn global(&self) -> Value;
     fn module(&self, module_id: &ModuleId) -> Value;
     fn version(&self) -> u64;
 }
 
-/// `ConfigSchemaRegistry` trait.
-/// `ConfigSchemaRegistry` trait。
 pub trait ConfigSchemaRegistry: Send + Sync {
     fn register_global_schema(
         &self,
@@ -165,8 +141,6 @@ pub trait ConfigSchemaRegistry: Send + Sync {
     fn list_schemas(&self) -> Vec<RegisteredSchema>;
 }
 
-/// API surface for `Config Apply`.
-/// `Config Apply` 的 API 接口。
 pub trait ConfigApplyApi: Send + Sync {
     fn apply_global_patch(
         &self,
@@ -184,8 +158,6 @@ pub trait ConfigApplyApi: Send + Sync {
     fn rollback(&self, token: ConfigRollbackToken) -> Result<(), SdkError>;
 }
 
-/// API surface for `Config Admin`.
-/// `Config Admin` 的 API 接口。
 pub trait ConfigAdminApi: Send + Sync {
     fn patch_global(
         &self,

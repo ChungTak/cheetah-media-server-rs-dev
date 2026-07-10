@@ -30,8 +30,6 @@ pub struct HlsPlaybackPacer {
 }
 
 impl HlsPlaybackPacer {
-    /// Creates a new `HlsPlaybackPacer` instance.
-    /// 创建新的 `HlsPlaybackPacer` 实例。
     pub fn new(max_buffer_ms: u64) -> Self {
         Self {
             buffer: VecDeque::new(),
@@ -129,8 +127,6 @@ pub struct StampSmoother {
 }
 
 impl StampSmoother {
-    /// Creates a new `StampSmoother` instance.
-    /// 创建新的 `StampSmoother` 实例。
     pub fn new(max_forward_jump_ms: i64, max_backward_jump_ms: i64) -> Self {
         Self {
             last_input: 0,

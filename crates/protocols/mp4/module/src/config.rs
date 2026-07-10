@@ -3,8 +3,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Configuration for `Mp 4 Module`.
-/// `Mp 4 Module` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mp4ModuleConfig {
     #[serde(default = "default_enabled")]
@@ -59,8 +57,6 @@ fn default_idle_timeout_ms() -> u64 {
 }
 
 impl Mp4ModuleConfig {
-    /// Creates `value` from input.
-    /// 从输入创建 `value`。
     pub fn from_value(value: Value) -> Result<Self, serde_json::Error> {
         if value.is_null() {
             return Ok(Self::default());
@@ -68,14 +64,10 @@ impl Mp4ModuleConfig {
         serde_json::from_value(value)
     }
 
-    /// `default_json` function of `Mp4ModuleConfig`.
-    /// `Mp4ModuleConfig` 的 `default_json` 函数。
     pub fn default_json() -> Value {
         serde_json::to_value(Self::default()).expect("default config serializes")
     }
 
-    /// Validates the input and returns an error if invalid.
-    /// 验证输入，无效时返回错误。
     pub fn validate(&self) -> Result<(), String> {
         if self.max_sessions == 0 {
             return Err("max_sessions must be > 0".into());

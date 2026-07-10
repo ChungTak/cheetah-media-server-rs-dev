@@ -3,8 +3,6 @@ use crate::prelude::*;
 use core::fmt;
 use smallvec::SmallVec;
 
-/// `Timebase` data structure.
-/// `Timebase` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timebase {
     pub num: u32,
@@ -12,14 +10,10 @@ pub struct Timebase {
 }
 
 impl Timebase {
-    /// Creates a new `Timebase` instance.
-    /// 创建新的 `Timebase` 实例。
     pub const fn new(num: u32, den: u32) -> Self {
         Self { num, den }
     }
 
-    /// Converts to `micros` representation.
-    /// 转换为 `micros` 表示。
     pub fn to_micros(tb: Timebase, value: i64) -> i64 {
         let num = i128::from(tb.num);
         let den = i128::from(tb.den.max(1));
@@ -27,8 +21,6 @@ impl Timebase {
         ((v * num * 1_000_000_i128) / den) as i64
     }
 
-    /// Creates `micros` from input.
-    /// 从输入创建 `micros`。
     pub fn from_micros(tb: Timebase, micros: i64) -> i64 {
         let num = i128::from(tb.num.max(1));
         let den = i128::from(tb.den);
@@ -37,37 +29,27 @@ impl Timebase {
     }
 }
 
-/// `MonoTime` data structure.
-/// `MonoTime` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MonoTime {
     micros: u64,
 }
 
 impl MonoTime {
-    /// Creates `micros` from input.
-    /// 从输入创建 `micros`。
     pub const fn from_micros(micros: u64) -> Self {
         Self { micros }
     }
 
-    /// `as_micros` function of `MonoTime`.
-    /// `MonoTime` 的 `as_micros` 函数。
     pub const fn as_micros(self) -> u64 {
         self.micros
     }
 }
 
-/// Error returned by `Timestamp` operations.
-/// `Timestamp` 操作返回的错误。
 #[derive(Debug, thiserror::Error)]
 pub enum TimestampError {
     #[error("invalid wrap width: {0}")]
     InvalidWrapWidth(u8),
 }
 
-/// `WrapUnwrapper` data structure.
-/// `WrapUnwrapper` 数据结构。
 #[derive(Clone)]
 pub struct WrapUnwrapper {
     mask: u64,
@@ -88,8 +70,6 @@ impl fmt::Debug for WrapUnwrapper {
 }
 
 impl WrapUnwrapper {
-    /// Creates a new `WrapUnwrapper` instance.
-    /// 创建新的 `WrapUnwrapper` 实例。
     pub fn new(bits: u8) -> Result<Self, TimestampError> {
         if bits == 0 || bits > 63 {
             return Err(TimestampError::InvalidWrapWidth(bits));
@@ -104,8 +84,6 @@ impl WrapUnwrapper {
         })
     }
 
-    /// `unwrap` function of `WrapUnwrapper`.
-    /// `WrapUnwrapper` 的 `unwrap` 函数。
     pub fn unwrap(&mut self, raw: u64) -> u64 {
         let raw = raw & self.mask;
         if let Some(last) = self.last_raw {
@@ -119,16 +97,12 @@ impl WrapUnwrapper {
         self.high + raw
     }
 
-    /// Resets the state to its initial value.
-    /// 将状态重置为初始值。
     pub fn reset(&mut self) {
         self.high = 0;
         self.last_raw = None;
     }
 }
 
-/// Mode selecting `Stamp Adjust` behavior.
-/// 选择 `Stamp Adjust` 行为的模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StampAdjustMode {
     Source,
@@ -137,8 +111,6 @@ pub enum StampAdjustMode {
     FrameRateGuess,
 }
 
-/// `StampAdjust` data structure.
-/// `StampAdjust` 数据结构。
 #[derive(Debug, Clone)]
 pub struct StampAdjust {
     mode: StampAdjustMode,
@@ -147,8 +119,6 @@ pub struct StampAdjust {
 }
 
 impl StampAdjust {
-    /// Creates a new `StampAdjust` instance.
-    /// 创建新的 `StampAdjust` 实例。
     pub fn new(mode: StampAdjustMode, step_us: i64) -> Self {
         Self {
             mode,
@@ -157,8 +127,6 @@ impl StampAdjust {
         }
     }
 
-    /// `adjust` function of `StampAdjust`.
-    /// `StampAdjust` 的 `adjust` 函数。
     pub fn adjust(&mut self, source_pts_us: Option<i64>, now: MonoTime) -> i64 {
         let mut value = match self.mode {
             StampAdjustMode::Source => source_pts_us.unwrap_or_else(|| now.as_micros() as i64),
@@ -178,8 +146,6 @@ impl StampAdjust {
     }
 }
 
-/// `DtsGenerator` data structure.
-/// `DtsGenerator` 数据结构。
 #[derive(Debug, Default, Clone)]
 pub struct DtsGenerator {
     last_dts: Option<i64>,
@@ -196,8 +162,6 @@ struct PtsOnlyDtsGeneration {
 }
 
 impl DtsGenerator {
-    /// Generates the `monotonic from pts`.
-    /// 生成 `monotonic from pts`。
     pub fn generate_monotonic_from_pts(&mut self, pts: i64) -> i64 {
         let mut dts = pts;
         if let Some(last) = self.last_dts {
@@ -290,8 +254,6 @@ impl DtsGenerator {
         }
     }
 
-    /// Resets the state to its initial value.
-    /// 将状态重置为初始值。
     pub fn reset(&mut self) {
         self.last_dts = None;
         self.last_source_pts = None;
@@ -300,21 +262,15 @@ impl DtsGenerator {
     }
 }
 
-/// `TimebaseConverter` data structure.
-/// `TimebaseConverter` 数据结构。
 pub struct TimebaseConverter;
 
 impl TimebaseConverter {
-    /// Converts the value into another representation.
-    /// 将值转换为另一种表示。
     pub fn convert(value: i64, src: Timebase, dst: Timebase) -> i64 {
         let us = Timebase::to_micros(src, value);
         Timebase::from_micros(dst, us)
     }
 }
 
-/// `DiscontinuityJudge` data structure.
-/// `DiscontinuityJudge` 数据结构。
 #[derive(Debug, Clone)]
 pub struct DiscontinuityJudge {
     max_gap_us: i64,
@@ -322,8 +278,6 @@ pub struct DiscontinuityJudge {
 }
 
 impl DiscontinuityJudge {
-    /// Creates a new `DiscontinuityJudge` instance.
-    /// 创建新的 `DiscontinuityJudge` 实例。
     pub fn new(max_gap_us: i64) -> Self {
         Self {
             max_gap_us: max_gap_us.max(0),
@@ -331,8 +285,6 @@ impl DiscontinuityJudge {
         }
     }
 
-    /// `observe` function of `DiscontinuityJudge`.
-    /// `DiscontinuityJudge` 的 `observe` 函数。
     pub fn observe(&mut self, pts_us: i64) -> bool {
         let is_discontinuity = match self.last_pts_us {
             Some(last) => pts_us < last || (pts_us - last) > self.max_gap_us,
@@ -343,16 +295,12 @@ impl DiscontinuityJudge {
     }
 }
 
-/// `TimestampValue` enumeration.
-/// `TimestampValue` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampValue {
     Unwrapped(i64),
     Wrapped(u64),
 }
 
-/// Configuration for `Timestamp Normalizer`.
-/// `Timestamp Normalizer` 的配置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimestampNormalizerConfig {
     pub input_timebase: Timebase,
@@ -364,8 +312,6 @@ pub struct TimestampNormalizerConfig {
 }
 
 impl TimestampNormalizerConfig {
-    /// Creates a new `TimestampNormalizerConfig` instance.
-    /// 创建新的 `TimestampNormalizerConfig` 实例。
     pub fn new(
         input_timebase: Timebase,
         output_timebase: Timebase,
@@ -398,30 +344,22 @@ impl TimestampNormalizerConfig {
         })
     }
 
-    /// Returns a copy with `max forward gap us` set.
-    /// 返回将 `max forward gap us` 设置后的副本。
     pub fn with_max_forward_gap_us(mut self, max_forward_gap_us: i64) -> Self {
         self.max_forward_gap_us = max_forward_gap_us.max(0);
         self
     }
 
-    /// Returns a copy with `default fallback step` set.
-    /// 返回将 `default fallback step` 设置后的副本。
     pub fn with_default_fallback_step(mut self, default_fallback_step: i64) -> Self {
         self.default_fallback_step = default_fallback_step.max(1);
         self
     }
 
-    /// Returns a copy with `negative composition allowed` set.
-    /// 返回将 `negative composition allowed` 设置后的副本。
     pub fn with_negative_composition_allowed(mut self, allow: bool) -> Self {
         self.allow_negative_composition = allow;
         self
     }
 }
 
-/// Error returned by `Timestamp Normalizer Config` operations.
-/// `Timestamp Normalizer Config` 操作返回的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum TimestampNormalizerConfigError {
     #[error("invalid input timebase {num}/{den}")]
@@ -432,8 +370,6 @@ pub enum TimestampNormalizerConfigError {
     InvalidWrapWidth(u8),
 }
 
-/// Error returned by `Timestamp Normalize` operations.
-/// `Timestamp Normalize` 操作返回的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum TimestampNormalizeError {
     #[error("wrapped timestamp provided without configured wrap_bits")]
@@ -442,8 +378,6 @@ pub enum TimestampNormalizeError {
     UnwrappedTimestampOverflow { value: u64 },
 }
 
-/// `TimestampAlert` enumeration.
-/// `TimestampAlert` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampAlert {
     MissingDtsUsedFallback,
@@ -455,8 +389,6 @@ pub enum TimestampAlert {
     ResetApplied,
 }
 
-/// Mode selecting `Timestamp Normalize` behavior.
-/// 选择 `Timestamp Normalize` 行为的模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampNormalizeMode {
     NoTimestamp,
@@ -473,8 +405,6 @@ pub enum TimestampNormalizeMode {
     },
 }
 
-/// `TimestampNormalizeInput` data structure.
-/// `TimestampNormalizeInput` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimestampNormalizeInput {
     pub mode: TimestampNormalizeMode,
@@ -488,8 +418,6 @@ pub struct TimestampNormalizeInput {
     pub force_discontinuity: bool,
 }
 
-/// `TimestampNormalizeOutput` data structure.
-/// `TimestampNormalizeOutput` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimestampNormalizeOutput {
     pub pts: i64,
@@ -500,8 +428,6 @@ pub struct TimestampNormalizeOutput {
     pub alerts: SmallVec<[TimestampAlert; 4]>,
 }
 
-/// `TimestampNormalizer` data structure.
-/// `TimestampNormalizer` 数据结构。
 #[derive(Debug, Clone)]
 pub struct TimestampNormalizer {
     config: TimestampNormalizerConfig,
@@ -515,8 +441,6 @@ pub struct TimestampNormalizer {
 }
 
 impl TimestampNormalizer {
-    /// Creates a new `TimestampNormalizer` instance.
-    /// 创建新的 `TimestampNormalizer` 实例。
     pub fn new(config: TimestampNormalizerConfig) -> Self {
         let dts_unwrapper = config.wrap_bits.map(|bits| match WrapUnwrapper::new(bits) {
             Ok(unwrapper) => unwrapper,
@@ -538,14 +462,10 @@ impl TimestampNormalizer {
         }
     }
 
-    /// `config` function of `TimestampNormalizer`.
-    /// `TimestampNormalizer` 的 `config` 函数。
     pub fn config(&self) -> &TimestampNormalizerConfig {
         &self.config
     }
 
-    /// Resets the state to its initial value.
-    /// 将状态重置为初始值。
     pub fn reset(&mut self) {
         self.epoch_offset = None;
         self.last_dts = None;
@@ -560,8 +480,6 @@ impl TimestampNormalizer {
         }
     }
 
-    /// Normalizes the value to a canonical form.
-    /// 将值归一化为标准形式。
     pub fn normalize(
         &mut self,
         input: TimestampNormalizeInput,

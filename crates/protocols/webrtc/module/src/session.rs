@@ -70,8 +70,6 @@ use std::time::Instant;
 use cheetah_sdk::{CancellationToken, PublishLease, StreamKey};
 use cheetah_webrtc_core::{WebRtcSessionId, WebRtcSessionRole};
 
-/// Kind of `Web Rtc API`.
-/// `Web Rtc API` 的种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcApiKind {
     SmsPublish,
@@ -83,8 +81,6 @@ pub enum WebRtcApiKind {
     OmeWs,
 }
 
-/// State used by `Web Rtc Module Session`.
-/// `Web Rtc Module Session` 使用的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcModuleSessionState {
     /// Created locally; SDP exchange ongoing.
@@ -221,22 +217,16 @@ impl WebRtcSessionTelemetry {
         self.last_update_at = Some(Instant::now());
     }
 
-    /// Increments `RTCP sr`.
-    /// 递增 `RTCP sr`。
     pub fn inc_rtcp_sr(&mut self) {
         self.rtcp_sr = self.rtcp_sr.saturating_add(1);
         self.last_update_at = Some(Instant::now());
     }
 
-    /// Increments `RTCP rr`.
-    /// 递增 `RTCP rr`。
     pub fn inc_rtcp_rr(&mut self) {
         self.rtcp_rr = self.rtcp_rr.saturating_add(1);
         self.last_update_at = Some(Instant::now());
     }
 
-    /// Adds `RTCP nack`.
-    /// 增加 `RTCP nack`。
     pub fn add_rtcp_nack(&mut self, count: u32) {
         self.rtcp_nack = self.rtcp_nack.saturating_add(count as u64);
         self.last_update_at = Some(Instant::now());
@@ -265,8 +255,6 @@ pub struct WebRtcModuleSession {
 }
 
 impl WebRtcModuleSession {
-    /// Creates a new `WebRtcModuleSession` instance.
-    /// 创建新的 `WebRtcModuleSession` 实例。
     pub fn new(
         id: WebRtcSessionId,
         stream_key: StreamKey,
@@ -292,23 +280,17 @@ impl WebRtcModuleSession {
     }
 }
 
-/// `WebRtcSessionIdAllocator` data structure.
-/// `WebRtcSessionIdAllocator` 数据结构。
 pub struct WebRtcSessionIdAllocator {
     next: AtomicU64,
 }
 
 impl WebRtcSessionIdAllocator {
-    /// Creates a new `WebRtcSessionIdAllocator` instance.
-    /// 创建新的 `WebRtcSessionIdAllocator` 实例。
     pub fn new() -> Self {
         Self {
             next: AtomicU64::new(1),
         }
     }
 
-    /// `allocate` function of `WebRtcSessionIdAllocator`.
-    /// `WebRtcSessionIdAllocator` 的 `allocate` 函数。
     pub fn allocate(&self) -> WebRtcSessionId {
         WebRtcSessionId::new(self.next.fetch_add(1, Ordering::Relaxed))
     }
@@ -320,36 +302,26 @@ impl Default for WebRtcSessionIdAllocator {
     }
 }
 
-/// `WebRtcSessionRegistry` data structure.
-/// `WebRtcSessionRegistry` 数据结构。
 #[derive(Default)]
 pub struct WebRtcSessionRegistry {
     pub sessions: HashMap<WebRtcSessionId, WebRtcModuleSession>,
 }
 
 impl WebRtcSessionRegistry {
-    /// Inserts the value into the collection.
-    /// 将值插入集合。
     pub fn insert(&mut self, session: WebRtcModuleSession) {
         self.sessions.insert(session.id, session);
     }
 
-    /// Removes the value from the collection.
-    /// 从集合中移除值。
     pub fn remove(&mut self, id: WebRtcSessionId) -> Option<WebRtcModuleSession> {
         self.sessions.remove(&id)
     }
 
-    /// `touch` function of `WebRtcSessionRegistry`.
-    /// `WebRtcSessionRegistry` 的 `touch` 函数。
     pub fn touch(&mut self, id: WebRtcSessionId) {
         if let Some(session) = self.sessions.get_mut(&id) {
             session.last_activity_at = Instant::now();
         }
     }
 
-    /// `mark_state` function of `WebRtcSessionRegistry`.
-    /// `WebRtcSessionRegistry` 的 `mark_state` 函数。
     pub fn mark_state(&mut self, id: WebRtcSessionId, state: WebRtcModuleSessionState) {
         if let Some(session) = self.sessions.get_mut(&id) {
             session.state = state;
@@ -370,8 +342,6 @@ impl WebRtcSessionRegistry {
         }
     }
 
-    /// `list` function of `WebRtcSessionRegistry`.
-    /// `WebRtcSessionRegistry` 的 `list` 函数。
     pub fn list(&self) -> Vec<&WebRtcModuleSession> {
         self.sessions.values().collect()
     }

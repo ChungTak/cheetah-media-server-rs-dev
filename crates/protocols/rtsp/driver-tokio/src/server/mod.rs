@@ -16,12 +16,8 @@ pub use command::{DriverSendError, RtspCoreCommandSender, RtspDriverCommand};
 pub use listener::start_server;
 pub use tls::{start_tls_server, DriverTlsConfig};
 
-/// Identifier for `RTSP Connection`.
-/// `RTSP Connection` 的标识符。
 pub type RtspConnectionId = u64;
 
-/// Configuration for `Driver`.
-/// `Driver` 的配置。
 #[derive(Debug, Clone)]
 pub struct DriverConfig {
     pub write_queue_capacity: usize,
@@ -49,8 +45,6 @@ impl Default for DriverConfig {
     }
 }
 
-/// Events produced by the `Driver` subsystem.
-/// `Driver` 子系统产生的事件。
 #[derive(Debug)]
 pub enum DriverEvent {
     ConnectionOpened {
@@ -67,8 +61,6 @@ pub enum DriverEvent {
     },
 }
 
-/// Handle to a `RTSP Server` resource.
-/// `RTSP Server` 资源的句柄。
 pub struct RtspServerHandle {
     events_rx: mpsc::Receiver<DriverEvent>,
     cmd_tx: RtspCoreCommandSender,
@@ -77,32 +69,22 @@ pub struct RtspServerHandle {
 }
 
 impl RtspServerHandle {
-    /// Receives `event` from the peer.
-    /// 从对端接收 `event`。
     pub async fn recv_event(&mut self) -> Option<DriverEvent> {
         self.events_rx.recv().await
     }
 
-    /// Sends `command` to the peer.
-    /// 向对端发送 `command`。
     pub async fn send_command(&self, command: RtspDriverCommand) -> Result<(), DriverSendError> {
         self.cmd_tx.send(command).await
     }
 
-    /// `command_sender` function of `RtspServerHandle`.
-    /// `RtspServerHandle` 的 `command_sender` 函数。
     pub fn command_sender(&self) -> RtspCoreCommandSender {
         self.cmd_tx.clone()
     }
 
-    /// Shuts down the send or receive side of the stream.
-    /// 关闭流的发送或接收端。
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
-    /// `wait` function of `RtspServerHandle`.
-    /// `RtspServerHandle` 的 `wait` 函数。
     pub async fn wait(self) -> Result<(), TaskJoinError> {
         self.join.wait().await
     }

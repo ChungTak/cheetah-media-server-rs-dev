@@ -44,8 +44,6 @@ pub enum TrackMuxerOutput {
 }
 
 impl TrackMuxer {
-    /// Creates a new `TrackMuxer` instance.
-    /// 创建新的 `TrackMuxer` 实例。
     pub fn new(
         lane: TrackLane,
         source_track_id: TrackId,

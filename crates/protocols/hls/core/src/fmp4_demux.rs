@@ -46,8 +46,6 @@ pub struct Fmp4Demuxer {
 }
 
 impl Fmp4Demuxer {
-    /// Creates a new `Fmp4Demuxer` instance.
-    /// 创建新的 `Fmp4Demuxer` 实例。
     pub fn new() -> Self {
         Self {
             inner: cheetah_codec::Fmp4Demuxer::new(cheetah_codec::Fmp4DemuxerConfig::default()),

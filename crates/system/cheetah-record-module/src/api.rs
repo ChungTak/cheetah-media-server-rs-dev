@@ -14,8 +14,6 @@ use crate::metadata::{RecordFileQuery, RecordFormatStr, RecordTaskState};
 use crate::registry::{RecordRegistry, RegistryError};
 use crate::task::{RecordTaskTemplate, TaskExecutor, TaskExecutorError};
 
-/// Error returned by `Record API` operations.
-/// `Record API` 操作返回的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum RecordApiError {
     #[error("invalid request: {0}")]
@@ -42,8 +40,6 @@ pub struct StartRecordRequest {
     pub record_template: Option<RecordTemplate>,
 }
 
-/// `RecordTemplate` data structure.
-/// `RecordTemplate` 数据结构。
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RecordTemplate {
     #[serde(default)]
@@ -54,8 +50,6 @@ pub struct RecordTemplate {
     pub segment_count: Option<u32>,
 }
 
-/// Response for `Start Record`.
-/// `Start Record` 的响应。
 #[derive(Debug, Clone, Serialize)]
 pub struct StartRecordResponse {
     pub code: u16,
@@ -64,24 +58,18 @@ pub struct StartRecordResponse {
     pub task_id: String,
 }
 
-/// Request for `Stop Record`.
-/// `Stop Record` 的请求。
 #[derive(Debug, Clone, Deserialize)]
 pub struct StopRecordRequest {
     #[serde(rename = "taskId")]
     pub task_id: String,
 }
 
-/// Response for `Stop Record`.
-/// `Stop Record` 的响应。
 #[derive(Debug, Clone, Serialize)]
 pub struct StopRecordResponse {
     pub code: u16,
     pub msg: String,
 }
 
-/// Response for `List Tasks`.
-/// `List Tasks` 的响应。
 #[derive(Debug, Clone, Serialize)]
 pub struct ListTasksResponse {
     pub code: u16,
@@ -89,8 +77,6 @@ pub struct ListTasksResponse {
     pub data: Vec<TaskBrief>,
 }
 
-/// `TaskBrief` data structure.
-/// `TaskBrief` 数据结构。
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskBrief {
     #[serde(rename = "taskId")]
@@ -101,8 +87,6 @@ pub struct TaskBrief {
     pub state: String,
 }
 
-/// Request for `File Query`.
-/// `File Query` 的请求。
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct FileQueryRequest {
     #[serde(default)]
@@ -119,8 +103,6 @@ pub struct FileQueryRequest {
     pub limit: Option<u32>,
 }
 
-/// Response for `File Query`.
-/// `File Query` 的响应。
 #[derive(Debug, Clone, Serialize)]
 pub struct FileQueryResponse {
     pub code: u16,
@@ -128,8 +110,6 @@ pub struct FileQueryResponse {
     pub data: Vec<FileBrief>,
 }
 
-/// `FileBrief` data structure.
-/// `FileBrief` 数据结构。
 #[derive(Debug, Clone, Serialize)]
 pub struct FileBrief {
     #[serde(rename = "fileId")]
@@ -146,8 +126,6 @@ pub struct FileBrief {
     pub end_time_ms: i64,
 }
 
-/// Request for `File Delete`.
-/// `File Delete` 的请求。
 #[derive(Debug, Clone, Deserialize)]
 pub struct FileDeleteRequest {
     #[serde(rename = "fileId")]
@@ -162,20 +140,14 @@ pub struct RecordApi {
 }
 
 impl RecordApi {
-    /// Creates a new `RecordApi` instance.
-    /// 创建新的 `RecordApi` 实例。
     pub fn new(registry: Arc<RecordRegistry>, executor: Arc<dyn TaskExecutor>) -> Self {
         Self { registry, executor }
     }
 
-    /// `registry` function of `RecordApi`.
-    /// `RecordApi` 的 `registry` 函数。
     pub fn registry(&self) -> Arc<RecordRegistry> {
         self.registry.clone()
     }
 
-    /// Starts the service or background task.
-    /// 启动服务或后台任务。
     pub async fn start(
         &self,
         req: StartRecordRequest,
@@ -236,8 +208,6 @@ impl RecordApi {
         })
     }
 
-    /// Stops the service or background task.
-    /// 停止服务或后台任务。
     pub async fn stop(&self, req: StopRecordRequest) -> Result<StopRecordResponse, RecordApiError> {
         self.executor.stop(&req.task_id).await?;
         let _ = self
@@ -249,8 +219,6 @@ impl RecordApi {
         })
     }
 
-    /// `list` function of `RecordApi`.
-    /// `RecordApi` 的 `list` 函数。
     pub fn list(&self) -> ListTasksResponse {
         let data = self
             .registry
@@ -271,8 +239,6 @@ impl RecordApi {
         }
     }
 
-    /// Queries `files` and returns the result.
-    /// 查询 `files` 并返回结果。
     pub fn query_files(&self, req: FileQueryRequest) -> Result<FileQueryResponse, RecordApiError> {
         let format = match req.format.as_deref() {
             Some(s) => Some(parse_format_str(s)?),
@@ -307,8 +273,6 @@ impl RecordApi {
         })
     }
 
-    /// `delete_file` function of `RecordApi`.
-    /// `RecordApi` 的 `delete_file` 函数。
     pub fn delete_file(&self, req: FileDeleteRequest) -> Result<(), RecordApiError> {
         // Path traversal guard: file path is metadata-driven, but we still
         // refuse traversal segments in the file id.

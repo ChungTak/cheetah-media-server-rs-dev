@@ -9,16 +9,12 @@ use cheetah_sdk::{
     PublisherSink, StreamKey,
 };
 
-/// Mode selecting `Session` behavior.
-/// 选择 `Session` 行为的模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionMode {
     Publish,
     Play,
 }
 
-/// `PublishTrackClock` data structure.
-/// `PublishTrackClock` 数据结构。
 #[derive(Default)]
 pub struct PublishTrackClock {
     pub base_seq: Option<u16>,
@@ -33,8 +29,6 @@ pub struct PublishTrackClock {
     pub last_rr_received: u32,
 }
 
-/// `PublishH264Depacketizer` data structure.
-/// `PublishH264Depacketizer` 数据结构。
 #[derive(Default)]
 pub struct PublishH264Depacketizer {
     pub fu_buffer: Vec<u8>,
@@ -45,8 +39,6 @@ pub struct PublishH264Depacketizer {
     pub access_unit_marker_seen: bool,
 }
 
-/// `PublishH265Depacketizer` data structure.
-/// `PublishH265Depacketizer` 数据结构。
 #[derive(Default)]
 pub struct PublishH265Depacketizer {
     pub fu_buffer: Vec<u8>,
@@ -57,8 +49,6 @@ pub struct PublishH265Depacketizer {
     pub access_unit_marker_seen: bool,
 }
 
-/// `PublishAv1Depacketizer` data structure.
-/// `PublishAv1Depacketizer` 数据结构。
 #[derive(Default)]
 pub struct PublishAv1Depacketizer {
     pub access_unit: Vec<u8>,
@@ -69,8 +59,6 @@ pub struct PublishAv1Depacketizer {
     pub access_unit_marker_seen: bool,
 }
 
-/// `PublishVp9Depacketizer` data structure.
-/// `PublishVp9Depacketizer` 数据结构。
 #[derive(Default)]
 pub struct PublishVp9Depacketizer {
     pub access_unit: Vec<u8>,
@@ -79,8 +67,6 @@ pub struct PublishVp9Depacketizer {
     pub access_unit_keyframe: bool,
 }
 
-/// `PublishVp8Depacketizer` data structure.
-/// `PublishVp8Depacketizer` 数据结构。
 #[derive(Default)]
 pub struct PublishVp8Depacketizer {
     pub access_unit: Vec<u8>,
@@ -89,8 +75,6 @@ pub struct PublishVp8Depacketizer {
     pub access_unit_keyframe: bool,
 }
 
-/// State used by `Publish Track Timestamp`.
-/// `Publish Track Timestamp` 使用的状态。
 pub struct PublishTrackTimestampState {
     pub normalizer: TimestampNormalizer,
     pub repair_count: u64,
@@ -98,8 +82,6 @@ pub struct PublishTrackTimestampState {
     pub discontinuity_count: u64,
 }
 
-/// `RtcpReceiverMetrics` data structure.
-/// `RtcpReceiverMetrics` 数据结构。
 pub struct RtcpReceiverMetrics {
     pub fraction_lost: u8,
     pub cumulative_lost: u32,
@@ -110,8 +92,6 @@ pub struct RtcpReceiverMetrics {
 }
 
 impl PublishTrackClock {
-    /// `on_rtp_packet` function of `PublishTrackClock`.
-    /// `PublishTrackClock` 的 `on_rtp_packet` 函数。
     pub fn on_rtp_packet(
         &mut self,
         seq: u16,
@@ -148,15 +128,11 @@ impl PublishTrackClock {
         self.last_transit = Some(transit);
     }
 
-    /// `note_sender_report` function of `PublishTrackClock`.
-    /// `PublishTrackClock` 的 `note_sender_report` 函数。
     pub fn note_sender_report(&mut self, lsr: u32, arrival_unix_micros: u64) {
         self.last_sr_lsr = Some(lsr);
         self.last_sr_unix_micros = Some(arrival_unix_micros);
     }
 
-    /// Builds the `receiver metrics`.
-    /// 构建 `receiver metrics`。
     pub fn build_receiver_metrics(&mut self, now_unix_micros: u64) -> RtcpReceiverMetrics {
         let expected = self.expected_packets();
         let expected_interval = expected.saturating_sub(self.last_rr_expected);
@@ -207,8 +183,6 @@ impl PublishTrackClock {
     }
 }
 
-/// `PublishSession` data structure.
-/// `PublishSession` 数据结构。
 pub struct PublishSession {
     pub cancel: CancellationToken,
     pub lease: PublishLease,
@@ -238,8 +212,6 @@ pub struct PublishSession {
     pub codec_probed: HashSet<TrackId>,
 }
 
-/// `PlayTransport` enumeration.
-/// `PlayTransport` 枚举。
 #[derive(Clone)]
 pub enum PlayTransport {
     TcpInterleaved {
@@ -262,8 +234,6 @@ pub enum PlayTransport {
     },
 }
 
-/// State used by `Play Track`.
-/// `Play Track` 使用的状态。
 #[derive(Clone)]
 pub struct PlayTrackState {
     pub transport: PlayTransport,
@@ -278,15 +248,11 @@ pub struct PlayTrackState {
     pub first_raw_timestamp: Option<u32>,
 }
 
-/// `PlaySession` data structure.
-/// `PlaySession` 数据结构。
 pub struct PlaySession {
     pub cancel: CancellationToken,
     pub join: Box<dyn RuntimeJoinHandle>,
 }
 
-/// `PublishUdpTrack` data structure.
-/// `PublishUdpTrack` 数据结构。
 #[derive(Clone)]
 pub struct PublishUdpTrack {
     pub rtp_socket: Arc<dyn AsyncUdpSocket>,
@@ -295,8 +261,6 @@ pub struct PublishUdpTrack {
     pub target_rtcp: SocketAddr,
 }
 
-/// State used by `RTSP Connection`.
-/// `RTSP Connection` 使用的状态。
 pub struct RtspConnectionState {
     pub session_id: String,
     pub peer_addr: Option<SocketAddr>,
@@ -318,8 +282,6 @@ pub struct RtspConnectionState {
 }
 
 impl RtspConnectionState {
-    /// Creates a new `RtspConnectionState` instance.
-    /// 创建新的 `RtspConnectionState` 实例。
     pub fn new(connection_id: RtspConnectionId) -> Self {
         Self {
             session_id: format!("rtsp-{connection_id}"),

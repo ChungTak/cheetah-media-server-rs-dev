@@ -1,7 +1,5 @@
 use thiserror::Error;
 
-/// Error returned by `SDK` operations.
-/// `SDK` 操作返回的错误。
 #[derive(Debug, Error)]
 pub enum SdkError {
     #[error("not found: {0}")]

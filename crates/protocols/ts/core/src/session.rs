@@ -7,16 +7,12 @@ use crate::request::{
     HttpResponseHead, StreamKeyParts, TsTransport, WebSocketMessage,
 };
 
-/// Command for `TS Core`.
-/// `TS Core` 的命令。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TsCoreCommand {
     SendTsBytes(Bytes),
     Close,
 }
 
-/// `TsCoreInput` enumeration.
-/// `TsCoreInput` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TsCoreInput {
     RequestHead(HttpRequestHead),
@@ -24,8 +20,6 @@ pub enum TsCoreInput {
     Command(TsCoreCommand),
 }
 
-/// `CloseReason` enumeration.
-/// `CloseReason` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseReason {
     Normal,
@@ -34,8 +28,6 @@ pub enum CloseReason {
     ProtocolError,
 }
 
-/// Events produced by the `TS Core` subsystem.
-/// `TS Core` 子系统产生的事件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TsCoreEvent {
     PlayRequested {
@@ -45,8 +37,6 @@ pub enum TsCoreEvent {
     PeerClosed,
 }
 
-/// `TsCoreOutput` enumeration.
-/// `TsCoreOutput` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TsCoreOutput {
     SendHttpResponse(HttpResponseHead),
@@ -78,16 +68,12 @@ impl Default for TsCore {
 }
 
 impl TsCore {
-    /// Creates a new `TsCore` instance.
-    /// 创建新的 `TsCore` 实例。
     pub fn new() -> Self {
         Self {
             state: SessionState::Idle,
         }
     }
 
-    /// Handles the `input` event.
-    /// 处理 `input` 事件。
     pub fn handle_input(&mut self, input: TsCoreInput) -> Vec<TsCoreOutput> {
         match input {
             TsCoreInput::RequestHead(head) => self.handle_request_head(head),

@@ -1,15 +1,6 @@
 use crate::prelude::*;
 use bytes::{Buf, Bytes, BytesMut};
 
-/// RTP fixed header parsed from / serialized to the wire format in RFC 3550.
-///
-/// All numeric fields are stored in host byte order after parsing so callers can
-/// compare and manipulate them without repeated `to_be`/`from_be` conversions.
-///
-/// 从 RFC 3550 线格式解析/序列化后的 RTP 固定头。
-///
-/// 所有数字字段在解析后均以主机字节序存储，调用方无需反复进行
-/// `to_be`/`from_be` 转换即可比较和操作。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtpHeader {
     pub version: u8,
@@ -21,17 +12,6 @@ pub struct RtpHeader {
 }
 
 impl RtpHeader {
-    /// Parses a 12-byte RTP base header plus optional CSRC list and extension.
-    ///
-    /// Returns the parsed header and the byte offset where the payload begins.
-    /// The function validates version, padding, extension length and CSRC count
-    /// in one pass, returning `None` for any malformed or truncated input.
-    ///
-    /// 解析 12 字节 RTP 基础头以及可选的 CSRC 列表和扩展头。
-    ///
-    /// 返回解析后的头和有效负载起始的字节偏移量。
-    /// 该函数一次性校验版本、填充、扩展长度和 CSRC 数量，
-    /// 任何格式错误或截断的输入都会返回 `None`。
     pub fn parse(raw: &[u8]) -> Option<(Self, usize)> {
         if raw.len() < 12 {
             return None;
@@ -80,15 +60,6 @@ impl RtpHeader {
         ))
     }
 
-    /// Serializes the header into a 12-byte big-endian RTP header.
-    ///
-    /// Marker bit and payload type are packed into the second byte; sequence
-    /// number, timestamp and SSRC are written as big-endian integers.
-    ///
-    /// 将头序列化为 12 字节大端序 RTP 头。
-    ///
-    /// 标记位和负载类型被打包进第二个字节；序列号、时间戳和 SSRC
-    /// 以大端整数写入。
     pub fn encode(self) -> [u8; 12] {
         let mut out = [0u8; 12];
         out[0] = (self.version & 0x03) << 6;
@@ -100,14 +71,6 @@ impl RtpHeader {
     }
 }
 
-/// A complete RTP packet composed of a parsed header and a payload byte buffer.
-///
-/// This is the canonical wire representation used by the codec layer; protocol
-/// cores are expected to produce or consume this type after framing is removed.
-///
-/// 由解析后的头和负载字节缓冲区组成的完整 RTP 包。
-///
-/// 这是 codec 层的标准线表示；协议核心在移除分帧后应生成或消费该类型。
 #[derive(Debug, Clone)]
 pub struct RtpPacket {
     pub header: RtpHeader,
@@ -115,16 +78,6 @@ pub struct RtpPacket {
 }
 
 impl RtpPacket {
-    /// Parses a full RTP packet, separating header from payload.
-    ///
-    /// Uses `RtpHeader::parse` for the header, then strips any padding bytes
-    /// indicated by the padding flag before copying the payload. Returns `None`
-    /// if the header is malformed or the payload length is inconsistent.
-    ///
-    /// 解析完整的 RTP 包，将头与负载分离。
-    ///
-    /// 使用 `RtpHeader::parse` 解析头，然后根据填充标志剥除填充字节，
-    /// 再拷贝负载。如果头格式错误或负载长度不一致则返回 `None`。
     pub fn parse(raw: &[u8]) -> Option<Self> {
         let (header, header_len) = RtpHeader::parse(raw)?;
         let payload_end = if (raw[0] & 0x20) != 0 {
@@ -142,14 +95,6 @@ impl RtpPacket {
         })
     }
 
-    /// Serializes the packet by concatenating the encoded header and payload.
-    ///
-    /// Allocates a fresh buffer sized to `12 + payload.len()` and writes the
-    /// big-endian header followed by the raw payload bytes.
-    ///
-    /// 将编码后的头与负载拼接，序列化整个包。
-    ///
-    /// 分配大小为 `12 + payload.len()` 的新缓冲区，写入大端头后跟原始负载字节。
     pub fn encode(&self) -> Bytes {
         let mut out = Vec::with_capacity(12 + self.payload.len());
         out.extend_from_slice(&self.header.encode());
@@ -158,30 +103,12 @@ impl RtpPacket {
     }
 }
 
-/// RTP clock-rate helper for timestamp unit conversion.
-///
-/// RTP timestamps are expressed in clock ticks whose frequency depends on the
-/// codec (e.g. 90000 Hz for video, 8000 Hz for G.711). This type converts
-/// between those ticks and normalized microseconds without losing precision.
-///
-/// 用于时间戳单位转换的 RTP 时钟速率辅助结构。
-///
-/// RTP 时间戳以时钟滴答表示，频率取决于编解码器（如视频 90000 Hz、
-/// G.711 8000 Hz）。该类型在这些滴答与归一化微秒之间进行高精度转换。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtpClock {
     pub rate: u32,
 }
 
 impl RtpClock {
-    /// Converts RTP clock ticks to microseconds using the configured rate.
-    ///
-    /// Returns 0 when the rate is uninitialized to avoid divide-by-zero and to
-    /// signal that no timing information is available yet.
-    ///
-    /// 使用配置的速率将 RTP 时钟滴答转换为微秒。
-    ///
-    /// 当速率未初始化时返回 0，避免除零并表明尚无可用时间信息。
     pub fn ticks_to_micros(self, ticks: u32) -> i64 {
         if self.rate == 0 {
             return 0;
@@ -189,14 +116,6 @@ impl RtpClock {
         (i64::from(ticks) * 1_000_000_i64) / i64::from(self.rate)
     }
 
-    /// Converts microseconds back to RTP clock ticks.
-    ///
-    /// Uses 128-bit intermediate arithmetic to prevent overflow when the clock
-    /// rate is high, and returns 0 for zero/negative input or uninitialized rate.
-    ///
-    /// 将微秒转换回 RTP 时钟滴答。
-    ///
-    /// 使用 128 位中间运算防止时钟速率高时溢出，对零/负输入或未初始化速率返回 0。
     pub fn micros_to_ticks(self, micros: i64) -> u32 {
         if self.rate == 0 || micros <= 0 {
             return 0;
@@ -205,16 +124,6 @@ impl RtpClock {
     }
 }
 
-/// Splits a raw payload into a sequence of `RtpPacket`s respecting an MTU.
-///
-/// The 12-byte RTP header size is subtracted from `mtu`, then the payload is
-/// consumed in chunks. Each chunk gets a copy of `header` with an incremented
-/// sequence number; the marker bit is set only on the final packet.
-///
-/// 将原始负载按 MTU 拆分为一系列 `RtpPacket`。
-///
-/// 从 `mtu` 中减去 12 字节 RTP 头大小，然后分块消费负载。
-/// 每块获得 `header` 的副本并递增序列号；仅在最后一个包上设置标记位。
 pub fn packetize_payload(payload: &[u8], mtu: usize, mut header: RtpHeader) -> Vec<RtpPacket> {
     let payload_mtu = mtu.saturating_sub(12).max(1);
     let mut out = Vec::new();
@@ -278,16 +187,6 @@ pub fn packetize_g711(
     out
 }
 
-/// Reassembles a fragmented RTP payload into a single contiguous byte buffer.
-///
-/// Sorts packets by sequence number, detects the largest sequence gap to drop
-/// stale leading packets, handles 16-bit sequence wrap-around, then concatenates
-/// the payloads. Returns an empty `Bytes` if the input vector is empty.
-///
-/// 将分片的 RTP 负载重组为单一连续字节缓冲区。
-///
-/// 按序列号排序包，检测最大序列间隙以丢弃陈旧的前导包，
-/// 处理 16 位序列号回绕，然后拼接负载。输入为空时返回空 `Bytes`。
 pub fn depacketize_payload(mut packets: Vec<RtpPacket>) -> Bytes {
     if packets.is_empty() {
         return Bytes::new();
@@ -328,16 +227,6 @@ pub fn depacketize_payload(mut packets: Vec<RtpPacket>) -> Bytes {
     Bytes::from(out)
 }
 
-/// Identifies the encapsulation mode carried inside an RTP payload.
-///
-/// RTP does not mandate a payload format; the same PT can carry PS/TS/ES, Ehome,
-/// JT/T 1078 or raw audio/video elementary streams. This enum lets the demuxer
-/// choose the right parser after probing the first few bytes.
-///
-/// 标识 RTP 负载内部采用的封装模式。
-///
-/// RTP 不强制负载格式；同一 PT 可能承载 PS/TS/ES、Ehome、JT/T 1078
-/// 或原始音视频基本流。该枚举让解复用器在探测前几个字节后选择正确解析器。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtpPayloadMode {
     Ps,
@@ -353,17 +242,6 @@ pub enum RtpPayloadMode {
     Unknown,
 }
 
-/// Probes the first bytes of an RTP payload to select the encapsulation mode.
-///
-/// Looks for JT/T 1078 magic, MPEG-PS start code, MPEG-TS sync byte, Ehome,
-/// raw H26x NAL start code, or raw audio/video elementary streams. Falls back
-/// to `Unknown` when the payload is empty or does not match any known signature.
-///
-/// 探测 RTP 负载的前几个字节以选择封装模式。
-///
-/// 查找 JT/T 1078 魔数、MPEG-PS 起始码、MPEG-TS 同步字节、Ehome、
-/// 原始 H26x NAL 起始码或原始音视频基本流。当负载为空或不匹配任何已知签名时
-/// 回退到 `Unknown`。
 pub fn probe_rtp_payload(payload: &[u8]) -> RtpPayloadMode {
     if payload.is_empty() {
         return RtpPayloadMode::Unknown;
@@ -855,8 +733,6 @@ mod tests {
     }
 }
 
-/// Information about `Ehome Codec`.
-/// `Ehome Codec` 的信息。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EhomeCodecInfo {
     pub payload_type: String,        // "ps" or "nalu"
@@ -867,8 +743,6 @@ pub struct EhomeCodecInfo {
     pub sample_rate: u32,
 }
 
-/// `EhomeOutput` enumeration.
-/// `EhomeOutput` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EhomeOutput {
     HandshakeSsrc(String),
@@ -876,8 +750,6 @@ pub enum EhomeOutput {
     MediaPayload(Bytes),
 }
 
-/// `EhomeDecoder` data structure.
-/// `EhomeDecoder` 数据结构。
 pub struct EhomeDecoder {
     packet_seq: u32,
     ssrc: Option<String>,
@@ -893,8 +765,6 @@ impl Default for EhomeDecoder {
 }
 
 impl EhomeDecoder {
-    /// Creates a new `EhomeDecoder` instance.
-    /// 创建新的 `EhomeDecoder` 实例。
     pub fn new() -> Self {
         Self {
             packet_seq: 0,
@@ -905,14 +775,10 @@ impl EhomeDecoder {
         }
     }
 
-    /// `codec_info` function of `EhomeDecoder`.
-    /// `EhomeDecoder` 的 `codec_info` 函数。
     pub fn codec_info(&self) -> Option<EhomeCodecInfo> {
         self.codec_info.clone()
     }
 
-    /// Decodes the value from the input buffer.
-    /// 从输入缓冲区解码值。
     pub fn decode(&mut self, buf: &mut BytesMut) -> Vec<EhomeOutput> {
         let mut outputs = Vec::new();
 

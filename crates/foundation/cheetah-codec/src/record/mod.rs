@@ -5,17 +5,9 @@
 //! `record/hls.rs`, `record/ps.rs`. The runtime is responsible for actual
 //! disk I/O.
 
-/// Module for `flv`.
-/// `flv` 相关模块。
 pub mod flv;
-/// Module for `hls`.
-/// `hls` 相关模块。
 pub mod hls;
-/// Module for `mp4`.
-/// `mp4` 相关模块。
 pub mod mp4;
-/// Module for `ps`.
-/// `ps` 相关模块。
 pub mod ps;
 
 use crate::prelude::*;
@@ -34,8 +26,6 @@ pub enum RecordFormat {
 }
 
 impl RecordFormat {
-    /// `extension` function of `RecordFormat`.
-    /// `RecordFormat` 的 `extension` 函数。
     pub fn extension(self) -> &'static str {
         match self {
             RecordFormat::Flv => "flv",
@@ -45,8 +35,6 @@ impl RecordFormat {
         }
     }
 
-    /// Parses the input into a structured value, returning an error if malformed.
-    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(input: &str) -> Option<Self> {
         let lower = input.to_ascii_lowercase();
         match lower.as_str() {

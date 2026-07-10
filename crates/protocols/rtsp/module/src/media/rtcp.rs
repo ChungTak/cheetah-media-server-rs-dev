@@ -4,16 +4,12 @@ use cheetah_rtsp_core::{
     RtcpSdesItem, RtcpSenderReport,
 };
 
-/// `ParsedRtcpSenderReport` data structure.
-/// `ParsedRtcpSenderReport` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParsedRtcpSenderReport {
     pub sender_ssrc: u32,
     pub lsr: u32,
 }
 
-/// Parses `RTCP sender report` from input.
-/// 从输入解析 `RTCP sender report`。
 pub fn parse_rtcp_sender_report(
     payload: &[u8],
 ) -> Result<Option<ParsedRtcpSenderReport>, cheetah_rtsp_core::RtcpError> {
@@ -32,8 +28,6 @@ pub fn parse_rtcp_sender_report(
     Ok(None)
 }
 
-/// `RtcpReceiverReportBlock` data structure.
-/// `RtcpReceiverReportBlock` 数据结构。
 pub struct RtcpReceiverReportBlock {
     pub sender_ssrc: u32,
     pub fraction_lost: u8,
@@ -44,8 +38,6 @@ pub struct RtcpReceiverReportBlock {
     pub dlsr: u32,
 }
 
-/// Builds the `RTCP sender report`.
-/// 构建 `RTCP sender report`。
 pub fn build_rtcp_sender_report(
     ssrc: u32,
     rtp_timestamp: u32,
@@ -65,8 +57,6 @@ pub fn build_rtcp_sender_report(
     RtcpPacket::build(&[packet]).map(Bytes::from)
 }
 
-/// Builds the `RTCP sdes cname`.
-/// 构建 `RTCP sdes cname`。
 pub fn build_rtcp_sdes_cname(
     ssrc: u32,
     cname: &str,
@@ -80,8 +70,6 @@ pub fn build_rtcp_sdes_cname(
     RtcpPacket::build(&[packet]).map(Bytes::from)
 }
 
-/// Builds the `RTCP receiver report`.
-/// 构建 `RTCP receiver report`。
 pub fn build_rtcp_receiver_report(
     receiver_ssrc: u32,
     block: RtcpReceiverReportBlock,
@@ -101,8 +89,6 @@ pub fn build_rtcp_receiver_report(
     RtcpPacket::build(&[packet]).map(Bytes::from)
 }
 
-/// Builds the `RTCP bye`.
-/// 构建 `RTCP bye`。
 pub fn build_rtcp_bye(
     ssrc: u32,
     reason: Option<&str>,

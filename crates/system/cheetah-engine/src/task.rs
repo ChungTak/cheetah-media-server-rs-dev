@@ -15,8 +15,6 @@ struct TaskNode {
     token: CancellationToken,
 }
 
-/// `TaskSystem` data structure.
-/// `TaskSystem` 数据结构。
 #[derive(Default)]
 pub struct TaskSystem {
     next_id: AtomicU64,
@@ -46,8 +44,6 @@ fn is_terminal_state(state: TaskState) -> bool {
 }
 
 impl TaskSystem {
-    /// Sets the `event bus` value.
-    /// 设置 `event bus` 的值。
     pub fn set_event_bus(&self, event_bus: Arc<dyn EventBus>) {
         *self.event_bus.write() = Some(event_bus);
     }

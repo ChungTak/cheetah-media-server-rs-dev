@@ -7,16 +7,12 @@ use cheetah_runtime_api::{AsyncUdpSocket, CancellationToken, JoinHandle, Runtime
 
 use super::RtspClientEvent;
 
-/// `RtspClientPortRange` data structure.
-/// `RtspClientPortRange` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtspClientPortRange {
     pub start: u16,
     pub end: u16,
 }
 
-/// `RtspClientUdpEndpoint` data structure.
-/// `RtspClientUdpEndpoint` 数据结构。
 #[derive(Clone)]
 pub struct RtspClientUdpEndpoint {
     pub rtp_socket: Arc<dyn AsyncUdpSocket>,
@@ -25,16 +21,12 @@ pub struct RtspClientUdpEndpoint {
     pub local_rtcp: SocketAddr,
 }
 
-/// `RtspClientUdpRemote` data structure.
-/// `RtspClientUdpRemote` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtspClientUdpRemote {
     pub rtp: SocketAddr,
     pub rtcp: SocketAddr,
 }
 
-/// `allocate_udp_endpoint` function.
-/// `allocate_udp_endpoint` 函数。
 pub fn allocate_udp_endpoint(
     runtime_api: &Arc<dyn RuntimeApi>,
     bind_ip: IpAddr,
@@ -55,8 +47,6 @@ pub fn allocate_udp_endpoint(
     })
 }
 
-/// Configures the `UDP remote and punch` with the given settings.
-/// 使用给定设置配置 `UDP remote and punch`。
 pub async fn configure_udp_remote_and_punch(
     endpoint: &RtspClientUdpEndpoint,
     remote_rtp: SocketAddr,
@@ -68,8 +58,6 @@ pub async fn configure_udp_remote_and_punch(
     Ok(())
 }
 
-/// Spawns `UDP receive tasks` on the runtime.
-/// 在运行时上派生 `UDP receive tasks`。
 pub fn spawn_udp_receive_tasks(
     runtime_api: Arc<dyn RuntimeApi>,
     endpoint: RtspClientUdpEndpoint,

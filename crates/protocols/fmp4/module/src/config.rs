@@ -2,8 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Configuration for `Fmp 4 Module`.
-/// `Fmp 4 Module` 的配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fmp4ModuleConfig {
     pub enabled: bool,
@@ -38,8 +36,6 @@ pub struct Fmp4ModuleConfig {
     pub pull_jobs: Vec<Fmp4PullJobConfig>,
 }
 
-/// Configuration for `Fmp 4 TLS`.
-/// `Fmp 4 TLS` 的配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fmp4TlsConfig {
     pub enabled: bool,
@@ -50,8 +46,6 @@ pub struct Fmp4TlsConfig {
     pub handshake_timeout_ms: u64,
 }
 
-/// Configuration for `Fmp 4 Pull Job`.
-/// `Fmp 4 Pull Job` 的配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Fmp4PullJobConfig {
     pub name: String,
@@ -91,20 +85,14 @@ impl Default for Fmp4ModuleConfig {
 }
 
 impl Fmp4ModuleConfig {
-    /// `default_json` function of `Fmp4ModuleConfig`.
-    /// `Fmp4ModuleConfig` 的 `default_json` 函数。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap_or_default()
     }
 
-    /// Creates `value` from input.
-    /// 从输入创建 `value`。
     pub fn from_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
     }
 
-    /// Validates the input and returns an error if invalid.
-    /// 验证输入，无效时返回错误。
     pub fn validate(&self) -> Result<(), String> {
         let mut errors = Vec::new();
         if self.listen.parse::<std::net::SocketAddr>().is_err() {

@@ -27,8 +27,6 @@ use futures::FutureExt;
 use parking_lot::Mutex;
 use tracing::{debug, warn};
 
-/// `WebRtcRenditionSnapshot` data structure.
-/// `WebRtcRenditionSnapshot` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcRenditionSnapshot {
     pub mid: String,
@@ -36,16 +34,12 @@ pub struct WebRtcRenditionSnapshot {
     pub seen_rids: Vec<String>,
 }
 
-/// Policy controlling `Playback Audio` behavior.
-/// 控制 `Playback Audio` 行为的策略。
 #[derive(Debug, Clone, Copy)]
 pub struct PlaybackAudioPolicy {
     pub profile: crate::config::CodecProfileWire,
     pub strategy: crate::codec_policy::AudioOutputStrategy,
 }
 
-/// Policy controlling `Playback Timing` behavior.
-/// 控制 `Playback Timing` 行为的策略。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlaybackTimingPolicy {
     pub jitter_buffer_ms: u64,
@@ -411,14 +405,10 @@ impl WebRtcPublishBridge {
         })
     }
 
-    /// `stream_key` function of `WebRtcPublishBridge`.
-    /// `WebRtcPublishBridge` 的 `stream_key` 函数。
     pub fn stream_key(&self) -> &StreamKey {
         &self.stream_key
     }
 
-    /// `lease` function of `WebRtcPublishBridge`.
-    /// `WebRtcPublishBridge` 的 `lease` 函数。
     pub fn lease(&self) -> &PublishLease {
         &self.lease
     }
@@ -463,8 +453,6 @@ impl WebRtcPublishBridge {
         pending
     }
 
-    /// `rendition_snapshot` function of `WebRtcPublishBridge`.
-    /// `WebRtcPublishBridge` 的 `rendition_snapshot` 函数。
     pub fn rendition_snapshot(&self) -> Vec<WebRtcRenditionSnapshot> {
         self.simulcast.rendition_snapshot()
     }
@@ -847,8 +835,6 @@ pub struct PlayTrackMap {
 }
 
 impl PlayTrackMap {
-    /// `record` function of `PlayTrackMap`.
-    /// `PlayTrackMap` 的 `record` 函数。
     pub fn record(&mut self, mid: MidLabel, kind: cheetah_webrtc_core::WebRtcMediaKind) {
         match kind {
             cheetah_webrtc_core::WebRtcMediaKind::Audio => self.audio_mid = Some(mid),
@@ -915,20 +901,14 @@ pub struct WebRtcPlayBootstrapStats {
 }
 
 impl WebRtcBridgeRegistry {
-    /// Inserts `publish` into the collection.
-    /// 将 `publish` 插入集合。
     pub fn insert_publish(&mut self, session_id: WebRtcSessionId, bridge: WebRtcPublishBridge) {
         self.publish.insert(session_id, bridge);
     }
 
-    /// Removes `publish` from the collection.
-    /// 从集合中移除 `publish`。
     pub fn remove_publish(&mut self, session_id: WebRtcSessionId) -> Option<WebRtcPublishBridge> {
         self.publish.remove(&session_id)
     }
 
-    /// Inserts `play` into the collection.
-    /// 将 `play` 插入集合。
     pub fn insert_play(
         &mut self,
         session_id: WebRtcSessionId,
@@ -937,8 +917,6 @@ impl WebRtcBridgeRegistry {
         self.play.insert(session_id, cancel);
     }
 
-    /// Removes `play` from the collection.
-    /// 从集合中移除 `play`。
     pub fn remove_play(
         &mut self,
         session_id: WebRtcSessionId,
@@ -948,8 +926,6 @@ impl WebRtcBridgeRegistry {
         self.play.remove(&session_id)
     }
 
-    /// Pushes `publish frame` into the pipeline.
-    /// 将 `publish frame` 推入管道。
     pub fn push_publish_frame(
         &mut self,
         session_id: WebRtcSessionId,
@@ -973,8 +949,6 @@ impl WebRtcBridgeRegistry {
             .unwrap_or(false)
     }
 
-    /// `contains_publish` function of `WebRtcBridgeRegistry`.
-    /// `WebRtcBridgeRegistry` 的 `contains_publish` 函数。
     pub fn contains_publish(&self, session_id: WebRtcSessionId) -> bool {
         self.publish.contains_key(&session_id)
     }
@@ -1038,8 +1012,6 @@ impl WebRtcBridgeRegistry {
         }
     }
 
-    /// `record_play_track` function of `WebRtcBridgeRegistry`.
-    /// `WebRtcBridgeRegistry` 的 `record_play_track` 函数。
     pub fn record_play_track(
         &mut self,
         session_id: WebRtcSessionId,
@@ -1052,8 +1024,6 @@ impl WebRtcBridgeRegistry {
             .record(mid, kind);
     }
 
-    /// `play_track_for` function of `WebRtcBridgeRegistry`.
-    /// `WebRtcBridgeRegistry` 的 `play_track_for` 函数。
     pub fn play_track_for(
         &self,
         session_id: WebRtcSessionId,
@@ -1096,8 +1066,6 @@ impl WebRtcBridgeRegistry {
         }
     }
 
-    /// `record_play_timing_policy` function of `WebRtcBridgeRegistry`.
-    /// `WebRtcBridgeRegistry` 的 `record_play_timing_policy` 函数。
     pub fn record_play_timing_policy(
         &mut self,
         session_id: WebRtcSessionId,
@@ -1111,8 +1079,6 @@ impl WebRtcBridgeRegistry {
         stats.effective_playout_delay_ms = effective_delay_ms;
     }
 
-    /// `record_play_timing_delay` function of `WebRtcBridgeRegistry`.
-    /// `WebRtcBridgeRegistry` 的 `record_play_timing_delay` 函数。
     pub fn record_play_timing_delay(&mut self, session_id: WebRtcSessionId, delayed_micros: u64) {
         if delayed_micros == 0 {
             return;
@@ -1128,8 +1094,6 @@ impl WebRtcBridgeRegistry {
         self.play_stats.get(&session_id).cloned()
     }
 
-    /// Publishes `renditions` to subscribers.
-    /// 将 `renditions` 发布给订阅者。
     pub fn publish_renditions(
         &self,
         session_id: WebRtcSessionId,
