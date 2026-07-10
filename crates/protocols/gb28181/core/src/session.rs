@@ -4,31 +4,67 @@ use std::net::SocketAddr;
 use crate::error::Gb28181Diagnostic;
 use crate::message::{SipMessage, StartLine};
 
+/// `GbDeviceId` type alias.
+/// `GbDeviceId` 类型别名.
 pub type GbDeviceId = String;
+/// `GbSessionId` type alias.
+/// `GbSessionId` 类型别名.
 pub type GbSessionId = String;
 
+/// `DialogState` enumeration.
+/// `DialogState` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DialogState {
+    /// `Trying` variant.
+    /// `Trying` 变体.
     Trying,
+    /// `Confirmed` variant.
+    /// `Confirmed` 变体.
     Confirmed,
+    /// `Terminated` variant.
+    /// `Terminated` 变体.
     Terminated,
 }
 
+/// `GbDevice` data structure.
+/// `GbDevice` 数据结构.
 #[derive(Debug, Clone)]
 pub struct GbDevice {
+    /// `id` field of type `GbDeviceId`.
+    /// `id` 字段，类型为 `GbDeviceId`.
     pub id: GbDeviceId,
+    /// `contact_addr` field of type `SocketAddr`.
+    /// `contact_addr` 字段，类型为 `SocketAddr`.
     pub contact_addr: SocketAddr,
+    /// `expires_at_ms` field of type `u64`.
+    /// `expires_at_ms` 字段，类型为 `u64`.
     pub expires_at_ms: u64,
+    /// `last_keepalive_ms` field of type `u64`.
+    /// `last_keepalive_ms` 字段，类型为 `u64`.
     pub last_keepalive_ms: u64,
 }
 
+/// `GbInviteSpec` data structure.
+/// `GbInviteSpec` 数据结构.
 #[derive(Debug, Clone)]
 pub struct GbInviteSpec {
+    /// `session_key` field of type `String`.
+    /// `session_key` 字段，类型为 `String`.
     pub session_key: String,
+    /// `ssrc` field of type `u32`.
+    /// `ssrc` 字段，类型为 `u32`.
     pub ssrc: u32,
+    /// `destination` field of type `SocketAddr`.
+    /// `destination` 字段，类型为 `SocketAddr`.
     pub destination: SocketAddr,
+    /// `app_name` field of type `String`.
+    /// `app_name` 字段，类型为 `String`.
     pub app_name: String,
+    /// `stream_name` field of type `String`.
+    /// `stream_name` 字段，类型为 `String`.
     pub stream_name: String,
+    /// `is_video` field of type `bool`.
+    /// `is_video` 字段，类型为 `bool`.
     pub is_video: bool,
     /// Local IP for the SDP `c=IN IP4 ...` line and the `m=` media address.
     pub local_ip: String,
@@ -36,12 +72,24 @@ pub struct GbInviteSpec {
     pub local_port: u16,
 }
 
+/// `GbTalkSpec` data structure.
+/// `GbTalkSpec` 数据结构.
 #[derive(Debug, Clone)]
 pub struct GbTalkSpec {
+    /// `session_key` field of type `String`.
+    /// `session_key` 字段，类型为 `String`.
     pub session_key: String,
+    /// `ssrc` field of type `u32`.
+    /// `ssrc` 字段，类型为 `u32`.
     pub ssrc: u32,
+    /// `destination` field of type `SocketAddr`.
+    /// `destination` 字段，类型为 `SocketAddr`.
     pub destination: SocketAddr,
+    /// `app_name` field of type `String`.
+    /// `app_name` 字段，类型为 `String`.
     pub app_name: String,
+    /// `stream_name` field of type `String`.
+    /// `stream_name` 字段，类型为 `String`.
     pub stream_name: String,
     /// Local IP for the SDP `c=IN IP4 ...` line.
     pub local_ip: String,
@@ -49,61 +97,96 @@ pub struct GbTalkSpec {
     pub local_port: u16,
 }
 
+/// `Gb28181Command` enumeration.
+/// `Gb28181Command` 枚举.
 #[derive(Debug, Clone)]
 pub enum Gb28181Command {
+    /// `RegisterChallenge` variant.
+    /// `RegisterChallenge` 变体.
     RegisterChallenge {
         device_id: GbDeviceId,
         destination: SocketAddr,
     },
+    /// `StartInvite` variant.
+    /// `StartInvite` 变体.
     StartInvite(GbInviteSpec),
+    /// `StopInvite` variant.
+    /// `StopInvite` 变体.
     StopInvite(GbSessionId),
+    /// `StartTalk` variant.
+    /// `StartTalk` 变体.
     StartTalk(GbTalkSpec),
+    /// `StopTalk` variant.
+    /// `StopTalk` 变体.
     StopTalk(GbSessionId),
 }
 
+/// `Gb28181Event` enumeration.
+/// `Gb28181Event` 枚举.
 #[derive(Debug, Clone)]
 pub enum Gb28181Event {
+    /// `DeviceRegistered` variant.
+    /// `DeviceRegistered` 变体.
     DeviceRegistered {
         device_id: GbDeviceId,
         contact_addr: SocketAddr,
     },
-    DeviceKeepalive {
-        device_id: GbDeviceId,
-    },
-    DeviceOffline {
-        device_id: GbDeviceId,
-    },
-    InviteSuccess {
-        session_key: String,
-        ssrc: u32,
-    },
-    InviteClosed {
-        session_key: String,
-    },
+    /// `DeviceKeepalive` variant.
+    /// `DeviceKeepalive` 变体.
+    DeviceKeepalive { device_id: GbDeviceId },
+    /// `DeviceOffline` variant.
+    /// `DeviceOffline` 变体.
+    DeviceOffline { device_id: GbDeviceId },
+    /// `InviteSuccess` variant.
+    /// `InviteSuccess` 变体.
+    InviteSuccess { session_key: String, ssrc: u32 },
+    /// `InviteClosed` variant.
+    /// `InviteClosed` 变体.
+    InviteClosed { session_key: String },
 }
 
+/// `SipSendAction` data structure.
+/// `SipSendAction` 数据结构.
 #[derive(Debug, Clone)]
 pub struct SipSendAction {
+    /// `destination` field of type `SocketAddr`.
+    /// `destination` 字段，类型为 `SocketAddr`.
     pub destination: SocketAddr,
+    /// `message` field of type `SipMessage`.
+    /// `message` 字段，类型为 `SipMessage`.
     pub message: SipMessage,
 }
 
+/// `Gb28181CoreInput` enumeration.
+/// `Gb28181CoreInput` 枚举.
 #[derive(Debug, Clone)]
 pub enum Gb28181CoreInput {
+    /// `SipMessage` variant.
+    /// `SipMessage` 变体.
     SipMessage {
         source: SocketAddr,
         message: SipMessage,
     },
-    Tick {
-        now_ms: u64,
-    },
+    /// `Tick` variant.
+    /// `Tick` 变体.
+    Tick { now_ms: u64 },
+    /// `Command` variant.
+    /// `Command` 变体.
     Command(Gb28181Command),
 }
 
+/// `Gb28181CoreOutput` enumeration.
+/// `Gb28181CoreOutput` 枚举.
 #[derive(Debug, Clone)]
 pub enum Gb28181CoreOutput {
+    /// `SendSip` variant.
+    /// `SendSip` 变体.
     SendSip(SipSendAction),
+    /// `Event` variant.
+    /// `Event` 变体.
     Event(Gb28181Event),
+    /// `Diagnostic` variant.
+    /// `Diagnostic` 变体.
     Diagnostic(Gb28181Diagnostic),
 }
 
@@ -119,9 +202,17 @@ struct GbInviteSession {
     _last_activity_ms: u64,
 }
 
+/// `Gb28181Core` data structure.
+/// `Gb28181Core` 数据结构.
 pub struct Gb28181Core {
+    /// `devices` field.
+    /// `devices` 字段.
     devices: HashMap<GbDeviceId, GbDevice>,
+    /// `sessions` field.
+    /// `sessions` 字段.
     sessions: HashMap<GbSessionId, GbInviteSession>,
+    /// `next_call_id_seq` field of type `u64`.
+    /// `next_call_id_seq` 字段，类型为 `u64`.
     next_call_id_seq: u64,
     /// Last known time from Tick input; 0 if no Tick received yet.
     now_ms: u64,
@@ -134,6 +225,8 @@ impl Default for Gb28181Core {
 }
 
 impl Gb28181Core {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             devices: HashMap::new(),
@@ -143,6 +236,8 @@ impl Gb28181Core {
         }
     }
 
+    /// `handle_input` function.
+    /// `handle_input` 函数.
     pub fn handle_input(&mut self, input: Gb28181CoreInput, outputs: &mut Vec<Gb28181CoreOutput>) {
         match input {
             Gb28181CoreInput::SipMessage { source, message } => {
@@ -714,6 +809,8 @@ impl Gb28181Core {
         }
     }
 
+    /// `list_devices` function.
+    /// `list_devices` 函数.
     pub fn list_devices(&self) -> Vec<GbDevice> {
         self.devices.values().cloned().collect()
     }

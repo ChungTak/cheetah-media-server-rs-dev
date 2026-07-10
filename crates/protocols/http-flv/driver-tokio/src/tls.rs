@@ -21,8 +21,14 @@ use crate::server::{
 /// TLS configuration for HTTPS-FLV / WSS-FLV server.
 #[derive(Debug, Clone)]
 pub struct HttpFlvTlsDriverConfig {
+    /// `cert_path` field of type `String`.
+    /// `cert_path` 字段，类型为 `String`.
     pub cert_path: String,
+    /// `key_path` field of type `String`.
+    /// `key_path` 字段，类型为 `String`.
     pub key_path: String,
+    /// `handshake_timeout` field of type `Duration`.
+    /// `handshake_timeout` 字段，类型为 `Duration`.
     pub handshake_timeout: Duration,
 }
 

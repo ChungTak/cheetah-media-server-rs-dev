@@ -29,17 +29,33 @@ enum RebuildTarget {
     Running,
 }
 
+/// `ModuleManager` data structure.
+/// `ModuleManager` 数据结构.
 #[derive(Default)]
 pub struct ModuleManager {
+    /// `factories` field.
+    /// `factories` 字段.
     factories: RwLock<HashMap<ModuleId, Arc<dyn ModuleFactory>>>,
+    /// `manifests` field.
+    /// `manifests` 字段.
     manifests: RwLock<HashMap<ModuleId, ModuleManifest>>,
+    /// `records` field.
+    /// `records` 字段.
     records: Mutex<HashMap<ModuleId, ModuleRecord>>,
+    /// `states` field.
+    /// `states` 字段.
     states: DashMap<ModuleId, ModuleState>,
+    /// `http_mounts` field.
+    /// `http_mounts` 字段.
     http_mounts: RwLock<HashMap<ModuleId, HttpRouteMount>>,
+    /// `runtime` field.
+    /// `runtime` 字段.
     runtime: RwLock<Option<RuntimeState>>,
 }
 
 impl ModuleManager {
+    /// `register_factory` function.
+    /// `register_factory` 函数.
     pub fn register_factory(&self, factory: Arc<dyn ModuleFactory>) -> Result<(), SdkError> {
         let manifest = factory.manifest();
         let module_id = manifest.module_id.clone();
@@ -396,6 +412,8 @@ impl ModuleManager {
         Ok(())
     }
 
+    /// `init_all` function.
+    /// `init_all` 函数.
     pub async fn init_all(
         &self,
         context: EngineContext,
@@ -445,6 +463,8 @@ impl ModuleManager {
         Ok(())
     }
 
+    /// `start_all` function.
+    /// `start_all` 函数.
     pub async fn start_all(
         &self,
         context: &EngineContext,
@@ -498,6 +518,8 @@ impl ModuleManager {
         Ok(())
     }
 
+    /// `stop_all` function.
+    /// `stop_all` 函数.
     pub async fn stop_all(&self, context: &EngineContext) {
         let mut order = match self.topo_order() {
             Ok(v) => v,

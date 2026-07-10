@@ -22,7 +22,11 @@ use crate::server::{
 /// TLS configuration for HTTPS HLS server.
 #[derive(Debug, Clone)]
 pub struct HlsTlsConfig {
+    /// `cert_path` field of type `String`.
+    /// `cert_path` 字段，类型为 `String`.
     pub cert_path: String,
+    /// `key_path` field of type `String`.
+    /// `key_path` 字段，类型为 `String`.
     pub key_path: String,
 }
 

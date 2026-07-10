@@ -25,11 +25,17 @@ pub struct VodSessionId(pub u64);
 /// Splits an `app/stream` key into namespace + path components for the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamKeyParts {
+    /// `namespace` field of type `String`.
+    /// `namespace` 字段，类型为 `String`.
     pub namespace: String,
+    /// `path` field of type `String`.
+    /// `path` 字段，类型为 `String`.
     pub path: String,
 }
 
 impl StreamKeyParts {
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(input: &str) -> Self {
         if let Some((ns, p)) = input.split_once('/') {
             Self {
@@ -48,23 +54,33 @@ impl StreamKeyParts {
 /// Session command from the protocol/control layer.
 #[derive(Debug, Clone)]
 pub enum VodControlCommand {
+    /// `Start` variant.
+    /// `Start` 变体.
     Start { file_size: u64 },
+    /// `Seek` variant.
+    /// `Seek` 变体.
     Seek { position_us: i64 },
+    /// `Pause` variant.
+    /// `Pause` 变体.
     Pause(bool),
+    /// `Scale` variant.
+    /// `Scale` 变体.
     Scale(f32),
+    /// `Stop` variant.
+    /// `Stop` 变体.
     Stop,
 }
 
 /// Input event for the state machine.
 #[derive(Debug, Clone)]
 pub enum VodCoreInput {
+    /// `Control` variant.
+    /// `Control` 变体.
     Control(VodControlCommand),
     /// Driver fulfilled a previous `ReadAt` request.
     ReadAt(Mp4ReadResult),
     /// Time tick from the driver. `now_us` should be monotonic.
-    Tick {
-        now_us: u64,
-    },
+    Tick { now_us: u64 },
 }
 
 /// Output emitted by the state machine.
@@ -101,13 +117,29 @@ pub enum VodDiagnostic {
 
 /// Sans-I/O MP4 VOD session.
 pub struct VodSession {
+    /// `reader` field of type `Mp4Reader`.
+    /// `reader` 字段，类型为 `Mp4Reader`.
     reader: Mp4Reader,
+    /// `state` field of type `SessionState`.
+    /// `state` 字段，类型为 `SessionState`.
     state: SessionState,
+    /// `paused` field of type `bool`.
+    /// `paused` 字段，类型为 `bool`.
     paused: bool,
+    /// `scale` field of type `f32`.
+    /// `scale` 字段，类型为 `f32`.
     scale: f32,
+    /// `started_real_us` field.
+    /// `started_real_us` 字段.
     started_real_us: Option<u64>,
+    /// `started_media_us` field of type `i64`.
+    /// `started_media_us` 字段，类型为 `i64`.
     started_media_us: i64,
+    /// `pending_seek_us` field.
+    /// `pending_seek_us` 字段.
     pending_seek_us: Option<i64>,
+    /// `tracks_emitted` field of type `bool`.
+    /// `tracks_emitted` 字段，类型为 `bool`.
     tracks_emitted: bool,
 }
 
@@ -120,6 +152,8 @@ enum SessionState {
 }
 
 impl VodSession {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: Mp4ReaderConfig) -> Self {
         Self {
             reader: Mp4Reader::new(config),
@@ -133,22 +167,32 @@ impl VodSession {
         }
     }
 
+    /// `duration_us` function.
+    /// `duration_us` 函数.
     pub fn duration_us(&self) -> i64 {
         self.reader.duration_us()
     }
 
+    /// `tracks` function.
+    /// `tracks` 函数.
     pub fn tracks(&self) -> &[TrackInfo] {
         self.reader.tracks()
     }
 
+    /// Returns `true` if `running` is true.
+    /// 返回 `真` 如果 `running` is 真.
     pub fn is_running(&self) -> bool {
         matches!(self.state, SessionState::Running)
     }
 
+    /// Returns `true` if `stopped` is true.
+    /// 返回 `真` 如果 `stopped` is 真.
     pub fn is_stopped(&self) -> bool {
         matches!(self.state, SessionState::Stopped)
     }
 
+    /// `step` function.
+    /// `step` 函数.
     pub fn step(&mut self, input: VodCoreInput) -> Vec<VodOutput> {
         match input {
             VodCoreInput::Control(cmd) => self.handle_control(cmd),

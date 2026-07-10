@@ -27,41 +27,85 @@ use futures::FutureExt;
 use parking_lot::Mutex;
 use tracing::{debug, warn};
 
+/// `WebRtcRenditionSnapshot` data structure.
+/// `WebRtcRenditionSnapshot` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcRenditionSnapshot {
+    /// `mid` field of type `String`.
+    /// `mid` 字段，类型为 `String`.
     pub mid: String,
+    /// `current_rid` field.
+    /// `current_rid` 字段.
     pub current_rid: Option<String>,
+    /// `seen_rids` field.
+    /// `seen_rids` 字段.
     pub seen_rids: Vec<String>,
 }
 
+/// `PlaybackAudioPolicy` data structure.
+/// `PlaybackAudioPolicy` 数据结构.
 #[derive(Debug, Clone, Copy)]
 pub struct PlaybackAudioPolicy {
+    /// `profile` field.
+    /// `profile` 字段.
     pub profile: crate::config::CodecProfileWire,
+    /// `strategy` field.
+    /// `strategy` 字段.
     pub strategy: crate::codec_policy::AudioOutputStrategy,
 }
 
+/// `PlaybackTimingPolicy` data structure.
+/// `PlaybackTimingPolicy` 数据结构.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlaybackTimingPolicy {
+    /// `jitter_buffer_ms` field of type `u64`.
+    /// `jitter_buffer_ms` 字段，类型为 `u64`.
     pub jitter_buffer_ms: u64,
+    /// `playout_delay_min_ms` field of type `u16`.
+    /// `playout_delay_min_ms` 字段，类型为 `u16`.
     pub playout_delay_min_ms: u16,
+    /// `playout_delay_max_ms` field of type `u16`.
+    /// `playout_delay_max_ms` 字段，类型为 `u16`.
     pub playout_delay_max_ms: u16,
 }
 
+/// `PlaybackCodecMapping` data structure.
+/// `PlaybackCodecMapping` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PlaybackCodecMapping {
+    /// `codec` field of type `WebRtcCodecKind`.
+    /// `codec` 字段，类型为 `WebRtcCodecKind`.
     pub codec: WebRtcCodecKind,
+    /// `clock_rate` field of type `u32`.
+    /// `clock_rate` 字段，类型为 `u32`.
     pub clock_rate: u32,
 }
 
 /// Engine ingress state for a publish session.
 pub struct WebRtcPublishBridge {
+    /// `stream_key` field of type `StreamKey`.
+    /// `stream_key` 字段，类型为 `StreamKey`.
     stream_key: StreamKey,
+    /// `lease` field of type `PublishLease`.
+    /// `lease` 字段，类型为 `PublishLease`.
     lease: PublishLease,
+    /// `sink` field.
+    /// `sink` 字段.
     sink: Box<dyn PublisherSink>,
+    /// `track_meta` field.
+    /// `track_meta` 字段.
     track_meta: HashMap<MidLabel, TrackMeta>,
+    /// `track_timestamp_epoch` field.
+    /// `track_timestamp_epoch` 字段.
     track_timestamp_epoch: HashMap<MidLabel, u32>,
+    /// `next_track_id` field of type `u32`.
+    /// `next_track_id` 字段，类型为 `u32`.
     next_track_id: u32,
+    /// `simulcast` field of type `SimulcastSelection`.
+    /// `simulcast` 字段，类型为 `SimulcastSelection`.
     simulcast: SimulcastSelection,
+    /// `rtcp_based_timestamp` field of type `bool`.
+    /// `rtcp_based_timestamp` 字段，类型为 `bool`.
     rtcp_based_timestamp: bool,
     /// Set to `true` when the adaptive simulcast policy upgrades to a
     /// higher layer. The module event worker should consume this flag
@@ -405,10 +449,14 @@ impl WebRtcPublishBridge {
         })
     }
 
+    /// `stream_key` function.
+    /// `stream_key` 函数.
     pub fn stream_key(&self) -> &StreamKey {
         &self.stream_key
     }
 
+    /// `lease` function.
+    /// `lease` 函数.
     pub fn lease(&self) -> &PublishLease {
         &self.lease
     }
@@ -453,6 +501,8 @@ impl WebRtcPublishBridge {
         pending
     }
 
+    /// `rendition_snapshot` function.
+    /// `rendition_snapshot` 函数.
     pub fn rendition_snapshot(&self) -> Vec<WebRtcRenditionSnapshot> {
         self.simulcast.rendition_snapshot()
     }
@@ -830,11 +880,17 @@ fn codec_id_is_video(codec: CodecId) -> bool {
 /// outgoing track.
 #[derive(Debug, Default)]
 pub struct PlayTrackMap {
+    /// `video_mid` field.
+    /// `video_mid` 字段.
     pub video_mid: Option<MidLabel>,
+    /// `audio_mid` field.
+    /// `audio_mid` 字段.
     pub audio_mid: Option<MidLabel>,
 }
 
 impl PlayTrackMap {
+    /// `record` function.
+    /// `record` 函数.
     pub fn record(&mut self, mid: MidLabel, kind: cheetah_webrtc_core::WebRtcMediaKind) {
         match kind {
             cheetah_webrtc_core::WebRtcMediaKind::Audio => self.audio_mid = Some(mid),
@@ -846,9 +902,17 @@ impl PlayTrackMap {
 /// Registry of active publish bridges, keyed by WebRTC session id.
 #[derive(Default)]
 pub struct WebRtcBridgeRegistry {
+    /// `publish` field.
+    /// `publish` 字段.
     publish: HashMap<WebRtcSessionId, WebRtcPublishBridge>,
+    /// `play` field.
+    /// `play` 字段.
     play: HashMap<WebRtcSessionId, cheetah_sdk::CancellationToken>,
+    /// `play_tracks` field.
+    /// `play_tracks` 字段.
     play_tracks: HashMap<WebRtcSessionId, PlayTrackMap>,
+    /// `play_stats` field.
+    /// `play_stats` 字段.
     play_stats: HashMap<WebRtcSessionId, WebRtcPlayBootstrapStats>,
 }
 
@@ -901,14 +965,20 @@ pub struct WebRtcPlayBootstrapStats {
 }
 
 impl WebRtcBridgeRegistry {
+    /// `insert_publish` function.
+    /// `insert_publish` 函数.
     pub fn insert_publish(&mut self, session_id: WebRtcSessionId, bridge: WebRtcPublishBridge) {
         self.publish.insert(session_id, bridge);
     }
 
+    /// `remove_publish` function.
+    /// `remove_publish` 函数.
     pub fn remove_publish(&mut self, session_id: WebRtcSessionId) -> Option<WebRtcPublishBridge> {
         self.publish.remove(&session_id)
     }
 
+    /// `insert_play` function.
+    /// `insert_play` 函数.
     pub fn insert_play(
         &mut self,
         session_id: WebRtcSessionId,
@@ -917,6 +987,8 @@ impl WebRtcBridgeRegistry {
         self.play.insert(session_id, cancel);
     }
 
+    /// `remove_play` function.
+    /// `remove_play` 函数.
     pub fn remove_play(
         &mut self,
         session_id: WebRtcSessionId,
@@ -926,6 +998,8 @@ impl WebRtcBridgeRegistry {
         self.play.remove(&session_id)
     }
 
+    /// `push_publish_frame` function.
+    /// `push_publish_frame` 函数.
     pub fn push_publish_frame(
         &mut self,
         session_id: WebRtcSessionId,
@@ -949,6 +1023,8 @@ impl WebRtcBridgeRegistry {
             .unwrap_or(false)
     }
 
+    /// `contains_publish` function.
+    /// `contains_publish` 函数.
     pub fn contains_publish(&self, session_id: WebRtcSessionId) -> bool {
         self.publish.contains_key(&session_id)
     }
@@ -1012,6 +1088,8 @@ impl WebRtcBridgeRegistry {
         }
     }
 
+    /// `record_play_track` function.
+    /// `record_play_track` 函数.
     pub fn record_play_track(
         &mut self,
         session_id: WebRtcSessionId,
@@ -1024,6 +1102,8 @@ impl WebRtcBridgeRegistry {
             .record(mid, kind);
     }
 
+    /// `play_track_for` function.
+    /// `play_track_for` 函数.
     pub fn play_track_for(
         &self,
         session_id: WebRtcSessionId,
@@ -1066,6 +1146,8 @@ impl WebRtcBridgeRegistry {
         }
     }
 
+    /// `record_play_timing_policy` function.
+    /// `record_play_timing_policy` 函数.
     pub fn record_play_timing_policy(
         &mut self,
         session_id: WebRtcSessionId,
@@ -1079,6 +1161,8 @@ impl WebRtcBridgeRegistry {
         stats.effective_playout_delay_ms = effective_delay_ms;
     }
 
+    /// `record_play_timing_delay` function.
+    /// `record_play_timing_delay` 函数.
     pub fn record_play_timing_delay(&mut self, session_id: WebRtcSessionId, delayed_micros: u64) {
         if delayed_micros == 0 {
             return;
@@ -1094,6 +1178,8 @@ impl WebRtcBridgeRegistry {
         self.play_stats.get(&session_id).cloned()
     }
 
+    /// `publish_renditions` function.
+    /// `publish_renditions` 函数.
     pub fn publish_renditions(
         &self,
         session_id: WebRtcSessionId,

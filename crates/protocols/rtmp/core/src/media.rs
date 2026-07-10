@@ -8,55 +8,81 @@ use cheetah_codec::{
 
 use crate::error::Error;
 
+/// `RtmpTimestamp` data structure.
+/// `RtmpTimestamp` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RtmpTimestamp(u32);
 
 impl RtmpTimestamp {
     pub const ZERO: Self = Self(0);
 
+    /// Creates `millis` from input.
+    /// 创建 `millis` 来自 输入.
     pub const fn from_millis(t: u32) -> Self {
         Self(t)
     }
 
+    /// `as_millis` function.
+    /// `as_millis` 函数.
     pub const fn as_millis(self) -> u32 {
         self.0
     }
 
+    /// `as_duration` function.
+    /// `as_duration` 函数.
     pub const fn as_duration(self) -> Duration {
         Duration::from_millis(self.0 as u64)
     }
 
+    /// `wrapping_add` function.
+    /// `wrapping_add` 函数.
     pub fn wrapping_add(self, other: Self) -> Self {
         Self(self.0.wrapping_add(other.0))
     }
 
+    /// `checked_sub` function.
+    /// `checked_sub` 函数.
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         self.0.checked_sub(other.0).map(Self)
     }
 }
 
+/// `RtmpTimestampDelta` data structure.
+/// `RtmpTimestampDelta` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RtmpTimestampDelta(i32);
 
 impl RtmpTimestampDelta {
     pub const ZERO: Self = Self(0);
 
+    /// Creates `millis` from input.
+    /// 创建 `millis` 来自 输入.
     pub const fn from_millis(t: i32) -> Self {
         Self(t)
     }
 
+    /// `as_millis` function.
+    /// `as_millis` 函数.
     pub const fn as_millis(self) -> i32 {
         self.0
     }
 }
 
+/// `MediaFrame` enumeration.
+/// `MediaFrame` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MediaFrame {
+    /// `Audio` variant.
+    /// `Audio` 变体.
     Audio(AudioFrame),
+    /// `Video` variant.
+    /// `Video` 变体.
     Video(VideoFrame),
 }
 
 impl MediaFrame {
+    /// `unwrap_audio` function.
+    /// `unwrap_audio` 函数.
     pub fn unwrap_audio(self) -> AudioFrame {
         match self {
             MediaFrame::Audio(f) => f,
@@ -64,6 +90,8 @@ impl MediaFrame {
         }
     }
 
+    /// `unwrap_video` function.
+    /// `unwrap_video` 函数.
     pub fn unwrap_video(self) -> VideoFrame {
         match self {
             MediaFrame::Video(f) => f,
@@ -72,14 +100,30 @@ impl MediaFrame {
     }
 }
 
+/// `AudioFrame` data structure.
+/// `AudioFrame` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioFrame {
+    /// `timestamp` field of type `RtmpTimestamp`.
+    /// `timestamp` 字段，类型为 `RtmpTimestamp`.
     pub timestamp: RtmpTimestamp,
+    /// `format` field of type `AudioFormat`.
+    /// `format` 字段，类型为 `AudioFormat`.
     pub format: AudioFormat,
+    /// `sample_rate` field of type `AudioSampleRate`.
+    /// `sample_rate` 字段，类型为 `AudioSampleRate`.
     pub sample_rate: AudioSampleRate,
+    /// `is_8bit_sample` field of type `bool`.
+    /// `is_8bit_sample` 字段，类型为 `bool`.
     pub is_8bit_sample: bool,
+    /// `is_stereo` field of type `bool`.
+    /// `is_stereo` 字段，类型为 `bool`.
     pub is_stereo: bool,
+    /// `is_aac_sequence_header` field of type `bool`.
+    /// `is_aac_sequence_header` 字段，类型为 `bool`.
     pub is_aac_sequence_header: bool,
+    /// `data` field.
+    /// `data` 字段.
     pub data: Vec<u8>,
 }
 
@@ -88,51 +132,107 @@ impl AudioFrame {
     pub const AAC_STEREO: bool = true;
 }
 
+/// `VideoFrame` data structure.
+/// `VideoFrame` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoFrame {
+    /// `timestamp` field of type `RtmpTimestamp`.
+    /// `timestamp` 字段，类型为 `RtmpTimestamp`.
     pub timestamp: RtmpTimestamp,
+    /// `composition_timestamp_offset` field of type `RtmpTimestampDelta`.
+    /// `composition_timestamp_offset` 字段，类型为 `RtmpTimestampDelta`.
     pub composition_timestamp_offset: RtmpTimestampDelta,
+    /// `frame_type` field of type `VideoFrameType`.
+    /// `frame_type` 字段，类型为 `VideoFrameType`.
     pub frame_type: VideoFrameType,
+    /// `codec` field of type `VideoCodec`.
+    /// `codec` 字段，类型为 `VideoCodec`.
     pub codec: VideoCodec,
+    /// `avc_packet_type` field.
+    /// `avc_packet_type` 字段.
     pub avc_packet_type: Option<AvcPacketType>,
+    /// `data` field.
+    /// `data` 字段.
     pub data: Vec<u8>,
 }
 
 impl VideoFrame {
+    /// Returns `true` if `keyframe` is true.
+    /// 返回 `真` 如果 `keyframe` is 真.
     pub fn is_keyframe(&self) -> bool {
         self.frame_type == VideoFrameType::KeyFrame
     }
 }
 
+/// `AvcPacketType` enumeration.
+/// `AvcPacketType` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AvcPacketType {
+    /// `SequenceHeader` variant.
+    /// `SequenceHeader` 变体.
     SequenceHeader = 0,
+    /// `NalUnit` variant.
+    /// `NalUnit` 变体.
     NalUnit = 1,
+    /// `EndOfSequence` variant.
+    /// `EndOfSequence` 变体.
     EndOfSequence = 2,
 }
 
+/// `VideoFrameType` enumeration.
+/// `VideoFrameType` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum VideoFrameType {
+    /// `KeyFrame` variant.
+    /// `KeyFrame` 变体.
     KeyFrame = 1,
+    /// `InterFrame` variant.
+    /// `InterFrame` 变体.
     InterFrame = 2,
+    /// `DisposableInterFrame` variant.
+    /// `DisposableInterFrame` 变体.
     DisposableInterFrame = 3,
+    /// `GeneratedKeyFrame` variant.
+    /// `GeneratedKeyFrame` 变体.
     GeneratedKeyFrame = 4,
+    /// `VideoInfoOrCommandFrame` variant.
+    /// `VideoInfoOrCommandFrame` 变体.
     VideoInfoOrCommandFrame = 5,
 }
 
+/// `VideoCodec` enumeration.
+/// `VideoCodec` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum VideoCodec {
+    /// `Jpeg` variant.
+    /// `Jpeg` 变体.
     Jpeg,
+    /// `H263` variant.
+    /// `H263` 变体.
     H263,
+    /// `ScreenVideo` variant.
+    /// `ScreenVideo` 变体.
     ScreenVideo,
+    /// `Vp6` variant.
+    /// `Vp6` 变体.
     Vp6,
+    /// `Vp6WithAlpha` variant.
+    /// `Vp6WithAlpha` 变体.
     Vp6WithAlpha,
+    /// `ScreenVideoV2` variant.
+    /// `ScreenVideoV2` 变体.
     ScreenVideoV2,
+    /// `Avc` variant.
+    /// `Avc` 变体.
     Avc,
+    /// `Unknown` variant.
+    /// `Unknown` 变体.
     Unknown(u8),
 }
 
 impl VideoCodec {
+    /// `raw_id` function.
+    /// `raw_id` 函数.
     pub fn raw_id(self) -> u8 {
         match self {
             VideoCodec::Jpeg => 1,
@@ -147,24 +247,54 @@ impl VideoCodec {
     }
 }
 
+/// `AudioFormat` enumeration.
+/// `AudioFormat` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AudioFormat {
+    /// `Adpcm` variant.
+    /// `Adpcm` 变体.
     Adpcm,
+    /// `Mp3` variant.
+    /// `Mp3` 变体.
     Mp3,
+    /// `LinearPcmLittleEndian` variant.
+    /// `LinearPcmLittleEndian` 变体.
     LinearPcmLittleEndian,
+    /// `Nellymoser16khzMono` variant.
+    /// `Nellymoser16khzMono` 变体.
     Nellymoser16khzMono,
+    /// `Nellymoser8KhzMono` variant.
+    /// `Nellymoser8KhzMono` 变体.
     Nellymoser8KhzMono,
+    /// `Nellymoser` variant.
+    /// `Nellymoser` 变体.
     Nellymoser,
+    /// `G711AlawLogarithmicPcm` variant.
+    /// `G711AlawLogarithmicPcm` 变体.
     G711AlawLogarithmicPcm,
+    /// `G711MuLawLogarithmicPcm` variant.
+    /// `G711MuLawLogarithmicPcm` 变体.
     G711MuLawLogarithmicPcm,
+    /// `Aac` variant.
+    /// `Aac` 变体.
     Aac,
+    /// `Speex` variant.
+    /// `Speex` 变体.
     Speex,
+    /// `Mp3_8khz` variant.
+    /// `Mp3_8khz` 变体.
     Mp3_8khz,
+    /// `DeviceSpecificSound` variant.
+    /// `DeviceSpecificSound` 变体.
     DeviceSpecificSound,
+    /// `Unknown` variant.
+    /// `Unknown` 变体.
     Unknown(u8),
 }
 
 impl AudioFormat {
+    /// `raw_id` function.
+    /// `raw_id` 函数.
     pub fn raw_id(self) -> u8 {
         match self {
             AudioFormat::Adpcm => 1,
@@ -184,21 +314,45 @@ impl AudioFormat {
     }
 }
 
+/// `AudioSampleRate` enumeration.
+/// `AudioSampleRate` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AudioSampleRate {
+    /// `Khz5` variant.
+    /// `Khz5` 变体.
     Khz5 = 0,
+    /// `Khz11` variant.
+    /// `Khz11` 变体.
     Khz11 = 1,
+    /// `Khz22` variant.
+    /// `Khz22` 变体.
     Khz22 = 2,
+    /// `Khz44` variant.
+    /// `Khz44` 变体.
     Khz44 = 3,
 }
 
+/// `AvcSequenceHeader` data structure.
+/// `AvcSequenceHeader` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AvcSequenceHeader {
+    /// `avc_profile_indication` field of type `u8`.
+    /// `avc_profile_indication` 字段，类型为 `u8`.
     pub avc_profile_indication: u8,
+    /// `profile_compatibility` field of type `u8`.
+    /// `profile_compatibility` 字段，类型为 `u8`.
     pub profile_compatibility: u8,
+    /// `avc_level_indication` field of type `u8`.
+    /// `avc_level_indication` 字段，类型为 `u8`.
     pub avc_level_indication: u8,
+    /// `length_size_minus_one` field of type `u8`.
+    /// `length_size_minus_one` 字段，类型为 `u8`.
     pub length_size_minus_one: u8,
+    /// `sps_list` field.
+    /// `sps_list` 字段.
     pub sps_list: Vec<Vec<u8>>,
+    /// `pps_list` field.
+    /// `pps_list` 字段.
     pub pps_list: Vec<Vec<u8>>,
 }
 
@@ -209,6 +363,8 @@ impl AvcSequenceHeader {
     const MAX_SPS_SIZE: usize = 4096;
     const MAX_PPS_SIZE: usize = 4096;
 
+    /// Creates `bytes` from input.
+    /// 创建 `bytes` 来自 输入.
     pub fn from_bytes(data: &[u8]) -> Result<Self, Error> {
         if data.len() < 7 {
             return Err(Error::invalid_data(
@@ -348,6 +504,8 @@ impl AvcSequenceHeader {
         })
     }
 
+    /// Converts to `bytes` representation.
+    /// Converts 为 `bytes` 表示.
     pub fn to_bytes(&self) -> Result<Vec<u8>, Error> {
         if self.sps_list.is_empty() {
             return Err(Error::invalid_data("SPS list must not be empty"));
@@ -419,6 +577,8 @@ impl AvcSequenceHeader {
     }
 }
 
+/// `encode_audio_frame` function.
+/// `encode_audio_frame` 函数.
 pub fn encode_audio_frame(buf: &mut Vec<u8>, frame: &AudioFrame) {
     let header = ((frame.format.raw_id()) << 4)
         | ((frame.sample_rate as u8) << 2)
@@ -434,6 +594,8 @@ pub fn encode_audio_frame(buf: &mut Vec<u8>, frame: &AudioFrame) {
     buf.extend_from_slice(&frame.data);
 }
 
+/// `decode_audio_frame` function.
+/// `decode_audio_frame` 函数.
 pub fn decode_audio_frame(buf: &[u8], timestamp: RtmpTimestamp) -> Result<AudioFrame, Error> {
     let mut reader = buf;
     let header = read_u8(&mut reader)?;
@@ -484,6 +646,8 @@ pub fn decode_audio_frame(buf: &[u8], timestamp: RtmpTimestamp) -> Result<AudioF
     })
 }
 
+/// `encode_video_frame` function.
+/// `encode_video_frame` 函数.
 pub fn encode_video_frame(buf: &mut Vec<u8>, frame: &VideoFrame) {
     let frame_type_codec = ((frame.frame_type as u8) << 4) | (frame.codec.raw_id());
     buf.push(frame_type_codec);
@@ -496,6 +660,8 @@ pub fn encode_video_frame(buf: &mut Vec<u8>, frame: &VideoFrame) {
     buf.extend_from_slice(&frame.data);
 }
 
+/// `decode_video_frame` function.
+/// `decode_video_frame` 函数.
 pub fn decode_video_frame(buf: &[u8], timestamp: RtmpTimestamp) -> Result<VideoFrame, Error> {
     let mut reader = buf;
     let frame_type_codec = read_u8(&mut reader)?;
@@ -558,38 +724,72 @@ pub fn decode_video_frame(buf: &[u8], timestamp: RtmpTimestamp) -> Result<VideoF
     })
 }
 
+/// `VideoIngressHeader` data structure.
+/// `VideoIngressHeader` 数据结构.
 #[derive(Debug, Clone, Copy)]
 pub struct VideoIngressHeader {
+    /// `frame_type` field of type `u8`.
+    /// `frame_type` 字段，类型为 `u8`.
     pub frame_type: u8,
+    /// `codec` field of type `CodecId`.
+    /// `codec` 字段，类型为 `CodecId`.
     pub codec: CodecId,
+    /// `packet_type` field of type `u8`.
+    /// `packet_type` 字段，类型为 `u8`.
     pub packet_type: u8,
+    /// `cts` field of type `i32`.
+    /// `cts` 字段，类型为 `i32`.
     pub cts: i32,
+    /// `payload_offset` field of type `usize`.
+    /// `payload_offset` 字段，类型为 `usize`.
     pub payload_offset: usize,
 }
 
 /// Enhanced RTMP multi-track packet type (packet_type = 5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MultiTrackType {
+    /// `OneTrack` variant.
+    /// `OneTrack` 变体.
     OneTrack,
+    /// `ManyTracks` variant.
+    /// `ManyTracks` 变体.
     ManyTracks,
+    /// `ManyTracksManyCodecs` variant.
+    /// `ManyTracksManyCodecs` 变体.
     ManyTracksManyCodecs,
 }
 
 /// A single track entry within a multi-track packet.
 #[derive(Debug, Clone)]
 pub struct MultiTrackEntry {
+    /// `track_id` field of type `u8`.
+    /// `track_id` 字段，类型为 `u8`.
     pub track_id: u8,
+    /// `codec` field of type `CodecId`.
+    /// `codec` 字段，类型为 `CodecId`.
     pub codec: CodecId,
+    /// `packet_type` field of type `u8`.
+    /// `packet_type` 字段，类型为 `u8`.
     pub packet_type: u8,
+    /// `data_offset` field of type `usize`.
+    /// `data_offset` 字段，类型为 `usize`.
     pub data_offset: usize,
+    /// `data_len` field of type `usize`.
+    /// `data_len` 字段，类型为 `usize`.
     pub data_len: usize,
 }
 
 /// Parsed multi-track video header.
 #[derive(Debug, Clone)]
 pub struct VideoMultiTrackHeader {
+    /// `frame_type` field of type `u8`.
+    /// `frame_type` 字段，类型为 `u8`.
     pub frame_type: u8,
+    /// `multi_track_type` field of type `MultiTrackType`.
+    /// `multi_track_type` 字段，类型为 `MultiTrackType`.
     pub multi_track_type: MultiTrackType,
+    /// `tracks` field.
+    /// `tracks` 字段.
     pub tracks: Vec<MultiTrackEntry>,
 }
 
@@ -693,6 +893,8 @@ pub fn parse_video_multi_track(payload: &[u8]) -> Option<VideoMultiTrackHeader> 
     })
 }
 
+/// Parses `video_ingress_header` from input.
+/// 解析 `video_ingress_header` 来自 输入.
 pub fn parse_video_ingress_header(payload: &[u8]) -> Option<VideoIngressHeader> {
     parse_video_ingress_header_with_mode(payload, DomesticCodecMode::Standard)
 }

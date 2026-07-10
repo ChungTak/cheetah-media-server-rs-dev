@@ -9,6 +9,8 @@ use super::{
 };
 
 impl RtmpCore {
+    /// `handle_media_input` function.
+    /// `handle_media_input` 函数.
     pub(super) fn handle_media_input(
         &mut self,
         stream_id: u32,
@@ -43,6 +45,8 @@ impl RtmpCore {
         }));
     }
 
+    /// `push_pending_publish_media` function.
+    /// `push_pending_publish_media` 函数.
     pub(super) fn push_pending_publish_media(
         &mut self,
         stream_id: u32,
@@ -86,6 +90,8 @@ impl RtmpCore {
         self.pending_media_bytes = self.pending_media_bytes.saturating_add(payload_len);
     }
 
+    /// `flush_pending_publish_media` function.
+    /// `flush_pending_publish_media` 函数.
     pub(super) fn flush_pending_publish_media(
         &mut self,
         stream_id: u32,
@@ -106,6 +112,8 @@ impl RtmpCore {
         self.pending_publish = None;
     }
 
+    /// `clear_pending_publish` function.
+    /// `clear_pending_publish` 函数.
     pub(super) fn clear_pending_publish(&mut self) {
         self.pending_publish = None;
         self.pending_media.clear();

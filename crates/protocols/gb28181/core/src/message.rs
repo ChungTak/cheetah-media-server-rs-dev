@@ -1,13 +1,19 @@
 use crate::error::Gb28181CoreError;
 use std::fmt;
 
+/// `StartLine` enumeration.
+/// `StartLine` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartLine {
+    /// `Request` variant.
+    /// `Request` 变体.
     Request {
         method: String,
         uri: String,
         version: String,
     },
+    /// `Response` variant.
+    /// `Response` 变体.
     Response {
         version: String,
         status: u16,
@@ -15,10 +21,18 @@ pub enum StartLine {
     },
 }
 
+/// `SipMessage` data structure.
+/// `SipMessage` 数据结构.
 #[derive(Debug, Clone)]
 pub struct SipMessage {
+    /// `start_line` field of type `StartLine`.
+    /// `start_line` 字段，类型为 `StartLine`.
     pub start_line: StartLine,
+    /// `headers` field.
+    /// `headers` 字段.
     pub headers: Vec<(String, String)>,
+    /// `body` field.
+    /// `body` 字段.
     pub body: Vec<u8>,
 }
 
@@ -124,6 +138,8 @@ impl SipMessage {
         }
     }
 
+    /// Returns the `header` value.
+    /// 返回 `header` 值.
     pub fn get_header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -141,6 +157,8 @@ impl SipMessage {
             .map(|(_, val)| val.as_str())
     }
 
+    /// Sets the `header` value.
+    /// Sets `header` 值.
     pub fn set_header(&mut self, name: &str, value: &str) {
         if let Some(pos) = self
             .headers

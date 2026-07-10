@@ -5,15 +5,33 @@ use bytes::Bytes;
 use crate::audio::{adts_strip, AacAudioSpecificConfig};
 use crate::track::{CodecId, MediaKind};
 
+/// `ProtocolKind` enumeration.
+/// `ProtocolKind` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProtocolKind {
+    /// `Rtmp` variant.
+    /// `Rtmp` 变体.
     Rtmp,
+    /// `Rtsp` variant.
+    /// `Rtsp` 变体.
     Rtsp,
+    /// `Hls` variant.
+    /// `Hls` 变体.
     Hls,
+    /// `Flv` variant.
+    /// `Flv` 变体.
     Flv,
+    /// `Webrtc` variant.
+    /// `Webrtc` 变体.
     Webrtc,
+    /// `Srt` variant.
+    /// `Srt` 变体.
     Srt,
+    /// `Gb28181` variant.
+    /// `Gb28181` 变体.
     Gb28181,
+    /// `Unknown` variant.
+    /// `Unknown` 变体.
     Unknown,
 }
 
@@ -27,15 +45,29 @@ bitflags! {
     }
 }
 
+/// `CompatProfile` data structure.
+/// `CompatProfile` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompatProfile {
+    /// `protocol` field of type `ProtocolKind`.
+    /// `protocol` 字段，类型为 `ProtocolKind`.
     pub protocol: ProtocolKind,
+    /// `vendor` field.
+    /// `vendor` 字段.
     pub vendor: Option<String>,
+    /// `device_model` field.
+    /// `device_model` 字段.
     pub device_model: Option<String>,
+    /// `client_family` field.
+    /// `client_family` 字段.
     pub client_family: Option<String>,
+    /// `flags` field of type `CompatFlags`.
+    /// `flags` 字段，类型为 `CompatFlags`.
     pub flags: CompatFlags,
 }
 
+/// `apply_compat_profile` function.
+/// `apply_compat_profile` 函数.
 pub fn apply_compat_profile(profile: &CompatProfile, codec: CodecId, payload: &[u8]) -> Bytes {
     let mut out = Bytes::copy_from_slice(payload);
     if profile.flags.contains(CompatFlags::RELAX_START_CODE)
@@ -46,6 +78,8 @@ pub fn apply_compat_profile(profile: &CompatProfile, codec: CodecId, payload: &[
     out
 }
 
+/// `normalize_h26x_start_codes` function.
+/// `normalize_h26x_start_codes` 函数.
 pub fn normalize_h26x_start_codes(payload: &[u8]) -> Bytes {
     let mut out = Vec::with_capacity(payload.len() + 16);
     let mut i = 0usize;
@@ -71,6 +105,8 @@ pub fn normalize_h26x_start_codes(payload: &[u8]) -> Bytes {
     Bytes::from(out)
 }
 
+/// `infer_aac_asc_from_adts` function.
+/// `infer_aac_asc_from_adts` 函数.
 pub fn infer_aac_asc_from_adts(frame: &[u8]) -> Option<AacAudioSpecificConfig> {
     let (header, _) = adts_strip(frame)?;
     Some(AacAudioSpecificConfig {
@@ -80,24 +116,56 @@ pub fn infer_aac_asc_from_adts(frame: &[u8]) -> Option<AacAudioSpecificConfig> {
     })
 }
 
+/// `RTMP_AUDIO_CODEC_ID_ADPCM` constant.
+/// `RTMP_AUDIO_CODEC_ID_ADPCM` 常量.
 pub const RTMP_AUDIO_CODEC_ID_ADPCM: u8 = 1;
+/// `RTMP_AUDIO_CODEC_ID_MP3` constant.
+/// `RTMP_AUDIO_CODEC_ID_MP3` 常量.
 pub const RTMP_AUDIO_CODEC_ID_MP3: u8 = 2;
+/// `RTMP_VIDEO_CODEC_ID_H264` constant.
+/// `RTMP_VIDEO_CODEC_ID_H264` 常量.
 pub const RTMP_VIDEO_CODEC_ID_H264: u8 = 7;
+/// `RTMP_AUDIO_CODEC_ID_G711A` constant.
+/// `RTMP_AUDIO_CODEC_ID_G711A` 常量.
 pub const RTMP_AUDIO_CODEC_ID_G711A: u8 = 7;
+/// `RTMP_AUDIO_CODEC_ID_G711U` constant.
+/// `RTMP_AUDIO_CODEC_ID_G711U` 常量.
 pub const RTMP_AUDIO_CODEC_ID_G711U: u8 = 8;
+/// `RTMP_AUDIO_CODEC_ID_AAC` constant.
+/// `RTMP_AUDIO_CODEC_ID_AAC` 常量.
 pub const RTMP_AUDIO_CODEC_ID_AAC: u8 = 10;
+/// `RTMP_VIDEO_CODEC_ID_H265` constant.
+/// `RTMP_VIDEO_CODEC_ID_H265` 常量.
 pub const RTMP_VIDEO_CODEC_ID_H265: u8 = 12;
+/// `RTMP_VIDEO_CODEC_ID_AV1` constant.
+/// `RTMP_VIDEO_CODEC_ID_AV1` 常量.
 pub const RTMP_VIDEO_CODEC_ID_AV1: u8 = 13;
+/// `RTMP_AUDIO_CODEC_ID_OPUS` constant.
+/// `RTMP_AUDIO_CODEC_ID_OPUS` 常量.
 pub const RTMP_AUDIO_CODEC_ID_OPUS: u8 = 13;
+/// `RTMP_VIDEO_CODEC_ID_H266` constant.
+/// `RTMP_VIDEO_CODEC_ID_H266` 常量.
 pub const RTMP_VIDEO_CODEC_ID_H266: u8 = 14;
+/// `RTMP_VIDEO_CODEC_ID_VP9` constant.
+/// `RTMP_VIDEO_CODEC_ID_VP9` 常量.
 pub const RTMP_VIDEO_CODEC_ID_VP9: u8 = 16;
 
 // 国内扩展 codec ID (ZLMediaKit / domestic vendor convention)
 // These conflict with standard assignments (e.g., 14 = H266 in standard, VP8 in domestic).
+/// `DOMESTIC_VIDEO_CODEC_ID_H265` constant.
+/// `DOMESTIC_VIDEO_CODEC_ID_H265` 常量.
 pub const DOMESTIC_VIDEO_CODEC_ID_H265: u8 = 12;
+/// `DOMESTIC_VIDEO_CODEC_ID_AV1` constant.
+/// `DOMESTIC_VIDEO_CODEC_ID_AV1` 常量.
 pub const DOMESTIC_VIDEO_CODEC_ID_AV1: u8 = 13;
+/// `DOMESTIC_VIDEO_CODEC_ID_VP8` constant.
+/// `DOMESTIC_VIDEO_CODEC_ID_VP8` 常量.
 pub const DOMESTIC_VIDEO_CODEC_ID_VP8: u8 = 14;
+/// `DOMESTIC_VIDEO_CODEC_ID_VP9` constant.
+/// `DOMESTIC_VIDEO_CODEC_ID_VP9` 常量.
 pub const DOMESTIC_VIDEO_CODEC_ID_VP9: u8 = 15;
+/// `DOMESTIC_AUDIO_CODEC_ID_OPUS` constant.
+/// `DOMESTIC_AUDIO_CODEC_ID_OPUS` 常量.
 pub const DOMESTIC_AUDIO_CODEC_ID_OPUS: u8 = 13;
 
 /// Controls how ambiguous legacy RTMP codec IDs are interpreted.
@@ -117,36 +185,58 @@ pub enum DomesticCodecMode {
     Auto,
 }
 
+/// `RTMP_CODEC_ID_H264` constant.
+/// `RTMP_CODEC_ID_H264` 常量.
 #[doc(hidden)]
 #[deprecated(note = "use RTMP_VIDEO_CODEC_ID_H264")]
 pub const RTMP_CODEC_ID_H264: u8 = RTMP_VIDEO_CODEC_ID_H264;
+/// `RTMP_CODEC_ID_G711A` constant.
+/// `RTMP_CODEC_ID_G711A` 常量.
 #[doc(hidden)]
 #[deprecated(note = "use RTMP_AUDIO_CODEC_ID_G711A")]
 pub const RTMP_CODEC_ID_G711A: u8 = RTMP_AUDIO_CODEC_ID_G711A;
+/// `RTMP_CODEC_ID_G711U` constant.
+/// `RTMP_CODEC_ID_G711U` 常量.
 #[doc(hidden)]
 #[deprecated(note = "use RTMP_AUDIO_CODEC_ID_G711U")]
 pub const RTMP_CODEC_ID_G711U: u8 = RTMP_AUDIO_CODEC_ID_G711U;
+/// `RTMP_CODEC_ID_AAC` constant.
+/// `RTMP_CODEC_ID_AAC` 常量.
 #[doc(hidden)]
 #[deprecated(note = "use RTMP_AUDIO_CODEC_ID_AAC")]
 pub const RTMP_CODEC_ID_AAC: u8 = RTMP_AUDIO_CODEC_ID_AAC;
+/// `RTMP_CODEC_ID_H265` constant.
+/// `RTMP_CODEC_ID_H265` 常量.
 #[doc(hidden)]
 #[deprecated(note = "use RTMP_VIDEO_CODEC_ID_H265")]
 pub const RTMP_CODEC_ID_H265: u8 = RTMP_VIDEO_CODEC_ID_H265;
+/// `RTMP_CODEC_ID_AV1` constant.
+/// `RTMP_CODEC_ID_AV1` 常量.
 #[doc(hidden)]
 #[deprecated(note = "use RTMP_VIDEO_CODEC_ID_AV1")]
 pub const RTMP_CODEC_ID_AV1: u8 = RTMP_VIDEO_CODEC_ID_AV1;
+/// `RTMP_CODEC_ID_OPUS` constant.
+/// `RTMP_CODEC_ID_OPUS` 常量.
 #[doc(hidden)]
 #[deprecated(note = "use RTMP_AUDIO_CODEC_ID_OPUS")]
 pub const RTMP_CODEC_ID_OPUS: u8 = RTMP_AUDIO_CODEC_ID_OPUS;
+/// `RTMP_CODEC_ID_H266` constant.
+/// `RTMP_CODEC_ID_H266` 常量.
 #[doc(hidden)]
 #[deprecated(note = "use RTMP_VIDEO_CODEC_ID_H266")]
 pub const RTMP_CODEC_ID_H266: u8 = RTMP_VIDEO_CODEC_ID_H266;
+/// `RTMP_CODEC_ID_VP9` constant.
+/// `RTMP_CODEC_ID_VP9` 常量.
 #[doc(hidden)]
 #[deprecated(note = "use RTMP_VIDEO_CODEC_ID_VP9")]
 pub const RTMP_CODEC_ID_VP9: u8 = RTMP_VIDEO_CODEC_ID_VP9;
+/// `RTMP_CODEC_ID_ADPCM` constant.
+/// `RTMP_CODEC_ID_ADPCM` 常量.
 #[doc(hidden)]
 #[deprecated(note = "use RTMP_AUDIO_CODEC_ID_ADPCM")]
 pub const RTMP_CODEC_ID_ADPCM: u8 = RTMP_AUDIO_CODEC_ID_ADPCM;
+/// `RTMP_CODEC_ID_MP3` constant.
+/// `RTMP_CODEC_ID_MP3` 常量.
 #[doc(hidden)]
 #[deprecated(note = "use RTMP_AUDIO_CODEC_ID_MP3")]
 pub const RTMP_CODEC_ID_MP3: u8 = RTMP_AUDIO_CODEC_ID_MP3;
@@ -158,13 +248,27 @@ const fn fourcc(value: [u8; 4]) -> u32 {
         | value[3] as u32
 }
 
+/// `RTMP_FOURCC_H265` constant.
+/// `RTMP_FOURCC_H265` 常量.
 pub const RTMP_FOURCC_H265: u32 = fourcc(*b"hvc1");
+/// `RTMP_FOURCC_H266` constant.
+/// `RTMP_FOURCC_H266` 常量.
 pub const RTMP_FOURCC_H266: u32 = fourcc(*b"vvc1");
+/// `RTMP_FOURCC_H264` constant.
+/// `RTMP_FOURCC_H264` 常量.
 pub const RTMP_FOURCC_H264: u32 = fourcc(*b"avc1");
+/// `RTMP_FOURCC_AV1` constant.
+/// `RTMP_FOURCC_AV1` 常量.
 pub const RTMP_FOURCC_AV1: u32 = fourcc(*b"av01");
+/// `RTMP_FOURCC_VP8` constant.
+/// `RTMP_FOURCC_VP8` 常量.
 pub const RTMP_FOURCC_VP8: u32 = fourcc(*b"vp08");
+/// `RTMP_FOURCC_VP9` constant.
+/// `RTMP_FOURCC_VP9` 常量.
 pub const RTMP_FOURCC_VP9: u32 = fourcc(*b"vp09");
 
+/// `codec_from_rtmp_codec_id` function.
+/// `codec_from_rtmp_codec_id` 函数.
 pub fn codec_from_rtmp_codec_id(media: MediaKind, codec_id: u8) -> Option<CodecId> {
     match media {
         MediaKind::Video => match codec_id {
@@ -248,6 +352,8 @@ pub fn rtmp_domestic_codec_id_from_codec(codec: CodecId) -> Option<u8> {
     }
 }
 
+/// `rtmp_codec_id_from_codec` function.
+/// `rtmp_codec_id_from_codec` 函数.
 pub fn rtmp_codec_id_from_codec(codec: CodecId) -> Option<u8> {
     match codec {
         CodecId::H264 => Some(RTMP_VIDEO_CODEC_ID_H264),
@@ -265,6 +371,8 @@ pub fn rtmp_codec_id_from_codec(codec: CodecId) -> Option<u8> {
     }
 }
 
+/// `codec_from_rtmp_fourcc` function.
+/// `codec_from_rtmp_fourcc` 函数.
 pub fn codec_from_rtmp_fourcc(fourcc: u32) -> Option<CodecId> {
     match fourcc {
         RTMP_FOURCC_H264 => Some(CodecId::H264),
@@ -277,6 +385,8 @@ pub fn codec_from_rtmp_fourcc(fourcc: u32) -> Option<CodecId> {
     }
 }
 
+/// `rtmp_fourcc_from_codec` function.
+/// `rtmp_fourcc_from_codec` 函数.
 pub fn rtmp_fourcc_from_codec(codec: CodecId) -> Option<u32> {
     match codec {
         CodecId::H264 => Some(RTMP_FOURCC_H264),
@@ -289,6 +399,8 @@ pub fn rtmp_fourcc_from_codec(codec: CodecId) -> Option<u32> {
     }
 }
 
+/// `codec_from_rtmp_metadata` function.
+/// `codec_from_rtmp_metadata` 函数.
 pub fn codec_from_rtmp_metadata(
     media: MediaKind,
     numeric: Option<f64>,
@@ -333,6 +445,8 @@ pub fn codec_from_rtmp_metadata(
     }
 }
 
+/// `rtmp_audio_flag` function.
+/// `rtmp_audio_flag` 函数.
 pub fn rtmp_audio_flag(
     codec: CodecId,
     sample_rate: u32,

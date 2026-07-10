@@ -12,9 +12,17 @@ use cheetah_webrtc_core::WebRtcSessionId;
 /// empty diff and therefore preserves prior observable behaviour.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcRouteUpdate {
+    /// `session_id` field of type `WebRtcSessionId`.
+    /// `session_id` 字段，类型为 `WebRtcSessionId`.
     pub session_id: WebRtcSessionId,
+    /// `previous_addr` field.
+    /// `previous_addr` 字段.
     pub previous_addr: Option<SocketAddr>,
+    /// `new_addr` field of type `SocketAddr`.
+    /// `new_addr` 字段，类型为 `SocketAddr`.
     pub new_addr: SocketAddr,
+    /// `diff` field of type `RouteCandidateDiff`.
+    /// `diff` 字段，类型为 `RouteCandidateDiff`.
     pub diff: RouteCandidateDiff,
 }
 
@@ -31,8 +39,14 @@ pub struct WebRtcRouteUpdate {
 /// compute a diff can fall back to it without behavioural change.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RouteCandidateDiff {
+    /// `added` field.
+    /// `added` 字段.
     pub added: Vec<SocketAddr>,
+    /// `removed` field.
+    /// `removed` 字段.
     pub removed: Vec<SocketAddr>,
+    /// `stale` field.
+    /// `stale` 字段.
     pub stale: Vec<SocketAddr>,
 }
 

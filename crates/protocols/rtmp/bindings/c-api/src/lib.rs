@@ -11,67 +11,157 @@ use cheetah_rtmp_core::{
 const EMPTY_ERROR: &[u8] = b"\0";
 const NULL_POINTER_ERROR: &[u8] = b"null pointer\0";
 
+/// `RtmpCoreApiError` enumeration.
+/// `RtmpCoreApiError` 枚举.
 #[repr(C)]
 #[expect(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpCoreApiError {
+    /// `RTMP_CORE_API_ERROR_OK` variant.
+    /// `RTMP_CORE_API_ERROR_OK` 变体.
     RTMP_CORE_API_ERROR_OK = 0,
+    /// `RTMP_CORE_API_ERROR_INVALID_ARGUMENT` variant.
+    /// `RTMP_CORE_API_ERROR_INVALID_ARGUMENT` 变体.
     RTMP_CORE_API_ERROR_INVALID_ARGUMENT,
+    /// `RTMP_CORE_API_ERROR_NULL_POINTER` variant.
+    /// `RTMP_CORE_API_ERROR_NULL_POINTER` 变体.
     RTMP_CORE_API_ERROR_NULL_POINTER,
+    /// `RTMP_CORE_API_ERROR_CORE` variant.
+    /// `RTMP_CORE_API_ERROR_CORE` 变体.
     RTMP_CORE_API_ERROR_CORE,
+    /// `RTMP_CORE_API_ERROR_NO_OUTPUT` variant.
+    /// `RTMP_CORE_API_ERROR_NO_OUTPUT` 变体.
     RTMP_CORE_API_ERROR_NO_OUTPUT,
+    /// `RTMP_CORE_API_ERROR_OVERFLOW` variant.
+    /// `RTMP_CORE_API_ERROR_OVERFLOW` 变体.
     RTMP_CORE_API_ERROR_OVERFLOW,
 }
 
+/// `RtmpCoreOutputKind` enumeration.
+/// `RtmpCoreOutputKind` 枚举.
 #[repr(C)]
 #[expect(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpCoreOutputKind {
+    /// `RTMP_CORE_OUTPUT_KIND_NONE` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_NONE` 变体.
     RTMP_CORE_OUTPUT_KIND_NONE = 0,
+    /// `RTMP_CORE_OUTPUT_KIND_WRITE` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_WRITE` 变体.
     RTMP_CORE_OUTPUT_KIND_WRITE,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_CONNECTED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_CONNECTED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_CONNECTED,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_STREAM_CREATED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_STREAM_CREATED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_STREAM_CREATED,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_COMMAND_IGNORED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_COMMAND_IGNORED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_COMMAND_IGNORED,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_MESSAGE_IGNORED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_MESSAGE_IGNORED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_MESSAGE_IGNORED,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_USER_CONTROL_IGNORED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_USER_CONTROL_IGNORED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_USER_CONTROL_IGNORED,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_ACK_RECEIVED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_ACK_RECEIVED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_ACK_RECEIVED,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_LOCAL_ACK_WINDOW_UPDATED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_LOCAL_ACK_WINDOW_UPDATED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_LOCAL_ACK_WINDOW_UPDATED,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_PEER_ACK_WINDOW_UPDATED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_PEER_ACK_WINDOW_UPDATED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_PEER_ACK_WINDOW_UPDATED,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_CLIENT_STATE_CHANGED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_CLIENT_STATE_CHANGED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_CLIENT_STATE_CHANGED,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_CLIENT_DISCONNECT_REQUESTED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_CLIENT_DISCONNECT_REQUESTED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_CLIENT_DISCONNECT_REQUESTED,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_PUBLISH_REQUESTED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_PUBLISH_REQUESTED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_PUBLISH_REQUESTED,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_PLAY_REQUESTED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_PLAY_REQUESTED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_PLAY_REQUESTED,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_METADATA` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_METADATA` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_METADATA,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_NOTIFY` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_NOTIFY` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_NOTIFY,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_MEDIA_DATA` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_MEDIA_DATA` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_MEDIA_DATA,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_STREAM_CLOSED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_STREAM_CLOSED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_STREAM_CLOSED,
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_PEER_CLOSED` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_EVENT_PEER_CLOSED` 变体.
     RTMP_CORE_OUTPUT_KIND_EVENT_PEER_CLOSED,
+    /// `RTMP_CORE_OUTPUT_KIND_SET_TIMER` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_SET_TIMER` 变体.
     RTMP_CORE_OUTPUT_KIND_SET_TIMER,
+    /// `RTMP_CORE_OUTPUT_KIND_CANCEL_TIMER` variant.
+    /// `RTMP_CORE_OUTPUT_KIND_CANCEL_TIMER` 变体.
     RTMP_CORE_OUTPUT_KIND_CANCEL_TIMER,
 }
 
+/// `RtmpCoreOutputMediaType` enumeration.
+/// `RtmpCoreOutputMediaType` 枚举.
 #[repr(C)]
 #[expect(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpCoreOutputMediaType {
+    /// `RTMP_CORE_OUTPUT_MEDIA_TYPE_NONE` variant.
+    /// `RTMP_CORE_OUTPUT_MEDIA_TYPE_NONE` 变体.
     RTMP_CORE_OUTPUT_MEDIA_TYPE_NONE = 0,
+    /// `RTMP_CORE_OUTPUT_MEDIA_TYPE_AUDIO` variant.
+    /// `RTMP_CORE_OUTPUT_MEDIA_TYPE_AUDIO` 变体.
     RTMP_CORE_OUTPUT_MEDIA_TYPE_AUDIO,
+    /// `RTMP_CORE_OUTPUT_MEDIA_TYPE_VIDEO` variant.
+    /// `RTMP_CORE_OUTPUT_MEDIA_TYPE_VIDEO` 变体.
     RTMP_CORE_OUTPUT_MEDIA_TYPE_VIDEO,
+    /// `RTMP_CORE_OUTPUT_MEDIA_TYPE_DATA` variant.
+    /// `RTMP_CORE_OUTPUT_MEDIA_TYPE_DATA` 变体.
     RTMP_CORE_OUTPUT_MEDIA_TYPE_DATA,
 }
 
+/// `RtmpCoreOutputView` data structure.
+/// `RtmpCoreOutputView` 数据结构.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct RtmpCoreOutputView {
+    /// `kind` field of type `RtmpCoreOutputKind`.
+    /// `kind` 字段，类型为 `RtmpCoreOutputKind`.
     pub kind: RtmpCoreOutputKind,
+    /// `timer_id` field of type `u64`.
+    /// `timer_id` 字段，类型为 `u64`.
     pub timer_id: u64,
+    /// `at_micros` field of type `u64`.
+    /// `at_micros` 字段，类型为 `u64`.
     pub at_micros: u64,
+    /// `stream_id` field of type `u32`.
+    /// `stream_id` 字段，类型为 `u32`.
     pub stream_id: u32,
+    /// `timestamp_ms` field of type `u32`.
+    /// `timestamp_ms` 字段，类型为 `u32`.
     pub timestamp_ms: u32,
+    /// `media_type` field of type `RtmpCoreOutputMediaType`.
+    /// `media_type` 字段，类型为 `RtmpCoreOutputMediaType`.
     pub media_type: RtmpCoreOutputMediaType,
+    /// `primary_ptr` field.
+    /// `primary_ptr` 字段.
     pub primary_ptr: *const u8,
+    /// `primary_len` field of type `u32`.
+    /// `primary_len` 字段，类型为 `u32`.
     pub primary_len: u32,
+    /// `secondary_ptr` field.
+    /// `secondary_ptr` 字段.
     pub secondary_ptr: *const u8,
+    /// `secondary_len` field of type `u32`.
+    /// `secondary_len` 字段，类型为 `u32`.
     pub secondary_len: u32,
 }
 
@@ -314,10 +404,20 @@ fn encode_amf_values(values: &[AmfValue]) -> Bytes {
     Bytes::from(payload)
 }
 
+/// `RtmpCoreHandle` data structure.
+/// `RtmpCoreHandle` 数据结构.
 pub struct RtmpCoreHandle {
+    /// `core` field of type `RtmpCore`.
+    /// `core` 字段，类型为 `RtmpCore`.
     core: RtmpCore,
+    /// `output_queue` field.
+    /// `output_queue` 字段.
     output_queue: VecDeque<OwnedOutput>,
+    /// `current_output` field.
+    /// `current_output` 字段.
     current_output: Option<OwnedOutput>,
+    /// `last_error_string` field.
+    /// `last_error_string` 字段.
     last_error_string: Option<CString>,
 }
 
@@ -392,16 +492,22 @@ unsafe fn read_utf8<'a>(data: *const u8, len: u32) -> Result<&'a str, RtmpCoreAp
     std::str::from_utf8(bytes).map_err(|_| RtmpCoreApiError::RTMP_CORE_API_ERROR_INVALID_ARGUMENT)
 }
 
+/// `rtmp_library_version` function.
+/// `rtmp_library_version` 函数.
 #[unsafe(no_mangle)]
 pub extern "C" fn rtmp_library_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
 }
 
+/// `rtmp_core_new` function.
+/// `rtmp_core_new` 函数.
 #[unsafe(no_mangle)]
 pub extern "C" fn rtmp_core_new() -> *mut RtmpCoreHandle {
     Box::into_raw(Box::new(RtmpCoreHandle::new()))
 }
 
+/// `rtmp_core_free` function.
+/// `rtmp_core_free` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_free(handle: *mut RtmpCoreHandle) {
     if handle.is_null() {
@@ -410,6 +516,8 @@ pub unsafe extern "C" fn rtmp_core_free(handle: *mut RtmpCoreHandle) {
     let _ = unsafe { Box::from_raw(handle) };
 }
 
+/// `rtmp_core_get_last_error` function.
+/// `rtmp_core_get_last_error` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_get_last_error(handle: *const RtmpCoreHandle) -> *const c_char {
     if handle.is_null() {
@@ -422,6 +530,8 @@ pub unsafe extern "C" fn rtmp_core_get_last_error(handle: *const RtmpCoreHandle)
         .map_or(EMPTY_ERROR.as_ptr().cast(), |text| text.as_ptr())
 }
 
+/// `rtmp_core_pending_output_count` function.
+/// `rtmp_core_pending_output_count` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_pending_output_count(handle: *const RtmpCoreHandle) -> u32 {
     if handle.is_null() {
@@ -431,6 +541,8 @@ pub unsafe extern "C" fn rtmp_core_pending_output_count(handle: *const RtmpCoreH
     handle_ref.pending_output_count()
 }
 
+/// `rtmp_core_clear_outputs` function.
+/// `rtmp_core_clear_outputs` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_clear_outputs(handle: *mut RtmpCoreHandle) {
     let Some(handle_ref) = (unsafe { handle_mut(handle) }) else {
@@ -440,6 +552,8 @@ pub unsafe extern "C" fn rtmp_core_clear_outputs(handle: *mut RtmpCoreHandle) {
     handle_ref.output_queue.clear();
 }
 
+/// `rtmp_core_clear_output` function.
+/// `rtmp_core_clear_output` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_clear_output(handle: *mut RtmpCoreHandle) {
     let Some(handle_ref) = (unsafe { handle_mut(handle) }) else {
@@ -448,6 +562,8 @@ pub unsafe extern "C" fn rtmp_core_clear_output(handle: *mut RtmpCoreHandle) {
     handle_ref.current_output = None;
 }
 
+/// `rtmp_core_next_output` function.
+/// `rtmp_core_next_output` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_next_output(
     handle: *mut RtmpCoreHandle,
@@ -480,6 +596,8 @@ pub unsafe extern "C" fn rtmp_core_next_output(
     RtmpCoreApiError::RTMP_CORE_API_ERROR_OK
 }
 
+/// `rtmp_core_handle_bytes` function.
+/// `rtmp_core_handle_bytes` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_handle_bytes(
     handle: *mut RtmpCoreHandle,
@@ -496,6 +614,8 @@ pub unsafe extern "C" fn rtmp_core_handle_bytes(
     handle_ref.apply_input(CoreInput::Bytes(Bytes::copy_from_slice(bytes)))
 }
 
+/// `rtmp_core_handle_timeout` function.
+/// `rtmp_core_handle_timeout` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_handle_timeout(
     handle: *mut RtmpCoreHandle,
@@ -514,6 +634,8 @@ fn command_no_payload(
     handle_ref.apply_input(CoreInput::Command(command))
 }
 
+/// `rtmp_core_command_accept_publish` function.
+/// `rtmp_core_command_accept_publish` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_accept_publish(
     handle: *mut RtmpCoreHandle,
@@ -525,6 +647,8 @@ pub unsafe extern "C" fn rtmp_core_command_accept_publish(
     command_no_payload(handle_ref, RtmpCoreCommand::AcceptPublish { stream_id })
 }
 
+/// `rtmp_core_command_reject_publish` function.
+/// `rtmp_core_command_reject_publish` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_reject_publish(
     handle: *mut RtmpCoreHandle,
@@ -548,6 +672,8 @@ pub unsafe extern "C" fn rtmp_core_command_reject_publish(
     )
 }
 
+/// `rtmp_core_command_accept_play` function.
+/// `rtmp_core_command_accept_play` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_accept_play(
     handle: *mut RtmpCoreHandle,
@@ -559,6 +685,8 @@ pub unsafe extern "C" fn rtmp_core_command_accept_play(
     command_no_payload(handle_ref, RtmpCoreCommand::AcceptPlay { stream_id })
 }
 
+/// `rtmp_core_command_accept_play_configured` function.
+/// `rtmp_core_command_accept_play_configured` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_accept_play_configured(
     handle: *mut RtmpCoreHandle,
@@ -579,6 +707,8 @@ pub unsafe extern "C" fn rtmp_core_command_accept_play_configured(
     )
 }
 
+/// `rtmp_core_command_reject_play` function.
+/// `rtmp_core_command_reject_play` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_reject_play(
     handle: *mut RtmpCoreHandle,
@@ -617,6 +747,8 @@ unsafe fn read_payload(
     }
 }
 
+/// `rtmp_core_command_send_metadata` function.
+/// `rtmp_core_command_send_metadata` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_send_metadata(
     handle: *mut RtmpCoreHandle,
@@ -641,6 +773,8 @@ pub unsafe extern "C" fn rtmp_core_command_send_metadata(
     )
 }
 
+/// `rtmp_core_command_send_audio` function.
+/// `rtmp_core_command_send_audio` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_send_audio(
     handle: *mut RtmpCoreHandle,
@@ -665,6 +799,8 @@ pub unsafe extern "C" fn rtmp_core_command_send_audio(
     )
 }
 
+/// `rtmp_core_command_send_video` function.
+/// `rtmp_core_command_send_video` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_send_video(
     handle: *mut RtmpCoreHandle,
@@ -689,6 +825,8 @@ pub unsafe extern "C" fn rtmp_core_command_send_video(
     )
 }
 
+/// `rtmp_core_command_send_notify` function.
+/// `rtmp_core_command_send_notify` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_send_notify(
     handle: *mut RtmpCoreHandle,
@@ -713,6 +851,8 @@ pub unsafe extern "C" fn rtmp_core_command_send_notify(
     )
 }
 
+/// `rtmp_core_command_close_stream` function.
+/// `rtmp_core_command_close_stream` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_close_stream(
     handle: *mut RtmpCoreHandle,
@@ -724,6 +864,8 @@ pub unsafe extern "C" fn rtmp_core_command_close_stream(
     command_no_payload(handle_ref, RtmpCoreCommand::CloseStream { stream_id })
 }
 
+/// `rtmp_core_command_close_connection` function.
+/// `rtmp_core_command_close_connection` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_close_connection(
     handle: *mut RtmpCoreHandle,

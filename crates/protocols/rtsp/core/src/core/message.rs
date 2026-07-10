@@ -6,50 +6,108 @@ use super::{
     RtspCoreError, RtspMessageLimits,
 };
 
+/// `RtspHeader` data structure.
+/// `RtspHeader` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspHeader {
+    /// `name` field of type `String`.
+    /// `name` 字段，类型为 `String`.
     pub name: String,
+    /// `value` field of type `String`.
+    /// `值` 字段，类型为 `String`.
     pub value: String,
 }
 
+/// `RtspRequestMessage` data structure.
+/// `RtspRequestMessage` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspRequestMessage {
+    /// `method` field of type `String`.
+    /// `方法` 字段，类型为 `String`.
     pub method: String,
+    /// `uri` field of type `String`.
+    /// `uri` 字段，类型为 `String`.
     pub uri: String,
+    /// `version` field of type `String`.
+    /// `version` 字段，类型为 `String`.
     pub version: String,
+    /// `headers` field.
+    /// `headers` 字段.
     pub headers: Vec<RtspHeader>,
+    /// `body` field of type `Bytes`.
+    /// `body` 字段，类型为 `Bytes`.
     pub body: Bytes,
 }
 
+/// `RtspResponseMessage` data structure.
+/// `RtspResponseMessage` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspResponseMessage {
+    /// `version` field of type `String`.
+    /// `version` 字段，类型为 `String`.
     pub version: String,
+    /// `status_code` field of type `u16`.
+    /// `status_code` 字段，类型为 `u16`.
     pub status_code: u16,
+    /// `reason_phrase` field of type `String`.
+    /// `reason_phrase` 字段，类型为 `String`.
     pub reason_phrase: String,
+    /// `headers` field.
+    /// `headers` 字段.
     pub headers: Vec<RtspHeader>,
+    /// `body` field of type `Bytes`.
+    /// `body` 字段，类型为 `Bytes`.
     pub body: Bytes,
 }
 
+/// `RtspRequest` data structure.
+/// `RtspRequest` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtspRequest {
+    /// `method` field of type `RtspMethod`.
+    /// `方法` 字段，类型为 `RtspMethod`.
     pub method: RtspMethod,
+    /// `uri` field of type `String`.
+    /// `uri` 字段，类型为 `String`.
     pub uri: String,
+    /// `version` field of type `String`.
+    /// `version` 字段，类型为 `String`.
     pub version: String,
+    /// `headers` field.
+    /// `headers` 字段.
     pub headers: Vec<RtspHeader>,
+    /// `body` field of type `Bytes`.
+    /// `body` 字段，类型为 `Bytes`.
     pub body: Bytes,
+    /// `cseq` field.
+    /// `cseq` 字段.
     pub cseq: Option<u32>,
+    /// `session` field.
+    /// `session` 字段.
     pub session: Option<String>,
 }
 
+/// `RtspRequestDecoder` data structure.
+/// `RtspRequestDecoder` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtspRequestDecoder {
+    /// `buffer` field of type `BytesMut`.
+    /// `buffer` 字段，类型为 `BytesMut`.
     buffer: BytesMut,
+    /// `limits` field of type `RtspMessageLimits`.
+    /// `limits` 字段，类型为 `RtspMessageLimits`.
     limits: RtspMessageLimits,
 }
 
+/// `RtspResponseDecoder` data structure.
+/// `RtspResponseDecoder` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtspResponseDecoder {
+    /// `buffer` field of type `BytesMut`.
+    /// `buffer` 字段，类型为 `BytesMut`.
     buffer: BytesMut,
+    /// `limits` field of type `RtspMessageLimits`.
+    /// `limits` 字段，类型为 `RtspMessageLimits`.
     limits: RtspMessageLimits,
 }
 
@@ -61,18 +119,24 @@ fn header_value<'a>(headers: &'a [RtspHeader], name: &str) -> Option<&'a str> {
 }
 
 impl RtspRequestMessage {
+    /// `header_value` function.
+    /// `header_value` 函数.
     pub fn header_value(&self, name: &str) -> Option<&str> {
         header_value(&self.headers, name)
     }
 }
 
 impl RtspResponseMessage {
+    /// `header_value` function.
+    /// `header_value` 函数.
     pub fn header_value(&self, name: &str) -> Option<&str> {
         header_value(&self.headers, name)
     }
 }
 
 impl RtspRequest {
+    /// `header_value` function.
+    /// `header_value` 函数.
     pub fn header_value(&self, name: &str) -> Option<&str> {
         header_value(&self.headers, name)
     }
@@ -91,10 +155,14 @@ impl Default for RtspResponseDecoder {
 }
 
 impl RtspRequestDecoder {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self::with_limits(RtspMessageLimits::default())
     }
 
+    /// Returns a copy with `limits` set.
+    /// 返回 一个 copy 带有 `limits` 设置.
     pub fn with_limits(limits: RtspMessageLimits) -> Self {
         Self {
             buffer: BytesMut::new(),
@@ -102,6 +170,8 @@ impl RtspRequestDecoder {
         }
     }
 
+    /// `feed` function.
+    /// `feed` 函数.
     pub fn feed(&mut self, data: &[u8]) -> Result<(), RtspCoreError> {
         self.limits
             .validate_buffer_growth(self.buffer.len(), data.len())?;
@@ -109,6 +179,8 @@ impl RtspRequestDecoder {
         Ok(())
     }
 
+    /// `decode` function.
+    /// `decode` 函数.
     pub fn decode(&mut self) -> Result<Option<RtspRequestMessage>, RtspCoreError> {
         match try_parse_message(&mut self.buffer, &self.limits)? {
             ParsedMessage::Incomplete => Ok(None),
@@ -119,10 +191,14 @@ impl RtspRequestDecoder {
 }
 
 impl RtspResponseDecoder {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self::with_limits(RtspMessageLimits::default())
     }
 
+    /// Returns a copy with `limits` set.
+    /// 返回 一个 copy 带有 `limits` 设置.
     pub fn with_limits(limits: RtspMessageLimits) -> Self {
         Self {
             buffer: BytesMut::new(),
@@ -130,6 +206,8 @@ impl RtspResponseDecoder {
         }
     }
 
+    /// `feed` function.
+    /// `feed` 函数.
     pub fn feed(&mut self, data: &[u8]) -> Result<(), RtspCoreError> {
         self.limits
             .validate_buffer_growth(self.buffer.len(), data.len())?;
@@ -137,6 +215,8 @@ impl RtspResponseDecoder {
         Ok(())
     }
 
+    /// `decode` function.
+    /// `decode` 函数.
     pub fn decode(&mut self) -> Result<Option<RtspResponseMessage>, RtspCoreError> {
         match try_parse_message(&mut self.buffer, &self.limits)? {
             ParsedMessage::Incomplete => Ok(None),
@@ -146,12 +226,22 @@ impl RtspResponseDecoder {
     }
 }
 
+/// `ParsedMessage` enumeration.
+/// `ParsedMessage` 枚举.
 pub(crate) enum ParsedMessage {
+    /// `Incomplete` variant.
+    /// `Incomplete` 变体.
     Incomplete,
+    /// `Request` variant.
+    /// `Request` 变体.
     Request(RtspRequestMessage),
+    /// `Response` variant.
+    /// `Response` 变体.
     Response(RtspResponseMessage),
 }
 
+/// `try_parse_request` function.
+/// `try_parse_request` 函数.
 pub(crate) fn try_parse_request(
     buffer: &mut BytesMut,
     limits: &RtspMessageLimits,
@@ -159,6 +249,8 @@ pub(crate) fn try_parse_request(
     try_parse_message(buffer, limits)
 }
 
+/// `try_parse_message` function.
+/// `try_parse_message` 函数.
 pub(crate) fn try_parse_message(
     buffer: &mut BytesMut,
     limits: &RtspMessageLimits,
@@ -192,6 +284,8 @@ pub(crate) fn try_parse_message(
     }
 }
 
+/// `encode_rtsp_request` function.
+/// `encode_rtsp_request` 函数.
 pub fn encode_rtsp_request(request: &RtspRequestMessage) -> Result<Bytes, RtspCoreError> {
     validate_start_line_field(&request.method, "method")?;
     validate_start_line_field(&request.uri, "uri")?;
@@ -218,6 +312,8 @@ pub fn encode_rtsp_request(request: &RtspRequestMessage) -> Result<Bytes, RtspCo
     Ok(buf.freeze())
 }
 
+/// `encode_rtsp_response` function.
+/// `encode_rtsp_response` 函数.
 pub fn encode_rtsp_response(response: &RtspResponseMessage) -> Result<Bytes, RtspCoreError> {
     validate_start_line_field(&response.version, "version")?;
     validate_reason_phrase(&response.reason_phrase)?;
@@ -249,6 +345,8 @@ pub fn encode_rtsp_response(response: &RtspResponseMessage) -> Result<Bytes, Rts
     Ok(buf.freeze())
 }
 
+/// `encode_rtsp_response_parts` function.
+/// `encode_rtsp_response_parts` 函数.
 pub(crate) fn encode_rtsp_response_parts(
     cseq: Option<u32>,
     status_code: u16,
@@ -283,6 +381,8 @@ pub(crate) fn encode_rtsp_response_parts(
     })
 }
 
+/// `into_rtsp_request` function.
+/// `into_rtsp_request` 函数.
 pub(crate) fn into_rtsp_request(request: RtspRequestMessage) -> RtspRequest {
     let method = RtspMethod::parse(&request.method);
     let cseq = request

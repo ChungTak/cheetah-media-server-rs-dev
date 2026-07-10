@@ -1,8 +1,12 @@
 use cheetah_sdk::{SdkError, ServiceDescriptor, ServiceRegistry};
 use dashmap::DashMap;
 
+/// `InMemoryServiceRegistry` data structure.
+/// `InMemoryServiceRegistry` 数据结构.
 #[derive(Default)]
 pub struct InMemoryServiceRegistry {
+    /// `services` field.
+    /// `services` 字段.
     services: DashMap<String, ServiceDescriptor>,
 }
 

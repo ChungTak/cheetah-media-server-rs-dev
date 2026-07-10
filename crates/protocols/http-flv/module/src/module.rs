@@ -28,6 +28,8 @@ use crate::pull::{run_pull_job_supervisor, PullReadLimits};
 
 const MODULE_ID: &str = "http-flv";
 
+/// `HttpFlvModuleFactory` data structure.
+/// `HttpFlvModuleFactory` 数据结构.
 pub struct HttpFlvModuleFactory;
 
 impl ModuleFactory for HttpFlvModuleFactory {
@@ -64,16 +66,32 @@ impl ModuleFactory for HttpFlvModuleFactory {
     }
 }
 
+/// `HttpFlvModule` data structure.
+/// `HttpFlvModule` 数据结构.
 pub struct HttpFlvModule {
+    /// `info` field of type `ModuleInfo`.
+    /// `info` 字段，类型为 `ModuleInfo`.
     info: ModuleInfo,
+    /// `state` field of type `ModuleState`.
+    /// `state` 字段，类型为 `ModuleState`.
     state: ModuleState,
+    /// `engine` field.
+    /// `engine` 字段.
     engine: Option<EngineContext>,
+    /// `config` field of type `HttpFlvModuleConfig`.
+    /// `config` 字段，类型为 `HttpFlvModuleConfig`.
     config: HttpFlvModuleConfig,
+    /// `runtime_cancel` field.
+    /// `runtime_cancel` 字段.
     runtime_cancel: Option<CancellationToken>,
+    /// `runtime_loops` field.
+    /// `runtime_loops` 字段.
     runtime_loops: Vec<OneShotReceiver>,
 }
 
 impl HttpFlvModule {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             info: ModuleInfo {

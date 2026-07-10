@@ -9,17 +9,31 @@ use cheetah_codec::{CodecId, MediaKind};
 /// Track info extracted from init segment.
 #[derive(Debug, Clone)]
 pub struct Fmp4DemuxTrack {
+    /// `track_id` field of type `u32`.
+    /// `track_id` 字段，类型为 `u32`.
     pub track_id: u32,
+    /// `codec` field of type `CodecId`.
+    /// `codec` 字段，类型为 `CodecId`.
     pub codec: CodecId,
+    /// `media_kind` field of type `MediaKind`.
+    /// `media_kind` 字段，类型为 `MediaKind`.
     pub media_kind: MediaKind,
+    /// `timescale` field of type `u32`.
+    /// `timescale` 字段，类型为 `u32`.
     pub timescale: u32,
+    /// `extradata` field of type `Bytes`.
+    /// `extradata` 字段，类型为 `Bytes`.
     pub extradata: Bytes,
 }
 
 /// Events produced by the fMP4 demuxer.
 #[derive(Debug, Clone)]
 pub enum Fmp4DemuxEvent {
+    /// `TrackInfo` variant.
+    /// `TrackInfo` 变体.
     TrackInfo(Vec<Fmp4DemuxTrack>),
+    /// `Frame` variant.
+    /// `Frame` 变体.
     Frame {
         track_id: u32,
         media_kind: MediaKind,
@@ -33,19 +47,33 @@ pub enum Fmp4DemuxEvent {
 /// Error from fMP4 demuxing.
 #[derive(Debug, Clone)]
 pub enum Fmp4DemuxError {
+    /// `InvalidBox` variant.
+    /// `InvalidBox` 变体.
     InvalidBox,
+    /// `NoMoov` variant.
+    /// `NoMoov` 变体.
     NoMoov,
+    /// `NoMdat` variant.
+    /// `NoMdat` 变体.
     NoMdat,
+    /// `InitNotParsed` variant.
+    /// `InitNotParsed` 变体.
     InitNotParsed,
 }
 
 /// fMP4 demuxer state — delegates to `cheetah_codec::Fmp4Demuxer`.
 pub struct Fmp4Demuxer {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: cheetah_codec::Fmp4Demuxer,
+    /// `init_parsed` field of type `bool`.
+    /// `init_parsed` 字段，类型为 `bool`.
     init_parsed: bool,
 }
 
 impl Fmp4Demuxer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             inner: cheetah_codec::Fmp4Demuxer::new(cheetah_codec::Fmp4DemuxerConfig::default()),

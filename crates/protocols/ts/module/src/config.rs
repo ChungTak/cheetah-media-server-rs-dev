@@ -2,58 +2,114 @@
 
 use serde::{Deserialize, Serialize};
 
+/// `TsModuleConfig` data structure.
+/// `TsModuleConfig` 数据结构.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TsModuleConfig {
+    /// `enabled` field of type `bool`.
+    /// `enabled` 字段，类型为 `bool`.
     pub enabled: bool,
+    /// `listen` field of type `String`.
+    /// `listen` 字段，类型为 `String`.
     pub listen: String,
+    /// `write_queue_capacity` field of type `usize`.
+    /// `write_queue_capacity` 字段，类型为 `usize`.
     #[serde(default = "default_write_queue_capacity")]
     pub write_queue_capacity: usize,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     #[serde(default = "default_read_buffer_size")]
     pub read_buffer_size: usize,
+    /// `subscriber_queue_capacity` field of type `usize`.
+    /// `subscriber_queue_capacity` 字段，类型为 `usize`.
     #[serde(default = "default_subscriber_queue_capacity")]
     pub subscriber_queue_capacity: usize,
+    /// `bootstrap_max_frames` field of type `usize`.
+    /// `bootstrap_max_frames` 字段，类型为 `usize`.
     #[serde(default = "default_bootstrap_max_frames")]
     pub bootstrap_max_frames: usize,
+    /// `play_wait_source_timeout_ms` field of type `u64`.
+    /// `play_wait_source_timeout_ms` 字段，类型为 `u64`.
     #[serde(default = "default_play_wait_source_timeout_ms")]
     pub play_wait_source_timeout_ms: u64,
+    /// `max_tracks` field of type `usize`.
+    /// `max_tracks` 字段，类型为 `usize`.
     #[serde(default = "default_max_tracks")]
     pub max_tracks: usize,
+    /// `strict_crc` field of type `bool`.
+    /// `strict_crc` 字段，类型为 `bool`.
     #[serde(default)]
     pub strict_crc: bool,
+    /// `max_reassembly_bytes` field of type `usize`.
+    /// `max_reassembly_bytes` 字段，类型为 `usize`.
     #[serde(default = "default_max_reassembly_bytes")]
     pub max_reassembly_bytes: usize,
+    /// `pat_pmt_interval_ms` field of type `u64`.
+    /// `pat_pmt_interval_ms` 字段，类型为 `u64`.
     #[serde(default = "default_pat_pmt_interval_ms")]
     pub pat_pmt_interval_ms: u64,
     /// When true, TS mux only runs while at least one player is connected.
     #[serde(default)]
     pub demand_mode: bool,
+    /// `tls` field.
+    /// `tls` 字段.
     #[serde(default)]
     pub tls: Option<TsTlsConfig>,
+    /// `pull_jobs` field.
+    /// `pull_jobs` 字段.
     #[serde(default)]
     pub pull_jobs: Vec<TsPullJobConfig>,
 }
 
+/// `TsTlsConfig` data structure.
+/// `TsTlsConfig` 数据结构.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TsTlsConfig {
+    /// `enabled` field of type `bool`.
+    /// `enabled` 字段，类型为 `bool`.
     pub enabled: bool,
+    /// `listen` field of type `String`.
+    /// `listen` 字段，类型为 `String`.
     pub listen: String,
+    /// `cert_path` field of type `String`.
+    /// `cert_path` 字段，类型为 `String`.
     pub cert_path: String,
+    /// `key_path` field of type `String`.
+    /// `key_path` 字段，类型为 `String`.
     pub key_path: String,
+    /// `handshake_timeout_ms` field of type `u64`.
+    /// `handshake_timeout_ms` 字段，类型为 `u64`.
     #[serde(default = "default_handshake_timeout_ms")]
     pub handshake_timeout_ms: u64,
 }
 
+/// `TsPullJobConfig` data structure.
+/// `TsPullJobConfig` 数据结构.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TsPullJobConfig {
+    /// `name` field of type `String`.
+    /// `name` 字段，类型为 `String`.
     pub name: String,
+    /// `enabled` field of type `bool`.
+    /// `enabled` 字段，类型为 `bool`.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// `source_url` field of type `String`.
+    /// `source_url` 字段，类型为 `String`.
     pub source_url: String,
+    /// `target_stream_key` field of type `String`.
+    /// `target_stream_key` 字段，类型为 `String`.
     pub target_stream_key: String,
+    /// `retry_backoff_ms` field of type `u64`.
+    /// `retry_backoff_ms` 字段，类型为 `u64`.
     #[serde(default = "default_retry_backoff_ms")]
     pub retry_backoff_ms: u64,
+    /// `max_retry_backoff_ms` field of type `u64`.
+    /// `max_retry_backoff_ms` 字段，类型为 `u64`.
     #[serde(default = "default_max_retry_backoff_ms")]
     pub max_retry_backoff_ms: u64,
+    /// `insecure_tls` field of type `bool`.
+    /// `insecure_tls` 字段，类型为 `bool`.
     #[serde(default)]
     pub insecure_tls: bool,
 }
@@ -80,10 +136,14 @@ impl Default for TsModuleConfig {
 }
 
 impl TsModuleConfig {
+    /// `default_json` function.
+    /// `default_json` 函数.
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap_or_default()
     }
 
+    /// Creates `value` from input.
+    /// 创建 `值` 来自 输入.
     pub fn from_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
     }

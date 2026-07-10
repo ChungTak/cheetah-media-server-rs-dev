@@ -16,16 +16,36 @@ use cheetah_sdk::{HealthApi, MetricsApi};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+/// `ControlState` data structure.
+/// `ControlState` 数据结构.
 #[derive(Clone)]
 pub struct ControlState {
+    /// `health` field.
+    /// `health` 字段.
     pub health: Arc<dyn HealthApi>,
+    /// `metrics` field.
+    /// `metrics` 字段.
     pub metrics: Arc<dyn MetricsApi>,
+    /// `modules` field.
+    /// `modules` 字段.
     pub modules: Arc<dyn ModuleManagerApi>,
+    /// `streams` field.
+    /// `streams` 字段.
     pub streams: Arc<dyn StreamManagerApi>,
+    /// `tasks` field.
+    /// `tasks` 字段.
     pub tasks: Arc<dyn TaskSystemApi>,
+    /// `config` field.
+    /// `config` 字段.
     pub config: Arc<dyn ConfigProvider>,
+    /// `config_apply` field.
+    /// `config_apply` 字段.
     pub config_apply: Arc<dyn ConfigApplyApi>,
+    /// `config_schemas` field.
+    /// `config_schemas` 字段.
     pub config_schemas: Arc<dyn ConfigSchemaRegistry>,
+    /// `service_registry` field.
+    /// `service_registry` 字段.
     pub service_registry: Arc<dyn ServiceRegistry>,
 }
 
@@ -35,6 +55,8 @@ struct PatchRequest {
     effect: Option<String>,
 }
 
+/// `router` function.
+/// `router` 函数.
 pub fn router(state: ControlState) -> Router {
     let state = Arc::new(state);
     Router::new()
@@ -55,6 +77,8 @@ pub fn router(state: ControlState) -> Router {
         .layer(Extension(state))
 }
 
+/// `spawn_server` function.
+/// `spawn_server` 函数.
 pub fn spawn_server(
     addr: SocketAddr,
     state: ControlState,

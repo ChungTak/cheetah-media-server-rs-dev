@@ -14,15 +14,35 @@ use crate::error::Gb28181CoreError;
 /// frequently omit RFC-mandated parameters.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DigestParams {
+    /// `realm` field.
+    /// `realm` 字段.
     pub realm: Option<String>,
+    /// `nonce` field.
+    /// `nonce` 字段.
     pub nonce: Option<String>,
+    /// `username` field.
+    /// `username` 字段.
     pub username: Option<String>,
+    /// `uri` field.
+    /// `uri` 字段.
     pub uri: Option<String>,
+    /// `response` field.
+    /// `response` 字段.
     pub response: Option<String>,
+    /// `algorithm` field.
+    /// `algorithm` 字段.
     pub algorithm: Option<String>,
+    /// `opaque` field.
+    /// `opaque` 字段.
     pub opaque: Option<String>,
+    /// `qop` field.
+    /// `qop` 字段.
     pub qop: Option<String>,
+    /// `nc` field.
+    /// `nc` 字段.
     pub nc: Option<String>,
+    /// `cnonce` field.
+    /// `cnonce` 字段.
     pub cnonce: Option<String>,
     /// Any additional unrecognised parameters, preserved verbatim for diagnostics.
     pub extra: HashMap<String, String>,

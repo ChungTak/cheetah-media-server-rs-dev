@@ -10,59 +10,101 @@ use crate::request::{
 /// Input events to the fMP4 core state machine.
 #[derive(Debug, Clone)]
 pub enum Fmp4CoreInput {
+    /// `RequestHead` variant.
+    /// `RequestHead` 变体.
     RequestHead(HttpRequestHead),
+    /// `WebSocketMessage` variant.
+    /// `WebSocketMessage` 变体.
     WebSocketMessage(WebSocketMessage),
+    /// `Command` variant.
+    /// `Command` 变体.
     Command(Fmp4CoreCommand),
 }
 
 /// Commands from module/driver to the core.
 #[derive(Debug, Clone)]
 pub enum Fmp4CoreCommand {
+    /// `SendFmp4Bytes` variant.
+    /// `SendFmp4Bytes` 变体.
     SendFmp4Bytes(Bytes),
+    /// `Close` variant.
+    /// `Close` 变体.
     Close,
 }
 
 /// Output actions from the core state machine.
 #[derive(Debug, Clone)]
 pub enum Fmp4CoreOutput {
+    /// `SendHttpResponse` variant.
+    /// `SendHttpResponse` 变体.
     SendHttpResponse(HttpResponseHead),
+    /// `SendBytes` variant.
+    /// `SendBytes` 变体.
     SendBytes(Bytes),
+    /// `SendWebSocketBinary` variant.
+    /// `SendWebSocketBinary` 变体.
     SendWebSocketBinary(Bytes),
+    /// `SendWebSocketPong` variant.
+    /// `SendWebSocketPong` 变体.
     SendWebSocketPong(Bytes),
+    /// `Event` variant.
+    /// `Event` 变体.
     Event(Fmp4CoreEvent),
+    /// `Close` variant.
+    /// `Close` 变体.
     Close { reason: CloseReason },
 }
 
 /// Events emitted by the core for the module layer.
 #[derive(Debug, Clone)]
 pub enum Fmp4CoreEvent {
+    /// `PlayRequested` variant.
+    /// `PlayRequested` 变体.
     PlayRequested {
         stream_key: StreamKeyParts,
         transport: Fmp4Transport,
     },
+    /// `PeerClosed` variant.
+    /// `PeerClosed` 变体.
     PeerClosed,
 }
 
 /// Reason for closing a connection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseReason {
+    /// `Normal` variant.
+    /// `Normal` 变体.
     Normal,
+    /// `InvalidRequest` variant.
+    /// `InvalidRequest` 变体.
     InvalidRequest,
+    /// `MethodNotAllowed` variant.
+    /// `MethodNotAllowed` 变体.
     MethodNotAllowed,
+    /// `WebSocketTextMessage` variant.
+    /// `WebSocketTextMessage` 变体.
     WebSocketTextMessage,
+    /// `CommandClose` variant.
+    /// `CommandClose` 变体.
     CommandClose,
 }
 
 /// Sans-I/O fMP4 core state machine.
 pub struct Fmp4Core {
+    /// `transport` field.
+    /// `transport` 字段.
     transport: Option<Fmp4Transport>,
 }
 
 impl Fmp4Core {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self { transport: None }
     }
 
+    /// `process` function.
+    /// `process` 函数.
     pub fn process(&mut self, input: Fmp4CoreInput) -> Vec<Fmp4CoreOutput> {
         match input {
             Fmp4CoreInput::RequestHead(head) => self.handle_request(head),

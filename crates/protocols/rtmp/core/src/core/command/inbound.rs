@@ -12,6 +12,8 @@ use crate::message::{RtmpMessageHeader, RtmpMessageStreamId};
 use super::super::{CoreOutput, RtmpCore, RtmpCoreError, RtmpEvent};
 
 impl RtmpCore {
+    /// `on_notify_message` function.
+    /// `on_notify_message` 函数.
     pub(crate) fn on_notify_message(
         &mut self,
         message_stream_id: u32,
@@ -21,6 +23,8 @@ impl RtmpCore {
         self.emit_notify_event(message_stream_id, values)
     }
 
+    /// `on_notify_message_amf3` function.
+    /// `on_notify_message_amf3` 函数.
     pub(crate) fn on_notify_message_amf3(
         &mut self,
         message_stream_id: u32,
@@ -65,6 +69,8 @@ impl RtmpCore {
         }))
     }
 
+    /// `on_command_message` function.
+    /// `on_command_message` 函数.
     pub(crate) fn on_command_message(
         &mut self,
         message_stream_id: u32,
@@ -74,6 +80,8 @@ impl RtmpCore {
         self.on_command_message_with_version(message_stream_id, payload, AmfVersion::Amf0, out)
     }
 
+    /// `on_command_message_amf3` function.
+    /// `on_command_message_amf3` 函数.
     pub(crate) fn on_command_message_amf3(
         &mut self,
         message_stream_id: u32,

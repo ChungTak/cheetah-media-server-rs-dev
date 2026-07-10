@@ -94,11 +94,17 @@ pub struct DispatcherOfferWaiter {
 /// shape so adapters can be written without re-exposing private types.
 #[derive(Debug, Clone)]
 pub enum DispatcherOfferOutcome {
+    /// `Sdp` variant.
+    /// `Sdp` 变体.
     Sdp(String),
+    /// `Failed` variant.
+    /// `Failed` 变体.
     Failed(String),
 }
 
 impl DispatcherOfferWaiter {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new<F>(runtime: Arc<dyn RuntimeApi>, subscribe: F) -> Self
     where
         F: Fn(WebRtcSessionId) -> BoxFuture<'static, DispatcherOfferOutcome>
@@ -167,6 +173,8 @@ pub enum BridgeLifecycleEvent {
 /// Bridge configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct P2pBridgeConfig {
+    /// `job` field of type `P2pJobConfig`.
+    /// `job` 字段，类型为 `P2pJobConfig`.
     pub job: P2pJobConfig,
     /// Local session id. Must be unique across the driver. Callers
     /// allocate via `WebRtcSessionIdAllocator`.
@@ -190,8 +198,12 @@ pub enum P2pBridgeOutcome {
     Encode { reason: P2pMessageError },
 }
 
+/// `P2pBridgeError` enumeration.
+/// `P2pBridgeError` 枚举.
 #[derive(Debug, Clone, Error)]
 pub enum P2pBridgeError {
+    /// `AlreadyFinished` variant.
+    /// `AlreadyFinished` 变体.
     #[error("bridge already finished")]
     AlreadyFinished,
 }
@@ -591,6 +603,8 @@ where
 /// integration test module thin.
 #[derive(Debug, Default)]
 pub struct RecordingDriverSink {
+    /// `commands` field.
+    /// `commands` 字段.
     pub commands: Mutex<Vec<WebRtcDriverCommand>>,
 }
 
@@ -604,6 +618,8 @@ impl P2pDriverSink for RecordingDriverSink {
 /// Test-only waiter that returns a fixed offer SDP after a small
 /// delay so the bridge actually awaits.
 pub struct StaticOfferWaiter {
+    /// `sdp` field of type `String`.
+    /// `sdp` 字段，类型为 `String`.
     pub sdp: String,
 }
 
@@ -621,6 +637,8 @@ impl P2pOfferWaiter for StaticOfferWaiter {
 /// Test-only waiter that always fails after `delay`. Used to verify
 /// the bridge emits a `OfferFailed` outcome and stops the session.
 pub struct FailingOfferWaiter {
+    /// `reason` field of type `String`.
+    /// `reason` 字段，类型为 `String`.
     pub reason: String,
 }
 

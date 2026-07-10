@@ -15,9 +15,17 @@ use crate::demuxed_muxer::{DemuxedMuxerConfig, DemuxedStreamMuxer};
 /// Configuration for the stream muxer.
 #[derive(Debug, Clone)]
 pub struct StreamMuxerConfig {
+    /// `segment_duration_ms` field of type `u64`.
+    /// `segment_duration_ms` 字段，类型为 `u64`.
     pub segment_duration_ms: u64,
+    /// `segment_count` field of type `usize`.
+    /// `segment_count` 字段，类型为 `usize`.
     pub segment_count: usize,
+    /// `ready_threshold` field of type `usize`.
+    /// `ready_threshold` 字段，类型为 `usize`.
     pub ready_threshold: usize,
+    /// `force_segment_after_ms` field of type `u64`.
+    /// `force_segment_after_ms` 字段，类型为 `u64`.
     pub force_segment_after_ms: u64,
     /// Force first 2 segments to cut on any keyframe for fast stream discovery.
     pub fast_register: bool,
@@ -43,10 +51,20 @@ pub struct StreamMuxerConfig {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SegmentMeta {
+    /// `name` field of type `String`.
+    /// `name` 字段，类型为 `String`.
     pub name: String,
+    /// `duration_secs` field of type `f64`.
+    /// `duration_secs` 字段，类型为 `f64`.
     pub duration_secs: f64,
+    /// `sequence` field of type `u64`.
+    /// `sequence` 字段，类型为 `u64`.
     pub sequence: u64,
+    /// `program_date_time_ms` field.
+    /// `program_date_time_ms` 字段.
     pub program_date_time_ms: Option<i64>,
+    /// `markers` field.
+    /// `markers` 字段.
     pub markers: Vec<cheetah_hls_core::CueMarker>,
 }
 
@@ -54,18 +72,28 @@ pub struct SegmentMeta {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum MuxerOutput {
+    /// `SegmentReady` variant.
+    /// `SegmentReady` 变体.
     SegmentReady {
         name: String,
         duration_secs: f64,
         data: Bytes,
     },
+    /// `PartReady` variant.
+    /// `PartReady` 变体.
     PartReady(HlsPart),
 }
 
 /// Per-stream HLS muxer state.
 pub struct StreamMuxer {
+    /// `config` field of type `StreamMuxerConfig`.
+    /// `config` 字段，类型为 `StreamMuxerConfig`.
     config: StreamMuxerConfig,
+    /// `ts_muxer` field.
+    /// `ts_muxer` 字段.
     ts_muxer: Option<TsMuxer>,
+    /// `fmp4_muxer` field.
+    /// `fmp4_muxer` 字段.
     fmp4_muxer: Option<Fmp4Muxer>,
     /// Cached fMP4 init segment.
     fmp4_init: Option<Bytes>,
@@ -76,12 +104,22 @@ pub struct StreamMuxer {
     /// Accumulated part binary data for current segment (LL-HLS).
     /// Segment = concatenation of all its parts.
     pending_segment_part_data: Vec<Bytes>,
+    /// `ring` field of type `SegmentRing`.
+    /// `ring` 字段，类型为 `SegmentRing`.
     ring: SegmentRing,
     /// LL-HLS state (None when ll_hls disabled or container is TS).
     ll_state: Option<LowLatencyState>,
+    /// `video_codec` field of type `CodecId`.
+    /// `video_codec` 字段，类型为 `CodecId`.
     video_codec: CodecId,
+    /// `audio_codec` field of type `CodecId`.
+    /// `audio_codec` 字段，类型为 `CodecId`.
     audio_codec: CodecId,
+    /// `has_video` field of type `bool`.
+    /// `has_video` 字段，类型为 `bool`.
     has_video: bool,
+    /// `has_audio` field of type `bool`.
+    /// `has_audio` 字段，类型为 `bool`.
     has_audio: bool,
     /// AAC AudioSpecificConfig for ADTS wrapping.
     aac_config: Option<AacAudioSpecificConfig>,
@@ -89,13 +127,25 @@ pub struct StreamMuxer {
     parameter_sets: Option<Bytes>,
     /// Raw extradata bytes for fMP4 codec config boxes.
     video_extradata: Bytes,
+    /// `audio_extradata` field of type `Bytes`.
+    /// `audio_extradata` 字段，类型为 `Bytes`.
     audio_extradata: Bytes,
+    /// `video_width` field of type `u16`.
+    /// `video_width` 字段，类型为 `u16`.
     video_width: u16,
+    /// `video_height` field of type `u16`.
+    /// `video_height` 字段，类型为 `u16`.
     video_height: u16,
+    /// `audio_sample_rate` field of type `u32`.
+    /// `audio_sample_rate` 字段，类型为 `u32`.
     audio_sample_rate: u32,
+    /// `audio_channels` field of type `u8`.
+    /// `audio_channels` 字段，类型为 `u8`.
     audio_channels: u8,
     /// Segment timing state.
     segment_start_dts: Option<u64>,
+    /// `segment_last_dts` field of type `u64`.
+    /// `segment_last_dts` 字段，类型为 `u64`.
     segment_last_dts: u64,
     /// Last observed inter-frame DTS interval for video (microseconds).
     /// Used as a fallback to estimate the last frame's display duration when
@@ -104,8 +154,14 @@ pub struct StreamMuxer {
     /// DTS of the previous video frame (microseconds), tracked to compute
     /// `last_video_frame_interval_us`.
     prev_video_dts_us: Option<u64>,
+    /// `segment_has_keyframe` field of type `bool`.
+    /// `segment_has_keyframe` 字段，类型为 `bool`.
     segment_has_keyframe: bool,
+    /// `segment_seq` field of type `u64`.
+    /// `segment_seq` 字段，类型为 `u64`.
     segment_seq: u64,
+    /// `ready` field of type `bool`.
+    /// `ready` 字段，类型为 `bool`.
     ready: bool,
     /// Whether muxing is enabled (for hls_demand mode).
     pub enabled: bool,
@@ -128,6 +184,8 @@ pub struct StreamMuxer {
 }
 
 impl StreamMuxer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: StreamMuxerConfig) -> Self {
         let ll_state = if config.ll_hls_enabled && config.container == HlsContainer::Fmp4 {
             Some(LowLatencyState::new(
@@ -676,10 +734,14 @@ impl StreamMuxer {
         }
     }
 
+    /// Returns `true` if `ready` is true.
+    /// 返回 `真` 如果 `ready` is 真.
     pub fn is_ready(&self) -> bool {
         self.ready
     }
 
+    /// `playlist` function.
+    /// `playlist` 函数.
     pub fn playlist(&self, session_id: Option<u64>) -> String {
         // Use cached playlist when no special parameters
         if session_id.is_none() {
@@ -690,6 +752,8 @@ impl StreamMuxer {
         self.playlist_with_options(session_id, false)
     }
 
+    /// `playlist_with_options_and_token` function.
+    /// `playlist_with_options_and_token` 函数.
     pub fn playlist_with_options_and_token(
         &self,
         session_id: Option<u64>,
@@ -871,6 +935,8 @@ impl StreamMuxer {
         out
     }
 
+    /// `playlist_rewind_with_token` function.
+    /// `playlist_rewind_with_token` 函数.
     pub fn playlist_rewind_with_token(
         &self,
         session_id: Option<u64>,
@@ -884,6 +950,8 @@ impl StreamMuxer {
         }
     }
 
+    /// Returns the `segment` value.
+    /// 返回 `segment` 值.
     pub fn get_segment(&self, name: &str) -> Option<Bytes> {
         if let Some(ref demuxed) = self.demuxed {
             // Try exact name first, then with video_ prefix for legacy URLs
@@ -1261,6 +1329,8 @@ impl StreamMuxer {
     }
 }
 
+/// `generate_stream_validation_key` function.
+/// `generate_stream_validation_key` 函数.
 pub(crate) fn generate_stream_validation_key() -> String {
     let mut random = [0_u8; 16];
     getrandom::getrandom(&mut random).expect("secure random stream validation key");
@@ -1551,6 +1621,8 @@ fn append_hvcc_array(out: &mut Vec<u8>, nal_unit_type: u8, units: &[Bytes]) {
     }
 }
 
+/// `fmp4_sample_payload` function.
+/// `fmp4_sample_payload` 函数.
 pub(crate) fn fmp4_sample_payload(frame: &AVFrame) -> Bytes {
     if frame.format != cheetah_codec::FrameFormat::CanonicalH26x {
         return frame.payload.clone();
@@ -1601,13 +1673,21 @@ fn to_annexb(payload: &[u8]) -> Vec<u8> {
 /// Health tracking for muxer crash recovery.
 #[allow(dead_code)]
 pub struct MuxerHealth {
+    /// `crash_count` field of type `u32`.
+    /// `crash_count` 字段，类型为 `u32`.
     crash_count: u32,
+    /// `last_crash_us` field of type `u64`.
+    /// `last_crash_us` 字段，类型为 `u64`.
     last_crash_us: u64,
+    /// `rebuild_delay_ms` field of type `u64`.
+    /// `rebuild_delay_ms` 字段，类型为 `u64`.
     rebuild_delay_ms: u64,
 }
 
 #[allow(dead_code)]
 impl MuxerHealth {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             crash_count: 0,

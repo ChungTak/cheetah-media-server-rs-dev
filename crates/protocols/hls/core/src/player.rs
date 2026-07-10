@@ -7,8 +7,14 @@ use crate::parser::{ParsedMasterPlaylist, ParsedMediaPlaylist, ParsedVariant};
 /// Adaptive bitrate selection strategy.
 #[derive(Debug, Clone, Copy)]
 pub enum BandwidthStrategy {
+    /// `Highest` variant.
+    /// `Highest` 变体.
     Highest,
+    /// `Lowest` variant.
+    /// `Lowest` 变体.
     Lowest,
+    /// `Auto` variant.
+    /// `Auto` 变体.
     Auto { safety_factor: f64 },
 }
 
@@ -31,6 +37,8 @@ pub struct HlsPlayerState {
 }
 
 impl HlsPlayerState {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             selected_variant_uri: None,

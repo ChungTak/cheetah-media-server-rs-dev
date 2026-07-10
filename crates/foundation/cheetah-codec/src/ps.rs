@@ -35,23 +35,45 @@ fn is_ps_stream_id(stream_id: u8) -> bool {
     )
 }
 
+/// `PsStreamKind` enumeration.
+/// `PsStreamKind` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PsStreamKind {
+    /// `Video` variant.
+    /// `Video` 变体.
     Video,
+    /// `Audio` variant.
+    /// `Audio` 变体.
     Audio,
+    /// `Private` variant.
+    /// `Private` 变体.
     Private,
 }
 
+/// `PesPacket` data structure.
+/// `PesPacket` 数据结构.
 #[derive(Debug, Clone)]
 pub struct PesPacket {
+    /// `stream_id` field of type `u8`.
+    /// `stream_id` 字段，类型为 `u8`.
     pub stream_id: u8,
+    /// `kind` field of type `PsStreamKind`.
+    /// `kind` 字段，类型为 `PsStreamKind`.
     pub kind: PsStreamKind,
+    /// `pts` field.
+    /// `pts` 字段.
     pub pts: Option<i64>,
+    /// `dts` field.
+    /// `dts` 字段.
     pub dts: Option<i64>,
+    /// `payload` field of type `Bytes`.
+    /// `payload` 字段，类型为 `Bytes`.
     pub payload: Bytes,
 }
 
 impl PesPacket {
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(raw: &[u8]) -> Option<(Self, usize)> {
         if raw.len() < 9 {
             return None;
@@ -104,6 +126,8 @@ impl PesPacket {
         ))
     }
 
+    /// `encode` function.
+    /// `encode` 函数.
     pub fn encode(&self) -> Bytes {
         let mut header_data = Vec::new();
         let mut flags2 = 0u8;
@@ -129,16 +153,24 @@ impl PesPacket {
     }
 }
 
+/// `PsPacket` data structure.
+/// `PsPacket` 数据结构.
 #[derive(Debug, Clone)]
 pub struct PsPacket {
+    /// `pes` field.
+    /// `pes` 字段.
     pub pes: Vec<PesPacket>,
 }
 
 impl PsPacket {
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(raw: &[u8]) -> Self {
         Self::parse_bounded(raw, raw.len(), usize::MAX)
     }
 
+    /// Parses `bounded` from input.
+    /// 解析 `bounded` 来自 输入.
     pub fn parse_bounded(raw: &[u8], max_bytes: usize, max_pes: usize) -> Self {
         if max_bytes == 0 || max_pes == 0 {
             return Self { pes: Vec::new() };
@@ -161,6 +193,8 @@ impl PsPacket {
         Self { pes }
     }
 
+    /// `encode` function.
+    /// `encode` 函数.
     pub fn encode(&self) -> Bytes {
         let total = self.pes.iter().map(|p| p.payload.len() + 32).sum::<usize>();
         let mut out = Vec::with_capacity(total);
@@ -211,9 +245,15 @@ fn encode_pts_dts(value: i64, prefix: u8) -> [u8; 5] {
 // UPGRADED PRODUCTION-GRADE PS DEMUXER & MUXER
 // ==========================================
 
+/// `PsDemuxerConfig` data structure.
+/// `PsDemuxerConfig` 数据结构.
 #[derive(Debug, Clone)]
 pub struct PsDemuxerConfig {
+    /// `max_reassembly_bytes` field of type `usize`.
+    /// `max_reassembly_bytes` 字段，类型为 `usize`.
     pub max_reassembly_bytes: usize,
+    /// `max_tracks` field of type `usize`.
+    /// `max_tracks` 字段，类型为 `usize`.
     pub max_tracks: usize,
 }
 
@@ -226,34 +266,74 @@ impl Default for PsDemuxerConfig {
     }
 }
 
+/// `PsDemuxDiagnostic` enumeration.
+/// `PsDemuxDiagnostic` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PsDemuxDiagnostic {
+    /// `BufferOverflow` variant.
+    /// `BufferOverflow` 变体.
     BufferOverflow,
+    /// `InvalidStartCode` variant.
+    /// `InvalidStartCode` 变体.
     InvalidStartCode { code: u8 },
+    /// `PsmParseError` variant.
+    /// `PsmParseError` 变体.
     PsmParseError,
+    /// `PesParseError` variant.
+    /// `PesParseError` 变体.
     PesParseError,
 }
 
+/// `PsDemuxEvent` enumeration.
+/// `PsDemuxEvent` 枚举.
 #[derive(Debug, Clone)]
 pub enum PsDemuxEvent {
+    /// `TrackInfo` variant.
+    /// `TrackInfo` 变体.
     TrackInfo(Vec<TrackInfo>),
+    /// `Frame` variant.
+    /// `Frame` 变体.
     Frame(Box<AVFrame>),
+    /// `Diagnostic` variant.
+    /// `Diagnostic` 变体.
     Diagnostic(PsDemuxDiagnostic),
 }
 
+/// `PsDemuxer` data structure.
+/// `PsDemuxer` 数据结构.
 pub struct PsDemuxer {
+    /// `config` field of type `PsDemuxerConfig`.
+    /// `config` 字段，类型为 `PsDemuxerConfig`.
     config: PsDemuxerConfig,
+    /// `remain_buffer` field.
+    /// `remain_buffer` 字段.
     remain_buffer: Vec<u8>,
+    /// `tracks` field.
+    /// `tracks` 字段.
     tracks: HashMap<u8, TrackInfo>,
+    /// `video_buffer` field.
+    /// `video_buffer` 字段.
     video_buffer: Vec<u8>,
+    /// `last_video_pts` field.
+    /// `last_video_pts` 字段.
     last_video_pts: Option<i64>,
+    /// `video_dts` field.
+    /// `video_dts` 字段.
     video_dts: Option<i64>,
+    /// `last_audio_pts` field.
+    /// `last_audio_pts` 字段.
     last_audio_pts: Option<i64>,
+    /// `audio_es_id` field of type `u8`.
+    /// `audio_es_id` 字段，类型为 `u8`.
     audio_es_id: u8,
+    /// `new_ps` field of type `bool`.
+    /// `new_ps` 字段，类型为 `bool`.
     new_ps: bool,
 }
 
 impl PsDemuxer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: PsDemuxerConfig) -> Self {
         Self {
             config,
@@ -268,6 +348,8 @@ impl PsDemuxer {
         }
     }
 
+    /// `push` function.
+    /// `push` 函数.
     pub fn push(&mut self, data: &[u8]) -> Vec<PsDemuxEvent> {
         let mut events = Vec::new();
         if self.remain_buffer.len() + data.len() > self.config.max_reassembly_bytes {
@@ -401,6 +483,8 @@ impl PsDemuxer {
         events
     }
 
+    /// `flush` function.
+    /// `flush` 函数.
     pub fn flush(&mut self) -> Vec<PsDemuxEvent> {
         let mut events = Vec::new();
         self.emit_video_frame(&mut events);
@@ -645,22 +729,32 @@ impl PsDemuxer {
     }
 }
 
+/// `PsMuxer` data structure.
+/// `PsMuxer` 数据结构.
 #[derive(Default)]
 pub struct PsMuxer {
+    /// `tracks` field.
+    /// `tracks` 字段.
     tracks: HashMap<u8, TrackInfo>,
 }
 
 impl PsMuxer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             tracks: HashMap::new(),
         }
     }
 
+    /// `add_track` function.
+    /// `add_track` 函数.
     pub fn add_track(&mut self, track: TrackInfo) {
         self.tracks.insert(track.track_id.0 as u8, track);
     }
 
+    /// `mux` function.
+    /// `mux` 函数.
     pub fn mux(&mut self, frame: &AVFrame) -> Option<Bytes> {
         let track = self.tracks.get(&(frame.track_id.0 as u8))?;
         let mut out = Vec::new();

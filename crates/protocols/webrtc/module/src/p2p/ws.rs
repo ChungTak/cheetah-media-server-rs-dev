@@ -73,12 +73,20 @@ impl Default for WebSocketTransportConfig {
 /// Errors specific to the WebSocket transport.
 #[derive(Debug, Error)]
 pub enum WebSocketTransportError {
+    /// `Url` variant.
+    /// `Url` 变体.
     #[error(transparent)]
     Url(#[from] SignalingUrlError),
+    /// `ConnectTimeout` variant.
+    /// `ConnectTimeout` 变体.
     #[error("connect timed out after {0:?}")]
     ConnectTimeout(Duration),
+    /// `WebSocket` variant.
+    /// `WebSocket` 变体.
     #[error("websocket error: {0}")]
     WebSocket(String),
+    /// `InvalidRequest` variant.
+    /// `InvalidRequest` 变体.
     #[error("invalid websocket request: {0}")]
     InvalidRequest(String),
 }
@@ -103,7 +111,11 @@ impl From<WebSocketTransportError> for P2pTransportError {
 /// the P2P decoder limits.
 #[derive(Clone)]
 pub struct WebSocketTransportFactory {
+    /// `config` field of type `WebSocketTransportConfig`.
+    /// `config` 字段，类型为 `WebSocketTransportConfig`.
     config: WebSocketTransportConfig,
+    /// `connector` field.
+    /// `connector` 字段.
     connector: Arc<dyn WsConnector>,
 }
 
@@ -116,6 +128,8 @@ impl std::fmt::Debug for WebSocketTransportFactory {
 }
 
 impl WebSocketTransportFactory {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: WebSocketTransportConfig) -> Self {
         Self {
             config,
@@ -180,7 +194,11 @@ impl KeeperTransportFactory for WebSocketTransportFactory {
 /// P2P signaling encode/decode on top. WebSocket framing + TLS live in
 /// the driver.
 pub struct WebSocketP2pTransport {
+    /// `connection` field.
+    /// `connection` 字段.
     connection: Box<dyn WsConnection>,
+    /// `decoder` field of type `P2pDecoderConfig`.
+    /// `decoder` 字段，类型为 `P2pDecoderConfig`.
     decoder: P2pDecoderConfig,
     /// Per-instance counters for tests / diagnostics.
     pub counters: Arc<WebSocketCounters>,
@@ -190,8 +208,14 @@ pub struct WebSocketP2pTransport {
 /// reaching into the `tokio-tungstenite` types.
 #[derive(Debug, Default)]
 pub struct WebSocketCounters {
+    /// `messages_sent` field.
+    /// `messages_sent` 字段.
     pub messages_sent: std::sync::atomic::AtomicU64,
+    /// `messages_received` field.
+    /// `messages_received` 字段.
     pub messages_received: std::sync::atomic::AtomicU64,
+    /// `decode_errors` field.
+    /// `decode_errors` 字段.
     pub decode_errors: std::sync::atomic::AtomicU64,
 }
 
@@ -281,10 +305,18 @@ pub fn snapshot_counters(counters: &WebSocketCounters) -> WebSocketCounterSnapsh
     }
 }
 
+/// `WebSocketCounterSnapshot` data structure.
+/// `WebSocketCounterSnapshot` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WebSocketCounterSnapshot {
+    /// `messages_sent` field of type `u64`.
+    /// `messages_sent` 字段，类型为 `u64`.
     pub messages_sent: u64,
+    /// `messages_received` field of type `u64`.
+    /// `messages_received` 字段，类型为 `u64`.
     pub messages_received: u64,
+    /// `decode_errors` field of type `u64`.
+    /// `decode_errors` 字段，类型为 `u64`.
     pub decode_errors: u64,
 }
 
@@ -292,13 +324,19 @@ pub struct WebSocketCounterSnapshot {
 /// callers to keep `tokio-tungstenite` types out of their own APIs.
 #[derive(Debug, Default)]
 pub struct WebSocketDecodeStats {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: Mutex<Vec<String>>,
 }
 
 impl WebSocketDecodeStats {
+    /// `record` function.
+    /// `record` 函数.
     pub fn record(&self, msg: impl Into<String>) {
         self.inner.lock().push(msg.into());
     }
+    /// `snapshot` function.
+    /// `snapshot` 函数.
     pub fn snapshot(&self) -> Vec<String> {
         self.inner.lock().clone()
     }

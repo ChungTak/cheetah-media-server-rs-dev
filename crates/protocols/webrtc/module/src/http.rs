@@ -45,17 +45,41 @@ use crate::session::{
     WebRtcSessionRegistry,
 };
 
+/// `WebRtcHttpService` data structure.
+/// `WebRtcHttpService` 数据结构.
 pub(crate) struct WebRtcHttpService {
+    /// `driver` field.
+    /// `driver` 字段.
     pub driver: Arc<Mutex<Option<Arc<WebRtcDriverHandle>>>>,
+    /// `config` field.
+    /// `config` 字段.
     pub config: Arc<Mutex<WebRtcModuleConfig>>,
+    /// `allocator` field.
+    /// `allocator` 字段.
     pub allocator: Arc<WebRtcSessionIdAllocator>,
+    /// `registry` field.
+    /// `registry` 字段.
     pub registry: Arc<Mutex<WebRtcSessionRegistry>>,
+    /// `bridges` field.
+    /// `bridges` 字段.
     pub bridges: Arc<Mutex<WebRtcBridgeRegistry>>,
+    /// `answer_dispatcher` field.
+    /// `answer_dispatcher` 字段.
     pub answer_dispatcher: Arc<AnswerDispatcher>,
+    /// `engine` field.
+    /// `engine` 字段.
     pub engine: Option<EngineContext>,
+    /// `jobs` field.
+    /// `jobs` 字段.
     pub jobs: Arc<Mutex<crate::jobs::WebRtcJobRegistry>>,
+    /// `http_client` field.
+    /// `http_client` 字段.
     pub http_client: crate::http_client::WhipWhepHttpClient,
+    /// `jobs_cancel` field.
+    /// `jobs_cancel` 字段.
     pub jobs_cancel: cheetah_sdk::CancellationToken,
+    /// `metrics` field.
+    /// `metrics` 字段.
     pub metrics: Arc<crate::metrics::WebRtcModuleMetrics>,
     /// P2P room keeper registry — driven by `/api/v1/rtc/p2p/keeper/*`.
     pub keepers: Arc<crate::p2p::P2pRoomKeeperRegistry>,
@@ -2373,6 +2397,8 @@ fn keeper_config_from_body(body: &Value) -> Result<crate::p2p::P2pRoomKeeperConf
 /// so that incoming `AnswerReady` events can be routed back to the
 /// pending HTTP request.
 pub(crate) struct AnswerDispatcher {
+    /// `waiters` field.
+    /// `waiters` 字段.
     waiters: Mutex<
         std::collections::HashMap<
             cheetah_webrtc_core::WebRtcSessionId,
@@ -2381,19 +2407,29 @@ pub(crate) struct AnswerDispatcher {
     >,
 }
 
+/// `AnswerOutcome` enumeration.
+/// `AnswerOutcome` 枚举.
 #[derive(Debug, Clone)]
 pub(crate) enum AnswerOutcome {
+    /// `Sdp` variant.
+    /// `Sdp` 变体.
     Sdp(String),
+    /// `Failed` variant.
+    /// `Failed` 变体.
     Failed(String),
 }
 
 impl AnswerDispatcher {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub(crate) fn new() -> Self {
         Self {
             waiters: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
+    /// `subscribe` function.
+    /// `subscribe` 函数.
     pub(crate) fn subscribe(
         &self,
         session_id: cheetah_webrtc_core::WebRtcSessionId,
@@ -2404,6 +2440,8 @@ impl AnswerDispatcher {
         rx
     }
 
+    /// `deliver_sdp` function.
+    /// `deliver_sdp` 函数.
     pub(crate) fn deliver_sdp(
         &self,
         session_id: cheetah_webrtc_core::WebRtcSessionId,
@@ -2415,6 +2453,8 @@ impl AnswerDispatcher {
         }
     }
 
+    /// `deliver_failure` function.
+    /// `deliver_failure` 函数.
     pub(crate) fn deliver_failure(
         &self,
         session_id: cheetah_webrtc_core::WebRtcSessionId,
@@ -2489,11 +2529,17 @@ async fn await_answer_with_timeout(
 /// [`RuntimeApi`] handle so the offer wait can be bounded without pulling
 /// `tokio::time` into the module.
 pub(crate) struct OmeAnswerWaiter {
+    /// `dispatcher` field.
+    /// `dispatcher` 字段.
     dispatcher: Arc<AnswerDispatcher>,
+    /// `runtime` field.
+    /// `runtime` 字段.
     runtime: Arc<dyn RuntimeApi>,
 }
 
 impl OmeAnswerWaiter {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub(crate) fn new(dispatcher: Arc<AnswerDispatcher>, runtime: Arc<dyn RuntimeApi>) -> Self {
         Self {
             dispatcher,

@@ -6,17 +6,27 @@ use crate::chunk::{MessageHeaderFormat, RtmpChunk, RtmpChunkSize, RtmpChunkStrea
 use crate::message::{RtmpMessageStreamId, RtmpMessageType};
 use crate::timestamp::RtmpTimestamp;
 
+/// `RtmpChunkEncoder` data structure.
+/// `RtmpChunkEncoder` 数据结构.
 #[derive(Debug, Default)]
 pub struct RtmpChunkEncoder {
+    /// `chunk_size` field of type `RtmpChunkSize`.
+    /// `chunk_size` 字段，类型为 `RtmpChunkSize`.
     chunk_size: RtmpChunkSize,
+    /// `chunk_streams` field.
+    /// `chunk_streams` 字段.
     chunk_streams: BTreeMap<RtmpChunkStreamId, RtmpChunkStream>,
 }
 
 impl RtmpChunkEncoder {
+    /// Sets the `chunk_size` value.
+    /// Sets `chunk_size` 值.
     pub fn set_chunk_size(&mut self, size: RtmpChunkSize) {
         self.chunk_size = size;
     }
 
+    /// `encode` function.
+    /// `encode` 函数.
     pub fn encode(&mut self, buf: &mut Vec<u8>, chunk: &RtmpChunk) {
         let mut chunk_stream = self.resolve_chunk_stream(chunk);
         self.encode_message(buf, &mut chunk_stream, &chunk.payload);

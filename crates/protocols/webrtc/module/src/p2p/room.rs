@@ -28,14 +28,24 @@ pub const P2P_DEFAULT_MAX_KEEPERS: usize = 1024;
 /// Registry-side errors.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum P2pRoomKeeperError {
+    /// `InvalidRoomId` variant.
+    /// `InvalidRoomId` 变体.
     #[error("invalid room id: {0}")]
     InvalidRoomId(String),
+    /// `InvalidHost` variant.
+    /// `InvalidHost` 变体.
     #[error("invalid signaling host: {0}")]
     InvalidHost(String),
+    /// `InvalidPort` variant.
+    /// `InvalidPort` 变体.
     #[error("invalid signaling port: {0}")]
     InvalidPort(u16),
+    /// `LimitReached` variant.
+    /// `LimitReached` 变体.
     #[error("keeper limit reached ({0})")]
     LimitReached(usize),
+    /// `NotFound` variant.
+    /// `NotFound` 变体.
     #[error("keeper not found: {0:?}")]
     NotFound(P2pRoomKeeperKey),
 }
@@ -43,19 +53,29 @@ pub enum P2pRoomKeeperError {
 /// Configuration for a single keeper.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct P2pRoomKeeperConfig {
+    /// `server_host` field of type `String`.
+    /// `server_host` 字段，类型为 `String`.
     pub server_host: String,
+    /// `server_port` field of type `u16`.
+    /// `server_port` 字段，类型为 `u16`.
     pub server_port: u16,
     /// Room id this keeper holds open on the remote signaling server.
     pub room_id: String,
     /// Optional vhost / app / stream tuple advertised in `check_in`.
     pub vhost: Option<String>,
+    /// `app` field.
+    /// `app` 字段.
     pub app: Option<String>,
+    /// `stream` field.
+    /// `stream` 字段.
     pub stream: Option<String>,
     /// Whether to use `wss://` for the signaling WebSocket.
     pub ssl: bool,
 }
 
 impl P2pRoomKeeperConfig {
+    /// `validate` function.
+    /// `validate` 函数.
     pub fn validate(&self) -> Result<(), P2pRoomKeeperError> {
         if self.room_id.is_empty() || self.room_id.len() > P2P_MAX_FIELD_BYTES {
             return Err(P2pRoomKeeperError::InvalidRoomId(self.room_id.clone()));
@@ -87,14 +107,26 @@ pub enum P2pKeeperState {
     /// Created but not yet wired to a transport.
     #[default]
     Pending,
+    /// `Connecting` variant.
+    /// `Connecting` 变体.
     Connecting,
+    /// `Registered` variant.
+    /// `Registered` 变体.
     Registered,
+    /// `Reconnecting` variant.
+    /// `Reconnecting` 变体.
     Reconnecting,
+    /// `Stopped` variant.
+    /// `Stopped` 变体.
     Stopped,
+    /// `Failed` variant.
+    /// `Failed` 变体.
     Failed,
 }
 
 impl P2pKeeperState {
+    /// `as_str` function.
+    /// `as_str` 函数.
     pub fn as_str(self) -> &'static str {
         match self {
             P2pKeeperState::Pending => "pending",
@@ -110,8 +142,14 @@ impl P2pKeeperState {
 /// Live status of a keeper.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct P2pKeeperStatus {
+    /// `state` field of type `P2pKeeperState`.
+    /// `state` 字段，类型为 `P2pKeeperState`.
     pub state: P2pKeeperState,
+    /// `last_error` field.
+    /// `last_error` 字段.
     pub last_error: Option<String>,
+    /// `reconnect_attempts` field of type `u32`.
+    /// `reconnect_attempts` 字段，类型为 `u32`.
     pub reconnect_attempts: u32,
 }
 
@@ -119,8 +157,14 @@ pub struct P2pKeeperStatus {
 /// HTTP / Prometheus exporters: cheap to clone, no internal locks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct P2pRoomKeeperSnapshot {
+    /// `key` field of type `P2pRoomKeeperKey`.
+    /// `key` 字段，类型为 `P2pRoomKeeperKey`.
     pub key: P2pRoomKeeperKey,
+    /// `config` field of type `P2pRoomKeeperConfig`.
+    /// `config` 字段，类型为 `P2pRoomKeeperConfig`.
     pub config: P2pRoomKeeperConfig,
+    /// `status` field of type `P2pKeeperStatus`.
+    /// `status` 字段，类型为 `P2pKeeperStatus`.
     pub status: P2pKeeperStatus,
 }
 
@@ -137,8 +181,14 @@ struct RegistryInner {
 /// to also signal the keeper task to stop.
 #[derive(Debug)]
 pub struct P2pRoomKeeperRegistry {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: Mutex<RegistryInner>,
+    /// `next_key` field of type `AtomicU64`.
+    /// `next_key` 字段，类型为 `AtomicU64`.
     next_key: AtomicU64,
+    /// `max_keepers` field of type `usize`.
+    /// `max_keepers` 字段，类型为 `usize`.
     max_keepers: usize,
 }
 
@@ -149,6 +199,8 @@ impl Default for P2pRoomKeeperRegistry {
 }
 
 impl P2pRoomKeeperRegistry {
+    /// Returns a copy with `capacity` set.
+    /// 返回 一个 copy 带有 `capacity` 设置.
     pub fn with_capacity(max_keepers: usize) -> Self {
         Self {
             inner: Mutex::new(RegistryInner::default()),
@@ -226,6 +278,8 @@ impl P2pRoomKeeperRegistry {
         self.inner.lock().keepers.len()
     }
 
+    /// Returns `true` if `empty` is true.
+    /// 返回 `真` 如果 `empty` is 真.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }

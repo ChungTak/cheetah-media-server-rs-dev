@@ -72,10 +72,20 @@ const MAX_INPUT_TIME_JUMP: Duration = Duration::from_secs(60 * 60);
 /// it input via [`WebRtcCore::handle_input`] and drain output via
 /// [`WebRtcCore::pump_outputs`].
 pub struct WebRtcCore {
+    /// `config` field of type `WebRtcCoreConfig`.
+    /// `config` 字段，类型为 `WebRtcCoreConfig`.
     config: WebRtcCoreConfig,
+    /// `sessions` field.
+    /// `sessions` 字段.
     sessions: HashMap<WebRtcSessionId, WebRtcCoreSession>,
+    /// `pending_outputs` field.
+    /// `pending_outputs` 字段.
     pending_outputs: VecDeque<WebRtcCoreOutput>,
+    /// `start_instant` field of type `Instant`.
+    /// `start_instant` 字段，类型为 `Instant`.
     start_instant: Instant,
+    /// `last_seen_instant` field of type `Instant`.
+    /// `last_seen_instant` 字段，类型为 `Instant`.
     last_seen_instant: Instant,
 }
 

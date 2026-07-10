@@ -1,5 +1,7 @@
 use super::*;
 
+/// Builds `frame_from_rtp` output.
+/// 构建 `frame_from_rtp` 输出.
 pub(super) fn build_frame_from_rtp(
     track: &TrackInfo,
     packet: &RtpPacket,
@@ -159,6 +161,8 @@ pub(super) fn build_frame_from_rtp(
     Some(built)
 }
 
+/// Builds `vp9_frame_from_rtp` output.
+/// 构建 `vp9_frame_from_rtp` 输出.
 pub fn build_vp9_frame_from_rtp(
     track: &TrackInfo,
     packet: &RtpPacket,
@@ -237,6 +241,8 @@ pub fn build_vp9_frame_from_rtp(
     })
 }
 
+/// Builds `vp8_frame_from_rtp` output.
+/// 构建 `vp8_frame_from_rtp` 输出.
 pub fn build_vp8_frame_from_rtp(
     track: &TrackInfo,
     packet: &RtpPacket,
@@ -317,6 +323,8 @@ pub fn build_vp8_frame_from_rtp(
     })
 }
 
+/// Builds `frames_from_rtp` output.
+/// 构建 `frames_from_rtp` 输出.
 pub fn build_frames_from_rtp(
     track: &TrackInfo,
     packet: &RtpPacket,
@@ -418,6 +426,8 @@ fn build_passthrough_audio_frame(
     }
 }
 
+/// `av1_rtp_payload_is_keyframe` function.
+/// `av1_rtp_payload_is_keyframe` 函数.
 #[cfg(test)]
 pub(super) fn av1_rtp_payload_is_keyframe(payload: &[u8]) -> bool {
     if payload.len() < 2 {
@@ -476,6 +486,8 @@ pub(super) fn av1_rtp_payload_is_keyframe(payload: &[u8]) -> bool {
     false
 }
 
+/// `av1_obu_is_keyframe` function.
+/// `av1_obu_is_keyframe` 函数.
 pub(super) fn av1_obu_is_keyframe(obu: &[u8]) -> Option<bool> {
     let obu_header = *obu.first()?;
     let obu_type = (obu_header >> 3) & 0x0f;
@@ -501,6 +513,8 @@ fn av1_frame_header_is_keyframe(payload: &[u8]) -> Option<bool> {
     Some(frame_type == 0)
 }
 
+/// `av1_read_leb128` function.
+/// `av1_read_leb128` 函数.
 pub(super) fn av1_read_leb128(data: &[u8]) -> Option<(usize, usize)> {
     let mut value: usize = 0;
     let mut shift: u32 = 0;
@@ -515,6 +529,8 @@ pub(super) fn av1_read_leb128(data: &[u8]) -> Option<(usize, usize)> {
     None
 }
 
+/// `vp8_rtp_payload_is_keyframe` function.
+/// `vp8_rtp_payload_is_keyframe` 函数.
 #[cfg(test)]
 pub(super) fn vp8_rtp_payload_is_keyframe(payload: &[u8]) -> bool {
     let Some((offset, start, partition_id)) = vp8_payload_descriptor_info(payload) else {
@@ -558,6 +574,8 @@ fn vp8_payload_descriptor_info(payload: &[u8]) -> Option<(usize, bool, u8)> {
     Some((offset, start, partition_id))
 }
 
+/// `vp9_rtp_payload_is_keyframe` function.
+/// `vp9_rtp_payload_is_keyframe` 函数.
 #[cfg(test)]
 pub(super) fn vp9_rtp_payload_is_keyframe(payload: &[u8]) -> bool {
     if payload.is_empty() {

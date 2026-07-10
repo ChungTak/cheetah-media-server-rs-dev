@@ -3,6 +3,8 @@ use bytes::Bytes;
 
 use crate::{AVFrame, Timebase, TrackInfo};
 
+/// `CodecNormalizer` trait.
+/// `CodecNormalizer` trait.
 pub trait CodecNormalizer {
     type Input;
 
@@ -10,26 +12,36 @@ pub trait CodecNormalizer {
     fn track_info(&self) -> Option<&TrackInfo>;
 }
 
+/// `Packetizer` trait.
+/// `Packetizer` trait.
 pub trait Packetizer {
     type Packet;
 
     fn packetize(&mut self, frame: &AVFrame) -> Vec<Self::Packet>;
 }
 
+/// `Depacketizer` trait.
+/// `Depacketizer` trait.
 pub trait Depacketizer {
     type Packet;
 
     fn depacketize(&mut self, packet: Self::Packet) -> Option<AVFrame>;
 }
 
+/// `TrackExporter` trait.
+/// `TrackExporter` trait.
 pub trait TrackExporter {
     type Output;
 
     fn export(&self, track: &TrackInfo) -> Option<Self::Output>;
 }
 
+/// `PassthroughNormalizer` data structure.
+/// `PassthroughNormalizer` 数据结构.
 #[derive(Debug, Default)]
 pub struct PassthroughNormalizer {
+    /// `track` field.
+    /// `track` 字段.
     track: Option<TrackInfo>,
 }
 
@@ -54,6 +66,8 @@ impl CodecNormalizer for PassthroughNormalizer {
     }
 }
 
+/// `RawPayloadPacketizer` data structure.
+/// `RawPayloadPacketizer` 数据结构.
 #[derive(Debug, Default)]
 pub struct RawPayloadPacketizer;
 
@@ -65,10 +79,18 @@ impl Packetizer for RawPayloadPacketizer {
     }
 }
 
+/// `RawPayloadDepacketizer` data structure.
+/// `RawPayloadDepacketizer` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RawPayloadDepacketizer {
+    /// `template` field of type `AVFrame`.
+    /// `template` 字段，类型为 `AVFrame`.
     pub template: AVFrame,
+    /// `next_pts` field of type `i64`.
+    /// `next_pts` 字段，类型为 `i64`.
     pub next_pts: i64,
+    /// `step` field of type `i64`.
+    /// `step` 字段，类型为 `i64`.
     pub step: i64,
 }
 
@@ -87,6 +109,8 @@ impl Depacketizer for RawPayloadDepacketizer {
     }
 }
 
+/// `SimpleTrackExporter` data structure.
+/// `SimpleTrackExporter` 数据结构.
 #[derive(Debug, Default)]
 pub struct SimpleTrackExporter;
 

@@ -22,8 +22,14 @@ const AAC_SILENT_FRAME: &[u8] = &[0x21, 0x10, 0x05, 0x00, 0xa0, 0x19, 0x33];
 /// so that players requiring audio don't stall.
 #[derive(Debug, Clone)]
 pub struct MuteAudioMaker {
+    /// `track_id` field of type `TrackId`.
+    /// `track_id` 字段，类型为 `TrackId`.
     track_id: TrackId,
+    /// `sample_rate` field of type `u32`.
+    /// `sample_rate` 字段，类型为 `u32`.
     sample_rate: u32,
+    /// `channels` field of type `u8`.
+    /// `channels` 字段，类型为 `u8`.
     channels: u8,
     /// Samples per AAC frame (always 1024 for AAC-LC).
     samples_per_frame: u32,
@@ -81,14 +87,20 @@ impl MuteAudioMaker {
         self.asc.to_bytes()
     }
 
+    /// `sample_rate` function.
+    /// `sample_rate` 函数.
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
+    /// `channels` function.
+    /// `channels` 函数.
     pub fn channels(&self) -> u8 {
         self.channels
     }
 
+    /// `track_id` function.
+    /// `track_id` 函数.
     pub fn track_id(&self) -> TrackId {
         self.track_id
     }

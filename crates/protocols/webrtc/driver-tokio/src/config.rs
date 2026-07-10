@@ -11,7 +11,11 @@ use cheetah_webrtc_core::WebRtcCoreConfig;
 /// subsequent driver restarts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UdpPortRange {
+    /// `min` field of type `u16`.
+    /// `min` 字段，类型为 `u16`.
     pub min: u16,
+    /// `max` field of type `u16`.
+    /// `max` 字段，类型为 `u16`.
     pub max: u16,
 }
 
@@ -48,6 +52,8 @@ impl UdpPortRange {
     }
 }
 
+/// `WebRtcDriverConfig` data structure.
+/// `WebRtcDriverConfig` 数据结构.
 #[derive(Debug, Clone)]
 pub struct WebRtcDriverConfig {
     /// UDP listen address. Required.

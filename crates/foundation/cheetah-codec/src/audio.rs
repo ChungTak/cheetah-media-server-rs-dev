@@ -1,27 +1,51 @@
 use crate::prelude::*;
 use bytes::Bytes;
 
+/// `AudioSampleLayout` enumeration.
+/// `AudioSampleLayout` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioSampleLayout {
+    /// `Interleaved` variant.
+    /// `Interleaved` 变体.
     Interleaved,
+    /// `Planar` variant.
+    /// `Planar` 变体.
     Planar,
 }
 
+/// `AudioParams` data structure.
+/// `AudioParams` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AudioParams {
+    /// `sample_rate` field of type `u32`.
+    /// `sample_rate` 字段，类型为 `u32`.
     pub sample_rate: u32,
+    /// `channels` field of type `u8`.
+    /// `channels` 字段，类型为 `u8`.
     pub channels: u8,
+    /// `samples_per_frame` field of type `u16`.
+    /// `samples_per_frame` 字段，类型为 `u16`.
     pub samples_per_frame: u16,
 }
 
+/// `AacAudioSpecificConfig` data structure.
+/// `AacAudioSpecificConfig` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AacAudioSpecificConfig {
+    /// `audio_object_type` field of type `u8`.
+    /// `audio_object_type` 字段，类型为 `u8`.
     pub audio_object_type: u8,
+    /// `sampling_frequency_index` field of type `u8`.
+    /// `sampling_frequency_index` 字段，类型为 `u8`.
     pub sampling_frequency_index: u8,
+    /// `channel_configuration` field of type `u8`.
+    /// `channel_configuration` 字段，类型为 `u8`.
     pub channel_configuration: u8,
 }
 
 impl AacAudioSpecificConfig {
+    /// Creates `bytes` from input.
+    /// 创建 `bytes` 来自 输入.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         if bytes.len() < 2 {
             return None;
@@ -38,6 +62,8 @@ impl AacAudioSpecificConfig {
         })
     }
 
+    /// Converts to `bytes` representation.
+    /// Converts 为 `bytes` 表示.
     pub fn to_bytes(self) -> [u8; 2] {
         let b0 = (self.audio_object_type << 3) | ((self.sampling_frequency_index >> 1) & 0x07);
         let b1 = ((self.sampling_frequency_index & 0x01) << 7)
@@ -46,6 +72,8 @@ impl AacAudioSpecificConfig {
     }
 }
 
+/// `aac_channel_count_from_config` function.
+/// `aac_channel_count_from_config` 函数.
 pub fn aac_channel_count_from_config(channel_configuration: u8) -> Option<u8> {
     match channel_configuration {
         1 => Some(1),
@@ -61,6 +89,8 @@ pub fn aac_channel_count_from_config(channel_configuration: u8) -> Option<u8> {
     }
 }
 
+/// `aac_channel_count_from_asc` function.
+/// `aac_channel_count_from_asc` 函数.
 pub fn aac_channel_count_from_asc(bytes: &[u8]) -> Option<u8> {
     let mut reader = BitReader::new(bytes);
     let mut audio_object_type = read_aac_audio_object_type(&mut reader)?;
@@ -94,15 +124,27 @@ pub fn aac_channel_count_from_asc(bytes: &[u8]) -> Option<u8> {
     parse_ga_specific_config_channel_count(&mut reader, audio_object_type)
 }
 
+/// `AdtsHeader` data structure.
+/// `AdtsHeader` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AdtsHeader {
+    /// `profile` field of type `u8`.
+    /// `profile` 字段，类型为 `u8`.
     pub profile: u8,
+    /// `sampling_frequency_index` field of type `u8`.
+    /// `sampling_frequency_index` 字段，类型为 `u8`.
     pub sampling_frequency_index: u8,
+    /// `channel_configuration` field of type `u8`.
+    /// `channel_configuration` 字段，类型为 `u8`.
     pub channel_configuration: u8,
+    /// `frame_length` field of type `u16`.
+    /// `frame_length` 字段，类型为 `u16`.
     pub frame_length: u16,
 }
 
 impl AdtsHeader {
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(data: &[u8]) -> Option<Self> {
         if data.len() < 7 {
             return None;
@@ -124,6 +166,8 @@ impl AdtsHeader {
         })
     }
 
+    /// `build` function.
+    /// `build` 函数.
     pub fn build(self) -> [u8; 7] {
         let mut out = [0u8; 7];
         out[0] = 0xff;
@@ -152,6 +196,8 @@ impl AdtsHeader {
     }
 }
 
+/// `adts_wrap` function.
+/// `adts_wrap` 函数.
 pub fn adts_wrap(raw_aac: &[u8], asc: AacAudioSpecificConfig) -> Bytes {
     let frame_len = raw_aac.len().saturating_add(7).min(usize::from(u16::MAX)) as u16;
     let header = AdtsHeader {
@@ -167,6 +213,8 @@ pub fn adts_wrap(raw_aac: &[u8], asc: AacAudioSpecificConfig) -> Bytes {
     Bytes::from(out)
 }
 
+/// `adts_strip` function.
+/// `adts_strip` 函数.
 pub fn adts_strip(frame: &[u8]) -> Option<(AdtsHeader, &[u8])> {
     let header = AdtsHeader::parse(frame)?;
     if usize::from(header.frame_length) < 7 || frame.len() < usize::from(header.frame_length) {

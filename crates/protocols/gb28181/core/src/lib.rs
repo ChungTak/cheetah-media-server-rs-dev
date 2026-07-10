@@ -1,7 +1,17 @@
+/// `digest` module.
+/// `digest` 模块.
 pub mod digest;
+/// `error` module.
+/// `error` 模块.
 pub mod error;
+/// `message` module.
+/// `message` 模块.
 pub mod message;
+/// `sdp` module.
+/// `sdp` 模块.
 pub mod sdp;
+/// `session` module.
+/// `session` 模块.
 pub mod session;
 
 pub use digest::{compute_md5_response, DigestParams};

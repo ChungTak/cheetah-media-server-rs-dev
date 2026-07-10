@@ -12,13 +12,25 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
+/// `HlsConnectionId` type alias.
+/// `HlsConnectionId` 类型别名.
 pub type HlsConnectionId = u64;
 
+/// `HlsDriverConfig` data structure.
+/// `HlsDriverConfig` 数据结构.
 #[derive(Debug, Clone)]
 pub struct HlsDriverConfig {
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     pub read_buffer_size: usize,
+    /// `max_request_header_bytes` field of type `usize`.
+    /// `max_request_header_bytes` 字段，类型为 `usize`.
     pub max_request_header_bytes: usize,
+    /// `command_queue_capacity` field of type `usize`.
+    /// `command_queue_capacity` 字段，类型为 `usize`.
     pub command_queue_capacity: usize,
+    /// `event_queue_capacity` field of type `usize`.
+    /// `event_queue_capacity` 字段，类型为 `usize`.
     pub event_queue_capacity: usize,
     /// Optional module response timeout in milliseconds. `None` lets the module own
     /// LL-HLS blocking reload/preload timeouts.
@@ -43,21 +55,29 @@ impl Default for HlsDriverConfig {
     }
 }
 
+/// `HlsDriverEvent` enumeration.
+/// `HlsDriverEvent` 枚举.
 #[derive(Debug)]
 pub enum HlsDriverEvent {
+    /// `ConnectionOpened` variant.
+    /// `ConnectionOpened` 变体.
     ConnectionOpened {
         connection_id: HlsConnectionId,
         peer: Option<SocketAddr>,
     },
-    ConnectionClosed {
-        connection_id: HlsConnectionId,
-    },
+    /// `ConnectionClosed` variant.
+    /// `ConnectionClosed` 变体.
+    ConnectionClosed { connection_id: HlsConnectionId },
+    /// `Core` variant.
+    /// `Core` 变体.
     Core {
         connection_id: HlsConnectionId,
         event: HlsCoreEvent,
     },
 }
 
+/// `HlsDriverCommand` enumeration.
+/// `HlsDriverCommand` 枚举.
 #[derive(Debug)]
 pub enum HlsDriverCommand {
     /// Send a complete HTTP response to a connection.
@@ -68,27 +88,41 @@ pub enum HlsDriverCommand {
         body: Bytes,
         headers: Vec<(&'static str, String)>,
     },
-    CloseConnection {
-        connection_id: HlsConnectionId,
-    },
+    /// `CloseConnection` variant.
+    /// `CloseConnection` 变体.
+    CloseConnection { connection_id: HlsConnectionId },
+    /// `Shutdown` variant.
+    /// `Shutdown` 变体.
     Shutdown,
 }
 
+/// `HlsCommandSender` data structure.
+/// `HlsCommandSender` 数据结构.
 #[derive(Clone)]
 pub struct HlsCommandSender {
+    /// `tx` field.
+    /// `tx` 字段.
     tx: mpsc::Sender<HlsDriverCommand>,
 }
 
+/// `DriverSendError` enumeration.
+/// `DriverSendError` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverSendError {
+    /// `ChannelClosed` variant.
+    /// `ChannelClosed` 变体.
     ChannelClosed,
 }
 
 impl HlsCommandSender {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub(crate) fn new(tx: mpsc::Sender<HlsDriverCommand>) -> Self {
         Self { tx }
     }
 
+    /// `send` function.
+    /// `send` 函数.
     pub async fn send(&self, command: HlsDriverCommand) -> Result<(), DriverSendError> {
         self.tx
             .send(command)
@@ -97,15 +131,29 @@ impl HlsCommandSender {
     }
 }
 
+/// `HlsServerHandle` data structure.
+/// `HlsServerHandle` 数据结构.
 pub struct HlsServerHandle {
+    /// `listen` field of type `SocketAddr`.
+    /// `listen` 字段，类型为 `SocketAddr`.
     listen: SocketAddr,
+    /// `events_rx` field.
+    /// `events_rx` 字段.
     events_rx: mpsc::Receiver<HlsDriverEvent>,
+    /// `cmd_tx` field of type `HlsCommandSender`.
+    /// `cmd_tx` 字段，类型为 `HlsCommandSender`.
     cmd_tx: HlsCommandSender,
+    /// `cancel` field of type `CancellationToken`.
+    /// `cancel` 字段，类型为 `CancellationToken`.
     cancel: CancellationToken,
+    /// `join` field.
+    /// `join` 字段.
     join: Box<dyn JoinHandle>,
 }
 
 impl HlsServerHandle {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub(crate) fn new(
         listen: SocketAddr,
         events_rx: mpsc::Receiver<HlsDriverEvent>,
@@ -122,22 +170,32 @@ impl HlsServerHandle {
         }
     }
 
+    /// `recv_event` function.
+    /// `recv_event` 函数.
     pub async fn recv_event(&mut self) -> Option<HlsDriverEvent> {
         self.events_rx.recv().await
     }
 
+    /// `local_addr` function.
+    /// `local_addr` 函数.
     pub fn local_addr(&self) -> SocketAddr {
         self.listen
     }
 
+    /// `command_sender` function.
+    /// `command_sender` 函数.
     pub fn command_sender(&self) -> HlsCommandSender {
         self.cmd_tx.clone()
     }
 
+    /// `shutdown` function.
+    /// `shutdown` 函数.
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
+    /// `wait` function.
+    /// `wait` 函数.
     pub async fn wait(self) -> Result<(), TaskJoinError> {
         self.join.wait().await
     }
@@ -148,13 +206,25 @@ struct ConnectionState {
     cancel: CancellationToken,
 }
 
+/// `HttpResponseData` data structure.
+/// `HttpResponseData` 数据结构.
 pub(crate) struct HttpResponseData {
+    /// `status` field of type `u16`.
+    /// `status` 字段，类型为 `u16`.
     pub(crate) status: u16,
+    /// `content_type` field of type `&'static str`.
+    /// `content_type` 字段，类型为 `&'static str`.
     pub(crate) content_type: &'static str,
+    /// `body` field of type `Bytes`.
+    /// `body` 字段，类型为 `Bytes`.
     pub(crate) body: Bytes,
+    /// `headers` field.
+    /// `headers` 字段.
     pub(crate) headers: Vec<(&'static str, String)>,
 }
 
+/// `start_server` function.
+/// `start_server` 函数.
 pub fn start_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,
@@ -287,6 +357,8 @@ const KEEP_ALIVE_MAX_REQUESTS: u32 = 100;
 /// Write timeout per chunk in seconds.
 const WRITE_TIMEOUT_SECS: u64 = 10;
 
+/// `run_connection` function.
+/// `run_connection` 函数.
 pub(crate) async fn run_connection(
     connection_id: HlsConnectionId,
     mut stream: Box<dyn cheetah_runtime_api::AsyncTcpStream>,

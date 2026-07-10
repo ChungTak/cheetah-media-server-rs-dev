@@ -10,6 +10,8 @@ use crate::event::WebRtcCoreEvent;
 use crate::input::WebRtcCloseReason;
 use crate::types::WebRtcSessionId;
 
+/// `WebRtcCoreOutput` enumeration.
+/// `WebRtcCoreOutput` 枚举.
 #[derive(Debug, Clone)]
 pub enum WebRtcCoreOutput {
     /// Network packet to deliver via the driver socket.
@@ -35,22 +37,42 @@ pub enum WebRtcCoreOutput {
     },
 }
 
+/// `WebRtcLocalDescriptionKind` enumeration.
+/// `WebRtcLocalDescriptionKind` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WebRtcLocalDescriptionKind {
+    /// `Offer` variant.
+    /// `Offer` 变体.
     Offer,
+    /// `Answer` variant.
+    /// `Answer` 变体.
     Answer,
 }
 
+/// `WebRtcPacketOut` data structure.
+/// `WebRtcPacketOut` 数据结构.
 #[derive(Debug, Clone)]
 pub struct WebRtcPacketOut {
+    /// `session_id` field of type `WebRtcSessionId`.
+    /// `session_id` 字段，类型为 `WebRtcSessionId`.
     pub session_id: WebRtcSessionId,
+    /// `source` field.
+    /// `source` 字段.
     pub source: Option<SocketAddr>,
+    /// `destination` field of type `SocketAddr`.
+    /// `destination` 字段，类型为 `SocketAddr`.
     pub destination: SocketAddr,
+    /// `data` field of type `Bytes`.
+    /// `data` 字段，类型为 `Bytes`.
     pub data: Bytes,
 }
 
+/// `WebRtcTimer` data structure.
+/// `WebRtcTimer` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WebRtcTimer {
+    /// `session_id` field of type `WebRtcSessionId`.
+    /// `session_id` 字段，类型为 `WebRtcSessionId`.
     pub session_id: WebRtcSessionId,
     /// Deadline expressed in microseconds anchored at the core start time.
     pub deadline_micros: u64,

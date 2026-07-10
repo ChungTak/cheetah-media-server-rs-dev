@@ -15,22 +15,46 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::warn;
 
+/// `HttpFlvConnectionId` type alias.
+/// `HttpFlvConnectionId` 类型别名.
 pub type HttpFlvConnectionId = u64;
 
+/// `ConnectionControl` data structure.
+/// `ConnectionControl` 数据结构.
 #[derive(Clone)]
 pub(crate) struct ConnectionControl {
+    /// `tx` field.
+    /// `tx` 字段.
     pub(crate) tx: mpsc::Sender<ConnectionCommand>,
+    /// `cancel` field of type `CancellationToken`.
+    /// `cancel` 字段，类型为 `CancellationToken`.
     pub(crate) cancel: CancellationToken,
 }
 
+/// `HttpFlvDriverConfig` data structure.
+/// `HttpFlvDriverConfig` 数据结构.
 #[derive(Debug, Clone)]
 pub struct HttpFlvDriverConfig {
+    /// `write_queue_capacity` field of type `usize`.
+    /// `write_queue_capacity` 字段，类型为 `usize`.
     pub write_queue_capacity: usize,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     pub read_buffer_size: usize,
+    /// `max_request_header_bytes` field of type `usize`.
+    /// `max_request_header_bytes` 字段，类型为 `usize`.
     pub max_request_header_bytes: usize,
+    /// `max_body_buffer_bytes` field of type `usize`.
+    /// `max_body_buffer_bytes` 字段，类型为 `usize`.
     pub max_body_buffer_bytes: usize,
+    /// `max_websocket_message_bytes` field of type `usize`.
+    /// `max_websocket_message_bytes` 字段，类型为 `usize`.
     pub max_websocket_message_bytes: usize,
+    /// `command_queue_capacity` field of type `usize`.
+    /// `command_queue_capacity` 字段，类型为 `usize`.
     pub command_queue_capacity: usize,
+    /// `event_queue_capacity` field of type `usize`.
+    /// `event_queue_capacity` 字段，类型为 `usize`.
     pub event_queue_capacity: usize,
 }
 
@@ -48,45 +72,69 @@ impl Default for HttpFlvDriverConfig {
     }
 }
 
+/// `HttpFlvDriverEvent` enumeration.
+/// `HttpFlvDriverEvent` 枚举.
 #[derive(Debug)]
 pub enum HttpFlvDriverEvent {
+    /// `ConnectionOpened` variant.
+    /// `ConnectionOpened` 变体.
     ConnectionOpened {
         connection_id: HttpFlvConnectionId,
         peer: Option<SocketAddr>,
     },
+    /// `ConnectionClosed` variant.
+    /// `ConnectionClosed` 变体.
     ConnectionClosed {
         connection_id: HttpFlvConnectionId,
         reason: String,
     },
+    /// `Core` variant.
+    /// `Core` 变体.
     Core {
         connection_id: HttpFlvConnectionId,
         event: HttpFlvEvent,
     },
 }
 
+/// `HttpFlvDriverCommand` enumeration.
+/// `HttpFlvDriverCommand` 枚举.
 #[derive(Debug, Clone)]
 pub enum HttpFlvDriverCommand {
+    /// `SendFlvBytes` variant.
+    /// `SendFlvBytes` 变体.
     SendFlvBytes {
         connection_id: HttpFlvConnectionId,
         bytes: Bytes,
     },
-    CloseConnection {
-        connection_id: HttpFlvConnectionId,
-    },
+    /// `CloseConnection` variant.
+    /// `CloseConnection` 变体.
+    CloseConnection { connection_id: HttpFlvConnectionId },
+    /// `Shutdown` variant.
+    /// `Shutdown` 变体.
     Shutdown,
 }
 
+/// `HttpFlvCoreCommandSender` data structure.
+/// `HttpFlvCoreCommandSender` 数据结构.
 #[derive(Clone)]
 pub struct HttpFlvCoreCommandSender {
+    /// `tx` field.
+    /// `tx` 字段.
     pub(crate) tx: mpsc::Sender<HttpFlvDriverCommand>,
 }
 
+/// `DriverSendError` enumeration.
+/// `DriverSendError` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverSendError {
+    /// `ChannelClosed` variant.
+    /// `ChannelClosed` 变体.
     ChannelClosed,
 }
 
 impl HttpFlvCoreCommandSender {
+    /// `send` function.
+    /// `send` 函数.
     pub async fn send(&self, command: HttpFlvDriverCommand) -> Result<(), DriverSendError> {
         self.tx
             .send(command)
@@ -94,6 +142,8 @@ impl HttpFlvCoreCommandSender {
             .map_err(|_| DriverSendError::ChannelClosed)
     }
 
+    /// `send_flv_bytes` function.
+    /// `send_flv_bytes` 函数.
     pub async fn send_flv_bytes(
         &self,
         connection_id: HttpFlvConnectionId,
@@ -106,6 +156,8 @@ impl HttpFlvCoreCommandSender {
         .await
     }
 
+    /// `close_connection` function.
+    /// `close_connection` 函数.
     pub async fn close_connection(
         &self,
         connection_id: HttpFlvConnectionId,
@@ -115,42 +167,72 @@ impl HttpFlvCoreCommandSender {
     }
 }
 
+/// `HttpFlvServerHandle` data structure.
+/// `HttpFlvServerHandle` 数据结构.
 pub struct HttpFlvServerHandle {
+    /// `listen` field of type `SocketAddr`.
+    /// `listen` 字段，类型为 `SocketAddr`.
     pub(crate) listen: SocketAddr,
+    /// `events_rx` field.
+    /// `events_rx` 字段.
     pub(crate) events_rx: mpsc::Receiver<HttpFlvDriverEvent>,
+    /// `cmd_tx` field of type `HttpFlvCoreCommandSender`.
+    /// `cmd_tx` 字段，类型为 `HttpFlvCoreCommandSender`.
     pub(crate) cmd_tx: HttpFlvCoreCommandSender,
+    /// `cancel` field of type `CancellationToken`.
+    /// `cancel` 字段，类型为 `CancellationToken`.
     pub(crate) cancel: CancellationToken,
+    /// `join` field.
+    /// `join` 字段.
     pub(crate) join: Box<dyn JoinHandle>,
 }
 
 impl HttpFlvServerHandle {
+    /// `recv_event` function.
+    /// `recv_event` 函数.
     pub async fn recv_event(&mut self) -> Option<HttpFlvDriverEvent> {
         self.events_rx.recv().await
     }
 
+    /// `local_addr` function.
+    /// `local_addr` 函数.
     pub fn local_addr(&self) -> SocketAddr {
         self.listen
     }
 
+    /// `core_command_sender` function.
+    /// `core_command_sender` 函数.
     pub fn core_command_sender(&self) -> HttpFlvCoreCommandSender {
         self.cmd_tx.clone()
     }
 
+    /// `shutdown` function.
+    /// `shutdown` 函数.
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
+    /// `wait` function.
+    /// `wait` 函数.
     pub async fn wait(self) -> Result<(), TaskJoinError> {
         self.join.wait().await
     }
 }
 
+/// `ConnectionCommand` enumeration.
+/// `ConnectionCommand` 枚举.
 #[derive(Debug)]
 pub(crate) enum ConnectionCommand {
+    /// `SendFlvBytes` variant.
+    /// `SendFlvBytes` 变体.
     SendFlvBytes(Bytes),
+    /// `Close` variant.
+    /// `Close` 变体.
     Close,
 }
 
+/// `start_server` function.
+/// `start_server` 函数.
 pub fn start_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,
@@ -246,6 +328,8 @@ pub fn start_server(
     })
 }
 
+/// `handle_driver_command_with_map` function.
+/// `handle_driver_command_with_map` 函数.
 pub(crate) fn handle_driver_command_with_map(
     command: HttpFlvDriverCommand,
     conn_map: &Arc<Mutex<HashMap<HttpFlvConnectionId, ConnectionControl>>>,
@@ -291,6 +375,8 @@ fn send_connection_command(
     }
 }
 
+/// `run_connection` function.
+/// `run_connection` 函数.
 pub(crate) async fn run_connection(
     connection_id: HttpFlvConnectionId,
     mut stream: Box<dyn cheetah_runtime_api::AsyncTcpStream>,

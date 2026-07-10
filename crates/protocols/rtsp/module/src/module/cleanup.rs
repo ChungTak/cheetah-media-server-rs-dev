@@ -1,5 +1,7 @@
 use super::play::{send_play_rtcp_packet, PlayRtcpPacket, PlayRtcpSendError};
 use super::*;
+/// `cleanup_connection` function.
+/// `cleanup_connection` 函数.
 pub(super) async fn cleanup_connection(
     connection_id: RtspConnectionId,
     engine: &EngineContext,
@@ -9,6 +11,8 @@ pub(super) async fn cleanup_connection(
     cleanup_connection_with_config(connection_id, engine, sessions, multicast, 0).await;
 }
 
+/// `cleanup_connection_with_config` function.
+/// `cleanup_connection_with_config` 函数.
 pub(super) async fn cleanup_connection_with_config(
     connection_id: RtspConnectionId,
     engine: &EngineContext,
@@ -85,6 +89,8 @@ fn cancel_pending_describe(state: &mut RtspConnectionState) {
     }
 }
 
+/// `send_play_rtcp_bye` function.
+/// `send_play_rtcp_bye` 函数.
 pub(super) async fn send_play_rtcp_bye(
     connection_id: RtspConnectionId,
     command_tx: &RtspCoreCommandSender,

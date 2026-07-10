@@ -11,21 +11,33 @@ use crate::timestamp::RtmpTimestamp;
 
 const MAX_MESSAGE_SIZE: usize = 8 * 1024 * 1024;
 
+/// `RtmpChunkDecoder` data structure.
+/// `RtmpChunkDecoder` 数据结构.
 #[derive(Debug, Default)]
 pub struct RtmpChunkDecoder {
+    /// `chunk_size` field of type `RtmpChunkSize`.
+    /// `chunk_size` 字段，类型为 `RtmpChunkSize`.
     chunk_size: RtmpChunkSize,
+    /// `chunk_streams` field.
+    /// `chunk_streams` 字段.
     chunk_streams: BTreeMap<RtmpChunkStreamId, RtmpChunkStream>,
 }
 
 impl RtmpChunkDecoder {
+    /// Sets the `chunk_size` value.
+    /// Sets `chunk_size` 值.
     pub fn set_chunk_size(&mut self, size: RtmpChunkSize) {
         self.chunk_size = size;
     }
 
+    /// `reset_chunk_stream` function.
+    /// `reset_chunk_stream` 函数.
     pub fn reset_chunk_stream(&mut self, chunk_stream_id: RtmpChunkStreamId) {
         self.chunk_streams.remove(&chunk_stream_id);
     }
 
+    /// `decode` function.
+    /// `decode` 函数.
     pub fn decode(&mut self, mut buf: &[u8]) -> Result<(usize, Option<RtmpChunk>), Error> {
         let original_buf_len = buf.len();
 

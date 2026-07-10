@@ -5,29 +5,47 @@ use crate::error::HlsCoreError;
 /// Parsed media playlist.
 #[derive(Debug, Clone)]
 pub struct ParsedMediaPlaylist {
+    /// `target_duration` field of type `u32`.
+    /// `target_duration` 字段，类型为 `u32`.
     pub target_duration: u32,
+    /// `media_sequence` field of type `u64`.
+    /// `media_sequence` 字段，类型为 `u64`.
     pub media_sequence: u64,
+    /// `segments` field.
+    /// `segments` 字段.
     pub segments: Vec<ParsedSegment>,
+    /// `end_list` field of type `bool`.
+    /// `end_list` 字段，类型为 `bool`.
     pub end_list: bool,
 }
 
 /// A single segment entry from a parsed playlist.
 #[derive(Debug, Clone)]
 pub struct ParsedSegment {
+    /// `duration` field of type `f64`.
+    /// `duration` 字段，类型为 `f64`.
     pub duration: f64,
+    /// `uri` field of type `String`.
+    /// `uri` 字段，类型为 `String`.
     pub uri: String,
 }
 
 /// Parsed master (multivariant) playlist.
 #[derive(Debug, Clone)]
 pub struct ParsedMasterPlaylist {
+    /// `variants` field.
+    /// `variants` 字段.
     pub variants: Vec<ParsedVariant>,
 }
 
 /// A variant stream entry.
 #[derive(Debug, Clone)]
 pub struct ParsedVariant {
+    /// `bandwidth` field of type `u64`.
+    /// `bandwidth` 字段，类型为 `u64`.
     pub bandwidth: u64,
+    /// `uri` field of type `String`.
+    /// `uri` 字段，类型为 `String`.
     pub uri: String,
 }
 

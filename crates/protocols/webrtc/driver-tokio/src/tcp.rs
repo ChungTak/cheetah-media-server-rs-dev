@@ -32,15 +32,23 @@ pub const TCP_FRAME_MAX_BYTES: usize = 65_535;
 /// the next `extend` call.
 #[derive(Debug, Default)]
 pub struct Tcp4571Decoder {
+    /// `buf` field of type `BytesMut`.
+    /// `buf` 字段，类型为 `BytesMut`.
     buf: BytesMut,
+    /// `max_frame` field of type `usize`.
+    /// `max_frame` 字段，类型为 `usize`.
     max_frame: usize,
 }
 
 impl Tcp4571Decoder {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self::with_max_frame(TCP_FRAME_MAX_BYTES)
     }
 
+    /// Returns a copy with `max_frame` set.
+    /// 返回 一个 copy 带有 `max_frame` 设置.
     pub fn with_max_frame(max_frame: usize) -> Self {
         Self {
             buf: BytesMut::with_capacity(4096),
@@ -89,6 +97,8 @@ impl Tcp4571Decoder {
 /// Errors produced by [`Tcp4571Decoder::next_frame`].
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Tcp4571Error {
+    /// `FrameTooLarge` variant.
+    /// `FrameTooLarge` 变体.
     #[error("RFC 4571 frame length {len} exceeds configured maximum")]
     FrameTooLarge { len: usize },
 }

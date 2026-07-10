@@ -21,6 +21,8 @@ fn timebase_value_to_millis(tb: Timebase, value: i64) -> i64 {
     round_half_away_from_zero(scaled, den) as i64
 }
 
+/// `millis_to_rtmp_timestamp_ms` function.
+/// `millis_to_rtmp_timestamp_ms` 函数.
 pub fn millis_to_rtmp_timestamp_ms(millis: i64) -> u32 {
     if millis <= 0 {
         return 0;
@@ -28,15 +30,21 @@ pub fn millis_to_rtmp_timestamp_ms(millis: i64) -> u32 {
     millis.min(i64::from(u32::MAX)) as u32
 }
 
+/// `dts_to_rtmp_timestamp_ms` function.
+/// `dts_to_rtmp_timestamp_ms` 函数.
 pub fn dts_to_rtmp_timestamp_ms(dts: i64, timebase: Timebase) -> u32 {
     let dts_ms = timebase_value_to_millis(timebase, dts);
     millis_to_rtmp_timestamp_ms(dts_ms)
 }
 
+/// `frame_dts_to_rtmp_timestamp_ms` function.
+/// `frame_dts_to_rtmp_timestamp_ms` 函数.
 pub fn frame_dts_to_rtmp_timestamp_ms(frame: &AVFrame) -> u32 {
     dts_to_rtmp_timestamp_ms(frame.dts, frame.timebase)
 }
 
+/// `frame_composition_time_ms` function.
+/// `frame_composition_time_ms` 函数.
 pub fn frame_composition_time_ms(frame: &AVFrame) -> i32 {
     let pts_ms = timebase_value_to_millis(frame.timebase, frame.pts);
     let dts_ms = timebase_value_to_millis(frame.timebase, frame.dts);
@@ -53,6 +61,8 @@ pub fn select_egress_timestamps(_media_kind: MediaKind, pts: i64, dts: i64) -> (
     (dts, pts)
 }
 
+/// `media_ts_to_rtp_ticks` function.
+/// `media_ts_to_rtp_ticks` 函数.
 pub fn media_ts_to_rtp_ticks(
     primary: i64,
     secondary: i64,
@@ -82,12 +92,20 @@ pub fn media_ts_to_rtp_ticks(
     }
 }
 
+/// `TimestampRepairResult` data structure.
+/// `TimestampRepairResult` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimestampRepairResult {
+    /// `timestamp` field of type `u32`.
+    /// `timestamp` 字段，类型为 `u32`.
     pub timestamp: u32,
+    /// `repaired` field of type `bool`.
+    /// `repaired` 字段，类型为 `bool`.
     pub repaired: bool,
 }
 
+/// `repair_monotonic_timestamp` function.
+/// `repair_monotonic_timestamp` 函数.
 pub fn repair_monotonic_timestamp(
     raw_timestamp: u32,
     last_timestamp: Option<u32>,
@@ -122,10 +140,14 @@ pub fn repair_monotonic_timestamp(
     }
 }
 
+/// `should_sample_timestamp_repair` function.
+/// `should_sample_timestamp_repair` 函数.
 pub fn should_sample_timestamp_repair(repair_count: u64) -> bool {
     repair_count <= 3 || repair_count.is_power_of_two() || repair_count.is_multiple_of(1024)
 }
 
+/// `should_emit_alert_threshold` function.
+/// `should_emit_alert_threshold` 函数.
 pub fn should_emit_alert_threshold(count: u64, threshold: u64) -> bool {
     threshold > 0 && count >= threshold && (count == threshold || count.is_multiple_of(threshold))
 }
@@ -134,13 +156,23 @@ pub fn should_emit_alert_threshold(count: u64, threshold: u64) -> bool {
 /// epoch offset between the first video and audio frames. Ensures both tracks
 /// share a common time origin so players don't experience A/V desync.
 pub struct AvSyncAligner {
+    /// `video_epoch_us` field.
+    /// `video_epoch_us` 字段.
     video_epoch_us: Option<i64>,
+    /// `audio_epoch_us` field.
+    /// `audio_epoch_us` 字段.
     audio_epoch_us: Option<i64>,
+    /// `sync_offset_us` field of type `i64`.
+    /// `sync_offset_us` 字段，类型为 `i64`.
     sync_offset_us: i64,
+    /// `synced` field of type `bool`.
+    /// `synced` 字段，类型为 `bool`.
     synced: bool,
 }
 
 impl AvSyncAligner {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             video_epoch_us: None,
@@ -183,10 +215,14 @@ impl AvSyncAligner {
         }
     }
 
+    /// Returns `true` if `synced` is true.
+    /// 返回 `真` 如果 `synced` is 真.
     pub fn is_synced(&self) -> bool {
         self.synced
     }
 
+    /// `offset_us` function.
+    /// `offset_us` 函数.
     pub fn offset_us(&self) -> i64 {
         self.sync_offset_us
     }
@@ -203,13 +239,23 @@ impl Default for AvSyncAligner {
 /// This handles B-frame reordering (IBBP patterns) more accurately than
 /// step estimation alone.
 pub struct SortingWindowDtsGenerator {
+    /// `window` field.
+    /// `window` 字段.
     window: VecDeque<i64>,
+    /// `window_size` field of type `usize`.
+    /// `window_size` 字段，类型为 `usize`.
     window_size: usize,
+    /// `last_output_dts` field of type `i64`.
+    /// `last_output_dts` 字段，类型为 `i64`.
     last_output_dts: i64,
+    /// `initialized` field of type `bool`.
+    /// `initialized` 字段，类型为 `bool`.
     initialized: bool,
 }
 
 impl SortingWindowDtsGenerator {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(window_size: usize) -> Self {
         Self {
             window: VecDeque::with_capacity(window_size.max(1)),
@@ -261,6 +307,8 @@ impl SortingWindowDtsGenerator {
         out
     }
 
+    /// `reset` function.
+    /// `reset` 函数.
     pub fn reset(&mut self) {
         self.window.clear();
         self.last_output_dts = 0;
@@ -281,14 +329,26 @@ pub struct RtpEgressTimestamp {
 /// when converting from media timebases (e.g., 1/1000 ms) to RTP clock rates
 /// (e.g., 90000 Hz). Tracks fractional ticks to prevent drift over long sessions.
 pub struct IncrementalRtpTimestampGenerator {
+    /// `last_dts_us` field of type `i64`.
+    /// `last_dts_us` 字段，类型为 `i64`.
     last_dts_us: i64,
+    /// `rtp_timestamp` field of type `u32`.
+    /// `rtp_timestamp` 字段，类型为 `u32`.
     rtp_timestamp: u32,
+    /// `clock_rate` field of type `u32`.
+    /// `clock_rate` 字段，类型为 `u32`.
     clock_rate: u32,
+    /// `fractional_ticks` field of type `f64`.
+    /// `fractional_ticks` 字段，类型为 `f64`.
     fractional_ticks: f64,
+    /// `initialized` field of type `bool`.
+    /// `initialized` 字段，类型为 `bool`.
     initialized: bool,
 }
 
 impl IncrementalRtpTimestampGenerator {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(clock_rate: u32) -> Self {
         Self {
             last_dts_us: 0,
@@ -342,8 +402,14 @@ impl IncrementalRtpTimestampGenerator {
 /// Estimates video frame rate from PTS deltas by collecting samples and averaging.
 /// Used when metadata-declared frame rate is missing or inaccurate.
 pub struct FrameRateEstimator {
+    /// `samples` field.
+    /// `samples` 字段.
     samples: VecDeque<i64>,
+    /// `max_samples` field of type `usize`.
+    /// `max_samples` 字段，类型为 `usize`.
     max_samples: usize,
+    /// `last_pts_us` field.
+    /// `last_pts_us` 字段.
     last_pts_us: Option<i64>,
     /// Number of initial frames to skip before collecting samples (ABL: 15).
     warmup_frames: usize,
@@ -356,6 +422,8 @@ pub struct FrameRateEstimator {
 }
 
 impl FrameRateEstimator {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(max_samples: usize) -> Self {
         Self {
             samples: VecDeque::with_capacity(max_samples.max(1)),
@@ -422,6 +490,8 @@ impl FrameRateEstimator {
         Some(clamp_f64(fps, self.min_fps, self.max_fps))
     }
 
+    /// `reset` function.
+    /// `reset` 函数.
     pub fn reset(&mut self) {
         self.samples.clear();
         self.last_pts_us = None;

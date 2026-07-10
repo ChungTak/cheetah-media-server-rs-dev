@@ -3,19 +3,33 @@ use crate::amf3::Amf3Value;
 use crate::error::Error;
 use crate::prelude::*;
 
+/// `AmfVersion` enumeration.
+/// `AmfVersion` 枚举.
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum AmfVersion {
+    /// `Amf0` variant.
+    /// `Amf0` 变体.
     Amf0,
+    /// `Amf3` variant.
+    /// `Amf3` 变体.
     Amf3,
 }
 
+/// `AmfValue` enumeration.
+/// `AmfValue` 枚举.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum AmfValue {
+    /// `Amf0` variant.
+    /// `Amf0` 变体.
     Amf0(Amf0Value),
+    /// `Amf3` variant.
+    /// `Amf3` 变体.
     Amf3(Amf3Value),
 }
 
 impl AmfValue {
+    /// `decode` function.
+    /// `decode` 函数.
     pub fn decode(buf: &[u8], version: AmfVersion) -> Result<(usize, Self), Error> {
         match version {
             AmfVersion::Amf0 => Amf0Value::decode(buf).map(|(n, v)| (n, Self::Amf0(v))),
@@ -23,6 +37,8 @@ impl AmfValue {
         }
     }
 
+    /// `encode` function.
+    /// `encode` 函数.
     pub fn encode(&self, buf: &mut Vec<u8>) {
         match self {
             Self::Amf0(x) => x.encode(buf),
@@ -30,6 +46,8 @@ impl AmfValue {
         }
     }
 
+    /// `expect_object_member` function.
+    /// `expect_object_member` 函数.
     #[track_caller]
     pub fn expect_object_member(&self, key: &str) -> Result<AmfValueRef<'_>, Error> {
         match self {
@@ -47,11 +65,15 @@ impl AmfValue {
         }
     }
 
+    /// `expect_str` function.
+    /// `expect_str` 函数.
     #[track_caller]
     pub fn expect_str(&self) -> Result<&str, Error> {
         self.to_ref().expect_str()
     }
 
+    /// `expect_number` function.
+    /// `expect_number` 函数.
     #[track_caller]
     pub fn expect_number(&self) -> Result<f64, Error> {
         self.to_ref().expect_number()
@@ -64,6 +86,8 @@ impl AmfValue {
         }
     }
 
+    /// `amf0_object` function.
+    /// `amf0_object` 函数.
     pub fn amf0_object<'a, I>(entries: I) -> Self
     where
         I: IntoIterator<Item = (&'a str, Amf0Value)>,
@@ -99,13 +123,21 @@ impl From<(AmfVersion, f64)> for AmfValue {
     }
 }
 
+/// `AmfValueRef` enumeration.
+/// `AmfValueRef` 枚举.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum AmfValueRef<'a> {
+    /// `Amf0` variant.
+    /// `Amf0` 变体.
     Amf0(&'a Amf0Value),
+    /// `Amf3` variant.
+    /// `Amf3` 变体.
     Amf3(&'a Amf3Value),
 }
 
 impl<'a> AmfValueRef<'a> {
+    /// `expect_str` function.
+    /// `expect_str` 函数.
     pub fn expect_str(&self) -> Result<&'a str, Error> {
         match self {
             Self::Amf0(Amf0Value::String(s)) => Ok(s),
@@ -114,6 +146,8 @@ impl<'a> AmfValueRef<'a> {
         }
     }
 
+    /// `expect_number` function.
+    /// `expect_number` 函数.
     pub fn expect_number(&self) -> Result<f64, Error> {
         match self {
             Self::Amf0(Amf0Value::Number(n)) => Ok(*n),
@@ -124,9 +158,15 @@ impl<'a> AmfValueRef<'a> {
     }
 }
 
+/// `Pair` data structure.
+/// `Pair` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pair<K, V> {
+    /// `key` field of type `K`.
+    /// `key` 字段，类型为 `K`.
     pub key: K,
+    /// `value` field of type `V`.
+    /// `值` 字段，类型为 `V`.
     pub value: V,
 }
 

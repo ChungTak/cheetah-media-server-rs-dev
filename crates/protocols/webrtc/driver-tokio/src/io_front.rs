@@ -45,11 +45,17 @@ use crate::stun::extract_local_ufrag;
 /// adds <100 ns per send relative to the previous unsynchronised
 /// `mpsc::Sender` clone.
 pub(crate) struct ShardChannels {
+    /// `cmd_tx` field.
+    /// `cmd_tx` 字段.
     pub(crate) cmd_tx: parking_lot::RwLock<mpsc::Sender<ShardCommand>>,
+    /// `packet_tx` field.
+    /// `packet_tx` 字段.
     pub(crate) packet_tx: parking_lot::RwLock<mpsc::Sender<NetDatagram>>,
 }
 
 impl ShardChannels {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub(crate) fn new(
         cmd_tx: mpsc::Sender<ShardCommand>,
         packet_tx: mpsc::Sender<NetDatagram>,
@@ -60,14 +66,20 @@ impl ShardChannels {
         }
     }
 
+    /// `cmd_sender` function.
+    /// `cmd_sender` 函数.
     pub(crate) fn cmd_sender(&self) -> mpsc::Sender<ShardCommand> {
         self.cmd_tx.read().clone()
     }
 
+    /// `packet_sender` function.
+    /// `packet_sender` 函数.
     pub(crate) fn packet_sender(&self) -> mpsc::Sender<NetDatagram> {
         self.packet_tx.read().clone()
     }
 
+    /// `rebind` function.
+    /// `rebind` 函数.
     pub(crate) fn rebind(
         &self,
         cmd_tx: mpsc::Sender<ShardCommand>,
@@ -382,14 +394,32 @@ async fn forward_for_session(
 
 /// Configuration passed from `spawn_driver` into the front-end task.
 pub(crate) struct IoFrontConfig {
+    /// `shards` field.
+    /// `shards` 字段.
     pub(crate) shards: Vec<Arc<ShardChannels>>,
+    /// `directory` field.
+    /// `directory` 字段.
     pub(crate) directory: Arc<RouteDirectory>,
+    /// `selector` field of type `ShardSelector`.
+    /// `selector` 字段，类型为 `ShardSelector`.
     pub(crate) selector: ShardSelector,
+    /// `shard_loads` field.
+    /// `shard_loads` 字段.
     pub(crate) shard_loads: Arc<ShardLoadTable>,
+    /// `commands_accepted` field.
+    /// `commands_accepted` 字段.
     pub(crate) commands_accepted: Arc<std::sync::atomic::AtomicU64>,
+    /// `unrouted_packets` field.
+    /// `unrouted_packets` 字段.
     pub(crate) unrouted_packets: Arc<std::sync::atomic::AtomicU64>,
+    /// `event_tx` field.
+    /// `event_tx` 字段.
     pub(crate) event_tx: mpsc::Sender<WebRtcDriverEvent>,
+    /// `cmd_rx` field.
+    /// `cmd_rx` 字段.
     pub(crate) cmd_rx: mpsc::Receiver<WebRtcDriverCommand>,
+    /// `packet_rx` field.
+    /// `packet_rx` 字段.
     pub(crate) packet_rx: mpsc::Receiver<NetDatagram>,
 }
 

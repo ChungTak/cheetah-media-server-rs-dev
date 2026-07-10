@@ -28,6 +28,8 @@ use crate::config::{RtpClientJobConfig, RtpModuleConfig};
 
 const MODULE_ID: &str = "rtp";
 
+/// `RtpModuleFactory` data structure.
+/// `RtpModuleFactory` 数据结构.
 pub struct RtpModuleFactory;
 
 impl ModuleFactory for RtpModuleFactory {
@@ -65,20 +67,36 @@ impl ModuleFactory for RtpModuleFactory {
     }
 }
 
+/// `RtpModule` data structure.
+/// `RtpModule` 数据结构.
 pub struct RtpModule {
+    /// `state` field of type `ModuleState`.
+    /// `state` 字段，类型为 `ModuleState`.
     state: ModuleState,
+    /// `config` field of type `RtpModuleConfig`.
+    /// `config` 字段，类型为 `RtpModuleConfig`.
     config: RtpModuleConfig,
+    /// `ctx` field.
+    /// `ctx` 字段.
     ctx: Option<EngineContext>,
     /// Shared with the HTTP service so the latter sees the driver as soon as `start` sets it.
     /// `update_http_mount` runs at init time — before `start` — so the module can't pass a
     /// concrete handle directly.
     driver_handle: Arc<Mutex<Option<Arc<RtpDriverHandle>>>>,
+    /// `cancel_token` field.
+    /// `cancel_token` 字段.
     cancel_token: Option<CancellationToken>,
+    /// `active_egress` field.
+    /// `active_egress` 字段.
     active_egress: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    /// `client_targets` field.
+    /// `client_targets` 字段.
     client_targets: Arc<Mutex<HashMap<String, Vec<String>>>>,
 }
 
 impl RtpModule {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             state: ModuleState::Created,

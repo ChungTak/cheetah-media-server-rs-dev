@@ -36,10 +36,18 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
+/// `HttpMethod` enumeration.
+/// `HttpMethod` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
+    /// `Post` variant.
+    /// `Post` 变体.
     Post,
+    /// `Delete` variant.
+    /// `Delete` 变体.
     Delete,
+    /// `Patch` variant.
+    /// `Patch` 变体.
     Patch,
 }
 
@@ -53,26 +61,48 @@ impl HttpMethod {
     }
 }
 
+/// `HttpClientError` enumeration.
+/// `HttpClientError` 枚举.
 #[derive(Debug, Error)]
 pub enum HttpClientError {
+    /// `InvalidUrl` variant.
+    /// `InvalidUrl` 变体.
     #[error("invalid url: {0}")]
     InvalidUrl(String),
+    /// `UnsupportedScheme` variant.
+    /// `UnsupportedScheme` 变体.
     #[error("unsupported scheme: {0}")]
     UnsupportedScheme(String),
+    /// `DnsFailure` variant.
+    /// `DnsFailure` 变体.
     #[error("network address resolution failed: {0}")]
     DnsFailure(String),
+    /// `AddressBlocked` variant.
+    /// `AddressBlocked` 变体.
     #[error("network address blocked by policy: {0}")]
     AddressBlocked(String),
+    /// `ConnectTimeout` variant.
+    /// `ConnectTimeout` 变体.
     #[error("connect timed out")]
     ConnectTimeout,
+    /// `Io` variant.
+    /// `Io` 变体.
     #[error("io error: {0}")]
     Io(String),
+    /// `Tls` variant.
+    /// `Tls` 变体.
     #[error("tls error: {0}")]
     Tls(String),
+    /// `BadResponse` variant.
+    /// `BadResponse` 变体.
     #[error("invalid http response: {0}")]
     BadResponse(String),
+    /// `BodyTooLarge` variant.
+    /// `BodyTooLarge` 变体.
     #[error("response body exceeds {0} bytes")]
     BodyTooLarge(usize),
+    /// `RequestTimeout` variant.
+    /// `RequestTimeout` 变体.
     #[error("request timed out")]
     RequestTimeout,
 }
@@ -83,14 +113,24 @@ impl From<io::Error> for HttpClientError {
     }
 }
 
+/// `HttpClientResponse` data structure.
+/// `HttpClientResponse` 数据结构.
 #[derive(Debug, Clone)]
 pub struct HttpClientResponse {
+    /// `status` field of type `u16`.
+    /// `status` 字段，类型为 `u16`.
     pub status: u16,
+    /// `headers` field.
+    /// `headers` 字段.
     pub headers: Vec<(String, String)>,
+    /// `body` field of type `Bytes`.
+    /// `body` 字段，类型为 `Bytes`.
     pub body: Bytes,
 }
 
 impl HttpClientResponse {
+    /// `header` function.
+    /// `header` 函数.
     pub fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -102,17 +142,35 @@ impl HttpClientResponse {
 /// Configuration for an outbound HTTP request.
 #[derive(Debug, Clone)]
 pub struct HttpClientRequest {
+    /// `url` field of type `String`.
+    /// `url` 字段，类型为 `String`.
     pub url: String,
+    /// `method` field of type `HttpMethod`.
+    /// `方法` 字段，类型为 `HttpMethod`.
     pub method: HttpMethod,
+    /// `headers` field.
+    /// `headers` 字段.
     pub headers: Vec<(String, String)>,
+    /// `body` field of type `Bytes`.
+    /// `body` 字段，类型为 `Bytes`.
     pub body: Bytes,
+    /// `timeout` field of type `Duration`.
+    /// `timeout` 字段，类型为 `Duration`.
     pub timeout: Duration,
+    /// `max_response_bytes` field of type `usize`.
+    /// `max_response_bytes` 字段，类型为 `usize`.
     pub max_response_bytes: usize,
+    /// `allow_private_ips` field of type `bool`.
+    /// `allow_private_ips` 字段，类型为 `bool`.
     pub allow_private_ips: bool,
+    /// `allowed_schemes` field.
+    /// `allowed_schemes` 字段.
     pub allowed_schemes: Vec<&'static str>,
 }
 
 impl HttpClientRequest {
+    /// Creates a new `post_sdp` instance.
+    /// 创建 新的 `post_sdp` 实例.
     pub fn new_post_sdp(url: impl Into<String>, sdp: impl Into<Bytes>) -> Self {
         Self {
             url: url.into(),
@@ -129,6 +187,8 @@ impl HttpClientRequest {
         }
     }
 
+    /// Creates a new `delete` instance.
+    /// 创建 新的 `delete` 实例.
     pub fn new_delete(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
@@ -147,10 +207,14 @@ impl HttpClientRequest {
 /// rebuild the trust store per request.
 #[derive(Clone)]
 pub struct WhipWhepHttpClient {
+    /// `tls_config` field.
+    /// `tls_config` 字段.
     tls_config: Arc<ClientConfig>,
 }
 
 impl WhipWhepHttpClient {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         // Install the process-default rustls crypto provider lazily.
         // Production deployments call this from `main.rs` before any
@@ -664,10 +728,20 @@ fn find_crlf(buf: &[u8]) -> Option<usize> {
 #[doc(hidden)]
 #[derive(Debug, Clone)]
 pub struct ParsedUrlForTesting {
+    /// `scheme_https` field of type `bool`.
+    /// `scheme_https` 字段，类型为 `bool`.
     pub scheme_https: bool,
+    /// `host` field of type `String`.
+    /// `host` 字段，类型为 `String`.
     pub host: String,
+    /// `port` field.
+    /// `port` 字段.
     pub port: Option<u16>,
+    /// `effective_port` field of type `u16`.
+    /// `effective_port` 字段，类型为 `u16`.
     pub effective_port: u16,
+    /// `path_and_query` field of type `String`.
+    /// `path_and_query` 字段，类型为 `String`.
     pub path_and_query: String,
 }
 

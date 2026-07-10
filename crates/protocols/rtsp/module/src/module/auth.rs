@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NONCE_COUNTER: AtomicU64 = AtomicU64::new(1);
 
+/// `request_requires_auth` function.
+/// `request_requires_auth` 函数.
 pub(super) fn request_requires_auth(method: &RtspMethod, config: &RtspModuleConfig) -> bool {
     if !config.auth.enabled {
         return false;
@@ -18,6 +20,8 @@ pub(super) fn request_requires_auth(method: &RtspMethod, config: &RtspModuleConf
     }
 }
 
+/// `AuthError` enumeration.
+/// `AuthError` 枚举.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum AuthError {
     /// Authentication failed — send 401 without stale hint.
@@ -26,6 +30,8 @@ pub(super) enum AuthError {
     StaleNonce,
 }
 
+/// `check_request_auth` function.
+/// `check_request_auth` 函数.
 pub(super) fn check_request_auth(
     connection_id: RtspConnectionId,
     req: &RtspRequest,
@@ -137,6 +143,8 @@ fn request_requires_auth_for_connection(
     request_requires_auth(method, config)
 }
 
+/// `issue_digest_nonce` function.
+/// `issue_digest_nonce` 函数.
 pub(super) fn issue_digest_nonce(
     connection_id: RtspConnectionId,
     sessions: &Arc<Mutex<HashMap<RtspConnectionId, RtspConnectionState>>>,
@@ -172,6 +180,8 @@ fn build_digest_nonce(connection_id: RtspConnectionId, now_unix_micros: u64) -> 
     nonce
 }
 
+/// Builds `www_authenticate_headers` output.
+/// 构建 `www_authenticate_headers` 输出.
 pub(super) fn build_www_authenticate_headers(
     config: &RtspModuleConfig,
     digest_nonce: Option<&str>,

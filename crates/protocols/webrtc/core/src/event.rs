@@ -13,34 +13,50 @@ use crate::types::{DataChannelId, MidLabel, WebRtcSessionId};
 /// All boundary-visible events for a session.
 #[derive(Debug, Clone)]
 pub enum WebRtcCoreEvent {
+    /// `Lifecycle` variant.
+    /// `Lifecycle` 变体.
     Lifecycle {
         session_id: WebRtcSessionId,
         state: WebRtcSessionLifecycle,
     },
+    /// `Ice` variant.
+    /// `Ice` 变体.
     Ice {
         session_id: WebRtcSessionId,
         state: WebRtcIceState,
     },
+    /// `MediaTrackAdded` variant.
+    /// `MediaTrackAdded` 变体.
     MediaTrackAdded {
         session_id: WebRtcSessionId,
         track: WebRtcMediaTrack,
     },
+    /// `Media` variant.
+    /// `Media` 变体.
     Media {
         session_id: WebRtcSessionId,
         event: WebRtcMediaEvent,
     },
+    /// `DataChannel` variant.
+    /// `DataChannel` 变体.
     DataChannel {
         session_id: WebRtcSessionId,
         event: WebRtcDataChannelEvent,
     },
+    /// `Stats` variant.
+    /// `Stats` 变体.
     Stats {
         session_id: WebRtcSessionId,
         snapshot: crate::stats::WebRtcSessionStats,
     },
+    /// `Bwe` variant.
+    /// `Bwe` 变体.
     Bwe {
         session_id: WebRtcSessionId,
         snapshot: crate::stats::WebRtcBweStats,
     },
+    /// `RtcpFeedback` variant.
+    /// `RtcpFeedback` 变体.
     RtcpFeedback {
         session_id: WebRtcSessionId,
         feedback: WebRtcRtcpFeedback,
@@ -71,6 +87,8 @@ pub enum WebRtcCoreEvent {
     },
 }
 
+/// `WebRtcSessionLifecycle` enumeration.
+/// `WebRtcSessionLifecycle` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WebRtcSessionLifecycle {
     /// Session has been created in the core.
@@ -87,37 +105,73 @@ pub enum WebRtcSessionLifecycle {
     Failed,
 }
 
+/// `WebRtcIceState` enumeration.
+/// `WebRtcIceState` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WebRtcIceState {
+    /// `New` variant.
+    /// `New` 变体.
     New,
+    /// `Checking` variant.
+    /// `Checking` 变体.
     Checking,
+    /// `Connected` variant.
+    /// `Connected` 变体.
     Connected,
+    /// `Disconnected` variant.
+    /// `Disconnected` 变体.
     Disconnected,
+    /// `Closed` variant.
+    /// `Closed` 变体.
     Closed,
 }
 
 /// A media track newly negotiated for a session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebRtcMediaTrack {
+    /// `mid` field of type `MidLabel`.
+    /// `mid` 字段，类型为 `MidLabel`.
     pub mid: MidLabel,
+    /// `kind` field of type `WebRtcMediaKind`.
+    /// `kind` 字段，类型为 `WebRtcMediaKind`.
     pub kind: WebRtcMediaKind,
+    /// `direction` field of type `WebRtcMediaDirection`.
+    /// `direction` 字段，类型为 `WebRtcMediaDirection`.
     pub direction: WebRtcMediaDirection,
     /// Simulcast layer RIDs negotiated for this track, if any.
     pub simulcast_send: Vec<String>,
+    /// `simulcast_recv` field.
+    /// `simulcast_recv` 字段.
     pub simulcast_recv: Vec<String>,
 }
 
+/// `WebRtcMediaKind` enumeration.
+/// `WebRtcMediaKind` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WebRtcMediaKind {
+    /// `Audio` variant.
+    /// `Audio` 变体.
     Audio,
+    /// `Video` variant.
+    /// `Video` 变体.
     Video,
 }
 
+/// `WebRtcMediaDirection` enumeration.
+/// `WebRtcMediaDirection` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WebRtcMediaDirection {
+    /// `SendOnly` variant.
+    /// `SendOnly` 变体.
     SendOnly,
+    /// `RecvOnly` variant.
+    /// `RecvOnly` 变体.
     RecvOnly,
+    /// `SendRecv` variant.
+    /// `SendRecv` 变体.
     SendRecv,
+    /// `Inactive` variant.
+    /// `Inactive` 变体.
     Inactive,
 }
 
@@ -171,10 +225,20 @@ pub enum WebRtcMediaEvent {
 ///   normalizer can mark the frame as discontinuous.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebRtcFrameMeta {
+    /// `audio_level_dbov` field.
+    /// `audio_level_dbov` 字段.
     pub audio_level_dbov: Option<i8>,
+    /// `voice_activity` field.
+    /// `voice_activity` 字段.
     pub voice_activity: Option<bool>,
+    /// `video_orientation` field.
+    /// `video_orientation` 字段.
     pub video_orientation: Option<u8>,
+    /// `sequence_number` field.
+    /// `sequence_number` 字段.
     pub sequence_number: Option<u16>,
+    /// `contiguous` field of type `bool`.
+    /// `contiguous` 字段，类型为 `bool`.
     pub contiguous: bool,
 }
 
@@ -186,47 +250,75 @@ pub struct WebRtcFrameMeta {
 /// pushing into engine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WebRtcCodecKind {
+    /// `Opus` variant.
+    /// `Opus` 变体.
     Opus,
+    /// `Pcma` variant.
+    /// `Pcma` 变体.
     Pcma,
+    /// `Pcmu` variant.
+    /// `Pcmu` 变体.
     Pcmu,
+    /// `H264` variant.
+    /// `H264` 变体.
     H264,
+    /// `H265` variant.
+    /// `H265` 变体.
     H265,
+    /// `Vp8` variant.
+    /// `Vp8` 变体.
     Vp8,
+    /// `Vp9` variant.
+    /// `Vp9` 变体.
     Vp9,
+    /// `Av1` variant.
+    /// `Av1` 变体.
     Av1,
+    /// `Unknown` variant.
+    /// `Unknown` 变体.
     Unknown,
 }
 
+/// `WebRtcDataChannelEvent` enumeration.
+/// `WebRtcDataChannelEvent` 枚举.
 #[derive(Debug, Clone)]
 pub enum WebRtcDataChannelEvent {
-    Opened {
-        id: DataChannelId,
-        label: String,
-    },
+    /// `Opened` variant.
+    /// `Opened` 变体.
+    Opened { id: DataChannelId, label: String },
+    /// `Message` variant.
+    /// `Message` 变体.
     Message {
         id: DataChannelId,
         payload: Bytes,
         binary: bool,
     },
-    Closed {
-        id: DataChannelId,
-    },
+    /// `Closed` variant.
+    /// `Closed` 变体.
+    Closed { id: DataChannelId },
 }
 
+/// `WebRtcRtcpFeedback` enumeration.
+/// `WebRtcRtcpFeedback` 枚举.
 #[derive(Debug, Clone)]
 pub enum WebRtcRtcpFeedback {
+    /// `SenderReport` variant.
+    /// `SenderReport` 变体.
     SenderReport,
+    /// `ReceiverReport` variant.
+    /// `ReceiverReport` 变体.
     ReceiverReport,
-    Pli {
-        mid: Option<MidLabel>,
-    },
-    Fir {
-        mid: Option<MidLabel>,
-    },
-    Nack {
-        mid: Option<MidLabel>,
-        count: u32,
-    },
+    /// `Pli` variant.
+    /// `Pli` 变体.
+    Pli { mid: Option<MidLabel> },
+    /// `Fir` variant.
+    /// `Fir` 变体.
+    Fir { mid: Option<MidLabel> },
+    /// `Nack` variant.
+    /// `Nack` 变体.
+    Nack { mid: Option<MidLabel>, count: u32 },
+    /// `Twcc` variant.
+    /// `Twcc` 变体.
     Twcc,
     /// Receiver Estimated Maximum Bitrate, surfaced from `str0m`'s BWE
     /// subsystem (`Event::EgressBitrateEstimate(BweKind::Remb)`). The
@@ -248,8 +340,14 @@ pub enum WebRtcRtcpFeedback {
 /// them on simulcast track addition for visibility.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcSimulcastLayerObservation {
+    /// `mid` field of type `MidLabel`.
+    /// `mid` 字段，类型为 `MidLabel`.
     pub mid: MidLabel,
+    /// `rid` field of type `String`.
+    /// `rid` 字段，类型为 `String`.
     pub rid: String,
+    /// `source` field of type `WebRtcSimulcastRidSource`.
+    /// `source` 字段，类型为 `WebRtcSimulcastRidSource`.
     pub source: WebRtcSimulcastRidSource,
 }
 

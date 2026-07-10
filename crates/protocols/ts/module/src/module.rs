@@ -26,6 +26,8 @@ use crate::config::{TsModuleConfig, TsPullJobConfig};
 
 const MODULE_ID: &str = "ts";
 
+/// `TsModuleFactory` data structure.
+/// `TsModuleFactory` 数据结构.
 pub struct TsModuleFactory;
 
 impl ModuleFactory for TsModuleFactory {

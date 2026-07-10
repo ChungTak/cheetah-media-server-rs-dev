@@ -60,9 +60,17 @@ struct MuxTrackEntry {
 
 /// Shared multi-track MPEG-TS muxer.
 pub struct MpegTsMuxer {
+    /// `tracks` field.
+    /// `tracks` 字段.
     tracks: Vec<MuxTrackEntry>,
+    /// `pat_cc` field of type `u8`.
+    /// `pat_cc` 字段，类型为 `u8`.
     pat_cc: u8,
+    /// `pmt_cc` field of type `u8`.
+    /// `pmt_cc` 字段，类型为 `u8`.
     pmt_cc: u8,
+    /// `pcr_pid` field of type `u16`.
+    /// `pcr_pid` 字段，类型为 `u16`.
     pcr_pid: u16,
 }
 

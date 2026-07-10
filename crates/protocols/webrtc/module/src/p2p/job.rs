@@ -34,7 +34,11 @@ use super::message::{P2pDirection, P2pMessage, P2pMessageHeader, P2pStreamTuple}
 /// Job kind drives the SDP direction in the offer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum P2pJobKind {
+    /// `Pull` variant.
+    /// `Pull` 变体.
     Pull,
+    /// `Push` variant.
+    /// `Push` 变体.
     Push,
 }
 
@@ -64,13 +68,19 @@ pub enum P2pJobState {
     Failed,
 }
 
+/// `P2pJobError` enumeration.
+/// `P2pJobError` 枚举.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum P2pJobError {
+    /// `InvalidTransition` variant.
+    /// `InvalidTransition` 变体.
     #[error("invalid transition: cannot apply {what} in state {state:?}")]
     InvalidTransition {
         what: &'static str,
         state: P2pJobState,
     },
+    /// `PeerProtocol` variant.
+    /// `PeerProtocol` 变体.
     #[error("inconsistent peer message: {0}")]
     PeerProtocol(String),
 }
@@ -115,11 +125,23 @@ pub enum P2pJobAction {
 /// Configuration knobs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct P2pJobConfig {
+    /// `kind` field of type `P2pJobKind`.
+    /// `kind` 字段，类型为 `P2pJobKind`.
     pub kind: P2pJobKind,
+    /// `stream` field of type `P2pStreamTuple`.
+    /// `stream` 字段，类型为 `P2pStreamTuple`.
     pub stream: P2pStreamTuple,
+    /// `local_room_id` field of type `String`.
+    /// `local_room_id` 字段，类型为 `String`.
     pub local_room_id: String,
+    /// `peer_room_id` field of type `String`.
+    /// `peer_room_id` 字段，类型为 `String`.
     pub peer_room_id: String,
+    /// `transport_id` field of type `String`.
+    /// `transport_id` 字段，类型为 `String`.
     pub transport_id: String,
+    /// `pending_candidate_cap` field of type `usize`.
+    /// `pending_candidate_cap` 字段，类型为 `usize`.
     pub pending_candidate_cap: usize,
 }
 
@@ -139,13 +161,23 @@ impl Default for P2pJobConfig {
 /// Pure state machine.
 #[derive(Debug)]
 pub struct P2pJob {
+    /// `config` field of type `P2pJobConfig`.
+    /// `config` 字段，类型为 `P2pJobConfig`.
     config: P2pJobConfig,
+    /// `state` field of type `P2pJobState`.
+    /// `state` 字段，类型为 `P2pJobState`.
     state: P2pJobState,
+    /// `pending` field of type `PendingCandidateBuffer`.
+    /// `pending` 字段，类型为 `PendingCandidateBuffer`.
     pending: PendingCandidateBuffer,
+    /// `last_error` field.
+    /// `last_error` 字段.
     last_error: Option<String>,
 }
 
 impl P2pJob {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: P2pJobConfig) -> Self {
         let cap = config.pending_candidate_cap.max(1);
         let pending = PendingCandidateBuffer::new(cap).expect("non-zero cap is guaranteed above");
@@ -157,18 +189,26 @@ impl P2pJob {
         }
     }
 
+    /// `state` function.
+    /// `state` 函数.
     pub fn state(&self) -> P2pJobState {
         self.state
     }
 
+    /// `last_error` function.
+    /// `last_error` 函数.
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
     }
 
+    /// `config` function.
+    /// `config` 函数.
     pub fn config(&self) -> &P2pJobConfig {
         &self.config
     }
 
+    /// `pending_state` function.
+    /// `pending_state` 函数.
     pub fn pending_state(&self) -> BufferState {
         self.pending.state()
     }

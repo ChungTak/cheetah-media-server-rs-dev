@@ -16,95 +16,141 @@ mod command;
 mod handshake;
 mod media;
 
+/// `TimerId` type alias.
+/// `TimerId` 类型别名.
 pub type TimerId = u64;
 
+/// `CoreInput` enumeration.
+/// `CoreInput` 枚举.
 #[derive(Debug, Clone)]
 pub enum CoreInput {
+    /// `Bytes` variant.
+    /// `Bytes` 变体.
     Bytes(Bytes),
+    /// `Timeout` variant.
+    /// `Timeout` 变体.
     Timeout { id: TimerId },
+    /// `Command` variant.
+    /// `Command` 变体.
     Command(RtmpCoreCommand),
 }
 
+/// `CoreOutput` enumeration.
+/// `CoreOutput` 枚举.
 #[derive(Debug, Clone)]
 pub enum CoreOutput {
+    /// `Write` variant.
+    /// `Write` 变体.
     Write(Bytes),
+    /// `Event` variant.
+    /// `Event` 变体.
     Event(RtmpEvent),
+    /// `SetTimer` variant.
+    /// `SetTimer` 变体.
     SetTimer { id: TimerId, at_micros: u64 },
+    /// `CancelTimer` variant.
+    /// `CancelTimer` 变体.
     CancelTimer { id: TimerId },
 }
 
+/// `RtmpMediaType` enumeration.
+/// `RtmpMediaType` 枚举.
 #[derive(Debug, Clone)]
 pub enum RtmpMediaType {
+    /// `Audio` variant.
+    /// `Audio` 变体.
     Audio,
+    /// `Video` variant.
+    /// `Video` 变体.
     Video,
+    /// `Data` variant.
+    /// `Data` 变体.
     Data,
 }
 
+/// `RtmpClientState` enumeration.
+/// `RtmpClientState` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpClientState {
+    /// `Connected` variant.
+    /// `Connected` 变体.
     Connected,
+    /// `MediaStreamCreated` variant.
+    /// `MediaStreamCreated` 变体.
     MediaStreamCreated,
+    /// `Publishing` variant.
+    /// `Publishing` 变体.
     Publishing,
+    /// `Playing` variant.
+    /// `Playing` 变体.
     Playing,
 }
 
+/// `RtmpEvent` enumeration.
+/// `RtmpEvent` 枚举.
 #[derive(Debug, Clone)]
 pub enum RtmpEvent {
-    Connected {
-        app: String,
-        tc_url: String,
-    },
+    /// `Connected` variant.
+    /// `Connected` 变体.
+    Connected { app: String, tc_url: String },
+    /// `PublishRequested` variant.
+    /// `PublishRequested` 变体.
     PublishRequested {
         stream_id: u32,
         app: String,
         tc_url: String,
         stream_name: String,
     },
+    /// `PlayRequested` variant.
+    /// `PlayRequested` 变体.
     PlayRequested {
         stream_id: u32,
         app: String,
         tc_url: String,
         stream_name: String,
     },
-    StreamCreated {
-        stream_id: u32,
-    },
-    CommandIgnored {
-        name: String,
-        detail: String,
-    },
-    MessageIgnored {
-        name: String,
-        detail: String,
-    },
-    UserControlIgnored {
-        name: String,
-        detail: String,
-    },
-    AckReceived {
-        sequence_number: u32,
-    },
-    LocalAckWindowUpdated {
-        size: u32,
-    },
-    PeerAckWindowUpdated {
-        size: u32,
-    },
-    ClientStateChanged {
-        state: RtmpClientState,
-    },
-    ClientDisconnectRequested {
-        reason: String,
-    },
+    /// `StreamCreated` variant.
+    /// `StreamCreated` 变体.
+    StreamCreated { stream_id: u32 },
+    /// `CommandIgnored` variant.
+    /// `CommandIgnored` 变体.
+    CommandIgnored { name: String, detail: String },
+    /// `MessageIgnored` variant.
+    /// `MessageIgnored` 变体.
+    MessageIgnored { name: String, detail: String },
+    /// `UserControlIgnored` variant.
+    /// `UserControlIgnored` 变体.
+    UserControlIgnored { name: String, detail: String },
+    /// `AckReceived` variant.
+    /// `AckReceived` 变体.
+    AckReceived { sequence_number: u32 },
+    /// `LocalAckWindowUpdated` variant.
+    /// `LocalAckWindowUpdated` 变体.
+    LocalAckWindowUpdated { size: u32 },
+    /// `PeerAckWindowUpdated` variant.
+    /// `PeerAckWindowUpdated` 变体.
+    PeerAckWindowUpdated { size: u32 },
+    /// `ClientStateChanged` variant.
+    /// `ClientStateChanged` 变体.
+    ClientStateChanged { state: RtmpClientState },
+    /// `ClientDisconnectRequested` variant.
+    /// `ClientDisconnectRequested` 变体.
+    ClientDisconnectRequested { reason: String },
+    /// `Metadata` variant.
+    /// `Metadata` 变体.
     Metadata {
         stream_id: u32,
         values: Vec<AmfValue>,
     },
+    /// `Notify` variant.
+    /// `Notify` 变体.
     Notify {
         stream_id: u32,
         name: String,
         values: Vec<AmfValue>,
     },
+    /// `MediaData` variant.
+    /// `MediaData` 变体.
     MediaData {
         stream_id: u32,
         timestamp_ms: u32,
@@ -112,10 +158,7 @@ pub enum RtmpEvent {
         payload: Bytes,
     },
     /// Player requested seek to a position (milliseconds).
-    SeekRequested {
-        stream_id: u32,
-        millis: f64,
-    },
+    SeekRequested { stream_id: u32, millis: f64 },
     /// Player requested pause or unpause.
     PauseRequested {
         stream_id: u32,
@@ -123,66 +166,75 @@ pub enum RtmpEvent {
         millis: f64,
     },
     /// Player toggled receiveVideo.
-    ReceiveVideo {
-        stream_id: u32,
-        enabled: bool,
-    },
+    ReceiveVideo { stream_id: u32, enabled: bool },
     /// Player toggled receiveAudio.
-    ReceiveAudio {
-        stream_id: u32,
-        enabled: bool,
-    },
-    StreamClosed {
-        stream_id: u32,
-    },
+    ReceiveAudio { stream_id: u32, enabled: bool },
+    /// `StreamClosed` variant.
+    /// `StreamClosed` 变体.
+    StreamClosed { stream_id: u32 },
+    /// `PeerClosed` variant.
+    /// `PeerClosed` 变体.
     PeerClosed,
 }
 
+/// `RtmpCoreCommand` enumeration.
+/// `RtmpCoreCommand` 枚举.
 #[derive(Debug, Clone)]
 pub enum RtmpCoreCommand {
-    SetWindowAckSize {
-        size: u32,
-    },
-    SetPeerBandwidth {
-        size: u32,
-    },
-    SetChunkSize {
-        size: u32,
-    },
-    SendAck {
-        sequence_number: u32,
-    },
+    /// `SetWindowAckSize` variant.
+    /// `SetWindowAckSize` 变体.
+    SetWindowAckSize { size: u32 },
+    /// `SetPeerBandwidth` variant.
+    /// `SetPeerBandwidth` 变体.
+    SetPeerBandwidth { size: u32 },
+    /// `SetChunkSize` variant.
+    /// `SetChunkSize` 变体.
+    SetChunkSize { size: u32 },
+    /// `SendAck` variant.
+    /// `SendAck` 变体.
+    SendAck { sequence_number: u32 },
+    /// `SendPingResponse` variant.
+    /// `SendPingResponse` 变体.
     SendPingResponse {
         timestamp: crate::timestamp::RtmpTimestamp,
     },
+    /// `ClientConnect` variant.
+    /// `ClientConnect` 变体.
     ClientConnect {
         app: String,
         flash_ver: String,
         tc_url: String,
     },
-    ClientCreateStream {
-        transaction_id: f64,
-    },
+    /// `ClientCreateStream` variant.
+    /// `ClientCreateStream` 变体.
+    ClientCreateStream { transaction_id: f64 },
+    /// `ClientPublish` variant.
+    /// `ClientPublish` 变体.
     ClientPublish {
         stream_id: u32,
         transaction_id: f64,
         stream_name: String,
     },
+    /// `ClientPlay` variant.
+    /// `ClientPlay` 变体.
     ClientPlay {
         stream_id: u32,
         transaction_id: f64,
         stream_name: String,
         start: f64,
     },
-    ClientSeek {
-        stream_id: u32,
-        millis: f64,
-    },
+    /// `ClientSeek` variant.
+    /// `ClientSeek` 变体.
+    ClientSeek { stream_id: u32, millis: f64 },
+    /// `ClientPause` variant.
+    /// `ClientPause` 变体.
     ClientPause {
         stream_id: u32,
         pause: bool,
         millis: f64,
     },
+    /// `ClientHandleWireCommand` variant.
+    /// `ClientHandleWireCommand` 变体.
     ClientHandleWireCommand {
         message_stream_id: u32,
         name: String,
@@ -190,81 +242,109 @@ pub enum RtmpCoreCommand {
         object: crate::amf::AmfValue,
         args: Vec<crate::amf::AmfValue>,
     },
-    ClientObserveAck {
-        sequence_number: u32,
-    },
-    ClientObserveWinAckSize {
-        size: u32,
-    },
+    /// `ClientObserveAck` variant.
+    /// `ClientObserveAck` 变体.
+    ClientObserveAck { sequence_number: u32 },
+    /// `ClientObserveWinAckSize` variant.
+    /// `ClientObserveWinAckSize` 变体.
+    ClientObserveWinAckSize { size: u32 },
+    /// `ClientHandleSetPeerBandwidth` variant.
+    /// `ClientHandleSetPeerBandwidth` 变体.
     ClientHandleSetPeerBandwidth {
         size: u32,
         response_window_size: u32,
     },
+    /// `ClientObserveMediaData` variant.
+    /// `ClientObserveMediaData` 变体.
     ClientObserveMediaData {
         stream_id: u32,
         timestamp_ms: u32,
         media_type: RtmpMediaType,
         payload: Bytes,
     },
+    /// `ClientHandleUserControl` variant.
+    /// `ClientHandleUserControl` 变体.
     ClientHandleUserControl {
         event: crate::user_control::RtmpUserControlEvent,
     },
+    /// `ClientHandleUnhandledMessage` variant.
+    /// `ClientHandleUnhandledMessage` 变体.
     ClientHandleUnhandledMessage {
         message: crate::message::RtmpMessage,
     },
-    AcceptPublish {
-        stream_id: u32,
-    },
-    RejectPublish {
-        stream_id: u32,
-        description: String,
-    },
-    AcceptPlay {
-        stream_id: u32,
-    },
+    /// `AcceptPublish` variant.
+    /// `AcceptPublish` 变体.
+    AcceptPublish { stream_id: u32 },
+    /// `RejectPublish` variant.
+    /// `RejectPublish` 变体.
+    RejectPublish { stream_id: u32, description: String },
+    /// `AcceptPlay` variant.
+    /// `AcceptPlay` 变体.
+    AcceptPlay { stream_id: u32 },
+    /// `AcceptPlayConfigured` variant.
+    /// `AcceptPlayConfigured` 变体.
     AcceptPlayConfigured {
         stream_id: u32,
         emit_play_status: bool,
         emit_sample_access: bool,
     },
-    RejectPlay {
-        stream_id: u32,
-        description: String,
-    },
+    /// `RejectPlay` variant.
+    /// `RejectPlay` 变体.
+    RejectPlay { stream_id: u32, description: String },
+    /// `SendMetadata` variant.
+    /// `SendMetadata` 变体.
     SendMetadata {
         stream_id: u32,
         timestamp_ms: u32,
         payload: Bytes,
     },
+    /// `SendAudio` variant.
+    /// `SendAudio` 变体.
     SendAudio {
         stream_id: u32,
         timestamp_ms: u32,
         payload: Bytes,
     },
+    /// `SendVideo` variant.
+    /// `SendVideo` 变体.
     SendVideo {
         stream_id: u32,
         timestamp_ms: u32,
         payload: Bytes,
     },
+    /// `SendNotify` variant.
+    /// `SendNotify` 变体.
     SendNotify {
         stream_id: u32,
         timestamp_ms: u32,
         payload: Bytes,
     },
-    CloseStream {
-        stream_id: u32,
-    },
+    /// `CloseStream` variant.
+    /// `CloseStream` 变体.
+    CloseStream { stream_id: u32 },
+    /// `CloseConnection` variant.
+    /// `CloseConnection` 变体.
     CloseConnection,
 }
 
+/// `RtmpCoreError` enumeration.
+/// `RtmpCoreError` 枚举.
 #[derive(Debug, thiserror::Error)]
 pub enum RtmpCoreError {
+    /// `Chunk` variant.
+    /// `Chunk` 变体.
     #[error("chunk: {0}")]
     Chunk(String),
+    /// `Amf0` variant.
+    /// `Amf0` 变体.
     #[error("amf0 decode failed: {0}")]
     Amf0(String),
+    /// `InvalidHandshakeVersion` variant.
+    /// `InvalidHandshakeVersion` 变体.
     #[error("invalid rtmp handshake version: {0}")]
     InvalidHandshakeVersion(u8),
+    /// `Handshake` variant.
+    /// `Handshake` 变体.
     #[error("handshake: {0}")]
     Handshake(String),
 }
@@ -316,28 +396,72 @@ impl core::fmt::Debug for HandshakeRole {
     }
 }
 
+/// `RtmpCore` data structure.
+/// `RtmpCore` 数据结构.
 #[derive(Debug)]
 pub struct RtmpCore {
+    /// `state` field of type `HandshakeState`.
+    /// `state` 字段，类型为 `HandshakeState`.
     state: HandshakeState,
+    /// `in_chunk_size` field of type `usize`.
+    /// `in_chunk_size` 字段，类型为 `usize`.
     in_chunk_size: usize,
+    /// `out_chunk_size` field of type `usize`.
+    /// `out_chunk_size` 字段，类型为 `usize`.
     out_chunk_size: usize,
+    /// `decoder` field of type `RtmpChunkDecoder`.
+    /// `decoder` 字段，类型为 `RtmpChunkDecoder`.
     decoder: RtmpChunkDecoder,
+    /// `encoder` field of type `RtmpMessageEncoder`.
+    /// `encoder` 字段，类型为 `RtmpMessageEncoder`.
     encoder: RtmpMessageEncoder,
+    /// `input_buf` field of type `Buf`.
+    /// `input_buf` 字段，类型为 `Buf`.
     input_buf: Buf,
+    /// `handshake` field of type `HandshakeRole`.
+    /// `handshake` 字段，类型为 `HandshakeRole`.
     handshake: HandshakeRole,
+    /// `connected_app` field.
+    /// `connected_app` 字段.
     connected_app: Option<String>,
+    /// `connected_tc_url` field.
+    /// `connected_tc_url` 字段.
     connected_tc_url: Option<String>,
+    /// `peer_ack_window_size` field of type `u64`.
+    /// `peer_ack_window_size` 字段，类型为 `u64`.
     peer_ack_window_size: u64,
+    /// `local_ack_window_size` field of type `u32`.
+    /// `local_ack_window_size` 字段，类型为 `u32`.
     local_ack_window_size: u32,
+    /// `last_peer_bandwidth_limit_type` field.
+    /// `last_peer_bandwidth_limit_type` 字段.
     last_peer_bandwidth_limit_type: crate::message::SetPeerBandwidthLimitType,
+    /// `total_bytes_received` field of type `u64`.
+    /// `total_bytes_received` 字段，类型为 `u64`.
     total_bytes_received: u64,
+    /// `last_ack_sent` field of type `u64`.
+    /// `last_ack_sent` 字段，类型为 `u64`.
     last_ack_sent: u64,
+    /// `active_publish` field.
+    /// `active_publish` 字段.
     active_publish: Option<u32>,
+    /// `pending_publish` field.
+    /// `pending_publish` 字段.
     pending_publish: Option<u32>,
+    /// `pending_media` field.
+    /// `pending_media` 字段.
     pending_media: VecDeque<PendingPublishMedia>,
+    /// `pending_media_bytes` field of type `usize`.
+    /// `pending_media_bytes` 字段，类型为 `usize`.
     pending_media_bytes: usize,
+    /// `next_stream_id` field of type `u32`.
+    /// `next_stream_id` 字段，类型为 `u32`.
     next_stream_id: u32,
+    /// `client_create_stream_transaction_id` field.
+    /// `client_create_stream_transaction_id` 字段.
     client_create_stream_transaction_id: Option<i64>,
+    /// `client_pending_action` field.
+    /// `client_pending_action` 字段.
     client_pending_action: Option<ClientPendingAction>,
 }
 
@@ -348,6 +472,8 @@ impl Default for RtmpCore {
 }
 
 impl RtmpCore {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         let mut encoder = RtmpMessageEncoder::default();
         encoder.set_chunk_size(RtmpChunkSize::saturating_new(60_000));
@@ -376,6 +502,8 @@ impl RtmpCore {
         }
     }
 
+    /// Creates a new `client` instance.
+    /// 创建 新的 `client` 实例.
     pub fn new_client() -> Self {
         let mut encoder = RtmpMessageEncoder::default();
         encoder.set_chunk_size(RtmpChunkSize::saturating_new(60_000));
@@ -404,6 +532,8 @@ impl RtmpCore {
         }
     }
 
+    /// `handle_input` function.
+    /// `handle_input` 函数.
     pub fn handle_input(&mut self, input: CoreInput) -> Result<Vec<CoreOutput>, RtmpCoreError> {
         let mut out = Vec::new();
         match input {

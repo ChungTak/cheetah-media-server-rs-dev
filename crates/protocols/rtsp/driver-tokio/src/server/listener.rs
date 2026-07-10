@@ -28,6 +28,8 @@ use super::{DriverConfig, DriverEvent, RtspServerHandle};
 const INITIAL_READ_TIMEOUT: Duration = Duration::from_millis(20);
 const TUNNEL_PROBE_TIMEOUT_AFTER_INITIAL_TIMEOUT: Duration = Duration::from_millis(250);
 
+/// `start_server` function.
+/// `start_server` 函数.
 pub fn start_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,
@@ -405,6 +407,8 @@ async fn spawn_http_tunnel_connection(
     false
 }
 
+/// `spawn_direct_connection` function.
+/// `spawn_direct_connection` 函数.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn spawn_direct_connection(
     connection_id: u64,

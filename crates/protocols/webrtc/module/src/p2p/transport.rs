@@ -29,12 +29,20 @@ use super::message::P2pMessage;
 /// Failures the transport can surface.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum P2pTransportError {
+    /// `Closed` variant.
+    /// `Closed` 变体.
     #[error("transport closed")]
     Closed,
+    /// `Io` variant.
+    /// `Io` 变体.
     #[error("transport error: {0}")]
     Io(String),
+    /// `Encode` variant.
+    /// `Encode` 变体.
     #[error("encoding failed: {0}")]
     Encode(String),
+    /// `Decode` variant.
+    /// `Decode` 变体.
     #[error("decoding failed: {0}")]
     Decode(String),
 }
@@ -65,7 +73,11 @@ pub trait P2pTransport: Send + Sync {
 /// on one side surface on the other side's `recv`.
 #[derive(Debug)]
 pub struct InMemoryTransport {
+    /// `inbound` field.
+    /// `inbound` 字段.
     inbound: Arc<Mutex<mpsc::Receiver<P2pTransportEvent>>>,
+    /// `outbound` field.
+    /// `outbound` 字段.
     outbound: mpsc::Sender<P2pTransportEvent>,
     /// Mirror of the *peer's* outbound. Used by tests to inspect what
     /// the local end emitted, without blocking on `recv`.

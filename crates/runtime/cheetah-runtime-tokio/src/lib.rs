@@ -45,13 +45,21 @@ fn apply_low_latency_tcp_options(stream: &TcpStream) {
     }
 }
 
+/// `TokioRuntime` data structure.
+/// `TokioRuntime` 数据结构.
 #[derive(Clone, Debug)]
 pub struct TokioRuntime {
+    /// `start` field of type `Instant`.
+    /// `start` 字段，类型为 `Instant`.
     start: Instant,
+    /// `start_tokio` field of type `TokioInstant`.
+    /// `start_tokio` 字段，类型为 `TokioInstant`.
     start_tokio: TokioInstant,
 }
 
 impl TokioRuntime {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             start: Instant::now(),
@@ -70,8 +78,12 @@ impl Default for TokioRuntime {
     }
 }
 
+/// `TokioJoinHandle` data structure.
+/// `TokioJoinHandle` 数据结构.
 #[derive(Debug)]
 pub struct TokioJoinHandle {
+    /// `handle` field.
+    /// `handle` 字段.
     handle: tokio::task::JoinHandle<()>,
 }
 
@@ -96,8 +108,12 @@ impl JoinHandle for TokioJoinHandle {
     }
 }
 
+/// `TokioUdpSocket` data structure.
+/// `TokioUdpSocket` 数据结构.
 #[derive(Debug)]
 pub struct TokioUdpSocket {
+    /// `socket` field of type `UdpSocket`.
+    /// `socket` 字段，类型为 `UdpSocket`.
     socket: UdpSocket,
 }
 
@@ -133,8 +149,12 @@ impl AsyncUdpSocket for TokioUdpSocket {
     }
 }
 
+/// `TokioTcpStream` data structure.
+/// `TokioTcpStream` 数据结构.
 #[derive(Debug)]
 pub struct TokioTcpStream {
+    /// `stream` field of type `TcpStream`.
+    /// `stream` 字段，类型为 `TcpStream`.
     stream: TcpStream,
 }
 
@@ -176,8 +196,12 @@ impl AsyncTcpStream for TokioTcpStream {
     }
 }
 
+/// `TokioTcpListener` data structure.
+/// `TokioTcpListener` 数据结构.
 #[derive(Debug)]
 pub struct TokioTcpListener {
+    /// `listener` field of type `TcpListener`.
+    /// `listener` 字段，类型为 `TcpListener`.
     listener: TcpListener,
 }
 
@@ -194,8 +218,14 @@ impl AsyncTcpListener for TokioTcpListener {
     }
 }
 
+/// `TokioTimer` data structure.
+/// `TokioTimer` 数据结构.
 pub struct TokioTimer {
+    /// `deadline` field of type `MonoTime`.
+    /// `deadline` 字段，类型为 `MonoTime`.
     deadline: MonoTime,
+    /// `sleep` field.
+    /// `sleep` 字段.
     sleep: Pin<Box<Sleep>>,
 }
 

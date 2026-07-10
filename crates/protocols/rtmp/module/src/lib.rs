@@ -1,9 +1,23 @@
+/// `config` module.
+/// `config` 模块.
 pub mod config;
+/// `egress` module.
+/// `egress` 模块.
 pub(crate) mod egress;
+/// `ingest` module.
+/// `ingest` 模块.
 pub(crate) mod ingest;
+/// `module` module.
+/// `模块` 模块.
 pub mod module;
+/// `nal` module.
+/// `nal` 模块.
 pub(crate) mod nal;
+/// `route` module.
+/// `route` 模块.
 pub(crate) mod route;
+/// `session` module.
+/// `session` 模块.
 pub(crate) mod session;
 
 pub use config::RtmpModuleConfig;

@@ -2,9 +2,15 @@ use cheetah_sdk::{ClusterApi, ClusterNode, SdkError};
 use dashmap::DashMap;
 use parking_lot::RwLock;
 
+/// `LocalCluster` data structure.
+/// `LocalCluster` 数据结构.
 #[derive(Default)]
 pub struct LocalCluster {
+    /// `local` field.
+    /// `local` 字段.
     local: RwLock<Option<ClusterNode>>,
+    /// `peers` field.
+    /// `peers` 字段.
     peers: DashMap<String, ClusterNode>,
 }
 

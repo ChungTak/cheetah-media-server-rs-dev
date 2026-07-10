@@ -1,18 +1,30 @@
 use std::num::ParseIntError;
 
+/// `RtspTransportError` enumeration.
+/// `RtspTransportError` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspTransportError {
+    /// `EmptyHeader` variant.
+    /// `EmptyHeader` 变体.
     #[error("empty transport header")]
     EmptyHeader,
+    /// `InvalidProtocol` variant.
+    /// `InvalidProtocol` 变体.
     #[error("invalid transport protocol")]
     InvalidProtocol,
+    /// `InvalidHeaderValue` variant.
+    /// `InvalidHeaderValue` 变体.
     #[error("invalid transport header value")]
     InvalidHeaderValue,
+    /// `InvalidParameter` variant.
+    /// `InvalidParameter` 变体.
     #[error("invalid {parameter} value: {value}")]
     InvalidParameter {
         parameter: &'static str,
         value: String,
     },
+    /// `MissingPairedValue` variant.
+    /// `MissingPairedValue` 变体.
     #[error("cannot infer second value for {parameter} from {value}")]
     MissingPairedValue {
         parameter: &'static str,
@@ -52,10 +64,14 @@ pub struct RtspTransport {
 }
 
 impl RtspTransport {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// `rtp_avp_tcp_interleaved` function.
+    /// `rtp_avp_tcp_interleaved` 函数.
     pub fn rtp_avp_tcp_interleaved(rtp_channel: u8, rtcp_channel: u8) -> Self {
         Self {
             protocol: "RTP/AVP/TCP".to_string(),
@@ -65,6 +81,8 @@ impl RtspTransport {
         }
     }
 
+    /// `rtp_avp_udp` function.
+    /// `rtp_avp_udp` 函数.
     pub fn rtp_avp_udp(client_rtp_port: u16, client_rtcp_port: u16) -> Self {
         Self {
             protocol: "RTP/AVP".to_string(),
@@ -74,6 +92,8 @@ impl RtspTransport {
         }
     }
 
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(header_value: &str) -> Result<Self, RtspTransportError> {
         let header_value = header_value.trim();
         if header_value.is_empty() {
@@ -153,6 +173,8 @@ impl RtspTransport {
         Ok(transport)
     }
 
+    /// Parses `multiple` from input.
+    /// 解析 `multiple` 来自 输入.
     pub fn parse_multiple(header_value: &str) -> Result<Vec<Self>, RtspTransportError> {
         let header_value = header_value.trim();
         if header_value.is_empty() {
@@ -176,6 +198,8 @@ impl RtspTransport {
         Ok(transports)
     }
 
+    /// Converts to `header` representation.
+    /// Converts 为 `header` 表示.
     pub fn to_header(&self) -> String {
         let mut parts = vec![self.protocol.clone()];
         if self.unicast {

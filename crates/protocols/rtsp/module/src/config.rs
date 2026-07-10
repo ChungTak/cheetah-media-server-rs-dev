@@ -4,6 +4,8 @@ use std::net::{Ipv4Addr, SocketAddr};
 use cheetah_sdk::{BackpressurePolicy, SdkError};
 use serde::{Deserialize, Serialize};
 
+/// `RtspModuleConfig` data structure.
+/// `RtspModuleConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspModuleConfig {
@@ -54,31 +56,65 @@ pub struct RtspModuleConfig {
     pub relay_jobs: Vec<RtspRelayJobConfig>,
 }
 
+/// `RtspAuthConfig` data structure.
+/// `RtspAuthConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspAuthConfig {
+    /// `enabled` field of type `bool`.
+    /// `enabled` 字段，类型为 `bool`.
     pub enabled: bool,
+    /// `require_publish_auth` field of type `bool`.
+    /// `require_publish_auth` 字段，类型为 `bool`.
     pub require_publish_auth: bool,
+    /// `realm` field of type `String`.
+    /// `realm` 字段，类型为 `String`.
     pub realm: String,
+    /// `users` field.
+    /// `users` 字段.
     pub users: Vec<RtspAuthUserConfig>,
+    /// `allow_basic` field of type `bool`.
+    /// `allow_basic` 字段，类型为 `bool`.
     pub allow_basic: bool,
+    /// `allow_digest` field of type `bool`.
+    /// `allow_digest` 字段，类型为 `bool`.
     pub allow_digest: bool,
+    /// `nonce_ttl_secs` field of type `u32`.
+    /// `nonce_ttl_secs` 字段，类型为 `u32`.
     pub nonce_ttl_secs: u32,
 }
 
+/// `RtspAuthUserConfig` data structure.
+/// `RtspAuthUserConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RtspAuthUserConfig {
+    /// `username` field of type `String`.
+    /// `username` 字段，类型为 `String`.
     pub username: String,
+    /// `password` field of type `String`.
+    /// `password` 字段，类型为 `String`.
     pub password: String,
 }
 
+/// `RtspTlsConfig` data structure.
+/// `RtspTlsConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspTlsConfig {
+    /// `enabled` field of type `bool`.
+    /// `enabled` 字段，类型为 `bool`.
     pub enabled: bool,
+    /// `listen` field of type `String`.
+    /// `listen` 字段，类型为 `String`.
     pub listen: String,
+    /// `cert_path` field of type `String`.
+    /// `cert_path` 字段，类型为 `String`.
     pub cert_path: String,
+    /// `key_path` field of type `String`.
+    /// `key_path` 字段，类型为 `String`.
     pub key_path: String,
+    /// `handshake_timeout_ms` field of type `u64`.
+    /// `handshake_timeout_ms` 字段，类型为 `u64`.
     pub handshake_timeout_ms: u64,
 }
 
@@ -95,6 +131,8 @@ impl Default for RtspTlsConfig {
 }
 
 impl RtspTlsConfig {
+    /// `validate` function.
+    /// `validate` 函数.
     pub fn validate(&self) -> Result<(), SdkError> {
         if !self.enabled {
             return Ok(());
@@ -116,14 +154,22 @@ impl RtspTlsConfig {
     }
 }
 
+/// `RtspHeartbeatMode` enumeration.
+/// `RtspHeartbeatMode` 枚举.
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum RtspHeartbeatMode {
+    /// `GetParameter` variant.
+    /// `GetParameter` 变体.
     #[default]
     GetParameter,
+    /// `Options` variant.
+    /// `Options` 变体.
     Options,
 }
 
+/// `RtspAlertThresholds` data structure.
+/// `RtspAlertThresholds` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspAlertThresholds {
@@ -135,6 +181,8 @@ pub struct RtspAlertThresholds {
     pub queue_drop_count: u64,
 }
 
+/// `RtspUdpConfig` data structure.
+/// `RtspUdpConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspUdpConfig {
@@ -156,6 +204,8 @@ pub struct RtspUdpConfig {
     pub enable_reorder_buffer: bool,
 }
 
+/// `RtspMulticastConfig` data structure.
+/// `RtspMulticastConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspMulticastConfig {
@@ -179,15 +229,27 @@ pub struct RtspMulticastConfig {
     pub idle_release_ms: u64,
 }
 
+/// `RtspPullTransport` enumeration.
+/// `RtspPullTransport` 枚举.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum RtspPullTransport {
+    /// `TcpInterleaved` variant.
+    /// `TcpInterleaved` 变体.
     TcpInterleaved,
+    /// `Udp` variant.
+    /// `Udp` 变体.
     Udp,
+    /// `HttpTunnel` variant.
+    /// `HttpTunnel` 变体.
     HttpTunnel,
+    /// `Multicast` variant.
+    /// `Multicast` 变体.
     Multicast,
 }
 
+/// `RtspPullJobConfig` data structure.
+/// `RtspPullJobConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspPullJobConfig {
@@ -213,14 +275,24 @@ pub struct RtspPullJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+/// `RtspPushTransport` enumeration.
+/// `RtspPushTransport` 枚举.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum RtspPushTransport {
+    /// `TcpInterleaved` variant.
+    /// `TcpInterleaved` 变体.
     TcpInterleaved,
+    /// `Udp` variant.
+    /// `Udp` 变体.
     Udp,
+    /// `HttpTunnel` variant.
+    /// `HttpTunnel` 变体.
     HttpTunnel,
 }
 
+/// `RtspPushJobConfig` data structure.
+/// `RtspPushJobConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspPushJobConfig {
@@ -244,6 +316,8 @@ pub struct RtspPushJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+/// `RtspRelayJobConfig` data structure.
+/// `RtspRelayJobConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtspRelayJobConfig {
@@ -411,6 +485,8 @@ impl Default for RtspRelayJobConfig {
 }
 
 impl RtspModuleConfig {
+    /// Creates `value` from input.
+    /// 创建 `值` 来自 输入.
     pub fn from_value(value: serde_json::Value) -> Result<Self, SdkError> {
         let cfg: Self = serde_json::from_value(value)
             .map_err(|err| SdkError::InvalidArgument(format!("invalid rtsp config: {err}")))?;
@@ -418,6 +494,8 @@ impl RtspModuleConfig {
         Ok(cfg)
     }
 
+    /// `validate` function.
+    /// `validate` 函数.
     pub fn validate(&self) -> Result<(), SdkError> {
         self.listen
             .parse::<SocketAddr>()
@@ -733,6 +811,8 @@ impl RtspModuleConfig {
         Ok(())
     }
 
+    /// `default_json` function.
+    /// `default_json` 函数.
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).expect("serialize default rtsp config")
     }

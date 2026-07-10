@@ -1,8 +1,14 @@
 use crate::prelude::*;
 
+/// `RtpReorderSettings` data structure.
+/// `RtpReorderSettings` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtpReorderSettings {
+    /// `max_packets` field of type `usize`.
+    /// `max_packets` 字段，类型为 `usize`.
     pub max_packets: usize,
+    /// `max_delay_ms` field of type `u64`.
+    /// `max_delay_ms` 字段，类型为 `u64`.
     pub max_delay_ms: u64,
 }
 
@@ -22,14 +28,24 @@ struct PendingPacket<T> {
     packet: T,
 }
 
+/// `RtpReorderBuffer` data structure.
+/// `RtpReorderBuffer` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtpReorderBuffer<T> {
+    /// `settings` field of type `RtpReorderSettings`.
+    /// `settings` 字段，类型为 `RtpReorderSettings`.
     settings: RtpReorderSettings,
+    /// `expected_seq` field.
+    /// `expected_seq` 字段.
     expected_seq: Option<u16>,
+    /// `pending` field.
+    /// `pending` 字段.
     pending: Vec<PendingPacket<T>>,
 }
 
 impl<T> RtpReorderBuffer<T> {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(settings: RtpReorderSettings) -> Self {
         Self {
             settings,
@@ -38,6 +54,8 @@ impl<T> RtpReorderBuffer<T> {
         }
     }
 
+    /// `push` function.
+    /// `push` 函数.
     pub fn push(&mut self, sequence_number: u16, arrival_ms: u64, packet: T) -> Vec<T> {
         let Some(expected) = self.expected_seq else {
             self.expected_seq = Some(sequence_number.wrapping_add(1));
@@ -91,11 +109,15 @@ impl<T> RtpReorderBuffer<T> {
         Vec::new()
     }
 
+    /// `reset` function.
+    /// `reset` 函数.
     pub fn reset(&mut self) {
         self.expected_seq = None;
         self.pending.clear();
     }
 
+    /// `pending_len` function.
+    /// `pending_len` 函数.
     pub fn pending_len(&self) -> usize {
         self.pending.len()
     }

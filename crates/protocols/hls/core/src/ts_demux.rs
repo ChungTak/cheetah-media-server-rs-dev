@@ -31,7 +31,11 @@ pub enum TsDemuxEvent {
 
 /// MPEG-TS demuxer state machine.
 pub struct TsDemuxer {
+    /// `pmt_pid` field.
+    /// `pmt_pid` 字段.
     pmt_pid: Option<u16>,
+    /// `tracks` field.
+    /// `tracks` 字段.
     tracks: Vec<TsTrackState>,
     /// Remainder bytes from unaligned feed (less than 188 bytes).
     remainder: Vec<u8>,
@@ -48,6 +52,8 @@ struct TsTrackState {
 }
 
 impl TsDemuxer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             pmt_pid: None,

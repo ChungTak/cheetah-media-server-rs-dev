@@ -15,13 +15,17 @@ use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc;
 
+/// `DispatcherMode` enumeration.
+/// `DispatcherMode` 枚举.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum DispatcherMode {
+    /// `PerStream` variant.
+    /// `PerStream` 变体.
     #[default]
     PerStream,
-    SharedPool {
-        workers: usize,
-    },
+    /// `SharedPool` variant.
+    /// `SharedPool` 变体.
+    SharedPool { workers: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -649,11 +653,17 @@ impl StreamManagerInner {
     }
 }
 
+/// `StreamManager` data structure.
+/// `StreamManager` 数据结构.
 pub struct StreamManager {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: Arc<StreamManagerInner>,
 }
 
 impl StreamManager {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(
         mode: DispatcherMode,
         ring_capacity: usize,
@@ -679,6 +689,8 @@ impl StreamManager {
         }
     }
 
+    /// Sets the `event_bus` value.
+    /// Sets `event_bus` 值.
     pub fn set_event_bus(&self, event_bus: Arc<dyn EventBus>) {
         *self.inner.event_bus.write() = Some(event_bus);
     }

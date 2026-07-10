@@ -100,6 +100,8 @@ impl Jtt1078SubPackage {
 /// Parsed header of a single JT/T 1078 RTP packet.
 #[derive(Debug, Clone)]
 pub struct Jtt1078Header {
+    /// `version` field of type `Jtt1078Version`.
+    /// `version` 字段，类型为 `Jtt1078Version`.
     pub version: Jtt1078Version,
     /// Payload type as carried in the M/PT byte (lower 7 bits).
     pub payload_type: u8,
@@ -272,13 +274,25 @@ impl Jtt1078Header {
 /// A fully assembled JTT1078 media frame (after de-fragmentation).
 #[derive(Debug, Clone)]
 pub struct Jtt1078Frame {
+    /// `payload_type` field of type `u8`.
+    /// `payload_type` 字段，类型为 `u8`.
     pub payload_type: u8,
+    /// `sim` field of type `String`.
+    /// `sim` 字段，类型为 `String`.
     pub sim: String,
+    /// `channel` field of type `u8`.
+    /// `channel` 字段，类型为 `u8`.
     pub channel: u8,
+    /// `frame_type` field of type `Jtt1078FrameType`.
+    /// `frame_type` 字段，类型为 `Jtt1078FrameType`.
     pub frame_type: Jtt1078FrameType,
+    /// `timestamp_ms` field of type `u64`.
+    /// `timestamp_ms` 字段，类型为 `u64`.
     pub timestamp_ms: u64,
     /// Estimated frame interval in milliseconds (learned from header or gap).
     pub frame_interval_ms: u32,
+    /// `data` field of type `Bytes`.
+    /// `data` 字段，类型为 `Bytes`.
     pub data: Bytes,
 }
 
@@ -511,9 +525,17 @@ const DEFAULT_MAX_PACKET_PAYLOAD: usize = 1400;
 /// followed by the variable tail (timestamp + intervals + body_len for video,
 /// timestamp + body_len for audio, body_len for pass-through), and finally the payload.
 pub struct Jtt1078Packetizer {
+    /// `sim` field of type `[u8; 6]`.
+    /// `sim` 字段，类型为 `[u8; 6]`.
     sim: [u8; 6],
+    /// `channel` field of type `u8`.
+    /// `channel` 字段，类型为 `u8`.
     channel: u8,
+    /// `max_payload_bytes` field of type `usize`.
+    /// `max_payload_bytes` 字段，类型为 `usize`.
     max_payload_bytes: usize,
+    /// `next_seq` field of type `u16`.
+    /// `next_seq` 字段，类型为 `u16`.
     next_seq: u16,
 }
 

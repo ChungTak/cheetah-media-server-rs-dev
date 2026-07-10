@@ -18,6 +18,8 @@ pub enum ErrorKind {
     Unsupported,
 
     // 以下是内部类型，不在文档中显示
+    /// `InsufficientBuffer` variant.
+    /// `InsufficientBuffer` 变体.
     #[doc(hidden)]
     InsufficientBuffer,
 }
@@ -51,31 +53,43 @@ impl Error {
         }
     }
 
+    /// `invalid_data` function.
+    /// `invalid_data` 函数.
     #[track_caller]
     pub(crate) fn invalid_data<T: Into<String>>(reason: T) -> Self {
         Self::with_reason(ErrorKind::InvalidData, reason)
     }
 
+    /// `invalid_input` function.
+    /// `invalid_input` 函数.
     #[track_caller]
     pub(crate) fn invalid_input<T: Into<String>>(reason: T) -> Self {
         Self::with_reason(ErrorKind::InvalidInput, reason)
     }
 
+    /// `invalid_state` function.
+    /// `invalid_state` 函数.
     #[track_caller]
     pub(crate) fn invalid_state<T: Into<String>>(reason: T) -> Self {
         Self::with_reason(ErrorKind::InvalidState, reason)
     }
 
+    /// `unsupported` function.
+    /// `unsupported` 函数.
     #[track_caller]
     pub(crate) fn unsupported<T: Into<String>>(reason: T) -> Self {
         Self::with_reason(ErrorKind::Unsupported, reason)
     }
 
+    /// `insufficient_buffer` function.
+    /// `insufficient_buffer` 函数.
     #[track_caller]
     pub(crate) fn insufficient_buffer() -> Self {
         Self::new(ErrorKind::InsufficientBuffer)
     }
 
+    /// `check_buffer_size` function.
+    /// `check_buffer_size` 函数.
     #[track_caller]
     pub(crate) fn check_buffer_size(required_size: usize, buf: &[u8]) -> Result<(), Self> {
         if buf.len() < required_size {

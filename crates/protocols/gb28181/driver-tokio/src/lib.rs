@@ -14,27 +14,45 @@ use cheetah_gb28181_core::{
 };
 use cheetah_runtime_api::{CancellationToken, RuntimeApi};
 
+/// `GbDriverCommand` enumeration.
+/// `GbDriverCommand` 枚举.
 #[derive(Debug, Clone)]
 pub enum GbDriverCommand {
+    /// `StartInvite` variant.
+    /// `StartInvite` 变体.
     StartInvite(GbInviteSpec),
-    StopInvite {
-        session_key: String,
-    },
+    /// `StopInvite` variant.
+    /// `StopInvite` 变体.
+    StopInvite { session_key: String },
+    /// `StartTalk` variant.
+    /// `StartTalk` 变体.
     StartTalk(GbTalkSpec),
-    StopTalk {
-        session_key: String,
-    },
+    /// `StopTalk` variant.
+    /// `StopTalk` 变体.
+    StopTalk { session_key: String },
+    /// `RegisterChallenge` variant.
+    /// `RegisterChallenge` 变体.
     RegisterChallenge {
         device_id: GbDeviceId,
         destination: SocketAddr,
     },
 }
 
+/// `Gb28181DriverConfig` data structure.
+/// `Gb28181DriverConfig` 数据结构.
 #[derive(Debug, Clone)]
 pub struct Gb28181DriverConfig {
+    /// `listen_udp` field of type `SocketAddr`.
+    /// `listen_udp` 字段，类型为 `SocketAddr`.
     pub listen_udp: SocketAddr,
+    /// `listen_tcp` field of type `SocketAddr`.
+    /// `listen_tcp` 字段，类型为 `SocketAddr`.
     pub listen_tcp: SocketAddr,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     pub read_buffer_size: usize,
+    /// `tick_interval_ms` field of type `u64`.
+    /// `tick_interval_ms` 字段，类型为 `u64`.
     pub tick_interval_ms: u64,
 }
 
@@ -49,26 +67,42 @@ impl Default for Gb28181DriverConfig {
     }
 }
 
+/// `Gb28181DriverHandle` data structure.
+/// `Gb28181DriverHandle` 数据结构.
 pub struct Gb28181DriverHandle {
+    /// `cmd_tx` field.
+    /// `cmd_tx` 字段.
     cmd_tx: mpsc::Sender<GbDriverCommand>,
+    /// `event_rx` field.
+    /// `event_rx` 字段.
     event_rx: Arc<Mutex<mpsc::Receiver<Gb28181Event>>>,
+    /// `diag_rx` field.
+    /// `diag_rx` 字段.
     diag_rx: Arc<Mutex<mpsc::Receiver<Gb28181Diagnostic>>>,
 }
 
 impl Gb28181DriverHandle {
+    /// `send_command` function.
+    /// `send_command` 函数.
     pub async fn send_command(&self, cmd: GbDriverCommand) -> Result<(), &'static str> {
         self.cmd_tx.send(cmd).await.map_err(|_| "driver stopped")
     }
 
+    /// `recv_event` function.
+    /// `recv_event` 函数.
     pub async fn recv_event(&self) -> Option<Gb28181Event> {
         self.event_rx.lock().await.recv().await
     }
 
+    /// `recv_diagnostic` function.
+    /// `recv_diagnostic` 函数.
     pub async fn recv_diagnostic(&self) -> Option<Gb28181Diagnostic> {
         self.diag_rx.lock().await.recv().await
     }
 }
 
+/// `start_driver` function.
+/// `start_driver` 函数.
 pub fn start_driver(
     config: Gb28181DriverConfig,
     runtime: Arc<dyn RuntimeApi>,

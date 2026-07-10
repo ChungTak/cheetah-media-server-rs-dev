@@ -14,39 +14,45 @@ const EVENT_PING_RESPONSE: u16 = 7;
 const EVENT_BUFFER_EMPTY: u16 = 31;
 const EVENT_BUFFER_READY: u16 = 32;
 
+/// `RtmpUserControlEvent` enumeration.
+/// `RtmpUserControlEvent` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtmpUserControlEvent {
-    StreamBegin {
-        stream_id: RtmpMessageStreamId,
-    },
-    StreamEof {
-        stream_id: RtmpMessageStreamId,
-    },
-    StreamDry {
-        stream_id: RtmpMessageStreamId,
-    },
+    /// `StreamBegin` variant.
+    /// `StreamBegin` 变体.
+    StreamBegin { stream_id: RtmpMessageStreamId },
+    /// `StreamEof` variant.
+    /// `StreamEof` 变体.
+    StreamEof { stream_id: RtmpMessageStreamId },
+    /// `StreamDry` variant.
+    /// `StreamDry` 变体.
+    StreamDry { stream_id: RtmpMessageStreamId },
+    /// `SetBufferLength` variant.
+    /// `SetBufferLength` 变体.
     SetBufferLength {
         stream_id: RtmpMessageStreamId,
         length: u32,
     },
-    StreamIsRecorded {
-        stream_id: RtmpMessageStreamId,
-    },
-    PingRequest {
-        timestamp: RtmpTimestamp,
-    },
-    PingResponse {
-        timestamp: RtmpTimestamp,
-    },
-    BufferEmpty {
-        stream_id: RtmpMessageStreamId,
-    },
-    BufferReady {
-        stream_id: RtmpMessageStreamId,
-    },
+    /// `StreamIsRecorded` variant.
+    /// `StreamIsRecorded` 变体.
+    StreamIsRecorded { stream_id: RtmpMessageStreamId },
+    /// `PingRequest` variant.
+    /// `PingRequest` 变体.
+    PingRequest { timestamp: RtmpTimestamp },
+    /// `PingResponse` variant.
+    /// `PingResponse` 变体.
+    PingResponse { timestamp: RtmpTimestamp },
+    /// `BufferEmpty` variant.
+    /// `BufferEmpty` 变体.
+    BufferEmpty { stream_id: RtmpMessageStreamId },
+    /// `BufferReady` variant.
+    /// `BufferReady` 变体.
+    BufferReady { stream_id: RtmpMessageStreamId },
 }
 
 impl RtmpUserControlEvent {
+    /// `name` function.
+    /// `name` 函数.
     pub fn name(&self) -> &'static str {
         match self {
             Self::StreamBegin { .. } => "StreamBegin",
@@ -61,6 +67,8 @@ impl RtmpUserControlEvent {
         }
     }
 
+    /// `encode` function.
+    /// `encode` 函数.
     pub fn encode(&self, buf: &mut Vec<u8>) {
         match self {
             Self::StreamBegin { stream_id } => {
@@ -103,6 +111,8 @@ impl RtmpUserControlEvent {
         }
     }
 
+    /// `decode` function.
+    /// `decode` 函数.
     pub fn decode(mut buf: &[u8]) -> Result<Self, Error> {
         let event_type = buf.read_u16()?;
         let event = match event_type {

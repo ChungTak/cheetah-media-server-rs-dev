@@ -270,18 +270,34 @@ pub fn format_iso8601(unix_ms: i64) -> String {
 /// A segment entry for file-based playlist generation.
 #[derive(Debug, Clone)]
 pub struct SegmentFileEntry {
+    /// `filename` field of type `String`.
+    /// `filename` 字段，类型为 `String`.
     pub filename: String,
+    /// `duration_secs` field of type `f64`.
+    /// `duration_secs` 字段，类型为 `f64`.
     pub duration_secs: f64,
 }
 
 /// Info about a media rendition for demuxed master playlist generation.
 #[derive(Debug, Clone)]
 pub struct MediaRenditionInfo {
+    /// `codecs` field of type `String`.
+    /// `codecs` 字段，类型为 `String`.
     pub codecs: String,
+    /// `bandwidth` field of type `u64`.
+    /// `bandwidth` 字段，类型为 `u64`.
     pub bandwidth: u64,
+    /// `width` field.
+    /// `width` 字段.
     pub width: Option<u32>,
+    /// `height` field.
+    /// `height` 字段.
     pub height: Option<u32>,
+    /// `frame_rate` field.
+    /// `frame_rate` 字段.
     pub frame_rate: Option<f64>,
+    /// `channels` field.
+    /// `channels` 字段.
     pub channels: Option<u8>,
 }
 

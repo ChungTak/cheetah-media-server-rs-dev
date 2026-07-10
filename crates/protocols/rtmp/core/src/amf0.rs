@@ -26,32 +26,52 @@ const MARKER_XML_DOCUMENT: u8 = 0x0F;
 const MARKER_TYPED_OBJECT: u8 = 0x10;
 const MARKER_AVMPLUS_OBJECT: u8 = 0x11;
 
+/// `Amf0Value` enumeration.
+/// `Amf0Value` 枚举.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Amf0Value {
+    /// `Number` variant.
+    /// `Number` 变体.
     Number(f64),
+    /// `Boolean` variant.
+    /// `Boolean` 变体.
     Boolean(bool),
+    /// `String` variant.
+    /// `String` 变体.
     String(String),
+    /// `Object` variant.
+    /// `Object` 变体.
     Object {
         // `None` 表示匿名对象
         class_name: Option<String>,
         entries: Vec<Pair<String, Self>>,
     },
+    /// `Null` variant.
+    /// `Null` 变体.
     Null,
+    /// `Undefined` variant.
+    /// `Undefined` 变体.
     Undefined,
-    EcmaArray {
-        entries: Vec<Pair<String, Self>>,
-    },
-    Array {
-        entries: Vec<Self>,
-    },
-    Date {
-        unix_time_ms: i64,
-    },
+    /// `EcmaArray` variant.
+    /// `EcmaArray` 变体.
+    EcmaArray { entries: Vec<Pair<String, Self>> },
+    /// `Array` variant.
+    /// `Array` 变体.
+    Array { entries: Vec<Self> },
+    /// `Date` variant.
+    /// `Date` 变体.
+    Date { unix_time_ms: i64 },
+    /// `XmlDocument` variant.
+    /// `XmlDocument` 变体.
     XmlDocument(String),
+    /// `AvmPlus` variant.
+    /// `AvmPlus` 变体.
     AvmPlus(Amf3Value),
 }
 
 impl Amf0Value {
+    /// `decode` function.
+    /// `decode` 函数.
     pub fn decode(buf: &[u8]) -> Result<(usize, Self), Error> {
         let original_buf_len = buf.len();
         let mut decoder = Decoder {
@@ -63,6 +83,8 @@ impl Amf0Value {
         Ok((original_buf_len - decoder.buf.len(), value))
     }
 
+    /// `encode` function.
+    /// `encode` 函数.
     pub fn encode(&self, buf: &mut Vec<u8>) {
         let mut encoder = Encoder {
             buf,
@@ -71,6 +93,8 @@ impl Amf0Value {
         encoder.encode_value(self);
     }
 
+    /// `as_str` function.
+    /// `as_str` 函数.
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Self::String(v) => Some(v),
@@ -78,6 +102,8 @@ impl Amf0Value {
         }
     }
 
+    /// `as_f64` function.
+    /// `as_f64` 函数.
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Self::Number(v) => Some(*v),
@@ -85,6 +111,8 @@ impl Amf0Value {
         }
     }
 
+    /// `as_object_entries` function.
+    /// `as_object_entries` 函数.
     pub fn as_object_entries(&self) -> Option<&[Pair<String, Self>]> {
         match self {
             Self::Object { entries, .. } | Self::EcmaArray { entries } => Some(entries),
@@ -92,6 +120,8 @@ impl Amf0Value {
         }
     }
 
+    /// `object` function.
+    /// `object` 函数.
     pub fn object<K, I>(entries: I) -> Self
     where
         K: Into<String>,
@@ -109,6 +139,8 @@ impl Amf0Value {
         }
     }
 
+    /// `empty_object` function.
+    /// `empty_object` 函数.
     pub fn empty_object() -> Self {
         Self::Object {
             class_name: None,
@@ -116,6 +148,8 @@ impl Amf0Value {
         }
     }
 
+    /// `ecma_array` function.
+    /// `ecma_array` 函数.
     pub fn ecma_array<K, I>(entries: I) -> Self
     where
         K: Into<String>,
@@ -133,18 +167,30 @@ impl Amf0Value {
     }
 }
 
+/// `Amf0Error` enumeration.
+/// `Amf0Error` 枚举.
 #[derive(Debug, thiserror::Error)]
 pub enum Amf0Error {
+    /// `UnexpectedEof` variant.
+    /// `UnexpectedEof` 变体.
     #[error("unexpected eof")]
     UnexpectedEof,
+    /// `UnsupportedMarker` variant.
+    /// `UnsupportedMarker` 变体.
     #[error("unsupported amf0 marker {0:#x}")]
     UnsupportedMarker(u8),
+    /// `Unsupported` variant.
+    /// `Unsupported` 变体.
     #[error("unsupported: {0}")]
     Unsupported(String),
+    /// `InvalidUtf8` variant.
+    /// `InvalidUtf8` 变体.
     #[error("invalid utf8 string")]
     InvalidUtf8,
 }
 
+/// `decode_all` function.
+/// `decode_all` 函数.
 pub fn decode_all(mut payload: &[u8]) -> Result<Vec<Amf0Value>, Amf0Error> {
     let mut values = Vec::new();
     while !payload.is_empty() {
@@ -155,6 +201,8 @@ pub fn decode_all(mut payload: &[u8]) -> Result<Vec<Amf0Value>, Amf0Error> {
     Ok(values)
 }
 
+/// `encode_all` function.
+/// `encode_all` 函数.
 pub fn encode_all(values: &[Amf0Value]) -> Bytes {
     let mut out = Vec::new();
     let mut encoder = Encoder {

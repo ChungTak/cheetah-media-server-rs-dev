@@ -14,6 +14,8 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 /// TLS configuration for the RTMP server.
 #[derive(Clone)]
 pub struct RtmpTlsConfig {
+    /// `acceptor` field of type `TlsAcceptor`.
+    /// `acceptor` 字段，类型为 `TlsAcceptor`.
     pub acceptor: TlsAcceptor,
 }
 
@@ -69,6 +71,8 @@ impl RtmpTlsConfig {
 /// TLS client configuration for outbound RTMPS connections.
 #[derive(Clone)]
 pub struct RtmpTlsClientConfig {
+    /// `connector` field of type `TlsConnector`.
+    /// `connector` 字段，类型为 `TlsConnector`.
     pub connector: TlsConnector,
 }
 
@@ -134,11 +138,17 @@ impl RtmpTlsClientConfig {
 
 /// Wraps a TLS server stream to implement `AsyncTcpStream`.
 pub struct TlsServerStream {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: ServerTlsStream<TcpStream>,
+    /// `peer` field of type `SocketAddr`.
+    /// `peer` 字段，类型为 `SocketAddr`.
     peer: SocketAddr,
 }
 
 impl TlsServerStream {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(inner: ServerTlsStream<TcpStream>, peer: SocketAddr) -> Self {
         Self { inner, peer }
     }
@@ -168,11 +178,17 @@ impl AsyncTcpStream for TlsServerStream {
 
 /// Wraps a TLS client stream to implement `AsyncTcpStream`.
 pub struct TlsClientStream {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: ClientTlsStream<TcpStream>,
+    /// `peer` field of type `SocketAddr`.
+    /// `peer` 字段，类型为 `SocketAddr`.
     peer: SocketAddr,
 }
 
 impl TlsClientStream {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(inner: ClientTlsStream<TcpStream>, peer: SocketAddr) -> Self {
         Self { inner, peer }
     }

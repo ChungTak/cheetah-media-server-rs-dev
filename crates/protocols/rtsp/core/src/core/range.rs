@@ -1,17 +1,31 @@
 use std::fmt;
 
+/// `RtspRangeError` enumeration.
+/// `RtspRangeError` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspRangeError {
+    /// `EmptyHeader` variant.
+    /// `EmptyHeader` 变体.
     #[error("empty range header")]
     EmptyHeader,
+    /// `UnknownFormat` variant.
+    /// `UnknownFormat` 变体.
     #[error("unknown range format: {0}")]
     UnknownFormat(String),
+    /// `InvalidNptRange` variant.
+    /// `InvalidNptRange` 变体.
     #[error("invalid npt range: {0}")]
     InvalidNptRange(String),
+    /// `InvalidNptTime` variant.
+    /// `InvalidNptTime` 变体.
     #[error("invalid npt time: {0}")]
     InvalidNptTime(String),
+    /// `InvalidSmpteTime` variant.
+    /// `InvalidSmpteTime` 变体.
     #[error("invalid smpte time: {0}")]
     InvalidSmpteTime(String),
+    /// `InvalidClockRange` variant.
+    /// `InvalidClockRange` 变体.
     #[error("invalid clock range: {0}")]
     InvalidClockRange(String),
 }
@@ -19,12 +33,20 @@ pub enum RtspRangeError {
 /// RTSP Range 头语义（RFC 2326 Section 12.29）。
 #[derive(Debug, Clone, PartialEq)]
 pub enum RtspRange {
+    /// `Npt` variant.
+    /// `Npt` 变体.
     Npt(NptRange),
+    /// `Smpte` variant.
+    /// `Smpte` 变体.
     Smpte(SmpteRange),
+    /// `Clock` variant.
+    /// `Clock` 变体.
     Clock(ClockRange),
 }
 
 impl RtspRange {
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(header_value: &str) -> Result<Self, RtspRangeError> {
         let value = header_value.trim();
         if value.is_empty() {
@@ -77,9 +99,15 @@ impl fmt::Display for RtspRange {
     }
 }
 
+/// `NptTime` enumeration.
+/// `NptTime` 枚举.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NptTime {
+    /// `Now` variant.
+    /// `Now` 变体.
     Now,
+    /// `Seconds` variant.
+    /// `Seconds` 变体.
     Seconds(f64),
 }
 
@@ -131,17 +159,27 @@ fn parse_npt_hhmmss(value: &str) -> Result<NptTime, RtspRangeError> {
     Ok(NptTime::Seconds(hours * 3600.0 + minutes * 60.0 + seconds))
 }
 
+/// `NptRange` data structure.
+/// `NptRange` 数据结构.
 #[derive(Debug, Clone, PartialEq)]
 pub struct NptRange {
+    /// `start` field of type `NptTime`.
+    /// `start` 字段，类型为 `NptTime`.
     pub start: NptTime,
+    /// `end` field.
+    /// `end` 字段.
     pub end: Option<NptTime>,
 }
 
 impl NptRange {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(start: NptTime, end: Option<NptTime>) -> Self {
         Self { start, end }
     }
 
+    /// Creates `start` from input.
+    /// 创建 `start` 来自 输入.
     pub fn from_start(start: f64) -> Self {
         Self {
             start: NptTime::Seconds(start),
@@ -149,6 +187,8 @@ impl NptRange {
         }
     }
 
+    /// `all` function.
+    /// `all` 函数.
     pub fn all() -> Self {
         Self {
             start: NptTime::Seconds(0.0),
@@ -156,6 +196,8 @@ impl NptRange {
         }
     }
 
+    /// Creates `now` from input.
+    /// 创建 `now` 来自 输入.
     pub fn from_now() -> Self {
         Self {
             start: NptTime::Now,
@@ -209,19 +251,39 @@ impl fmt::Display for NptRange {
     }
 }
 
+/// `SmpteType` enumeration.
+/// `SmpteType` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SmpteType {
+    /// `Smpte` variant.
+    /// `Smpte` 变体.
     Smpte,
+    /// `Smpte30Drop` variant.
+    /// `Smpte30Drop` 变体.
     Smpte30Drop,
+    /// `Smpte25` variant.
+    /// `Smpte25` 变体.
     Smpte25,
 }
 
+/// `SmpteTime` data structure.
+/// `SmpteTime` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmpteTime {
+    /// `hours` field of type `u8`.
+    /// `hours` 字段，类型为 `u8`.
     pub hours: u8,
+    /// `minutes` field of type `u8`.
+    /// `minutes` 字段，类型为 `u8`.
     pub minutes: u8,
+    /// `seconds` field of type `u8`.
+    /// `seconds` 字段，类型为 `u8`.
     pub seconds: u8,
+    /// `frames` field of type `u8`.
+    /// `frames` 字段，类型为 `u8`.
     pub frames: u8,
+    /// `subframes` field.
+    /// `subframes` 字段.
     pub subframes: Option<u8>,
 }
 
@@ -289,10 +351,18 @@ impl fmt::Display for SmpteTime {
     }
 }
 
+/// `SmpteRange` data structure.
+/// `SmpteRange` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmpteRange {
+    /// `smpte_type` field of type `SmpteType`.
+    /// `smpte_type` 字段，类型为 `SmpteType`.
     pub smpte_type: SmpteType,
+    /// `start` field of type `SmpteTime`.
+    /// `start` 字段，类型为 `SmpteTime`.
     pub start: SmpteTime,
+    /// `end` field.
+    /// `end` 字段.
     pub end: Option<SmpteTime>,
 }
 
@@ -329,9 +399,15 @@ impl fmt::Display for SmpteRange {
     }
 }
 
+/// `ClockRange` data structure.
+/// `ClockRange` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClockRange {
+    /// `start` field of type `String`.
+    /// `start` 字段，类型为 `String`.
     pub start: String,
+    /// `end` field.
+    /// `end` 字段.
     pub end: Option<String>,
 }
 

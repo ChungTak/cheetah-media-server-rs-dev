@@ -15,75 +15,137 @@ use tracing::warn;
 use crate::config::Mp4ModuleConfig;
 use crate::session_registry::{SessionError, VodSessionRecord, VodSessionRegistry};
 
+/// `VodApiError` enumeration.
+/// `VodApiError` 枚举.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum VodApiError {
+    /// `InvalidRequest` variant.
+    /// `InvalidRequest` 变体.
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+    /// `Session` variant.
+    /// `Session` 变体.
     #[error("session error: {0}")]
     Session(#[from] SessionError),
+    /// `Driver` variant.
+    /// `Driver` 变体.
     #[error("driver error: {0}")]
     Driver(String),
+    /// `NotFound` variant.
+    /// `NotFound` 变体.
     #[error("file not found: {0}")]
     NotFound(String),
 }
 
+/// `StartVodRequest` data structure.
+/// `StartVodRequest` 数据结构.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartVodRequest {
+    /// `uri` field of type `String`.
+    /// `uri` 字段，类型为 `String`.
     pub uri: String,
+    /// `format` field.
+    /// `format` 字段.
     #[serde(rename = "format", default)]
     pub format: Option<String>,
+    /// `start_time_ms` field.
+    /// `start_time_ms` 字段.
     #[serde(rename = "startTime", default)]
     pub start_time_ms: Option<i64>,
+    /// `end_time_ms` field.
+    /// `end_time_ms` 字段.
     #[serde(rename = "endTime", default)]
     pub end_time_ms: Option<i64>,
+    /// `loop_count` field.
+    /// `loop_count` 字段.
     #[serde(rename = "loopCount", default)]
     pub loop_count: Option<u32>,
+    /// `session_id` field.
+    /// `session_id` 字段.
     #[serde(rename = "sessionId", default)]
     pub session_id: Option<String>,
 }
 
+/// `StartVodResponse` data structure.
+/// `StartVodResponse` 数据结构.
 #[derive(Debug, Clone, Serialize)]
 pub struct StartVodResponse {
+    /// `code` field of type `u16`.
+    /// `code` 字段，类型为 `u16`.
     pub code: u16,
+    /// `msg` field of type `String`.
+    /// `msg` 字段，类型为 `String`.
     pub msg: String,
+    /// `session_id` field of type `String`.
+    /// `session_id` 字段，类型为 `String`.
     #[serde(rename = "sessionId")]
     pub session_id: String,
 }
 
+/// `ControlVodRequest` data structure.
+/// `ControlVodRequest` 数据结构.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ControlVodRequest {
+    /// `session_id` field of type `String`.
+    /// `session_id` 字段，类型为 `String`.
     #[serde(rename = "sessionId")]
     pub session_id: String,
+    /// `seek` field.
+    /// `seek` 字段.
     #[serde(default)]
     pub seek: Option<i64>,
+    /// `pause` field.
+    /// `pause` 字段.
     #[serde(default)]
     pub pause: Option<bool>,
+    /// `scale` field.
+    /// `scale` 字段.
     #[serde(default)]
     pub scale: Option<f32>,
 }
 
+/// `ControlVodResponse` data structure.
+/// `ControlVodResponse` 数据结构.
 #[derive(Debug, Clone, Serialize)]
 pub struct ControlVodResponse {
+    /// `code` field of type `u16`.
+    /// `code` 字段，类型为 `u16`.
     pub code: u16,
+    /// `msg` field of type `String`.
+    /// `msg` 字段，类型为 `String`.
     pub msg: String,
 }
 
+/// `StopVodRequest` data structure.
+/// `StopVodRequest` 数据结构.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StopVodRequest {
+    /// `session_id` field of type `String`.
+    /// `session_id` 字段，类型为 `String`.
     #[serde(rename = "sessionId")]
     pub session_id: String,
 }
 
+/// `StopVodResponse` data structure.
+/// `StopVodResponse` 数据结构.
 #[derive(Debug, Clone, Serialize)]
 pub struct StopVodResponse {
+    /// `code` field of type `u16`.
+    /// `code` 字段，类型为 `u16`.
     pub code: u16,
+    /// `msg` field of type `String`.
+    /// `msg` 字段，类型为 `String`.
     pub msg: String,
 }
 
 /// Bundles a session registry + module config for HTTP handlers.
 #[derive(Clone)]
 pub struct VodApi {
+    /// `registry` field.
+    /// `registry` 字段.
     registry: Arc<VodSessionRegistry>,
+    /// `config` field.
+    /// `config` 字段.
     config: Arc<Mp4ModuleConfig>,
     /// Optional engine adapter for publishing VOD frames as a live engine stream.
     /// When `Some`, every started session's frames are bridged to RTSP/RTMP/etc
@@ -95,6 +157,8 @@ pub struct VodApi {
 }
 
 impl VodApi {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(registry: Arc<VodSessionRegistry>, config: Arc<Mp4ModuleConfig>) -> Self {
         Self {
             registry,
@@ -104,6 +168,8 @@ impl VodApi {
         }
     }
 
+    /// Returns a copy with `engine_bridge` set.
+    /// 返回 一个 copy 带有 `engine_bridge` 设置.
     pub fn with_engine_bridge(
         registry: Arc<VodSessionRegistry>,
         config: Arc<Mp4ModuleConfig>,
@@ -118,10 +184,14 @@ impl VodApi {
         }
     }
 
+    /// `registry` function.
+    /// `registry` 函数.
     pub fn registry(&self) -> Arc<VodSessionRegistry> {
         self.registry.clone()
     }
 
+    /// `start` function.
+    /// `start` 函数.
     pub async fn start(&self, req: StartVodRequest) -> Result<StartVodResponse, VodApiError> {
         if req.uri.is_empty() {
             return Err(VodApiError::InvalidRequest("uri must not be empty".into()));
@@ -227,6 +297,8 @@ impl VodApi {
         })
     }
 
+    /// `control` function.
+    /// `control` 函数.
     pub fn control(&self, req: ControlVodRequest) -> Result<ControlVodResponse, VodApiError> {
         let handle = self
             .registry
@@ -255,6 +327,8 @@ impl VodApi {
         })
     }
 
+    /// `stop` function.
+    /// `stop` 函数.
     pub fn stop(&self, req: StopVodRequest) -> Result<StopVodResponse, VodApiError> {
         // Send Stop *before* removing the registry record so the driver
         // task gracefully unwinds. Dropping the registry's Arc would also

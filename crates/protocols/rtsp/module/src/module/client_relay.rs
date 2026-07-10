@@ -10,12 +10,22 @@ use crate::config::{
 use crate::module::client_pull::{spawn_pull_job_supervisors, wait_pull_job_supervisors};
 use crate::module::client_push::{spawn_push_job_supervisors, wait_push_job_supervisors};
 
+/// `RelayJobSupervisorHandle` data structure.
+/// `RelayJobSupervisorHandle` 数据结构.
 pub(super) struct RelayJobSupervisorHandle {
+    /// `job_name` field of type `String`.
+    /// `job_name` 字段，类型为 `String`.
     job_name: String,
+    /// `relay_stream_key` field of type `String`.
+    /// `relay_stream_key` 字段，类型为 `String`.
     relay_stream_key: String,
+    /// `join` field.
+    /// `join` 字段.
     join: Box<dyn RuntimeJoinHandle>,
 }
 
+/// `spawn_relay_job_supervisors` function.
+/// `spawn_relay_job_supervisors` 函数.
 pub(super) fn spawn_relay_job_supervisors(
     engine: &EngineContext,
     config: &RtspModuleConfig,
@@ -50,6 +60,8 @@ pub(super) fn spawn_relay_job_supervisors(
     handles
 }
 
+/// `wait_relay_job_supervisors` function.
+/// `wait_relay_job_supervisors` 函数.
 pub(super) async fn wait_relay_job_supervisors(handles: &mut Vec<RelayJobSupervisorHandle>) {
     for handle in handles.drain(..) {
         handle.join.abort();

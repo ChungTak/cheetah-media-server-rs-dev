@@ -7,11 +7,23 @@ use std::collections::VecDeque;
 /// A frame waiting to be paced out.
 #[derive(Debug, Clone)]
 pub struct PacedFrame {
+    /// `dts_ms` field of type `u64`.
+    /// `dts_ms` 字段，类型为 `u64`.
     pub dts_ms: u64,
+    /// `data` field.
+    /// `data` 字段.
     pub data: bytes::Bytes,
+    /// `media_kind` field.
+    /// `media_kind` 字段.
     pub media_kind: cheetah_codec::MediaKind,
+    /// `codec` field.
+    /// `codec` 字段.
     pub codec: cheetah_codec::CodecId,
+    /// `pts_ms` field of type `u64`.
+    /// `pts_ms` 字段，类型为 `u64`.
     pub pts_ms: u64,
+    /// `keyframe` field of type `bool`.
+    /// `keyframe` 字段，类型为 `bool`.
     pub keyframe: bool,
 }
 
@@ -20,6 +32,8 @@ pub struct PacedFrame {
 /// Call `push()` when frames arrive from segment download.
 /// Call `drain_ready()` periodically (every ~50ms) to get frames that should play now.
 pub struct HlsPlaybackPacer {
+    /// `buffer` field.
+    /// `buffer` 字段.
     buffer: VecDeque<PacedFrame>,
     /// Wall-clock time (micros) when playback started.
     play_start_us: Option<u64>,
@@ -30,6 +44,8 @@ pub struct HlsPlaybackPacer {
 }
 
 impl HlsPlaybackPacer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(max_buffer_ms: u64) -> Self {
         Self {
             buffer: VecDeque::new(),
@@ -118,15 +134,29 @@ impl HlsPlaybackPacer {
 /// Input timestamps may jump forward/backward due to encoder restarts, segment
 /// boundaries, or stream switching. The smoother maintains continuity in output.
 pub struct StampSmoother {
+    /// `last_input` field of type `i64`.
+    /// `last_input` 字段，类型为 `i64`.
     last_input: i64,
+    /// `last_output` field of type `i64`.
+    /// `last_output` 字段，类型为 `i64`.
     last_output: i64,
+    /// `offset` field of type `i64`.
+    /// `offset` 字段，类型为 `i64`.
     offset: i64,
+    /// `max_forward_jump_ms` field of type `i64`.
+    /// `max_forward_jump_ms` 字段，类型为 `i64`.
     max_forward_jump_ms: i64,
+    /// `max_backward_jump_ms` field of type `i64`.
+    /// `max_backward_jump_ms` 字段，类型为 `i64`.
     max_backward_jump_ms: i64,
+    /// `started` field of type `bool`.
+    /// `started` 字段，类型为 `bool`.
     started: bool,
 }
 
 impl StampSmoother {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(max_forward_jump_ms: i64, max_backward_jump_ms: i64) -> Self {
         Self {
             last_input: 0,

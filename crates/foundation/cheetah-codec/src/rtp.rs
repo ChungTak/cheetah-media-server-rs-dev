@@ -1,17 +1,33 @@
 use crate::prelude::*;
 use bytes::{Buf, Bytes, BytesMut};
 
+/// `RtpHeader` data structure.
+/// `RtpHeader` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtpHeader {
+    /// `version` field of type `u8`.
+    /// `version` 字段，类型为 `u8`.
     pub version: u8,
+    /// `payload_type` field of type `u8`.
+    /// `payload_type` 字段，类型为 `u8`.
     pub payload_type: u8,
+    /// `sequence_number` field of type `u16`.
+    /// `sequence_number` 字段，类型为 `u16`.
     pub sequence_number: u16,
+    /// `timestamp` field of type `u32`.
+    /// `timestamp` 字段，类型为 `u32`.
     pub timestamp: u32,
+    /// `ssrc` field of type `u32`.
+    /// `ssrc` 字段，类型为 `u32`.
     pub ssrc: u32,
+    /// `marker` field of type `bool`.
+    /// `marker` 字段，类型为 `bool`.
     pub marker: bool,
 }
 
 impl RtpHeader {
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(raw: &[u8]) -> Option<(Self, usize)> {
         if raw.len() < 12 {
             return None;
@@ -60,6 +76,8 @@ impl RtpHeader {
         ))
     }
 
+    /// `encode` function.
+    /// `encode` 函数.
     pub fn encode(self) -> [u8; 12] {
         let mut out = [0u8; 12];
         out[0] = (self.version & 0x03) << 6;
@@ -71,13 +89,21 @@ impl RtpHeader {
     }
 }
 
+/// `RtpPacket` data structure.
+/// `RtpPacket` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtpPacket {
+    /// `header` field of type `RtpHeader`.
+    /// `header` 字段，类型为 `RtpHeader`.
     pub header: RtpHeader,
+    /// `payload` field of type `Bytes`.
+    /// `payload` 字段，类型为 `Bytes`.
     pub payload: Bytes,
 }
 
 impl RtpPacket {
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(raw: &[u8]) -> Option<Self> {
         let (header, header_len) = RtpHeader::parse(raw)?;
         let payload_end = if (raw[0] & 0x20) != 0 {
@@ -95,6 +121,8 @@ impl RtpPacket {
         })
     }
 
+    /// `encode` function.
+    /// `encode` 函数.
     pub fn encode(&self) -> Bytes {
         let mut out = Vec::with_capacity(12 + self.payload.len());
         out.extend_from_slice(&self.header.encode());
@@ -103,12 +131,18 @@ impl RtpPacket {
     }
 }
 
+/// `RtpClock` data structure.
+/// `RtpClock` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtpClock {
+    /// `rate` field of type `u32`.
+    /// `rate` 字段，类型为 `u32`.
     pub rate: u32,
 }
 
 impl RtpClock {
+    /// `ticks_to_micros` function.
+    /// `ticks_to_micros` 函数.
     pub fn ticks_to_micros(self, ticks: u32) -> i64 {
         if self.rate == 0 {
             return 0;
@@ -116,6 +150,8 @@ impl RtpClock {
         (i64::from(ticks) * 1_000_000_i64) / i64::from(self.rate)
     }
 
+    /// `micros_to_ticks` function.
+    /// `micros_to_ticks` 函数.
     pub fn micros_to_ticks(self, micros: i64) -> u32 {
         if self.rate == 0 || micros <= 0 {
             return 0;
@@ -124,6 +160,8 @@ impl RtpClock {
     }
 }
 
+/// `packetize_payload` function.
+/// `packetize_payload` 函数.
 pub fn packetize_payload(payload: &[u8], mtu: usize, mut header: RtpHeader) -> Vec<RtpPacket> {
     let payload_mtu = mtu.saturating_sub(12).max(1);
     let mut out = Vec::new();
@@ -187,6 +225,8 @@ pub fn packetize_g711(
     out
 }
 
+/// `depacketize_payload` function.
+/// `depacketize_payload` 函数.
 pub fn depacketize_payload(mut packets: Vec<RtpPacket>) -> Bytes {
     if packets.is_empty() {
         return Bytes::new();
@@ -227,21 +267,39 @@ pub fn depacketize_payload(mut packets: Vec<RtpPacket>) -> Bytes {
     Bytes::from(out)
 }
 
+/// `RtpPayloadMode` enumeration.
+/// `RtpPayloadMode` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtpPayloadMode {
+    /// `Ps` variant.
+    /// `Ps` 变体.
     Ps,
+    /// `Ts` variant.
+    /// `Ts` 变体.
     Ts,
+    /// `Es` variant.
+    /// `Es` 变体.
     Es,
+    /// `Ehome` variant.
+    /// `Ehome` 变体.
     Ehome,
     /// Hikvision XHB private container (also seen as `xhb`/`hk` in vendor stacks).
     Xhb,
     /// JT/T 1078 vehicle terminal video transport.
     Jtt1078,
+    /// `RawAudio` variant.
+    /// `RawAudio` 变体.
     RawAudio,
+    /// `RawVideo` variant.
+    /// `RawVideo` 变体.
     RawVideo,
+    /// `Unknown` variant.
+    /// `Unknown` 变体.
     Unknown,
 }
 
+/// `probe_rtp_payload` function.
+/// `probe_rtp_payload` 函数.
 pub fn probe_rtp_payload(payload: &[u8]) -> RtpPayloadMode {
     if payload.is_empty() {
         return RtpPayloadMode::Unknown;
@@ -378,11 +436,15 @@ pub fn encode_interleaved_rtp_frame(packet: &RtpPacket, channel: u8) -> Bytes {
 /// Result of parsing a single TCP RTP frame in `AutoDetect` mode.
 #[derive(Debug, Clone)]
 pub struct ParsedTcpRtpFrame {
+    /// `packet` field of type `RtpPacket`.
+    /// `packet` 字段，类型为 `RtpPacket`.
     pub packet: RtpPacket,
     /// Number of bytes consumed from the input buffer.
     pub consumed: usize,
     /// `Some(channel)` for `Interleaved4Byte` framing, `None` for `TwoByte`.
     pub channel: Option<u8>,
+    /// `framing` field of type `RtpTcpFraming`.
+    /// `framing` 字段，类型为 `RtpTcpFraming`.
     pub framing: RtpTcpFraming,
 }
 
@@ -733,28 +795,62 @@ mod tests {
     }
 }
 
+/// `EhomeCodecInfo` data structure.
+/// `EhomeCodecInfo` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EhomeCodecInfo {
-    pub payload_type: String,        // "ps" or "nalu"
+    /// `payload_type` field of type `String`.
+    /// `payload_type` 字段，类型为 `String`.
+    pub payload_type: String, // "ps" or "nalu"
+    /// `video_codec` field.
+    /// `video_codec` 字段.
     pub video_codec: Option<String>, // "h264", "h265"
+    /// `audio_codec` field.
+    /// `audio_codec` 字段.
     pub audio_codec: Option<String>, // "g711a", "g711u", "aac"
+    /// `channels` field of type `u8`.
+    /// `channels` 字段，类型为 `u8`.
     pub channels: u8,
+    /// `sample_bit` field of type `u8`.
+    /// `sample_bit` 字段，类型为 `u8`.
     pub sample_bit: u8,
+    /// `sample_rate` field of type `u32`.
+    /// `sample_rate` 字段，类型为 `u32`.
     pub sample_rate: u32,
 }
 
+/// `EhomeOutput` enumeration.
+/// `EhomeOutput` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EhomeOutput {
+    /// `HandshakeSsrc` variant.
+    /// `HandshakeSsrc` 变体.
     HandshakeSsrc(String),
+    /// `HandshakeCodec` variant.
+    /// `HandshakeCodec` 变体.
     HandshakeCodec(EhomeCodecInfo),
+    /// `MediaPayload` variant.
+    /// `MediaPayload` 变体.
     MediaPayload(Bytes),
 }
 
+/// `EhomeDecoder` data structure.
+/// `EhomeDecoder` 数据结构.
 pub struct EhomeDecoder {
+    /// `packet_seq` field of type `u32`.
+    /// `packet_seq` 字段，类型为 `u32`.
     packet_seq: u32,
+    /// `ssrc` field.
+    /// `ssrc` 字段.
     ssrc: Option<String>,
+    /// `codec_info` field.
+    /// `codec_info` 字段.
     codec_info: Option<EhomeCodecInfo>,
+    /// `is_ehome2` field of type `bool`.
+    /// `is_ehome2` 字段，类型为 `bool`.
     is_ehome2: bool,
+    /// `first_packet` field of type `bool`.
+    /// `first_packet` 字段，类型为 `bool`.
     first_packet: bool,
 }
 
@@ -765,6 +861,8 @@ impl Default for EhomeDecoder {
 }
 
 impl EhomeDecoder {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             packet_seq: 0,
@@ -775,10 +873,14 @@ impl EhomeDecoder {
         }
     }
 
+    /// `codec_info` function.
+    /// `codec_info` 函数.
     pub fn codec_info(&self) -> Option<EhomeCodecInfo> {
         self.codec_info.clone()
     }
 
+    /// `decode` function.
+    /// `decode` 函数.
     pub fn decode(&mut self, buf: &mut BytesMut) -> Vec<EhomeOutput> {
         let mut outputs = Vec::new();
 

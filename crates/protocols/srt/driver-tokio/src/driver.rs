@@ -12,96 +12,156 @@ use tokio::sync::mpsc;
 
 use crate::config::SrtDriverConfig;
 
+/// `SrtPeerId` data structure.
+/// `SrtPeerId` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SrtPeerId(pub u64);
 
+/// `SrtDriverStats` data structure.
+/// `SrtDriverStats` 数据结构.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SrtDriverStats {
+    /// `bytes_in` field of type `u64`.
+    /// `bytes_in` 字段，类型为 `u64`.
     pub bytes_in: u64,
+    /// `bytes_out` field of type `u64`.
+    /// `bytes_out` 字段，类型为 `u64`.
     pub bytes_out: u64,
+    /// `packets_in` field of type `u64`.
+    /// `packets_in` 字段，类型为 `u64`.
     pub packets_in: u64,
+    /// `packets_out` field of type `u64`.
+    /// `packets_out` 字段，类型为 `u64`.
     pub packets_out: u64,
+    /// `sender_packets_in_buffer` field of type `u32`.
+    /// `sender_packets_in_buffer` 字段，类型为 `u32`.
     pub sender_packets_in_buffer: u32,
+    /// `sender_packets_in_loss_list` field of type `u32`.
+    /// `sender_packets_in_loss_list` 字段，类型为 `u32`.
     pub sender_packets_in_loss_list: u32,
+    /// `sender_total_retransmits` field of type `u32`.
+    /// `sender_total_retransmits` 字段，类型为 `u32`.
     pub sender_total_retransmits: u32,
+    /// `sender_total_sent` field of type `u64`.
+    /// `sender_total_sent` 字段，类型为 `u64`.
     pub sender_total_sent: u64,
+    /// `sender_total_bytes_sent` field of type `u64`.
+    /// `sender_total_bytes_sent` 字段，类型为 `u64`.
     pub sender_total_bytes_sent: u64,
+    /// `receiver_packets_in_buffer` field of type `u32`.
+    /// `receiver_packets_in_buffer` 字段，类型为 `u32`.
     pub receiver_packets_in_buffer: u32,
+    /// `receiver_packets_in_loss_list` field of type `u32`.
+    /// `receiver_packets_in_loss_list` 字段，类型为 `u32`.
     pub receiver_packets_in_loss_list: u32,
+    /// `receiver_total_received` field of type `u64`.
+    /// `receiver_total_received` 字段，类型为 `u64`.
     pub receiver_total_received: u64,
+    /// `receiver_total_lost` field of type `u64`.
+    /// `receiver_total_lost` 字段，类型为 `u64`.
     pub receiver_total_lost: u64,
+    /// `receiver_total_duplicates` field of type `u64`.
+    /// `receiver_total_duplicates` 字段，类型为 `u64`.
     pub receiver_total_duplicates: u64,
+    /// `receiver_total_bytes_received` field of type `u64`.
+    /// `receiver_total_bytes_received` 字段，类型为 `u64`.
     pub receiver_total_bytes_received: u64,
+    /// `receiver_rtt_micros` field of type `u32`.
+    /// `receiver_rtt_micros` 字段，类型为 `u32`.
     pub receiver_rtt_micros: u32,
+    /// `receiver_rtt_var_micros` field of type `u32`.
+    /// `receiver_rtt_var_micros` 字段，类型为 `u32`.
     pub receiver_rtt_var_micros: u32,
+    /// `receiver_loss_rate_percent_x100` field of type `u32`.
+    /// `receiver_loss_rate_percent_x100` 字段，类型为 `u32`.
     pub receiver_loss_rate_percent_x100: u32,
+    /// `receiver_jitter_micros` field of type `u32`.
+    /// `receiver_jitter_micros` 字段，类型为 `u32`.
     pub receiver_jitter_micros: u32,
 }
 
+/// `SrtDriverCommand` enumeration.
+/// `SrtDriverCommand` 枚举.
 #[derive(Debug, Clone)]
 pub enum SrtDriverCommand {
+    /// `ConnectCaller` variant.
+    /// `ConnectCaller` 变体.
     ConnectCaller {
         peer_id: SrtPeerId,
         remote: SocketAddr,
         stream_id: Option<String>,
         options: SrtSessionOptions,
     },
-    SendPayload {
-        peer_id: SrtPeerId,
-        payload: Bytes,
-    },
-    Close {
-        peer_id: SrtPeerId,
-        reason: String,
-    },
+    /// `SendPayload` variant.
+    /// `SendPayload` 变体.
+    SendPayload { peer_id: SrtPeerId, payload: Bytes },
+    /// `Close` variant.
+    /// `Close` 变体.
+    Close { peer_id: SrtPeerId, reason: String },
 }
 
+/// `SrtDriverEvent` enumeration.
+/// `SrtDriverEvent` 枚举.
 #[derive(Debug, Clone)]
 pub enum SrtDriverEvent {
-    ListenerStarted {
-        local_addr: SocketAddr,
-    },
+    /// `ListenerStarted` variant.
+    /// `ListenerStarted` 变体.
+    ListenerStarted { local_addr: SocketAddr },
+    /// `CallerConnecting` variant.
+    /// `CallerConnecting` 变体.
     CallerConnecting {
         peer_id: SrtPeerId,
         remote: SocketAddr,
     },
+    /// `Connected` variant.
+    /// `Connected` 变体.
     Connected {
         peer_id: SrtPeerId,
         remote: SocketAddr,
         stream_id: Option<String>,
     },
-    Payload {
-        peer_id: SrtPeerId,
-        payload: Bytes,
-    },
-    KeyRefreshNeeded {
-        peer_id: SrtPeerId,
-    },
+    /// `Payload` variant.
+    /// `Payload` 变体.
+    Payload { peer_id: SrtPeerId, payload: Bytes },
+    /// `KeyRefreshNeeded` variant.
+    /// `KeyRefreshNeeded` 变体.
+    KeyRefreshNeeded { peer_id: SrtPeerId },
+    /// `Stats` variant.
+    /// `Stats` 变体.
     Stats {
         peer_id: SrtPeerId,
         stats: SrtDriverStats,
     },
-    Disconnected {
-        peer_id: SrtPeerId,
-        reason: String,
-    },
+    /// `Disconnected` variant.
+    /// `Disconnected` 变体.
+    Disconnected { peer_id: SrtPeerId, reason: String },
+    /// `Error` variant.
+    /// `Error` 变体.
     Error {
         peer_id: Option<SrtPeerId>,
         message: String,
     },
 }
 
+/// `SrtDriverHandle` data structure.
+/// `SrtDriverHandle` 数据结构.
 #[derive(Clone)]
 pub struct SrtDriverHandle {
+    /// `command_tx` field.
+    /// `command_tx` 字段.
     command_tx: mpsc::Sender<SrtDriverCommand>,
 }
 
 impl SrtDriverHandle {
+    /// `send` function.
+    /// `send` 函数.
     pub async fn send(&self, command: SrtDriverCommand) {
         let _ = self.command_tx.send(command).await;
     }
 }
 
+/// `spawn_driver` function.
+/// `spawn_driver` 函数.
 pub fn spawn_driver(
     config: SrtDriverConfig,
     cancel: CancellationToken,

@@ -8,20 +8,30 @@ use crate::prelude::*;
 
 use bytes::Bytes;
 
+/// `RtmpMessageEncoder` data structure.
+/// `RtmpMessageEncoder` 数据结构.
 #[derive(Debug, Default)]
 pub struct RtmpMessageEncoder {
+    /// `chunk_encoder` field of type `RtmpChunkEncoder`.
+    /// `chunk_encoder` 字段，类型为 `RtmpChunkEncoder`.
     chunk_encoder: RtmpChunkEncoder,
 }
 
 impl RtmpMessageEncoder {
+    /// Sets the `chunk_size` value.
+    /// Sets `chunk_size` 值.
     pub fn set_chunk_size(&mut self, size: crate::chunk::RtmpChunkSize) {
         self.chunk_encoder.set_chunk_size(size);
     }
 
+    /// `encode_raw_chunk` function.
+    /// `encode_raw_chunk` 函数.
     pub fn encode_raw_chunk(&mut self, buf: &mut Vec<u8>, chunk: &RtmpChunk) {
         self.chunk_encoder.encode(buf, chunk);
     }
 
+    /// `encode` function.
+    /// `encode` 函数.
     pub fn encode(
         &mut self,
         buf: &mut Vec<u8>,

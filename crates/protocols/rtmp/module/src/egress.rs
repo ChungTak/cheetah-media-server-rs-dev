@@ -50,6 +50,8 @@ fn extract_raw_rtmp_audio_payload(frame: &AVFrame) -> Option<Bytes> {
     })
 }
 
+/// `frame_dts_to_rtmp_timestamp_ms` function.
+/// `frame_dts_to_rtmp_timestamp_ms` 函数.
 pub(crate) fn frame_dts_to_rtmp_timestamp_ms(frame: &AVFrame) -> u32 {
     core_frame_dts_to_rtmp_timestamp_ms(frame)
 }
@@ -84,6 +86,8 @@ fn payload_to_core_command(
     }
 }
 
+/// `map_frame_to_rtmp_with_tracks` function.
+/// `map_frame_to_rtmp_with_tracks` 函数.
 pub(crate) fn map_frame_to_rtmp_with_tracks(
     stream_id: u32,
     frame: Arc<AVFrame>,
@@ -113,6 +117,8 @@ pub(crate) fn map_frame_to_rtmp_with_tracks(
     Some(payload_to_core_command(stream_id, payload))
 }
 
+/// `map_non_h264_video` function.
+/// `map_non_h264_video` 函数.
 #[cfg(test)]
 pub(crate) fn map_non_h264_video(
     stream_id: u32,
@@ -133,6 +139,8 @@ pub(crate) fn map_non_h264_video(
     Some(payload_to_core_command(stream_id, payload))
 }
 
+/// `send_track_bootstrap` function.
+/// `send_track_bootstrap` 函数.
 pub(crate) async fn send_track_bootstrap(
     connection_id: RtmpConnectionId,
     stream_id: u32,
@@ -155,6 +163,8 @@ pub(crate) async fn send_track_bootstrap(
     Ok(())
 }
 
+/// Builds `track_bootstrap_commands` output.
+/// 构建 `track_bootstrap_commands` 输出.
 pub(crate) fn build_track_bootstrap_commands(
     stream_id: u32,
     tracks: &[TrackInfo],
@@ -173,6 +183,8 @@ pub(crate) fn build_track_bootstrap_commands(
     .collect()
 }
 
+/// Builds `video_config_payload` output.
+/// 构建 `video_config_payload` 输出.
 #[cfg(test)]
 pub(crate) fn build_video_config_payload(
     codec: CodecId,
@@ -182,42 +194,58 @@ pub(crate) fn build_video_config_payload(
     core_build_video_config_payload(codec, config, map_play_mode(mode))
 }
 
+/// `use_enhanced_video_mode` function.
+/// `use_enhanced_video_mode` 函数.
 #[cfg(test)]
 pub(crate) fn use_enhanced_video_mode(mode: RtmpPlayMode, codec: CodecId) -> bool {
     core_use_enhanced_video_mode(map_play_mode(mode), codec)
 }
 
+/// Builds `h266_config` output.
+/// 构建 `h266_config` 输出.
 #[cfg(test)]
 pub(crate) fn build_h266_config(vps: &[Bytes], sps: &[Bytes], pps: &[Bytes]) -> Bytes {
     core_build_h266_config(vps, sps, pps)
 }
 
+/// `track_list_has_audio` function.
+/// `track_list_has_audio` 函数.
 pub(crate) fn track_list_has_audio(tracks: &[TrackInfo]) -> bool {
     tracks
         .iter()
         .any(|track| track.media_kind == MediaKind::Audio)
 }
 
+/// `track_list_has_video` function.
+/// `track_list_has_video` 函数.
 pub(crate) fn track_list_has_video(tracks: &[TrackInfo]) -> bool {
     tracks
         .iter()
         .any(|track| track.media_kind == MediaKind::Video)
 }
 
+/// `track_list_has_supported_playback_codec` function.
+/// `track_list_has_supported_playback_codec` 函数.
 pub(crate) fn track_list_has_supported_playback_codec(tracks: &[TrackInfo]) -> bool {
     tracks
         .iter()
         .any(|track| rtmp_playback_codec_supported(track.media_kind, track.codec))
 }
 
+/// `rtmp_playback_codec_supported` function.
+/// `rtmp_playback_codec_supported` 函数.
 pub(crate) fn rtmp_playback_codec_supported(media_kind: MediaKind, codec: CodecId) -> bool {
     core_rtmp_playback_codec_supported(media_kind, codec)
 }
 
+/// `track_list_has_codec` function.
+/// `track_list_has_codec` 函数.
 pub(crate) fn track_list_has_codec(tracks: &[TrackInfo], codec: CodecId) -> bool {
     tracks.iter().any(|track| track.codec == codec)
 }
 
+/// `should_delay_publish_release_for_h264` function.
+/// `should_delay_publish_release_for_h264` 函数.
 pub(crate) fn should_delay_publish_release_for_h264(session: &PublishSession) -> bool {
     session
         .tracks
@@ -226,15 +254,21 @@ pub(crate) fn should_delay_publish_release_for_h264(session: &PublishSession) ->
         .is_some_and(|track| track.codec == CodecId::H264)
 }
 
+/// `play_accept_flags` function.
+/// `play_accept_flags` 函数.
 pub(crate) fn play_accept_flags(tracks: &[TrackInfo]) -> (bool, bool) {
     let enabled = track_list_has_video(tracks) || track_list_has_audio(tracks);
     (enabled, enabled)
 }
 
+/// `should_force_close_play_on_source_end` function.
+/// `should_force_close_play_on_source_end` 函数.
 pub(crate) fn should_force_close_play_on_source_end(tracks: &[TrackInfo]) -> bool {
     track_list_has_codec(tracks, CodecId::H265)
 }
 
+/// `maybe_make_mute_audio` function.
+/// `maybe_make_mute_audio` 函数.
 pub(crate) fn maybe_make_mute_audio(
     stream_id: u32,
     timestamp_ms: u32,
@@ -257,6 +291,8 @@ fn mute_aac_frame_payload() -> Bytes {
     core_mute_aac_frame_payload()
 }
 
+/// Builds `metadata` output.
+/// 构建 `metadata` 输出.
 #[cfg(test)]
 pub(crate) fn build_metadata(tracks: &[TrackInfo]) -> Bytes {
     core_build_metadata(tracks)

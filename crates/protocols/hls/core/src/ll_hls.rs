@@ -11,7 +11,11 @@ use bytes::Bytes;
 /// Maps to a logical role (video/audio), not a physical TrackId.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TrackLane {
+    /// `Video` variant.
+    /// `Video` 变体.
     Video,
+    /// `Audio` variant.
+    /// `Audio` 变体.
     Audio,
 }
 
@@ -37,6 +41,8 @@ pub enum LlHlsPackagingMode {
 }
 
 impl LlHlsPackagingMode {
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(s: &str) -> Self {
         match s {
             "video-only" => Self::VideoOnly,
@@ -49,9 +55,17 @@ impl LlHlsPackagingMode {
 /// A partial segment (sub-segment) for LL-HLS.
 #[derive(Debug, Clone)]
 pub struct HlsPart {
+    /// `uri` field of type `String`.
+    /// `uri` 字段，类型为 `String`.
     pub uri: String,
+    /// `duration_secs` field of type `f64`.
+    /// `duration_secs` 字段，类型为 `f64`.
     pub duration_secs: f64,
+    /// `independent` field of type `bool`.
+    /// `independent` 字段，类型为 `bool`.
     pub independent: bool,
+    /// `data` field of type `Bytes`.
+    /// `data` 字段，类型为 `Bytes`.
     pub data: Bytes,
     /// Global part sequence number.
     pub sequence: u64,
@@ -62,7 +76,11 @@ pub struct HlsPart {
 /// Completed segment's parts snapshot (archived when segment finalizes).
 #[derive(Debug, Clone)]
 pub struct SegmentParts {
+    /// `segment_sequence` field of type `u64`.
+    /// `segment_sequence` 字段，类型为 `u64`.
     pub segment_sequence: u64,
+    /// `parts` field.
+    /// `parts` 字段.
     pub parts: Vec<HlsPart>,
 }
 
@@ -74,6 +92,8 @@ pub struct LowLatencyState {
     completed_segments_parts: VecDeque<SegmentParts>,
     /// Maximum number of completed segment part-lists to retain.
     max_completed_segments: usize,
+    /// `part_target_secs` field of type `f64`.
+    /// `part_target_secs` 字段，类型为 `f64`.
     part_target_secs: f64,
     /// Global part sequence counter.
     part_seq: u64,
@@ -90,12 +110,20 @@ pub struct LowLatencyState {
 /// Info about another rendition for EXT-X-RENDITION-REPORT.
 #[derive(Debug, Clone)]
 pub struct RenditionReport {
+    /// `uri` field of type `String`.
+    /// `uri` 字段，类型为 `String`.
     pub uri: String,
+    /// `last_msn` field of type `u64`.
+    /// `last_msn` 字段，类型为 `u64`.
     pub last_msn: u64,
+    /// `last_part` field of type `u64`.
+    /// `last_part` 字段，类型为 `u64`.
     pub last_part: u64,
 }
 
 impl LowLatencyState {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(part_target_ms: u64, max_completed_segments: usize) -> Self {
         Self {
             current_parts: Vec::new(),

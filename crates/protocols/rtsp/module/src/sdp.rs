@@ -8,6 +8,8 @@ use cheetah_codec::{
     MediaKind, TrackId, TrackInfo, TrackReadiness,
 };
 
+/// `RTSP_MP2P_PROBE_TRACK_MARKER` constant.
+/// `RTSP_MP2P_PROBE_TRACK_MARKER` 常量.
 pub(crate) const RTSP_MP2P_PROBE_TRACK_MARKER: &[u8] = b"rtsp-compat/mp2p-probe/v1";
 
 struct MediaSection {
@@ -24,6 +26,8 @@ struct MediaSection {
     control: Option<String>,
 }
 
+/// Parses `announce_sdp` from input.
+/// 解析 `announce_sdp` 来自 输入.
 pub fn parse_announce_sdp(
     body: &str,
 ) -> Result<(Vec<TrackInfo>, HashMap<String, TrackId>), String> {
@@ -224,6 +228,8 @@ pub fn parse_announce_sdp(
     Ok((tracks, control_to_track))
 }
 
+/// Returns `true` if `mp2p_probe_track` is true.
+/// 返回 `真` 如果 `mp2p_probe_track` is 真.
 pub(crate) fn is_mp2p_probe_track(track: &TrackInfo) -> bool {
     track.codec == CodecId::Unknown
         && matches!(
@@ -243,6 +249,8 @@ fn parse_payload_attribute(rest: &str) -> Option<(u8, &str)> {
     Some((payload_type, value.trim_start()))
 }
 
+/// Builds `describe_sdp` output.
+/// 构建 `describe_sdp` 输出.
 pub fn build_describe_sdp(
     base_uri: &str,
     tracks: &[TrackInfo],
@@ -319,6 +327,8 @@ fn extract_rtsp_host(uri: &str) -> Option<&str> {
     Some(host_port.split(':').next().unwrap_or(host_port))
 }
 
+/// `normalize_control` function.
+/// `normalize_control` 函数.
 pub fn normalize_control(control: &str) -> String {
     let trimmed = control.trim();
     let trimmed = trimmed

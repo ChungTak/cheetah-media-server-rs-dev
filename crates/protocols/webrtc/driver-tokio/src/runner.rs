@@ -36,9 +36,17 @@ use crate::tcp::{encode_frame, Tcp4571Decoder};
 /// Spec for creating a new session inside the driver.
 #[derive(Debug, Clone)]
 pub struct WebRtcSessionSpec {
+    /// `session_id` field of type `WebRtcSessionId`.
+    /// `session_id` 字段，类型为 `WebRtcSessionId`.
     pub session_id: WebRtcSessionId,
+    /// `role` field of type `WebRtcSessionRole`.
+    /// `role` 字段，类型为 `WebRtcSessionRole`.
     pub role: WebRtcSessionRole,
+    /// `remote_sdp_offer` field of type `String`.
+    /// `remote_sdp_offer` 字段，类型为 `String`.
     pub remote_sdp_offer: String,
+    /// `candidate_transport_policy` field of type `CandidateTransportPolicy`.
+    /// `candidate_transport_policy` 字段，类型为 `CandidateTransportPolicy`.
     pub candidate_transport_policy: CandidateTransportPolicy,
 }
 
@@ -196,17 +204,35 @@ pub enum WebRtcTcpCloseReason {
 /// Driver-level diagnostic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcDriverDiagnostic {
+    /// `session_id` field.
+    /// `session_id` 字段.
     pub session_id: Option<WebRtcSessionId>,
+    /// `kind` field of type `WebRtcDriverDiagnosticKind`.
+    /// `kind` 字段，类型为 `WebRtcDriverDiagnosticKind`.
     pub kind: WebRtcDriverDiagnosticKind,
+    /// `message` field of type `String`.
+    /// `message` 字段，类型为 `String`.
     pub message: String,
 }
 
+/// `WebRtcDriverDiagnosticKind` enumeration.
+/// `WebRtcDriverDiagnosticKind` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WebRtcDriverDiagnosticKind {
+    /// `UnroutedPacket` variant.
+    /// `UnroutedPacket` 变体.
     UnroutedPacket,
+    /// `SocketError` variant.
+    /// `SocketError` 变体.
     SocketError,
+    /// `QueueFull` variant.
+    /// `QueueFull` 变体.
     QueueFull,
+    /// `UnsupportedCommand` variant.
+    /// `UnsupportedCommand` 变体.
     UnsupportedCommand,
+    /// `Lifecycle` variant.
+    /// `Lifecycle` 变体.
     Lifecycle,
     /// A stale route entry expired after the migration TTL elapsed.
     /// The session is still active on its new address; this is purely
@@ -224,10 +250,20 @@ pub enum WebRtcDriverDiagnosticKind {
 
 /// Handle to a running driver task.
 pub struct WebRtcDriverHandle {
+    /// `cmd_tx` field.
+    /// `cmd_tx` 字段.
     cmd_tx: mpsc::Sender<WebRtcDriverCommand>,
+    /// `event_rx` field.
+    /// `event_rx` 字段.
     event_rx: tokio::sync::Mutex<mpsc::Receiver<WebRtcDriverEvent>>,
+    /// `local_udp_addr` field of type `SocketAddr`.
+    /// `local_udp_addr` 字段，类型为 `SocketAddr`.
     local_udp_addr: SocketAddr,
+    /// `local_tcp_addr` field.
+    /// `local_tcp_addr` 字段.
     local_tcp_addr: Option<SocketAddr>,
+    /// `session_count` field.
+    /// `session_count` 字段.
     session_count: Arc<std::sync::atomic::AtomicUsize>,
     /// Cumulative count of commands accepted by the driver task.
     /// Incremented on every successful pop from the command channel.
@@ -276,11 +312,23 @@ pub struct WebRtcDriverHandle {
 /// atomic loads) so dashboards can poll it without contention.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcDriverStats {
+    /// `local_udp_addr` field of type `SocketAddr`.
+    /// `local_udp_addr` 字段，类型为 `SocketAddr`.
     pub local_udp_addr: SocketAddr,
+    /// `local_tcp_addr` field.
+    /// `local_tcp_addr` 字段.
     pub local_tcp_addr: Option<SocketAddr>,
+    /// `session_count` field of type `usize`.
+    /// `session_count` 字段，类型为 `usize`.
     pub session_count: usize,
+    /// `commands_accepted_total` field of type `u64`.
+    /// `commands_accepted_total` 字段，类型为 `u64`.
     pub commands_accepted_total: u64,
+    /// `events_emitted_total` field of type `u64`.
+    /// `events_emitted_total` 字段，类型为 `u64`.
     pub events_emitted_total: u64,
+    /// `unrouted_packets_total` field of type `u64`.
+    /// `unrouted_packets_total` 字段，类型为 `u64`.
     pub unrouted_packets_total: u64,
     /// Number of session-owner shards. `1` for the current default
     /// driver topology; will grow once the multi-shard front-end is
@@ -291,12 +339,16 @@ pub struct WebRtcDriverStats {
 }
 
 impl WebRtcDriverHandle {
+    /// `send_command` function.
+    /// `send_command` 函数.
     pub async fn send_command(&self, cmd: WebRtcDriverCommand) {
         if let Err(err) = self.cmd_tx.send(cmd).await {
             warn!("WebRTC driver command channel closed: {err}");
         }
     }
 
+    /// `try_send_command` function.
+    /// `try_send_command` 函数.
     pub async fn try_send_command(&self, cmd: WebRtcDriverCommand) -> Result<(), WebRtcSendError> {
         match self.cmd_tx.try_send(cmd) {
             Ok(()) => Ok(()),
@@ -305,6 +357,8 @@ impl WebRtcDriverHandle {
         }
     }
 
+    /// `recv_event` function.
+    /// `recv_event` 函数.
     pub async fn recv_event(&self) -> Option<WebRtcDriverEvent> {
         let evt = self.event_rx.lock().await.recv().await;
         if evt.is_some() {
@@ -314,6 +368,8 @@ impl WebRtcDriverHandle {
         evt
     }
 
+    /// `local_udp_addr` function.
+    /// `local_udp_addr` 函数.
     pub fn local_udp_addr(&self) -> SocketAddr {
         self.local_udp_addr
     }
@@ -324,6 +380,8 @@ impl WebRtcDriverHandle {
         self.local_tcp_addr
     }
 
+    /// `session_count` function.
+    /// `session_count` 函数.
     pub fn session_count(&self) -> usize {
         self.session_count
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -492,10 +550,16 @@ impl WebRtcDriverHandle {
     }
 }
 
+/// `WebRtcSendError` enumeration.
+/// `WebRtcSendError` 枚举.
 #[derive(Debug, thiserror::Error)]
 pub enum WebRtcSendError {
+    /// `QueueFull` variant.
+    /// `QueueFull` 变体.
     #[error("driver command queue is full")]
     QueueFull,
+    /// `Closed` variant.
+    /// `Closed` 变体.
     #[error("driver command channel closed")]
     Closed,
 }
@@ -677,46 +741,74 @@ pub async fn spawn_driver(
     Ok(handle)
 }
 
+/// `UdpDatagram` data structure.
+/// `UdpDatagram` 数据结构.
 #[derive(Debug, Clone)]
 pub(crate) struct UdpDatagram {
+    /// `source` field of type `SocketAddr`.
+    /// `source` 字段，类型为 `SocketAddr`.
     pub(crate) source: SocketAddr,
+    /// `data` field of type `Bytes`.
+    /// `data` 字段，类型为 `Bytes`.
     pub(crate) data: Bytes,
+    /// `received_at` field of type `Instant`.
+    /// `received_at` 字段，类型为 `Instant`.
     pub(crate) received_at: Instant,
 }
 
 /// Payload arriving from either the UDP listener or a TCP connection.
 #[derive(Debug, Clone)]
 pub(crate) enum NetDatagram {
+    /// `Udp` variant.
+    /// `Udp` 变体.
     Udp(UdpDatagram),
+    /// `Tcp` variant.
+    /// `Tcp` 变体.
     Tcp(TcpDatagram),
 }
 
+/// `TcpDatagram` data structure.
+/// `TcpDatagram` 数据结构.
 #[derive(Debug, Clone)]
 pub(crate) struct TcpDatagram {
+    /// `source` field of type `SocketAddr`.
+    /// `source` 字段，类型为 `SocketAddr`.
     pub(crate) source: SocketAddr,
+    /// `data` field of type `Bytes`.
+    /// `data` 字段，类型为 `Bytes`.
     pub(crate) data: Bytes,
+    /// `received_at` field of type `Instant`.
+    /// `received_at` 字段，类型为 `Instant`.
     pub(crate) received_at: Instant,
 }
 
 impl NetDatagram {
+    /// `source` function.
+    /// `source` 函数.
     pub(crate) fn source(&self) -> SocketAddr {
         match self {
             Self::Udp(d) => d.source,
             Self::Tcp(d) => d.source,
         }
     }
+    /// `received_at` function.
+    /// `received_at` 函数.
     pub(crate) fn received_at(&self) -> Instant {
         match self {
             Self::Udp(d) => d.received_at,
             Self::Tcp(d) => d.received_at,
         }
     }
+    /// `into_data` function.
+    /// `into_data` 函数.
     pub(crate) fn into_data(self) -> Bytes {
         match self {
             Self::Udp(d) => d.data,
             Self::Tcp(d) => d.data,
         }
     }
+    /// `data` function.
+    /// `data` 函数.
     pub(crate) fn data(&self) -> &Bytes {
         match self {
             Self::Udp(d) => &d.data,
@@ -754,6 +846,8 @@ impl NetDatagram {
 /// lock so they cannot drift.
 #[derive(Default)]
 pub(crate) struct TcpWriterRegistry {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: parking_lot::Mutex<TcpWriterRegistryInner>,
 }
 
@@ -778,12 +872,16 @@ impl TcpWriterRegistry {
         guard.owners.insert(addr, shard);
     }
 
+    /// `remove` function.
+    /// `remove` 函数.
     pub(crate) fn remove(&self, addr: &SocketAddr) {
         let mut guard = self.inner.lock();
         guard.writers.remove(addr);
         guard.owners.remove(addr);
     }
 
+    /// `get` function.
+    /// `get` 函数.
     pub(crate) fn get(
         &self,
         addr: &SocketAddr,

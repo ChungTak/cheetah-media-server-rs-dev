@@ -12,23 +12,55 @@ use cheetah_hls_core::{
 
 /// Per-track fMP4 muxer state.
 pub struct TrackMuxer {
+    /// `lane` field of type `TrackLane`.
+    /// `lane` 字段，类型为 `TrackLane`.
     pub lane: TrackLane,
+    /// `source_track_id` field of type `TrackId`.
+    /// `source_track_id` 字段，类型为 `TrackId`.
     pub source_track_id: TrackId,
+    /// `media_kind` field of type `MediaKind`.
+    /// `media_kind` 字段，类型为 `MediaKind`.
     pub media_kind: MediaKind,
+    /// `codec` field of type `CodecId`.
+    /// `codec` 字段，类型为 `CodecId`.
     pub codec: CodecId,
+    /// `fmp4_muxer` field of type `Fmp4Muxer`.
+    /// `fmp4_muxer` 字段，类型为 `Fmp4Muxer`.
     fmp4_muxer: Fmp4Muxer,
+    /// `init_segment` field of type `Bytes`.
+    /// `init_segment` 字段，类型为 `Bytes`.
     pub init_segment: Bytes,
+    /// `ll_state` field of type `LowLatencyState`.
+    /// `ll_state` 字段，类型为 `LowLatencyState`.
     pub ll_state: LowLatencyState,
+    /// `pending_part_samples` field.
+    /// `pending_part_samples` 字段.
     pending_part_samples: Vec<Fmp4Sample>,
+    /// `pending_segment_part_data` field.
+    /// `pending_segment_part_data` 字段.
     pending_segment_part_data: Vec<Bytes>,
+    /// `segment_start_dts_ms` field.
+    /// `segment_start_dts_ms` 字段.
     segment_start_dts_ms: Option<u64>,
+    /// `segment_last_dts_ms` field of type `u64`.
+    /// `segment_last_dts_ms` 字段，类型为 `u64`.
     segment_last_dts_ms: u64,
     /// Last inter-frame interval in ms (for EXTINF estimation at flush).
     last_frame_interval_ms: Option<u64>,
+    /// `prev_dts_ms` field.
+    /// `prev_dts_ms` 字段.
     prev_dts_ms: Option<u64>,
+    /// `segment_has_keyframe` field of type `bool`.
+    /// `segment_has_keyframe` 字段，类型为 `bool`.
     segment_has_keyframe: bool,
+    /// `segment_seq` field of type `u64`.
+    /// `segment_seq` 字段，类型为 `u64`.
     segment_seq: u64,
+    /// `ring` field of type `SegmentRing`.
+    /// `ring` 字段，类型为 `SegmentRing`.
     pub ring: SegmentRing,
+    /// `concluded` field of type `bool`.
+    /// `concluded` 字段，类型为 `bool`.
     pub concluded: bool,
     /// Part target in ms (frame-aligned).
     part_target_ms: u64,
@@ -39,11 +71,17 @@ pub struct TrackMuxer {
 /// Output event from a track muxer.
 #[derive(Debug, Clone)]
 pub enum TrackMuxerOutput {
+    /// `PartReady` variant.
+    /// `PartReady` 变体.
     PartReady(HlsPart),
+    /// `SegmentReady` variant.
+    /// `SegmentReady` 变体.
     SegmentReady { name: String, duration_secs: f64 },
 }
 
 impl TrackMuxer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(
         lane: TrackLane,
         source_track_id: TrackId,

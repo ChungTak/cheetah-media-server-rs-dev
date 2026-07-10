@@ -27,15 +27,23 @@ use cheetah_rtmp_core::{
 use crate::nal::{avcc_nal_length_size, hvcc_nal_length_size, normalize_nal_length_size};
 use crate::session::{PublishSession, PublishTrackTimestampState};
 
+/// `RTMP_VIDEO_RAW_SIDEDATA_MAGIC` constant.
+/// `RTMP_VIDEO_RAW_SIDEDATA_MAGIC` 常量.
 pub(crate) const RTMP_VIDEO_RAW_SIDEDATA_MAGIC: &[u8] = b"rtmp-video-raw:";
+/// `RTMP_AUDIO_RAW_SIDEDATA_MAGIC` constant.
+/// `RTMP_AUDIO_RAW_SIDEDATA_MAGIC` 常量.
 pub(crate) const RTMP_AUDIO_RAW_SIDEDATA_MAGIC: &[u8] = b"rtmp-audio-raw:";
 const RTMP_AUDIO_FOURCC_OPUS: &[u8; 4] = b"Opus";
 const ENHANCED_RTMP_AUDIO_SEQUENCE_START: u8 = 0;
 const ENHANCED_RTMP_AUDIO_CODED_FRAMES: u8 = 1;
 const ENHANCED_RTMP_AUDIO_METADATA: u8 = 4;
 
+/// `handle_data_ingest` function.
+/// `handle_data_ingest` 函数.
 pub(crate) fn handle_data_ingest(_session: &mut PublishSession, _payload: &[u8]) {}
 
+/// `apply_metadata_to_tracks` function.
+/// `apply_metadata_to_tracks` 函数.
 pub(crate) fn apply_metadata_to_tracks(session: &mut PublishSession, values: &[AmfValue]) {
     core_apply_flv_metadata_to_tracks(&mut session.tracks.video, &mut session.tracks.audio, values);
 }
@@ -43,6 +51,8 @@ pub(crate) fn apply_metadata_to_tracks(session: &mut PublishSession, values: &[A
 #[cfg(test)]
 const DEFAULT_TIMESTAMP_REPAIR_ALERT_THRESHOLD: u64 = 32;
 
+/// `handle_video_ingest` function.
+/// `handle_video_ingest` 函数.
 #[cfg(test)]
 pub(crate) fn handle_video_ingest(
     session: &mut PublishSession,
@@ -57,6 +67,8 @@ pub(crate) fn handle_video_ingest(
     )
 }
 
+/// `handle_video_ingest_with_alert_threshold` function.
+/// `handle_video_ingest_with_alert_threshold` 函数.
 pub(crate) fn handle_video_ingest_with_alert_threshold(
     session: &mut PublishSession,
     timestamp_ms: u32,
@@ -181,6 +193,8 @@ pub(crate) fn handle_video_ingest_with_alert_threshold(
     Some(frame)
 }
 
+/// `apply_video_config` function.
+/// `apply_video_config` 函数.
 pub(crate) fn apply_video_config(
     session: &mut PublishSession,
     codec: CodecId,
@@ -224,6 +238,8 @@ fn ensure_video_track(session: &mut PublishSession, codec: CodecId) {
     session.tracks.video = Some(track);
 }
 
+/// Parses `hvcc_parameter_sets` from input.
+/// 解析 `hvcc_parameter_sets` 来自 输入.
 #[cfg(test)]
 pub(crate) fn parse_hvcc_parameter_sets(
     payload: &[u8],
@@ -232,6 +248,8 @@ pub(crate) fn parse_hvcc_parameter_sets(
     core_parse_flv_hvcc_parameter_sets(payload, codec)
 }
 
+/// `handle_audio_ingest` function.
+/// `handle_audio_ingest` 函数.
 #[cfg(test)]
 pub(crate) fn handle_audio_ingest(
     session: &mut PublishSession,
@@ -416,6 +434,8 @@ fn build_normalized_audio_frame(
     Some(frame)
 }
 
+/// `handle_audio_ingest_with_alert_threshold` function.
+/// `handle_audio_ingest_with_alert_threshold` 函数.
 pub(crate) fn handle_audio_ingest_with_alert_threshold(
     session: &mut PublishSession,
     timestamp_ms: u32,
@@ -689,6 +709,8 @@ fn update_repair_counter(
     core_update_timestamp_repair_counter(normalized, repair_count)
 }
 
+/// `should_emit_alert_threshold` function.
+/// `should_emit_alert_threshold` 函数.
 pub(crate) fn should_emit_alert_threshold(count: u64, threshold: u64) -> bool {
     cheetah_codec::should_emit_alert_threshold(count, threshold)
 }
@@ -823,33 +845,47 @@ fn flv_sample_rate(code: u8) -> Option<u32> {
     }
 }
 
+/// Parses `avcc_parameter_sets` from input.
+/// 解析 `avcc_parameter_sets` 来自 输入.
 #[cfg(test)]
 pub(crate) fn parse_avcc_parameter_sets(avcc: &[u8]) -> (Vec<Bytes>, Vec<Bytes>) {
     core_parse_flv_avcc_parameter_sets(avcc)
 }
 
+/// `attach_raw_rtmp_video_payload` function.
+/// `attach_raw_rtmp_video_payload` 函数.
 pub(crate) fn attach_raw_rtmp_video_payload(frame: &mut AVFrame, payload: &[u8]) {
     core_attach_raw_rtmp_video_payload(frame, payload);
 }
 
+/// `attach_raw_rtmp_audio_payload` function.
+/// `attach_raw_rtmp_audio_payload` 函数.
 pub(crate) fn attach_raw_rtmp_audio_payload(frame: &mut AVFrame, payload: &[u8]) {
     core_attach_raw_rtmp_audio_payload(frame, payload);
 }
 
+/// `length_prefixed_to_annexb` function.
+/// `length_prefixed_to_annexb` 函数.
 #[cfg(test)]
 pub(crate) fn length_prefixed_to_annexb(payload: &[u8]) -> Bytes {
     length_prefixed_to_annexb_with_size(payload, 4)
 }
 
+/// `length_prefixed_to_annexb_with_size` function.
+/// `length_prefixed_to_annexb_with_size` 函数.
 pub(crate) fn length_prefixed_to_annexb_with_size(payload: &[u8], nal_length_size: usize) -> Bytes {
     core_length_prefixed_to_annexb_with_size(payload, nal_length_size)
 }
 
+/// `annexb_to_length_prefixed` function.
+/// `annexb_to_length_prefixed` 函数.
 #[cfg(test)]
 pub(crate) fn annexb_to_length_prefixed(payload: &[u8]) -> Bytes {
     annexb_to_length_prefixed_with_size(payload, 4)
 }
 
+/// `annexb_to_length_prefixed_with_size` function.
+/// `annexb_to_length_prefixed_with_size` 函数.
 #[cfg(test)]
 pub(crate) fn annexb_to_length_prefixed_with_size(payload: &[u8], nal_length_size: usize) -> Bytes {
     let nal_length_size = normalize_nal_length_size(nal_length_size);

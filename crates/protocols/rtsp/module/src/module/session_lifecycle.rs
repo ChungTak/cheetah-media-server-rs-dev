@@ -1,5 +1,7 @@
 use super::*;
 
+/// `request_session_token` function.
+/// `request_session_token` 函数.
 pub(super) fn request_session_token(req: &RtspRequest) -> Option<&str> {
     req.session
         .as_deref()
@@ -7,10 +9,14 @@ pub(super) fn request_session_token(req: &RtspRequest) -> Option<&str> {
         .filter(|token| !token.is_empty())
 }
 
+/// Parses `session_token` from input.
+/// 解析 `session_token` 来自 输入.
 pub(super) fn parse_session_token(raw: &str) -> &str {
     raw.split(';').next().unwrap_or_default().trim()
 }
 
+/// `validate_request_session` function.
+/// `validate_request_session` 函数.
 pub(super) fn validate_request_session(
     connection_id: RtspConnectionId,
     req: &RtspRequest,
@@ -37,6 +43,8 @@ pub(super) fn validate_request_session(
     }
 }
 
+/// `validate_record_state` function.
+/// `validate_record_state` 函数.
 pub(super) fn validate_record_state(
     mode: Option<SessionMode>,
     has_publish: bool,
@@ -66,6 +74,8 @@ pub(super) fn validate_record_state(
     Ok(())
 }
 
+/// `validate_pause_state` function.
+/// `validate_pause_state` 函数.
 pub(super) fn validate_pause_state(
     mode: Option<SessionMode>,
     has_play: bool,

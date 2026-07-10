@@ -49,6 +49,8 @@ struct PauseRequestMeta {
     requested_range: Option<String>,
 }
 
+/// `RtspModuleFactory` data structure.
+/// `RtspModuleFactory` 数据结构.
 pub struct RtspModuleFactory;
 
 impl ModuleFactory for RtspModuleFactory {
@@ -85,16 +87,32 @@ impl ModuleFactory for RtspModuleFactory {
     }
 }
 
+/// `RtspModule` data structure.
+/// `RtspModule` 数据结构.
 pub struct RtspModule {
+    /// `info` field of type `ModuleInfo`.
+    /// `info` 字段，类型为 `ModuleInfo`.
     info: ModuleInfo,
+    /// `state` field of type `ModuleState`.
+    /// `state` 字段，类型为 `ModuleState`.
     state: ModuleState,
+    /// `engine` field.
+    /// `engine` 字段.
     engine: Option<EngineContext>,
+    /// `config` field of type `RtspModuleConfig`.
+    /// `config` 字段，类型为 `RtspModuleConfig`.
     config: RtspModuleConfig,
+    /// `runtime_cancel` field.
+    /// `runtime_cancel` 字段.
     runtime_cancel: Option<CancellationToken>,
+    /// `event_loop` field.
+    /// `event_loop` 字段.
     event_loop: Option<OneShotReceiver>,
 }
 
 impl RtspModule {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             info: ModuleInfo {

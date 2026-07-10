@@ -1,14 +1,30 @@
 use super::*;
 
+/// `RtspRequestDispatchCtx` data structure.
+/// `RtspRequestDispatchCtx` 数据结构.
 pub(super) struct RtspRequestDispatchCtx {
+    /// `engine` field of type `EngineContext`.
+    /// `engine` 字段，类型为 `EngineContext`.
     engine: EngineContext,
+    /// `config` field of type `RtspModuleConfig`.
+    /// `config` 字段，类型为 `RtspModuleConfig`.
     config: RtspModuleConfig,
+    /// `command_tx` field of type `RtspCoreCommandSender`.
+    /// `command_tx` 字段，类型为 `RtspCoreCommandSender`.
     command_tx: RtspCoreCommandSender,
+    /// `sessions` field.
+    /// `sessions` 字段.
     sessions: Arc<Mutex<HashMap<RtspConnectionId, RtspConnectionState>>>,
+    /// `multicast` field.
+    /// `multicast` 字段.
     multicast: Arc<MulticastSenderRegistry>,
+    /// `module_cancel` field of type `CancellationToken`.
+    /// `module_cancel` 字段，类型为 `CancellationToken`.
     module_cancel: CancellationToken,
 }
 
+/// `handle_driver_event` function.
+/// `handle_driver_event` 函数.
 pub(super) async fn handle_driver_event(
     event: DriverEvent,
     engine: &EngineContext,
@@ -93,6 +109,8 @@ pub(super) async fn handle_driver_event(
     }
 }
 
+/// `handle_rtsp_request` function.
+/// `handle_rtsp_request` 函数.
 pub(super) async fn handle_rtsp_request(
     connection_id: RtspConnectionId,
     req: RtspRequest,

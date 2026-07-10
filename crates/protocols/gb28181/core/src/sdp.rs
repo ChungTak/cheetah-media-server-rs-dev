@@ -1,15 +1,29 @@
 use crate::error::Gb28181CoreError;
 
+/// `GbSdp` data structure.
+/// `GbSdp` 数据结构.
 #[derive(Debug, Clone, Default)]
 pub struct GbSdp {
+    /// `ip` field of type `String`.
+    /// `ip` 字段，类型为 `String`.
     pub ip: String,
+    /// `video_port` field.
+    /// `video_port` 字段.
     pub video_port: Option<u16>,
+    /// `audio_port` field.
+    /// `audio_port` 字段.
     pub audio_port: Option<u16>,
+    /// `ssrc` field.
+    /// `ssrc` 字段.
     pub ssrc: Option<u32>,
+    /// `sendrecv_mode` field of type `String`.
+    /// `sendrecv_mode` 字段，类型为 `String`.
     pub sendrecv_mode: String, // recvonly, sendonly, sendrecv
 }
 
 impl GbSdp {
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(text: &str) -> Result<Self, Gb28181CoreError> {
         let mut sdp = GbSdp::default();
         for line in text.lines() {
@@ -68,6 +82,8 @@ impl GbSdp {
         Ok(sdp)
     }
 
+    /// Converts to `string` representation.
+    /// Converts 为 `string` 表示.
     pub fn to_string(
         session_id: &str,
         ip: &str,

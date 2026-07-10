@@ -11,15 +11,25 @@ use tokio_rustls::TlsConnector;
 /// Configuration for the pull client.
 #[derive(Debug, Clone)]
 pub struct Fmp4PullClientConfig {
+    /// `url` field of type `String`.
+    /// `url` 字段，类型为 `String`.
     pub url: String,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     pub read_buffer_size: usize,
+    /// `insecure_tls` field of type `bool`.
+    /// `insecure_tls` 字段，类型为 `bool`.
     pub insecure_tls: bool,
 }
 
 /// Events from the pull client.
 #[derive(Debug)]
 pub enum Fmp4PullEvent {
+    /// `Bytes` variant.
+    /// `Bytes` 变体.
     Bytes(Bytes),
+    /// `Closed` variant.
+    /// `Closed` 变体.
     Closed { reason: String },
 }
 

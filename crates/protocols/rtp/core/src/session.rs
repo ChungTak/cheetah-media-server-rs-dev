@@ -53,13 +53,29 @@ struct RtpSession {
     max_rtp_len_observed: usize,
 }
 
+/// `RtpCore` data structure.
+/// `RtpCore` 数据结构.
 pub struct RtpCore {
+    /// `sessions` field.
+    /// `sessions` 字段.
     sessions: HashMap<RtpSessionKey, RtpSession>,
+    /// `ssrc_to_session` field.
+    /// `ssrc_to_session` 字段.
     ssrc_to_session: HashMap<u32, RtpSessionKey>,
+    /// `tcp_conn_to_session` field.
+    /// `tcp_conn_to_session` 字段.
     tcp_conn_to_session: HashMap<u64, RtpSessionKey>,
+    /// `ehome_decoders` field.
+    /// `ehome_decoders` 字段.
     ehome_decoders: HashMap<u64, cheetah_codec::EhomeDecoder>,
+    /// `max_sessions` field of type `usize`.
+    /// `max_sessions` 字段，类型为 `usize`.
     max_sessions: usize,
+    /// `session_idle_timeout_ms` field of type `u64`.
+    /// `session_idle_timeout_ms` 字段，类型为 `u64`.
     session_idle_timeout_ms: u64,
+    /// `now_ms` field of type `u64`.
+    /// `now_ms` 字段，类型为 `u64`.
     now_ms: u64,
     /// TCP framing mode applied when deframing inbound RTP-over-TCP traffic. Defaults to
     /// `AutoDetect`, matching ABLMediaServer's behaviour of accepting both 2-byte length-prefix
@@ -72,6 +88,8 @@ pub struct RtpCore {
 }
 
 impl RtpCore {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(max_sessions: usize, session_idle_timeout_ms: u64) -> Self {
         Self {
             sessions: HashMap::new(),
@@ -96,6 +114,8 @@ impl RtpCore {
         self.max_rtp_len_cap = cap.max(1500);
     }
 
+    /// `handle_input` function.
+    /// `handle_input` 函数.
     pub fn handle_input(&mut self, input: RtpCoreInput) -> Vec<RtpCoreOutput> {
         let mut outputs = Vec::with_capacity(4);
         match input {

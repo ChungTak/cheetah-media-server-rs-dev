@@ -28,20 +28,30 @@ const EVENT_CHANNEL_CAPACITY: usize = 128;
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum VodDriverEvent {
+    /// `Tracks` variant.
+    /// `Tracks` 变体.
     Tracks(Vec<cheetah_codec::TrackInfo>),
+    /// `Frame` variant.
+    /// `Frame` 变体.
     Frame(cheetah_codec::AVFrame),
     /// Forwarded core diagnostic for audit / error responses.
     Diagnostic(cheetah_mp4_core::VodDiagnostic),
-    Closed {
-        reason: String,
-    },
+    /// `Closed` variant.
+    /// `Closed` 变体.
+    Closed { reason: String },
 }
 
 /// Driver configuration.
 #[derive(Debug, Clone)]
 pub struct VodDriverConfig {
+    /// `read_chunk_bytes` field of type `usize`.
+    /// `read_chunk_bytes` 字段，类型为 `usize`.
     pub read_chunk_bytes: usize,
+    /// `idle_timeout_ms` field of type `u64`.
+    /// `idle_timeout_ms` 字段，类型为 `u64`.
     pub idle_timeout_ms: u64,
+    /// `reader_config` field of type `Mp4ReaderConfig`.
+    /// `reader_config` 字段，类型为 `Mp4ReaderConfig`.
     pub reader_config: Mp4ReaderConfig,
     /// ABL-style playback count.
     /// * `1` (default) — play once and close.
@@ -74,6 +84,8 @@ impl Default for VodDriverConfig {
 /// use tokio directly), but the public surface exposes only a `futures::Stream`
 /// so consumers never depend on a `tokio::sync::mpsc` type. See `AGENTS.md` §5.
 pub struct VodEventStream {
+    /// `rx` field.
+    /// `rx` 字段.
     rx: mpsc::Receiver<VodDriverEvent>,
 }
 
@@ -88,11 +100,17 @@ impl Stream for VodEventStream {
 /// Command channel handle exposed to the module/protocol layer.
 #[derive(Clone)]
 pub struct VodDriverHandle {
+    /// `cmd_tx` field.
+    /// `cmd_tx` 字段.
     cmd_tx: mpsc::UnboundedSender<VodControlCommand>,
+    /// `event_rx` field.
+    /// `event_rx` 字段.
     event_rx: Arc<Mutex<Option<mpsc::Receiver<VodDriverEvent>>>>,
 }
 
 impl VodDriverHandle {
+    /// `send_control` function.
+    /// `send_control` 函数.
     pub fn send_control(&self, cmd: VodControlCommand) -> Result<(), VodDriverError> {
         self.cmd_tx.send(cmd).map_err(|_| VodDriverError::Closed)
     }
@@ -103,12 +121,20 @@ impl VodDriverHandle {
     }
 }
 
+/// `VodDriverError` enumeration.
+/// `VodDriverError` 枚举.
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum VodDriverError {
+    /// `Closed` variant.
+    /// `Closed` 变体.
     #[error("driver channel closed")]
     Closed,
+    /// `Io` variant.
+    /// `Io` 变体.
     #[error("file io error: {0}")]
     Io(String),
+    /// `NotFound` variant.
+    /// `NotFound` 变体.
     #[error("file not found: {0}")]
     NotFound(String),
 }

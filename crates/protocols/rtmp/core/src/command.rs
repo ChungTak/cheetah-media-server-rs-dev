@@ -9,6 +9,8 @@ use crate::timestamp::RtmpTimestamp;
 // 从格式（AMF）的表现力来说应该用 f64，
 // 但 RTMP 规范不推荐使用小数，而且实际上也不会用到，
 // 因此内部用整数来保存
+/// `TransactionId` data structure.
+/// `TransactionId` 数据结构.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TransactionId(i64);
 
@@ -17,14 +19,20 @@ impl TransactionId {
     pub const CONNECT: Self = Self(1);
     pub const NON_RESERVED_START: Self = Self(2);
 
+    /// Creates `f64` from input.
+    /// 创建 `f64` 来自 输入.
     pub fn from_f64(id: f64) -> Self {
         Self(round_f64_to_i64(id))
     }
 
+    /// `get` function.
+    /// `get` 函数.
     pub const fn get(self) -> i64 {
         self.0
     }
 
+    /// `increment` function.
+    /// `increment` 函数.
     pub fn increment(&mut self) {
         self.0 += 1
     }
@@ -46,16 +54,36 @@ fn round_f64_to_i64(value: f64) -> i64 {
     }
 }
 
+/// `RtmpCommand` enumeration.
+/// `RtmpCommand` 枚举.
 #[derive(Debug, Clone)]
 pub enum RtmpCommand {
+    /// `Connect` variant.
+    /// `Connect` 变体.
     Connect(RtmpConnectCommand),
+    /// `CreateStream` variant.
+    /// `CreateStream` 变体.
     CreateStream(RtmpCreateStreamCommand),
+    /// `Publish` variant.
+    /// `Publish` 变体.
     Publish(RtmpPublishCommand),
+    /// `Play` variant.
+    /// `Play` 变体.
     Play(RtmpPlayCommand),
+    /// `DeleteStream` variant.
+    /// `DeleteStream` 变体.
     DeleteStream(RtmpDeleteStreamCommand),
+    /// `GetStreamLength` variant.
+    /// `GetStreamLength` 变体.
     GetStreamLength(RtmpGetStreamLengthCommand),
+    /// `Result` variant.
+    /// `Result` 变体.
     Result(RtmpResultCommand),
+    /// `OnStatus` variant.
+    /// `OnStatus` 变体.
     OnStatus(RtmpOnStatusCommand),
+    /// `Ignore` variant.
+    /// `Ignore` 变体.
     Ignore {
         name: String,
 
@@ -66,6 +94,8 @@ pub enum RtmpCommand {
 }
 
 impl RtmpCommand {
+    /// `name` function.
+    /// `name` 函数.
     pub fn name(&self) -> &str {
         match self {
             RtmpCommand::Connect(_) => "connect",
@@ -80,6 +110,8 @@ impl RtmpCommand {
         }
     }
 
+    /// `into_message` function.
+    /// `into_message` 函数.
     pub fn into_message(self, header: RtmpMessageHeader) -> Result<RtmpMessage, Error> {
         match self {
             RtmpCommand::Ignore { .. } => {
@@ -191,6 +223,8 @@ impl RtmpCommand {
         }
     }
 
+    /// `into_pcm_message` function.
+    /// `into_pcm_message` 函数.
     pub fn into_pcm_message(self) -> Result<RtmpMessage, Error> {
         self.into_message(RtmpMessageHeader {
             stream_id: RtmpMessageStreamId::PCM,
@@ -198,6 +232,8 @@ impl RtmpCommand {
         })
     }
 
+    /// Creates `message` from input.
+    /// 创建 `message` 来自 输入.
     pub fn from_message(
         name: &str,
         transaction_id: TransactionId,
@@ -238,10 +274,18 @@ impl RtmpCommand {
     }
 }
 
+/// `RtmpConnectCommand` data structure.
+/// `RtmpConnectCommand` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtmpConnectCommand {
+    /// `app` field of type `String`.
+    /// `app` 字段，类型为 `String`.
     pub app: String,
+    /// `flash_ver` field of type `String`.
+    /// `flash_ver` 字段，类型为 `String`.
     pub flash_ver: String,
+    /// `tc_url` field of type `String`.
+    /// `tc_url` 字段，类型为 `String`.
     pub tc_url: String,
 }
 
@@ -276,6 +320,8 @@ impl RtmpConnectCommand {
         })
     }
 
+    /// `accept` function.
+    /// `accept` 函数.
     pub fn accept(&self) -> Result<RtmpMessage, Error> {
         let properties = AmfValue::amf0_object([
             ("fmsVer", Amf0Value::String("FMS/4,5,0,297".to_string())),
@@ -303,8 +349,12 @@ impl RtmpConnectCommand {
     }
 }
 
+/// `RtmpCreateStreamCommand` data structure.
+/// `RtmpCreateStreamCommand` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtmpCreateStreamCommand {
+    /// `transaction_id` field of type `TransactionId`.
+    /// `transaction_id` 字段，类型为 `TransactionId`.
     pub transaction_id: TransactionId,
 }
 
@@ -314,9 +364,15 @@ impl RtmpCreateStreamCommand {
     }
 }
 
+/// `RtmpPublishCommand` data structure.
+/// `RtmpPublishCommand` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtmpPublishCommand {
+    /// `transaction_id` field of type `TransactionId`.
+    /// `transaction_id` 字段，类型为 `TransactionId`.
     pub transaction_id: TransactionId,
+    /// `stream_name` field of type `String`.
+    /// `stream_name` 字段，类型为 `String`.
     pub stream_name: String,
 }
 
@@ -348,6 +404,8 @@ impl RtmpPublishCommand {
         })
     }
 
+    /// `accept` function.
+    /// `accept` 函数.
     pub fn accept(
         transaction_id: TransactionId,
         stream_id: RtmpMessageStreamId,
@@ -376,10 +434,18 @@ impl RtmpPublishCommand {
     }
 }
 
+/// `RtmpPlayCommand` data structure.
+/// `RtmpPlayCommand` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtmpPlayCommand {
+    /// `transaction_id` field of type `TransactionId`.
+    /// `transaction_id` 字段，类型为 `TransactionId`.
     pub transaction_id: TransactionId,
+    /// `stream_name` field of type `String`.
+    /// `stream_name` 字段，类型为 `String`.
     pub stream_name: String,
+    /// `start` field of type `f64`.
+    /// `start` 字段，类型为 `f64`.
     pub start: f64,
 }
 
@@ -405,6 +471,8 @@ impl RtmpPlayCommand {
         })
     }
 
+    /// `accept` function.
+    /// `accept` 函数.
     pub fn accept(
         transaction_id: TransactionId,
         stream_id: RtmpMessageStreamId,
@@ -433,9 +501,15 @@ impl RtmpPlayCommand {
     }
 }
 
+/// `RtmpDeleteStreamCommand` data structure.
+/// `RtmpDeleteStreamCommand` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtmpDeleteStreamCommand {
+    /// `transaction_id` field of type `TransactionId`.
+    /// `transaction_id` 字段，类型为 `TransactionId`.
     pub transaction_id: TransactionId,
+    /// `stream_id` field of type `RtmpMessageStreamId`.
+    /// `stream_id` 字段，类型为 `RtmpMessageStreamId`.
     pub stream_id: RtmpMessageStreamId,
 }
 
@@ -456,9 +530,15 @@ impl RtmpDeleteStreamCommand {
     }
 }
 
+/// `RtmpGetStreamLengthCommand` data structure.
+/// `RtmpGetStreamLengthCommand` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtmpGetStreamLengthCommand {
+    /// `transaction_id` field of type `TransactionId`.
+    /// `transaction_id` 字段，类型为 `TransactionId`.
     pub transaction_id: TransactionId,
+    /// `stream_name` field of type `String`.
+    /// `stream_name` 字段，类型为 `String`.
     pub stream_name: String,
 }
 
@@ -480,14 +560,24 @@ impl RtmpGetStreamLengthCommand {
     }
 }
 
+/// `RtmpResultCommand` data structure.
+/// `RtmpResultCommand` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtmpResultCommand {
+    /// `transaction_id` field of type `TransactionId`.
+    /// `transaction_id` 字段，类型为 `TransactionId`.
     pub transaction_id: TransactionId,
+    /// `properties` field of type `AmfValue`.
+    /// `properties` 字段，类型为 `AmfValue`.
     pub properties: AmfValue,
+    /// `information` field of type `AmfValue`.
+    /// `information` 字段，类型为 `AmfValue`.
     pub information: AmfValue,
 }
 
 impl RtmpResultCommand {
+    /// Returns the `stream_length_result` value.
+    /// 返回 `stream_length_result` 值.
     pub fn get_stream_length_result(transaction_id: TransactionId, length: f64) -> Self {
         Self {
             transaction_id,
@@ -513,6 +603,8 @@ impl RtmpResultCommand {
         })
     }
 
+    /// Returns `true` if `error` is true.
+    /// 返回 `真` 如果 `error` is 真.
     pub fn is_error(&self) -> bool {
         self.information
             .expect_object_member("code")
@@ -521,6 +613,8 @@ impl RtmpResultCommand {
             .unwrap_or(false)
     }
 
+    /// `create_stream_result` function.
+    /// `create_stream_result` 函数.
     pub fn create_stream_result(
         transaction_id: TransactionId,
         stream_id: RtmpMessageStreamId,
@@ -533,11 +627,21 @@ impl RtmpResultCommand {
     }
 }
 
+/// `RtmpOnStatusCommand` data structure.
+/// `RtmpOnStatusCommand` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtmpOnStatusCommand {
+    /// `level` field of type `String`.
+    /// `level` 字段，类型为 `String`.
     pub level: String,
+    /// `code` field of type `String`.
+    /// `code` 字段，类型为 `String`.
     pub code: String,
+    /// `description` field.
+    /// `description` 字段.
     pub description: Option<String>,
+    /// `details` field.
+    /// `details` 字段.
     pub details: Option<String>,
 }
 
@@ -580,14 +684,20 @@ impl RtmpOnStatusCommand {
         })
     }
 
+    /// Returns `true` if `publish_start` is true.
+    /// 返回 `真` 如果 `publish_start` is 真.
     pub fn is_publish_start(&self) -> bool {
         self.code == "NetStream.Publish.Start"
     }
 
+    /// Returns `true` if `play_start` is true.
+    /// 返回 `真` 如果 `play_start` is 真.
     pub fn is_play_start(&self) -> bool {
         self.code == "NetStream.Play.Start"
     }
 
+    /// `publish_start` function.
+    /// `publish_start` 函数.
     pub fn publish_start() -> Self {
         Self {
             level: "status".to_string(),
@@ -597,6 +707,8 @@ impl RtmpOnStatusCommand {
         }
     }
 
+    /// `play_start` function.
+    /// `play_start` 函数.
     pub fn play_start() -> Self {
         Self {
             level: "status".to_string(),
@@ -606,6 +718,8 @@ impl RtmpOnStatusCommand {
         }
     }
 
+    /// `publish_bad_name` function.
+    /// `publish_bad_name` 函数.
     pub fn publish_bad_name(reason: &str) -> Self {
         Self {
             level: "error".to_string(),
@@ -615,6 +729,8 @@ impl RtmpOnStatusCommand {
         }
     }
 
+    /// `play_stream_not_found` function.
+    /// `play_stream_not_found` 函数.
     pub fn play_stream_not_found(reason: &str) -> Self {
         Self {
             level: "error".to_string(),

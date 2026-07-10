@@ -5,21 +5,49 @@ use serde::{Deserialize, Serialize};
 
 use crate::route::{parse_stream_key_spec, validate_pull_source_url};
 
+/// `HttpFlvModuleConfig` data structure.
+/// `HttpFlvModuleConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct HttpFlvModuleConfig {
+    /// `enabled` field of type `bool`.
+    /// `enabled` 字段，类型为 `bool`.
     pub enabled: bool,
+    /// `listen` field of type `String`.
+    /// `listen` 字段，类型为 `String`.
     pub listen: String,
+    /// `tls` field of type `HttpFlvTlsConfig`.
+    /// `tls` 字段，类型为 `HttpFlvTlsConfig`.
     pub tls: HttpFlvTlsConfig,
+    /// `write_queue_capacity` field of type `usize`.
+    /// `write_queue_capacity` 字段，类型为 `usize`.
     pub write_queue_capacity: usize,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     pub read_buffer_size: usize,
+    /// `play_wait_source_timeout_ms` field of type `u64`.
+    /// `play_wait_source_timeout_ms` 字段，类型为 `u64`.
     pub play_wait_source_timeout_ms: u64,
+    /// `subscriber_queue_capacity` field of type `usize`.
+    /// `subscriber_queue_capacity` 字段，类型为 `usize`.
     pub subscriber_queue_capacity: usize,
+    /// `subscriber_backpressure` field of type `BackpressurePolicy`.
+    /// `subscriber_backpressure` 字段，类型为 `BackpressurePolicy`.
     pub subscriber_backpressure: BackpressurePolicy,
+    /// `bootstrap_max_frames` field of type `usize`.
+    /// `bootstrap_max_frames` 字段，类型为 `usize`.
     pub bootstrap_max_frames: usize,
+    /// `enable_add_mute` field of type `bool`.
+    /// `enable_add_mute` 字段，类型为 `bool`.
     pub enable_add_mute: bool,
+    /// `emit_play_metadata` field of type `bool`.
+    /// `emit_play_metadata` 字段，类型为 `bool`.
     pub emit_play_metadata: bool,
+    /// `alert_thresholds` field of type `HttpFlvAlertThresholds`.
+    /// `alert_thresholds` 字段，类型为 `HttpFlvAlertThresholds`.
     pub alert_thresholds: HttpFlvAlertThresholds,
+    /// `pull_jobs` field.
+    /// `pull_jobs` 字段.
     pub pull_jobs: Vec<HttpFlvPullJobConfig>,
 }
 
@@ -27,10 +55,20 @@ pub struct HttpFlvModuleConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct HttpFlvTlsConfig {
+    /// `enabled` field of type `bool`.
+    /// `enabled` 字段，类型为 `bool`.
     pub enabled: bool,
+    /// `listen` field of type `String`.
+    /// `listen` 字段，类型为 `String`.
     pub listen: String,
+    /// `cert_path` field of type `String`.
+    /// `cert_path` 字段，类型为 `String`.
     pub cert_path: String,
+    /// `key_path` field of type `String`.
+    /// `key_path` 字段，类型为 `String`.
     pub key_path: String,
+    /// `handshake_timeout_ms` field of type `u64`.
+    /// `handshake_timeout_ms` 字段，类型为 `u64`.
     pub handshake_timeout_ms: u64,
 }
 
@@ -46,21 +84,41 @@ impl Default for HttpFlvTlsConfig {
     }
 }
 
+/// `HttpFlvPullJobConfig` data structure.
+/// `HttpFlvPullJobConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct HttpFlvPullJobConfig {
+    /// `name` field of type `String`.
+    /// `name` 字段，类型为 `String`.
     pub name: String,
+    /// `enabled` field of type `bool`.
+    /// `enabled` 字段，类型为 `bool`.
     pub enabled: bool,
+    /// `source_url` field of type `String`.
+    /// `source_url` 字段，类型为 `String`.
     pub source_url: String,
+    /// `target_stream_key` field of type `String`.
+    /// `target_stream_key` 字段，类型为 `String`.
     pub target_stream_key: String,
+    /// `retry_backoff_ms` field of type `u64`.
+    /// `retry_backoff_ms` 字段，类型为 `u64`.
     pub retry_backoff_ms: u64,
+    /// `max_retry_backoff_ms` field of type `u64`.
+    /// `max_retry_backoff_ms` 字段，类型为 `u64`.
     pub max_retry_backoff_ms: u64,
 }
 
+/// `HttpFlvAlertThresholds` data structure.
+/// `HttpFlvAlertThresholds` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct HttpFlvAlertThresholds {
+    /// `startup_timeout_ms` field of type `u64`.
+    /// `startup_timeout_ms` 字段，类型为 `u64`.
     pub startup_timeout_ms: u64,
+    /// `queue_drop_count` field of type `u64`.
+    /// `queue_drop_count` 字段，类型为 `u64`.
     pub queue_drop_count: u64,
 }
 
@@ -107,6 +165,8 @@ impl Default for HttpFlvAlertThresholds {
 }
 
 impl HttpFlvModuleConfig {
+    /// Creates `value` from input.
+    /// 创建 `值` 来自 输入.
     pub fn from_value(value: serde_json::Value) -> Result<Self, SdkError> {
         let cfg: Self = serde_json::from_value(value)
             .map_err(|err| SdkError::InvalidArgument(format!("invalid http_flv config: {err}")))?;
@@ -114,6 +174,8 @@ impl HttpFlvModuleConfig {
         Ok(cfg)
     }
 
+    /// `validate` function.
+    /// `validate` 函数.
     pub fn validate(&self) -> Result<(), SdkError> {
         self.listen
             .parse::<SocketAddr>()
@@ -200,6 +262,8 @@ impl HttpFlvModuleConfig {
         Ok(())
     }
 
+    /// `default_json` function.
+    /// `default_json` 函数.
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).expect("serialize default http_flv config")
     }

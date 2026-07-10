@@ -20,13 +20,27 @@ pub use udp::{
     RtspClientPortRange, RtspClientUdpEndpoint, RtspClientUdpRemote,
 };
 
+/// `RtspClientConfig` data structure.
+/// `RtspClientConfig` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtspClientConfig {
+    /// `command_queue_capacity` field of type `usize`.
+    /// `command_queue_capacity` 字段，类型为 `usize`.
     pub command_queue_capacity: usize,
+    /// `event_queue_capacity` field of type `usize`.
+    /// `event_queue_capacity` 字段，类型为 `usize`.
     pub event_queue_capacity: usize,
+    /// `write_queue_capacity` field of type `usize`.
+    /// `write_queue_capacity` 字段，类型为 `usize`.
     pub write_queue_capacity: usize,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     pub read_buffer_size: usize,
+    /// `udp_port_range` field.
+    /// `udp_port_range` 字段.
     pub udp_port_range: Option<RtspClientPortRange>,
+    /// `http_tunnel_header_limit` field of type `usize`.
+    /// `http_tunnel_header_limit` 字段，类型为 `usize`.
     pub http_tunnel_header_limit: usize,
 }
 
@@ -43,35 +57,44 @@ impl Default for RtspClientConfig {
     }
 }
 
+/// `RtspClientEvent` enumeration.
+/// `RtspClientEvent` 枚举.
 #[derive(Debug, Clone)]
 pub enum RtspClientEvent {
-    Connected {
-        peer: SocketAddr,
-    },
-    Response {
-        response: RtspResponseMessage,
-    },
-    InterleavedFrame {
-        channel: u8,
-        payload: Bytes,
-    },
+    /// `Connected` variant.
+    /// `Connected` 变体.
+    Connected { peer: SocketAddr },
+    /// `Response` variant.
+    /// `Response` 变体.
+    Response { response: RtspResponseMessage },
+    /// `InterleavedFrame` variant.
+    /// `InterleavedFrame` 变体.
+    InterleavedFrame { channel: u8, payload: Bytes },
+    /// `UdpRtp` variant.
+    /// `UdpRtp` 变体.
     UdpRtp {
         track_id: u32,
         from: SocketAddr,
         payload: Bytes,
     },
+    /// `UdpRtcp` variant.
+    /// `UdpRtcp` 变体.
     UdpRtcp {
         track_id: u32,
         from: SocketAddr,
         payload: Bytes,
     },
-    Closed {
-        reason: String,
-    },
+    /// `Closed` variant.
+    /// `Closed` 变体.
+    Closed { reason: String },
 }
 
+/// `RtspClientSendError` enumeration.
+/// `RtspClientSendError` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtspClientSendError {
+    /// `ChannelClosed` variant.
+    /// `ChannelClosed` 变体.
     ChannelClosed,
 }
 
@@ -85,19 +108,35 @@ impl std::fmt::Display for RtspClientSendError {
 
 impl std::error::Error for RtspClientSendError {}
 
+/// `RtspClientHandle` data structure.
+/// `RtspClientHandle` 数据结构.
 pub struct RtspClientHandle {
+    /// `events_rx` field.
+    /// `events_rx` 字段.
     events_rx: mpsc::Receiver<RtspClientEvent>,
+    /// `event_tx` field.
+    /// `event_tx` 字段.
     event_tx: mpsc::Sender<RtspClientEvent>,
+    /// `cmd_tx` field of type `RtspClientCommandSender`.
+    /// `cmd_tx` 字段，类型为 `RtspClientCommandSender`.
     cmd_tx: RtspClientCommandSender,
+    /// `cancel` field of type `CancellationToken`.
+    /// `cancel` 字段，类型为 `CancellationToken`.
     cancel: CancellationToken,
+    /// `join` field.
+    /// `join` 字段.
     join: Box<dyn JoinHandle>,
 }
 
 impl RtspClientHandle {
+    /// `recv_event` function.
+    /// `recv_event` 函数.
     pub async fn recv_event(&mut self) -> Option<RtspClientEvent> {
         self.events_rx.recv().await
     }
 
+    /// `send_command` function.
+    /// `send_command` 函数.
     pub async fn send_command(
         &self,
         command: RtspClientCommand,
@@ -105,23 +144,33 @@ impl RtspClientHandle {
         self.cmd_tx.send(command).await
     }
 
+    /// `command_sender` function.
+    /// `command_sender` 函数.
     pub fn command_sender(&self) -> RtspClientCommandSender {
         self.cmd_tx.clone()
     }
 
+    /// `event_sender` function.
+    /// `event_sender` 函数.
     pub fn event_sender(&self) -> mpsc::Sender<RtspClientEvent> {
         self.event_tx.clone()
     }
 
+    /// `shutdown` function.
+    /// `shutdown` 函数.
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
+    /// `wait` function.
+    /// `wait` 函数.
     pub async fn wait(self) -> Result<(), TaskJoinError> {
         self.join.wait().await
     }
 }
 
+/// `start_tcp_client` function.
+/// `start_tcp_client` 函数.
 pub fn start_tcp_client(
     runtime_api: Arc<dyn RuntimeApi>,
     peer: SocketAddr,
@@ -255,6 +304,8 @@ impl cheetah_runtime_api::AsyncTcpStream for TlsClientStreamWrapper {
     }
 }
 
+/// `start_http_tunnel_client` function.
+/// `start_http_tunnel_client` 函数.
 pub fn start_http_tunnel_client(
     runtime_api: Arc<dyn RuntimeApi>,
     peer: SocketAddr,

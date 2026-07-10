@@ -17,12 +17,20 @@ use crate::api::{
     StopRecordRequest,
 };
 
+/// `ZlmCompatError` enumeration.
+/// `ZlmCompatError` 枚举.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum ZlmCompatError {
+    /// `InvalidRequest` variant.
+    /// `InvalidRequest` 变体.
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+    /// `Api` variant.
+    /// `Api` 变体.
     #[error("api error: {0}")]
     Api(#[from] RecordApiError),
+    /// `PathNotAllowed` variant.
+    /// `PathNotAllowed` 变体.
     #[error("path not allowed: {0}")]
     PathNotAllowed(String),
 }
@@ -33,12 +41,22 @@ pub struct ZlmStartRecord {
     /// ZLM accepts both numeric (0/1/2/3) and string ("mp4"/"hls"/...) types.
     #[serde(rename = "type")]
     pub r#type: Value,
+    /// `vhost` field.
+    /// `vhost` 字段.
     #[serde(default)]
     pub vhost: Option<String>,
+    /// `app` field of type `String`.
+    /// `app` 字段，类型为 `String`.
     pub app: String,
+    /// `stream` field of type `String`.
+    /// `stream` 字段，类型为 `String`.
     pub stream: String,
+    /// `customized_path` field.
+    /// `customized_path` 字段.
     #[serde(rename = "customized_path", default)]
     pub customized_path: Option<String>,
+    /// `max_second` field.
+    /// `max_second` 字段.
     #[serde(rename = "max_second", default)]
     pub max_second: Option<u64>,
 }
@@ -46,34 +64,60 @@ pub struct ZlmStartRecord {
 /// `POST /index/api/stopRecord` body.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ZlmStopRecord {
+    /// `r#type` field of type `Value`.
+    /// `r#类型` 字段，类型为 `Value`.
     #[serde(rename = "type")]
     pub r#type: Value,
+    /// `vhost` field.
+    /// `vhost` 字段.
     #[serde(default)]
     pub vhost: Option<String>,
+    /// `app` field of type `String`.
+    /// `app` 字段，类型为 `String`.
     pub app: String,
+    /// `stream` field of type `String`.
+    /// `stream` 字段，类型为 `String`.
     pub stream: String,
 }
 
 /// `GET /index/api/isRecording` query body.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ZlmIsRecording {
+    /// `r#type` field of type `Value`.
+    /// `r#类型` 字段，类型为 `Value`.
     #[serde(rename = "type")]
     pub r#type: Value,
+    /// `vhost` field.
+    /// `vhost` 字段.
     #[serde(default)]
     pub vhost: Option<String>,
+    /// `app` field of type `String`.
+    /// `app` 字段，类型为 `String`.
     pub app: String,
+    /// `stream` field of type `String`.
+    /// `stream` 字段，类型为 `String`.
     pub stream: String,
 }
 
 /// `GET /index/api/getMP4RecordFile` query body.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ZlmGetMp4Files {
+    /// `vhost` field.
+    /// `vhost` 字段.
     #[serde(default)]
     pub vhost: Option<String>,
+    /// `app` field of type `String`.
+    /// `app` 字段，类型为 `String`.
     pub app: String,
+    /// `stream` field of type `String`.
+    /// `stream` 字段，类型为 `String`.
     pub stream: String,
+    /// `period` field.
+    /// `period` 字段.
     #[serde(default)]
     pub period: Option<String>,
+    /// `customized_path` field.
+    /// `customized_path` 字段.
     #[serde(rename = "customized_path", default)]
     pub customized_path: Option<String>,
 }
@@ -81,12 +125,22 @@ pub struct ZlmGetMp4Files {
 /// `POST /index/api/deleteRecordDirectory` body.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ZlmDeleteDirectory {
+    /// `vhost` field.
+    /// `vhost` 字段.
     #[serde(default)]
     pub vhost: Option<String>,
+    /// `app` field of type `String`.
+    /// `app` 字段，类型为 `String`.
     pub app: String,
+    /// `stream` field of type `String`.
+    /// `stream` 字段，类型为 `String`.
     pub stream: String,
+    /// `period` field.
+    /// `period` 字段.
     #[serde(default)]
     pub period: Option<String>,
+    /// `customized_path` field.
+    /// `customized_path` 字段.
     #[serde(rename = "customized_path", default)]
     pub customized_path: Option<String>,
 }
@@ -94,14 +148,20 @@ pub struct ZlmDeleteDirectory {
 /// Bundles `RecordApi` and exposes ZLM-style handlers.
 #[derive(Clone)]
 pub struct ZlmRecordCompat {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: Arc<RecordApi>,
 }
 
 impl ZlmRecordCompat {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(inner: Arc<RecordApi>) -> Self {
         Self { inner }
     }
 
+    /// `start_record` function.
+    /// `start_record` 函数.
     pub async fn start_record(&self, req: ZlmStartRecord) -> Result<Value, ZlmCompatError> {
         let format = parse_zlm_type(&req.r#type)?;
         if let Some(path) = &req.customized_path {
@@ -124,6 +184,8 @@ impl ZlmRecordCompat {
         Ok(serde_json::json!({ "code": 0, "result": true }))
     }
 
+    /// `stop_record` function.
+    /// `stop_record` 函数.
     pub async fn stop_record(&self, req: ZlmStopRecord) -> Result<Value, ZlmCompatError> {
         let format = parse_zlm_type(&req.r#type)?;
         let task_id = zlm_task_id(&format, &req.app, &req.stream);
@@ -131,6 +193,8 @@ impl ZlmRecordCompat {
         Ok(serde_json::json!({ "code": 0, "result": true }))
     }
 
+    /// Returns `true` if `recording` is true.
+    /// 返回 `真` 如果 `recording` is 真.
     pub fn is_recording(&self, req: ZlmIsRecording) -> Result<Value, ZlmCompatError> {
         let format = parse_zlm_type(&req.r#type)?;
         let task_id = zlm_task_id(&format, &req.app, &req.stream);
@@ -138,6 +202,8 @@ impl ZlmRecordCompat {
         Ok(serde_json::json!({ "code": 0, "status": recording }))
     }
 
+    /// Returns the `mp4_files` value.
+    /// 返回 `mp4_files` 值.
     pub fn get_mp4_files(&self, req: ZlmGetMp4Files) -> Result<Value, ZlmCompatError> {
         if let Some(path) = &req.customized_path {
             validate_customized_path(path)?;
@@ -162,6 +228,8 @@ impl ZlmRecordCompat {
         }))
     }
 
+    /// `delete_record_directory` function.
+    /// `delete_record_directory` 函数.
     pub fn delete_record_directory(
         &self,
         req: ZlmDeleteDirectory,

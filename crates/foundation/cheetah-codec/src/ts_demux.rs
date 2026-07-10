@@ -47,12 +47,26 @@ pub enum MpegTsDemuxEvent {
 /// Diagnostic messages from the demuxer.
 #[derive(Debug, Clone)]
 pub enum MpegTsDemuxDiagnostic {
+    /// `SyncLoss` variant.
+    /// `SyncLoss` 变体.
     SyncLoss,
+    /// `ContinuityGap` variant.
+    /// `ContinuityGap` 变体.
     ContinuityGap { pid: u16, expected: u8, got: u8 },
+    /// `CrcError` variant.
+    /// `CrcError` 变体.
     CrcError { pid: u16 },
+    /// `PesOverflow` variant.
+    /// `PesOverflow` 变体.
     PesOverflow { pid: u16 },
+    /// `UnknownStreamType` variant.
+    /// `UnknownStreamType` 变体.
     UnknownStreamType { stream_type: u8, pid: u16 },
+    /// `AdaptationFieldOverflow` variant.
+    /// `AdaptationFieldOverflow` 变体.
     AdaptationFieldOverflow { pid: u16 },
+    /// `AdtsError` variant.
+    /// `AdtsError` 变体.
     AdtsError { pid: u16, reason: &'static str },
 }
 
@@ -85,16 +99,32 @@ struct DemuxTrackState {
 
 /// Shared MPEG-TS demuxer state machine.
 pub struct MpegTsDemuxer {
+    /// `config` field of type `MpegTsDemuxerConfig`.
+    /// `config` 字段，类型为 `MpegTsDemuxerConfig`.
     config: MpegTsDemuxerConfig,
+    /// `pmt_pid` field.
+    /// `pmt_pid` 字段.
     pmt_pid: Option<u16>,
+    /// `tracks` field.
+    /// `tracks` 字段.
     tracks: Vec<DemuxTrackState>,
+    /// `remainder` field.
+    /// `remainder` 字段.
     remainder: Vec<u8>,
+    /// `pmt_section_buf` field.
+    /// `pmt_section_buf` 字段.
     pmt_section_buf: Vec<u8>,
+    /// `pmt_section_target_len` field.
+    /// `pmt_section_target_len` 字段.
     pmt_section_target_len: Option<usize>,
+    /// `next_track_id` field of type `u32`.
+    /// `next_track_id` 字段，类型为 `u32`.
     next_track_id: u32,
 }
 
 impl MpegTsDemuxer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: MpegTsDemuxerConfig) -> Self {
         Self {
             config,

@@ -23,18 +23,44 @@ use crate::service_registry::InMemoryServiceRegistry;
 use crate::stream::{DispatcherMode, StreamManager};
 use crate::task::TaskSystem;
 
+/// Builder for constructing an [`Engine`] instance.
+///
+/// Allows configuration of the event bus capacity, ring buffer capacity,
+/// dispatcher mode, and the set of module factories before building.
+///
+/// 用于构建 [`Engine`] 实例的构建器。
+///
+/// 在构建前允许配置事件总线容量、环形缓冲区容量、调度器模式和模块工厂集合。
 pub struct EngineBuilder {
+    /// `config_provider` field.
+    /// `config_provider` 字段.
     config_provider: Arc<dyn ConfigProvider>,
+    /// `config_apply_api` field.
+    /// `config_apply_api` 字段.
     config_apply_api: Arc<dyn ConfigApplyApi>,
+    /// `runtime_api` field.
+    /// `runtime_api` 字段.
     runtime_api: Arc<dyn RuntimeApi>,
+    /// `config_schema_registry` field.
+    /// `config_schema_registry` 字段.
     config_schema_registry: Option<Arc<dyn ConfigSchemaRegistry>>,
+    /// `event_bus_capacity` field of type `usize`.
+    /// `event_bus_capacity` 字段，类型为 `usize`.
     event_bus_capacity: usize,
+    /// `ring_capacity` field of type `usize`.
+    /// `ring_capacity` 字段，类型为 `usize`.
     ring_capacity: usize,
+    /// `dispatcher_mode` field of type `DispatcherMode`.
+    /// `dispatcher_mode` 字段，类型为 `DispatcherMode`.
     dispatcher_mode: DispatcherMode,
+    /// `factories` field.
+    /// `factories` 字段.
     factories: Vec<Arc<dyn ModuleFactory>>,
 }
 
 impl EngineBuilder {
+    /// Create a new builder with the required config and runtime APIs.
+    /// 使用必需的配置和运行时 API 创建新构建器。
     pub fn new(
         config_provider: Arc<dyn ConfigProvider>,
         config_apply_api: Arc<dyn ConfigApplyApi>,
@@ -52,31 +78,43 @@ impl EngineBuilder {
         }
     }
 
+    /// Set the event bus capacity and return `self`.
+    /// 设置事件总线容量并返回 `self`。
     pub fn with_event_bus_capacity(mut self, capacity: usize) -> Self {
         self.event_bus_capacity = capacity.max(1);
         self
     }
 
+    /// Set the stream ring buffer capacity and return `self`.
+    /// 设置流环形缓冲区容量并返回 `self`。
     pub fn with_ring_capacity(mut self, capacity: usize) -> Self {
         self.ring_capacity = capacity.max(128);
         self
     }
 
+    /// Set the dispatcher mode and return `self`.
+    /// 设置调度器模式并返回 `self`。
     pub fn with_dispatcher_mode(mut self, mode: DispatcherMode) -> Self {
         self.dispatcher_mode = mode;
         self
     }
 
+    /// Register a config schema registry and return `self`.
+    /// 注册配置 schema 注册表并返回 `self`。
     pub fn with_config_schema_registry(mut self, registry: Arc<dyn ConfigSchemaRegistry>) -> Self {
         self.config_schema_registry = Some(registry);
         self
     }
 
+    /// Register a module factory for this engine.
+    /// 为本引擎注册一个模块工厂。
     pub fn register_module_factory(mut self, factory: Arc<dyn ModuleFactory>) -> Self {
         self.factories.push(factory);
         self
     }
 
+    /// Build the engine and wire all internal services.
+    /// 构建引擎并连接所有内部服务。
     pub fn build(self) -> Result<Engine, SdkError> {
         let event_bus = Arc::new(LocalEventBus::new(self.event_bus_capacity));
         let task_system = Arc::new(TaskSystem::default());
@@ -135,23 +173,67 @@ impl EngineBuilder {
     }
 }
 
+/// Central orchestration of the media server.
+///
+/// `Engine` owns the runtime-neutral service implementations (stream manager,
+/// module manager, task system, etc.) and exposes typed API traits. It is
+/// responsible for initializing, starting, and stopping modules.
+///
+/// 媒体服务器的中央编排器。
+///
+/// `Engine` 拥有运行时无关的服务实现（流管理器、模块管理器、任务系统等）
+/// 并暴露类型化的 API trait。它负责初始化、启动和停止模块。
 pub struct Engine {
+    /// `config_provider` field.
+    /// `config_provider` 字段.
     config_provider: Arc<dyn ConfigProvider>,
+    /// `config_apply_api` field.
+    /// `config_apply_api` 字段.
     config_apply_api: Arc<dyn ConfigApplyApi>,
+    /// `runtime_api` field.
+    /// `runtime_api` 字段.
     runtime_api: Arc<dyn RuntimeApi>,
+    /// `event_bus` field.
+    /// `event_bus` 字段.
     event_bus: Arc<LocalEventBus>,
+    /// `task_system` field.
+    /// `task_system` 字段.
     task_system: Arc<TaskSystem>,
+    /// `stream_manager` field.
+    /// `stream_manager` 字段.
     stream_manager: Arc<StreamManager>,
+    /// `module_manager` field.
+    /// `module_manager` 字段.
     module_manager: Arc<ModuleManager>,
+    /// `room_service` field.
+    /// `room_service` 字段.
     room_service: Arc<RoomService>,
+    /// `metrics` field.
+    /// `metrics` 字段.
     metrics: Arc<MetricsRegistry>,
+    /// `health` field.
+    /// `health` 字段.
     health: Arc<HealthService>,
+    /// `service_registry` field.
+    /// `service_registry` 字段.
     service_registry: Arc<InMemoryServiceRegistry>,
+    /// `database` field.
+    /// `database` 字段.
     database: Arc<InMemoryDatabase>,
+    /// `proxy_manager` field.
+    /// `proxy_manager` 字段.
     proxy_manager: Arc<LocalProxyManager>,
+    /// `cluster` field.
+    /// `cluster` 字段.
     cluster: Arc<LocalCluster>,
+    /// `ffmpeg` field.
+    /// `ffmpeg` 字段.
     ffmpeg: Arc<LocalFfmpegService>,
+    /// `core_adapters` field.
+    /// `core_adapters` 字段.
     core_adapters: Arc<LocalCoreAdapters>,
+    /// `root_cancel` field.
+    /// `root_cancel` 字段.
     root_cancel: RwLock<CancellationToken>,
 }
 
@@ -180,6 +262,8 @@ impl Engine {
         }
     }
 
+    /// Initialize and start all modules.
+    /// 初始化并启动所有模块。
     pub async fn start(&self) -> Result<(), SdkError> {
         if self.health.is_live() {
             return Err(SdkError::Conflict("engine is already running".to_string()));
@@ -234,6 +318,8 @@ impl Engine {
         Ok(())
     }
 
+    /// Stop all modules and release engine resources.
+    /// 停止所有模块并释放引擎资源。
     pub async fn stop(&self) {
         if !self.health.is_live() {
             return;
@@ -251,74 +337,110 @@ impl Engine {
             }));
     }
 
+    /// Return the stream manager API.
+    /// 返回流管理器 API。
     pub fn stream_manager_api(&self) -> Arc<dyn StreamManagerApi> {
         self.stream_manager.clone()
     }
 
+    /// Return the publisher API.
+    /// 返回发布者 API。
     pub fn publisher_api(&self) -> Arc<dyn PublisherApi> {
         self.stream_manager.clone()
     }
 
+    /// Return the subscriber API.
+    /// 返回订阅者 API。
     pub fn subscriber_api(&self) -> Arc<dyn SubscriberApi> {
         self.stream_manager.clone()
     }
 
+    /// Return the core adapters API.
+    /// 返回核心适配器 API。
     pub fn core_adapters_api(&self) -> Arc<dyn CoreAdaptersApi> {
         self.core_adapters.clone()
     }
 
+    /// Return the module manager API.
+    /// 返回模块管理器 API。
     pub fn module_manager_api(&self) -> Arc<dyn ModuleManagerApi> {
         self.module_manager.clone()
     }
 
+    /// Return the task system API.
+    /// 返回任务系统 API。
     pub fn task_system_api(&self) -> Arc<dyn TaskSystemApi> {
         self.task_system.clone()
     }
 
+    /// Return the room service API.
+    /// 返回房间服务 API。
     pub fn room_service_api(&self) -> Arc<dyn RoomServiceApi> {
         self.room_service.clone()
     }
 
+    /// Return the event bus API.
+    /// 返回事件总线 API。
     pub fn event_bus_api(&self) -> Arc<dyn EventBus> {
         self.event_bus.clone()
     }
 
+    /// Return the health API.
+    /// 返回健康 API。
     pub fn health_api(&self) -> Arc<dyn HealthApi> {
         self.health.clone()
     }
 
+    /// Return the metrics API.
+    /// 返回指标 API。
     pub fn metrics_api(&self) -> Arc<dyn MetricsApi> {
         self.metrics.clone()
     }
 
+    /// Return the read-only config provider.
+    /// 返回只读配置提供者。
     pub fn config_provider(&self) -> Arc<dyn ConfigProvider> {
         self.config_provider.clone()
     }
 
+    /// Return the config apply API.
+    /// 返回配置应用 API。
     pub fn config_apply_api(&self) -> Arc<dyn ConfigApplyApi> {
         self.config_apply_api.clone()
     }
 
+    /// Return the runtime API.
+    /// 返回运行时 API。
     pub fn runtime_api(&self) -> Arc<dyn RuntimeApi> {
         self.runtime_api.clone()
     }
 
+    /// Return the service registry API.
+    /// 返回服务注册 API。
     pub fn service_registry_api(&self) -> Arc<dyn ServiceRegistry> {
         self.service_registry.clone()
     }
 
+    /// Return the database API.
+    /// 返回数据库 API。
     pub fn database_api(&self) -> Arc<dyn DatabaseApi> {
         self.database.clone()
     }
 
+    /// Return the proxy manager API.
+    /// 返回代理管理器 API。
     pub fn proxy_manager_api(&self) -> Arc<dyn cheetah_sdk::ProxyManager> {
         self.proxy_manager.clone()
     }
 
+    /// Return the cluster API.
+    /// 返回集群 API。
     pub fn cluster_api(&self) -> Arc<dyn ClusterApi> {
         self.cluster.clone()
     }
 
+    /// Return the FFmpeg API.
+    /// 返回 FFmpeg API。
     pub fn ffmpeg_api(&self) -> Arc<dyn FfmpegApi> {
         self.ffmpeg.clone()
     }

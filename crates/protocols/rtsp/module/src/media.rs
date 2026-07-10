@@ -17,6 +17,8 @@ use crate::session::{
 
 mod depacketize;
 mod packetize;
+/// `ps_compat` module.
+/// `ps_compat` 模块.
 pub(crate) mod ps_compat;
 mod rtcp;
 
@@ -33,11 +35,23 @@ pub use rtcp::{
     build_rtcp_sender_report, parse_rtcp_sender_report, RtcpReceiverReportBlock,
 };
 
+/// `BuiltFrameFromRtp` data structure.
+/// `BuiltFrameFromRtp` 数据结构.
 pub struct BuiltFrameFromRtp {
+    /// `frame` field of type `AVFrame`.
+    /// `frame` 字段，类型为 `AVFrame`.
     pub frame: AVFrame,
+    /// `discovered_audio_asc` field.
+    /// `discovered_audio_asc` 字段.
     pub discovered_audio_asc: Option<Bytes>,
+    /// `discovered_av1_sequence_header` field.
+    /// `discovered_av1_sequence_header` 字段.
     pub discovered_av1_sequence_header: Option<Bytes>,
+    /// `discovered_av1_codec_config` field.
+    /// `discovered_av1_codec_config` 字段.
     pub discovered_av1_codec_config: Option<Bytes>,
+    /// `discovered_video_dimensions` field.
+    /// `discovered_video_dimensions` 字段.
     pub discovered_video_dimensions: Option<(u32, u32)>,
 }
 
@@ -47,38 +61,80 @@ struct DepacketizedAac {
     discovered_asc: Option<Bytes>,
 }
 
+/// `TransportInterleaved` data structure.
+/// `TransportInterleaved` 数据结构.
 #[derive(Debug, Clone, Copy)]
 pub struct TransportInterleaved {
+    /// `rtp_channel` field of type `u8`.
+    /// `rtp_channel` 字段，类型为 `u8`.
     pub rtp_channel: u8,
+    /// `rtcp_channel` field of type `u8`.
+    /// `rtcp_channel` 字段，类型为 `u8`.
     pub rtcp_channel: u8,
 }
 
+/// `TransportUdpPorts` data structure.
+/// `TransportUdpPorts` 数据结构.
 #[derive(Debug, Clone, Copy)]
 pub struct TransportUdpPorts {
+    /// `client_rtp_port` field of type `u16`.
+    /// `client_rtp_port` 字段，类型为 `u16`.
     pub client_rtp_port: u16,
+    /// `client_rtcp_port` field of type `u16`.
+    /// `client_rtcp_port` 字段，类型为 `u16`.
     pub client_rtcp_port: u16,
+    /// `server_rtp_port` field.
+    /// `server_rtp_port` 字段.
     pub server_rtp_port: Option<u16>,
+    /// `server_rtcp_port` field.
+    /// `server_rtcp_port` 字段.
     pub server_rtcp_port: Option<u16>,
+    /// `destination` field.
+    /// `destination` 字段.
     pub destination: Option<IpAddr>,
+    /// `source` field.
+    /// `source` 字段.
     pub source: Option<IpAddr>,
 }
 
+/// `TransportUdpMulticast` data structure.
+/// `TransportUdpMulticast` 数据结构.
 #[derive(Debug, Clone, Copy)]
 pub struct TransportUdpMulticast {
+    /// `rtp_port` field.
+    /// `rtp_port` 字段.
     pub rtp_port: Option<u16>,
+    /// `rtcp_port` field.
+    /// `rtcp_port` 字段.
     pub rtcp_port: Option<u16>,
+    /// `destination` field.
+    /// `destination` 字段.
     pub destination: Option<Ipv4Addr>,
+    /// `ttl` field.
+    /// `ttl` 字段.
     pub ttl: Option<u8>,
 }
 
+/// `RtspSetupTransport` enumeration.
+/// `RtspSetupTransport` 枚举.
 #[derive(Debug, Clone, Copy)]
 pub enum RtspSetupTransport {
+    /// `TcpInterleaved` variant.
+    /// `TcpInterleaved` 变体.
     TcpInterleaved(TransportInterleaved),
+    /// `TcpInterleavedAuto` variant.
+    /// `TcpInterleavedAuto` 变体.
     TcpInterleavedAuto,
+    /// `UdpUnicast` variant.
+    /// `UdpUnicast` 变体.
     UdpUnicast(TransportUdpPorts),
+    /// `UdpMulticast` variant.
+    /// `UdpMulticast` 变体.
     UdpMulticast(TransportUdpMulticast),
 }
 
+/// Parses `setup_transport` from input.
+/// 解析 `setup_transport` 来自 输入.
 pub fn parse_setup_transport(value: &str) -> Option<RtspSetupTransport> {
     for candidate in value.split(',').map(str::trim) {
         if candidate.is_empty() {
@@ -174,6 +230,8 @@ fn parse_setup_transport_candidate(candidate: &str) -> Option<RtspSetupTransport
     None
 }
 
+/// Parses `transport_interleaved` from input.
+/// 解析 `transport_interleaved` 来自 输入.
 #[cfg(test)]
 pub fn parse_transport_interleaved(value: &str) -> Option<TransportInterleaved> {
     let mut rtp_channel = None;
@@ -202,6 +260,8 @@ pub fn parse_transport_interleaved(value: &str) -> Option<TransportInterleaved> 
     })
 }
 
+/// Parses `transport_udp_ports` from input.
+/// 解析 `transport_udp_ports` 来自 输入.
 #[cfg(test)]
 pub fn parse_transport_udp_ports(value: &str) -> Option<TransportUdpPorts> {
     for part in value.split(';') {
@@ -239,6 +299,8 @@ fn transport_param_value<'a>(part: &'a str, name: &str) -> Option<&'a str> {
     }
 }
 
+/// Parses `stream_key_from_uri` from input.
+/// 解析 `stream_key_from_uri` 来自 输入.
 pub fn parse_stream_key_from_uri(uri: &str) -> Option<StreamKey> {
     let path = extract_uri_path(uri)?;
     let trimmed = path.trim_matches('/');
@@ -258,6 +320,8 @@ pub fn parse_stream_key_from_uri(uri: &str) -> Option<StreamKey> {
     }
 }
 
+/// Parses `track_control_from_uri` from input.
+/// 解析 `track_control_from_uri` 来自 输入.
 pub fn parse_track_control_from_uri(uri: &str) -> Option<String> {
     let path = extract_uri_path(uri)?;
     let path = path.trim_matches('/');

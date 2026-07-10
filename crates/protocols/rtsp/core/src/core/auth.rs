@@ -3,53 +3,105 @@ use sha2::{Digest, Sha256};
 
 use super::method::RtspMethod;
 
+/// `RtspAuthorization` enumeration.
+/// `RtspAuthorization` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtspAuthorization {
+    /// `Basic` variant.
+    /// `Basic` 变体.
     Basic { username: String, password: String },
+    /// `Digest` variant.
+    /// `Digest` 变体.
     Digest(RtspDigestAuthorization),
 }
 
+/// `RtspDigestAuthorization` data structure.
+/// `RtspDigestAuthorization` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspDigestAuthorization {
+    /// `username` field of type `String`.
+    /// `username` 字段，类型为 `String`.
     pub username: String,
+    /// `realm` field of type `String`.
+    /// `realm` 字段，类型为 `String`.
     pub realm: String,
+    /// `nonce` field of type `String`.
+    /// `nonce` 字段，类型为 `String`.
     pub nonce: String,
+    /// `uri` field of type `String`.
+    /// `uri` 字段，类型为 `String`.
     pub uri: String,
+    /// `response` field of type `String`.
+    /// `response` 字段，类型为 `String`.
     pub response: String,
+    /// `algorithm` field of type `RtspDigestAlgorithm`.
+    /// `algorithm` 字段，类型为 `RtspDigestAlgorithm`.
     pub algorithm: RtspDigestAlgorithm,
+    /// `qop` field.
+    /// `qop` 字段.
     pub qop: Option<String>,
+    /// `nc` field.
+    /// `nc` 字段.
     pub nc: Option<String>,
+    /// `cnonce` field.
+    /// `cnonce` 字段.
     pub cnonce: Option<String>,
 }
 
+/// `RtspDigestChallenge` data structure.
+/// `RtspDigestChallenge` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspDigestChallenge {
+    /// `realm` field of type `String`.
+    /// `realm` 字段，类型为 `String`.
     pub realm: String,
+    /// `nonce` field of type `String`.
+    /// `nonce` 字段，类型为 `String`.
     pub nonce: String,
+    /// `algorithm` field of type `RtspDigestAlgorithm`.
+    /// `algorithm` 字段，类型为 `RtspDigestAlgorithm`.
     pub algorithm: RtspDigestAlgorithm,
     /// When true, the nonce is stale but credentials are valid.
     /// Client should retry with the new nonce without re-prompting.
     pub stale: bool,
 }
 
+/// `RtspDigestAlgorithm` enumeration.
+/// `RtspDigestAlgorithm` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtspDigestAlgorithm {
+    /// `Md5` variant.
+    /// `Md5` 变体.
     Md5,
+    /// `Sha256` variant.
+    /// `Sha256` 变体.
     Sha256,
 }
 
+/// `RtspAuthorizationError` enumeration.
+/// `RtspAuthorizationError` 枚举.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum RtspAuthorizationError {
+    /// `UnsupportedScheme` variant.
+    /// `UnsupportedScheme` 变体.
     #[error("unsupported authorization scheme")]
     UnsupportedScheme,
+    /// `InvalidBasicPayload` variant.
+    /// `InvalidBasicPayload` 变体.
     #[error("invalid basic authorization payload")]
     InvalidBasicPayload,
+    /// `InvalidBasicUtf8` variant.
+    /// `InvalidBasicUtf8` 变体.
     #[error("basic authorization payload is not valid utf-8")]
     InvalidBasicUtf8,
+    /// `InvalidDigestParameter` variant.
+    /// `InvalidDigestParameter` 变体.
     #[error("invalid digest authorization parameter: {0}")]
     InvalidDigestParameter(String),
 }
 
+/// Parses `authorization_header` from input.
+/// 解析 `authorization_header` 来自 输入.
 pub fn parse_authorization_header(
     value: &str,
 ) -> Result<RtspAuthorization, RtspAuthorizationError> {
@@ -109,6 +161,8 @@ pub fn parse_authorization_header(
     Err(RtspAuthorizationError::UnsupportedScheme)
 }
 
+/// `verify_digest_response` function.
+/// `verify_digest_response` 函数.
 pub fn verify_digest_response(
     auth: &RtspDigestAuthorization,
     challenge: &RtspDigestChallenge,

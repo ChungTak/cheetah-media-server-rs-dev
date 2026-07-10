@@ -54,10 +54,16 @@ pub enum P2pDirection {
 /// required; the wire format is identical to ZLM's signaling JSON.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct P2pStreamTuple {
+    /// `vhost` field of type `String`.
+    /// `vhost` 字段，类型为 `String`.
     #[serde(default)]
     pub vhost: String,
+    /// `app` field of type `String`.
+    /// `app` 字段，类型为 `String`.
     #[serde(default)]
     pub app: String,
+    /// `stream` field of type `String`.
+    /// `stream` 字段，类型为 `String`.
     #[serde(default)]
     pub stream: String,
 }
@@ -65,8 +71,14 @@ pub struct P2pStreamTuple {
 /// Common fields shared by most P2P messages.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct P2pMessageHeader {
+    /// `room_id` field.
+    /// `room_id` 字段.
     pub room_id: Option<String>,
+    /// `peer_id` field.
+    /// `peer_id` 字段.
     pub peer_id: Option<String>,
+    /// `transport_id` field.
+    /// `transport_id` 字段.
     pub transport_id: Option<String>,
 }
 
@@ -118,12 +130,10 @@ pub enum P2pMessage {
         message: String,
     },
     /// `ping` / `pong` — keepalive pair.
-    Ping {
-        header: P2pMessageHeader,
-    },
-    Pong {
-        header: P2pMessageHeader,
-    },
+    Ping { header: P2pMessageHeader },
+    /// `Pong` variant.
+    /// `Pong` 变体.
+    Pong { header: P2pMessageHeader },
     /// `room_list` — list of rooms reported by the peer.
     RoomList {
         header: P2pMessageHeader,
@@ -131,9 +141,7 @@ pub enum P2pMessage {
     },
     /// Unrecognised message type. We keep the raw `type` so the
     /// receive loop can log it and reply with `error`.
-    Unknown {
-        ty: String,
-    },
+    Unknown { ty: String },
 }
 
 impl P2pMessage {
@@ -166,18 +174,28 @@ impl P2pMessage {
 /// [`P2pMessage::Error`] replies.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum P2pMessageError {
+    /// `PayloadTooLarge` variant.
+    /// `PayloadTooLarge` 变体.
     #[error("payload exceeds {limit} bytes")]
     PayloadTooLarge { limit: usize },
+    /// `InvalidJson` variant.
+    /// `InvalidJson` 变体.
     #[error("invalid json: {0}")]
     InvalidJson(String),
+    /// `MissingField` variant.
+    /// `MissingField` 变体.
     #[error("missing required field `{0}`")]
     MissingField(&'static str),
+    /// `FieldTooLarge` variant.
+    /// `FieldTooLarge` 变体.
     #[error("field `{field}` exceeds {limit} bytes (was {actual})")]
     FieldTooLarge {
         field: &'static str,
         limit: usize,
         actual: usize,
     },
+    /// `InvalidField` variant.
+    /// `InvalidField` 变体.
     #[error("invalid value for `{field}`: {reason}")]
     InvalidField { field: &'static str, reason: String },
 }
@@ -185,8 +203,14 @@ pub enum P2pMessageError {
 /// Decoder configuration. Defaults match the architecture document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct P2pDecoderConfig {
+    /// `max_message_bytes` field of type `usize`.
+    /// `max_message_bytes` 字段，类型为 `usize`.
     pub max_message_bytes: usize,
+    /// `max_sdp_bytes` field of type `usize`.
+    /// `max_sdp_bytes` 字段，类型为 `usize`.
     pub max_sdp_bytes: usize,
+    /// `max_candidate_bytes` field of type `usize`.
+    /// `max_candidate_bytes` 字段，类型为 `usize`.
     pub max_candidate_bytes: usize,
 }
 

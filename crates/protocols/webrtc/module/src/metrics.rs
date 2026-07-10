@@ -69,17 +69,41 @@ use cheetah_webrtc_driver_tokio::LocalCandidateCounts;
 /// counters to zero.
 #[derive(Debug, Default)]
 pub struct WebRtcModuleMetrics {
+    /// `packets_in` field of type `AtomicU64`.
+    /// `packets_in` 字段，类型为 `AtomicU64`.
     pub(crate) packets_in: AtomicU64,
+    /// `packets_out` field of type `AtomicU64`.
+    /// `packets_out` 字段，类型为 `AtomicU64`.
     pub(crate) packets_out: AtomicU64,
+    /// `nack_in` field of type `AtomicU64`.
+    /// `nack_in` 字段，类型为 `AtomicU64`.
     pub(crate) nack_in: AtomicU64,
+    /// `nack_out` field of type `AtomicU64`.
+    /// `nack_out` 字段，类型为 `AtomicU64`.
     pub(crate) nack_out: AtomicU64,
+    /// `rtx_sent` field of type `AtomicU64`.
+    /// `rtx_sent` 字段，类型为 `AtomicU64`.
     pub(crate) rtx_sent: AtomicU64,
+    /// `rtx_miss` field of type `AtomicU64`.
+    /// `rtx_miss` 字段，类型为 `AtomicU64`.
     pub(crate) rtx_miss: AtomicU64,
+    /// `pli` field of type `AtomicU64`.
+    /// `pli` 字段，类型为 `AtomicU64`.
     pub(crate) pli: AtomicU64,
+    /// `fir` field of type `AtomicU64`.
+    /// `fir` 字段，类型为 `AtomicU64`.
     pub(crate) fir: AtomicU64,
+    /// `twcc_feedback` field of type `AtomicU64`.
+    /// `twcc_feedback` 字段，类型为 `AtomicU64`.
     pub(crate) twcc_feedback: AtomicU64,
+    /// `simulcast_layer_switches` field of type `AtomicU64`.
+    /// `simulcast_layer_switches` 字段，类型为 `AtomicU64`.
     pub(crate) simulcast_layer_switches: AtomicU64,
+    /// `route_migrations` field of type `AtomicU64`.
+    /// `route_migrations` 字段，类型为 `AtomicU64`.
     pub(crate) route_migrations: AtomicU64,
+    /// `queue_drops` field of type `AtomicU64`.
+    /// `queue_drops` 字段，类型为 `AtomicU64`.
     pub(crate) queue_drops: AtomicU64,
     /// Last observed REMB bitrate in bps. Stored atomically because
     /// the snapshot reader does not hold the registry lock; the
@@ -89,13 +113,29 @@ pub struct WebRtcModuleMetrics {
     pub(crate) bwe_estimate_bps: AtomicU64,
 
     // Phase 02 follow-up: local candidate counters
+    /// `local_candidate_host` field of type `AtomicU64`.
+    /// `local_candidate_host` 字段，类型为 `AtomicU64`.
     pub(crate) local_candidate_host: AtomicU64,
+    /// `local_candidate_srflx` field of type `AtomicU64`.
+    /// `local_candidate_srflx` 字段，类型为 `AtomicU64`.
     pub(crate) local_candidate_srflx: AtomicU64,
+    /// `local_candidate_prflx` field of type `AtomicU64`.
+    /// `local_candidate_prflx` 字段，类型为 `AtomicU64`.
     pub(crate) local_candidate_prflx: AtomicU64,
+    /// `local_candidate_relay` field of type `AtomicU64`.
+    /// `local_candidate_relay` 字段，类型为 `AtomicU64`.
     pub(crate) local_candidate_relay: AtomicU64,
+    /// `local_candidate_udp` field of type `AtomicU64`.
+    /// `local_candidate_udp` 字段，类型为 `AtomicU64`.
     pub(crate) local_candidate_udp: AtomicU64,
+    /// `local_candidate_tcp` field of type `AtomicU64`.
+    /// `local_candidate_tcp` 字段，类型为 `AtomicU64`.
     pub(crate) local_candidate_tcp: AtomicU64,
+    /// `local_candidate_ipv4` field of type `AtomicU64`.
+    /// `local_candidate_ipv4` 字段，类型为 `AtomicU64`.
     pub(crate) local_candidate_ipv4: AtomicU64,
+    /// `local_candidate_ipv6` field of type `AtomicU64`.
+    /// `local_candidate_ipv6` 字段，类型为 `AtomicU64`.
     pub(crate) local_candidate_ipv6: AtomicU64,
 
     // Phase 04 task 4.2: play disconnect counters
@@ -108,6 +148,8 @@ pub struct WebRtcModuleMetrics {
 }
 
 impl WebRtcModuleMetrics {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
@@ -133,27 +175,39 @@ impl WebRtcModuleMetrics {
         self.fir.fetch_add(delta.fir, Ordering::Relaxed);
     }
 
+    /// `record_remb` function.
+    /// `record_remb` 函数.
     pub fn record_remb(&self, bps: u64) {
         self.remb_bitrate_bps.store(bps, Ordering::Relaxed);
     }
 
+    /// `record_bwe` function.
+    /// `record_bwe` 函数.
     pub fn record_bwe(&self, bps: u64) {
         self.bwe_estimate_bps.store(bps, Ordering::Relaxed);
     }
 
+    /// `inc_twcc_feedback` function.
+    /// `inc_twcc_feedback` 函数.
     pub fn inc_twcc_feedback(&self) {
         self.twcc_feedback.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// `inc_simulcast_layer_switch` function.
+    /// `inc_simulcast_layer_switch` 函数.
     pub fn inc_simulcast_layer_switch(&self) {
         self.simulcast_layer_switches
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    /// `inc_route_migration` function.
+    /// `inc_route_migration` 函数.
     pub fn inc_route_migration(&self) {
         self.route_migrations.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// `inc_queue_drop` function.
+    /// `inc_queue_drop` 函数.
     pub fn inc_queue_drop(&self) {
         self.queue_drops.fetch_add(1, Ordering::Relaxed);
     }
@@ -237,43 +291,109 @@ impl WebRtcModuleMetrics {
 /// every field below is safe to add into the global counters.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WebRtcSessionStatsDelta {
+    /// `packets_in` field of type `u64`.
+    /// `packets_in` 字段，类型为 `u64`.
     pub packets_in: u64,
+    /// `packets_out` field of type `u64`.
+    /// `packets_out` 字段，类型为 `u64`.
     pub packets_out: u64,
+    /// `nack_in` field of type `u64`.
+    /// `nack_in` 字段，类型为 `u64`.
     pub nack_in: u64,
+    /// `nack_out` field of type `u64`.
+    /// `nack_out` 字段，类型为 `u64`.
     pub nack_out: u64,
+    /// `rtx_sent` field of type `u64`.
+    /// `rtx_sent` 字段，类型为 `u64`.
     pub rtx_sent: u64,
+    /// `rtx_miss` field of type `u64`.
+    /// `rtx_miss` 字段，类型为 `u64`.
     pub rtx_miss: u64,
+    /// `pli` field of type `u64`.
+    /// `pli` 字段，类型为 `u64`.
     pub pli: u64,
+    /// `fir` field of type `u64`.
+    /// `fir` 字段，类型为 `u64`.
     pub fir: u64,
 }
 
+/// `WebRtcModuleCounterSnapshot` data structure.
+/// `WebRtcModuleCounterSnapshot` 数据结构.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct WebRtcModuleCounterSnapshot {
+    /// `packets_in` field of type `u64`.
+    /// `packets_in` 字段，类型为 `u64`.
     pub packets_in: u64,
+    /// `packets_out` field of type `u64`.
+    /// `packets_out` 字段，类型为 `u64`.
     pub packets_out: u64,
+    /// `nack_in` field of type `u64`.
+    /// `nack_in` 字段，类型为 `u64`.
     pub nack_in: u64,
+    /// `nack_out` field of type `u64`.
+    /// `nack_out` 字段，类型为 `u64`.
     pub nack_out: u64,
+    /// `rtx_sent` field of type `u64`.
+    /// `rtx_sent` 字段，类型为 `u64`.
     pub rtx_sent: u64,
+    /// `rtx_miss` field of type `u64`.
+    /// `rtx_miss` 字段，类型为 `u64`.
     pub rtx_miss: u64,
+    /// `pli` field of type `u64`.
+    /// `pli` 字段，类型为 `u64`.
     pub pli: u64,
+    /// `fir` field of type `u64`.
+    /// `fir` 字段，类型为 `u64`.
     pub fir: u64,
+    /// `twcc_feedback` field of type `u64`.
+    /// `twcc_feedback` 字段，类型为 `u64`.
     pub twcc_feedback: u64,
+    /// `simulcast_layer_switches` field of type `u64`.
+    /// `simulcast_layer_switches` 字段，类型为 `u64`.
     pub simulcast_layer_switches: u64,
+    /// `route_migrations` field of type `u64`.
+    /// `route_migrations` 字段，类型为 `u64`.
     pub route_migrations: u64,
+    /// `queue_drops` field of type `u64`.
+    /// `queue_drops` 字段，类型为 `u64`.
     pub queue_drops: u64,
+    /// `remb_bitrate_bps` field of type `u64`.
+    /// `remb_bitrate_bps` 字段，类型为 `u64`.
     pub remb_bitrate_bps: u64,
+    /// `bwe_estimate_bps` field of type `u64`.
+    /// `bwe_estimate_bps` 字段，类型为 `u64`.
     pub bwe_estimate_bps: u64,
     // Phase 02 follow-up 第十三轮：local candidate counters
+    /// `local_candidate_host` field of type `u64`.
+    /// `local_candidate_host` 字段，类型为 `u64`.
     pub local_candidate_host: u64,
+    /// `local_candidate_srflx` field of type `u64`.
+    /// `local_candidate_srflx` 字段，类型为 `u64`.
     pub local_candidate_srflx: u64,
+    /// `local_candidate_prflx` field of type `u64`.
+    /// `local_candidate_prflx` 字段，类型为 `u64`.
     pub local_candidate_prflx: u64,
+    /// `local_candidate_relay` field of type `u64`.
+    /// `local_candidate_relay` 字段，类型为 `u64`.
     pub local_candidate_relay: u64,
+    /// `local_candidate_udp` field of type `u64`.
+    /// `local_candidate_udp` 字段，类型为 `u64`.
     pub local_candidate_udp: u64,
+    /// `local_candidate_tcp` field of type `u64`.
+    /// `local_candidate_tcp` 字段，类型为 `u64`.
     pub local_candidate_tcp: u64,
+    /// `local_candidate_ipv4` field of type `u64`.
+    /// `local_candidate_ipv4` 字段，类型为 `u64`.
     pub local_candidate_ipv4: u64,
+    /// `local_candidate_ipv6` field of type `u64`.
+    /// `local_candidate_ipv6` 字段，类型为 `u64`.
     pub local_candidate_ipv6: u64,
     // Phase 04 task 4.2: play disconnect counters
+    /// `play_disconnect_events` field of type `u64`.
+    /// `play_disconnect_events` 字段，类型为 `u64`.
     pub play_disconnect_events: u64,
+    /// `play_disconnect_short` field of type `u64`.
+    /// `play_disconnect_short` 字段，类型为 `u64`.
     pub play_disconnect_short: u64,
 }
 
@@ -289,33 +409,77 @@ pub struct WebRtcModuleMetricsSnapshot {
     pub publish_sessions: u64,
     /// Sessions whose role is `Player` (WHEP / SMS play / push).
     pub play_sessions: u64,
+    /// `packets_in_total` field of type `u64`.
+    /// `packets_in_total` 字段，类型为 `u64`.
     pub packets_in_total: u64,
+    /// `packets_out_total` field of type `u64`.
+    /// `packets_out_total` 字段，类型为 `u64`.
     pub packets_out_total: u64,
+    /// `nack_in_total` field of type `u64`.
+    /// `nack_in_total` 字段，类型为 `u64`.
     pub nack_in_total: u64,
+    /// `nack_out_total` field of type `u64`.
+    /// `nack_out_total` 字段，类型为 `u64`.
     pub nack_out_total: u64,
+    /// `rtx_sent_total` field of type `u64`.
+    /// `rtx_sent_total` 字段，类型为 `u64`.
     pub rtx_sent_total: u64,
+    /// `rtx_miss_total` field of type `u64`.
+    /// `rtx_miss_total` 字段，类型为 `u64`.
     pub rtx_miss_total: u64,
+    /// `pli_total` field of type `u64`.
+    /// `pli_total` 字段，类型为 `u64`.
     pub pli_total: u64,
+    /// `fir_total` field of type `u64`.
+    /// `fir_total` 字段，类型为 `u64`.
     pub fir_total: u64,
+    /// `twcc_feedback_total` field of type `u64`.
+    /// `twcc_feedback_total` 字段，类型为 `u64`.
     pub twcc_feedback_total: u64,
+    /// `simulcast_layer_switch_total` field of type `u64`.
+    /// `simulcast_layer_switch_total` 字段，类型为 `u64`.
     pub simulcast_layer_switch_total: u64,
+    /// `route_migration_total` field of type `u64`.
+    /// `route_migration_total` 字段，类型为 `u64`.
     pub route_migration_total: u64,
+    /// `queue_drop_total` field of type `u64`.
+    /// `queue_drop_total` 字段，类型为 `u64`.
     pub queue_drop_total: u64,
     /// Last observed REMB bitrate (gauge).
     pub remb_bitrate_bps: u64,
     /// Last observed BWE estimate (gauge).
     pub bwe_estimate_bps: u64,
     // Phase 02 follow-up 第十三轮：local candidate counters
+    /// `local_candidate_host_total` field of type `u64`.
+    /// `local_candidate_host_total` 字段，类型为 `u64`.
     pub local_candidate_host_total: u64,
+    /// `local_candidate_srflx_total` field of type `u64`.
+    /// `local_candidate_srflx_total` 字段，类型为 `u64`.
     pub local_candidate_srflx_total: u64,
+    /// `local_candidate_prflx_total` field of type `u64`.
+    /// `local_candidate_prflx_total` 字段，类型为 `u64`.
     pub local_candidate_prflx_total: u64,
+    /// `local_candidate_relay_total` field of type `u64`.
+    /// `local_candidate_relay_total` 字段，类型为 `u64`.
     pub local_candidate_relay_total: u64,
+    /// `local_candidate_udp_total` field of type `u64`.
+    /// `local_candidate_udp_total` 字段，类型为 `u64`.
     pub local_candidate_udp_total: u64,
+    /// `local_candidate_tcp_total` field of type `u64`.
+    /// `local_candidate_tcp_total` 字段，类型为 `u64`.
     pub local_candidate_tcp_total: u64,
+    /// `local_candidate_ipv4_total` field of type `u64`.
+    /// `local_candidate_ipv4_total` 字段，类型为 `u64`.
     pub local_candidate_ipv4_total: u64,
+    /// `local_candidate_ipv6_total` field of type `u64`.
+    /// `local_candidate_ipv6_total` 字段，类型为 `u64`.
     pub local_candidate_ipv6_total: u64,
     // Phase 04 task 4.2: play disconnect counters
+    /// `play_disconnect_events_total` field of type `u64`.
+    /// `play_disconnect_events_total` 字段，类型为 `u64`.
     pub play_disconnect_events_total: u64,
+    /// `play_disconnect_short_total` field of type `u64`.
+    /// `play_disconnect_short_total` 字段，类型为 `u64`.
     pub play_disconnect_short_total: u64,
 }
 

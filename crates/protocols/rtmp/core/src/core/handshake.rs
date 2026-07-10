@@ -6,6 +6,8 @@ use bytes::Bytes;
 use super::{CoreOutput, HandshakeRole, HandshakeState, RtmpCore, RtmpCoreError};
 
 impl RtmpCore {
+    /// `try_handshake` function.
+    /// `try_handshake` 函数.
     pub(super) fn try_handshake(
         &mut self,
         bytes: Bytes,

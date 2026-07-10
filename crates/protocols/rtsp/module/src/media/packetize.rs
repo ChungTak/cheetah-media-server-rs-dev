@@ -1,5 +1,7 @@
 use super::*;
 
+/// `packetize_frame_to_rtp_with_timestamp` function.
+/// `packetize_frame_to_rtp_with_timestamp` 函数.
 pub fn packetize_frame_to_rtp_with_timestamp(
     frame: &AVFrame,
     track: &TrackInfo,

@@ -25,9 +25,17 @@ pub enum SeqEvent {
 /// Sans-I/O: no timers, no I/O, no async.
 #[derive(Debug, Clone)]
 pub struct SeqTracker {
+    /// `last_seq` field.
+    /// `last_seq` 字段.
     last_seq: Option<u16>,
+    /// `wrap_count` field of type `u32`.
+    /// `wrap_count` 字段，类型为 `u32`.
     wrap_count: u32,
+    /// `total_packets` field of type `u64`.
+    /// `total_packets` 字段，类型为 `u64`.
     total_packets: u64,
+    /// `total_lost` field of type `u64`.
+    /// `total_lost` 字段，类型为 `u64`.
     total_lost: u64,
     /// Seq jump beyond this threshold is considered a sender reset.
     reset_threshold: u16,
@@ -114,14 +122,20 @@ impl SeqTracker {
         u64::from(self.wrap_count) * 65536 + seq
     }
 
+    /// `total_packets` function.
+    /// `total_packets` 函数.
     pub fn total_packets(&self) -> u64 {
         self.total_packets
     }
 
+    /// `total_lost` function.
+    /// `total_lost` 函数.
     pub fn total_lost(&self) -> u64 {
         self.total_lost
     }
 
+    /// `wrap_count` function.
+    /// `wrap_count` 函数.
     pub fn wrap_count(&self) -> u32 {
         self.wrap_count
     }

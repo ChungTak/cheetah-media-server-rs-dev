@@ -28,8 +28,14 @@ use crate::sdp::build_describe_sdp;
 
 const MAX_PENDING_KEEPALIVE_REQUESTS: usize = 64;
 
+/// `PushJobSupervisorHandle` data structure.
+/// `PushJobSupervisorHandle` 数据结构.
 pub(super) struct PushJobSupervisorHandle {
+    /// `job_name` field of type `String`.
+    /// `job_name` 字段，类型为 `String`.
     job_name: String,
+    /// `join` field.
+    /// `join` 字段.
     join: Box<dyn RuntimeJoinHandle>,
 }
 
@@ -160,6 +166,8 @@ impl PushAttemptError {
     }
 }
 
+/// `spawn_push_job_supervisors` function.
+/// `spawn_push_job_supervisors` 函数.
 pub(super) fn spawn_push_job_supervisors(
     engine: &EngineContext,
     config: &RtspModuleConfig,
@@ -181,6 +189,8 @@ pub(super) fn spawn_push_job_supervisors(
     handles
 }
 
+/// `wait_push_job_supervisors` function.
+/// `wait_push_job_supervisors` 函数.
 pub(super) async fn wait_push_job_supervisors(handles: &mut Vec<PushJobSupervisorHandle>) {
     for handle in handles.drain(..) {
         handle.join.abort();

@@ -4,7 +4,11 @@ use crate::ll_hls::TrackLane;
 /// Parsed stream key parts from URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamKeyParts {
+    /// `namespace` field of type `String`.
+    /// `namespace` 字段，类型为 `String`.
     pub namespace: String,
+    /// `stream_path` field of type `String`.
+    /// `stream_path` 字段，类型为 `String`.
     pub stream_path: String,
 }
 

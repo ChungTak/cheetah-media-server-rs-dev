@@ -1,9 +1,15 @@
 const RTP_FIXED_HEADER_SIZE: usize = 12;
 
+/// `RtpError` enumeration.
+/// `RtpError` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtpError {
+    /// `UnsupportedVersion` variant.
+    /// `UnsupportedVersion` 变体.
     #[error("unsupported rtp version: {actual}")]
     UnsupportedVersion { actual: u8 },
+    /// `InsufficientData` variant.
+    /// `InsufficientData` 变体.
     #[error("insufficient data for {context}: need at least {needed} bytes, got {actual}")]
     InsufficientData {
         context: &'static str,
@@ -13,9 +19,15 @@ pub enum RtpError {
     #[error(
         "invalid rtp padding size: {padding_size}, available payload+padding bytes: {available}"
     )]
+    /// `InvalidPadding` variant.
+    /// `InvalidPadding` 变体.
     InvalidPadding { padding_size: u8, available: usize },
+    /// `TooManyCsrc` variant.
+    /// `TooManyCsrc` 变体.
     #[error("rtp csrc count exceeds 4-bit field: {count}")]
     TooManyCsrc { count: usize },
+    /// `ExtensionTooLarge` variant.
+    /// `ExtensionTooLarge` 变体.
     #[error("rtp extension data too large: {bytes} bytes")]
     ExtensionTooLarge { bytes: usize },
 }
@@ -63,6 +75,8 @@ impl Default for RtpHeader {
 }
 
 impl RtpHeader {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(payload_type: u8, sequence_number: u16, timestamp: u32, ssrc: u32) -> Self {
         Self {
             payload_type,
@@ -73,6 +87,8 @@ impl RtpHeader {
         }
     }
 
+    /// `size` function.
+    /// `size` 函数.
     pub fn size(&self) -> usize {
         RTP_FIXED_HEADER_SIZE + self.csrc.len() * 4
     }
@@ -90,13 +106,23 @@ pub struct RtpExtension {
 /// RTP 包。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtpPacket {
+    /// `header` field of type `RtpHeader`.
+    /// `header` 字段，类型为 `RtpHeader`.
     pub header: RtpHeader,
+    /// `extension` field.
+    /// `extension` 字段.
     pub extension: Option<RtpExtension>,
+    /// `payload` field.
+    /// `payload` 字段.
     pub payload: Vec<u8>,
+    /// `padding_size` field of type `u8`.
+    /// `padding_size` 字段，类型为 `u8`.
     pub padding_size: u8,
 }
 
 impl RtpPacket {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(header: RtpHeader, payload: Vec<u8>) -> Self {
         Self {
             header,
@@ -106,6 +132,8 @@ impl RtpPacket {
         }
     }
 
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(data: &[u8]) -> Result<Self, RtpError> {
         if data.len() < RTP_FIXED_HEADER_SIZE {
             return Err(RtpError::InsufficientData {
@@ -221,6 +249,8 @@ impl RtpPacket {
         })
     }
 
+    /// `build` function.
+    /// `build` 函数.
     pub fn build(&self) -> Result<Vec<u8>, RtpError> {
         if self.header.version != 2 {
             return Err(RtpError::UnsupportedVersion {
@@ -293,6 +323,8 @@ impl RtpPacket {
         Ok(out)
     }
 
+    /// `size` function.
+    /// `size` 函数.
     pub fn size(&self) -> usize {
         let mut size = self.header.size();
         if let Some(extension) = &self.extension {

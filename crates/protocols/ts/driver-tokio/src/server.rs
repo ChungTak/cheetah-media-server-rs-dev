@@ -15,52 +15,76 @@ pub struct TsConnectionId(pub u64);
 /// Configuration for the TS driver.
 #[derive(Debug, Clone)]
 pub struct TsDriverConfig {
+    /// `listen` field of type `SocketAddr`.
+    /// `listen` 字段，类型为 `SocketAddr`.
     pub listen: SocketAddr,
+    /// `write_queue_capacity` field of type `usize`.
+    /// `write_queue_capacity` 字段，类型为 `usize`.
     pub write_queue_capacity: usize,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     pub read_buffer_size: usize,
+    /// `tls` field.
+    /// `tls` 字段.
     pub tls: Option<TsTlsConfig>,
 }
 
 /// TLS configuration.
 #[derive(Debug, Clone)]
 pub struct TsTlsConfig {
+    /// `listen` field of type `SocketAddr`.
+    /// `listen` 字段，类型为 `SocketAddr`.
     pub listen: SocketAddr,
+    /// `cert_path` field of type `String`.
+    /// `cert_path` 字段，类型为 `String`.
     pub cert_path: String,
+    /// `key_path` field of type `String`.
+    /// `key_path` 字段，类型为 `String`.
     pub key_path: String,
+    /// `handshake_timeout_ms` field of type `u64`.
+    /// `handshake_timeout_ms` 字段，类型为 `u64`.
     pub handshake_timeout_ms: u64,
 }
 
 /// Commands sent from module to driver.
 #[derive(Debug)]
 pub enum TsDriverCommand {
+    /// `SendBytes` variant.
+    /// `SendBytes` 变体.
     SendBytes {
         connection_id: TsConnectionId,
         data: Bytes,
     },
-    CloseConnection {
-        connection_id: TsConnectionId,
-    },
+    /// `CloseConnection` variant.
+    /// `CloseConnection` 变体.
+    CloseConnection { connection_id: TsConnectionId },
 }
 
 /// Events sent from driver to module.
 #[derive(Debug)]
 pub enum TsDriverEvent {
+    /// `PlayRequested` variant.
+    /// `PlayRequested` 变体.
     PlayRequested {
         connection_id: TsConnectionId,
         stream_key: StreamKeyParts,
         transport: TsTransport,
     },
-    ConnectionClosed {
-        connection_id: TsConnectionId,
-    },
+    /// `ConnectionClosed` variant.
+    /// `ConnectionClosed` 变体.
+    ConnectionClosed { connection_id: TsConnectionId },
 }
 
 /// Handle to the running server.
 pub struct TsServerHandle {
+    /// `event_rx` field.
+    /// `event_rx` 字段.
     event_rx: mpsc::Receiver<TsDriverEvent>,
 }
 
 impl TsServerHandle {
+    /// `recv_event` function.
+    /// `recv_event` 函数.
     pub async fn recv_event(&mut self) -> Option<TsDriverEvent> {
         self.event_rx.recv().await
     }
@@ -69,10 +93,14 @@ impl TsServerHandle {
 /// Sender for commands to the driver.
 #[derive(Clone)]
 pub struct TsCommandSender {
+    /// `tx` field.
+    /// `tx` 字段.
     tx: mpsc::Sender<TsDriverCommand>,
 }
 
 impl TsCommandSender {
+    /// `send` function.
+    /// `send` 函数.
     pub async fn send(&self, cmd: TsDriverCommand) {
         let _ = self.tx.send(cmd).await;
     }

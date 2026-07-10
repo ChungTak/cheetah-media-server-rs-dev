@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::route::parse_stream_key_spec;
 
+/// `RtmpModuleConfig` data structure.
+/// `RtmpModuleConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpModuleConfig {
@@ -51,6 +53,8 @@ pub struct RtmpModuleConfig {
     pub direct_proxy: bool,
 }
 
+/// `RtmpPullJobConfig` data structure.
+/// `RtmpPullJobConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpPullJobConfig {
@@ -72,6 +76,8 @@ pub struct RtmpPullJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+/// `RtmpPushJobConfig` data structure.
+/// `RtmpPushJobConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpPushJobConfig {
@@ -93,6 +99,8 @@ pub struct RtmpPushJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+/// `RtmpRelayJobConfig` data structure.
+/// `RtmpRelayJobConfig` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpRelayJobConfig {
@@ -112,6 +120,8 @@ pub struct RtmpRelayJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+/// `RtmpAlertThresholds` data structure.
+/// `RtmpAlertThresholds` 数据结构.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpAlertThresholds {
@@ -244,6 +254,8 @@ pub struct RtmpAuthConfig {
 }
 
 impl RtmpModuleConfig {
+    /// Creates `value` from input.
+    /// 创建 `值` 来自 输入.
     pub fn from_value(value: serde_json::Value) -> Result<Self, SdkError> {
         let cfg: Self = serde_json::from_value(value)
             .map_err(|err| SdkError::InvalidArgument(format!("invalid rtmp config: {err}")))?;
@@ -251,6 +263,8 @@ impl RtmpModuleConfig {
         Ok(cfg)
     }
 
+    /// `validate` function.
+    /// `validate` 函数.
     pub fn validate(&self) -> Result<(), SdkError> {
         self.listen
             .parse::<SocketAddr>()
@@ -391,6 +405,8 @@ impl RtmpModuleConfig {
         Ok(())
     }
 
+    /// `default_json` function.
+    /// `default_json` 函数.
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).expect("serialize default rtmp config")
     }

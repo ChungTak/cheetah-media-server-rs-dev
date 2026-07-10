@@ -70,17 +70,35 @@ use std::time::Instant;
 use cheetah_sdk::{CancellationToken, PublishLease, StreamKey};
 use cheetah_webrtc_core::{WebRtcSessionId, WebRtcSessionRole};
 
+/// `WebRtcApiKind` enumeration.
+/// `WebRtcApiKind` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcApiKind {
+    /// `SmsPublish` variant.
+    /// `SmsPublish` 变体.
     SmsPublish,
+    /// `SmsPlay` variant.
+    /// `SmsPlay` 变体.
     SmsPlay,
+    /// `Whip` variant.
+    /// `Whip` 变体.
     Whip,
+    /// `Whep` variant.
+    /// `Whep` 变体.
     Whep,
+    /// `P2p` variant.
+    /// `P2p` 变体.
     P2p,
+    /// `Echo` variant.
+    /// `Echo` 变体.
     Echo,
+    /// `OmeWs` variant.
+    /// `OmeWs` 变体.
     OmeWs,
 }
 
+/// `WebRtcModuleSessionState` enumeration.
+/// `WebRtcModuleSessionState` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcModuleSessionState {
     /// Created locally; SDP exchange ongoing.
@@ -96,7 +114,11 @@ pub enum WebRtcModuleSessionState {
 /// Echo configuration applied to a session.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WebRtcEchoConfig {
+    /// `data_channel` field of type `bool`.
+    /// `data_channel` 字段，类型为 `bool`.
     pub data_channel: bool,
+    /// `media` field of type `bool`.
+    /// `media` 字段，类型为 `bool`.
     pub media: bool,
 }
 
@@ -111,27 +133,71 @@ pub struct WebRtcEchoConfig {
 /// telemetry itself is the operator-facing read-only surface.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WebRtcSessionTelemetry {
+    /// `rtp_extensions` field.
+    /// `rtp_extensions` 字段.
     pub rtp_extensions: Vec<cheetah_webrtc_core::RtpExtensionMapping>,
+    /// `bwe_estimated_bps` field.
+    /// `bwe_estimated_bps` 字段.
     pub bwe_estimated_bps: Option<u64>,
+    /// `bwe_target_bps` field.
+    /// `bwe_target_bps` 字段.
     pub bwe_target_bps: Option<u64>,
+    /// `remb_bitrate_bps` field.
+    /// `remb_bitrate_bps` 字段.
     pub remb_bitrate_bps: Option<u64>,
+    /// `rtt_micros` field.
+    /// `rtt_micros` 字段.
     pub rtt_micros: Option<u64>,
+    /// `loss_fraction_x10000` field.
+    /// `loss_fraction_x10000` 字段.
     pub loss_fraction_x10000: Option<u32>,
+    /// `packets_in` field of type `u64`.
+    /// `packets_in` 字段，类型为 `u64`.
     pub packets_in: u64,
+    /// `packets_out` field of type `u64`.
+    /// `packets_out` 字段，类型为 `u64`.
     pub packets_out: u64,
+    /// `bytes_in` field of type `u64`.
+    /// `bytes_in` 字段，类型为 `u64`.
     pub bytes_in: u64,
+    /// `bytes_out` field of type `u64`.
+    /// `bytes_out` 字段，类型为 `u64`.
     pub bytes_out: u64,
+    /// `nack_in` field of type `u64`.
+    /// `nack_in` 字段，类型为 `u64`.
     pub nack_in: u64,
+    /// `nack_out` field of type `u64`.
+    /// `nack_out` 字段，类型为 `u64`.
     pub nack_out: u64,
+    /// `pli_in` field of type `u64`.
+    /// `pli_in` 字段，类型为 `u64`.
     pub pli_in: u64,
+    /// `pli_out` field of type `u64`.
+    /// `pli_out` 字段，类型为 `u64`.
     pub pli_out: u64,
+    /// `fir_in` field of type `u64`.
+    /// `fir_in` 字段，类型为 `u64`.
     pub fir_in: u64,
+    /// `fir_out` field of type `u64`.
+    /// `fir_out` 字段，类型为 `u64`.
     pub fir_out: u64,
+    /// `rtcp_sr` field of type `u64`.
+    /// `rtcp_sr` 字段，类型为 `u64`.
     pub rtcp_sr: u64,
+    /// `rtcp_rr` field of type `u64`.
+    /// `rtcp_rr` 字段，类型为 `u64`.
     pub rtcp_rr: u64,
+    /// `rtcp_nack` field of type `u64`.
+    /// `rtcp_nack` 字段，类型为 `u64`.
     pub rtcp_nack: u64,
+    /// `rtx_sent` field of type `u64`.
+    /// `rtx_sent` 字段，类型为 `u64`.
     pub rtx_sent: u64,
+    /// `rtx_miss` field of type `u64`.
+    /// `rtx_miss` 字段，类型为 `u64`.
     pub rtx_miss: u64,
+    /// `last_update_at` field.
+    /// `last_update_at` 字段.
     pub last_update_at: Option<Instant>,
 }
 
@@ -217,16 +283,22 @@ impl WebRtcSessionTelemetry {
         self.last_update_at = Some(Instant::now());
     }
 
+    /// `inc_rtcp_sr` function.
+    /// `inc_rtcp_sr` 函数.
     pub fn inc_rtcp_sr(&mut self) {
         self.rtcp_sr = self.rtcp_sr.saturating_add(1);
         self.last_update_at = Some(Instant::now());
     }
 
+    /// `inc_rtcp_rr` function.
+    /// `inc_rtcp_rr` 函数.
     pub fn inc_rtcp_rr(&mut self) {
         self.rtcp_rr = self.rtcp_rr.saturating_add(1);
         self.last_update_at = Some(Instant::now());
     }
 
+    /// `add_rtcp_nack` function.
+    /// `add_rtcp_nack` 函数.
     pub fn add_rtcp_nack(&mut self, count: u32) {
         self.rtcp_nack = self.rtcp_nack.saturating_add(count as u64);
         self.last_update_at = Some(Instant::now());
@@ -235,16 +307,38 @@ impl WebRtcSessionTelemetry {
 
 /// Per-session module state captured by the registry.
 pub struct WebRtcModuleSession {
+    /// `id` field of type `WebRtcSessionId`.
+    /// `id` 字段，类型为 `WebRtcSessionId`.
     pub id: WebRtcSessionId,
+    /// `stream_key` field of type `StreamKey`.
+    /// `stream_key` 字段，类型为 `StreamKey`.
     pub stream_key: StreamKey,
+    /// `role` field of type `WebRtcSessionRole`.
+    /// `role` 字段，类型为 `WebRtcSessionRole`.
     pub role: WebRtcSessionRole,
+    /// `api_kind` field of type `WebRtcApiKind`.
+    /// `api_kind` 字段，类型为 `WebRtcApiKind`.
     pub api_kind: WebRtcApiKind,
+    /// `state` field of type `WebRtcModuleSessionState`.
+    /// `state` 字段，类型为 `WebRtcModuleSessionState`.
     pub state: WebRtcModuleSessionState,
+    /// `created_at` field of type `Instant`.
+    /// `created_at` 字段，类型为 `Instant`.
     pub created_at: Instant,
+    /// `last_activity_at` field of type `Instant`.
+    /// `last_activity_at` 字段，类型为 `Instant`.
     pub last_activity_at: Instant,
+    /// `publish_lease` field.
+    /// `publish_lease` 字段.
     pub publish_lease: Option<PublishLease>,
+    /// `subscriber_cancel` field.
+    /// `subscriber_cancel` 字段.
     pub subscriber_cancel: Option<CancellationToken>,
+    /// `echo` field of type `WebRtcEchoConfig`.
+    /// `echo` 字段，类型为 `WebRtcEchoConfig`.
     pub echo: WebRtcEchoConfig,
+    /// `telemetry` field of type `WebRtcSessionTelemetry`.
+    /// `telemetry` 字段，类型为 `WebRtcSessionTelemetry`.
     pub telemetry: WebRtcSessionTelemetry,
     /// Remote peer address observed from the selected ICE candidate
     /// pair. Populated when the driver reports a connected transport.
@@ -255,6 +349,8 @@ pub struct WebRtcModuleSession {
 }
 
 impl WebRtcModuleSession {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(
         id: WebRtcSessionId,
         stream_key: StreamKey,
@@ -280,17 +376,25 @@ impl WebRtcModuleSession {
     }
 }
 
+/// `WebRtcSessionIdAllocator` data structure.
+/// `WebRtcSessionIdAllocator` 数据结构.
 pub struct WebRtcSessionIdAllocator {
+    /// `next` field of type `AtomicU64`.
+    /// `next` 字段，类型为 `AtomicU64`.
     next: AtomicU64,
 }
 
 impl WebRtcSessionIdAllocator {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             next: AtomicU64::new(1),
         }
     }
 
+    /// `allocate` function.
+    /// `allocate` 函数.
     pub fn allocate(&self) -> WebRtcSessionId {
         WebRtcSessionId::new(self.next.fetch_add(1, Ordering::Relaxed))
     }
@@ -302,26 +406,38 @@ impl Default for WebRtcSessionIdAllocator {
     }
 }
 
+/// `WebRtcSessionRegistry` data structure.
+/// `WebRtcSessionRegistry` 数据结构.
 #[derive(Default)]
 pub struct WebRtcSessionRegistry {
+    /// `sessions` field.
+    /// `sessions` 字段.
     pub sessions: HashMap<WebRtcSessionId, WebRtcModuleSession>,
 }
 
 impl WebRtcSessionRegistry {
+    /// `insert` function.
+    /// `insert` 函数.
     pub fn insert(&mut self, session: WebRtcModuleSession) {
         self.sessions.insert(session.id, session);
     }
 
+    /// `remove` function.
+    /// `remove` 函数.
     pub fn remove(&mut self, id: WebRtcSessionId) -> Option<WebRtcModuleSession> {
         self.sessions.remove(&id)
     }
 
+    /// `touch` function.
+    /// `touch` 函数.
     pub fn touch(&mut self, id: WebRtcSessionId) {
         if let Some(session) = self.sessions.get_mut(&id) {
             session.last_activity_at = Instant::now();
         }
     }
 
+    /// `mark_state` function.
+    /// `mark_state` 函数.
     pub fn mark_state(&mut self, id: WebRtcSessionId, state: WebRtcModuleSessionState) {
         if let Some(session) = self.sessions.get_mut(&id) {
             session.state = state;
@@ -342,6 +458,8 @@ impl WebRtcSessionRegistry {
         }
     }
 
+    /// `list` function.
+    /// `list` 函数.
     pub fn list(&self) -> Vec<&WebRtcModuleSession> {
         self.sessions.values().collect()
     }

@@ -33,6 +33,16 @@ use cheetah_webrtc_module::WebRtcModuleFactory;
 use serde_json::Value;
 use tracing::{error, info};
 
+/// Entry point for the `cheetah` media server binary.
+///
+/// Initializes the Tokio runtime, loads configuration, registers all enabled
+/// protocol module factories, builds the engine, and starts the control HTTP
+/// server. Shutdown is handled via `Ctrl-C` with a 5-second graceful stop.
+///
+/// `cheetah` 媒体服务器二进制入口。
+///
+/// 初始化 Tokio 运行时、加载配置、注册所有启用的协议模块工厂、构建引擎并启动
+/// 控制 HTTP 服务器。通过 `Ctrl-C` 触发关闭，引擎有 5 秒优雅停止时间。
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Install rustls crypto provider before any TLS operations.
@@ -183,6 +193,14 @@ async fn main() -> anyhow::Result<()> {
     std::process::exit(0);
 }
 
+/// Resolve the control server listen address from `global.control.listen`.
+///
+/// Falls back to the `CHEETAH_CONTROL_ADDR` environment variable, then to the
+/// default `127.0.0.1:8891`.
+///
+/// 从 `global.control.listen` 解析控制服务器监听地址。
+///
+/// 回退到 `CHEETAH_CONTROL_ADDR` 环境变量，最后使用默认 `127.0.0.1:8891`。
 fn resolve_control_addr(global: Value) -> anyhow::Result<SocketAddr> {
     if let Some(addr) = global
         .get("control")

@@ -3,17 +3,27 @@ use crate::prelude::*;
 use core::fmt;
 use smallvec::SmallVec;
 
+/// `Timebase` data structure.
+/// `Timebase` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timebase {
+    /// `num` field of type `u32`.
+    /// `num` 字段，类型为 `u32`.
     pub num: u32,
+    /// `den` field of type `u32`.
+    /// `den` 字段，类型为 `u32`.
     pub den: u32,
 }
 
 impl Timebase {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub const fn new(num: u32, den: u32) -> Self {
         Self { num, den }
     }
 
+    /// Converts to `micros` representation.
+    /// Converts 为 `micros` 表示.
     pub fn to_micros(tb: Timebase, value: i64) -> i64 {
         let num = i128::from(tb.num);
         let den = i128::from(tb.den.max(1));
@@ -21,6 +31,8 @@ impl Timebase {
         ((v * num * 1_000_000_i128) / den) as i64
     }
 
+    /// Creates `micros` from input.
+    /// 创建 `micros` 来自 输入.
     pub fn from_micros(tb: Timebase, micros: i64) -> i64 {
         let num = i128::from(tb.num.max(1));
         let den = i128::from(tb.den);
@@ -29,32 +41,54 @@ impl Timebase {
     }
 }
 
+/// `MonoTime` data structure.
+/// `MonoTime` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MonoTime {
+    /// `micros` field of type `u64`.
+    /// `micros` 字段，类型为 `u64`.
     micros: u64,
 }
 
 impl MonoTime {
+    /// Creates `micros` from input.
+    /// 创建 `micros` 来自 输入.
     pub const fn from_micros(micros: u64) -> Self {
         Self { micros }
     }
 
+    /// `as_micros` function.
+    /// `as_micros` 函数.
     pub const fn as_micros(self) -> u64 {
         self.micros
     }
 }
 
+/// `TimestampError` enumeration.
+/// `TimestampError` 枚举.
 #[derive(Debug, thiserror::Error)]
 pub enum TimestampError {
+    /// `InvalidWrapWidth` variant.
+    /// `InvalidWrapWidth` 变体.
     #[error("invalid wrap width: {0}")]
     InvalidWrapWidth(u8),
 }
 
+/// `WrapUnwrapper` data structure.
+/// `WrapUnwrapper` 数据结构.
 #[derive(Clone)]
 pub struct WrapUnwrapper {
+    /// `mask` field of type `u64`.
+    /// `mask` 字段，类型为 `u64`.
     mask: u64,
+    /// `half` field of type `u64`.
+    /// `half` 字段，类型为 `u64`.
     half: u64,
+    /// `high` field of type `u64`.
+    /// `high` 字段，类型为 `u64`.
     high: u64,
+    /// `last_raw` field.
+    /// `last_raw` 字段.
     last_raw: Option<u64>,
 }
 
@@ -70,6 +104,8 @@ impl fmt::Debug for WrapUnwrapper {
 }
 
 impl WrapUnwrapper {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(bits: u8) -> Result<Self, TimestampError> {
         if bits == 0 || bits > 63 {
             return Err(TimestampError::InvalidWrapWidth(bits));
@@ -84,6 +120,8 @@ impl WrapUnwrapper {
         })
     }
 
+    /// `unwrap` function.
+    /// `unwrap` 函数.
     pub fn unwrap(&mut self, raw: u64) -> u64 {
         let raw = raw & self.mask;
         if let Some(last) = self.last_raw {
@@ -97,28 +135,50 @@ impl WrapUnwrapper {
         self.high + raw
     }
 
+    /// `reset` function.
+    /// `reset` 函数.
     pub fn reset(&mut self) {
         self.high = 0;
         self.last_raw = None;
     }
 }
 
+/// `StampAdjustMode` enumeration.
+/// `StampAdjustMode` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StampAdjustMode {
+    /// `Source` variant.
+    /// `Source` 变体.
     Source,
+    /// `Arrival` variant.
+    /// `Arrival` 变体.
     Arrival,
+    /// `SampleCount` variant.
+    /// `SampleCount` 变体.
     SampleCount,
+    /// `FrameRateGuess` variant.
+    /// `FrameRateGuess` 变体.
     FrameRateGuess,
 }
 
+/// `StampAdjust` data structure.
+/// `StampAdjust` 数据结构.
 #[derive(Debug, Clone)]
 pub struct StampAdjust {
+    /// `mode` field of type `StampAdjustMode`.
+    /// `mode` 字段，类型为 `StampAdjustMode`.
     mode: StampAdjustMode,
+    /// `last_pts_us` field.
+    /// `last_pts_us` 字段.
     last_pts_us: Option<i64>,
+    /// `step_us` field of type `i64`.
+    /// `step_us` 字段，类型为 `i64`.
     step_us: i64,
 }
 
 impl StampAdjust {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(mode: StampAdjustMode, step_us: i64) -> Self {
         Self {
             mode,
@@ -127,6 +187,8 @@ impl StampAdjust {
         }
     }
 
+    /// `adjust` function.
+    /// `adjust` 函数.
     pub fn adjust(&mut self, source_pts_us: Option<i64>, now: MonoTime) -> i64 {
         let mut value = match self.mode {
             StampAdjustMode::Source => source_pts_us.unwrap_or_else(|| now.as_micros() as i64),
@@ -146,11 +208,21 @@ impl StampAdjust {
     }
 }
 
+/// `DtsGenerator` data structure.
+/// `DtsGenerator` 数据结构.
 #[derive(Debug, Default, Clone)]
 pub struct DtsGenerator {
+    /// `last_dts` field.
+    /// `last_dts` 字段.
     last_dts: Option<i64>,
+    /// `last_source_pts` field.
+    /// `last_source_pts` 字段.
     last_source_pts: Option<i64>,
+    /// `smoothed_step` field.
+    /// `smoothed_step` 字段.
     smoothed_step: Option<i64>,
+    /// `pts_reorder_seen` field of type `bool`.
+    /// `pts_reorder_seen` 字段，类型为 `bool`.
     pts_reorder_seen: bool,
 }
 
@@ -162,6 +234,8 @@ struct PtsOnlyDtsGeneration {
 }
 
 impl DtsGenerator {
+    /// `generate_monotonic_from_pts` function.
+    /// `generate_monotonic_from_pts` 函数.
     pub fn generate_monotonic_from_pts(&mut self, pts: i64) -> i64 {
         let mut dts = pts;
         if let Some(last) = self.last_dts {
@@ -254,6 +328,8 @@ impl DtsGenerator {
         }
     }
 
+    /// `reset` function.
+    /// `reset` 函数.
     pub fn reset(&mut self) {
         self.last_dts = None;
         self.last_source_pts = None;
@@ -262,22 +338,34 @@ impl DtsGenerator {
     }
 }
 
+/// `TimebaseConverter` data structure.
+/// `TimebaseConverter` 数据结构.
 pub struct TimebaseConverter;
 
 impl TimebaseConverter {
+    /// `convert` function.
+    /// `convert` 函数.
     pub fn convert(value: i64, src: Timebase, dst: Timebase) -> i64 {
         let us = Timebase::to_micros(src, value);
         Timebase::from_micros(dst, us)
     }
 }
 
+/// `DiscontinuityJudge` data structure.
+/// `DiscontinuityJudge` 数据结构.
 #[derive(Debug, Clone)]
 pub struct DiscontinuityJudge {
+    /// `max_gap_us` field of type `i64`.
+    /// `max_gap_us` 字段，类型为 `i64`.
     max_gap_us: i64,
+    /// `last_pts_us` field.
+    /// `last_pts_us` 字段.
     last_pts_us: Option<i64>,
 }
 
 impl DiscontinuityJudge {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(max_gap_us: i64) -> Self {
         Self {
             max_gap_us: max_gap_us.max(0),
@@ -285,6 +373,8 @@ impl DiscontinuityJudge {
         }
     }
 
+    /// `observe` function.
+    /// `observe` 函数.
     pub fn observe(&mut self, pts_us: i64) -> bool {
         let is_discontinuity = match self.last_pts_us {
             Some(last) => pts_us < last || (pts_us - last) > self.max_gap_us,
@@ -295,23 +385,45 @@ impl DiscontinuityJudge {
     }
 }
 
+/// `TimestampValue` enumeration.
+/// `TimestampValue` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampValue {
+    /// `Unwrapped` variant.
+    /// `Unwrapped` 变体.
     Unwrapped(i64),
+    /// `Wrapped` variant.
+    /// `Wrapped` 变体.
     Wrapped(u64),
 }
 
+/// `TimestampNormalizerConfig` data structure.
+/// `TimestampNormalizerConfig` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimestampNormalizerConfig {
+    /// `input_timebase` field of type `Timebase`.
+    /// `input_timebase` 字段，类型为 `Timebase`.
     pub input_timebase: Timebase,
+    /// `output_timebase` field of type `Timebase`.
+    /// `output_timebase` 字段，类型为 `Timebase`.
     pub output_timebase: Timebase,
+    /// `wrap_bits` field.
+    /// `wrap_bits` 字段.
     pub wrap_bits: Option<u8>,
+    /// `max_forward_gap_us` field of type `i64`.
+    /// `max_forward_gap_us` 字段，类型为 `i64`.
     pub max_forward_gap_us: i64,
+    /// `default_fallback_step` field of type `i64`.
+    /// `default_fallback_step` 字段，类型为 `i64`.
     pub default_fallback_step: i64,
+    /// `allow_negative_composition` field of type `bool`.
+    /// `allow_negative_composition` 字段，类型为 `bool`.
     pub allow_negative_composition: bool,
 }
 
 impl TimestampNormalizerConfig {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(
         input_timebase: Timebase,
         output_timebase: Timebase,
@@ -344,69 +456,117 @@ impl TimestampNormalizerConfig {
         })
     }
 
+    /// Returns a copy with `max_forward_gap_us` set.
+    /// 返回 一个 copy 带有 `max_forward_gap_us` 设置.
     pub fn with_max_forward_gap_us(mut self, max_forward_gap_us: i64) -> Self {
         self.max_forward_gap_us = max_forward_gap_us.max(0);
         self
     }
 
+    /// Returns a copy with `default_fallback_step` set.
+    /// 返回 一个 copy 带有 `default_fallback_step` 设置.
     pub fn with_default_fallback_step(mut self, default_fallback_step: i64) -> Self {
         self.default_fallback_step = default_fallback_step.max(1);
         self
     }
 
+    /// Returns a copy with `negative_composition_allowed` set.
+    /// 返回 一个 copy 带有 `negative_composition_allowed` 设置.
     pub fn with_negative_composition_allowed(mut self, allow: bool) -> Self {
         self.allow_negative_composition = allow;
         self
     }
 }
 
+/// `TimestampNormalizerConfigError` enumeration.
+/// `TimestampNormalizerConfigError` 枚举.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum TimestampNormalizerConfigError {
+    /// `InvalidInputTimebase` variant.
+    /// `InvalidInputTimebase` 变体.
     #[error("invalid input timebase {num}/{den}")]
     InvalidInputTimebase { num: u32, den: u32 },
+    /// `InvalidOutputTimebase` variant.
+    /// `InvalidOutputTimebase` 变体.
     #[error("invalid output timebase {num}/{den}")]
     InvalidOutputTimebase { num: u32, den: u32 },
+    /// `InvalidWrapWidth` variant.
+    /// `InvalidWrapWidth` 变体.
     #[error("invalid wrap width: {0}")]
     InvalidWrapWidth(u8),
 }
 
+/// `TimestampNormalizeError` enumeration.
+/// `TimestampNormalizeError` 枚举.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum TimestampNormalizeError {
+    /// `WrappedTimestampWithoutConfig` variant.
+    /// `WrappedTimestampWithoutConfig` 变体.
     #[error("wrapped timestamp provided without configured wrap_bits")]
     WrappedTimestampWithoutConfig,
+    /// `UnwrappedTimestampOverflow` variant.
+    /// `UnwrappedTimestampOverflow` 变体.
     #[error("wrapped timestamp {value} overflowed i64 after unwrap")]
     UnwrappedTimestampOverflow { value: u64 },
 }
 
+/// `TimestampAlert` enumeration.
+/// `TimestampAlert` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampAlert {
+    /// `MissingDtsUsedFallback` variant.
+    /// `MissingDtsUsedFallback` 变体.
     MissingDtsUsedFallback,
+    /// `MissingPtsDerivedFromDts` variant.
+    /// `MissingPtsDerivedFromDts` 变体.
     MissingPtsDerivedFromDts,
+    /// `NonMonotonicDtsRepaired` variant.
+    /// `NonMonotonicDtsRepaired` 变体.
     NonMonotonicDtsRepaired,
+    /// `PtsReorderObserved` variant.
+    /// `PtsReorderObserved` 变体.
     PtsReorderObserved,
+    /// `TimelineDiscontinuityDetected` variant.
+    /// `TimelineDiscontinuityDetected` 变体.
     TimelineDiscontinuityDetected,
+    /// `NegativeCompositionClamped` variant.
+    /// `NegativeCompositionClamped` 变体.
     NegativeCompositionClamped,
+    /// `ResetApplied` variant.
+    /// `ResetApplied` 变体.
     ResetApplied,
 }
 
+/// `TimestampNormalizeMode` enumeration.
+/// `TimestampNormalizeMode` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampNormalizeMode {
+    /// `NoTimestamp` variant.
+    /// `NoTimestamp` 变体.
     NoTimestamp,
+    /// `DtsPts` variant.
+    /// `DtsPts` 变体.
     DtsPts {
         dts: TimestampValue,
         pts: TimestampValue,
     },
+    /// `DtsWithCompositionOffset` variant.
+    /// `DtsWithCompositionOffset` 变体.
     DtsWithCompositionOffset {
         dts: TimestampValue,
         composition_offset: Option<i64>,
     },
-    PtsOnly {
-        pts: TimestampValue,
-    },
+    /// `PtsOnly` variant.
+    /// `PtsOnly` 变体.
+    PtsOnly { pts: TimestampValue },
 }
 
+/// `TimestampNormalizeInput` data structure.
+/// `TimestampNormalizeInput` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimestampNormalizeInput {
+    /// `mode` field of type `TimestampNormalizeMode`.
+    /// `mode` 字段，类型为 `TimestampNormalizeMode`.
     pub mode: TimestampNormalizeMode,
     /// Optional frame duration in `input_timebase` ticks.
     /// Used by `PtsOnly` mode as the highest-priority DTS cadence hint.
@@ -414,33 +574,71 @@ pub struct TimestampNormalizeInput {
     /// Optional fallback step in `input_timebase` ticks for missing source
     /// timestamps.
     pub fallback_step: Option<i64>,
+    /// `is_video` field of type `bool`.
+    /// `is_video` 字段，类型为 `bool`.
     pub is_video: bool,
+    /// `force_discontinuity` field of type `bool`.
+    /// `force_discontinuity` 字段，类型为 `bool`.
     pub force_discontinuity: bool,
 }
 
+/// `TimestampNormalizeOutput` data structure.
+/// `TimestampNormalizeOutput` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimestampNormalizeOutput {
+    /// `pts` field of type `i64`.
+    /// `pts` 字段，类型为 `i64`.
     pub pts: i64,
+    /// `dts` field of type `i64`.
+    /// `dts` 字段，类型为 `i64`.
     pub dts: i64,
+    /// `pts_us` field of type `i64`.
+    /// `pts_us` 字段，类型为 `i64`.
     pub pts_us: i64,
+    /// `dts_us` field of type `i64`.
+    /// `dts_us` 字段，类型为 `i64`.
     pub dts_us: i64,
+    /// `discontinuity` field of type `bool`.
+    /// `discontinuity` 字段，类型为 `bool`.
     pub discontinuity: bool,
+    /// `alerts` field.
+    /// `alerts` 字段.
     pub alerts: SmallVec<[TimestampAlert; 4]>,
 }
 
+/// `TimestampNormalizer` data structure.
+/// `TimestampNormalizer` 数据结构.
 #[derive(Debug, Clone)]
 pub struct TimestampNormalizer {
+    /// `config` field of type `TimestampNormalizerConfig`.
+    /// `config` 字段，类型为 `TimestampNormalizerConfig`.
     config: TimestampNormalizerConfig,
+    /// `dts_unwrapper` field.
+    /// `dts_unwrapper` 字段.
     dts_unwrapper: Option<WrapUnwrapper>,
+    /// `pts_unwrapper` field.
+    /// `pts_unwrapper` 字段.
     pts_unwrapper: Option<WrapUnwrapper>,
+    /// `epoch_offset` field.
+    /// `epoch_offset` 字段.
     epoch_offset: Option<i64>,
+    /// `last_dts` field.
+    /// `last_dts` 字段.
     last_dts: Option<i64>,
+    /// `next_fallback_dts` field.
+    /// `next_fallback_dts` 字段.
     next_fallback_dts: Option<i64>,
+    /// `dts_generator` field of type `DtsGenerator`.
+    /// `dts_generator` 字段，类型为 `DtsGenerator`.
     dts_generator: DtsGenerator,
+    /// `pending_reset` field of type `bool`.
+    /// `pending_reset` 字段，类型为 `bool`.
     pending_reset: bool,
 }
 
 impl TimestampNormalizer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: TimestampNormalizerConfig) -> Self {
         let dts_unwrapper = config.wrap_bits.map(|bits| match WrapUnwrapper::new(bits) {
             Ok(unwrapper) => unwrapper,
@@ -462,10 +660,14 @@ impl TimestampNormalizer {
         }
     }
 
+    /// `config` function.
+    /// `config` 函数.
     pub fn config(&self) -> &TimestampNormalizerConfig {
         &self.config
     }
 
+    /// `reset` function.
+    /// `reset` 函数.
     pub fn reset(&mut self) {
         self.epoch_offset = None;
         self.last_dts = None;
@@ -480,6 +682,8 @@ impl TimestampNormalizer {
         }
     }
 
+    /// `normalize` function.
+    /// `normalize` 函数.
     pub fn normalize(
         &mut self,
         input: TimestampNormalizeInput,

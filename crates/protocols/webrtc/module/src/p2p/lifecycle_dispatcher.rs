@@ -23,6 +23,8 @@ use super::bridge::{BridgeLifecycleEvent, BridgeLifecycleSource};
 /// `run_bridge_with_lifecycle` callers can share it.
 #[derive(Debug, Default)]
 pub struct LifecycleDispatcher {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: Mutex<Inner>,
 }
 
@@ -37,6 +39,8 @@ struct Inner {
 const SUBSCRIBE_CAPACITY: usize = 4;
 
 impl LifecycleDispatcher {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }

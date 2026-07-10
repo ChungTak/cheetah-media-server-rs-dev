@@ -1,8 +1,14 @@
 use serde::{Deserialize, Serialize};
 
+/// `HlsModuleConfig` data structure.
+/// `HlsModuleConfig` 数据结构.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HlsModuleConfig {
+    /// `enabled` field of type `bool`.
+    /// `enabled` 字段，类型为 `bool`.
     pub enabled: bool,
+    /// `listen` field of type `String`.
+    /// `listen` 字段，类型为 `String`.
     pub listen: String,
     /// Target segment duration in milliseconds.
     pub segment_duration_ms: u64,
@@ -80,10 +86,20 @@ pub struct HlsModuleConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CacheControlConfig {
+    /// `master_playlist_max_age` field of type `i32`.
+    /// `master_playlist_max_age` 字段，类型为 `i32`.
     pub master_playlist_max_age: i32,
+    /// `chunklist_max_age` field of type `i32`.
+    /// `chunklist_max_age` 字段，类型为 `i32`.
     pub chunklist_max_age: i32,
+    /// `chunklist_with_directives_max_age` field of type `i32`.
+    /// `chunklist_with_directives_max_age` 字段，类型为 `i32`.
     pub chunklist_with_directives_max_age: i32,
+    /// `segment_max_age` field of type `i32`.
+    /// `segment_max_age` 字段，类型为 `i32`.
     pub segment_max_age: i32,
+    /// `partial_segment_max_age` field of type `i32`.
+    /// `partial_segment_max_age` 字段，类型为 `i32`.
     pub partial_segment_max_age: i32,
 }
 
@@ -127,7 +143,11 @@ impl Default for HlsRecordingConfig {
 /// HTTPS/TLS configuration.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HlsTlsConfig {
+    /// `cert_path` field of type `String`.
+    /// `cert_path` 字段，类型为 `String`.
     pub cert_path: String,
+    /// `key_path` field of type `String`.
+    /// `key_path` 字段，类型为 `String`.
     pub key_path: String,
 }
 
@@ -190,7 +210,11 @@ impl Default for HlsFileOutputConfig {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HlsPullJobConfig {
+    /// `name` field of type `String`.
+    /// `name` 字段，类型为 `String`.
     pub name: String,
+    /// `enabled` field of type `bool`.
+    /// `enabled` 字段，类型为 `bool`.
     pub enabled: bool,
     /// Remote HLS source URL (master or media playlist).
     pub source_url: String,
@@ -277,10 +301,14 @@ impl Default for HlsModuleConfig {
 }
 
 impl HlsModuleConfig {
+    /// Creates `value` from input.
+    /// 创建 `值` 来自 输入.
     pub fn from_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
     }
 
+    /// `default_json` function.
+    /// `default_json` 函数.
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap()
     }

@@ -17,6 +17,8 @@ use super::{RecordContainerWriter, RecordError, RecordFormat, RecordWriteEvent};
 /// Configuration for HLS record output.
 #[derive(Debug, Clone)]
 pub struct HlsFileWriterConfig {
+    /// `segment_duration_ms` field of type `u64`.
+    /// `segment_duration_ms` 字段，类型为 `u64`.
     pub segment_duration_ms: u64,
 }
 
@@ -38,17 +40,35 @@ struct SegmentMeta {
 
 /// Stateful HLS record writer.
 pub struct HlsFileWriter {
+    /// `config` field of type `HlsFileWriterConfig`.
+    /// `config` 字段，类型为 `HlsFileWriterConfig`.
     config: HlsFileWriterConfig,
+    /// `muxer` field.
+    /// `muxer` 字段.
     muxer: Option<Fmp4Muxer>,
+    /// `init_emitted` field of type `bool`.
+    /// `init_emitted` 字段，类型为 `bool`.
     init_emitted: bool,
+    /// `pending_samples` field.
+    /// `pending_samples` 字段.
     pending_samples: Vec<Fmp4MuxSample>,
+    /// `segment_start_dts_us` field.
+    /// `segment_start_dts_us` 字段.
     segment_start_dts_us: Option<i64>,
+    /// `next_seq` field of type `u32`.
+    /// `next_seq` 字段，类型为 `u32`.
     next_seq: u32,
+    /// `finalized` field of type `bool`.
+    /// `finalized` 字段，类型为 `bool`.
     finalized: bool,
+    /// `segments` field.
+    /// `segments` 字段.
     segments: Vec<SegmentMeta>,
 }
 
 impl HlsFileWriter {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: HlsFileWriterConfig) -> Self {
         Self {
             config,

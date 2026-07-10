@@ -1,9 +1,13 @@
 use super::*;
 use crate::media::TransportInterleaved;
+/// `header_value` function.
+/// `header_value` 函数.
 pub(super) fn header_value<'a>(req: &'a RtspRequest, name: &str) -> Option<&'a str> {
     req.header_value(name)
 }
 
+/// `default_payload_type` function.
+/// `default_payload_type` 函数.
 pub(super) fn default_payload_type(codec: cheetah_codec::CodecId) -> u8 {
     match codec {
         cheetah_codec::CodecId::G711U => 0,
@@ -13,10 +17,14 @@ pub(super) fn default_payload_type(codec: cheetah_codec::CodecId) -> u8 {
     }
 }
 
+/// `format_rtp_ssrc` function.
+/// `format_rtp_ssrc` 函数.
 pub(super) fn format_rtp_ssrc(ssrc: u32) -> String {
     format!("{ssrc:08X}")
 }
 
+/// `wildcard_bind_addr` function.
+/// `wildcard_bind_addr` 函数.
 pub(super) fn wildcard_bind_addr(peer: SocketAddr) -> SocketAddr {
     if peer.is_ipv4() {
         SocketAddr::from(([0, 0, 0, 0], 0))
@@ -25,6 +33,8 @@ pub(super) fn wildcard_bind_addr(peer: SocketAddr) -> SocketAddr {
     }
 }
 
+/// `publish_track_is_already_setup` function.
+/// `publish_track_is_already_setup` 函数.
 pub(super) fn publish_track_is_already_setup(publish: &PublishSession, track_id: TrackId) -> bool {
     publish.udp_tracks.contains_key(&track_id)
         || publish
@@ -37,6 +47,8 @@ pub(super) fn publish_track_is_already_setup(publish: &PublishSession, track_id:
             .any(|configured_track_id| *configured_track_id == track_id)
 }
 
+/// `interleaved_channels_in_use` function.
+/// `interleaved_channels_in_use` 函数.
 pub(super) fn interleaved_channels_in_use(
     track_channels: &HashMap<u8, TrackId>,
     rtcp_channels: &HashMap<u8, TrackId>,
@@ -49,6 +61,8 @@ pub(super) fn interleaved_channels_in_use(
         || rtcp_channels.contains_key(&rtcp_channel)
 }
 
+/// `play_interleaved_channels_conflict` function.
+/// `play_interleaved_channels_conflict` 函数.
 pub(super) fn play_interleaved_channels_conflict(
     play_tracks: &HashMap<TrackId, PlayTrackState>,
     target_track_id: TrackId,
@@ -74,6 +88,8 @@ pub(super) fn play_interleaved_channels_conflict(
     })
 }
 
+/// `next_publish_interleaved_channels` function.
+/// `next_publish_interleaved_channels` 函数.
 pub(super) fn next_publish_interleaved_channels(
     track_channels: &HashMap<u8, TrackId>,
     rtcp_channels: &HashMap<u8, TrackId>,
@@ -90,6 +106,8 @@ pub(super) fn next_publish_interleaved_channels(
     None
 }
 
+/// `next_play_interleaved_channels` function.
+/// `next_play_interleaved_channels` 函数.
 pub(super) fn next_play_interleaved_channels(
     play_tracks: &HashMap<TrackId, PlayTrackState>,
     target_track_id: TrackId,
@@ -111,6 +129,8 @@ pub(super) fn next_play_interleaved_channels(
     None
 }
 
+/// `publish_configured_track_count` function.
+/// `publish_configured_track_count` 函数.
 pub(super) fn publish_configured_track_count(publish: &PublishSession) -> usize {
     let mut track_ids = HashSet::new();
     for track_id in publish.udp_tracks.keys().copied() {
@@ -125,10 +145,14 @@ pub(super) fn publish_configured_track_count(publish: &PublishSession) -> usize 
     track_ids.len()
 }
 
+/// `runtime_unix_time_micros` function.
+/// `runtime_unix_time_micros` 函数.
 pub(super) fn runtime_unix_time_micros(runtime_api: &Arc<dyn RuntimeApi>) -> u64 {
     runtime_api.now().as_micros()
 }
 
+/// `normalize_play_range_header` function.
+/// `normalize_play_range_header` 函数.
 pub(super) fn normalize_play_range_header(raw: &str) -> Option<String> {
     let value = raw.trim();
     if value.is_empty() || value.contains('\r') || value.contains('\n') {
@@ -170,6 +194,8 @@ pub(super) fn normalize_play_range_header(raw: &str) -> Option<String> {
     Some(format!("npt={start}-{end}"))
 }
 
+/// Parses `play_range_header` from input.
+/// 解析 `play_range_header` 来自 输入.
 pub(super) fn parse_play_range_header(
     raw: Option<&str>,
 ) -> Result<Option<String>, (u16, &'static str, &'static [u8])> {
@@ -183,6 +209,8 @@ pub(super) fn parse_play_range_header(
     ))
 }
 
+/// Parses `request_range_scale_headers` from input.
+/// 解析 `request_range_scale_headers` 来自 输入.
 pub(super) fn parse_request_range_scale_headers(
     req: &RtspRequest,
 ) -> Result<Option<String>, RtspErrorResponse> {
@@ -190,6 +218,8 @@ pub(super) fn parse_request_range_scale_headers(
     parse_play_range_header(header_value(req, "range"))
 }
 
+/// `validate_play_scale_header` function.
+/// `validate_play_scale_header` 函数.
 pub(super) fn validate_play_scale_header(
     raw: Option<&str>,
 ) -> Result<(), (u16, &'static str, &'static [u8])> {
@@ -213,6 +243,8 @@ pub(super) fn validate_play_scale_header(
     Ok(())
 }
 
+/// Returns `true` if `valid_npt_range_part` is true.
+/// 返回 `真` 如果 `valid_npt_range_part` is 真.
 pub(super) fn is_valid_npt_range_part(value: &str) -> bool {
     value.eq_ignore_ascii_case("now")
         || value
@@ -220,6 +252,8 @@ pub(super) fn is_valid_npt_range_part(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || b == b'.' || b == b':')
 }
 
+/// Parses `npt_seconds` from input.
+/// 解析 `npt_seconds` 来自 输入.
 pub(super) fn parse_npt_seconds(value: &str) -> Option<f64> {
     if value.is_empty() || value.eq_ignore_ascii_case("now") {
         return None;

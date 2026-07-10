@@ -7,43 +7,87 @@ use crate::request::{
     HttpResponseHead, StreamKeyParts, TsTransport, WebSocketMessage,
 };
 
+/// `TsCoreCommand` enumeration.
+/// `TsCoreCommand` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TsCoreCommand {
+    /// `SendTsBytes` variant.
+    /// `SendTsBytes` 变体.
     SendTsBytes(Bytes),
+    /// `Close` variant.
+    /// `Close` 变体.
     Close,
 }
 
+/// `TsCoreInput` enumeration.
+/// `TsCoreInput` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TsCoreInput {
+    /// `RequestHead` variant.
+    /// `RequestHead` 变体.
     RequestHead(HttpRequestHead),
+    /// `WebSocketMessage` variant.
+    /// `WebSocketMessage` 变体.
     WebSocketMessage(WebSocketMessage),
+    /// `Command` variant.
+    /// `Command` 变体.
     Command(TsCoreCommand),
 }
 
+/// `CloseReason` enumeration.
+/// `CloseReason` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseReason {
+    /// `Normal` variant.
+    /// `Normal` 变体.
     Normal,
+    /// `BadRequest` variant.
+    /// `BadRequest` 变体.
     BadRequest,
+    /// `MethodNotAllowed` variant.
+    /// `MethodNotAllowed` 变体.
     MethodNotAllowed,
+    /// `ProtocolError` variant.
+    /// `ProtocolError` 变体.
     ProtocolError,
 }
 
+/// `TsCoreEvent` enumeration.
+/// `TsCoreEvent` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TsCoreEvent {
+    /// `PlayRequested` variant.
+    /// `PlayRequested` 变体.
     PlayRequested {
         stream_key: StreamKeyParts,
         transport: TsTransport,
     },
+    /// `PeerClosed` variant.
+    /// `PeerClosed` 变体.
     PeerClosed,
 }
 
+/// `TsCoreOutput` enumeration.
+/// `TsCoreOutput` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TsCoreOutput {
+    /// `SendHttpResponse` variant.
+    /// `SendHttpResponse` 变体.
     SendHttpResponse(HttpResponseHead),
+    /// `SendBytes` variant.
+    /// `SendBytes` 变体.
     SendBytes(Bytes),
+    /// `SendWebSocketBinary` variant.
+    /// `SendWebSocketBinary` 变体.
     SendWebSocketBinary(Bytes),
+    /// `SendWebSocketPong` variant.
+    /// `SendWebSocketPong` 变体.
     SendWebSocketPong(Bytes),
+    /// `Event` variant.
+    /// `Event` 变体.
     Event(TsCoreEvent),
+    /// `Close` variant.
+    /// `Close` 变体.
     Close { reason: CloseReason },
 }
 
@@ -58,6 +102,8 @@ enum SessionState {
 /// Sans-I/O TS protocol session state machine.
 #[derive(Debug)]
 pub struct TsCore {
+    /// `state` field of type `SessionState`.
+    /// `state` 字段，类型为 `SessionState`.
     state: SessionState,
 }
 
@@ -68,12 +114,16 @@ impl Default for TsCore {
 }
 
 impl TsCore {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             state: SessionState::Idle,
         }
     }
 
+    /// `handle_input` function.
+    /// `handle_input` 函数.
     pub fn handle_input(&mut self, input: TsCoreInput) -> Vec<TsCoreOutput> {
         match input {
             TsCoreInput::RequestHead(head) => self.handle_request_head(head),

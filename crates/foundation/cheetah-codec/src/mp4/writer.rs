@@ -46,12 +46,20 @@ pub enum Mp4WriteEvent {
 
 /// Sample-table aware writer.
 pub struct Mp4Writer {
+    /// `config` field of type `Mp4WriterConfig`.
+    /// `config` 字段，类型为 `Mp4WriterConfig`.
     config: Mp4WriterConfig,
+    /// `tracks` field.
+    /// `tracks` 字段.
     tracks: Vec<TrackBuilder>,
+    /// `payload` field of type `BytesMut`.
+    /// `payload` 字段，类型为 `BytesMut`.
     payload: BytesMut,
 }
 
 impl Mp4Writer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: Mp4WriterConfig, tracks: &[TrackInfo]) -> Result<Self, Mp4Error> {
         if tracks.is_empty() {
             return Err(Mp4Error::UnsupportedTrack("no tracks"));

@@ -10,11 +10,21 @@ use tracing::warn;
 
 use crate::config::HttpFlvPullJobConfig;
 
+/// `PullReadLimits` data structure.
+/// `PullReadLimits` 数据结构.
 #[derive(Debug, Clone, Copy)]
 pub struct PullReadLimits {
+    /// `max_response_header_bytes` field of type `usize`.
+    /// `max_response_header_bytes` 字段，类型为 `usize`.
     pub max_response_header_bytes: usize,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     pub read_buffer_size: usize,
+    /// `max_demux_buffer_bytes` field of type `usize`.
+    /// `max_demux_buffer_bytes` 字段，类型为 `usize`.
     pub max_demux_buffer_bytes: usize,
+    /// `max_websocket_message_bytes` field of type `usize`.
+    /// `max_websocket_message_bytes` 字段，类型为 `usize`.
     pub max_websocket_message_bytes: usize,
 }
 
@@ -29,43 +39,83 @@ impl Default for PullReadLimits {
     }
 }
 
+/// `HttpFlvPullResult` data structure.
+/// `HttpFlvPullResult` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpFlvPullResult {
+    /// `header` field.
+    /// `header` 字段.
     pub header: Option<FlvHeader>,
+    /// `tags` field.
+    /// `tags` 字段.
     pub tags: Vec<FlvTag>,
+    /// `previous_tag_size_mismatch_count` field of type `u64`.
+    /// `previous_tag_size_mismatch_count` 字段，类型为 `u64`.
     pub previous_tag_size_mismatch_count: u64,
 }
 
+/// `HttpFlvPullError` enumeration.
+/// `HttpFlvPullError` 枚举.
 #[derive(Debug, thiserror::Error)]
 pub enum HttpFlvPullError {
+    /// `InvalidUrl` variant.
+    /// `InvalidUrl` 变体.
     #[error("invalid pull url: {0}")]
     InvalidUrl(String),
+    /// `UnsupportedScheme` variant.
+    /// `UnsupportedScheme` 变体.
     #[error("unsupported pull url scheme: {scheme}")]
     UnsupportedScheme { scheme: String },
+    /// `Resolve` variant.
+    /// `Resolve` 变体.
     #[error("resolve source host failed: {0}")]
     Resolve(String),
+    /// `Connect` variant.
+    /// `Connect` 变体.
     #[error("connect source failed: {0}")]
     Connect(String),
+    /// `WriteRequest` variant.
+    /// `WriteRequest` 变体.
     #[error("write pull request failed: {0}")]
     WriteRequest(String),
+    /// `ResponseHeaderTooLarge` variant.
+    /// `ResponseHeaderTooLarge` 变体.
     #[error("response header exceeds limit: {actual} > {limit}")]
     ResponseHeaderTooLarge { actual: usize, limit: usize },
+    /// `ResponseHeaderIncomplete` variant.
+    /// `ResponseHeaderIncomplete` 变体.
     #[error("source closed before response header completed")]
     ResponseHeaderIncomplete,
+    /// `InvalidStatusLine` variant.
+    /// `InvalidStatusLine` 变体.
     #[error("invalid response status line")]
     InvalidStatusLine,
+    /// `BadStatusCode` variant.
+    /// `BadStatusCode` 变体.
     #[error("source response status is not success: {status_code}")]
     BadStatusCode { status_code: u16 },
+    /// `InvalidWebSocketAccept` variant.
+    /// `InvalidWebSocketAccept` 变体.
     #[error("invalid websocket accept header")]
     InvalidWebSocketAccept,
+    /// `WebSocketProtocol` variant.
+    /// `WebSocketProtocol` 变体.
     #[error("websocket protocol error: {0}")]
     WebSocketProtocol(String),
+    /// `InvalidChunkedEncoding` variant.
+    /// `InvalidChunkedEncoding` 变体.
     #[error("invalid chunked response body: {0}")]
     InvalidChunkedEncoding(String),
+    /// `ReadBody` variant.
+    /// `ReadBody` 变体.
     #[error("read source body failed: {0}")]
     ReadBody(String),
+    /// `Cancelled` variant.
+    /// `Cancelled` 变体.
     #[error("pull cancelled")]
     Cancelled,
+    /// `FlvDemux` variant.
+    /// `FlvDemux` 变体.
     #[error("flv demux failed: {0}")]
     FlvDemux(FlvStreamError),
 }
@@ -226,6 +276,8 @@ fn parse_port(port_raw: &str) -> Result<u16, HttpFlvPullError> {
     Ok(port)
 }
 
+/// `run_pull_job_supervisor` function.
+/// `run_pull_job_supervisor` 函数.
 pub async fn run_pull_job_supervisor(
     runtime_api: Arc<dyn RuntimeApi>,
     job: HttpFlvPullJobConfig,
@@ -282,6 +334,8 @@ pub async fn run_pull_job_supervisor(
     }
 }
 
+/// `pull_flv_once` function.
+/// `pull_flv_once` 函数.
 pub async fn pull_flv_once(
     runtime_api: Arc<dyn RuntimeApi>,
     source_url: &str,
@@ -295,6 +349,8 @@ pub async fn pull_flv_once(
     }
 }
 
+/// `pull_http_flv_once` function.
+/// `pull_http_flv_once` 函数.
 pub async fn pull_http_flv_once(
     runtime_api: Arc<dyn RuntimeApi>,
     source_url: &str,
@@ -314,6 +370,8 @@ pub async fn pull_http_flv_once(
     pull_http_flv_once_parsed(runtime_api, parsed, cancel, limits).await
 }
 
+/// `pull_ws_flv_once` function.
+/// `pull_ws_flv_once` 函数.
 pub async fn pull_ws_flv_once(
     runtime_api: Arc<dyn RuntimeApi>,
     source_url: &str,
@@ -645,6 +703,8 @@ fn decode_ws_frame(
     Ok(Some((WsFrame { opcode, payload }, offset + payload_len)))
 }
 
+/// `fuzz_http_response_head` function.
+/// `fuzz_http_response_head` 函数.
 #[doc(hidden)]
 pub fn fuzz_http_response_head(
     raw: &[u8],
@@ -665,6 +725,8 @@ pub fn fuzz_http_response_head(
     Ok(())
 }
 
+/// `fuzz_decode_ws_frames` function.
+/// `fuzz_decode_ws_frames` 函数.
 #[doc(hidden)]
 pub fn fuzz_decode_ws_frames(
     raw: &[u8],

@@ -1,4 +1,6 @@
 use super::*;
+/// `send_basic_ok_with_session` function.
+/// `send_basic_ok_with_session` 函数.
 pub(super) async fn send_basic_ok_with_session(
     connection_id: RtspConnectionId,
     cseq: Option<u32>,
@@ -29,6 +31,8 @@ pub(super) async fn send_basic_ok_with_session(
     .await;
 }
 
+/// `handle_get_parameter` function.
+/// `handle_get_parameter` 函数.
 pub(super) async fn handle_get_parameter(
     connection_id: RtspConnectionId,
     req: RtspRequest,
@@ -60,6 +64,8 @@ pub(super) async fn handle_get_parameter(
     .await;
 }
 
+/// `send_response` function.
+/// `send_response` 函数.
 pub(super) async fn send_response(
     command_tx: &RtspCoreCommandSender,
     connection_id: RtspConnectionId,
@@ -89,6 +95,8 @@ pub(super) async fn send_response(
     }
 }
 
+/// Builds `rtp_info_header` output.
+/// 构建 `rtp_info_header` 输出.
 pub(super) fn build_rtp_info_header(
     base_uri: Option<&str>,
     control_to_track: &HashMap<String, TrackId>,
@@ -143,6 +151,8 @@ pub(super) fn build_rtp_info_header(
     )
 }
 
+/// Builds `play_response_headers` output.
+/// 构建 `play_response_headers` 输出.
 pub(super) fn build_play_response_headers(
     session_id: String,
     response_range: String,
@@ -163,6 +173,8 @@ pub(super) fn build_play_response_headers(
     headers
 }
 
+/// Builds `pause_response_headers` output.
+/// 构建 `pause_response_headers` 输出.
 pub(super) fn build_pause_response_headers(
     session_id: String,
     response_range: Option<String>,
@@ -179,6 +191,8 @@ pub(super) fn build_pause_response_headers(
     headers
 }
 
+/// Builds `get_parameter_response` output.
+/// 构建 `get_parameter_response` 输出.
 pub(super) fn build_get_parameter_response(
     session_id: Option<String>,
     request_content_type: Option<&str>,
@@ -204,14 +218,20 @@ pub(super) fn build_get_parameter_response(
     (headers, request_body)
 }
 
+/// `session_header_value` function.
+/// `session_header_value` 函数.
 pub(super) fn session_header_value(session_id: &str, session_timeout_secs: u32) -> String {
     format!("{session_id};timeout={session_timeout_secs}")
 }
 
+/// `resolve_play_response_range` function.
+/// `resolve_play_response_range` 函数.
 pub(super) fn resolve_play_response_range(requested_range: Option<String>) -> String {
     requested_range.unwrap_or_else(|| "npt=0.000-".to_string())
 }
 
+/// `resolve_pause_response_range` function.
+/// `resolve_pause_response_range` 函数.
 pub(super) fn resolve_pause_response_range(
     requested_range: Option<String>,
     last_play_range: Option<&str>,
@@ -225,6 +245,8 @@ pub(super) fn resolve_pause_response_range(
     }
 }
 
+/// `apply_play_response_range` function.
+/// `apply_play_response_range` 函数.
 pub(super) fn apply_play_response_range(
     state: &mut RtspConnectionState,
     requested_range: Option<String>,
@@ -234,6 +256,8 @@ pub(super) fn apply_play_response_range(
     response_range
 }
 
+/// `apply_pause_response_range` function.
+/// `apply_pause_response_range` 函数.
 pub(super) fn apply_pause_response_range(
     state: &mut RtspConnectionState,
     requested_range: Option<String>,

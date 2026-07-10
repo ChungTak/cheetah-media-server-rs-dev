@@ -78,22 +78,46 @@ pub enum P2pClientJobState {
 /// Snapshot returned by the `/list` endpoint.
 #[derive(Debug, Clone)]
 pub struct P2pClientJobSnapshot {
+    /// `session_id` field of type `WebRtcSessionId`.
+    /// `session_id` 字段，类型为 `WebRtcSessionId`.
     pub session_id: WebRtcSessionId,
+    /// `kind` field of type `P2pJobKind`.
+    /// `kind` 字段，类型为 `P2pJobKind`.
     pub kind: P2pJobKind,
+    /// `url` field of type `String`.
+    /// `url` 字段，类型为 `String`.
     pub url: String,
+    /// `state` field of type `P2pClientJobState`.
+    /// `state` 字段，类型为 `P2pClientJobState`.
     pub state: P2pClientJobState,
+    /// `last_error` field.
+    /// `last_error` 字段.
     pub last_error: Option<String>,
+    /// `signaling_url` field of type `String`.
+    /// `signaling_url` 字段，类型为 `String`.
     pub signaling_url: String,
+    /// `peer_room_id` field of type `String`.
+    /// `peer_room_id` 字段，类型为 `String`.
     pub peer_room_id: String,
+    /// `stream_key` field of type `String`.
+    /// `stream_key` 字段，类型为 `String`.
     pub stream_key: String,
 }
 
+/// `P2pClientJobError` enumeration.
+/// `P2pClientJobError` 枚举.
 #[derive(Debug, Error)]
 pub enum P2pClientJobError {
+    /// `InvalidUrl` variant.
+    /// `InvalidUrl` 变体.
     #[error("invalid url: {0}")]
     InvalidUrl(String),
+    /// `Conflict` variant.
+    /// `Conflict` 变体.
     #[error("job already running for {0}")]
     Conflict(String),
+    /// `DriverUnavailable` variant.
+    /// `DriverUnavailable` 变体.
     #[error("driver unavailable")]
     DriverUnavailable,
 }
@@ -103,8 +127,14 @@ pub enum P2pClientJobError {
 /// transport types.
 #[derive(Debug, Clone)]
 pub struct P2pClientJobRequest {
+    /// `url` field of type `String`.
+    /// `url` 字段，类型为 `String`.
     pub url: String,
+    /// `kind` field of type `P2pJobKind`.
+    /// `kind` 字段，类型为 `P2pJobKind`.
     pub kind: P2pJobKind,
+    /// `allow_private_ips` field of type `bool`.
+    /// `allow_private_ips` 字段，类型为 `bool`.
     pub allow_private_ips: bool,
     /// Override the entire signaling URL. When `None`, the registry
     /// derives `ws(s)://host:port/index/api/webrtc` from the URL.
@@ -138,6 +168,8 @@ impl Default for P2pClientJobRequest {
 /// one per module instance.
 #[derive(Default)]
 pub struct P2pClientJobRegistry {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: Mutex<HashMap<WebRtcSessionId, P2pClientJobEntry>>,
 }
 
@@ -148,10 +180,14 @@ struct P2pClientJobEntry {
 }
 
 impl P2pClientJobRegistry {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
 
+    /// `list` function.
+    /// `list` 函数.
     pub fn list(&self) -> Vec<P2pClientJobSnapshot> {
         self.inner
             .lock()
@@ -160,6 +196,8 @@ impl P2pClientJobRegistry {
             .collect()
     }
 
+    /// `stop` function.
+    /// `stop` 函数.
     pub fn stop(&self, session_id: WebRtcSessionId) -> bool {
         let entry = self.inner.lock().remove(&session_id);
         match entry {
@@ -171,6 +209,8 @@ impl P2pClientJobRegistry {
         }
     }
 
+    /// `stop_all` function.
+    /// `stop_all` 函数.
     pub fn stop_all(&self) {
         let entries: Vec<_> = self.inner.lock().drain().collect();
         for (_, entry) in entries {
@@ -214,11 +254,23 @@ impl P2pClientJobRegistry {
 /// constructs the runtime and the spawn callsite stays inside this
 /// crate.
 pub struct P2pClientJobRuntime {
+    /// `registry` field.
+    /// `registry` 字段.
     pub registry: Arc<P2pClientJobRegistry>,
+    /// `keepers` field.
+    /// `keepers` 字段.
     pub keepers: Arc<P2pRoomKeeperRegistry>,
+    /// `driver` field.
+    /// `driver` 字段.
     pub driver: Arc<WebRtcDriverHandle>,
+    /// `lifecycle` field.
+    /// `lifecycle` 字段.
     pub lifecycle: Arc<LifecycleDispatcher>,
+    /// `engine` field of type `EngineContext`.
+    /// `engine` 字段，类型为 `EngineContext`.
     pub engine: EngineContext,
+    /// `parent_cancel` field of type `CancellationToken`.
+    /// `parent_cancel` 字段，类型为 `CancellationToken`.
     pub parent_cancel: CancellationToken,
     /// `AnswerDispatcher` used to wait for the driver's `OfferReady`
     /// SDP. The bridge subscribes through this dispatcher instead of

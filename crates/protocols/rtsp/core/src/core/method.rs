@@ -1,25 +1,57 @@
 use std::fmt;
 use std::str::FromStr;
 
+/// `RtspMethod` enumeration.
+/// `RtspMethod` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RtspMethod {
+    /// `Get` variant.
+    /// `Get` 变体.
     Get,
+    /// `Post` variant.
+    /// `Post` 变体.
     Post,
+    /// `Options` variant.
+    /// `Options` 变体.
     Options,
+    /// `Describe` variant.
+    /// `Describe` 变体.
     Describe,
+    /// `Announce` variant.
+    /// `Announce` 变体.
     Announce,
+    /// `Setup` variant.
+    /// `Setup` 变体.
     Setup,
+    /// `Play` variant.
+    /// `Play` 变体.
     Play,
+    /// `Pause` variant.
+    /// `Pause` 变体.
     Pause,
+    /// `Teardown` variant.
+    /// `Teardown` 变体.
     Teardown,
+    /// `GetParameter` variant.
+    /// `GetParameter` 变体.
     GetParameter,
+    /// `SetParameter` variant.
+    /// `SetParameter` 变体.
     SetParameter,
+    /// `Redirect` variant.
+    /// `Redirect` 变体.
     Redirect,
+    /// `Record` variant.
+    /// `Record` 变体.
     Record,
+    /// `Extension` variant.
+    /// `Extension` 变体.
     Extension(String),
 }
 
 impl RtspMethod {
+    /// `as_str` function.
+    /// `as_str` 函数.
     pub fn as_str(&self) -> &str {
         match self {
             Self::Get => "GET",
@@ -39,6 +71,8 @@ impl RtspMethod {
         }
     }
 
+    /// `parse` function.
+    /// `parse` 函数.
     pub(crate) fn parse(value: &str) -> Self {
         match value {
             "GET" => Self::Get,

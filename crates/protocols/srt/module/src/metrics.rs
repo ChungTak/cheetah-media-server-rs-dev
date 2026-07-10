@@ -5,57 +5,141 @@ use cheetah_srt_core::SrtStreamMode;
 use cheetah_srt_driver_tokio::SrtDriverStats;
 use serde::Serialize;
 
+/// `SrtModuleMetrics` data structure.
+/// `SrtModuleMetrics` 数据结构.
 #[derive(Debug, Default)]
 pub struct SrtModuleMetrics {
+    /// `connections_active` field of type `AtomicU64`.
+    /// `connections_active` 字段，类型为 `AtomicU64`.
     connections_active: AtomicU64,
+    /// `connections_total` field of type `AtomicU64`.
+    /// `connections_total` 字段，类型为 `AtomicU64`.
     connections_total: AtomicU64,
+    /// `publish_connections_total` field of type `AtomicU64`.
+    /// `publish_connections_total` 字段，类型为 `AtomicU64`.
     publish_connections_total: AtomicU64,
+    /// `play_connections_total` field of type `AtomicU64`.
+    /// `play_connections_total` 字段，类型为 `AtomicU64`.
     play_connections_total: AtomicU64,
+    /// `bytes_in_total` field of type `AtomicU64`.
+    /// `bytes_in_total` 字段，类型为 `AtomicU64`.
     bytes_in_total: AtomicU64,
+    /// `bytes_out_total` field of type `AtomicU64`.
+    /// `bytes_out_total` 字段，类型为 `AtomicU64`.
     bytes_out_total: AtomicU64,
+    /// `packets_in_total` field of type `AtomicU64`.
+    /// `packets_in_total` 字段，类型为 `AtomicU64`.
     packets_in_total: AtomicU64,
+    /// `packets_out_total` field of type `AtomicU64`.
+    /// `packets_out_total` 字段，类型为 `AtomicU64`.
     packets_out_total: AtomicU64,
+    /// `retransmit_total` field of type `AtomicU64`.
+    /// `retransmit_total` 字段，类型为 `AtomicU64`.
     retransmit_total: AtomicU64,
+    /// `lost_packets_total` field of type `AtomicU64`.
+    /// `lost_packets_total` 字段，类型为 `AtomicU64`.
     lost_packets_total: AtomicU64,
+    /// `duplicate_packets_total` field of type `AtomicU64`.
+    /// `duplicate_packets_total` 字段，类型为 `AtomicU64`.
     duplicate_packets_total: AtomicU64,
+    /// `send_queue_depth` field of type `AtomicU64`.
+    /// `send_queue_depth` 字段，类型为 `AtomicU64`.
     send_queue_depth: AtomicU64,
+    /// `recv_queue_depth` field of type `AtomicU64`.
+    /// `recv_queue_depth` 字段，类型为 `AtomicU64`.
     recv_queue_depth: AtomicU64,
+    /// `rtt_micros` field of type `AtomicU64`.
+    /// `rtt_micros` 字段，类型为 `AtomicU64`.
     rtt_micros: AtomicU64,
+    /// `jitter_micros` field of type `AtomicU64`.
+    /// `jitter_micros` 字段，类型为 `AtomicU64`.
     jitter_micros: AtomicU64,
+    /// `key_refresh_total` field of type `AtomicU64`.
+    /// `key_refresh_total` 字段，类型为 `AtomicU64`.
     key_refresh_total: AtomicU64,
+    /// `disconnect_total` field of type `AtomicU64`.
+    /// `disconnect_total` 字段，类型为 `AtomicU64`.
     disconnect_total: AtomicU64,
+    /// `driver_errors_total` field of type `AtomicU64`.
+    /// `driver_errors_total` 字段，类型为 `AtomicU64`.
     driver_errors_total: AtomicU64,
+    /// `send_queue_full_total` field of type `AtomicU64`.
+    /// `send_queue_full_total` 字段，类型为 `AtomicU64`.
     send_queue_full_total: AtomicU64,
 }
 
+/// `SrtModuleMetricsSnapshot` data structure.
+/// `SrtModuleMetricsSnapshot` 数据结构.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct SrtModuleMetricsSnapshot {
+    /// `connections_active` field of type `u64`.
+    /// `connections_active` 字段，类型为 `u64`.
     pub connections_active: u64,
+    /// `connections_total` field of type `u64`.
+    /// `connections_total` 字段，类型为 `u64`.
     pub connections_total: u64,
+    /// `publish_connections_total` field of type `u64`.
+    /// `publish_connections_total` 字段，类型为 `u64`.
     pub publish_connections_total: u64,
+    /// `play_connections_total` field of type `u64`.
+    /// `play_connections_total` 字段，类型为 `u64`.
     pub play_connections_total: u64,
+    /// `bytes_in_total` field of type `u64`.
+    /// `bytes_in_total` 字段，类型为 `u64`.
     pub bytes_in_total: u64,
+    /// `bytes_out_total` field of type `u64`.
+    /// `bytes_out_total` 字段，类型为 `u64`.
     pub bytes_out_total: u64,
+    /// `packets_in_total` field of type `u64`.
+    /// `packets_in_total` 字段，类型为 `u64`.
     pub packets_in_total: u64,
+    /// `packets_out_total` field of type `u64`.
+    /// `packets_out_total` 字段，类型为 `u64`.
     pub packets_out_total: u64,
+    /// `retransmit_total` field of type `u64`.
+    /// `retransmit_total` 字段，类型为 `u64`.
     pub retransmit_total: u64,
+    /// `lost_packets_total` field of type `u64`.
+    /// `lost_packets_total` 字段，类型为 `u64`.
     pub lost_packets_total: u64,
+    /// `duplicate_packets_total` field of type `u64`.
+    /// `duplicate_packets_total` 字段，类型为 `u64`.
     pub duplicate_packets_total: u64,
+    /// `send_queue_depth` field of type `u64`.
+    /// `send_queue_depth` 字段，类型为 `u64`.
     pub send_queue_depth: u64,
+    /// `recv_queue_depth` field of type `u64`.
+    /// `recv_queue_depth` 字段，类型为 `u64`.
     pub recv_queue_depth: u64,
+    /// `rtt_micros` field of type `u64`.
+    /// `rtt_micros` 字段，类型为 `u64`.
     pub rtt_micros: u64,
+    /// `jitter_micros` field of type `u64`.
+    /// `jitter_micros` 字段，类型为 `u64`.
     pub jitter_micros: u64,
+    /// `key_refresh_total` field of type `u64`.
+    /// `key_refresh_total` 字段，类型为 `u64`.
     pub key_refresh_total: u64,
+    /// `disconnect_total` field of type `u64`.
+    /// `disconnect_total` 字段，类型为 `u64`.
     pub disconnect_total: u64,
+    /// `driver_errors_total` field of type `u64`.
+    /// `driver_errors_total` 字段，类型为 `u64`.
     pub driver_errors_total: u64,
+    /// `send_queue_full_total` field of type `u64`.
+    /// `send_queue_full_total` 字段，类型为 `u64`.
     pub send_queue_full_total: u64,
 }
 
 impl SrtModuleMetrics {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
 
+    /// `inc_connection` function.
+    /// `inc_connection` 函数.
     pub fn inc_connection(&self, mode: SrtStreamMode) {
         self.connections_active.fetch_add(1, Ordering::Relaxed);
         self.connections_total.fetch_add(1, Ordering::Relaxed);
@@ -70,15 +154,21 @@ impl SrtModuleMetrics {
         }
     }
 
+    /// `dec_connection` function.
+    /// `dec_connection` 函数.
     pub fn dec_connection(&self) {
         decrement_saturating(&self.connections_active);
         self.disconnect_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// `inc_key_refresh` function.
+    /// `inc_key_refresh` 函数.
     pub fn inc_key_refresh(&self) {
         self.key_refresh_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// `inc_driver_error` function.
+    /// `inc_driver_error` 函数.
     pub fn inc_driver_error(&self, message: &str) {
         self.driver_errors_total.fetch_add(1, Ordering::Relaxed);
         if message == "SRT send queue full" {
@@ -86,6 +176,8 @@ impl SrtModuleMetrics {
         }
     }
 
+    /// `add_stats_delta` function.
+    /// `add_stats_delta` 函数.
     pub fn add_stats_delta(&self, previous: Option<&SrtDriverStats>, current: &SrtDriverStats) {
         let baseline = previous.cloned().unwrap_or_default();
         self.bytes_in_total.fetch_add(
@@ -138,6 +230,8 @@ impl SrtModuleMetrics {
             .store(u64::from(current.receiver_jitter_micros), Ordering::Relaxed);
     }
 
+    /// `snapshot` function.
+    /// `snapshot` 函数.
     pub fn snapshot(&self) -> SrtModuleMetricsSnapshot {
         SrtModuleMetricsSnapshot {
             connections_active: self.connections_active.load(Ordering::Relaxed),

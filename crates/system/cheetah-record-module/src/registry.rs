@@ -10,14 +10,24 @@ use parking_lot::RwLock;
 
 use crate::metadata::{RecordFileMetadata, RecordFileQuery, RecordTaskMetadata, RecordTaskState};
 
+/// `RegistryError` enumeration.
+/// `RegistryError` 枚举.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum RegistryError {
+    /// `TaskNotFound` variant.
+    /// `TaskNotFound` 变体.
     #[error("task not found: {0}")]
     TaskNotFound(String),
+    /// `DuplicateTask` variant.
+    /// `DuplicateTask` 变体.
     #[error("task already exists: {0}")]
     DuplicateTask(String),
+    /// `FileNotFound` variant.
+    /// `FileNotFound` 变体.
     #[error("file not found: {0}")]
     FileNotFound(String),
+    /// `CapacityExceeded` variant.
+    /// `CapacityExceeded` 变体.
     #[error("registry capacity exceeded ({0})")]
     CapacityExceeded(usize),
 }
@@ -26,12 +36,20 @@ pub enum RegistryError {
 /// by `RecordModule` using `metadata_flush_interval_ms`.
 #[derive(Default)]
 pub struct RecordRegistry {
+    /// `tasks` field.
+    /// `tasks` 字段.
     tasks: RwLock<HashMap<String, RecordTaskMetadata>>,
+    /// `files` field.
+    /// `files` 字段.
     files: RwLock<HashMap<String, RecordFileMetadata>>,
+    /// `capacity` field of type `usize`.
+    /// `capacity` 字段，类型为 `usize`.
     capacity: usize,
 }
 
 impl RecordRegistry {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(capacity: usize) -> Self {
         Self {
             tasks: RwLock::new(HashMap::new()),
@@ -40,18 +58,26 @@ impl RecordRegistry {
         }
     }
 
+    /// `capacity` function.
+    /// `capacity` 函数.
     pub fn capacity(&self) -> usize {
         self.capacity
     }
 
+    /// `task_count` function.
+    /// `task_count` 函数.
     pub fn task_count(&self) -> usize {
         self.tasks.read().len()
     }
 
+    /// `file_count` function.
+    /// `file_count` 函数.
     pub fn file_count(&self) -> usize {
         self.files.read().len()
     }
 
+    /// `insert_task` function.
+    /// `insert_task` 函数.
     pub fn insert_task(&self, task: RecordTaskMetadata) -> Result<(), RegistryError> {
         let mut tasks = self.tasks.write();
         if tasks.contains_key(&task.task_id) {
@@ -64,6 +90,8 @@ impl RecordRegistry {
         Ok(())
     }
 
+    /// `update_task_state` function.
+    /// `update_task_state` 函数.
     pub fn update_task_state(
         &self,
         task_id: &str,
@@ -77,6 +105,8 @@ impl RecordRegistry {
         Ok(())
     }
 
+    /// `remove_task` function.
+    /// `remove_task` 函数.
     pub fn remove_task(&self, task_id: &str) -> Result<RecordTaskMetadata, RegistryError> {
         self.tasks
             .write()
@@ -84,19 +114,27 @@ impl RecordRegistry {
             .ok_or_else(|| RegistryError::TaskNotFound(task_id.to_string()))
     }
 
+    /// `list_tasks` function.
+    /// `list_tasks` 函数.
     pub fn list_tasks(&self) -> Vec<RecordTaskMetadata> {
         self.tasks.read().values().cloned().collect()
     }
 
+    /// Returns the `task` value.
+    /// 返回 `task` 值.
     pub fn get_task(&self, task_id: &str) -> Option<RecordTaskMetadata> {
         self.tasks.read().get(task_id).cloned()
     }
 
+    /// `insert_file` function.
+    /// `insert_file` 函数.
     pub fn insert_file(&self, file: RecordFileMetadata) -> Result<(), RegistryError> {
         self.files.write().insert(file.file_id.clone(), file);
         Ok(())
     }
 
+    /// `remove_file` function.
+    /// `remove_file` 函数.
     pub fn remove_file(&self, file_id: &str) -> Result<RecordFileMetadata, RegistryError> {
         self.files
             .write()
@@ -104,6 +142,8 @@ impl RecordRegistry {
             .ok_or_else(|| RegistryError::FileNotFound(file_id.to_string()))
     }
 
+    /// `query_files` function.
+    /// `query_files` 函数.
     pub fn query_files(&self, query: &RecordFileQuery) -> Vec<RecordFileMetadata> {
         let files = self.files.read();
         let mut filtered: Vec<RecordFileMetadata> = files

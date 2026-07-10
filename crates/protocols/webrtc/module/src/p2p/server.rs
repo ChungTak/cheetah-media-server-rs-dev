@@ -50,10 +50,16 @@ impl Default for SignalingServerConfig {
     }
 }
 
+/// `SignalingServerError` enumeration.
+/// `SignalingServerError` 枚举.
 #[derive(Debug, Error)]
 pub enum SignalingServerError {
+    /// `Bind` variant.
+    /// `Bind` 变体.
     #[error("bind failed: {0}")]
     Bind(String),
+    /// `Accept` variant.
+    /// `Accept` 变体.
     #[error("accept failed: {0}")]
     Accept(String),
 }
@@ -70,6 +76,8 @@ impl From<WsServerError> for SignalingServerError {
 /// Information surfaced to the connection handler.
 #[derive(Debug, Clone)]
 pub struct InboundConnection {
+    /// `remote_addr` field of type `SocketAddr`.
+    /// `remote_addr` 字段，类型为 `SocketAddr`.
     pub remote_addr: SocketAddr,
 }
 

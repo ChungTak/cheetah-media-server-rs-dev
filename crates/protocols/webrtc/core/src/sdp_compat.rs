@@ -24,8 +24,14 @@ use serde::{Deserialize, Serialize};
 /// Outcome of running [`preprocess_remote_sdp`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SdpCompatReport {
+    /// `trimmed_trailing_whitespace` field of type `bool`.
+    /// `trimmed_trailing_whitespace` 字段，类型为 `bool`.
     pub trimmed_trailing_whitespace: bool,
+    /// `normalized_line_endings` field of type `bool`.
+    /// `normalized_line_endings` 字段，类型为 `bool`.
     pub normalized_line_endings: bool,
+    /// `appended_missing_terminator` field of type `bool`.
+    /// `appended_missing_terminator` 字段，类型为 `bool`.
     pub appended_missing_terminator: bool,
     /// True when `a=ssrc-group:SIM` was present without `a=rid` lines and
     /// the preprocessor injected synthetic `a=rid:r0/r1/r2` + `a=simulcast`.
@@ -35,6 +41,8 @@ pub struct SdpCompatReport {
 }
 
 impl SdpCompatReport {
+    /// Returns `true` if `modified` is true.
+    /// 返回 `真` 如果 `modified` is 真.
     pub fn is_modified(&self) -> bool {
         self.trimmed_trailing_whitespace
             || self.normalized_line_endings

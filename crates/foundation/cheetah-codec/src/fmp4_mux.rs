@@ -11,8 +11,14 @@ use crate::track::{CodecExtradata, CodecId, MediaKind, TrackInfo};
 /// Configuration for the fMP4 muxer.
 #[derive(Debug, Clone)]
 pub struct Fmp4MuxerConfig {
+    /// `include_styp` field of type `bool`.
+    /// `include_styp` 字段，类型为 `bool`.
     pub include_styp: bool,
+    /// `include_sidx` field of type `bool`.
+    /// `include_sidx` 字段，类型为 `bool`.
     pub include_sidx: bool,
+    /// `max_samples_per_fragment` field of type `usize`.
+    /// `max_samples_per_fragment` 字段，类型为 `usize`.
     pub max_samples_per_fragment: usize,
 }
 
@@ -29,15 +35,25 @@ impl Default for Fmp4MuxerConfig {
 /// Events produced by the muxer.
 #[derive(Debug, Clone)]
 pub enum Fmp4MuxEvent {
+    /// `InitSegment` variant.
+    /// `InitSegment` 变体.
     InitSegment(Bytes),
+    /// `MediaSegment` variant.
+    /// `MediaSegment` 变体.
     MediaSegment { data: Bytes, keyframe: bool },
+    /// `Diagnostic` variant.
+    /// `Diagnostic` 变体.
     Diagnostic(Fmp4Diagnostic),
 }
 
 /// Diagnostic messages from the muxer.
 #[derive(Debug, Clone)]
 pub enum Fmp4Diagnostic {
+    /// `UnsupportedCodec` variant.
+    /// `UnsupportedCodec` 变体.
     UnsupportedCodec { codec: CodecId, track_id: u32 },
+    /// `MaxSamplesReached` variant.
+    /// `MaxSamplesReached` 变体.
     MaxSamplesReached { track_id: u32 },
 }
 
@@ -81,22 +97,42 @@ impl MuxTrack {
 /// A sample to be muxed.
 #[derive(Debug, Clone)]
 pub struct Fmp4MuxSample {
+    /// `track_id` field of type `u32`.
+    /// `track_id` 字段，类型为 `u32`.
     pub track_id: u32,
+    /// `dts_us` field of type `i64`.
+    /// `dts_us` 字段，类型为 `i64`.
     pub dts_us: i64,
+    /// `pts_us` field of type `i64`.
+    /// `pts_us` 字段，类型为 `i64`.
     pub pts_us: i64,
+    /// `is_keyframe` field of type `bool`.
+    /// `is_keyframe` 字段，类型为 `bool`.
     pub is_keyframe: bool,
+    /// `data` field of type `Bytes`.
+    /// `data` 字段，类型为 `Bytes`.
     pub data: Bytes,
 }
 
 /// Shared fMP4 muxer.
 pub struct Fmp4Muxer {
+    /// `config` field of type `Fmp4MuxerConfig`.
+    /// `config` 字段，类型为 `Fmp4MuxerConfig`.
     config: Fmp4MuxerConfig,
+    /// `tracks` field.
+    /// `tracks` 字段.
     tracks: Vec<MuxTrack>,
+    /// `sequence_number` field of type `u32`.
+    /// `sequence_number` 字段，类型为 `u32`.
     sequence_number: u32,
+    /// `init_segment` field.
+    /// `init_segment` 字段.
     init_segment: Option<Bytes>,
 }
 
 impl Fmp4Muxer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: Fmp4MuxerConfig, tracks: &[TrackInfo]) -> Self {
         let mux_tracks = tracks.iter().map(MuxTrack::from_track_info).collect();
         Self {
@@ -166,6 +202,8 @@ impl Fmp4Muxer {
         }]
     }
 
+    /// `sequence_number` function.
+    /// `sequence_number` 函数.
     pub fn sequence_number(&self) -> u32 {
         self.sequence_number
     }

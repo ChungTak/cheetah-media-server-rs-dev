@@ -102,8 +102,14 @@ type BoxedStream = Box<
 /// stream halves so the same struct wraps both client
 /// (`MaybeTlsStream<TcpStream>`) and server (`TcpStream`) connections.
 pub struct TokioWsConnection {
+    /// `sink` field.
+    /// `sink` 字段.
     sink: tokio::sync::Mutex<BoxedSink>,
+    /// `stream` field.
+    /// `stream` 字段.
     stream: tokio::sync::Mutex<BoxedStream>,
+    /// `closed` field of type `AtomicBool`.
+    /// `closed` 字段，类型为 `AtomicBool`.
     closed: AtomicBool,
 }
 
@@ -253,6 +259,8 @@ pub enum WsServerError {
 
 /// A bound WebSocket server listener, ready to [`serve`](Self::serve).
 pub struct WsServerListener {
+    /// `listener` field of type `TcpListener`.
+    /// `listener` 字段，类型为 `TcpListener`.
     listener: TcpListener,
 }
 
@@ -274,6 +282,8 @@ impl WsServerListener {
     /// Each upgraded connection is handed to `handler` on its own task.
     // The tungstenite handshake callback returns a large `Result` whose
     // shape we don't control.
+    /// `serve` function.
+    /// `serve` 函数.
     #[allow(clippy::result_large_err)]
     pub async fn serve(
         self,

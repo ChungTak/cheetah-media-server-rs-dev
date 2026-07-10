@@ -75,6 +75,8 @@ pub fn validate_abl_whep_query(query: Option<&str>) -> Result<(String, String), 
 /// Error returned when ABL-style WHEP query parameters are invalid.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AblWhepQueryError {
+    /// `MissingStream` variant.
+    /// `MissingStream` 变体.
     #[error("missing required query parameter: stream (or streamName)")]
     MissingStream,
 }
@@ -113,23 +115,45 @@ pub enum OmeTransportMode {
 /// Parsed OME-compatible WebRTC request target.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OmeWebRtcRequest {
+    /// `app` field of type `String`.
+    /// `app` 字段，类型为 `String`.
     pub app: String,
+    /// `stream` field of type `String`.
+    /// `stream` 字段，类型为 `String`.
     pub stream: String,
+    /// `playlist` field.
+    /// `playlist` 字段.
     pub playlist: Option<String>,
+    /// `direction` field of type `OmeDirection`.
+    /// `direction` 字段，类型为 `OmeDirection`.
     pub direction: OmeDirection,
+    /// `transport` field of type `OmeTransportMode`.
+    /// `transport` 字段，类型为 `OmeTransportMode`.
     pub transport: OmeTransportMode,
 }
 
+/// `OmeWebRtcUrlError` enumeration.
+/// `OmeWebRtcUrlError` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OmeWebRtcUrlError {
+    /// `MissingApp` variant.
+    /// `MissingApp` 变体.
     #[error("missing app segment")]
     MissingApp,
+    /// `MissingStream` variant.
+    /// `MissingStream` 变体.
     #[error("missing stream segment")]
     MissingStream,
+    /// `TooManyPathSegments` variant.
+    /// `TooManyPathSegments` 变体.
     #[error("too many path segments")]
     TooManyPathSegments,
+    /// `InvalidDirection` variant.
+    /// `InvalidDirection` 变体.
     #[error("invalid direction `{0}`")]
     InvalidDirection(String),
+    /// `InvalidTransport` variant.
+    /// `InvalidTransport` 变体.
     #[error("invalid transport `{0}`")]
     InvalidTransport(String),
 }
@@ -147,6 +171,8 @@ pub fn parse_ome_webrtc_path_query(
     parse_ome_webrtc_path_query_with_default_transport(path, query, OmeTransportMode::UdpTcp)
 }
 
+/// Parses `ome_webrtc_path_query_with_default_transport` from input.
+/// 解析 `ome_webrtc_path_query_with_default_transport` 来自 输入.
 pub fn parse_ome_webrtc_path_query_with_default_transport(
     path: &str,
     query: Option<&str>,
@@ -209,6 +235,8 @@ fn parse_ome_direction(input: &str) -> Result<OmeDirection, OmeWebRtcUrlError> {
     }
 }
 
+/// Parses `ome_transport_mode` from input.
+/// 解析 `ome_transport_mode` 来自 输入.
 pub fn parse_ome_transport_mode(input: &str) -> Result<OmeTransportMode, OmeWebRtcUrlError> {
     let s = input.trim().to_ascii_lowercase();
     match s.as_str() {
@@ -555,6 +583,8 @@ pub struct ZlmRtcUrl {
     pub extra_params: Vec<(String, String)>,
 }
 
+/// `ZlmRtcScheme` enumeration.
+/// `ZlmRtcScheme` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZlmRtcScheme {
     /// Plain RTC (HTTP signalling, UDP/TCP transport).
@@ -569,6 +599,8 @@ pub enum ZlmRtcScheme {
 }
 
 impl ZlmRtcScheme {
+    /// Returns `true` if `secure` is true.
+    /// 返回 `真` 如果 `secure` is 真.
     pub fn is_secure(self) -> bool {
         matches!(self, Self::Rtcs | Self::WebRtcs)
     }
@@ -588,18 +620,32 @@ impl ZlmRtcScheme {
     }
 }
 
+/// `ZlmRtcUrlError` enumeration.
+/// `ZlmRtcUrlError` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ZlmRtcUrlError {
+    /// `InvalidScheme` variant.
+    /// `InvalidScheme` 变体.
     #[error("invalid scheme — expected rtc/rtcs/webrtc/webrtcs")]
     InvalidScheme,
+    /// `MissingHost` variant.
+    /// `MissingHost` 变体.
     #[error("missing authority (host)")]
     MissingHost,
+    /// `InvalidPort` variant.
+    /// `InvalidPort` 变体.
     #[error("invalid port `{port}`: {message}")]
     InvalidPort { port: String, message: String },
+    /// `MissingPath` variant.
+    /// `MissingPath` 变体.
     #[error("missing path — URL must have at least /<app>/<stream>")]
     MissingPath,
+    /// `MissingStream` variant.
+    /// `MissingStream` 变体.
     #[error("missing stream segment")]
     MissingStream,
+    /// `InvalidSignalingProtocols` variant.
+    /// `InvalidSignalingProtocols` 变体.
     #[error("invalid signaling_protocols `{value}` — expected an integer")]
     InvalidSignalingProtocols { value: String },
 }

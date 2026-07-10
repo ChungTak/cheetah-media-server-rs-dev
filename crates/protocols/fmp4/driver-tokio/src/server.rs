@@ -19,52 +19,76 @@ pub struct Fmp4ConnectionId(pub u64);
 /// Driver configuration.
 #[derive(Debug, Clone)]
 pub struct Fmp4DriverConfig {
+    /// `listen` field of type `SocketAddr`.
+    /// `listen` 字段，类型为 `SocketAddr`.
     pub listen: SocketAddr,
+    /// `write_queue_capacity` field of type `usize`.
+    /// `write_queue_capacity` 字段，类型为 `usize`.
     pub write_queue_capacity: usize,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     pub read_buffer_size: usize,
+    /// `tls` field.
+    /// `tls` 字段.
     pub tls: Option<Fmp4TlsConfig>,
 }
 
 /// TLS configuration.
 #[derive(Debug, Clone)]
 pub struct Fmp4TlsConfig {
+    /// `listen` field of type `SocketAddr`.
+    /// `listen` 字段，类型为 `SocketAddr`.
     pub listen: SocketAddr,
+    /// `cert_path` field of type `String`.
+    /// `cert_path` 字段，类型为 `String`.
     pub cert_path: String,
+    /// `key_path` field of type `String`.
+    /// `key_path` 字段，类型为 `String`.
     pub key_path: String,
+    /// `handshake_timeout_ms` field of type `u64`.
+    /// `handshake_timeout_ms` 字段，类型为 `u64`.
     pub handshake_timeout_ms: u64,
 }
 
 /// Events from driver to module.
 #[derive(Debug, Clone)]
 pub enum Fmp4DriverEvent {
+    /// `PlayRequested` variant.
+    /// `PlayRequested` 变体.
     PlayRequested {
         connection_id: Fmp4ConnectionId,
         stream_key: StreamKeyParts,
         transport: Fmp4Transport,
     },
-    ConnectionClosed {
-        connection_id: Fmp4ConnectionId,
-    },
+    /// `ConnectionClosed` variant.
+    /// `ConnectionClosed` 变体.
+    ConnectionClosed { connection_id: Fmp4ConnectionId },
 }
 
 /// Commands from module to driver.
 #[derive(Debug, Clone)]
 pub enum Fmp4DriverCommand {
+    /// `SendData` variant.
+    /// `SendData` 变体.
     SendData {
         connection_id: Fmp4ConnectionId,
         data: Bytes,
     },
-    CloseConnection {
-        connection_id: Fmp4ConnectionId,
-    },
+    /// `CloseConnection` variant.
+    /// `CloseConnection` 变体.
+    CloseConnection { connection_id: Fmp4ConnectionId },
 }
 
 /// Handle for receiving driver events.
 pub struct Fmp4DriverHandle {
+    /// `event_rx` field.
+    /// `event_rx` 字段.
     event_rx: mpsc::Receiver<Fmp4DriverEvent>,
 }
 
 impl Fmp4DriverHandle {
+    /// `recv_event` function.
+    /// `recv_event` 函数.
     pub async fn recv_event(&mut self) -> Option<Fmp4DriverEvent> {
         self.event_rx.recv().await
     }
@@ -73,10 +97,14 @@ impl Fmp4DriverHandle {
 /// Sender for driver commands.
 #[derive(Clone)]
 pub struct Fmp4CommandSender {
+    /// `cmd_tx` field.
+    /// `cmd_tx` 字段.
     cmd_tx: mpsc::Sender<Fmp4DriverCommand>,
 }
 
 impl Fmp4CommandSender {
+    /// `send` function.
+    /// `send` 函数.
     pub async fn send(&self, cmd: Fmp4DriverCommand) {
         let _ = self.cmd_tx.send(cmd).await;
     }

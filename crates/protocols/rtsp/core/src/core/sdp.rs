@@ -1,24 +1,42 @@
 use std::fmt;
 
+/// `SdpError` enumeration.
+/// `SdpError` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SdpError {
+    /// `MissingRequiredField` variant.
+    /// `MissingRequiredField` 变体.
     #[error("missing required SDP field `{field}`")]
     MissingRequiredField { field: &'static str },
+    /// `InvalidOrigin` variant.
+    /// `InvalidOrigin` 变体.
     #[error("invalid SDP origin field: {0}")]
     InvalidOrigin(String),
+    /// `InvalidConnection` variant.
+    /// `InvalidConnection` 变体.
     #[error("invalid SDP connection field: {0}")]
     InvalidConnection(String),
+    /// `InvalidBandwidth` variant.
+    /// `InvalidBandwidth` 变体.
     #[error("invalid SDP bandwidth field: {0}")]
     InvalidBandwidth(String),
+    /// `InvalidTiming` variant.
+    /// `InvalidTiming` 变体.
     #[error("invalid SDP timing field: {0}")]
     InvalidTiming(String),
+    /// `InvalidMedia` variant.
+    /// `InvalidMedia` 变体.
     #[error("invalid SDP media field: {0}")]
     InvalidMedia(String),
+    /// `InvalidAttribute` variant.
+    /// `InvalidAttribute` 变体.
     #[error("invalid SDP attribute `{attribute}`: {value}")]
     InvalidAttribute {
         attribute: &'static str,
         value: String,
     },
+    /// `InvalidNumber` variant.
+    /// `InvalidNumber` 变体.
     #[error("invalid numeric value for `{field}`: {value}")]
     InvalidNumber { field: &'static str, value: String },
 }
@@ -26,99 +44,196 @@ pub enum SdpError {
 /// SDP 会话描述（RFC 8866）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sdp {
+    /// `version` field of type `u8`.
+    /// `version` 字段，类型为 `u8`.
     pub version: u8,
+    /// `origin` field of type `SdpOrigin`.
+    /// `origin` 字段，类型为 `SdpOrigin`.
     pub origin: SdpOrigin,
+    /// `session_name` field of type `String`.
+    /// `session_name` 字段，类型为 `String`.
     pub session_name: String,
+    /// `session_info` field.
+    /// `session_info` 字段.
     pub session_info: Option<String>,
+    /// `uri` field.
+    /// `uri` 字段.
     pub uri: Option<String>,
+    /// `email` field.
+    /// `email` 字段.
     pub email: Option<String>,
+    /// `phone` field.
+    /// `phone` 字段.
     pub phone: Option<String>,
+    /// `connection` field.
+    /// `connection` 字段.
     pub connection: Option<SdpConnection>,
+    /// `bandwidth` field.
+    /// `bandwidth` 字段.
     pub bandwidth: Vec<SdpBandwidth>,
+    /// `timing` field of type `SdpTiming`.
+    /// `timing` 字段，类型为 `SdpTiming`.
     pub timing: SdpTiming,
+    /// `attributes` field.
+    /// `attributes` 字段.
     pub attributes: Vec<SdpAttribute>,
+    /// `media` field.
+    /// `media` 字段.
     pub media: Vec<SdpMedia>,
 }
 
 /// `o=` origin 字段。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdpOrigin {
+    /// `username` field of type `String`.
+    /// `username` 字段，类型为 `String`.
     pub username: String,
+    /// `session_id` field of type `String`.
+    /// `session_id` 字段，类型为 `String`.
     pub session_id: String,
+    /// `session_version` field of type `String`.
+    /// `session_version` 字段，类型为 `String`.
     pub session_version: String,
+    /// `net_type` field of type `String`.
+    /// `net_type` 字段，类型为 `String`.
     pub net_type: String,
+    /// `addr_type` field of type `String`.
+    /// `addr_type` 字段，类型为 `String`.
     pub addr_type: String,
+    /// `address` field of type `String`.
+    /// `address` 字段，类型为 `String`.
     pub address: String,
 }
 
 /// `c=` connection 字段。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdpConnection {
+    /// `net_type` field of type `String`.
+    /// `net_type` 字段，类型为 `String`.
     pub net_type: String,
+    /// `addr_type` field of type `String`.
+    /// `addr_type` 字段，类型为 `String`.
     pub addr_type: String,
+    /// `address` field of type `String`.
+    /// `address` 字段，类型为 `String`.
     pub address: String,
 }
 
 /// `b=` bandwidth 字段。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdpBandwidth {
+    /// `bwtype` field of type `String`.
+    /// `bwtype` 字段，类型为 `String`.
     pub bwtype: String,
+    /// `bandwidth` field of type `u64`.
+    /// `bandwidth` 字段，类型为 `u64`.
     pub bandwidth: u64,
 }
 
 /// `t=` timing 字段。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdpTiming {
+    /// `start` field of type `u64`.
+    /// `start` 字段，类型为 `u64`.
     pub start: u64,
+    /// `stop` field of type `u64`.
+    /// `stop` 字段，类型为 `u64`.
     pub stop: u64,
 }
 
 /// `m=` media 描述。
 #[derive(Debug, Clone, PartialEq)]
 pub struct SdpMedia {
+    /// `media_type` field of type `String`.
+    /// `media_type` 字段，类型为 `String`.
     pub media_type: String,
+    /// `port` field of type `u16`.
+    /// `port` 字段，类型为 `u16`.
     pub port: u16,
+    /// `num_ports` field.
+    /// `num_ports` 字段.
     pub num_ports: Option<u16>,
+    /// `protocol` field of type `String`.
+    /// `protocol` 字段，类型为 `String`.
     pub protocol: String,
+    /// `formats` field.
+    /// `formats` 字段.
     pub formats: Vec<String>,
+    /// `title` field.
+    /// `title` 字段.
     pub title: Option<String>,
+    /// `connection` field.
+    /// `connection` 字段.
     pub connection: Option<SdpConnection>,
+    /// `bandwidth` field.
+    /// `bandwidth` 字段.
     pub bandwidth: Vec<SdpBandwidth>,
+    /// `attributes` field.
+    /// `attributes` 字段.
     pub attributes: Vec<SdpAttribute>,
 }
 
 /// `a=` attribute 字段。
 #[derive(Debug, Clone, PartialEq)]
 pub enum SdpAttribute {
+    /// `Rtpmap` variant.
+    /// `Rtpmap` 变体.
     Rtpmap {
         payload_type: u8,
         encoding: String,
         clock_rate: u32,
         encoding_params: Option<String>,
     },
+    /// `Fmtp` variant.
+    /// `Fmtp` 变体.
     Fmtp {
         payload_type: u8,
         parameters: String,
     },
+    /// `Control` variant.
+    /// `Control` 变体.
     Control(String),
+    /// `Range` variant.
+    /// `Range` 变体.
     Range(String),
+    /// `Recvonly` variant.
+    /// `Recvonly` 变体.
     Recvonly,
+    /// `Sendrecv` variant.
+    /// `Sendrecv` 变体.
     Sendrecv,
+    /// `Sendonly` variant.
+    /// `Sendonly` 变体.
     Sendonly,
+    /// `Inactive` variant.
+    /// `Inactive` 变体.
     Inactive,
+    /// `Framerate` variant.
+    /// `Framerate` 变体.
     Framerate(f64),
+    /// `Tool` variant.
+    /// `Tool` 变体.
     Tool(String),
+    /// `Type` variant.
+    /// `Type` 变体.
     Type(String),
+    /// `Charset` variant.
+    /// `Charset` 变体.
     Charset(String),
+    /// `Sdplang` variant.
+    /// `Sdplang` 变体.
     Sdplang(String),
+    /// `Lang` variant.
+    /// `Lang` 变体.
     Lang(String),
-    Custom {
-        name: String,
-        value: Option<String>,
-    },
+    /// `Custom` variant.
+    /// `Custom` 变体.
+    Custom { name: String, value: Option<String> },
 }
 
 impl Sdp {
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(text: &str) -> Result<Self, SdpError> {
         let mut version = None;
         let mut origin = None;
@@ -230,6 +345,8 @@ impl Sdp {
         })
     }
 
+    /// `builder` function.
+    /// `builder` 函数.
     pub fn builder() -> SdpBuilder {
         SdpBuilder::new()
     }
@@ -392,17 +509,41 @@ fn fmt_attribute(f: &mut fmt::Formatter<'_>, attr: &SdpAttribute) -> fmt::Result
 /// SDP 构造器。
 #[derive(Debug, Clone)]
 pub struct SdpBuilder {
+    /// `version` field of type `u8`.
+    /// `version` 字段，类型为 `u8`.
     version: u8,
+    /// `origin` field.
+    /// `origin` 字段.
     origin: Option<SdpOrigin>,
+    /// `session_name` field.
+    /// `session_name` 字段.
     session_name: Option<String>,
+    /// `session_info` field.
+    /// `session_info` 字段.
     session_info: Option<String>,
+    /// `uri` field.
+    /// `uri` 字段.
     uri: Option<String>,
+    /// `email` field.
+    /// `email` 字段.
     email: Option<String>,
+    /// `phone` field.
+    /// `phone` 字段.
     phone: Option<String>,
+    /// `connection` field.
+    /// `connection` 字段.
     connection: Option<SdpConnection>,
+    /// `bandwidth` field.
+    /// `bandwidth` 字段.
     bandwidth: Vec<SdpBandwidth>,
+    /// `timing` field.
+    /// `timing` 字段.
     timing: Option<SdpTiming>,
+    /// `attributes` field.
+    /// `attributes` 字段.
     attributes: Vec<SdpAttribute>,
+    /// `media` field.
+    /// `media` 字段.
     media: Vec<SdpMedia>,
 }
 
@@ -413,6 +554,8 @@ impl Default for SdpBuilder {
 }
 
 impl SdpBuilder {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             version: 0,
@@ -430,16 +573,22 @@ impl SdpBuilder {
         }
     }
 
+    /// `version` function.
+    /// `version` 函数.
     pub fn version(mut self, version: u8) -> Self {
         self.version = version;
         self
     }
 
+    /// `origin` function.
+    /// `origin` 函数.
     pub fn origin(mut self, origin: SdpOrigin) -> Self {
         self.origin = Some(origin);
         self
     }
 
+    /// `origin_simple` function.
+    /// `origin_simple` 函数.
     pub fn origin_simple(mut self, session_id: &str, address: &str) -> Self {
         self.origin = Some(SdpOrigin {
             username: "-".to_string(),
@@ -452,36 +601,50 @@ impl SdpBuilder {
         self
     }
 
+    /// `session_name` function.
+    /// `session_name` 函数.
     pub fn session_name(mut self, name: &str) -> Self {
         self.session_name = Some(name.to_string());
         self
     }
 
+    /// `session_info` function.
+    /// `session_info` 函数.
     pub fn session_info(mut self, info: &str) -> Self {
         self.session_info = Some(info.to_string());
         self
     }
 
+    /// `uri` function.
+    /// `uri` 函数.
     pub fn uri(mut self, uri: &str) -> Self {
         self.uri = Some(uri.to_string());
         self
     }
 
+    /// `email` function.
+    /// `email` 函数.
     pub fn email(mut self, email: &str) -> Self {
         self.email = Some(email.to_string());
         self
     }
 
+    /// `phone` function.
+    /// `phone` 函数.
     pub fn phone(mut self, phone: &str) -> Self {
         self.phone = Some(phone.to_string());
         self
     }
 
+    /// `connection` function.
+    /// `connection` 函数.
     pub fn connection(mut self, connection: SdpConnection) -> Self {
         self.connection = Some(connection);
         self
     }
 
+    /// `connection_simple` function.
+    /// `connection_simple` 函数.
     pub fn connection_simple(mut self, address: &str) -> Self {
         self.connection = Some(SdpConnection {
             net_type: "IN".to_string(),
@@ -491,6 +654,8 @@ impl SdpBuilder {
         self
     }
 
+    /// `bandwidth` function.
+    /// `bandwidth` 函数.
     pub fn bandwidth(mut self, bwtype: &str, bandwidth: u64) -> Self {
         self.bandwidth.push(SdpBandwidth {
             bwtype: bwtype.to_string(),
@@ -499,29 +664,41 @@ impl SdpBuilder {
         self
     }
 
+    /// `timing` function.
+    /// `timing` 函数.
     pub fn timing(mut self, start: u64, stop: u64) -> Self {
         self.timing = Some(SdpTiming { start, stop });
         self
     }
 
+    /// `attribute` function.
+    /// `attribute` 函数.
     pub fn attribute(mut self, attr: SdpAttribute) -> Self {
         self.attributes.push(attr);
         self
     }
 
+    /// `control` function.
+    /// `control` 函数.
     pub fn control(self, url: &str) -> Self {
         self.attribute(SdpAttribute::Control(url.to_string()))
     }
 
+    /// `range` function.
+    /// `range` 函数.
     pub fn range(self, range: &str) -> Self {
         self.attribute(SdpAttribute::Range(range.to_string()))
     }
 
+    /// `add_media` function.
+    /// `add_media` 函数.
     pub fn add_media(mut self, media: SdpMedia) -> Self {
         self.media.push(media);
         self
     }
 
+    /// `build` function.
+    /// `build` 函数.
     pub fn build(self) -> Result<Sdp, SdpError> {
         Ok(Sdp {
             version: self.version,
@@ -549,18 +726,38 @@ impl SdpBuilder {
 /// SDP 媒体描述构造器。
 #[derive(Debug, Clone)]
 pub struct SdpMediaBuilder {
+    /// `media_type` field of type `String`.
+    /// `media_type` 字段，类型为 `String`.
     media_type: String,
+    /// `port` field of type `u16`.
+    /// `port` 字段，类型为 `u16`.
     port: u16,
+    /// `num_ports` field.
+    /// `num_ports` 字段.
     num_ports: Option<u16>,
+    /// `protocol` field of type `String`.
+    /// `protocol` 字段，类型为 `String`.
     protocol: String,
+    /// `formats` field.
+    /// `formats` 字段.
     formats: Vec<String>,
+    /// `title` field.
+    /// `title` 字段.
     title: Option<String>,
+    /// `connection` field.
+    /// `connection` 字段.
     connection: Option<SdpConnection>,
+    /// `bandwidth` field.
+    /// `bandwidth` 字段.
     bandwidth: Vec<SdpBandwidth>,
+    /// `attributes` field.
+    /// `attributes` 字段.
     attributes: Vec<SdpAttribute>,
 }
 
 impl SdpMediaBuilder {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(media_type: &str, port: u16, protocol: &str) -> Self {
         Self {
             media_type: media_type.to_string(),
@@ -575,34 +772,48 @@ impl SdpMediaBuilder {
         }
     }
 
+    /// `video` function.
+    /// `video` 函数.
     pub fn video(port: u16) -> Self {
         Self::new("video", port, "RTP/AVP")
     }
 
+    /// `audio` function.
+    /// `audio` 函数.
     pub fn audio(port: u16) -> Self {
         Self::new("audio", port, "RTP/AVP")
     }
 
+    /// `num_ports` function.
+    /// `num_ports` 函数.
     pub fn num_ports(mut self, num_ports: u16) -> Self {
         self.num_ports = Some(num_ports);
         self
     }
 
+    /// `format` function.
+    /// `format` 函数.
     pub fn format(mut self, format: &str) -> Self {
         self.formats.push(format.to_string());
         self
     }
 
+    /// `title` function.
+    /// `title` 函数.
     pub fn title(mut self, title: &str) -> Self {
         self.title = Some(title.to_string());
         self
     }
 
+    /// `connection` function.
+    /// `connection` 函数.
     pub fn connection(mut self, connection: SdpConnection) -> Self {
         self.connection = Some(connection);
         self
     }
 
+    /// `bandwidth` function.
+    /// `bandwidth` 函数.
     pub fn bandwidth(mut self, bwtype: &str, bandwidth: u64) -> Self {
         self.bandwidth.push(SdpBandwidth {
             bwtype: bwtype.to_string(),
@@ -611,11 +822,15 @@ impl SdpMediaBuilder {
         self
     }
 
+    /// `attribute` function.
+    /// `attribute` 函数.
     pub fn attribute(mut self, attr: SdpAttribute) -> Self {
         self.attributes.push(attr);
         self
     }
 
+    /// `rtpmap` function.
+    /// `rtpmap` 函数.
     pub fn rtpmap(self, payload_type: u8, encoding: &str, clock_rate: u32) -> Self {
         self.attribute(SdpAttribute::Rtpmap {
             payload_type,
@@ -625,6 +840,8 @@ impl SdpMediaBuilder {
         })
     }
 
+    /// `fmtp` function.
+    /// `fmtp` 函数.
     pub fn fmtp(self, payload_type: u8, parameters: &str) -> Self {
         self.attribute(SdpAttribute::Fmtp {
             payload_type,
@@ -632,14 +849,20 @@ impl SdpMediaBuilder {
         })
     }
 
+    /// `control` function.
+    /// `control` 函数.
     pub fn control(self, url: &str) -> Self {
         self.attribute(SdpAttribute::Control(url.to_string()))
     }
 
+    /// `range` function.
+    /// `range` 函数.
     pub fn range(self, range: &str) -> Self {
         self.attribute(SdpAttribute::Range(range.to_string()))
     }
 
+    /// `build` function.
+    /// `build` 函数.
     pub fn build(self) -> SdpMedia {
         SdpMedia {
             media_type: self.media_type,

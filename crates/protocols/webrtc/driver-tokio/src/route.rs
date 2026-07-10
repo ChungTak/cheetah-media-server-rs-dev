@@ -13,19 +13,29 @@ use cheetah_webrtc_core::WebRtcSessionId;
 
 use crate::migration::RouteCandidateDiff;
 
+/// `RouteTable` data structure.
+/// `RouteTable` 数据结构.
 #[derive(Default, Debug)]
 pub(crate) struct RouteTable {
+    /// `by_addr` field.
+    /// `by_addr` 字段.
     by_addr: HashMap<SocketAddr, WebRtcSessionId>,
     /// Stale routes kept around for a short TTL during connection migration.
     /// Whenever a session re-binds to a new address we move the old entry
     /// here so reorderd packets from the old path do not panic the
     /// `WebRtcCore` (it just rejects them).
     stale: HashMap<SocketAddr, (WebRtcSessionId, std::time::Instant)>,
+    /// `soft_cap` field of type `usize`.
+    /// `soft_cap` 字段，类型为 `usize`.
     soft_cap: usize,
+    /// `stale_ttl` field of type `Duration`.
+    /// `stale_ttl` 字段，类型为 `Duration`.
     stale_ttl: Duration,
 }
 
 impl RouteTable {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub(crate) fn new(soft_cap: usize, stale_ttl: Duration) -> Self {
         Self {
             by_addr: HashMap::new(),
@@ -35,6 +45,8 @@ impl RouteTable {
         }
     }
 
+    /// `lookup` function.
+    /// `lookup` 函数.
     pub(crate) fn lookup(&self, addr: &SocketAddr) -> Option<WebRtcSessionId> {
         self.by_addr
             .get(addr)
@@ -42,6 +54,8 @@ impl RouteTable {
             .or_else(|| self.stale.get(addr).map(|(id, _)| *id))
     }
 
+    /// `bind` function.
+    /// `bind` 函数.
     pub(crate) fn bind(
         &mut self,
         addr: SocketAddr,
@@ -108,6 +122,8 @@ impl RouteTable {
         Ok(self.bind(addr, session, now))
     }
 
+    /// `forget_session` function.
+    /// `forget_session` 函数.
     pub(crate) fn forget_session(&mut self, session: WebRtcSessionId) -> RouteCandidateDiff {
         let mut removed = Vec::new();
         let mut stale_addrs = Vec::new();
@@ -157,6 +173,8 @@ impl RouteTable {
         }
     }
 
+    /// `compact` function.
+    /// `compact` 函数.
     pub(crate) fn compact(&mut self, now: std::time::Instant) {
         self.stale
             .retain(|_, (_, recorded)| now.duration_since(*recorded) < self.stale_ttl);
@@ -180,6 +198,8 @@ impl RouteTable {
         expired
     }
 
+    /// `len` function.
+    /// `len` 函数.
     #[allow(dead_code)]
     pub(crate) fn len(&self) -> usize {
         self.by_addr.len()

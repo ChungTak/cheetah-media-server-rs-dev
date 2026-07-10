@@ -4,16 +4,32 @@ use base64::Engine;
 
 use crate::track::{CodecExtradata, CodecId, MediaKind, TrackInfo};
 
+/// `SdpMediaDescription` data structure.
+/// `SdpMediaDescription` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdpMediaDescription {
+    /// `media` field of type `String`.
+    /// `media` 字段，类型为 `String`.
     pub media: String,
+    /// `payload_type` field of type `u8`.
+    /// `payload_type` 字段，类型为 `u8`.
     pub payload_type: u8,
+    /// `codec` field of type `String`.
+    /// `codec` 字段，类型为 `String`.
     pub codec: String,
+    /// `clock_rate` field of type `u32`.
+    /// `clock_rate` 字段，类型为 `u32`.
     pub clock_rate: u32,
+    /// `channels` field.
+    /// `channels` 字段.
     pub channels: Option<u8>,
+    /// `fmtp` field.
+    /// `fmtp` 字段.
     pub fmtp: Option<String>,
 }
 
+/// `export_media_description` function.
+/// `export_media_description` 函数.
 pub fn export_media_description(track: &TrackInfo) -> Option<SdpMediaDescription> {
     let payload_type = track
         .payload_type
@@ -38,6 +54,8 @@ pub fn export_media_description(track: &TrackInfo) -> Option<SdpMediaDescription
     })
 }
 
+/// `export_fmtp` function.
+/// `export_fmtp` 函数.
 pub fn export_fmtp(track: &TrackInfo) -> Option<String> {
     if track.codec == CodecId::AV1 {
         let (profile, level_idx, tier) = match &track.extradata {

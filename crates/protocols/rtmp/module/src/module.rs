@@ -70,6 +70,8 @@ const H264_RELEASE_GRACE_MS: u64 = 800;
 const RTMP_EGRESS_BACKWARD_REPAIR_THRESHOLD_MS: u32 = 3_000;
 const RTMP_PLAY_PACING_MAX_FORWARD_DELTA_MS: u32 = 30_000;
 
+/// `RtmpModuleFactory` data structure.
+/// `RtmpModuleFactory` 数据结构.
 pub struct RtmpModuleFactory;
 
 impl ModuleFactory for RtmpModuleFactory {
@@ -107,16 +109,32 @@ impl ModuleFactory for RtmpModuleFactory {
     }
 }
 
+/// `RtmpModule` data structure.
+/// `RtmpModule` 数据结构.
 pub struct RtmpModule {
+    /// `info` field of type `ModuleInfo`.
+    /// `info` 字段，类型为 `ModuleInfo`.
     info: ModuleInfo,
+    /// `state` field of type `ModuleState`.
+    /// `state` 字段，类型为 `ModuleState`.
     state: ModuleState,
+    /// `engine` field.
+    /// `engine` 字段.
     engine: Option<EngineContext>,
+    /// `config` field of type `RtmpModuleConfig`.
+    /// `config` 字段，类型为 `RtmpModuleConfig`.
     config: RtmpModuleConfig,
+    /// `runtime_cancel` field.
+    /// `runtime_cancel` 字段.
     runtime_cancel: Option<CancellationToken>,
+    /// `runtime_loops` field.
+    /// `runtime_loops` 字段.
     runtime_loops: Vec<OneShotReceiver>,
 }
 
 impl RtmpModule {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             info: ModuleInfo {

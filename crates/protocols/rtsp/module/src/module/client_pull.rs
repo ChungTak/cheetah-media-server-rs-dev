@@ -28,8 +28,14 @@ use crate::module::session_lifecycle::parse_session_token;
 use crate::sdp::parse_announce_sdp;
 use crate::session::PublishSession;
 
+/// `PullJobSupervisorHandle` data structure.
+/// `PullJobSupervisorHandle` 数据结构.
 pub(super) struct PullJobSupervisorHandle {
+    /// `job_name` field of type `String`.
+    /// `job_name` 字段，类型为 `String`.
     job_name: String,
+    /// `join` field.
+    /// `join` 字段.
     join: Box<dyn RuntimeJoinHandle>,
 }
 
@@ -107,6 +113,8 @@ impl PullAttemptError {
     }
 }
 
+/// `spawn_pull_job_supervisors` function.
+/// `spawn_pull_job_supervisors` 函数.
 pub(super) fn spawn_pull_job_supervisors(
     engine: &EngineContext,
     config: &RtspModuleConfig,
@@ -128,6 +136,8 @@ pub(super) fn spawn_pull_job_supervisors(
     handles
 }
 
+/// `wait_pull_job_supervisors` function.
+/// `wait_pull_job_supervisors` 函数.
 pub(super) async fn wait_pull_job_supervisors(handles: &mut Vec<PullJobSupervisorHandle>) {
     for handle in handles.drain(..) {
         handle.join.abort();

@@ -20,15 +20,35 @@
 //! sketched as commands but only implement the safe subset the rest of the
 //! pipeline currently consumes.
 
+/// `config` module.
+/// `config` 模块.
 pub mod config;
+/// `error` module.
+/// `error` 模块.
 pub mod error;
+/// `event` module.
+/// `event` 模块.
 pub mod event;
+/// `input` module.
+/// `输入` 模块.
 pub mod input;
+/// `offer_payload` module.
+/// `offer_payload` 模块.
 pub mod offer_payload;
+/// `output` module.
+/// `输出` 模块.
 pub mod output;
+/// `sdp_compat` module.
+/// `sdp_compat` 模块.
 pub mod sdp_compat;
+/// `session` module.
+/// `session` 模块.
 pub mod session;
+/// `stats` module.
+/// `stats` 模块.
 pub mod stats;
+/// `types` module.
+/// `types` 模块.
 pub mod types;
 
 pub use config::{WebRtcCoreConfig, WebRtcCoreLimits, WebRtcIceTransportPolicy};

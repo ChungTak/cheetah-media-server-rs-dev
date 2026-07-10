@@ -28,14 +28,26 @@ pub struct Mp4FileWriterConfig {
 
 /// Stateful MP4 file record writer.
 pub struct Mp4FileWriter {
+    /// `config` field of type `Mp4FileWriterConfig`.
+    /// `config` 字段，类型为 `Mp4FileWriterConfig`.
     config: Mp4FileWriterConfig,
+    /// `inner` field.
+    /// `inner` 字段.
     inner: Option<Mp4Writer>,
+    /// `tracks` field.
+    /// `tracks` 字段.
     tracks: Vec<TrackInfo>,
+    /// `finalized` field of type `bool`.
+    /// `finalized` 字段，类型为 `bool`.
     finalized: bool,
+    /// `drop_count` field of type `u32`.
+    /// `drop_count` 字段，类型为 `u32`.
     drop_count: u32,
 }
 
 impl Mp4FileWriter {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: Mp4FileWriterConfig) -> Self {
         Self {
             config,

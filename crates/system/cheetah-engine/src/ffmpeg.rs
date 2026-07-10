@@ -1,8 +1,12 @@
 use cheetah_sdk::{FfmpegApi, FfmpegJob, SdkError};
 use dashmap::DashMap;
 
+/// `LocalFfmpegService` data structure.
+/// `LocalFfmpegService` 数据结构.
 #[derive(Default)]
 pub struct LocalFfmpegService {
+    /// `jobs` field.
+    /// `jobs` 字段.
     jobs: DashMap<String, FfmpegJob>,
 }
 

@@ -8,49 +8,93 @@ use crate::request::{
 };
 use crate::HttpFlvCoreError;
 
+/// `HttpFlvCoreCommand` enumeration.
+/// `HttpFlvCoreCommand` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpFlvCoreCommand {
+    /// `SendFlvBytes` variant.
+    /// `SendFlvBytes` 变体.
     SendFlvBytes(Bytes),
+    /// `Close` variant.
+    /// `Close` 变体.
     Close,
 }
 
+/// `HttpFlvCoreInput` enumeration.
+/// `HttpFlvCoreInput` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpFlvCoreInput {
+    /// `RequestHead` variant.
+    /// `RequestHead` 变体.
     RequestHead(HttpRequestHead),
+    /// `BodyBytes` variant.
+    /// `BodyBytes` 变体.
     BodyBytes(Bytes),
+    /// `WebSocketMessage` variant.
+    /// `WebSocketMessage` 变体.
     WebSocketMessage(WebSocketMessage),
+    /// `Command` variant.
+    /// `Command` 变体.
     Command(HttpFlvCoreCommand),
 }
 
+/// `CloseReason` enumeration.
+/// `CloseReason` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseReason {
+    /// `Normal` variant.
+    /// `Normal` 变体.
     Normal,
+    /// `BadRequest` variant.
+    /// `BadRequest` 变体.
     BadRequest,
+    /// `MethodNotAllowed` variant.
+    /// `MethodNotAllowed` 变体.
     MethodNotAllowed,
+    /// `ProtocolError` variant.
+    /// `ProtocolError` 变体.
     ProtocolError,
 }
 
+/// `HttpFlvEvent` enumeration.
+/// `HttpFlvEvent` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpFlvEvent {
+    /// `PlayRequested` variant.
+    /// `PlayRequested` 变体.
     PlayRequested {
         stream_key: StreamKeyParts,
         transport: HttpFlvTransport,
         play_mode: RtmpFlvPlayMode,
     },
     /// HTTP POST push: client is publishing FLV data.
-    PublishRequested {
-        stream_key: StreamKeyParts,
-    },
+    PublishRequested { stream_key: StreamKeyParts },
+    /// `PullTag` variant.
+    /// `PullTag` 变体.
     PullTag(FlvTag),
+    /// `PeerClosed` variant.
+    /// `PeerClosed` 变体.
     PeerClosed,
 }
 
+/// `HttpFlvCoreOutput` enumeration.
+/// `HttpFlvCoreOutput` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpFlvCoreOutput {
+    /// `SendHttpResponse` variant.
+    /// `SendHttpResponse` 变体.
     SendHttpResponse(HttpResponseHead),
+    /// `SendBytes` variant.
+    /// `SendBytes` 变体.
     SendBytes(Bytes),
+    /// `SendWebSocketBinary` variant.
+    /// `SendWebSocketBinary` 变体.
     SendWebSocketBinary(Bytes),
+    /// `Event` variant.
+    /// `Event` 变体.
     Event(HttpFlvEvent),
+    /// `Close` variant.
+    /// `Close` 变体.
     Close { reason: CloseReason },
 }
 
@@ -63,9 +107,15 @@ enum SessionState {
     Closed,
 }
 
+/// `HttpFlvCore` data structure.
+/// `HttpFlvCore` 数据结构.
 #[derive(Debug)]
 pub struct HttpFlvCore {
+    /// `state` field of type `SessionState`.
+    /// `state` 字段，类型为 `SessionState`.
     state: SessionState,
+    /// `demuxer` field of type `FlvDemuxer`.
+    /// `demuxer` 字段，类型为 `FlvDemuxer`.
     demuxer: FlvDemuxer,
 }
 
@@ -76,6 +126,8 @@ impl Default for HttpFlvCore {
 }
 
 impl HttpFlvCore {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             state: SessionState::Idle,
@@ -83,6 +135,8 @@ impl HttpFlvCore {
         }
     }
 
+    /// `handle_input` function.
+    /// `handle_input` 函数.
     pub fn handle_input(
         &mut self,
         input: HttpFlvCoreInput,

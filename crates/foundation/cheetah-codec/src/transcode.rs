@@ -141,14 +141,26 @@ pub trait AacDecoder: Send {
 
 /// AAC → G.711 transcoding pipeline.
 pub struct AacToG711Transcoder {
+    /// `decoder` field.
+    /// `decoder` 字段.
     decoder: Box<dyn AacDecoder>,
+    /// `target_codec` field of type `CodecId`.
+    /// `target_codec` 字段，类型为 `CodecId`.
     target_codec: CodecId,
+    /// `output_track_id` field of type `TrackId`.
+    /// `output_track_id` 字段，类型为 `TrackId`.
     output_track_id: TrackId,
+    /// `output_pts` field of type `i64`.
+    /// `output_pts` 字段，类型为 `i64`.
     output_pts: i64,
+    /// `output_sample_rate` field of type `u32`.
+    /// `output_sample_rate` 字段，类型为 `u32`.
     output_sample_rate: u32,
 }
 
 impl AacToG711Transcoder {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(
         decoder: Box<dyn AacDecoder>,
         target_codec: CodecId,
@@ -232,15 +244,29 @@ pub trait AacEncoder: Send {
 /// Decodes G.711 (A-law or μ-law) to PCM, optionally resamples, then encodes
 /// to AAC using the provided encoder.
 pub struct G711ToAacTranscoder {
+    /// `source_codec` field of type `CodecId`.
+    /// `source_codec` 字段，类型为 `CodecId`.
     source_codec: CodecId,
+    /// `source_sample_rate` field of type `u32`.
+    /// `source_sample_rate` 字段，类型为 `u32`.
     source_sample_rate: u32,
+    /// `output_track_id` field of type `TrackId`.
+    /// `output_track_id` 字段，类型为 `TrackId`.
     output_track_id: TrackId,
+    /// `encoder` field.
+    /// `encoder` 字段.
     encoder: Box<dyn AacEncoder>,
+    /// `pcm_buffer` field.
+    /// `pcm_buffer` 字段.
     pcm_buffer: Vec<i16>,
+    /// `output_pts` field of type `i64`.
+    /// `output_pts` 字段，类型为 `i64`.
     output_pts: i64,
 }
 
 impl G711ToAacTranscoder {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(
         source_codec: CodecId,
         source_sample_rate: u32,
@@ -308,6 +334,8 @@ impl G711ToAacTranscoder {
         output
     }
 
+    /// `reset` function.
+    /// `reset` 函数.
     pub fn reset(&mut self) {
         self.pcm_buffer.clear();
         self.output_pts = 0;
@@ -353,14 +381,26 @@ pub trait OpusEncoder: Send {
 /// Decodes Opus to PCM using the provided decoder, optionally resamples,
 /// then encodes to AAC using the provided encoder.
 pub struct OpusToAacTranscoder {
+    /// `output_track_id` field of type `TrackId`.
+    /// `output_track_id` 字段，类型为 `TrackId`.
     output_track_id: TrackId,
+    /// `decoder` field.
+    /// `decoder` 字段.
     decoder: Box<dyn OpusDecoder>,
+    /// `encoder` field.
+    /// `encoder` 字段.
     encoder: Box<dyn AacEncoder>,
+    /// `pcm_buffer` field.
+    /// `pcm_buffer` 字段.
     pcm_buffer: Vec<i16>,
+    /// `output_pts` field of type `i64`.
+    /// `output_pts` 字段，类型为 `i64`.
     output_pts: i64,
 }
 
 impl OpusToAacTranscoder {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(
         output_track_id: TrackId,
         decoder: Box<dyn OpusDecoder>,
@@ -426,6 +466,8 @@ impl OpusToAacTranscoder {
         output
     }
 
+    /// `reset` function.
+    /// `reset` 函数.
     pub fn reset(&mut self) {
         self.pcm_buffer.clear();
         self.output_pts = 0;
@@ -438,14 +480,26 @@ impl OpusToAacTranscoder {
 /// needed, then encodes to Opus using the provided encoder. The canonical
 /// WebRTC Opus output is 48kHz/stereo/960 samples per frame.
 pub struct AacToOpusTranscoder {
+    /// `output_track_id` field of type `TrackId`.
+    /// `output_track_id` 字段，类型为 `TrackId`.
     output_track_id: TrackId,
+    /// `decoder` field.
+    /// `decoder` 字段.
     decoder: Box<dyn AacDecoder>,
+    /// `encoder` field.
+    /// `encoder` 字段.
     encoder: Box<dyn OpusEncoder>,
+    /// `pcm_buffer` field.
+    /// `pcm_buffer` 字段.
     pcm_buffer: Vec<i16>,
+    /// `output_pts` field of type `i64`.
+    /// `output_pts` 字段，类型为 `i64`.
     output_pts: i64,
 }
 
 impl AacToOpusTranscoder {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(
         output_track_id: TrackId,
         decoder: Box<dyn AacDecoder>,
@@ -511,6 +565,8 @@ impl AacToOpusTranscoder {
         output
     }
 
+    /// `reset` function.
+    /// `reset` 函数.
     pub fn reset(&mut self) {
         self.pcm_buffer.clear();
         self.output_pts = 0;
@@ -524,15 +580,29 @@ impl AacToOpusTranscoder {
 /// profile requires Opus output (e.g. Browser profile with no G.711 support
 /// in the offer).
 pub struct G711ToOpusTranscoder {
+    /// `source_codec` field of type `CodecId`.
+    /// `source_codec` 字段，类型为 `CodecId`.
     source_codec: CodecId,
+    /// `source_sample_rate` field of type `u32`.
+    /// `source_sample_rate` 字段，类型为 `u32`.
     source_sample_rate: u32,
+    /// `output_track_id` field of type `TrackId`.
+    /// `output_track_id` 字段，类型为 `TrackId`.
     output_track_id: TrackId,
+    /// `encoder` field.
+    /// `encoder` 字段.
     encoder: Box<dyn OpusEncoder>,
+    /// `pcm_buffer` field.
+    /// `pcm_buffer` 字段.
     pcm_buffer: Vec<i16>,
+    /// `output_pts` field of type `i64`.
+    /// `output_pts` 字段，类型为 `i64`.
     output_pts: i64,
 }
 
 impl G711ToOpusTranscoder {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(
         source_codec: CodecId,
         source_sample_rate: u32,
@@ -600,6 +670,8 @@ impl G711ToOpusTranscoder {
         output
     }
 
+    /// `reset` function.
+    /// `reset` 函数.
     pub fn reset(&mut self) {
         self.pcm_buffer.clear();
         self.output_pts = 0;

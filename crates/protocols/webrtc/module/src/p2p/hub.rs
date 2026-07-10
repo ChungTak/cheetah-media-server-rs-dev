@@ -43,12 +43,20 @@ use super::transport::{P2pTransport, P2pTransportError, P2pTransportEvent};
 /// Routing key for hub demultiplexing. Mirrors the wire envelope.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PeerKey {
+    /// `room_id` field of type `String`.
+    /// `room_id` 字段，类型为 `String`.
     pub room_id: String,
+    /// `peer_id` field of type `String`.
+    /// `peer_id` 字段，类型为 `String`.
     pub peer_id: String,
+    /// `transport_id` field of type `String`.
+    /// `transport_id` 字段，类型为 `String`.
     pub transport_id: String,
 }
 
 impl PeerKey {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(
         room_id: impl Into<String>,
         peer_id: impl Into<String>,
@@ -95,10 +103,16 @@ impl PeerKey {
 /// Hub-level error.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum KeeperHubError {
+    /// `DuplicateKey` variant.
+    /// `DuplicateKey` 变体.
     #[error("hub already has bridge for {0:?}")]
     DuplicateKey(PeerKey),
+    /// `CapacityExceeded` variant.
+    /// `CapacityExceeded` 变体.
     #[error("hub at peer capacity ({0})")]
     CapacityExceeded(usize),
+    /// `Closed` variant.
+    /// `Closed` 变体.
     #[error("hub is closed")]
     Closed,
 }
@@ -127,13 +141,23 @@ impl Default for KeeperHubConfig {
 /// `send` calls on a `tungstenite::WebSocketStream` would corrupt
 /// the framing).
 pub struct KeeperHub<T: P2pTransport + 'static> {
+    /// `transport` field.
+    /// `transport` 字段.
     transport: Arc<T>,
+    /// `config` field of type `KeeperHubConfig`.
+    /// `config` 字段，类型为 `KeeperHubConfig`.
     config: KeeperHubConfig,
+    /// `inbound` field.
+    /// `inbound` 字段.
     inbound: Mutex<HashMap<PeerKey, mpsc::Sender<P2pTransportEvent>>>,
+    /// `closed` field.
+    /// `closed` 字段.
     closed: std::sync::atomic::AtomicBool,
 }
 
 impl<T: P2pTransport + 'static> KeeperHub<T> {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(transport: T, config: KeeperHubConfig) -> Arc<Self> {
         Arc::new(Self {
             transport: Arc::new(transport),
@@ -143,10 +167,14 @@ impl<T: P2pTransport + 'static> KeeperHub<T> {
         })
     }
 
+    /// `config` function.
+    /// `config` 函数.
     pub fn config(&self) -> &KeeperHubConfig {
         &self.config
     }
 
+    /// `peer_count` function.
+    /// `peer_count` 函数.
     pub fn peer_count(&self) -> usize {
         self.inbound.lock().len()
     }
@@ -264,9 +292,17 @@ impl<T: P2pTransport + 'static> KeeperHub<T> {
 /// routing through a shared [`KeeperHub`]. Tests and production code
 /// pass this directly to `run_bridge`.
 pub struct HubBackedTransport<T: P2pTransport + 'static> {
+    /// `hub` field.
+    /// `hub` 字段.
     hub: Arc<KeeperHub<T>>,
+    /// `key` field of type `PeerKey`.
+    /// `key` 字段，类型为 `PeerKey`.
     key: PeerKey,
+    /// `inbound` field.
+    /// `inbound` 字段.
     inbound: AsyncMutex<mpsc::Receiver<P2pTransportEvent>>,
+    /// `detached` field.
+    /// `detached` 字段.
     detached: std::sync::atomic::AtomicBool,
 }
 

@@ -48,9 +48,15 @@ enum ServerHandshakeMode {
     LenientSeededS1,
 }
 
+/// `ClientHandshakeMode` enumeration.
+/// `ClientHandshakeMode` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientHandshakeMode {
+    /// `Strict` variant.
+    /// `Strict` 变体.
     Strict,
+    /// `Lenient` variant.
+    /// `Lenient` 变体.
     Lenient,
 }
 
@@ -63,21 +69,39 @@ enum Phase {
     Complete,
 }
 
+/// `RtmpServerHandshake` data structure.
+/// `RtmpServerHandshake` 数据结构.
 #[derive(Debug)]
 pub struct RtmpServerHandshake {
+    /// `options` field of type `RtmpHandshakeOptions`.
+    /// `options` 字段，类型为 `RtmpHandshakeOptions`.
     options: RtmpHandshakeOptions,
+    /// `mode` field of type `ServerHandshakeMode`.
+    /// `mode` 字段，类型为 `ServerHandshakeMode`.
     mode: ServerHandshakeMode,
+    /// `phase` field of type `Phase`.
+    /// `phase` 字段，类型为 `Phase`.
     phase: Phase,
+    /// `recv_buf` field.
+    /// `recv_buf` 字段.
     recv_buf: Vec<u8>,
+    /// `send_buf` field.
+    /// `send_buf` 字段.
     send_buf: Vec<u8>,
+    /// `s1_packet` field.
+    /// `s1_packet` 字段.
     s1_packet: Vec<u8>,
 }
 
 impl RtmpServerHandshake {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self::new_with_mode(ServerHandshakeMode::Strict)
     }
 
+    /// Creates a new `lenient_seeded_s1` instance.
+    /// 创建 新的 `lenient_seeded_s1` 实例.
     pub fn new_lenient_seeded_s1() -> Self {
         Self::new_with_mode(ServerHandshakeMode::LenientSeededS1)
     }
@@ -93,6 +117,8 @@ impl RtmpServerHandshake {
         }
     }
 
+    /// `feed_recv_buf` function.
+    /// `feed_recv_buf` 函数.
     pub fn feed_recv_buf(&mut self, buf: &[u8]) -> Result<(), Error> {
         self.recv_buf.extend_from_slice(buf);
         self.handle_recv_buf()?;
@@ -183,23 +209,33 @@ impl RtmpServerHandshake {
         Ok(())
     }
 
+    /// `take_recv_buf` function.
+    /// `take_recv_buf` 函数.
     pub fn take_recv_buf(&mut self) -> Vec<u8> {
         core::mem::take(&mut self.recv_buf)
     }
 
+    /// `send_buf` function.
+    /// `send_buf` 函数.
     pub fn send_buf(&self) -> &[u8] {
         &self.send_buf
     }
 
+    /// `advance_send_buf` function.
+    /// `advance_send_buf` 函数.
     pub fn advance_send_buf(&mut self, n: usize) {
         let n = n.min(self.send_buf.len());
         self.send_buf.drain(..n); // NOTE: 效率不高，但不是需要关注性能的地方，因此优先简洁
     }
 
+    /// Returns `true` if `recv_complete` is true.
+    /// 返回 `真` 如果 `recv_complete` is 真.
     pub fn is_recv_complete(&self) -> bool {
         self.phase == Phase::Complete
     }
 
+    /// Returns `true` if `send_complete` is true.
+    /// 返回 `真` 如果 `send_complete` is 真.
     pub fn is_send_complete(&self) -> bool {
         self.phase == Phase::Complete && self.send_buf.is_empty()
     }
@@ -211,20 +247,36 @@ impl Default for RtmpServerHandshake {
     }
 }
 
+/// `RtmpClientHandshake` data structure.
+/// `RtmpClientHandshake` 数据结构.
 #[derive(Debug)]
 pub struct RtmpClientHandshake {
+    /// `options` field of type `RtmpHandshakeOptions`.
+    /// `options` 字段，类型为 `RtmpHandshakeOptions`.
     options: RtmpHandshakeOptions,
+    /// `mode` field of type `ClientHandshakeMode`.
+    /// `mode` 字段，类型为 `ClientHandshakeMode`.
     mode: ClientHandshakeMode,
+    /// `phase` field of type `Phase`.
+    /// `phase` 字段，类型为 `Phase`.
     phase: Phase,
+    /// `recv_buf` field.
+    /// `recv_buf` 字段.
     recv_buf: Vec<u8>,
+    /// `send_buf` field.
+    /// `send_buf` 字段.
     send_buf: Vec<u8>,
 }
 
 impl RtmpClientHandshake {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self::new_with_mode(ClientHandshakeMode::Strict)
     }
 
+    /// Creates a new `lenient` instance.
+    /// 创建 新的 `lenient` 实例.
     pub fn new_lenient() -> Self {
         Self::new_with_mode(ClientHandshakeMode::Lenient)
     }
@@ -246,6 +298,8 @@ impl RtmpClientHandshake {
         }
     }
 
+    /// `feed_recv_buf` function.
+    /// `feed_recv_buf` 函数.
     pub fn feed_recv_buf(&mut self, buf: &[u8]) -> Result<(), Error> {
         self.recv_buf.extend_from_slice(buf);
         self.handle_recv_buf()?;
@@ -302,23 +356,33 @@ impl RtmpClientHandshake {
         Ok(())
     }
 
+    /// `take_recv_buf` function.
+    /// `take_recv_buf` 函数.
     pub fn take_recv_buf(&mut self) -> Vec<u8> {
         core::mem::take(&mut self.recv_buf)
     }
 
+    /// `send_buf` function.
+    /// `send_buf` 函数.
     pub fn send_buf(&self) -> &[u8] {
         &self.send_buf
     }
 
+    /// `advance_send_buf` function.
+    /// `advance_send_buf` 函数.
     pub fn advance_send_buf(&mut self, n: usize) {
         let n = n.min(self.send_buf.len());
         self.send_buf.drain(..n); // NOTE: 效率不高，但不是需要关注性能的地方，因此优先简洁
     }
 
+    /// Returns `true` if `recv_complete` is true.
+    /// 返回 `真` 如果 `recv_complete` is 真.
     pub fn is_recv_complete(&self) -> bool {
         self.phase == Phase::Complete
     }
 
+    /// Returns `true` if `send_complete` is true.
+    /// 返回 `真` 如果 `send_complete` is 真.
     pub fn is_send_complete(&self) -> bool {
         self.phase == Phase::Complete && self.send_buf.is_empty()
     }

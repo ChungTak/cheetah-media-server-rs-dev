@@ -9,6 +9,8 @@ use crate::error::HlsCoreError;
 use crate::ll_hls::TrackLane;
 use crate::request::{parse_hls_request, BlockingParams, HlsRequestKind, SkipMode, StreamKeyParts};
 
+/// `HlsSessionId` type alias.
+/// `HlsSessionId` 类型别名.
 pub type HlsSessionId = u64;
 
 /// Extracted HTTP request headers relevant to HLS.
@@ -41,9 +43,17 @@ pub enum HlsCoreInput {
 /// HTTP method (simplified for HLS — only GET and OPTIONS matter).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
+    /// `Get` variant.
+    /// `Get` 变体.
     Get,
+    /// `Options` variant.
+    /// `Options` 变体.
     Options,
+    /// `Head` variant.
+    /// `Head` 变体.
     Head,
+    /// `Other` variant.
+    /// `Other` 变体.
     Other,
 }
 
@@ -169,10 +179,14 @@ pub enum HlsCoreEvent {
 
 /// The HLS core state machine.
 pub struct HlsCore {
+    /// `_private` field.
+    /// `_private` 字段.
     _private: (),
 }
 
 impl HlsCore {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self { _private: () }
     }

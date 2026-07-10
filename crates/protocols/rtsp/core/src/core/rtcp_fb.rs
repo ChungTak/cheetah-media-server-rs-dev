@@ -10,13 +10,21 @@ pub const RTPFB_FMT_NACK: u8 = 1;
 
 /// FMT values for PSFB (PT=206).
 pub const PSFB_FMT_PLI: u8 = 1;
+/// `PSFB_FMT_FIR` constant.
+/// `PSFB_FMT_FIR` 常量.
 pub const PSFB_FMT_FIR: u8 = 4;
 
 /// RFC 4585 §6.2.1 — Generic NACK.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpNack {
+    /// `sender_ssrc` field of type `u32`.
+    /// `sender_ssrc` 字段，类型为 `u32`.
     pub sender_ssrc: u32,
+    /// `media_ssrc` field of type `u32`.
+    /// `media_ssrc` 字段，类型为 `u32`.
     pub media_ssrc: u32,
+    /// `nack_items` field.
+    /// `nack_items` 字段.
     pub nack_items: Vec<NackItem>,
 }
 
@@ -45,30 +53,50 @@ impl NackItem {
 /// RFC 4585 §6.3.1 — Picture Loss Indication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtcpPli {
+    /// `sender_ssrc` field of type `u32`.
+    /// `sender_ssrc` 字段，类型为 `u32`.
     pub sender_ssrc: u32,
+    /// `media_ssrc` field of type `u32`.
+    /// `media_ssrc` 字段，类型为 `u32`.
     pub media_ssrc: u32,
 }
 
 /// RFC 5104 §4.3.1 — Full Intra Request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpFir {
+    /// `sender_ssrc` field of type `u32`.
+    /// `sender_ssrc` 字段，类型为 `u32`.
     pub sender_ssrc: u32,
+    /// `media_ssrc` field of type `u32`.
+    /// `media_ssrc` 字段，类型为 `u32`.
     pub media_ssrc: u32,
+    /// `fci` field.
+    /// `fci` 字段.
     pub fci: Vec<FirEntry>,
 }
 
 /// A single FIR FCI entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FirEntry {
+    /// `ssrc` field of type `u32`.
+    /// `ssrc` 字段，类型为 `u32`.
     pub ssrc: u32,
+    /// `seq_nr` field of type `u8`.
+    /// `seq_nr` 字段，类型为 `u8`.
     pub seq_nr: u8,
 }
 
 /// Parsed RTCP Feedback packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtcpFeedback {
+    /// `Nack` variant.
+    /// `Nack` 变体.
     Nack(RtcpNack),
+    /// `Pli` variant.
+    /// `Pli` 变体.
     Pli(RtcpPli),
+    /// `Fir` variant.
+    /// `Fir` 变体.
     Fir(RtcpFir),
 }
 

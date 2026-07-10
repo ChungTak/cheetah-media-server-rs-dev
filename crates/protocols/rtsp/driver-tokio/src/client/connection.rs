@@ -17,15 +17,31 @@ use super::command::RtspClientCommand;
 use super::http_tunnel::{build_http_tunnel_get_request, build_http_tunnel_post_request};
 use super::{RtspClientConfig, RtspClientEvent};
 
+/// `HttpTunnelClientContext` data structure.
+/// `HttpTunnelClientContext` 数据结构.
 pub(super) struct HttpTunnelClientContext {
+    /// `peer` field of type `SocketAddr`.
+    /// `peer` 字段，类型为 `SocketAddr`.
     pub(super) peer: SocketAddr,
+    /// `path` field of type `String`.
+    /// `path` 字段，类型为 `String`.
     pub(super) path: String,
+    /// `session_cookie` field of type `String`.
+    /// `session_cookie` 字段，类型为 `String`.
     pub(super) session_cookie: String,
+    /// `event_tx` field.
+    /// `event_tx` 字段.
     pub(super) event_tx: mpsc::Sender<RtspClientEvent>,
+    /// `cancel` field of type `CancellationToken`.
+    /// `cancel` 字段，类型为 `CancellationToken`.
     pub(super) cancel: CancellationToken,
+    /// `config` field of type `RtspClientConfig`.
+    /// `config` 字段，类型为 `RtspClientConfig`.
     pub(super) config: RtspClientConfig,
 }
 
+/// `run_tcp_client_connection` function.
+/// `run_tcp_client_connection` 函数.
 pub(super) async fn run_tcp_client_connection(
     mut stream: Box<dyn AsyncTcpStream>,
     mut cmd_rx: mpsc::Receiver<RtspClientCommand>,
@@ -129,6 +145,8 @@ pub(super) async fn run_tcp_client_connection(
     let _ = event_tx.send(RtspClientEvent::Closed { reason }).await;
 }
 
+/// `run_http_tunnel_client_connection` function.
+/// `run_http_tunnel_client_connection` 函数.
 pub(super) async fn run_http_tunnel_client_connection(
     mut get_stream: Box<dyn AsyncTcpStream>,
     mut post_stream: Box<dyn AsyncTcpStream>,

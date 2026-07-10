@@ -9,6 +9,8 @@ use tokio::fs;
 
 /// Writes HLS segments and playlists to disk with automatic cleanup.
 pub struct HlsFileWriter {
+    /// `output_dir` field of type `PathBuf`.
+    /// `output_dir` 字段，类型为 `PathBuf`.
     output_dir: PathBuf,
     /// Per-stream tracking of written segment files for cleanup.
     written_segments: VecDeque<PathBuf>,
@@ -17,6 +19,8 @@ pub struct HlsFileWriter {
 }
 
 impl HlsFileWriter {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(output_dir: PathBuf, max_segments: usize) -> Self {
         Self {
             output_dir,

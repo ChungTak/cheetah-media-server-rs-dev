@@ -1,16 +1,42 @@
+/// `RTCP_PT_SR` constant.
+/// `RTCP_PT_SR` 常量.
 pub const RTCP_PT_SR: u8 = 200;
+/// `RTCP_PT_RR` constant.
+/// `RTCP_PT_RR` 常量.
 pub const RTCP_PT_RR: u8 = 201;
+/// `RTCP_PT_SDES` constant.
+/// `RTCP_PT_SDES` 常量.
 pub const RTCP_PT_SDES: u8 = 202;
+/// `RTCP_PT_BYE` constant.
+/// `RTCP_PT_BYE` 常量.
 pub const RTCP_PT_BYE: u8 = 203;
+/// `RTCP_PT_APP` constant.
+/// `RTCP_PT_APP` 常量.
 pub const RTCP_PT_APP: u8 = 204;
 
+/// `SDES_CNAME` constant.
+/// `SDES_CNAME` 常量.
 pub const SDES_CNAME: u8 = 1;
+/// `SDES_NAME` constant.
+/// `SDES_NAME` 常量.
 pub const SDES_NAME: u8 = 2;
+/// `SDES_EMAIL` constant.
+/// `SDES_EMAIL` 常量.
 pub const SDES_EMAIL: u8 = 3;
+/// `SDES_PHONE` constant.
+/// `SDES_PHONE` 常量.
 pub const SDES_PHONE: u8 = 4;
+/// `SDES_LOC` constant.
+/// `SDES_LOC` 常量.
 pub const SDES_LOC: u8 = 5;
+/// `SDES_TOOL` constant.
+/// `SDES_TOOL` 常量.
 pub const SDES_TOOL: u8 = 6;
+/// `SDES_NOTE` constant.
+/// `SDES_NOTE` 常量.
 pub const SDES_NOTE: u8 = 7;
+/// `SDES_PRIV` constant.
+/// `SDES_PRIV` 常量.
 pub const SDES_PRIV: u8 = 8;
 
 const RTCP_COMMON_HEADER_SIZE: usize = 4;
@@ -20,10 +46,16 @@ const RTCP_REPORT_BLOCK_SIZE: usize = 24;
 const RTCP_MAX_REPORT_COUNT: usize = 31;
 const RTCP_CUMULATIVE_LOST_MAX: u32 = 0x00FF_FFFF;
 
+/// `RtcpError` enumeration.
+/// `RtcpError` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtcpError {
+    /// `UnsupportedVersion` variant.
+    /// `UnsupportedVersion` 变体.
     #[error("unsupported rtcp version: {actual}")]
     UnsupportedVersion { actual: u8 },
+    /// `InsufficientData` variant.
+    /// `InsufficientData` 变体.
     #[error("insufficient data for {context}: need at least {needed} bytes, got {actual}")]
     InsufficientData {
         context: &'static str,
@@ -33,27 +65,51 @@ pub enum RtcpError {
     #[error(
         "invalid rtcp padding size: {padding_size}, available payload+padding bytes: {available}"
     )]
+    /// `InvalidPadding` variant.
+    /// `InvalidPadding` 变体.
     InvalidPadding { padding_size: u8, available: usize },
+    /// `TooManyReportBlocks` variant.
+    /// `TooManyReportBlocks` 变体.
     #[error("rtcp sender report count exceeds 5-bit field: {count}")]
     TooManyReportBlocks { count: usize },
+    /// `TooManySdesChunks` variant.
+    /// `TooManySdesChunks` 变体.
     #[error("rtcp sdes chunk count exceeds 5-bit field: {count}")]
     TooManySdesChunks { count: usize },
+    /// `TooManyByeSources` variant.
+    /// `TooManyByeSources` 变体.
     #[error("rtcp bye source count exceeds 5-bit field: {count}")]
     TooManyByeSources { count: usize },
+    /// `InvalidAppSubtype` variant.
+    /// `InvalidAppSubtype` 变体.
     #[error("rtcp app subtype exceeds 5-bit field: {subtype}")]
     InvalidAppSubtype { subtype: u8 },
+    /// `CumulativeLostOutOfRange` variant.
+    /// `CumulativeLostOutOfRange` 变体.
     #[error("rtcp cumulative lost exceeds 24-bit field: {value}")]
     CumulativeLostOutOfRange { value: u32 },
+    /// `SdesItemDataTooLong` variant.
+    /// `SdesItemDataTooLong` 变体.
     #[error("rtcp sdes item too large for 8-bit length field: type={item_type}, len={len}")]
     SdesItemDataTooLong { item_type: u8, len: usize },
+    /// `InvalidSdesPrivItem` variant.
+    /// `InvalidSdesPrivItem` 变体.
     #[error("invalid rtcp sdes PRIV item: len={len}, prefix_len={prefix_len}")]
     InvalidSdesPrivItem { len: usize, prefix_len: usize },
+    /// `ByeReasonTooLong` variant.
+    /// `ByeReasonTooLong` 变体.
     #[error("rtcp bye reason too large for 8-bit length field: len={len}")]
     ByeReasonTooLong { len: usize },
+    /// `SdesChunkMissingTerminator` variant.
+    /// `SdesChunkMissingTerminator` 变体.
     #[error("rtcp sdes chunk missing end marker: chunk_index={chunk_index}")]
     SdesChunkMissingTerminator { chunk_index: usize },
+    /// `PacketTooLarge` variant.
+    /// `PacketTooLarge` 变体.
     #[error("rtcp packet too large to encode length field: {words} words")]
     PacketTooLarge { words: usize },
+    /// `PayloadNotWordAligned` variant.
+    /// `PayloadNotWordAligned` 变体.
     #[error("rtcp packet payload must align to 32-bit words, got {bytes} bytes")]
     PayloadNotWordAligned { bytes: usize },
 }
@@ -61,77 +117,145 @@ pub enum RtcpError {
 /// RTCP Sender Report 中的报告块。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpReportBlock {
+    /// `ssrc` field of type `u32`.
+    /// `ssrc` 字段，类型为 `u32`.
     pub ssrc: u32,
+    /// `fraction_lost` field of type `u8`.
+    /// `fraction_lost` 字段，类型为 `u8`.
     pub fraction_lost: u8,
+    /// `cumulative_lost` field of type `u32`.
+    /// `cumulative_lost` 字段，类型为 `u32`.
     pub cumulative_lost: u32,
+    /// `highest_seq` field of type `u32`.
+    /// `highest_seq` 字段，类型为 `u32`.
     pub highest_seq: u32,
+    /// `jitter` field of type `u32`.
+    /// `jitter` 字段，类型为 `u32`.
     pub jitter: u32,
+    /// `last_sr` field of type `u32`.
+    /// `last_sr` 字段，类型为 `u32`.
     pub last_sr: u32,
+    /// `delay_since_sr` field of type `u32`.
+    /// `delay_since_sr` 字段，类型为 `u32`.
     pub delay_since_sr: u32,
 }
 
 /// RTCP Sender Report（PT=200，RFC 3550）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpSenderReport {
+    /// `ssrc` field of type `u32`.
+    /// `ssrc` 字段，类型为 `u32`.
     pub ssrc: u32,
+    /// `ntp_timestamp` field of type `u64`.
+    /// `ntp_timestamp` 字段，类型为 `u64`.
     pub ntp_timestamp: u64,
+    /// `rtp_timestamp` field of type `u32`.
+    /// `rtp_timestamp` 字段，类型为 `u32`.
     pub rtp_timestamp: u32,
+    /// `packet_count` field of type `u32`.
+    /// `packet_count` 字段，类型为 `u32`.
     pub packet_count: u32,
+    /// `octet_count` field of type `u32`.
+    /// `octet_count` 字段，类型为 `u32`.
     pub octet_count: u32,
+    /// `reports` field.
+    /// `reports` 字段.
     pub reports: Vec<RtcpReportBlock>,
 }
 
 /// RTCP Receiver Report（PT=201，RFC 3550）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpReceiverReport {
+    /// `ssrc` field of type `u32`.
+    /// `ssrc` 字段，类型为 `u32`.
     pub ssrc: u32,
+    /// `reports` field.
+    /// `reports` 字段.
     pub reports: Vec<RtcpReportBlock>,
 }
 
 /// RTCP Source Description（PT=202，RFC 3550）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpSdes {
+    /// `chunks` field.
+    /// `chunks` 字段.
     pub chunks: Vec<RtcpSdesChunk>,
 }
 
 /// RTCP BYE（PT=203，RFC 3550）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpBye {
+    /// `ssrcs` field.
+    /// `ssrcs` 字段.
     pub ssrcs: Vec<u32>,
+    /// `reason` field.
+    /// `reason` 字段.
     pub reason: Option<String>,
 }
 
 /// RTCP APP（PT=204，RFC 3550）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpApp {
+    /// `subtype` field of type `u8`.
+    /// `subtype` 字段，类型为 `u8`.
     pub subtype: u8,
+    /// `ssrc` field of type `u32`.
+    /// `ssrc` 字段，类型为 `u32`.
     pub ssrc: u32,
+    /// `name` field of type `[u8; 4]`.
+    /// `name` 字段，类型为 `[u8; 4]`.
     pub name: [u8; 4],
+    /// `data` field.
+    /// `data` 字段.
     pub data: Vec<u8>,
 }
 
 /// RTCP SDES Chunk。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpSdesChunk {
+    /// `ssrc` field of type `u32`.
+    /// `ssrc` 字段，类型为 `u32`.
     pub ssrc: u32,
+    /// `items` field.
+    /// `items` 字段.
     pub items: Vec<RtcpSdesItem>,
 }
 
 /// RTCP SDES Item。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtcpSdesItem {
+    /// `Cname` variant.
+    /// `Cname` 变体.
     Cname(String),
+    /// `Name` variant.
+    /// `Name` 变体.
     Name(String),
+    /// `Email` variant.
+    /// `Email` 变体.
     Email(String),
+    /// `Phone` variant.
+    /// `Phone` 变体.
     Phone(String),
+    /// `Loc` variant.
+    /// `Loc` 变体.
     Loc(String),
+    /// `Tool` variant.
+    /// `Tool` 变体.
     Tool(String),
+    /// `Note` variant.
+    /// `Note` 变体.
     Note(String),
+    /// `Priv` variant.
+    /// `Priv` 变体.
     Priv { prefix: String, value: Vec<u8> },
+    /// `Unknown` variant.
+    /// `Unknown` 变体.
     Unknown { item_type: u8, data: Vec<u8> },
 }
 
 impl RtcpSdesItem {
+    /// `item_type` function.
+    /// `item_type` 函数.
     pub fn item_type(&self) -> u8 {
         match self {
             RtcpSdesItem::Cname(_) => SDES_CNAME,
@@ -150,11 +274,23 @@ impl RtcpSdesItem {
 /// RTCP 包。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtcpPacket {
+    /// `SenderReport` variant.
+    /// `SenderReport` 变体.
     SenderReport(RtcpSenderReport),
+    /// `ReceiverReport` variant.
+    /// `ReceiverReport` 变体.
     ReceiverReport(RtcpReceiverReport),
+    /// `SourceDescription` variant.
+    /// `SourceDescription` 变体.
     SourceDescription(RtcpSdes),
+    /// `Bye` variant.
+    /// `Bye` 变体.
     Bye(RtcpBye),
+    /// `App` variant.
+    /// `App` 变体.
     App(RtcpApp),
+    /// `Unknown` variant.
+    /// `Unknown` 变体.
     Unknown {
         payload_type: u8,
         count: u8,

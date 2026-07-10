@@ -3,7 +3,11 @@
 //! Handles request routing, WebSocket upgrade, CORS, and session state
 //! without depending on any runtime, socket, or engine.
 
+/// `request` module.
+/// `request` 模块.
 pub mod request;
+/// `session` module.
+/// `session` 模块.
 pub mod session;
 
 pub use request::{

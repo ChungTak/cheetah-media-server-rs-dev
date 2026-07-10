@@ -14,17 +14,31 @@ use cheetah_rtp_core::{
 };
 use cheetah_runtime_api::CancellationToken;
 
+/// `RtpDriverConfig` data structure.
+/// `RtpDriverConfig` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtpDriverConfig {
+    /// `listen_udp` field of type `SocketAddr`.
+    /// `listen_udp` 字段，类型为 `SocketAddr`.
     pub listen_udp: SocketAddr,
+    /// `listen_tcp` field of type `SocketAddr`.
+    /// `listen_tcp` 字段，类型为 `SocketAddr`.
     pub listen_tcp: SocketAddr,
     /// Optional separate RTCP listening UDP socket (`rtcpPort` config). When `None`, RTCP is
     /// expected to flow on the same UDP socket as RTP and gets routed by the core based on
     /// payload type.
     pub listen_rtcp_udp: Option<SocketAddr>,
+    /// `write_queue_capacity` field of type `usize`.
+    /// `write_queue_capacity` 字段，类型为 `usize`.
     pub write_queue_capacity: usize,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     pub read_buffer_size: usize,
+    /// `session_idle_timeout_ms` field of type `u64`.
+    /// `session_idle_timeout_ms` 字段，类型为 `u64`.
     pub session_idle_timeout_ms: u64,
+    /// `max_sessions` field of type `usize`.
+    /// `max_sessions` 字段，类型为 `usize`.
     pub max_sessions: usize,
     /// Default TCP framing applied by the core when deframing inbound TCP RTP traffic. Defaults
     /// to `AutoDetect` so we accept both 2-byte length prefixes and 4-byte interleaved frames
@@ -50,29 +64,51 @@ impl Default for RtpDriverConfig {
     }
 }
 
+/// `RtpDriverCommand` enumeration.
+/// `RtpDriverCommand` 枚举.
 #[derive(Debug, Clone)]
 pub enum RtpDriverCommand {
+    /// `CreateServer` variant.
+    /// `CreateServer` 变体.
     CreateServer(RtpServerSpec),
+    /// `CreateClient` variant.
+    /// `CreateClient` 变体.
     CreateClient(RtpClientSpec),
+    /// `SendFrame` variant.
+    /// `SendFrame` 变体.
     SendFrame(Box<RtpSendFrame>),
+    /// `StopSession` variant.
+    /// `StopSession` 变体.
     StopSession(String),
 }
 
+/// `RtpDriverHandle` data structure.
+/// `RtpDriverHandle` 数据结构.
 pub struct RtpDriverHandle {
+    /// `cmd_tx` field.
+    /// `cmd_tx` 字段.
     cmd_tx: mpsc::Sender<RtpDriverCommand>,
+    /// `event_rx` field.
+    /// `event_rx` 字段.
     event_rx: Mutex<mpsc::Receiver<RtpCoreEvent>>,
 }
 
 impl RtpDriverHandle {
+    /// `send_command` function.
+    /// `send_command` 函数.
     pub async fn send_command(&self, cmd: RtpDriverCommand) {
         let _ = self.cmd_tx.send(cmd).await;
     }
 
+    /// `recv_event` function.
+    /// `recv_event` 函数.
     pub async fn recv_event(&self) -> Option<RtpCoreEvent> {
         self.event_rx.lock().await.recv().await
     }
 }
 
+/// `start_driver` function.
+/// `start_driver` 函数.
 pub fn start_driver(config: RtpDriverConfig, cancel: CancellationToken) -> RtpDriverHandle {
     let (cmd_tx, cmd_rx) = mpsc::channel(256);
     let (event_tx, event_rx) = mpsc::channel(256);

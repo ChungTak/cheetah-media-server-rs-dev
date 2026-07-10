@@ -1,5 +1,11 @@
+/// `error` module.
+/// `error` 模块.
 pub mod error;
+/// `session` module.
+/// `session` 模块.
 pub mod session;
+/// `types` module.
+/// `types` 模块.
 pub mod types;
 
 pub use cheetah_codec::{RtpPayloadMode, RtpTcpFraming};

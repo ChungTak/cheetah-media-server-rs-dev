@@ -12,15 +12,29 @@ use cheetah_codec::{
 
 /// MPEG-TS muxer that accumulates TS packets for a single segment.
 pub struct TsMuxer {
+    /// `inner` field of type `MpegTsMuxer`.
+    /// `inner` 字段，类型为 `MpegTsMuxer`.
     inner: MpegTsMuxer,
+    /// `buf` field of type `BytesMut`.
+    /// `buf` 字段，类型为 `BytesMut`.
     buf: BytesMut,
+    /// `video_track_id` field of type `TrackId`.
+    /// `video_track_id` 字段，类型为 `TrackId`.
     video_track_id: TrackId,
+    /// `audio_track_id` field of type `TrackId`.
+    /// `audio_track_id` 字段，类型为 `TrackId`.
     audio_track_id: TrackId,
+    /// `video_codec` field of type `CodecId`.
+    /// `video_codec` 字段，类型为 `CodecId`.
     video_codec: CodecId,
+    /// `audio_codec` field of type `CodecId`.
+    /// `audio_codec` 字段，类型为 `CodecId`.
     audio_codec: CodecId,
 }
 
 impl TsMuxer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(video_codec: CodecId, audio_codec: CodecId, has_audio: bool) -> Self {
         let video_track_id = TrackId(1);
         let audio_track_id = TrackId(2);
@@ -131,14 +145,24 @@ impl TsMuxer {
 /// Track descriptor for multi-track muxer.
 #[derive(Debug, Clone)]
 pub struct TsTrackDesc {
+    /// `codec` field of type `CodecId`.
+    /// `codec` 字段，类型为 `CodecId`.
     pub codec: CodecId,
+    /// `media_kind` field of type `MediaKind`.
+    /// `media_kind` 字段，类型为 `MediaKind`.
     pub media_kind: MediaKind,
 }
 
 /// Multi-track MPEG-TS muxer with dynamic PID allocation.
 pub struct TsMuxerMulti {
+    /// `inner` field of type `MpegTsMuxer`.
+    /// `inner` 字段，类型为 `MpegTsMuxer`.
     inner: MpegTsMuxer,
+    /// `buf` field of type `BytesMut`.
+    /// `buf` 字段，类型为 `BytesMut`.
     buf: BytesMut,
+    /// `tracks` field.
+    /// `tracks` 字段.
     tracks: Vec<TsTrackDescEntry>,
 }
 
@@ -175,10 +199,14 @@ impl TsMuxerMulti {
         }
     }
 
+    /// `take_segment` function.
+    /// `take_segment` 函数.
     pub fn take_segment(&mut self) -> Bytes {
         self.buf.split().freeze()
     }
 
+    /// `write_pat_pmt` function.
+    /// `write_pat_pmt` 函数.
     pub fn write_pat_pmt(&mut self) {
         for ev in self.inner.write_tables() {
             if let MpegTsMuxEvent::Packet(data) = ev {

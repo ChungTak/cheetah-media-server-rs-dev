@@ -1,4 +1,8 @@
+/// `decoder` module.
+/// `decoder` 模块.
 pub mod decoder;
+/// `encoder` module.
+/// `encoder` 模块.
 pub mod encoder;
 
 pub use decoder::{decode_rtmp_chunk_to_message, RtmpMessageDecoder};
@@ -15,6 +19,8 @@ use crate::user_control::RtmpUserControlEvent;
 
 use bytes::Bytes;
 
+/// `RtmpMessageStreamId` data structure.
+/// `RtmpMessageStreamId` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RtmpMessageStreamId(u32);
 
@@ -30,39 +36,73 @@ impl RtmpMessageStreamId {
     // 在本 crate 中，一个连接不会处理多个流，因此使用固定值
     pub const MEDIA: Self = Self(2);
 
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub const fn new(id: u32) -> Self {
         Self(id)
     }
 
+    /// `get` function.
+    /// `get` 函数.
     pub const fn get(self) -> u32 {
         self.0
     }
 }
 
+/// `RtmpMessageType` enumeration.
+/// `RtmpMessageType` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpMessageType {
     // Protocol Control Messages
+    /// `SetChunkSize` variant.
+    /// `SetChunkSize` 变体.
     SetChunkSize = 1,
+    /// `Abort` variant.
+    /// `Abort` 变体.
     Abort = 2,
+    /// `Ack` variant.
+    /// `Ack` 变体.
     Ack = 3,
+    /// `UserControl` variant.
+    /// `UserControl` 变体.
     UserControl = 4,
+    /// `WinAckSize` variant.
+    /// `WinAckSize` 变体.
     WinAckSize = 5,
+    /// `SetPeerBandwidth` variant.
+    /// `SetPeerBandwidth` 变体.
     SetPeerBandwidth = 6,
 
     // Media Messages
+    /// `Audio` variant.
+    /// `Audio` 变体.
     Audio = 8,
+    /// `Video` variant.
+    /// `Video` 变体.
     Video = 9,
 
     // Data/Command Messages
+    /// `DataAmf3` variant.
+    /// `DataAmf3` 变体.
     DataAmf3 = 15,
+    /// `CommandAmf3` variant.
+    /// `CommandAmf3` 变体.
     CommandAmf3 = 17,
+    /// `DataAmf0` variant.
+    /// `DataAmf0` 变体.
     DataAmf0 = 18,
+    /// `CommandAmf0` variant.
+    /// `CommandAmf0` 变体.
     CommandAmf0 = 20,
     // Aggregate Message
+    /// `Aggregate` variant.
+    /// `Aggregate` 变体.
     Aggregate = 22,
 }
 
 impl RtmpMessageType {
+    /// Creates `type_id` from input.
+    /// 创建 `type_id` 来自 输入.
     pub fn from_type_id(type_id: u8) -> Result<Self, Error> {
         match type_id {
             1 => Ok(RtmpMessageType::SetChunkSize),
@@ -85,9 +125,15 @@ impl RtmpMessageType {
     }
 }
 
+/// `RtmpMessageHeader` data structure.
+/// `RtmpMessageHeader` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtmpMessageHeader {
+    /// `stream_id` field of type `RtmpMessageStreamId`.
+    /// `stream_id` 字段，类型为 `RtmpMessageStreamId`.
     pub stream_id: RtmpMessageStreamId,
+    /// `timestamp` field of type `RtmpTimestamp`.
+    /// `timestamp` 字段，类型为 `RtmpTimestamp`.
     pub timestamp: RtmpTimestamp,
 }
 
@@ -98,43 +144,63 @@ impl RtmpMessageHeader {
     };
 }
 
+/// `RtmpMessage` enumeration.
+/// `RtmpMessage` 枚举.
 #[derive(Debug, Clone, PartialEq)]
 pub enum RtmpMessage {
+    /// `SetChunkSize` variant.
+    /// `SetChunkSize` 变体.
     SetChunkSize {
         header: RtmpMessageHeader,
         size: RtmpChunkSize,
     },
+    /// `Abort` variant.
+    /// `Abort` 变体.
     Abort {
         header: RtmpMessageHeader,
         chunk_stream_id: RtmpChunkStreamId,
     },
+    /// `Ack` variant.
+    /// `Ack` 变体.
     Ack {
         header: RtmpMessageHeader,
         sequence_number: u32, // 规范中的名称虽然是序列号，但实际上是累计接收字节数
     },
+    /// `WinAckSize` variant.
+    /// `WinAckSize` 变体.
     WinAckSize {
         header: RtmpMessageHeader,
         size: u32,
     },
+    /// `SetPeerBandwidth` variant.
+    /// `SetPeerBandwidth` 变体.
     SetPeerBandwidth {
         header: RtmpMessageHeader,
         size: u32,
         limit_type: SetPeerBandwidthLimitType,
     },
+    /// `UserControl` variant.
+    /// `UserControl` 变体.
     UserControl {
         header: RtmpMessageHeader,
         event: RtmpUserControlEvent,
     },
+    /// `Audio` variant.
+    /// `Audio` 变体.
     Audio {
         header: RtmpMessageHeader,
         frame: AudioFrame,
         payload: Bytes,
     },
+    /// `Video` variant.
+    /// `Video` 变体.
     Video {
         header: RtmpMessageHeader,
         frame: VideoFrame,
         payload: Bytes,
     },
+    /// `Command` variant.
+    /// `Command` 变体.
     Command {
         header: RtmpMessageHeader,
         amf_version: AmfVersion,
@@ -143,6 +209,8 @@ pub enum RtmpMessage {
         object: AmfValue,
         args: Vec<AmfValue>,
     },
+    /// `Data` variant.
+    /// `Data` 变体.
     Data {
         header: RtmpMessageHeader,
         amf_version: AmfVersion,
@@ -151,6 +219,8 @@ pub enum RtmpMessage {
 }
 
 impl RtmpMessage {
+    /// `header` function.
+    /// `header` 函数.
     pub fn header(&self) -> RtmpMessageHeader {
         match self {
             RtmpMessage::SetChunkSize { header, .. }
@@ -166,6 +236,8 @@ impl RtmpMessage {
         }
     }
 
+    /// `frame` function.
+    /// `frame` 函数.
     pub fn frame(&self) -> MediaFrame {
         match self {
             RtmpMessage::Audio { frame, .. } => MediaFrame::Audio(frame.clone()),
@@ -174,6 +246,8 @@ impl RtmpMessage {
         }
     }
 
+    /// `message_type` function.
+    /// `message_type` 函数.
     pub fn message_type(&self) -> RtmpMessageType {
         match self {
             RtmpMessage::SetChunkSize { .. } => RtmpMessageType::SetChunkSize,
@@ -195,6 +269,8 @@ impl RtmpMessage {
         }
     }
 
+    /// `stream_begin` function.
+    /// `stream_begin` 函数.
     pub fn stream_begin(stream_id: RtmpMessageStreamId) -> Self {
         Self::UserControl {
             header: RtmpMessageHeader::PCM,
@@ -202,6 +278,8 @@ impl RtmpMessage {
         }
     }
 
+    /// `win_ack_size` function.
+    /// `win_ack_size` 函数.
     pub fn win_ack_size(size: u32) -> Self {
         Self::WinAckSize {
             header: RtmpMessageHeader::PCM,
@@ -209,6 +287,8 @@ impl RtmpMessage {
         }
     }
 
+    /// Sets the `peer_bandwidth` value.
+    /// Sets `peer_bandwidth` 值.
     pub fn set_peer_bandwidth(size: u32) -> Self {
         Self::SetPeerBandwidth {
             header: RtmpMessageHeader::PCM,
@@ -219,6 +299,8 @@ impl RtmpMessage {
         }
     }
 
+    /// `ack` function.
+    /// `ack` 函数.
     pub fn ack(total_bytes_received: u32) -> Self {
         Self::Ack {
             header: RtmpMessageHeader::PCM,
@@ -226,6 +308,8 @@ impl RtmpMessage {
         }
     }
 
+    /// Sets the `chunk_size` value.
+    /// Sets `chunk_size` 值.
     pub fn set_chunk_size(size: RtmpChunkSize) -> Self {
         Self::SetChunkSize {
             header: RtmpMessageHeader::PCM,
@@ -234,10 +318,18 @@ impl RtmpMessage {
     }
 }
 
+/// `SetPeerBandwidthLimitType` enumeration.
+/// `SetPeerBandwidthLimitType` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetPeerBandwidthLimitType {
+    /// `Hard` variant.
+    /// `Hard` 变体.
     Hard = 0,
+    /// `Soft` variant.
+    /// `Soft` 变体.
     Soft,
+    /// `Dynamic` variant.
+    /// `Dynamic` 变体.
     Dynamic,
 }
 

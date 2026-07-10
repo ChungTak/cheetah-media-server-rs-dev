@@ -15,10 +15,18 @@ struct TaskNode {
     token: CancellationToken,
 }
 
+/// `TaskSystem` data structure.
+/// `TaskSystem` 数据结构.
 #[derive(Default)]
 pub struct TaskSystem {
+    /// `next_id` field of type `AtomicU64`.
+    /// `next_id` 字段，类型为 `AtomicU64`.
     next_id: AtomicU64,
+    /// `tasks` field.
+    /// `tasks` 字段.
     tasks: DashMap<TaskId, Arc<TaskNode>>,
+    /// `event_bus` field.
+    /// `event_bus` 字段.
     event_bus: RwLock<Option<Arc<dyn EventBus>>>,
 }
 
@@ -44,6 +52,8 @@ fn is_terminal_state(state: TaskState) -> bool {
 }
 
 impl TaskSystem {
+    /// Sets the `event_bus` value.
+    /// Sets `event_bus` 值.
     pub fn set_event_bus(&self, event_bus: Arc<dyn EventBus>) {
         *self.event_bus.write() = Some(event_bus);
     }

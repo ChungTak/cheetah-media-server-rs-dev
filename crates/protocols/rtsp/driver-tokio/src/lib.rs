@@ -1,4 +1,8 @@
+/// `client` module.
+/// `client` 模块.
 pub mod client;
+/// `server` module.
+/// `server` 模块.
 pub mod server;
 
 pub use cheetah_rtsp_core::{RtspCommand, RtspEvent, RtspHeader, RtspMethod, RtspRequest};

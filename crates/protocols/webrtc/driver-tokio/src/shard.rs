@@ -151,8 +151,14 @@ impl ShardSelectorStrategy for LeastLoadedShardStrategy {
 /// re-pick paths still resolve to the originally chosen shard so
 /// the `WebRtcCore` state is never orphaned.
 pub struct StickyHashShardStrategy {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: Arc<dyn ShardSelectorStrategy>,
+    /// `cache` field.
+    /// `cache` 字段.
     cache: Mutex<StickyCache>,
+    /// `cache_capacity` field of type `usize`.
+    /// `cache_capacity` 字段，类型为 `usize`.
     cache_capacity: usize,
 }
 
@@ -259,6 +265,8 @@ impl std::fmt::Debug for StickyHashShardStrategy {
 ///
 /// instead of constructing the inner / sticky pair by hand.
 pub struct BalancedStickyShardStrategy {
+    /// `inner` field of type `StickyHashShardStrategy`.
+    /// `inner` 字段，类型为 `StickyHashShardStrategy`.
     inner: StickyHashShardStrategy,
 }
 
@@ -320,9 +328,17 @@ impl std::fmt::Debug for BalancedStickyShardStrategy {
 /// with [`StickyHashShardStrategy`] when stronger affinity is
 /// required across the entire session lifetime.
 pub struct LoadAwareRebalanceStrategy {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: Arc<dyn ShardSelectorStrategy>,
+    /// `cache` field.
+    /// `cache` 字段.
     cache: Mutex<RebalanceCache>,
+    /// `cache_capacity` field of type `usize`.
+    /// `cache_capacity` 字段，类型为 `usize`.
     cache_capacity: usize,
+    /// `refresh_interval_ticks` field of type `u32`.
+    /// `refresh_interval_ticks` 字段，类型为 `u32`.
     refresh_interval_ticks: u32,
 }
 
@@ -465,7 +481,11 @@ impl std::fmt::Debug for LoadAwareRebalanceStrategy {
 /// 8k cache + 256-tick refresh defaults, or [`Self::new`] when
 /// you want to tune the parameters.
 pub struct StickyOverRebalanceStrategy {
+    /// `inner_sticky` field of type `StickyHashShardStrategy`.
+    /// `inner_sticky` 字段，类型为 `StickyHashShardStrategy`.
     inner_sticky: StickyHashShardStrategy,
+    /// `inner_rebalance` field.
+    /// `inner_rebalance` 字段.
     inner_rebalance: Arc<LoadAwareRebalanceStrategy>,
 }
 
@@ -536,7 +556,11 @@ impl std::fmt::Debug for StickyOverRebalanceStrategy {
 /// `Arc<dyn>` and a `usize`.
 #[derive(Clone)]
 pub struct ShardSelector {
+    /// `shard_count` field of type `usize`.
+    /// `shard_count` 字段，类型为 `usize`.
     shard_count: usize,
+    /// `strategy` field.
+    /// `strategy` 字段.
     strategy: Arc<dyn ShardSelectorStrategy>,
 }
 
@@ -563,6 +587,8 @@ impl ShardSelector {
         }
     }
 
+    /// `shard_count` function.
+    /// `shard_count` 函数.
     pub fn shard_count(&self) -> usize {
         self.shard_count
     }
@@ -591,7 +617,11 @@ impl ShardSelector {
 /// `WebRtcDriverHandle::shard_stats`.
 #[derive(Debug, Default)]
 pub struct ShardLoadTable {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: Mutex<HashMap<ShardId, ShardLoad>>,
+    /// `shard_count` field of type `usize`.
+    /// `shard_count` 字段，类型为 `usize`.
     shard_count: usize,
 }
 
@@ -601,6 +631,8 @@ pub struct ShardLoadTable {
 /// route counts to the shard that actually owns them.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ShardLoad {
+    /// `session_count` field of type `usize`.
+    /// `session_count` 字段，类型为 `usize`.
     pub session_count: usize,
     /// Number of remote addresses currently bound to a session on
     /// this shard. Updated by the shard's event loop whenever it
@@ -613,6 +645,8 @@ pub struct ShardLoad {
 }
 
 impl ShardLoadTable {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(shard_count: usize) -> Self {
         let shard_count = shard_count.max(1);
         let mut inner = HashMap::with_capacity(shard_count);
@@ -625,17 +659,23 @@ impl ShardLoadTable {
         }
     }
 
+    /// `shard_count` function.
+    /// `shard_count` 函数.
     #[allow(dead_code)]
     pub fn shard_count(&self) -> usize {
         self.shard_count
     }
 
+    /// `record_session_added` function.
+    /// `record_session_added` 函数.
     pub fn record_session_added(&self, shard: ShardId) {
         let mut guard = self.inner.lock();
         let entry = guard.entry(shard).or_default();
         entry.session_count = entry.session_count.saturating_add(1);
     }
 
+    /// `record_session_removed` function.
+    /// `record_session_removed` 函数.
     pub fn record_session_removed(&self, shard: ShardId) {
         let mut guard = self.inner.lock();
         let entry = guard.entry(shard).or_default();

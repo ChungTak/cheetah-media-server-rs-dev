@@ -9,34 +9,64 @@ use cheetah_codec::{CodecId, MediaKind};
 /// fMP4 track description (HLS-specific wrapper).
 #[derive(Debug, Clone)]
 pub struct Fmp4TrackDesc {
+    /// `track_id` field of type `u32`.
+    /// `track_id` 字段，类型为 `u32`.
     pub track_id: u32,
+    /// `codec` field of type `CodecId`.
+    /// `codec` 字段，类型为 `CodecId`.
     pub codec: CodecId,
+    /// `media_kind` field of type `MediaKind`.
+    /// `media_kind` 字段，类型为 `MediaKind`.
     pub media_kind: MediaKind,
+    /// `timescale` field of type `u32`.
+    /// `timescale` 字段，类型为 `u32`.
     pub timescale: u32,
     /// Codec-specific extradata (avcC for H264, hvcC for H265, esds for AAC, etc.)
     pub extradata: Bytes,
+    /// `width` field of type `u16`.
+    /// `width` 字段，类型为 `u16`.
     pub width: u16,
+    /// `height` field of type `u16`.
+    /// `height` 字段，类型为 `u16`.
     pub height: u16,
+    /// `sample_rate` field of type `u32`.
+    /// `sample_rate` 字段，类型为 `u32`.
     pub sample_rate: u32,
+    /// `channels` field of type `u8`.
+    /// `channels` 字段，类型为 `u8`.
     pub channels: u8,
 }
 
 /// A single sample to be written into a media segment.
 #[derive(Debug, Clone)]
 pub struct Fmp4Sample {
+    /// `track_id` field of type `u32`.
+    /// `track_id` 字段，类型为 `u32`.
     pub track_id: u32,
+    /// `pts_ms` field of type `u64`.
+    /// `pts_ms` 字段，类型为 `u64`.
     pub pts_ms: u64,
+    /// `dts_ms` field of type `u64`.
+    /// `dts_ms` 字段，类型为 `u64`.
     pub dts_ms: u64,
+    /// `is_keyframe` field of type `bool`.
+    /// `is_keyframe` 字段，类型为 `bool`.
     pub is_keyframe: bool,
+    /// `data` field of type `Bytes`.
+    /// `data` 字段，类型为 `Bytes`.
     pub data: Bytes,
 }
 
 /// fMP4 muxer for HLS — delegates to `cheetah_codec::Fmp4Muxer`.
 pub struct Fmp4Muxer {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: cheetah_codec::Fmp4Muxer,
 }
 
 impl Fmp4Muxer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(tracks: Vec<Fmp4TrackDesc>) -> Self {
         let track_infos: Vec<_> = tracks.iter().map(desc_to_track_info).collect();
         let inner = cheetah_codec::Fmp4Muxer::new(

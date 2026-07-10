@@ -10,9 +10,15 @@ struct RoomEntry {
     streams: RwLock<Vec<StreamKey>>,
 }
 
+/// `RoomService` data structure.
+/// `RoomService` 数据结构.
 #[derive(Default)]
 pub struct RoomService {
+    /// `next_id` field of type `AtomicU64`.
+    /// `next_id` 字段，类型为 `AtomicU64`.
     next_id: AtomicU64,
+    /// `rooms` field.
+    /// `rooms` 字段.
     rooms: DashMap<RoomId, RoomEntry>,
 }
 

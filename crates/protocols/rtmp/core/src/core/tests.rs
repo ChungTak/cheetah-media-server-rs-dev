@@ -7,6 +7,8 @@ mod command;
 mod handshake;
 mod media;
 
+/// `decode_first_message` function.
+/// `decode_first_message` 函数.
 pub(super) fn decode_first_message(
     decoder: &mut RtmpChunkDecoder,
     outputs: &[CoreOutput],

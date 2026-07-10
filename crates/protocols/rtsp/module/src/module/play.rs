@@ -400,6 +400,8 @@ fn frame_media_timestamp_ms(
     Some(cheetah_codec::dts_to_rtmp_timestamp_ms(media_ts, timebase))
 }
 
+/// `handle_describe` function.
+/// `handle_describe` 函数.
 pub(super) async fn handle_describe(
     connection_id: RtspConnectionId,
     req: RtspRequest,
@@ -702,6 +704,8 @@ fn finish_pending_describe(
     describe_pending.cancel();
 }
 
+/// `handle_setup` function.
+/// `handle_setup` 函数.
 pub(super) async fn handle_setup(
     connection_id: RtspConnectionId,
     req: RtspRequest,
@@ -1399,6 +1403,8 @@ pub(super) async fn handle_setup(
 // outlive the request, pushing the argument count to 8. Introducing a
 // context struct just for this one handler would hide the uniformity with
 // its siblings without reducing coupling, so we explicitly allow the lint.
+/// `handle_play` function.
+/// `handle_play` 函数.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn handle_play(
     connection_id: RtspConnectionId,
@@ -2016,6 +2022,8 @@ pub(super) async fn handle_play(
     let _ = start_play_tx.send();
 }
 
+/// `handle_pause` function.
+/// `handle_pause` 函数.
 pub(super) async fn handle_pause(
     connection_id: RtspConnectionId,
     request: PauseRequestMeta,
@@ -2094,6 +2102,8 @@ pub(super) async fn handle_pause(
     }
 }
 
+/// `send_play_rtcp_payload` function.
+/// `send_play_rtcp_payload` 函数.
 pub(super) async fn send_play_rtcp_payload(
     command_tx: &RtspCoreCommandSender,
     connection_id: RtspConnectionId,
@@ -2132,12 +2142,15 @@ pub(super) async fn send_play_rtcp_payload(
     }
 }
 
+/// `PlayRtcpPacket` enumeration.
+/// `PlayRtcpPacket` 枚举.
 #[derive(Debug, Clone)]
 pub(super) enum PlayRtcpPacket {
-    SdesCname {
-        ssrc: u32,
-        cname: String,
-    },
+    /// `SdesCname` variant.
+    /// `SdesCname` 变体.
+    SdesCname { ssrc: u32, cname: String },
+    /// `SenderReport` variant.
+    /// `SenderReport` 变体.
     SenderReport {
         ssrc: u32,
         rtp_timestamp: u32,
@@ -2145,23 +2158,28 @@ pub(super) enum PlayRtcpPacket {
         octets_sent: u32,
         unix_time_micros: u64,
     },
-    Bye {
-        ssrc: u32,
-        reason: Option<String>,
-    },
+    /// `Bye` variant.
+    /// `Bye` 变体.
+    Bye { ssrc: u32, reason: Option<String> },
 }
 
+/// `PlayRtcpSendError` enumeration.
+/// `PlayRtcpSendError` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum PlayRtcpSendError {
+    /// `Build` variant.
+    /// `Build` 变体.
     Build {
         packet: &'static str,
         detail: String,
     },
-    Send {
-        packet: &'static str,
-    },
+    /// `Send` variant.
+    /// `Send` 变体.
+    Send { packet: &'static str },
 }
 
+/// `send_play_rtcp_packet` function.
+/// `send_play_rtcp_packet` 函数.
 pub(super) async fn send_play_rtcp_packet(
     command_tx: &RtspCoreCommandSender,
     connection_id: RtspConnectionId,
@@ -2214,6 +2232,8 @@ pub(super) async fn send_play_rtcp_packet(
         })
 }
 
+/// `should_emit_sender_report` function.
+/// `should_emit_sender_report` 函数.
 pub(super) fn should_emit_sender_report(packets_sent: u32) -> bool {
     packets_sent == 1 || packets_sent.is_multiple_of(200)
 }

@@ -17,6 +17,8 @@ pub struct RtpRewriter {
 }
 
 impl RtpRewriter {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(target_ssrc: u32, initial_seq: u16) -> Self {
         Self {
             target_ssrc,
@@ -25,6 +27,8 @@ impl RtpRewriter {
         }
     }
 
+    /// Returns a copy with `payload_type` set.
+    /// 返回 一个 copy 带有 `payload_type` 设置.
     pub fn with_payload_type(mut self, pt: u8) -> Self {
         self.target_pt = Some(pt);
         self
@@ -52,10 +56,14 @@ impl RtpRewriter {
         Some(out.freeze())
     }
 
+    /// `current_seq` function.
+    /// `current_seq` 函数.
     pub fn current_seq(&self) -> u16 {
         self.next_seq
     }
 
+    /// `target_ssrc` function.
+    /// `target_ssrc` 函数.
     pub fn target_ssrc(&self) -> u32 {
         self.target_ssrc
     }

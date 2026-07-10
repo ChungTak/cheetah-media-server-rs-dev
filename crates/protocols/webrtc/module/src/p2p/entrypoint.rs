@@ -36,17 +36,31 @@ pub const P2P_DEFAULT_OFFER_TIMEOUT: Duration = Duration::from_secs(10);
 /// What the entrypoint produces.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct P2pBridgePlan {
+    /// `bridge_config` field of type `P2pBridgeConfig`.
+    /// `bridge_config` 字段，类型为 `P2pBridgeConfig`.
     pub bridge_config: P2pBridgeConfig,
+    /// `signaling_url` field of type `SignalingUrl`.
+    /// `signaling_url` 字段，类型为 `SignalingUrl`.
     pub signaling_url: SignalingUrl,
+    /// `kind` field of type `P2pJobKind`.
+    /// `kind` 字段，类型为 `P2pJobKind`.
     pub kind: P2pJobKind,
 }
 
+/// `P2pBridgePlanError` enumeration.
+/// `P2pBridgePlanError` 枚举.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum P2pBridgePlanError {
+    /// `NotP2p` variant.
+    /// `NotP2p` 变体.
     #[error("signaling_protocols={value}; expected 1 for P2P bridge plan")]
     NotP2p { value: u32 },
+    /// `MissingPeerRoom` variant.
+    /// `MissingPeerRoom` 变体.
     #[error("missing peer_room_id query parameter")]
     MissingPeerRoom,
+    /// `Url` variant.
+    /// `Url` 变体.
     #[error(transparent)]
     Url(#[from] SignalingUrlError),
 }
@@ -54,15 +68,29 @@ pub enum P2pBridgePlanError {
 /// Parameters threaded in from module configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct P2pBridgePlanInput<'a> {
+    /// `url` field of type `&'a ZlmRtcUrl`.
+    /// `url` 字段，类型为 `&'一个 ZlmRtcUrl`.
     pub url: &'a ZlmRtcUrl,
+    /// `kind` field of type `P2pJobKind`.
+    /// `kind` 字段，类型为 `P2pJobKind`.
     pub kind: P2pJobKind,
+    /// `session_id` field of type `WebRtcSessionId`.
+    /// `session_id` 字段，类型为 `WebRtcSessionId`.
     pub session_id: WebRtcSessionId,
+    /// `local_room_id` field of type `String`.
+    /// `local_room_id` 字段，类型为 `String`.
     pub local_room_id: String,
+    /// `transport_id` field of type `String`.
+    /// `transport_id` 字段，类型为 `String`.
     pub transport_id: String,
+    /// `policy` field of type `&'a SignalingUrlPolicy`.
+    /// `policy` 字段，类型为 `&'一个 SignalingUrlPolicy`.
     pub policy: &'a SignalingUrlPolicy,
     /// Override `pending_candidate_cap`; falls back to
     /// [`PENDING_CANDIDATE_DEFAULT_CAP`] when zero.
     pub pending_candidate_cap: usize,
+    /// `offer_timeout` field.
+    /// `offer_timeout` 字段.
     pub offer_timeout: Option<Duration>,
 }
 

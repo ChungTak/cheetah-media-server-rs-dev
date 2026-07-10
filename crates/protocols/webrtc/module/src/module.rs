@@ -35,6 +35,8 @@ use crate::session::{WebRtcModuleSessionState, WebRtcSessionIdAllocator, WebRtcS
 const MODULE_ID: &str = "webrtc";
 const ROUTES_PREFIX: &str = "/api/v1/rtc";
 
+/// `WebRtcModuleFactory` data structure.
+/// `WebRtcModuleFactory` 数据结构.
 pub struct WebRtcModuleFactory;
 
 impl ModuleFactory for WebRtcModuleFactory {
@@ -71,18 +73,44 @@ impl ModuleFactory for WebRtcModuleFactory {
     }
 }
 
+/// `WebRtcModule` data structure.
+/// `WebRtcModule` 数据结构.
 pub struct WebRtcModule {
+    /// `state` field of type `ModuleState`.
+    /// `state` 字段，类型为 `ModuleState`.
     state: ModuleState,
+    /// `config` field.
+    /// `config` 字段.
     config: Arc<Mutex<WebRtcModuleConfig>>,
+    /// `ctx` field.
+    /// `ctx` 字段.
     ctx: Option<EngineContext>,
+    /// `driver` field.
+    /// `driver` 字段.
     driver: Arc<Mutex<Option<Arc<WebRtcDriverHandle>>>>,
+    /// `cancel` field.
+    /// `cancel` 字段.
     cancel: Option<CancellationToken>,
+    /// `allocator` field.
+    /// `allocator` 字段.
     allocator: Arc<WebRtcSessionIdAllocator>,
+    /// `registry` field.
+    /// `registry` 字段.
     registry: Arc<Mutex<WebRtcSessionRegistry>>,
+    /// `bridges` field.
+    /// `bridges` 字段.
     bridges: Arc<Mutex<WebRtcBridgeRegistry>>,
+    /// `answer_dispatcher` field.
+    /// `answer_dispatcher` 字段.
     answer_dispatcher: Arc<AnswerDispatcher>,
+    /// `jobs` field.
+    /// `jobs` 字段.
     jobs: Arc<Mutex<crate::jobs::WebRtcJobRegistry>>,
+    /// `http_client` field.
+    /// `http_client` 字段.
     http_client: crate::http_client::WhipWhepHttpClient,
+    /// `metrics` field.
+    /// `metrics` 字段.
     metrics: Arc<crate::metrics::WebRtcModuleMetrics>,
     /// P2P signaling room keeper registry. Phase 05 follow-up:
     /// stores keeper bookkeeping for the upcoming WebSocket
@@ -115,6 +143,8 @@ pub struct WebRtcModule {
 }
 
 impl WebRtcModule {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             state: ModuleState::Created,

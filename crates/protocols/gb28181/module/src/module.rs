@@ -23,6 +23,8 @@ use crate::config::Gb28181ModuleConfig;
 
 const MODULE_ID: &str = "gb28181";
 
+/// `Gb28181ModuleFactory` data structure.
+/// `Gb28181ModuleFactory` 数据结构.
 pub struct Gb28181ModuleFactory;
 
 impl ModuleFactory for Gb28181ModuleFactory {
@@ -60,20 +62,36 @@ impl ModuleFactory for Gb28181ModuleFactory {
     }
 }
 
+/// `Gb28181Module` data structure.
+/// `Gb28181Module` 数据结构.
 pub struct Gb28181Module {
+    /// `state` field of type `ModuleState`.
+    /// `state` 字段，类型为 `ModuleState`.
     state: ModuleState,
+    /// `config` field of type `Gb28181ModuleConfig`.
+    /// `config` 字段，类型为 `Gb28181ModuleConfig`.
     config: Gb28181ModuleConfig,
+    /// `ctx` field.
+    /// `ctx` 字段.
     ctx: Option<EngineContext>,
     /// Shared with the HTTP service so the latter sees the driver as soon as `start` sets it.
     /// `update_http_mount` runs at init time — before `start` — so the module can't pass a
     /// concrete handle directly.
     driver_handle: Arc<Mutex<Option<Arc<Gb28181DriverHandle>>>>,
+    /// `cancel_token` field.
+    /// `cancel_token` 字段.
     cancel_token: Option<CancellationToken>,
+    /// `devices` field.
+    /// `devices` 字段.
     devices: Arc<Mutex<HashMap<String, GbDevice>>>,
+    /// `active_sessions` field.
+    /// `active_sessions` 字段.
     active_sessions: Arc<Mutex<HashMap<String, String>>>, // session_key -> device_id
 }
 
 impl Gb28181Module {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             state: ModuleState::Created,

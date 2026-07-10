@@ -13,11 +13,17 @@ use dashmap::DashMap;
 ///   report timing baseline). Overwritten on each publish.
 #[derive(Default)]
 pub struct MetricsRegistry {
+    /// `counters` field.
+    /// `counters` 字段.
     counters: DashMap<String, AtomicU64>,
+    /// `gauges` field.
+    /// `gauges` 字段.
     gauges: DashMap<String, AtomicU64>,
 }
 
 impl MetricsRegistry {
+    /// `inc` function.
+    /// `inc` 函数.
     pub fn inc(&self, key: &str, value: u64) {
         let entry = self
             .counters

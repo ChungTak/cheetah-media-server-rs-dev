@@ -4,12 +4,20 @@ use cheetah_rtsp_core::{
     RtcpSdesItem, RtcpSenderReport,
 };
 
+/// `ParsedRtcpSenderReport` data structure.
+/// `ParsedRtcpSenderReport` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParsedRtcpSenderReport {
+    /// `sender_ssrc` field of type `u32`.
+    /// `sender_ssrc` 字段，类型为 `u32`.
     pub sender_ssrc: u32,
+    /// `lsr` field of type `u32`.
+    /// `lsr` 字段，类型为 `u32`.
     pub lsr: u32,
 }
 
+/// Parses `rtcp_sender_report` from input.
+/// 解析 `rtcp_sender_report` 来自 输入.
 pub fn parse_rtcp_sender_report(
     payload: &[u8],
 ) -> Result<Option<ParsedRtcpSenderReport>, cheetah_rtsp_core::RtcpError> {
@@ -28,16 +36,34 @@ pub fn parse_rtcp_sender_report(
     Ok(None)
 }
 
+/// `RtcpReceiverReportBlock` data structure.
+/// `RtcpReceiverReportBlock` 数据结构.
 pub struct RtcpReceiverReportBlock {
+    /// `sender_ssrc` field of type `u32`.
+    /// `sender_ssrc` 字段，类型为 `u32`.
     pub sender_ssrc: u32,
+    /// `fraction_lost` field of type `u8`.
+    /// `fraction_lost` 字段，类型为 `u8`.
     pub fraction_lost: u8,
+    /// `cumulative_lost` field of type `u32`.
+    /// `cumulative_lost` 字段，类型为 `u32`.
     pub cumulative_lost: u32,
+    /// `extended_highest_seq` field of type `u32`.
+    /// `extended_highest_seq` 字段，类型为 `u32`.
     pub extended_highest_seq: u32,
+    /// `jitter` field of type `u32`.
+    /// `jitter` 字段，类型为 `u32`.
     pub jitter: u32,
+    /// `lsr` field of type `u32`.
+    /// `lsr` 字段，类型为 `u32`.
     pub lsr: u32,
+    /// `dlsr` field of type `u32`.
+    /// `dlsr` 字段，类型为 `u32`.
     pub dlsr: u32,
 }
 
+/// Builds `rtcp_sender_report` output.
+/// 构建 `rtcp_sender_report` 输出.
 pub fn build_rtcp_sender_report(
     ssrc: u32,
     rtp_timestamp: u32,
@@ -57,6 +83,8 @@ pub fn build_rtcp_sender_report(
     RtcpPacket::build(&[packet]).map(Bytes::from)
 }
 
+/// Builds `rtcp_sdes_cname` output.
+/// 构建 `rtcp_sdes_cname` 输出.
 pub fn build_rtcp_sdes_cname(
     ssrc: u32,
     cname: &str,
@@ -70,6 +98,8 @@ pub fn build_rtcp_sdes_cname(
     RtcpPacket::build(&[packet]).map(Bytes::from)
 }
 
+/// Builds `rtcp_receiver_report` output.
+/// 构建 `rtcp_receiver_report` 输出.
 pub fn build_rtcp_receiver_report(
     receiver_ssrc: u32,
     block: RtcpReceiverReportBlock,
@@ -89,6 +119,8 @@ pub fn build_rtcp_receiver_report(
     RtcpPacket::build(&[packet]).map(Bytes::from)
 }
 
+/// Builds `rtcp_bye` output.
+/// 构建 `rtcp_bye` 输出.
 pub fn build_rtcp_bye(
     ssrc: u32,
     reason: Option<&str>,

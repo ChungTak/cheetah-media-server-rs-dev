@@ -54,7 +54,11 @@ pub trait KeeperTransportFactory: Send + Sync {
 /// Reconnect / retry knobs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeeperSupervisorConfig {
+    /// `retry_initial_backoff` field of type `Duration`.
+    /// `retry_initial_backoff` 字段，类型为 `Duration`.
     pub retry_initial_backoff: Duration,
+    /// `retry_max_backoff` field of type `Duration`.
+    /// `retry_max_backoff` 字段，类型为 `Duration`.
     pub retry_max_backoff: Duration,
     /// Maximum reconnect attempts before giving up. `0` means
     /// "retry forever until cancelled".

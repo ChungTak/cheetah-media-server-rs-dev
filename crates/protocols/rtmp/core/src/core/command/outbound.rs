@@ -18,6 +18,8 @@ use super::super::{
 };
 
 impl RtmpCore {
+    /// `on_command` function.
+    /// `on_command` 函数.
     pub(crate) fn on_command(
         &mut self,
         cmd: RtmpCoreCommand,
@@ -252,6 +254,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// `emit_result_received` function.
+    /// `emit_result_received` 函数.
     pub(crate) fn emit_result_received(
         &mut self,
         result: RtmpResultCommand,
@@ -307,6 +311,8 @@ impl RtmpCore {
         }));
     }
 
+    /// `emit_on_status_received` function.
+    /// `emit_on_status_received` 函数.
     pub(crate) fn emit_on_status_received(
         &mut self,
         status: RtmpOnStatusCommand,
@@ -438,6 +444,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// `send_window_ack_size` function.
+    /// `send_window_ack_size` 函数.
     pub(crate) fn send_window_ack_size(
         &mut self,
         out: &mut Vec<CoreOutput>,
@@ -446,6 +454,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// `send_set_peer_bandwidth` function.
+    /// `send_set_peer_bandwidth` 函数.
     pub(crate) fn send_set_peer_bandwidth(
         &mut self,
         out: &mut Vec<CoreOutput>,
@@ -454,6 +464,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// `send_set_chunk_size` function.
+    /// `send_set_chunk_size` 函数.
     pub(crate) fn send_set_chunk_size(
         &mut self,
         chunk_size: u32,
@@ -465,6 +477,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// `send_connect_result` function.
+    /// `send_connect_result` 函数.
     pub(crate) fn send_connect_result(
         &mut self,
         txn: f64,
@@ -497,6 +511,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// `send_create_stream_result` function.
+    /// `send_create_stream_result` 函数.
     pub(crate) fn send_create_stream_result(
         &mut self,
         txn: f64,
@@ -514,6 +530,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// `allocate_stream_id` function.
+    /// `allocate_stream_id` 函数.
     pub(super) fn allocate_stream_id(&mut self) -> u32 {
         let current = self.next_stream_id.max(1);
         self.next_stream_id = self.next_stream_id.checked_add(1).unwrap_or(1);
@@ -614,6 +632,8 @@ impl RtmpCore {
         self.send_message(8, 0, 20, stream_id, payload, out)
     }
 
+    /// `send_pause_request` function.
+    /// `send_pause_request` 函数.
     pub(crate) fn send_pause_request(
         &mut self,
         stream_id: u32,
@@ -631,6 +651,8 @@ impl RtmpCore {
         self.send_message(8, 0, 20, stream_id, payload, out)
     }
 
+    /// `send_null_result` function.
+    /// `send_null_result` 函数.
     pub(crate) fn send_null_result(&mut self, txn: f64, out: &mut Vec<CoreOutput>) {
         let payload = crate::amf0::encode_all(&[
             WireAmf0Value::String("_result".to_string()),

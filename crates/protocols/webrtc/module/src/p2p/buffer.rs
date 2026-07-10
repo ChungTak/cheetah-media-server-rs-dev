@@ -46,8 +46,14 @@ pub enum BufferState {
 /// One buffered remote ICE candidate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingCandidate {
+    /// `candidate` field of type `String`.
+    /// `candidate` 字段，类型为 `String`.
     pub candidate: String,
+    /// `sdp_mid` field.
+    /// `sdp_mid` 字段.
     pub sdp_mid: Option<String>,
+    /// `sdp_mline_index` field.
+    /// `sdp_mline_index` 字段.
     pub sdp_mline_index: Option<u32>,
 }
 
@@ -57,19 +63,33 @@ pub struct PendingCandidate {
 /// time). Closing is final.
 #[derive(Debug)]
 pub struct PendingCandidateBuffer {
+    /// `queue` field.
+    /// `queue` 字段.
     queue: VecDeque<PendingCandidate>,
+    /// `seen` field.
+    /// `seen` 字段.
     seen: HashSet<String>,
+    /// `state` field of type `BufferState`.
+    /// `state` 字段，类型为 `BufferState`.
     state: BufferState,
+    /// `cap` field of type `usize`.
+    /// `cap` 字段，类型为 `usize`.
     cap: usize,
 }
 
+/// `PendingBufferError` enumeration.
+/// `PendingBufferError` 枚举.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum PendingBufferError {
+    /// `InvalidCap` variant.
+    /// `InvalidCap` 变体.
     #[error("buffer cap must be > 0")]
     InvalidCap,
 }
 
 impl PendingCandidateBuffer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(cap: usize) -> Result<Self, PendingBufferError> {
         if cap == 0 {
             return Err(PendingBufferError::InvalidCap);
@@ -82,14 +102,20 @@ impl PendingCandidateBuffer {
         })
     }
 
+    /// `state` function.
+    /// `state` 函数.
     pub fn state(&self) -> BufferState {
         self.state
     }
 
+    /// `len` function.
+    /// `len` 函数.
     pub fn len(&self) -> usize {
         self.queue.len()
     }
 
+    /// Returns `true` if `empty` is true.
+    /// 返回 `真` 如果 `empty` is 真.
     pub fn is_empty(&self) -> bool {
         self.queue.is_empty()
     }

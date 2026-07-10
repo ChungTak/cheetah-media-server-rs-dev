@@ -11,6 +11,8 @@ const UDP_INGEST_REORDER_MAX_PENDING_PACKETS: usize = 2;
 const UDP_INGEST_REORDER_MAX_DELAY_MS: u64 = 40;
 const UNSUPPORTED_CODEC_DROP_ALERT_THRESHOLD: u64 = 256;
 
+/// `handle_announce` function.
+/// `handle_announce` 函数.
 pub(super) async fn handle_announce(
     connection_id: RtspConnectionId,
     req: RtspRequest,
@@ -193,6 +195,8 @@ fn initial_video_parameter_set_caches(
     caches
 }
 
+/// Builds `pull_publish_session` output.
+/// 构建 `pull_publish_session` 输出.
 pub(super) fn build_pull_publish_session(
     config: &RtspModuleConfig,
     cancel: CancellationToken,
@@ -231,6 +235,8 @@ pub(super) fn build_pull_publish_session(
     }
 }
 
+/// `handle_record` function.
+/// `handle_record` 函数.
 pub(super) async fn handle_record(
     connection_id: RtspConnectionId,
     cseq: Option<u32>,
@@ -304,6 +310,8 @@ pub(super) async fn handle_record(
     }
 }
 
+/// `handle_interleaved_frame` function.
+/// `handle_interleaved_frame` 函数.
 pub(super) async fn handle_interleaved_frame(
     connection_id: RtspConnectionId,
     channel: u8,
@@ -360,6 +368,8 @@ pub(super) async fn handle_interleaved_frame(
     }
 }
 
+/// `ingest_publish_rtp_payload` function.
+/// `ingest_publish_rtp_payload` 函数.
 pub(super) fn ingest_publish_rtp_payload(
     connection_id: RtspConnectionId,
     track_id: TrackId,
@@ -381,6 +391,8 @@ pub(super) fn ingest_publish_rtp_payload(
     ingest_publish_rtp_packet(connection_id, track_id, &packet, publish, runtime_api);
 }
 
+/// `ingest_publish_rtp_packet` function.
+/// `ingest_publish_rtp_packet` 函数.
 pub(super) fn ingest_publish_rtp_packet(
     connection_id: RtspConnectionId,
     track_id: TrackId,
@@ -934,6 +946,8 @@ fn ensure_track_timestamp_normalizer<'a>(
     publish.timestamp_normalizers.get_mut(&track.track_id)
 }
 
+/// `flush_publish_video_reorder` function.
+/// `flush_publish_video_reorder` 函数.
 pub(super) fn flush_publish_video_reorder(publish: &mut PublishSession) {
     publish.timestamp_normalizers.clear();
 }
@@ -1147,6 +1161,8 @@ fn sampling_frequency_from_index(index: u8) -> Option<u32> {
     }
 }
 
+/// Builds `publish_receiver_report` output.
+/// 构建 `publish_receiver_report` 输出.
 pub(super) fn build_publish_receiver_report(
     connection_id: RtspConnectionId,
     track_id: TrackId,
@@ -1202,6 +1218,8 @@ pub(super) fn build_publish_receiver_report(
     }
 }
 
+/// `spawn_publish_rtp_udp_task` function.
+/// `spawn_publish_rtp_udp_task` 函数.
 pub(super) fn spawn_publish_rtp_udp_task(
     ctx: PublishUdpRtpTaskContext,
 ) -> Box<dyn cheetah_sdk::JoinHandle> {
@@ -1299,17 +1317,37 @@ fn publish_record_started(
         .is_some_and(|publish| publish.record_started)
 }
 
+/// `PublishUdpRtpTaskContext` data structure.
+/// `PublishUdpRtpTaskContext` 数据结构.
 pub(super) struct PublishUdpRtpTaskContext {
+    /// `runtime_api` field.
+    /// `runtime_api` 字段.
     pub runtime_api: Arc<dyn RuntimeApi>,
+    /// `sessions` field.
+    /// `sessions` 字段.
     pub sessions: Arc<Mutex<HashMap<RtspConnectionId, RtspConnectionState>>>,
+    /// `connection_id` field of type `RtspConnectionId`.
+    /// `connection_id` 字段，类型为 `RtspConnectionId`.
     pub connection_id: RtspConnectionId,
+    /// `track_id` field of type `TrackId`.
+    /// `track_id` 字段，类型为 `TrackId`.
     pub track_id: TrackId,
+    /// `rtp_socket` field.
+    /// `rtp_socket` 字段.
     pub rtp_socket: Arc<dyn cheetah_sdk::AsyncUdpSocket>,
+    /// `expected_remote` field of type `SocketAddr`.
+    /// `expected_remote` 字段，类型为 `SocketAddr`.
     pub expected_remote: SocketAddr,
+    /// `enable_reorder` field of type `bool`.
+    /// `enable_reorder` 字段，类型为 `bool`.
     pub enable_reorder: bool,
+    /// `cancel` field of type `CancellationToken`.
+    /// `cancel` 字段，类型为 `CancellationToken`.
     pub cancel: CancellationToken,
 }
 
+/// `spawn_publish_rtcp_udp_task` function.
+/// `spawn_publish_rtcp_udp_task` 函数.
 pub(super) fn spawn_publish_rtcp_udp_task(
     runtime_api: Arc<dyn RuntimeApi>,
     sessions: Arc<Mutex<HashMap<RtspConnectionId, RtspConnectionState>>>,

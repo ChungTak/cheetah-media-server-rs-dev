@@ -5,9 +5,17 @@
 //! `record/hls.rs`, `record/ps.rs`. The runtime is responsible for actual
 //! disk I/O.
 
+/// `flv` module.
+/// `flv` 模块.
 pub mod flv;
+/// `hls` module.
+/// `hls` 模块.
 pub mod hls;
+/// `mp4` module.
+/// `mp4` 模块.
 pub mod mp4;
+/// `ps` module.
+/// `ps` 模块.
 pub mod ps;
 
 use crate::prelude::*;
@@ -19,13 +27,23 @@ use crate::track::TrackInfo;
 /// Supported record file containers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RecordFormat {
+    /// `Flv` variant.
+    /// `Flv` 变体.
     Flv,
+    /// `Hls` variant.
+    /// `Hls` 变体.
     Hls,
+    /// `Mp4` variant.
+    /// `Mp4` 变体.
     Mp4,
+    /// `Ps` variant.
+    /// `Ps` 变体.
     Ps,
 }
 
 impl RecordFormat {
+    /// `extension` function.
+    /// `extension` 函数.
     pub fn extension(self) -> &'static str {
         match self {
             RecordFormat::Flv => "flv",
@@ -35,6 +53,8 @@ impl RecordFormat {
         }
     }
 
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(input: &str) -> Option<Self> {
         let lower = input.to_ascii_lowercase();
         match lower.as_str() {
@@ -70,22 +90,21 @@ pub enum RecordWriteEvent {
 /// Diagnostic emitted by a record writer.
 #[derive(Debug, Clone)]
 pub enum RecordDiagnostic {
+    /// `UnsupportedCodec` variant.
+    /// `UnsupportedCodec` 变体.
     UnsupportedCodec {
         codec: crate::track::CodecId,
         track_id: u32,
     },
-    UnsupportedTrack {
-        track_id: u32,
-        reason: &'static str,
-    },
-    MalformedFrame {
-        track_id: u32,
-        reason: &'static str,
-    },
-    BackpressureDropped {
-        track_id: u32,
-        count: u32,
-    },
+    /// `UnsupportedTrack` variant.
+    /// `UnsupportedTrack` 变体.
+    UnsupportedTrack { track_id: u32, reason: &'static str },
+    /// `MalformedFrame` variant.
+    /// `MalformedFrame` 变体.
+    MalformedFrame { track_id: u32, reason: &'static str },
+    /// `BackpressureDropped` variant.
+    /// `BackpressureDropped` 变体.
+    BackpressureDropped { track_id: u32, count: u32 },
     /// The writer asks the runtime layer to discard the file because it is
     /// below the configured "valid recording" threshold (see ZLM
     /// `MP4Recorder::asyncClose()` 1024-byte rule). The runtime should
@@ -99,14 +118,24 @@ pub enum RecordDiagnostic {
 /// Errors produced by record writers.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum RecordError {
+    /// `InvalidTracks` variant.
+    /// `InvalidTracks` 变体.
     #[error("track configuration invalid: {0}")]
     InvalidTracks(&'static str),
+    /// `InvalidFrame` variant.
+    /// `InvalidFrame` 变体.
     #[error("frame rejected: {0}")]
     InvalidFrame(&'static str),
+    /// `NotInitialized` variant.
+    /// `NotInitialized` 变体.
     #[error("writer is not initialized")]
     NotInitialized,
+    /// `Finalized` variant.
+    /// `Finalized` 变体.
     #[error("writer is finalized")]
     Finalized,
+    /// `Internal` variant.
+    /// `Internal` 变体.
     #[error("internal error: {0}")]
     Internal(&'static str),
 }

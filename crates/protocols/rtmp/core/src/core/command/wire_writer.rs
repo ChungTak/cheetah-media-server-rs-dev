@@ -9,6 +9,8 @@ use crate::timestamp::RtmpTimestamp;
 use super::super::{CoreOutput, RtmpCore, RtmpCoreError};
 
 impl RtmpCore {
+    /// `send_user_control` function.
+    /// `send_user_control` 函数.
     pub(crate) fn send_user_control(
         &mut self,
         event_type: u16,
@@ -21,6 +23,8 @@ impl RtmpCore {
         self.send_message(2, 0, 4, 0, payload.freeze(), out)
     }
 
+    /// `send_message` function.
+    /// `send_message` 函数.
     pub(crate) fn send_message(
         &mut self,
         csid: u32,
@@ -46,6 +50,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// `send_rtmp_message` function.
+    /// `send_rtmp_message` 函数.
     pub(crate) fn send_rtmp_message(
         &mut self,
         csid: u32,

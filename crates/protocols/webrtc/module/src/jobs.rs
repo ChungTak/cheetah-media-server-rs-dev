@@ -35,13 +35,21 @@ use crate::http::AnswerDispatcher;
 use crate::http_client::{HttpClientRequest, WhipWhepHttpClient};
 use crate::session::WebRtcSessionIdAllocator;
 
+/// `WebRtcJobKind` enumeration.
+/// `WebRtcJobKind` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcJobKind {
+    /// `Pull` variant.
+    /// `Pull` 变体.
     Pull,
+    /// `Push` variant.
+    /// `Push` 变体.
     Push,
 }
 
 impl WebRtcJobKind {
+    /// `label` function.
+    /// `label` 函数.
     pub fn label(self) -> &'static str {
         match self {
             WebRtcJobKind::Pull => "pull",
@@ -50,47 +58,101 @@ impl WebRtcJobKind {
     }
 }
 
+/// `WebRtcSignalingProtocol` enumeration.
+/// `WebRtcSignalingProtocol` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WebRtcSignalingProtocol {
+    /// `Whip` variant.
+    /// `Whip` 变体.
     Whip,
+    /// `Whep` variant.
+    /// `Whep` 变体.
     Whep,
 }
 
+/// `WebRtcClientJobSpec` data structure.
+/// `WebRtcClientJobSpec` 数据结构.
 #[derive(Debug, Clone)]
 pub struct WebRtcClientJobSpec {
+    /// `kind` field of type `WebRtcJobKind`.
+    /// `kind` 字段，类型为 `WebRtcJobKind`.
     pub kind: WebRtcJobKind,
+    /// `stream_key` field of type `StreamKey`.
+    /// `stream_key` 字段，类型为 `StreamKey`.
     pub stream_key: StreamKey,
+    /// `url` field of type `String`.
+    /// `url` 字段，类型为 `String`.
     pub url: String,
+    /// `protocol` field of type `WebRtcSignalingProtocol`.
+    /// `protocol` 字段，类型为 `WebRtcSignalingProtocol`.
     pub protocol: WebRtcSignalingProtocol,
+    /// `timeout` field of type `Duration`.
+    /// `timeout` 字段，类型为 `Duration`.
     pub timeout: Duration,
+    /// `retry` field of type `bool`.
+    /// `retry` 字段，类型为 `bool`.
     pub retry: bool,
+    /// `retry_initial_backoff` field of type `Duration`.
+    /// `retry_initial_backoff` 字段，类型为 `Duration`.
     pub retry_initial_backoff: Duration,
+    /// `retry_max_backoff` field of type `Duration`.
+    /// `retry_max_backoff` 字段，类型为 `Duration`.
     pub retry_max_backoff: Duration,
+    /// `max_retries` field of type `u32`.
+    /// `max_retries` 字段，类型为 `u32`.
     pub max_retries: u32,
+    /// `max_response_bytes` field of type `usize`.
+    /// `max_response_bytes` 字段，类型为 `usize`.
     pub max_response_bytes: usize,
+    /// `allow_private_ips` field of type `bool`.
+    /// `allow_private_ips` 字段，类型为 `bool`.
     pub allow_private_ips: bool,
 }
 
+/// `WebRtcJobState` enumeration.
+/// `WebRtcJobState` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcJobState {
+    /// `Pending` variant.
+    /// `Pending` 变体.
     Pending,
+    /// `Connecting` variant.
+    /// `Connecting` 变体.
     Connecting,
+    /// `Connected` variant.
+    /// `Connected` 变体.
     Connected,
+    /// `Failed` variant.
+    /// `Failed` 变体.
     Failed,
+    /// `Stopped` variant.
+    /// `Stopped` 变体.
     Stopped,
 }
 
+/// `WebRtcJobError` enumeration.
+/// `WebRtcJobError` 枚举.
 #[derive(Debug, Error)]
 pub enum WebRtcJobError {
+    /// `Conflict` variant.
+    /// `Conflict` 变体.
     #[error("job already exists for stream {0}")]
     Conflict(String),
+    /// `NotFound` variant.
+    /// `NotFound` 变体.
     #[error("job not found: {0}")]
     NotFound(String),
+    /// `InvalidSpec` variant.
+    /// `InvalidSpec` 变体.
     #[error("invalid spec: {0}")]
     InvalidSpec(String),
+    /// `Http` variant.
+    /// `Http` 变体.
     #[error("http error: {0}")]
     Http(String),
+    /// `Driver` variant.
+    /// `Driver` 变体.
     #[error("driver error: {0}")]
     Driver(String),
 }
@@ -98,19 +160,41 @@ pub enum WebRtcJobError {
 /// Per-job runtime state surfaced to HTTP `*list` endpoints.
 #[derive(Debug, Clone)]
 pub struct WebRtcJobSnapshot {
+    /// `kind` field of type `WebRtcJobKind`.
+    /// `kind` 字段，类型为 `WebRtcJobKind`.
     pub kind: WebRtcJobKind,
+    /// `stream_key` field of type `String`.
+    /// `stream_key` 字段，类型为 `String`.
     pub stream_key: String,
+    /// `url` field of type `String`.
+    /// `url` 字段，类型为 `String`.
     pub url: String,
+    /// `state` field of type `WebRtcJobState`.
+    /// `state` 字段，类型为 `WebRtcJobState`.
     pub state: WebRtcJobState,
+    /// `last_error` field.
+    /// `last_error` 字段.
     pub last_error: Option<String>,
+    /// `retry_count` field of type `u32`.
+    /// `retry_count` 字段，类型为 `u32`.
     pub retry_count: u32,
+    /// `remote_session_location` field.
+    /// `remote_session_location` 字段.
     pub remote_session_location: Option<String>,
+    /// `local_session_id` field.
+    /// `local_session_id` 字段.
     pub local_session_id: Option<WebRtcSessionId>,
 }
 
+/// `WebRtcJobRegistry` data structure.
+/// `WebRtcJobRegistry` 数据结构.
 #[derive(Default)]
 pub struct WebRtcJobRegistry {
+    /// `pull` field.
+    /// `pull` 字段.
     pull: HashMap<String, JobEntry>,
+    /// `push` field.
+    /// `push` 字段.
     push: HashMap<String, JobEntry>,
 }
 
@@ -120,6 +204,8 @@ struct JobEntry {
 }
 
 impl WebRtcJobRegistry {
+    /// `list` function.
+    /// `list` 函数.
     pub fn list(&self, kind: WebRtcJobKind) -> Vec<WebRtcJobSnapshot> {
         let map = match kind {
             WebRtcJobKind::Pull => &self.pull,
@@ -128,6 +214,8 @@ impl WebRtcJobRegistry {
         map.values().map(|e| e.snapshot.lock().clone()).collect()
     }
 
+    /// `cancel_all` function.
+    /// `cancel_all` 函数.
     pub fn cancel_all(&mut self) {
         for (_, entry) in self.pull.drain() {
             entry.cancel.cancel();
@@ -137,6 +225,8 @@ impl WebRtcJobRegistry {
         }
     }
 
+    /// `stop` function.
+    /// `stop` 函数.
     pub fn stop(&mut self, kind: WebRtcJobKind, stream_key: &str) -> bool {
         let map = match kind {
             WebRtcJobKind::Pull => &mut self.pull,

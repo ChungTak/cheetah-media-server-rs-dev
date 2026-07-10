@@ -17,20 +17,36 @@ use thiserror::Error;
 
 use crate::ome_signaling::{parse_ome_ws_message, OmeWsDecoderConfig, OmeWsMessage};
 
+/// `WebSocketOmeTransportError` enumeration.
+/// `WebSocketOmeTransportError` 枚举.
 #[derive(Debug, Error)]
 pub enum WebSocketOmeTransportError {
+    /// `Closed` variant.
+    /// `Closed` 变体.
     #[error("transport closed")]
     Closed,
+    /// `WebSocket` variant.
+    /// `WebSocket` 变体.
     #[error("websocket error: {0}")]
     WebSocket(String),
+    /// `Decode` variant.
+    /// `Decode` 变体.
     #[error("decode failed: {0}")]
     Decode(String),
 }
 
+/// `OmeWsServerConfig` data structure.
+/// `OmeWsServerConfig` 数据结构.
 #[derive(Debug, Clone)]
 pub struct OmeWsServerConfig {
+    /// `max_connections` field of type `usize`.
+    /// `max_connections` 字段，类型为 `usize`.
     pub max_connections: usize,
+    /// `decoder` field of type `OmeWsDecoderConfig`.
+    /// `decoder` 字段，类型为 `OmeWsDecoderConfig`.
     pub decoder: OmeWsDecoderConfig,
+    /// `accept_timeout` field of type `Duration`.
+    /// `accept_timeout` 字段，类型为 `Duration`.
     pub accept_timeout: Duration,
 }
 
@@ -44,29 +60,47 @@ impl Default for OmeWsServerConfig {
     }
 }
 
+/// `OmeWsInboundConnection` data structure.
+/// `OmeWsInboundConnection` 数据结构.
 #[derive(Debug, Clone)]
 pub struct OmeWsInboundConnection {
+    /// `remote_addr` field.
+    /// `remote_addr` 字段.
     pub remote_addr: std::net::SocketAddr,
+    /// `path_and_query` field of type `String`.
+    /// `path_and_query` 字段，类型为 `String`.
     pub path_and_query: String,
 }
 
+/// `OmeWsConnectionHandler` type alias.
+/// `OmeWsConnectionHandler` 类型别名.
 pub type OmeWsConnectionHandler = Arc<
     dyn Fn(OmeWsInboundConnection, WebSocketOmeTransport) -> futures::future::BoxFuture<'static, ()>
         + Send
         + Sync,
 >;
 
+/// `OmeWsServerError` enumeration.
+/// `OmeWsServerError` 枚举.
 #[derive(Debug, Error)]
 pub enum OmeWsServerError {
+    /// `Bind` variant.
+    /// `Bind` 变体.
     #[error("bind failed: {0}")]
     Bind(String),
+    /// `Accept` variant.
+    /// `Accept` 变体.
     #[error("accept failed: {0}")]
     Accept(String),
 }
 
 /// OME signaling transport over a runtime-neutral [`WsConnection`].
 pub struct WebSocketOmeTransport {
+    /// `connection` field.
+    /// `connection` 字段.
     connection: Box<dyn WsConnection>,
+    /// `decoder` field of type `OmeWsDecoderConfig`.
+    /// `decoder` 字段，类型为 `OmeWsDecoderConfig`.
     decoder: OmeWsDecoderConfig,
 }
 
@@ -118,6 +152,8 @@ impl WebSocketOmeTransport {
         }
     }
 
+    /// `recv_message` function.
+    /// `recv_message` 函数.
     pub async fn recv_message(&self) -> Result<Option<OmeWsMessage>, WebSocketOmeTransportError> {
         match self.connection.recv().await {
             Ok(WsFrame::Text(text)) => {
@@ -133,6 +169,8 @@ impl WebSocketOmeTransport {
         }
     }
 
+    /// `send_text` function.
+    /// `send_text` 函数.
     pub async fn send_text(&self, text: String) -> Result<(), WebSocketOmeTransportError> {
         self.connection
             .send_text(text)
@@ -143,6 +181,8 @@ impl WebSocketOmeTransport {
             })
     }
 
+    /// `close` function.
+    /// `close` 函数.
     pub async fn close(&self) {
         self.connection.close().await;
     }

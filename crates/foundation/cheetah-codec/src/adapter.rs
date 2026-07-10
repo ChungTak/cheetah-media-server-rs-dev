@@ -8,26 +8,44 @@ use crate::{
     TimestampNormalizeOutput, TrackId, TrackInfo, TrackInfoError,
 };
 
+/// `TimelineSource` enumeration.
+/// `TimelineSource` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimelineSource {
+    /// `TimestampNormalizer` variant.
+    /// `TimestampNormalizer` 变体.
     TimestampNormalizer,
+    /// `PassthroughLegacy` variant.
+    /// `PassthroughLegacy` 变体.
     PassthroughLegacy,
 }
 
+/// `FutureProtocolKind` enumeration.
+/// `FutureProtocolKind` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FutureProtocolKind {
+    /// `SrtTransport` variant.
+    /// `SrtTransport` 变体.
     SrtTransport,
+    /// `WebRtcRtpRtcp` variant.
+    /// `WebRtcRtpRtcp` 变体.
     WebRtcRtpRtcp,
 }
 
+/// `AdapterContractError` enumeration.
+/// `AdapterContractError` 枚举.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum AdapterContractError {
+    /// `TrackFrameMismatch` variant.
+    /// `TrackFrameMismatch` 变体.
     #[error("track/frame mismatch for {field}: track={track}, frame={frame}")]
     TrackFrameMismatch {
         field: &'static str,
         track: String,
         frame: String,
     },
+    /// `NormalizedTimestampMismatch` variant.
+    /// `NormalizedTimestampMismatch` 变体.
     #[error("normalized timestamp mismatch for {field}: frame={frame_value}, normalized={normalized_value}")]
     NormalizedTimestampMismatch {
         field: &'static str,
@@ -37,36 +55,66 @@ pub enum AdapterContractError {
     #[error(
         "normalized discontinuity mismatch: frame={frame_discontinuity}, normalized={normalized_discontinuity}"
     )]
+    /// `NormalizedDiscontinuityMismatch` variant.
+    /// `NormalizedDiscontinuityMismatch` 变体.
     NormalizedDiscontinuityMismatch {
         frame_discontinuity: bool,
         normalized_discontinuity: bool,
     },
+    /// `InvalidFrameTiming` variant.
+    /// `InvalidFrameTiming` 变体.
     #[error("invalid frame timing: {0}")]
     InvalidFrameTiming(#[from] FrameTimingError),
+    /// `InvalidTrackInfo` variant.
+    /// `InvalidTrackInfo` 变体.
     #[error("invalid track info: {0}")]
     InvalidTrackInfo(#[from] TrackInfoError),
+    /// `InvalidCodecConfig` variant.
+    /// `InvalidCodecConfig` 变体.
     #[error("invalid codec config: {0}")]
     InvalidCodecConfig(#[from] CodecConfigError),
+    /// `MissingRequiredParameterSets` variant.
+    /// `MissingRequiredParameterSets` 变体.
     #[error("required parameter sets missing for track {track_id:?} codec {codec:?}")]
     MissingRequiredParameterSets { track_id: TrackId, codec: CodecId },
+    /// `SrtBypassedMediaNormalization` variant.
+    /// `SrtBypassedMediaNormalization` 变体.
     #[error("srt ingress bypassed timestamp normalization")]
     SrtBypassedMediaNormalization,
+    /// `WebRtcBypassedMediaNormalization` variant.
+    /// `WebRtcBypassedMediaNormalization` 变体.
     #[error("webrtc ingress bypassed timestamp normalization")]
     WebRtcBypassedMediaNormalization,
+    /// `WebRtcVideoMissingAccessUnitBoundary` variant.
+    /// `WebRtcVideoMissingAccessUnitBoundary` 变体.
     #[error("webrtc video track {track_id:?} missing access unit boundary markers")]
     WebRtcVideoMissingAccessUnitBoundary { track_id: TrackId },
 }
 
+/// `IngressAdapterFrame` data structure.
+/// `IngressAdapterFrame` 数据结构.
 #[derive(Debug, Clone)]
 pub struct IngressAdapterFrame {
+    /// `track` field of type `TrackInfo`.
+    /// `track` 字段，类型为 `TrackInfo`.
     track: TrackInfo,
+    /// `frame` field of type `AVFrame`.
+    /// `frame` 字段，类型为 `AVFrame`.
     frame: AVFrame,
+    /// `timeline_source` field of type `TimelineSource`.
+    /// `timeline_source` 字段，类型为 `TimelineSource`.
     timeline_source: TimelineSource,
+    /// `random_access` field of type `bool`.
+    /// `random_access` 字段，类型为 `bool`.
     random_access: bool,
+    /// `discontinuity` field of type `bool`.
+    /// `discontinuity` 字段，类型为 `bool`.
     discontinuity: bool,
 }
 
 impl IngressAdapterFrame {
+    /// Creates `normalized` from input.
+    /// 创建 `normalized` 来自 输入.
     pub fn from_normalized(
         track: TrackInfo,
         frame: AVFrame,
@@ -96,6 +144,8 @@ impl IngressAdapterFrame {
         })
     }
 
+    /// Creates `passthrough` from input.
+    /// 创建 `passthrough` 来自 输入.
     pub fn from_passthrough(
         track: TrackInfo,
         frame: AVFrame,
@@ -110,84 +160,154 @@ impl IngressAdapterFrame {
         })
     }
 
+    /// `track` function.
+    /// `track` 函数.
     pub fn track(&self) -> &TrackInfo {
         &self.track
     }
 
+    /// `frame` function.
+    /// `frame` 函数.
     pub fn frame(&self) -> &AVFrame {
         &self.frame
     }
 
+    /// `codec` function.
+    /// `codec` 函数.
     pub fn codec(&self) -> CodecId {
         self.frame.codec
     }
 
+    /// `timebase` function.
+    /// `timebase` 函数.
     pub fn timebase(&self) -> Timebase {
         self.frame.timebase
     }
 
+    /// `pts` function.
+    /// `pts` 函数.
     pub fn pts(&self) -> i64 {
         self.frame.pts
     }
 
+    /// `dts` function.
+    /// `dts` 函数.
     pub fn dts(&self) -> i64 {
         self.frame.dts
     }
 
+    /// `duration` function.
+    /// `duration` 函数.
     pub fn duration(&self) -> i64 {
         self.frame.duration
     }
 
+    /// `random_access` function.
+    /// `random_access` 函数.
     pub fn random_access(&self) -> bool {
         self.random_access
     }
 
+    /// `discontinuity` function.
+    /// `discontinuity` 函数.
     pub fn discontinuity(&self) -> bool {
         self.discontinuity
     }
 
+    /// `timeline_source` function.
+    /// `timeline_source` 函数.
     pub fn timeline_source(&self) -> TimelineSource {
         self.timeline_source
     }
 }
 
+/// `FragmentBoundary` data structure.
+/// `FragmentBoundary` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FragmentBoundary {
+    /// `start_of_access_unit` field of type `bool`.
+    /// `start_of_access_unit` 字段，类型为 `bool`.
     pub start_of_access_unit: bool,
+    /// `end_of_access_unit` field of type `bool`.
+    /// `end_of_access_unit` 字段，类型为 `bool`.
     pub end_of_access_unit: bool,
 }
 
+/// `EncapsulationTimestamps` data structure.
+/// `EncapsulationTimestamps` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EncapsulationTimestamps {
+    /// `rtmp_timestamp_ms` field of type `u32`.
+    /// `rtmp_timestamp_ms` 字段，类型为 `u32`.
     pub rtmp_timestamp_ms: u32,
+    /// `composition_time_ms` field of type `i32`.
+    /// `composition_time_ms` 字段，类型为 `i32`.
     pub composition_time_ms: i32,
+    /// `rtp_timestamp_ticks` field of type `u32`.
+    /// `rtp_timestamp_ticks` 字段，类型为 `u32`.
     pub rtp_timestamp_ticks: u32,
 }
 
+/// `ParameterSetReplay` data structure.
+/// `ParameterSetReplay` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParameterSetReplay {
+    /// `requirement` field of type `ParameterSetRequirement`.
+    /// `requirement` 字段，类型为 `ParameterSetRequirement`.
     pub requirement: ParameterSetRequirement,
+    /// `units` field.
+    /// `units` 字段.
     pub units: Vec<Bytes>,
 }
 
+/// `EgressAdapterView` data structure.
+/// `EgressAdapterView` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EgressAdapterView {
+    /// `track_id` field of type `TrackId`.
+    /// `track_id` 字段，类型为 `TrackId`.
     track_id: TrackId,
+    /// `media_kind` field of type `MediaKind`.
+    /// `media_kind` 字段，类型为 `MediaKind`.
     media_kind: MediaKind,
+    /// `codec` field of type `CodecId`.
+    /// `codec` 字段，类型为 `CodecId`.
     codec: CodecId,
+    /// `timebase` field of type `Timebase`.
+    /// `timebase` 字段，类型为 `Timebase`.
     timebase: Timebase,
+    /// `random_access` field of type `bool`.
+    /// `random_access` 字段，类型为 `bool`.
     random_access: bool,
+    /// `discontinuity` field of type `bool`.
+    /// `discontinuity` 字段，类型为 `bool`.
     discontinuity: bool,
+    /// `pts` field of type `i64`.
+    /// `pts` 字段，类型为 `i64`.
     pts: i64,
+    /// `dts` field of type `i64`.
+    /// `dts` 字段，类型为 `i64`.
     dts: i64,
+    /// `duration` field of type `i64`.
+    /// `duration` 字段，类型为 `i64`.
     duration: i64,
+    /// `fragment_boundary` field of type `FragmentBoundary`.
+    /// `fragment_boundary` 字段，类型为 `FragmentBoundary`.
     fragment_boundary: FragmentBoundary,
+    /// `encapsulation_timestamps` field of type `EncapsulationTimestamps`.
+    /// `encapsulation_timestamps` 字段，类型为 `EncapsulationTimestamps`.
     encapsulation_timestamps: EncapsulationTimestamps,
+    /// `codec_config` field of type `CodecConfigView`.
+    /// `codec_config` 字段，类型为 `CodecConfigView`.
     codec_config: CodecConfigView,
+    /// `parameter_set_replay` field of type `ParameterSetReplay`.
+    /// `parameter_set_replay` 字段，类型为 `ParameterSetReplay`.
     parameter_set_replay: ParameterSetReplay,
 }
 
 impl EgressAdapterView {
+    /// `build` function.
+    /// `build` 函数.
     pub fn build(
         track: &TrackInfo,
         frame: &AVFrame,
@@ -246,82 +366,148 @@ impl EgressAdapterView {
         })
     }
 
+    /// `track_id` function.
+    /// `track_id` 函数.
     pub fn track_id(&self) -> TrackId {
         self.track_id
     }
 
+    /// `media_kind` function.
+    /// `media_kind` 函数.
     pub fn media_kind(&self) -> MediaKind {
         self.media_kind
     }
 
+    /// `codec` function.
+    /// `codec` 函数.
     pub fn codec(&self) -> CodecId {
         self.codec
     }
 
+    /// `timebase` function.
+    /// `timebase` 函数.
     pub fn timebase(&self) -> Timebase {
         self.timebase
     }
 
+    /// `random_access` function.
+    /// `random_access` 函数.
     pub fn random_access(&self) -> bool {
         self.random_access
     }
 
+    /// `discontinuity` function.
+    /// `discontinuity` 函数.
     pub fn discontinuity(&self) -> bool {
         self.discontinuity
     }
 
+    /// `pts` function.
+    /// `pts` 函数.
     pub fn pts(&self) -> i64 {
         self.pts
     }
 
+    /// `dts` function.
+    /// `dts` 函数.
     pub fn dts(&self) -> i64 {
         self.dts
     }
 
+    /// `duration` function.
+    /// `duration` 函数.
     pub fn duration(&self) -> i64 {
         self.duration
     }
 
+    /// `fragment_boundary` function.
+    /// `fragment_boundary` 函数.
     pub fn fragment_boundary(&self) -> FragmentBoundary {
         self.fragment_boundary
     }
 
+    /// `encapsulation_timestamps` function.
+    /// `encapsulation_timestamps` 函数.
     pub fn encapsulation_timestamps(&self) -> EncapsulationTimestamps {
         self.encapsulation_timestamps
     }
 
+    /// `codec_config` function.
+    /// `codec_config` 函数.
     pub fn codec_config(&self) -> &CodecConfigView {
         &self.codec_config
     }
 
+    /// `parameter_set_replay` function.
+    /// `parameter_set_replay` 函数.
     pub fn parameter_set_replay(&self) -> &ParameterSetReplay {
         &self.parameter_set_replay
     }
 }
 
+/// `SrtEgressContractView` data structure.
+/// `SrtEgressContractView` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SrtEgressContractView {
+    /// `track_id` field of type `TrackId`.
+    /// `track_id` 字段，类型为 `TrackId`.
     pub track_id: TrackId,
+    /// `media_kind` field of type `MediaKind`.
+    /// `media_kind` 字段，类型为 `MediaKind`.
     pub media_kind: MediaKind,
+    /// `codec` field of type `CodecId`.
+    /// `codec` 字段，类型为 `CodecId`.
     pub codec: CodecId,
+    /// `random_access` field of type `bool`.
+    /// `random_access` 字段，类型为 `bool`.
     pub random_access: bool,
+    /// `discontinuity` field of type `bool`.
+    /// `discontinuity` 字段，类型为 `bool`.
     pub discontinuity: bool,
+    /// `dts_ms` field of type `u32`.
+    /// `dts_ms` 字段，类型为 `u32`.
     pub dts_ms: u32,
+    /// `composition_time_ms` field of type `i32`.
+    /// `composition_time_ms` 字段，类型为 `i32`.
     pub composition_time_ms: i32,
+    /// `codec_config` field of type `CodecConfigView`.
+    /// `codec_config` 字段，类型为 `CodecConfigView`.
     pub codec_config: CodecConfigView,
+    /// `parameter_set_replay` field of type `ParameterSetReplay`.
+    /// `parameter_set_replay` 字段，类型为 `ParameterSetReplay`.
     pub parameter_set_replay: ParameterSetReplay,
 }
 
+/// `WebRtcEgressContractView` data structure.
+/// `WebRtcEgressContractView` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcEgressContractView {
+    /// `track_id` field of type `TrackId`.
+    /// `track_id` 字段，类型为 `TrackId`.
     pub track_id: TrackId,
+    /// `media_kind` field of type `MediaKind`.
+    /// `media_kind` 字段，类型为 `MediaKind`.
     pub media_kind: MediaKind,
+    /// `codec` field of type `CodecId`.
+    /// `codec` 字段，类型为 `CodecId`.
     pub codec: CodecId,
+    /// `random_access` field of type `bool`.
+    /// `random_access` 字段，类型为 `bool`.
     pub random_access: bool,
+    /// `discontinuity` field of type `bool`.
+    /// `discontinuity` 字段，类型为 `bool`.
     pub discontinuity: bool,
+    /// `fragment_boundary` field of type `FragmentBoundary`.
+    /// `fragment_boundary` 字段，类型为 `FragmentBoundary`.
     pub fragment_boundary: FragmentBoundary,
+    /// `rtp_timestamp_ticks` field of type `u32`.
+    /// `rtp_timestamp_ticks` 字段，类型为 `u32`.
     pub rtp_timestamp_ticks: u32,
+    /// `codec_config` field of type `CodecConfigView`.
+    /// `codec_config` 字段，类型为 `CodecConfigView`.
     pub codec_config: CodecConfigView,
+    /// `parameter_set_replay` field of type `ParameterSetReplay`.
+    /// `parameter_set_replay` 字段，类型为 `ParameterSetReplay`.
     pub parameter_set_replay: ParameterSetReplay,
 }
 
@@ -335,22 +521,46 @@ pub struct WebRtcEgressContractView {
 /// `cheetah-webrtc-core` types.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcIngressContractView {
+    /// `track_id` field of type `TrackId`.
+    /// `track_id` 字段，类型为 `TrackId`.
     pub track_id: TrackId,
+    /// `codec` field of type `CodecId`.
+    /// `codec` 字段，类型为 `CodecId`.
     pub codec: CodecId,
+    /// `rtp_timestamp_ticks` field of type `u32`.
+    /// `rtp_timestamp_ticks` 字段，类型为 `u32`.
     pub rtp_timestamp_ticks: u32,
+    /// `sequence_number` field of type `u16`.
+    /// `sequence_number` 字段，类型为 `u16`.
     pub sequence_number: u16,
+    /// `marker` field of type `bool`.
+    /// `marker` 字段，类型为 `bool`.
     pub marker: bool,
+    /// `rid` field.
+    /// `rid` 字段.
     pub rid: Option<String>,
+    /// `repaired_rid` field.
+    /// `repaired_rid` 字段.
     pub repaired_rid: Option<String>,
+    /// `twcc_sequence` field.
+    /// `twcc_sequence` 字段.
     pub twcc_sequence: Option<u16>,
 }
 
+/// `FutureProtocolEgressContractView` enumeration.
+/// `FutureProtocolEgressContractView` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FutureProtocolEgressContractView {
+    /// `Srt` variant.
+    /// `Srt` 变体.
     Srt(SrtEgressContractView),
+    /// `WebRtc` variant.
+    /// `WebRtc` 变体.
     WebRtc(WebRtcEgressContractView),
 }
 
+/// `enforce_future_protocol_ingress` function.
+/// `enforce_future_protocol_ingress` 函数.
 pub fn enforce_future_protocol_ingress(
     protocol: FutureProtocolKind,
     ingress: &IngressAdapterFrame,
@@ -371,6 +581,8 @@ pub fn enforce_future_protocol_ingress(
     Ok(())
 }
 
+/// `enforce_future_protocol_egress` function.
+/// `enforce_future_protocol_egress` 函数.
 pub fn enforce_future_protocol_egress(
     protocol: FutureProtocolKind,
     egress: &EgressAdapterView,
@@ -387,6 +599,8 @@ pub fn enforce_future_protocol_egress(
     Ok(())
 }
 
+/// Builds `future_protocol_egress_contract_view` output.
+/// 构建 `future_protocol_egress_contract_view` 输出.
 pub fn build_future_protocol_egress_contract_view(
     protocol: FutureProtocolKind,
     egress: &EgressAdapterView,

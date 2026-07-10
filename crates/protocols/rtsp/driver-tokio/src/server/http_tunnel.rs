@@ -13,15 +13,27 @@ use super::{DriverEvent, RtspConnectionId};
 
 const HTTP_TUNNEL_HEADER_LIMIT: usize = 64 * 1024;
 
+/// `HttpTunnelRegistryConfig` data structure.
+/// `HttpTunnelRegistryConfig` 数据结构.
 #[derive(Debug, Clone)]
 pub(super) struct HttpTunnelRegistryConfig {
+    /// `max_pending_tunnels` field of type `usize`.
+    /// `max_pending_tunnels` 字段，类型为 `usize`.
     pub(super) max_pending_tunnels: usize,
+    /// `pending_timeout_ms` field of type `u64`.
+    /// `pending_timeout_ms` 字段，类型为 `u64`.
     pub(super) pending_timeout_ms: u64,
+    /// `max_decoded_chunk_bytes` field of type `usize`.
+    /// `max_decoded_chunk_bytes` 字段，类型为 `usize`.
     pub(super) max_decoded_chunk_bytes: usize,
+    /// `max_base64_buffer_bytes` field of type `usize`.
+    /// `max_base64_buffer_bytes` 字段，类型为 `usize`.
     pub(super) max_base64_buffer_bytes: usize,
 }
 
 impl HttpTunnelRegistryConfig {
+    /// Creates `driver_config` from input.
+    /// 创建 `driver_config` 来自 输入.
     pub(super) fn from_driver_config(config: &super::DriverConfig) -> Self {
         Self {
             max_pending_tunnels: config.http_tunnel_max_pending.max(8),
@@ -32,34 +44,74 @@ impl HttpTunnelRegistryConfig {
     }
 }
 
+/// `PendingGetHalf` data structure.
+/// `PendingGetHalf` 数据结构.
 pub(super) struct PendingGetHalf {
+    /// `stream` field.
+    /// `stream` 字段.
     pub(super) stream: Box<dyn AsyncTcpStream>,
+    /// `path` field of type `String`.
+    /// `path` 字段，类型为 `String`.
     pub(super) path: String,
+    /// `expires_at_micros` field of type `u64`.
+    /// `expires_at_micros` 字段，类型为 `u64`.
     pub(super) expires_at_micros: u64,
 }
 
+/// `PendingPostHalf` data structure.
+/// `PendingPostHalf` 数据结构.
 pub(super) struct PendingPostHalf {
+    /// `stream` field.
+    /// `stream` 字段.
     pub(super) stream: Box<dyn AsyncTcpStream>,
+    /// `peer` field.
+    /// `peer` 字段.
     pub(super) peer: std::net::SocketAddr,
+    /// `path` field of type `String`.
+    /// `path` 字段，类型为 `String`.
     pub(super) path: String,
+    /// `initial_body` field of type `Bytes`.
+    /// `initial_body` 字段，类型为 `Bytes`.
     pub(super) initial_body: Bytes,
+    /// `expires_at_micros` field of type `u64`.
+    /// `expires_at_micros` 字段，类型为 `u64`.
     pub(super) expires_at_micros: u64,
 }
 
+/// `PendingPair` data structure.
+/// `PendingPair` 数据结构.
 pub(super) struct PendingPair {
+    /// `cookie` field of type `String`.
+    /// `cookie` 字段，类型为 `String`.
     pub(super) cookie: String,
+    /// `get` field of type `PendingGetHalf`.
+    /// `get` 字段，类型为 `PendingGetHalf`.
     pub(super) get: PendingGetHalf,
+    /// `post` field of type `PendingPostHalf`.
+    /// `post` 字段，类型为 `PendingPostHalf`.
     pub(super) post: PendingPostHalf,
 }
 
+/// `HttpTunnelRegistry` data structure.
+/// `HttpTunnelRegistry` 数据结构.
 pub(super) struct HttpTunnelRegistry {
+    /// `config` field of type `HttpTunnelRegistryConfig`.
+    /// `config` 字段，类型为 `HttpTunnelRegistryConfig`.
     config: HttpTunnelRegistryConfig,
+    /// `gets` field.
+    /// `gets` 字段.
     gets: HashMap<String, PendingGetHalf>,
+    /// `posts` field.
+    /// `posts` 字段.
     posts: HashMap<String, PendingPostHalf>,
+    /// `fifo` field.
+    /// `fifo` 字段.
     fifo: VecDeque<String>,
 }
 
 impl HttpTunnelRegistry {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub(super) fn new(config: HttpTunnelRegistryConfig) -> Self {
         Self {
             config,
@@ -69,10 +121,14 @@ impl HttpTunnelRegistry {
         }
     }
 
+    /// `config` function.
+    /// `config` 函数.
     pub(super) fn config(&self) -> &HttpTunnelRegistryConfig {
         &self.config
     }
 
+    /// `upsert_get` function.
+    /// `upsert_get` 函数.
     pub(super) fn upsert_get(
         &mut self,
         cookie: String,
@@ -112,6 +168,8 @@ impl HttpTunnelRegistry {
         Ok(None)
     }
 
+    /// `upsert_post` function.
+    /// `upsert_post` 函数.
     pub(super) fn upsert_post(
         &mut self,
         cookie: String,
@@ -157,6 +215,8 @@ impl HttpTunnelRegistry {
         Ok(None)
     }
 
+    /// `drain_expired` function.
+    /// `drain_expired` 函数.
     pub(super) fn drain_expired(
         &mut self,
         now_micros: u64,
@@ -204,29 +264,59 @@ impl HttpTunnelRegistry {
     }
 }
 
+/// `HttpTunnelMethod` enumeration.
+/// `HttpTunnelMethod` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum HttpTunnelMethod {
+    /// `Get` variant.
+    /// `Get` 变体.
     Get,
+    /// `Post` variant.
+    /// `Post` 变体.
     Post,
 }
 
+/// `HttpTunnelOpenRequest` data structure.
+/// `HttpTunnelOpenRequest` 数据结构.
 pub(super) struct HttpTunnelOpenRequest {
+    /// `method` field of type `HttpTunnelMethod`.
+    /// `方法` 字段，类型为 `HttpTunnelMethod`.
     pub(super) method: HttpTunnelMethod,
+    /// `cookie` field of type `String`.
+    /// `cookie` 字段，类型为 `String`.
     pub(super) cookie: String,
+    /// `path` field of type `String`.
+    /// `path` 字段，类型为 `String`.
     pub(super) path: String,
+    /// `initial_post_body` field of type `Bytes`.
+    /// `initial_post_body` 字段，类型为 `Bytes`.
     pub(super) initial_post_body: Bytes,
 }
 
+/// `HttpTunnelParseResult` enumeration.
+/// `HttpTunnelParseResult` 枚举.
 pub(super) enum HttpTunnelParseResult {
+    /// `Tunnel` variant.
+    /// `Tunnel` 变体.
     Tunnel(HttpTunnelOpenRequest),
+    /// `NotTunnel` variant.
+    /// `NotTunnel` 变体.
     NotTunnel(Bytes),
 }
 
+/// `HttpTunnelProbeResult` enumeration.
+/// `HttpTunnelProbeResult` 枚举.
 pub(super) enum HttpTunnelProbeResult {
+    /// `Parsed` variant.
+    /// `Parsed` 变体.
     Parsed(Result<HttpTunnelParseResult, &'static str>),
+    /// `TimedOut` variant.
+    /// `TimedOut` 变体.
     TimedOut(Bytes),
 }
 
+/// `probe_http_tunnel_open_request` function.
+/// `probe_http_tunnel_open_request` 函数.
 pub(super) async fn probe_http_tunnel_open_request(
     stream: &mut Box<dyn AsyncTcpStream>,
     initial_bytes: Bytes,
@@ -344,16 +434,22 @@ fn parse_http_tunnel_header(
     }))
 }
 
+/// `looks_like_http_tunnel_candidate` function.
+/// `looks_like_http_tunnel_candidate` 函数.
 pub(super) fn looks_like_http_tunnel_candidate(input: &[u8]) -> bool {
     input.starts_with(b"GET ") || input.starts_with(b"POST ")
 }
 
+/// Builds `http_tunnel_get_ok_response` output.
+/// 构建 `http_tunnel_get_ok_response` 输出.
 pub(super) fn build_http_tunnel_get_ok_response() -> Bytes {
     Bytes::from_static(
         b"HTTP/1.0 200 OK\r\nContent-Type: application/x-rtsp-tunnelled\r\nCache-Control: no-cache\r\nPragma: no-cache\r\n\r\n",
     )
 }
 
+/// Builds `http_tunnel_post_ok_response` output.
+/// 构建 `http_tunnel_post_ok_response` 输出.
 pub(super) fn build_http_tunnel_post_ok_response() -> Bytes {
     Bytes::from_static(b"HTTP/1.0 200 OK\r\nCache-Control: no-cache\r\nPragma: no-cache\r\n\r\n")
 }
@@ -422,6 +518,8 @@ impl Base64StreamDecoder {
     }
 }
 
+/// `run_http_tunnel_connection` function.
+/// `run_http_tunnel_connection` 函数.
 pub(super) async fn run_http_tunnel_connection(
     connection_id: RtspConnectionId,
     mut get_stream: Box<dyn AsyncTcpStream>,

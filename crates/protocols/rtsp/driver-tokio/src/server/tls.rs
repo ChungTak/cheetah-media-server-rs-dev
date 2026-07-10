@@ -25,8 +25,14 @@ use super::{DriverConfig, DriverEvent, RtspServerHandle};
 /// TLS configuration for the RTSPS listener.
 #[derive(Debug, Clone)]
 pub struct DriverTlsConfig {
+    /// `listen` field of type `SocketAddr`.
+    /// `listen` 字段，类型为 `SocketAddr`.
     pub listen: SocketAddr,
+    /// `server_config` field.
+    /// `server_config` 字段.
     pub server_config: Arc<ServerConfig>,
+    /// `handshake_timeout` field of type `Duration`.
+    /// `handshake_timeout` 字段，类型为 `Duration`.
     pub handshake_timeout: Duration,
 }
 

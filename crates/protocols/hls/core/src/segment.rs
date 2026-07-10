@@ -27,13 +27,23 @@ pub struct Segment {
 /// `retain_extra` keeps additional segments beyond the window for slow clients.
 /// Total capacity = max_segments + retain_extra.
 pub struct SegmentRing {
+    /// `segments` field.
+    /// `segments` 字段.
     segments: VecDeque<Segment>,
+    /// `max_segments` field of type `usize`.
+    /// `max_segments` 字段，类型为 `usize`.
     max_segments: usize,
+    /// `retain_extra` field of type `usize`.
+    /// `retain_extra` 字段，类型为 `usize`.
     retain_extra: usize,
+    /// `next_sequence` field of type `u64`.
+    /// `next_sequence` 字段，类型为 `u64`.
     next_sequence: u64,
 }
 
 impl SegmentRing {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(max_segments: usize) -> Self {
         Self::with_retain(max_segments, 0)
     }
@@ -105,6 +115,8 @@ impl SegmentRing {
         self.segments.len()
     }
 
+    /// Returns `true` if `empty` is true.
+    /// 返回 `真` 如果 `empty` is 真.
     pub fn is_empty(&self) -> bool {
         self.segments.is_empty()
     }

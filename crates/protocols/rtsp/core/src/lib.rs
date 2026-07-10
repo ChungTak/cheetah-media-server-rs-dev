@@ -1,3 +1,5 @@
+/// `core` module.
+/// `core` 模块.
 pub mod core;
 
 pub use core::{

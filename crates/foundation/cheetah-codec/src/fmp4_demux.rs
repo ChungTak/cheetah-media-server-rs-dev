@@ -11,6 +11,8 @@ use crate::track::{CodecId, MediaKind};
 /// Configuration for the fMP4 demuxer.
 #[derive(Debug, Clone)]
 pub struct Fmp4DemuxerConfig {
+    /// `max_box_bytes` field of type `usize`.
+    /// `max_box_bytes` 字段，类型为 `usize`.
     pub max_box_bytes: usize,
 }
 
@@ -25,17 +27,31 @@ impl Default for Fmp4DemuxerConfig {
 /// Track info extracted from init segment.
 #[derive(Debug, Clone)]
 pub struct Fmp4DemuxTrack {
+    /// `track_id` field of type `u32`.
+    /// `track_id` 字段，类型为 `u32`.
     pub track_id: u32,
+    /// `codec` field of type `CodecId`.
+    /// `codec` 字段，类型为 `CodecId`.
     pub codec: CodecId,
+    /// `media_kind` field of type `MediaKind`.
+    /// `media_kind` 字段，类型为 `MediaKind`.
     pub media_kind: MediaKind,
+    /// `timescale` field of type `u32`.
+    /// `timescale` 字段，类型为 `u32`.
     pub timescale: u32,
+    /// `extradata` field of type `Bytes`.
+    /// `extradata` 字段，类型为 `Bytes`.
     pub extradata: Bytes,
 }
 
 /// Events produced by the demuxer.
 #[derive(Debug, Clone)]
 pub enum Fmp4DemuxEvent {
+    /// `TrackInfo` variant.
+    /// `TrackInfo` 变体.
     TrackInfo(Vec<Fmp4DemuxTrack>),
+    /// `Frame` variant.
+    /// `Frame` 变体.
     Frame {
         track_id: u32,
         media_kind: MediaKind,
@@ -45,45 +61,62 @@ pub enum Fmp4DemuxEvent {
         keyframe: bool,
         data: Bytes,
     },
+    /// `Diagnostic` variant.
+    /// `Diagnostic` 变体.
     Diagnostic(Fmp4DemuxDiagnostic),
 }
 
 /// Diagnostic messages from the demuxer.
 #[derive(Debug, Clone)]
 pub enum Fmp4DemuxDiagnostic {
+    /// `MalformedBox` variant.
+    /// `MalformedBox` 变体.
     MalformedBox {
         box_type: [u8; 4],
         size: u64,
         header_size: usize,
     },
-    BoxTooLarge {
-        box_type: [u8; 4],
-        size: u64,
-    },
-    UnknownBox {
-        box_type: [u8; 4],
-    },
-    MdatOverflow {
-        track_id: u32,
-    },
-    TrackIdNotFound {
-        track_id: u32,
-    },
+    /// `BoxTooLarge` variant.
+    /// `BoxTooLarge` 变体.
+    BoxTooLarge { box_type: [u8; 4], size: u64 },
+    /// `UnknownBox` variant.
+    /// `UnknownBox` 变体.
+    UnknownBox { box_type: [u8; 4] },
+    /// `MdatOverflow` variant.
+    /// `MdatOverflow` 变体.
+    MdatOverflow { track_id: u32 },
+    /// `TrackIdNotFound` variant.
+    /// `TrackIdNotFound` 变体.
+    TrackIdNotFound { track_id: u32 },
+    /// `RepeatedInit` variant.
+    /// `RepeatedInit` 变体.
     RepeatedInit,
 }
 
 /// Streaming fMP4 demuxer with box reassembly.
 pub struct Fmp4Demuxer {
+    /// `config` field of type `Fmp4DemuxerConfig`.
+    /// `config` 字段，类型为 `Fmp4DemuxerConfig`.
     config: Fmp4DemuxerConfig,
+    /// `buffer` field of type `BytesMut`.
+    /// `buffer` 字段，类型为 `BytesMut`.
     buffer: BytesMut,
+    /// `tracks` field.
+    /// `tracks` 字段.
     tracks: Vec<Fmp4DemuxTrack>,
+    /// `init_parsed` field of type `bool`.
+    /// `init_parsed` 字段，类型为 `bool`.
     init_parsed: bool,
+    /// `pending_moof` field.
+    /// `pending_moof` 字段.
     pending_moof: Option<Bytes>,
     /// Bytes remaining to skip for an oversized box.
     skip_remaining: u64,
 }
 
 impl Fmp4Demuxer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: Fmp4DemuxerConfig) -> Self {
         Self {
             config,

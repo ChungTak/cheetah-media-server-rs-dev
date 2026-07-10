@@ -7,26 +7,50 @@ use cheetah_runtime_api::{AsyncUdpSocket, CancellationToken, JoinHandle, Runtime
 
 use super::RtspClientEvent;
 
+/// `RtspClientPortRange` data structure.
+/// `RtspClientPortRange` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtspClientPortRange {
+    /// `start` field of type `u16`.
+    /// `start` 字段，类型为 `u16`.
     pub start: u16,
+    /// `end` field of type `u16`.
+    /// `end` 字段，类型为 `u16`.
     pub end: u16,
 }
 
+/// `RtspClientUdpEndpoint` data structure.
+/// `RtspClientUdpEndpoint` 数据结构.
 #[derive(Clone)]
 pub struct RtspClientUdpEndpoint {
+    /// `rtp_socket` field.
+    /// `rtp_socket` 字段.
     pub rtp_socket: Arc<dyn AsyncUdpSocket>,
+    /// `rtcp_socket` field.
+    /// `rtcp_socket` 字段.
     pub rtcp_socket: Arc<dyn AsyncUdpSocket>,
+    /// `local_rtp` field of type `SocketAddr`.
+    /// `local_rtp` 字段，类型为 `SocketAddr`.
     pub local_rtp: SocketAddr,
+    /// `local_rtcp` field of type `SocketAddr`.
+    /// `local_rtcp` 字段，类型为 `SocketAddr`.
     pub local_rtcp: SocketAddr,
 }
 
+/// `RtspClientUdpRemote` data structure.
+/// `RtspClientUdpRemote` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtspClientUdpRemote {
+    /// `rtp` field of type `SocketAddr`.
+    /// `rtp` 字段，类型为 `SocketAddr`.
     pub rtp: SocketAddr,
+    /// `rtcp` field of type `SocketAddr`.
+    /// `rtcp` 字段，类型为 `SocketAddr`.
     pub rtcp: SocketAddr,
 }
 
+/// `allocate_udp_endpoint` function.
+/// `allocate_udp_endpoint` 函数.
 pub fn allocate_udp_endpoint(
     runtime_api: &Arc<dyn RuntimeApi>,
     bind_ip: IpAddr,
@@ -47,6 +71,8 @@ pub fn allocate_udp_endpoint(
     })
 }
 
+/// `configure_udp_remote_and_punch` function.
+/// `configure_udp_remote_and_punch` 函数.
 pub async fn configure_udp_remote_and_punch(
     endpoint: &RtspClientUdpEndpoint,
     remote_rtp: SocketAddr,
@@ -58,6 +84,8 @@ pub async fn configure_udp_remote_and_punch(
     Ok(())
 }
 
+/// `spawn_udp_receive_tasks` function.
+/// `spawn_udp_receive_tasks` 函数.
 pub fn spawn_udp_receive_tasks(
     runtime_api: Arc<dyn RuntimeApi>,
     endpoint: RtspClientUdpEndpoint,

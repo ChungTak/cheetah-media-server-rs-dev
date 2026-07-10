@@ -48,10 +48,20 @@ impl LocalCandidateCounts {
 /// generated SDP immediately before emitting `AnswerReady`/`OfferReady`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CandidateTransportPolicy {
+    /// `All` variant.
+    /// `All` 变体.
     All,
+    /// `UdpOnly` variant.
+    /// `UdpOnly` 变体.
     UdpOnly,
+    /// `TcpOnly` variant.
+    /// `TcpOnly` 变体.
     TcpOnly,
+    /// `RelayOnly` variant.
+    /// `RelayOnly` 变体.
     RelayOnly,
+    /// `UdpTcp` variant.
+    /// `UdpTcp` 变体.
     UdpTcp,
 }
 

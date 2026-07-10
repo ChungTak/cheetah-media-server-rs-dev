@@ -65,29 +65,57 @@ pub use sdp::{
 pub use seq_tracker::{SeqEvent, SeqTracker};
 pub use transport::{RtspTransport, RtspTransportError};
 
+/// `CoreInput` enumeration.
+/// `CoreInput` 枚举.
 #[derive(Debug, Clone)]
 pub enum CoreInput {
+    /// `Bytes` variant.
+    /// `Bytes` 变体.
     Bytes(Bytes),
+    /// `Command` variant.
+    /// `Command` 变体.
     Command(RtspCommand),
+    /// `PeerClosed` variant.
+    /// `PeerClosed` 变体.
     PeerClosed,
 }
 
+/// `CoreOutput` enumeration.
+/// `CoreOutput` 枚举.
 #[derive(Debug, Clone)]
 pub enum CoreOutput {
+    /// `Write` variant.
+    /// `Write` 变体.
     Write(Bytes),
+    /// `Event` variant.
+    /// `Event` 变体.
     Event(RtspEvent),
+    /// `Close` variant.
+    /// `Close` 变体.
     Close,
 }
 
+/// `RtspEvent` enumeration.
+/// `RtspEvent` 枚举.
 #[derive(Debug, Clone)]
 pub enum RtspEvent {
+    /// `Request` variant.
+    /// `Request` 变体.
     Request(RtspRequest),
+    /// `InterleavedFrame` variant.
+    /// `InterleavedFrame` 变体.
     InterleavedFrame { channel: u8, payload: Bytes },
+    /// `PeerClosed` variant.
+    /// `PeerClosed` 变体.
     PeerClosed,
 }
 
+/// `RtspCommand` enumeration.
+/// `RtspCommand` 枚举.
 #[derive(Debug, Clone)]
 pub enum RtspCommand {
+    /// `SendResponse` variant.
+    /// `SendResponse` 变体.
     SendResponse {
         cseq: Option<u32>,
         status_code: u16,
@@ -95,46 +123,83 @@ pub enum RtspCommand {
         headers: Vec<(String, String)>,
         body: Bytes,
     },
-    SendInterleaved {
-        channel: u8,
-        payload: Bytes,
-    },
+    /// `SendInterleaved` variant.
+    /// `SendInterleaved` 变体.
+    SendInterleaved { channel: u8, payload: Bytes },
+    /// `Close` variant.
+    /// `Close` 变体.
     Close,
 }
 
+/// `RtspCoreError` enumeration.
+/// `RtspCoreError` 枚举.
 #[derive(Debug, thiserror::Error)]
 pub enum RtspCoreError {
+    /// `InvalidUtf8` variant.
+    /// `InvalidUtf8` 变体.
     #[error("invalid utf-8 in rtsp header")]
     InvalidUtf8,
+    /// `InvalidStartLine` variant.
+    /// `InvalidStartLine` 变体.
     #[error("invalid rtsp start line")]
     InvalidStartLine,
+    /// `InvalidContentLength` variant.
+    /// `InvalidContentLength` 变体.
     #[error("invalid content-length")]
     InvalidContentLength,
+    /// `InvalidHeaderLine` variant.
+    /// `InvalidHeaderLine` 变体.
     #[error("invalid header line")]
     InvalidHeaderLine,
+    /// `InvalidMessageField` variant.
+    /// `InvalidMessageField` 变体.
     #[error("invalid message field: {0}")]
     InvalidMessageField(&'static str),
+    /// `UnexpectedRtspResponse` variant.
+    /// `UnexpectedRtspResponse` 变体.
     #[error("unexpected rtsp response while decoding request")]
     UnexpectedRtspResponse,
+    /// `UnexpectedRtspRequest` variant.
+    /// `UnexpectedRtspRequest` 变体.
     #[error("unexpected rtsp request while decoding response")]
     UnexpectedRtspRequest,
+    /// `InterleavedPayloadTooLarge` variant.
+    /// `InterleavedPayloadTooLarge` 变体.
     #[error("interleaved payload too large: {0} bytes")]
     InterleavedPayloadTooLarge(usize),
+    /// `InterleavedFrameSizeLimitExceeded` variant.
+    /// `InterleavedFrameSizeLimitExceeded` 变体.
     #[error("interleaved frame size limit exceeded: {actual} > {max}")]
     InterleavedFrameSizeLimitExceeded { max: usize, actual: usize },
+    /// `BufferSizeLimitExceeded` variant.
+    /// `BufferSizeLimitExceeded` 变体.
     #[error("rtsp buffer size limit exceeded: {actual} > {max}")]
     BufferSizeLimitExceeded { max: usize, actual: usize },
+    /// `HeaderCountLimitExceeded` variant.
+    /// `HeaderCountLimitExceeded` 变体.
     #[error("rtsp header count limit exceeded: {actual} > {max}")]
     HeaderCountLimitExceeded { max: usize, actual: usize },
+    /// `HeaderLineSizeLimitExceeded` variant.
+    /// `HeaderLineSizeLimitExceeded` 变体.
     #[error("rtsp header line size limit exceeded: {actual} > {max}")]
     HeaderLineSizeLimitExceeded { max: usize, actual: usize },
+    /// `BodySizeLimitExceeded` variant.
+    /// `BodySizeLimitExceeded` 变体.
     #[error("rtsp body size limit exceeded: {actual} > {max}")]
     BodySizeLimitExceeded { max: usize, actual: usize },
 }
 
+/// `RtspCore` data structure.
+/// `RtspCore` 数据结构.
 pub struct RtspCore {
+    /// `buffer` field of type `BytesMut`.
+    /// `buffer` 字段，类型为 `BytesMut`.
     buffer: BytesMut,
+    /// `closed` field of type `bool`.
+    /// `closed` 字段，类型为 `bool`.
     closed: bool,
+    /// `limits` field of type `RtspMessageLimits`.
+    /// `limits` 字段，类型为 `RtspMessageLimits`.
     limits: RtspMessageLimits,
 }
 
@@ -145,10 +210,14 @@ impl Default for RtspCore {
 }
 
 impl RtspCore {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self::with_limits(RtspMessageLimits::default())
     }
 
+    /// Returns a copy with `limits` set.
+    /// 返回 一个 copy 带有 `limits` 设置.
     pub fn with_limits(limits: RtspMessageLimits) -> Self {
         Self {
             buffer: BytesMut::new(),
@@ -157,10 +226,14 @@ impl RtspCore {
         }
     }
 
+    /// Returns a copy with `connection_limits` set.
+    /// 返回 一个 copy 带有 `connection_limits` 设置.
     pub fn with_connection_limits(limits: RtspConnectionLimits) -> Self {
         Self::with_limits(limits.into())
     }
 
+    /// `handle_input` function.
+    /// `handle_input` 函数.
     pub fn handle_input(&mut self, input: CoreInput) -> Result<Vec<CoreOutput>, RtspCoreError> {
         if self.closed {
             return Ok(Vec::new());

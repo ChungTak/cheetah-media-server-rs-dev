@@ -10,13 +10,25 @@ use tokio::sync::mpsc::error::TryRecvError;
 use super::command::{ConnectionCommand, ConnectionMap};
 use super::{DriverConfig, DriverEvent, RtspConnectionId};
 
+/// `ConnectionRuntime` data structure.
+/// `ConnectionRuntime` 数据结构.
 pub(super) struct ConnectionRuntime {
+    /// `event_tx` field.
+    /// `event_tx` 字段.
     pub(super) event_tx: mpsc::Sender<DriverEvent>,
+    /// `conn_map` field of type `ConnectionMap`.
+    /// `conn_map` 字段，类型为 `ConnectionMap`.
     pub(super) conn_map: ConnectionMap,
+    /// `cancel` field of type `CancellationToken`.
+    /// `cancel` 字段，类型为 `CancellationToken`.
     pub(super) cancel: CancellationToken,
+    /// `config` field of type `DriverConfig`.
+    /// `config` 字段，类型为 `DriverConfig`.
     pub(super) config: DriverConfig,
 }
 
+/// `run_connection` function.
+/// `run_connection` 函数.
 pub(super) async fn run_connection(
     connection_id: RtspConnectionId,
     mut stream: Box<dyn AsyncTcpStream>,
@@ -205,6 +217,8 @@ async fn write_pending_bytes(
     }
 }
 
+/// `write_pending_bytes_for_test` function.
+/// `write_pending_bytes_for_test` 函数.
 #[cfg(test)]
 pub(super) async fn write_pending_bytes_for_test(
     mut stream: Box<dyn AsyncTcpStream>,

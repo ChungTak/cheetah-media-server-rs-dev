@@ -128,6 +128,8 @@ fn media_type_name(media_type: RtmpMediaType) -> &'static str {
     }
 }
 
+/// `rtmp_alloc` function.
+/// `rtmp_alloc` 函数.
 #[unsafe(no_mangle)]
 pub extern "C" fn rtmp_alloc(size: u32) -> *mut u8 {
     if size == 0 {
@@ -138,6 +140,8 @@ pub extern "C" fn rtmp_alloc(size: u32) -> *mut u8 {
     unsafe { std::alloc::alloc(layout) }
 }
 
+/// `rtmp_free` function.
+/// `rtmp_free` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_free(ptr: *mut u8, size: u32) {
     if ptr.is_null() || size == 0 {
@@ -148,6 +152,8 @@ pub unsafe extern "C" fn rtmp_free(ptr: *mut u8, size: u32) {
     unsafe { std::alloc::dealloc(ptr, layout) };
 }
 
+/// `rtmp_vec_ptr` function.
+/// `rtmp_vec_ptr` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_vec_ptr(v: *const Vec<u8>) -> *const u8 {
     if v.is_null() {
@@ -156,6 +162,8 @@ pub unsafe extern "C" fn rtmp_vec_ptr(v: *const Vec<u8>) -> *const u8 {
     unsafe { (*v).as_ptr() }
 }
 
+/// `rtmp_vec_len` function.
+/// `rtmp_vec_len` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_vec_len(v: *const Vec<u8>) -> u32 {
     if v.is_null() {
@@ -164,6 +172,8 @@ pub unsafe extern "C" fn rtmp_vec_len(v: *const Vec<u8>) -> u32 {
     unsafe { u32::try_from((*v).len()).unwrap_or(u32::MAX) }
 }
 
+/// `rtmp_vec_free` function.
+/// `rtmp_vec_free` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_vec_free(v: *mut Vec<u8>) {
     if v.is_null() {
@@ -185,8 +195,14 @@ fn decode_payload_base64(payload_base64: &str) -> Option<Vec<u8>> {
         .ok()
 }
 
+/// `WasmHandle` data structure.
+/// `WasmHandle` 数据结构.
 pub struct WasmHandle {
+    /// `core` field of type `RtmpCore`.
+    /// `core` 字段，类型为 `RtmpCore`.
     core: RtmpCore,
+    /// `output_queue` field.
+    /// `output_queue` 字段.
     output_queue: std::collections::VecDeque<JsonOutput>,
 }
 
@@ -509,11 +525,15 @@ fn convert_event(event: RtmpEvent) -> JsonOutput {
     }
 }
 
+/// `rtmp_wasm_new` function.
+/// `rtmp_wasm_new` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_wasm_new() -> *mut WasmHandle {
     Box::into_raw(Box::new(WasmHandle::new()))
 }
 
+/// `rtmp_wasm_free` function.
+/// `rtmp_wasm_free` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_wasm_free(handle: *mut WasmHandle) {
     if handle.is_null() {
@@ -522,6 +542,8 @@ pub unsafe extern "C" fn rtmp_wasm_free(handle: *mut WasmHandle) {
     let _ = unsafe { Box::from_raw(handle) };
 }
 
+/// `rtmp_wasm_handle_bytes` function.
+/// `rtmp_wasm_handle_bytes` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_wasm_handle_bytes(
     handle: *mut WasmHandle,
@@ -538,6 +560,8 @@ pub unsafe extern "C" fn rtmp_wasm_handle_bytes(
     0
 }
 
+/// `rtmp_wasm_handle_timeout` function.
+/// `rtmp_wasm_handle_timeout` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_wasm_handle_timeout(handle: *mut WasmHandle, timer_id: u64) -> u32 {
     let Some(handle) = (unsafe { handle_mut(handle) }) else {
@@ -547,6 +571,8 @@ pub unsafe extern "C" fn rtmp_wasm_handle_timeout(handle: *mut WasmHandle, timer
     0
 }
 
+/// `rtmp_wasm_handle_command_json` function.
+/// `rtmp_wasm_handle_command_json` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_wasm_handle_command_json(
     handle: *mut WasmHandle,
@@ -667,6 +693,8 @@ unsafe fn handle_mut<'a>(handle: *mut WasmHandle) -> Option<&'a mut WasmHandle> 
     Some(unsafe { &mut *handle })
 }
 
+/// `rtmp_wasm_pending_output_count` function.
+/// `rtmp_wasm_pending_output_count` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_wasm_pending_output_count(handle: *const WasmHandle) -> u32 {
     if handle.is_null() {
@@ -676,6 +704,8 @@ pub unsafe extern "C" fn rtmp_wasm_pending_output_count(handle: *const WasmHandl
     u32::try_from(handle_ref.output_queue.len()).unwrap_or(u32::MAX)
 }
 
+/// `rtmp_wasm_next_output_json` function.
+/// `rtmp_wasm_next_output_json` 函数.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_wasm_next_output_json(handle: *mut WasmHandle) -> *mut Vec<u8> {
     let Some(handle) = (unsafe { handle_mut(handle) }) else {

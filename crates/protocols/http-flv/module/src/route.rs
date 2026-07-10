@@ -1,5 +1,7 @@
 use cheetah_sdk::StreamKey;
 
+/// Parses `stream_key_spec` from input.
+/// 解析 `stream_key_spec` 来自 输入.
 pub fn parse_stream_key_spec(spec: &str) -> Option<StreamKey> {
     let trimmed = spec.trim().trim_matches('/');
     let (namespace, path) = trimmed.split_once('/')?;
@@ -11,6 +13,8 @@ pub fn parse_stream_key_spec(spec: &str) -> Option<StreamKey> {
     Some(StreamKey::new(namespace, path))
 }
 
+/// `validate_pull_source_url` function.
+/// `validate_pull_source_url` 函数.
 pub fn validate_pull_source_url(source_url: &str) -> bool {
     let trimmed = source_url.trim();
     let Some((scheme, rest)) = trimmed.split_once("://") else {

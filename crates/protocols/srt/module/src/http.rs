@@ -5,7 +5,11 @@ use cheetah_sdk::{HttpHeader, HttpMethod, HttpRequest, HttpResponse, ModuleHttpS
 
 use crate::metrics::SrtModuleMetrics;
 
+/// `SrtHttpService` data structure.
+/// `SrtHttpService` 数据结构.
 pub(crate) struct SrtHttpService {
+    /// `metrics` field.
+    /// `metrics` 字段.
     pub metrics: Arc<SrtModuleMetrics>,
 }
 

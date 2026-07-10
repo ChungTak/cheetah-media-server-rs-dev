@@ -8,13 +8,29 @@
 //! HTTP service is the engine's HTTP module wrapper, not a hard-coded Axum
 //! dependency. Concrete disk I/O is performed by the runtime layer.
 
+/// `api` module.
+/// `api` 模块.
 pub mod api;
+/// `config` module.
+/// `config` 模块.
 pub mod config;
+/// `executor` module.
+/// `executor` 模块.
 pub mod executor;
+/// `metadata` module.
+/// `metadata` 模块.
 pub mod metadata;
+/// `module` module.
+/// `模块` 模块.
 pub mod module;
+/// `registry` module.
+/// `registry` 模块.
 pub mod registry;
+/// `task` module.
+/// `task` 模块.
 pub mod task;
+/// `zlm_compat` module.
+/// `zlm_compat` 模块.
 pub mod zlm_compat;
 
 pub use api::{RecordApi, RecordApiError};

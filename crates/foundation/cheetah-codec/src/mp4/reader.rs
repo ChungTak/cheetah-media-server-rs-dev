@@ -26,6 +26,8 @@ use super::Mp4Error;
 /// Configuration for the MP4 reader.
 #[derive(Debug, Clone)]
 pub struct Mp4ReaderConfig {
+    /// `max_box_bytes` field of type `u64`.
+    /// `max_box_bytes` 字段，类型为 `u64`.
     pub max_box_bytes: u64,
     /// Maximum bytes the reader is allowed to scan past the file head when
     /// looking for `moov` (handles `moov`-at-the-end inputs without a full
@@ -60,26 +62,30 @@ pub enum Mp4ReadEvent {
     Diagnostic(Mp4ReadDiagnostic),
 }
 
+/// `Mp4ReadDiagnostic` enumeration.
+/// `Mp4ReadDiagnostic` 枚举.
 #[derive(Debug, Clone)]
 pub enum Mp4ReadDiagnostic {
-    UnknownBoxSkipped {
-        fourcc: String,
-        size: u64,
-    },
-    OversizeBoxSkipped {
-        fourcc: String,
-        size: u64,
-    },
+    /// `UnknownBoxSkipped` variant.
+    /// `UnknownBoxSkipped` 变体.
+    UnknownBoxSkipped { fourcc: String, size: u64 },
+    /// `OversizeBoxSkipped` variant.
+    /// `OversizeBoxSkipped` 变体.
+    OversizeBoxSkipped { fourcc: String, size: u64 },
+    /// `SampleOutOfBounds` variant.
+    /// `SampleOutOfBounds` 变体.
     SampleOutOfBounds {
         track_id: u32,
         offset: u64,
         size: u32,
     },
-    MissingStss {
-        track_id: u32,
-    },
+    /// `MissingStss` variant.
+    /// `MissingStss` 变体.
+    MissingStss { track_id: u32 },
 }
 
+/// `Mp4ReadRequest` data structure.
+/// `Mp4ReadRequest` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mp4ReadRequest {
     /// Absolute file offset of the requested byte range.
@@ -88,15 +94,25 @@ pub struct Mp4ReadRequest {
     pub length: u64,
 }
 
+/// `Mp4ReadResult` data structure.
+/// `Mp4ReadResult` 数据结构.
 #[derive(Debug, Clone)]
 pub struct Mp4ReadResult {
+    /// `offset` field of type `u64`.
+    /// `offset` 字段，类型为 `u64`.
     pub offset: u64,
+    /// `data` field of type `Bytes`.
+    /// `data` 字段，类型为 `Bytes`.
     pub data: Bytes,
 }
 
 /// Sans-I/O classic MP4 reader.
 pub struct Mp4Reader {
+    /// `config` field of type `Mp4ReaderConfig`.
+    /// `config` 字段，类型为 `Mp4ReaderConfig`.
     config: Mp4ReaderConfig,
+    /// `state` field of type `ReaderState`.
+    /// `state` 字段，类型为 `ReaderState`.
     state: ReaderState,
     /// File total length (set via `set_file_size`).
     file_size: u64,
@@ -104,7 +120,11 @@ pub struct Mp4Reader {
     pending_reads: Vec<Mp4ReadResult>,
     /// Outstanding request waiting for runtime to fulfil.
     outstanding: Option<Mp4ReadRequest>,
+    /// `tracks` field.
+    /// `tracks` 字段.
     tracks: Vec<TrackInfo>,
+    /// `indices` field.
+    /// `indices` 字段.
     indices: Vec<SampleIndex>,
     /// Per-track playback cursor (next sample to emit).
     cursors: Vec<usize>,
@@ -127,6 +147,8 @@ enum ReaderState {
 }
 
 impl Mp4Reader {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: Mp4ReaderConfig) -> Self {
         Self {
             config,
@@ -142,6 +164,8 @@ impl Mp4Reader {
         }
     }
 
+    /// Sets the `file_size` value.
+    /// Sets `file_size` 值.
     pub fn set_file_size(&mut self, file_size: u64) {
         self.file_size = file_size;
     }
@@ -161,14 +185,20 @@ impl Mp4Reader {
         }
     }
 
+    /// `tracks` function.
+    /// `tracks` 函数.
     pub fn tracks(&self) -> &[TrackInfo] {
         &self.tracks
     }
 
+    /// `indices` function.
+    /// `indices` 函数.
     pub fn indices(&self) -> &[SampleIndex] {
         &self.indices
     }
 
+    /// `duration_us` function.
+    /// `duration_us` 函数.
     pub fn duration_us(&self) -> i64 {
         self.indices
             .iter()

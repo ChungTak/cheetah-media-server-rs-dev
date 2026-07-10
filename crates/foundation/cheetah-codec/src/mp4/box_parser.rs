@@ -11,17 +11,29 @@ pub const DEFAULT_MAX_BOX_SIZE: u64 = 256 * 1024 * 1024;
 /// A parsed box header (size + 4cc).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BoxHeader {
+    /// `fourcc` field of type `[u8; 4]`.
+    /// `fourcc` 字段，类型为 `[u8; 4]`.
     pub fourcc: [u8; 4],
+    /// `size` field of type `u64`.
+    /// `size` 字段，类型为 `u64`.
     pub size: u64,
+    /// `header_size` field of type `u8`.
+    /// `header_size` 字段，类型为 `u8`.
     pub header_size: u8,
+    /// `is_extends_to_eof` field of type `bool`.
+    /// `is_extends_to_eof` 字段，类型为 `bool`.
     pub is_extends_to_eof: bool,
 }
 
 impl BoxHeader {
+    /// `type_str` function.
+    /// `type_str` 函数.
     pub fn type_str(&self) -> String {
         String::from_utf8_lossy(&self.fourcc).into_owned()
     }
 
+    /// `payload_size` function.
+    /// `payload_size` 函数.
     pub fn payload_size(&self) -> u64 {
         self.size.saturating_sub(self.header_size as u64)
     }
@@ -146,13 +158,23 @@ where
 ///
 /// Skips unknown boxes; returns the slice payload of every child box.
 pub struct BoxIter<'a> {
+    /// `buf` field of type `&'a [u8]`.
+    /// `buf` 字段，类型为 `&'一个 [u8]`.
     pub buf: &'a [u8],
+    /// `offset` field of type `usize`.
+    /// `offset` 字段，类型为 `usize`.
     pub offset: usize,
+    /// `parent_end` field of type `usize`.
+    /// `parent_end` 字段，类型为 `usize`.
     pub parent_end: usize,
+    /// `max_box_size` field of type `u64`.
+    /// `max_box_size` 字段，类型为 `u64`.
     pub max_box_size: u64,
 }
 
 impl<'a> BoxIter<'a> {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(buf: &'a [u8], offset: usize, parent_end: usize, max_box_size: u64) -> Self {
         Self {
             buf,
@@ -163,10 +185,18 @@ impl<'a> BoxIter<'a> {
     }
 }
 
+/// `ChildBox` data structure.
+/// `ChildBox` 数据结构.
 #[derive(Debug, Clone)]
 pub struct ChildBox<'a> {
+    /// `header` field of type `BoxHeader`.
+    /// `header` 字段，类型为 `BoxHeader`.
     pub header: BoxHeader,
+    /// `payload` field of type `&'a [u8]`.
+    /// `payload` 字段，类型为 `&'一个 [u8]`.
     pub payload: &'a [u8],
+    /// `absolute_offset` field of type `u64`.
+    /// `absolute_offset` 字段，类型为 `u64`.
     pub absolute_offset: u64,
 }
 
@@ -212,6 +242,8 @@ pub fn read_u32(buf: &[u8], offset: usize) -> Result<u32, Mp4Error> {
     ]))
 }
 
+/// `read_u64` function.
+/// `read_u64` 函数.
 pub fn read_u64(buf: &[u8], offset: usize) -> Result<u64, Mp4Error> {
     if offset + 8 > buf.len() {
         return Err(Mp4Error::InvalidBox {
@@ -231,6 +263,8 @@ pub fn read_u64(buf: &[u8], offset: usize) -> Result<u64, Mp4Error> {
     ]))
 }
 
+/// `read_u16` function.
+/// `read_u16` 函数.
 pub fn read_u16(buf: &[u8], offset: usize) -> Result<u16, Mp4Error> {
     if offset + 2 > buf.len() {
         return Err(Mp4Error::InvalidBox {

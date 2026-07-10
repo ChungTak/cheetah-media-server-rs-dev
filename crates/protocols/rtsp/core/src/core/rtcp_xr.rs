@@ -6,20 +6,36 @@ pub const RTCP_PT_XR: u8 = 207;
 /// RTCP XR block types.
 #[allow(dead_code)]
 pub const XR_BLOCK_LOSS_RLE: u8 = 1;
+/// `XR_BLOCK_DUPLICATE_RLE` constant.
+/// `XR_BLOCK_DUPLICATE_RLE` 常量.
 #[allow(dead_code)]
 pub const XR_BLOCK_DUPLICATE_RLE: u8 = 2;
+/// `XR_BLOCK_PACKET_RECEIPT_TIMES` constant.
+/// `XR_BLOCK_PACKET_RECEIPT_TIMES` 常量.
 #[allow(dead_code)]
 pub const XR_BLOCK_PACKET_RECEIPT_TIMES: u8 = 3;
+/// `XR_BLOCK_RECEIVER_REFERENCE_TIME` constant.
+/// `XR_BLOCK_RECEIVER_REFERENCE_TIME` 常量.
 pub const XR_BLOCK_RECEIVER_REFERENCE_TIME: u8 = 4;
+/// `XR_BLOCK_DLRR` constant.
+/// `XR_BLOCK_DLRR` 常量.
 pub const XR_BLOCK_DLRR: u8 = 5;
+/// `XR_BLOCK_STATISTICS_SUMMARY` constant.
+/// `XR_BLOCK_STATISTICS_SUMMARY` 常量.
 #[allow(dead_code)]
 pub const XR_BLOCK_STATISTICS_SUMMARY: u8 = 6;
+/// `XR_BLOCK_VOIP_METRICS` constant.
+/// `XR_BLOCK_VOIP_METRICS` 常量.
 pub const XR_BLOCK_VOIP_METRICS: u8 = 7;
 
 /// Parsed RTCP XR packet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpXr {
+    /// `sender_ssrc` field of type `u32`.
+    /// `sender_ssrc` 字段，类型为 `u32`.
     pub sender_ssrc: u32,
+    /// `blocks` field.
+    /// `blocks` 字段.
     pub blocks: Vec<XrBlock>,
 }
 
@@ -39,33 +55,79 @@ pub enum XrBlock {
 /// DLRR sub-block entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DlrrSubBlock {
+    /// `ssrc` field of type `u32`.
+    /// `ssrc` 字段，类型为 `u32`.
     pub ssrc: u32,
+    /// `last_rr` field of type `u32`.
+    /// `last_rr` 字段，类型为 `u32`.
     pub last_rr: u32,
+    /// `delay_since_last_rr` field of type `u32`.
+    /// `delay_since_last_rr` 字段，类型为 `u32`.
     pub delay_since_last_rr: u32,
 }
 
 /// VoIP Metrics Report Block (§4.7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VoipMetricsBlock {
+    /// `ssrc` field of type `u32`.
+    /// `ssrc` 字段，类型为 `u32`.
     pub ssrc: u32,
+    /// `loss_rate` field of type `u8`.
+    /// `loss_rate` 字段，类型为 `u8`.
     pub loss_rate: u8,
+    /// `discard_rate` field of type `u8`.
+    /// `discard_rate` 字段，类型为 `u8`.
     pub discard_rate: u8,
+    /// `burst_density` field of type `u8`.
+    /// `burst_density` 字段，类型为 `u8`.
     pub burst_density: u8,
+    /// `gap_density` field of type `u8`.
+    /// `gap_density` 字段，类型为 `u8`.
     pub gap_density: u8,
+    /// `burst_duration` field of type `u16`.
+    /// `burst_duration` 字段，类型为 `u16`.
     pub burst_duration: u16,
+    /// `gap_duration` field of type `u16`.
+    /// `gap_duration` 字段，类型为 `u16`.
     pub gap_duration: u16,
+    /// `round_trip_delay` field of type `u16`.
+    /// `round_trip_delay` 字段，类型为 `u16`.
     pub round_trip_delay: u16,
+    /// `end_system_delay` field of type `u16`.
+    /// `end_system_delay` 字段，类型为 `u16`.
     pub end_system_delay: u16,
+    /// `signal_level` field of type `u8`.
+    /// `signal_level` 字段，类型为 `u8`.
     pub signal_level: u8,
+    /// `noise_level` field of type `u8`.
+    /// `noise_level` 字段，类型为 `u8`.
     pub noise_level: u8,
+    /// `rerl` field of type `u8`.
+    /// `rerl` 字段，类型为 `u8`.
     pub rerl: u8,
+    /// `gmin` field of type `u8`.
+    /// `gmin` 字段，类型为 `u8`.
     pub gmin: u8,
+    /// `r_factor` field of type `u8`.
+    /// `r_factor` 字段，类型为 `u8`.
     pub r_factor: u8,
+    /// `ext_r_factor` field of type `u8`.
+    /// `ext_r_factor` 字段，类型为 `u8`.
     pub ext_r_factor: u8,
+    /// `mos_lq` field of type `u8`.
+    /// `mos_lq` 字段，类型为 `u8`.
     pub mos_lq: u8,
+    /// `mos_cq` field of type `u8`.
+    /// `mos_cq` 字段，类型为 `u8`.
     pub mos_cq: u8,
+    /// `jb_nominal` field of type `u16`.
+    /// `jb_nominal` 字段，类型为 `u16`.
     pub jb_nominal: u16,
+    /// `jb_maximum` field of type `u16`.
+    /// `jb_maximum` 字段，类型为 `u16`.
     pub jb_maximum: u16,
+    /// `jb_abs_max` field of type `u16`.
+    /// `jb_abs_max` 字段，类型为 `u16`.
     pub jb_abs_max: u16,
 }
 

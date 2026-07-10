@@ -18,19 +18,33 @@ use super::{RecordContainerWriter, RecordDiagnostic, RecordError, RecordFormat, 
 /// Writer configuration.
 #[derive(Debug, Clone, Default)]
 pub struct FlvFileWriterConfig {
+    /// `include_onmetadata` field of type `bool`.
+    /// `include_onmetadata` 字段，类型为 `bool`.
     pub include_onmetadata: bool,
 }
 
 /// Stateful FLV file writer.
 pub struct FlvFileWriter {
+    /// `config` field of type `FlvFileWriterConfig`.
+    /// `config` 字段，类型为 `FlvFileWriterConfig`.
     config: FlvFileWriterConfig,
+    /// `header_emitted` field of type `bool`.
+    /// `header_emitted` 字段，类型为 `bool`.
     header_emitted: bool,
+    /// `finalized` field of type `bool`.
+    /// `finalized` 字段，类型为 `bool`.
     finalized: bool,
+    /// `tracks` field.
+    /// `tracks` 字段.
     tracks: Vec<TrackInfo>,
+    /// `base_dts_us` field.
+    /// `base_dts_us` 字段.
     base_dts_us: Option<i64>,
 }
 
 impl FlvFileWriter {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: FlvFileWriterConfig) -> Self {
         Self {
             config,

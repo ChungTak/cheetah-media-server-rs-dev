@@ -69,8 +69,14 @@ pub fn classify_timestamp_alert(alert: TimestampAlert) -> Option<RepairLayer> {
 /// Layer-classified repair counters (see §4 observability baseline).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RepairEventCounters {
+    /// `source_repair_events` field of type `u64`.
+    /// `source_repair_events` 字段，类型为 `u64`.
     pub source_repair_events: u64,
+    /// `canonical_repair_events` field of type `u64`.
+    /// `canonical_repair_events` 字段，类型为 `u64`.
     pub canonical_repair_events: u64,
+    /// `egress_repair_events` field of type `u64`.
+    /// `egress_repair_events` 字段，类型为 `u64`.
     pub egress_repair_events: u64,
 }
 
@@ -151,16 +157,38 @@ pub struct RuntimeObservabilityReport {
 /// and via the `record_*` helpers when repairs are observed.
 #[derive(Debug, Clone)]
 pub struct RuntimeReportBuilder {
+    /// `session_start_us` field of type `i64`.
+    /// `session_start_us` 字段，类型为 `i64`.
     session_start_us: i64,
+    /// `first_frame_wall_us` field.
+    /// `first_frame_wall_us` 字段.
     first_frame_wall_us: Option<i64>,
+    /// `last_frame_wall_us` field.
+    /// `last_frame_wall_us` 字段.
     last_frame_wall_us: Option<i64>,
+    /// `first_second_interval_sum_us` field of type `i64`.
+    /// `first_second_interval_sum_us` 字段，类型为 `i64`.
     first_second_interval_sum_us: i64,
+    /// `first_second_interval_count` field of type `u64`.
+    /// `first_second_interval_count` 字段，类型为 `u64`.
     first_second_interval_count: u64,
+    /// `first_keyframe_wall_us` field.
+    /// `first_keyframe_wall_us` 字段.
     first_keyframe_wall_us: Option<i64>,
+    /// `first_pts_us` field.
+    /// `first_pts_us` 字段.
     first_pts_us: Option<i64>,
+    /// `first_pts_wall_us` field.
+    /// `first_pts_wall_us` 字段.
     first_pts_wall_us: Option<i64>,
+    /// `last_pts_us` field.
+    /// `last_pts_us` 字段.
     last_pts_us: Option<i64>,
+    /// `last_pts_wall_us` field.
+    /// `last_pts_wall_us` 字段.
     last_pts_wall_us: Option<i64>,
+    /// `repairs` field of type `RepairEventCounters`.
+    /// `repairs` 字段，类型为 `RepairEventCounters`.
     repairs: RepairEventCounters,
 }
 

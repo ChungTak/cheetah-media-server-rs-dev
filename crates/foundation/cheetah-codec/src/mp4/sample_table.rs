@@ -33,6 +33,8 @@ pub struct SampleIndexEntry {
 }
 
 impl SampleIndexEntry {
+    /// `pts` function.
+    /// `pts` 函数.
     pub fn pts(&self) -> i64 {
         self.dts.saturating_add(self.cts_offset as i64)
     }
@@ -41,8 +43,14 @@ impl SampleIndexEntry {
 /// Per-track materialised sample index.
 #[derive(Debug, Clone)]
 pub struct SampleIndex {
+    /// `track_id` field of type `TrackId`.
+    /// `track_id` 字段，类型为 `TrackId`.
     pub track_id: TrackId,
+    /// `timescale` field of type `u32`.
+    /// `timescale` 字段，类型为 `u32`.
     pub timescale: u32,
+    /// `samples` field.
+    /// `samples` 字段.
     pub samples: Vec<SampleIndexEntry>,
     /// Total decoded duration in timescale ticks.
     pub duration: i64,
@@ -70,6 +78,8 @@ impl SampleIndex {
         Some(0)
     }
 
+    /// `duration_us` function.
+    /// `duration_us` 函数.
     pub fn duration_us(&self) -> i64 {
         if self.timescale == 0 {
             return 0;
@@ -82,30 +92,64 @@ impl SampleIndex {
 /// Helper used by the writer to incrementally build a track's sample table.
 #[derive(Debug, Clone)]
 pub struct TrackBuilder {
+    /// `track_id` field of type `TrackId`.
+    /// `track_id` 字段，类型为 `TrackId`.
     pub track_id: TrackId,
+    /// `media_kind` field of type `MediaKind`.
+    /// `media_kind` 字段，类型为 `MediaKind`.
     pub media_kind: MediaKind,
+    /// `codec` field of type `CodecId`.
+    /// `codec` 字段，类型为 `CodecId`.
     pub codec: CodecId,
+    /// `timescale` field of type `u32`.
+    /// `timescale` 字段，类型为 `u32`.
     pub timescale: u32,
+    /// `width` field of type `u16`.
+    /// `width` 字段，类型为 `u16`.
     pub width: u16,
+    /// `height` field of type `u16`.
+    /// `height` 字段，类型为 `u16`.
     pub height: u16,
+    /// `sample_rate` field of type `u32`.
+    /// `sample_rate` 字段，类型为 `u32`.
     pub sample_rate: u32,
+    /// `channels` field of type `u8`.
+    /// `channels` 字段，类型为 `u8`.
     pub channels: u8,
+    /// `extradata` field of type `Bytes`.
+    /// `extradata` 字段，类型为 `Bytes`.
     pub extradata: Bytes,
+    /// `samples` field.
+    /// `samples` 字段.
     pub samples: Vec<TrackSampleRecord>,
 }
 
+/// `TrackSampleRecord` data structure.
+/// `TrackSampleRecord` 数据结构.
 #[derive(Debug, Clone, Copy)]
 pub struct TrackSampleRecord {
     /// Sample data offset in the writer's payload buffer (relative).
     pub data_offset: u64,
+    /// `size` field of type `u32`.
+    /// `size` 字段，类型为 `u32`.
     pub size: u32,
+    /// `dts_us` field of type `i64`.
+    /// `dts_us` 字段，类型为 `i64`.
     pub dts_us: i64,
+    /// `pts_us` field of type `i64`.
+    /// `pts_us` 字段，类型为 `i64`.
     pub pts_us: i64,
+    /// `duration_us` field of type `i64`.
+    /// `duration_us` 字段，类型为 `i64`.
     pub duration_us: i64,
+    /// `is_sync` field of type `bool`.
+    /// `is_sync` 字段，类型为 `bool`.
     pub is_sync: bool,
 }
 
 impl TrackBuilder {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(track: &TrackInfo) -> Self {
         let mut tb = Self {
             track_id: track.track_id,
@@ -129,6 +173,8 @@ impl TrackBuilder {
         tb
     }
 
+    /// `duration_us` function.
+    /// `duration_us` 函数.
     pub fn duration_us(&self) -> i64 {
         if self.samples.is_empty() {
             return 0;
@@ -258,12 +304,26 @@ fn append_hvcc_array(out: &mut Vec<u8>, nal_unit_type: u8, units: &[Bytes]) {
 /// Parsed `stbl` content.
 #[derive(Debug, Clone, Default)]
 pub struct SampleTable {
-    pub stts: Vec<(u32, u32)>,      // (count, delta)
-    pub ctts: Vec<(u32, i32)>,      // (count, offset) — version 0 unsigned interpreted as signed
-    pub stss: Option<Vec<u32>>,     // 1-based sample numbers
+    /// `stts` field.
+    /// `stts` 字段.
+    pub stts: Vec<(u32, u32)>, // (count, delta)
+    /// `ctts` field.
+    /// `ctts` 字段.
+    pub ctts: Vec<(u32, i32)>, // (count, offset) — version 0 unsigned interpreted as signed
+    /// `stss` field.
+    /// `stss` 字段.
+    pub stss: Option<Vec<u32>>, // 1-based sample numbers
+    /// `stsc` field.
+    /// `stsc` 字段.
     pub stsc: Vec<(u32, u32, u32)>, // (first_chunk, samples_per_chunk, sample_description_index)
-    pub stsz_default: u32,          // 0 if per-sample sizes
+    /// `stsz_default` field of type `u32`.
+    /// `stsz_default` 字段，类型为 `u32`.
+    pub stsz_default: u32, // 0 if per-sample sizes
+    /// `stsz_sizes` field.
+    /// `stsz_sizes` 字段.
     pub stsz_sizes: Vec<u32>,
+    /// `stco` field.
+    /// `stco` 字段.
     pub stco: Vec<u64>,
 }
 

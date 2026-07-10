@@ -16,26 +16,54 @@ use cheetah_codec::CodecId;
 
 use crate::config::CodecProfileWire;
 
+/// `WebRtcVideoCodecPreference` enumeration.
+/// `WebRtcVideoCodecPreference` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WebRtcVideoCodecPreference {
+    /// `H264` variant.
+    /// `H264` 变体.
     H264,
+    /// `H265` variant.
+    /// `H265` 变体.
     H265,
+    /// `Vp8` variant.
+    /// `Vp8` 变体.
     Vp8,
+    /// `Vp9` variant.
+    /// `Vp9` 变体.
     Vp9,
+    /// `Av1` variant.
+    /// `Av1` 变体.
     Av1,
+    /// `Any` variant.
+    /// `Any` 变体.
     Any,
 }
 
+/// `WebRtcAudioCodecPreference` enumeration.
+/// `WebRtcAudioCodecPreference` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WebRtcAudioCodecPreference {
+    /// `Opus` variant.
+    /// `Opus` 变体.
     Opus,
+    /// `G711a` variant.
+    /// `G711a` 变体.
     G711a,
+    /// `G711u` variant.
+    /// `G711u` 变体.
     G711u,
+    /// `Aac` variant.
+    /// `Aac` 变体.
     Aac,
+    /// `Any` variant.
+    /// `Any` 变体.
     Any,
 }
 
 impl WebRtcVideoCodecPreference {
+    /// Creates `str_lossy` from input.
+    /// 创建 `str_lossy` 来自 输入.
     pub fn from_str_lossy(value: &str) -> Self {
         match value.to_ascii_lowercase().as_str() {
             "h264" | "avc" => Self::H264,
@@ -55,6 +83,8 @@ impl WebRtcVideoCodecPreference {
 }
 
 impl WebRtcAudioCodecPreference {
+    /// Creates `str_lossy` from input.
+    /// 创建 `str_lossy` 来自 输入.
     pub fn from_str_lossy(value: &str) -> Self {
         match value.to_ascii_lowercase().as_str() {
             "opus" => Self::Opus,
@@ -65,6 +95,8 @@ impl WebRtcAudioCodecPreference {
         }
     }
 
+    /// Returns `true` if `allowed` is true.
+    /// 返回 `真` 如果 `allowed` is 真.
     pub fn is_allowed(self, profile: CodecProfileWire) -> bool {
         !matches!((profile, self), (CodecProfileWire::Browser, Self::Aac))
     }
@@ -79,7 +111,11 @@ impl WebRtcAudioCodecPreference {
 /// - Channels: 2 (stereo)
 /// - Samples per frame: 960 (20ms at 48kHz)
 pub const OPUS_CLOCK_RATE: u32 = 48_000;
+/// `OPUS_CHANNELS` constant.
+/// `OPUS_CHANNELS` 常量.
 pub const OPUS_CHANNELS: u8 = 2;
+/// `OPUS_SAMPLES_PER_FRAME` constant.
+/// `OPUS_SAMPLES_PER_FRAME` 常量.
 pub const OPUS_SAMPLES_PER_FRAME: u16 = 960;
 
 /// G711A uses static RTP payload type 8 (RFC 3551).
@@ -110,6 +146,8 @@ pub enum AudioOutputStrategy {
 }
 
 impl AudioOutputStrategy {
+    /// Creates `str_lossy` from input.
+    /// 创建 `str_lossy` 来自 输入.
     pub fn from_str_lossy(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
             "transcode_to_opus" | "transcode-to-opus" | "opus" => Self::TranscodeToOpus,
@@ -150,11 +188,15 @@ pub enum AudioOutputError {
         "audio codec {source_codec:?} requires transcoding to Opus for browser playback, \
          but transcoding capability is not available; cannot negotiate audio output"
     )]
+    /// `TranscodingUnavailable` variant.
+    /// `TranscodingUnavailable` 变体.
     TranscodingUnavailable { source_codec: CodecId },
     #[error(
         "audio codec {source_codec:?} is not supported by the client and passthrough \
          is not possible; codec negotiation failed"
     )]
+    /// `CodecNotNegotiable` variant.
+    /// `CodecNotNegotiable` 变体.
     CodecNotNegotiable { source_codec: CodecId },
 }
 

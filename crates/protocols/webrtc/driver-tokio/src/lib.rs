@@ -25,6 +25,8 @@
 
 mod config;
 mod directory;
+/// `http_client` module.
+/// `http_client` 模块.
 pub mod http_client;
 mod io_front;
 mod migration;

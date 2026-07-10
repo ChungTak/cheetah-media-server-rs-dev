@@ -6,15 +6,27 @@ use crate::frame::{AVFrame, FrameFlags, FrameFormat, FrameTimingError};
 use crate::time::Timebase;
 use crate::track::{CodecExtradata, CodecId};
 
+/// `AccessUnit` data structure.
+/// `AccessUnit` 数据结构.
 #[derive(Debug, Clone)]
 pub struct AccessUnit {
+    /// `units` field.
+    /// `units` 字段.
     pub units: Vec<Bytes>,
+    /// `timing` field.
+    /// `timing` 字段.
     pub timing: Option<AccessUnitTiming>,
+    /// `random_access` field of type `bool`.
+    /// `random_access` 字段，类型为 `bool`.
     pub random_access: bool,
+    /// `parameter_set_requirement` field of type `ParameterSetRequirement`.
+    /// `parameter_set_requirement` 字段，类型为 `ParameterSetRequirement`.
     pub parameter_set_requirement: ParameterSetRequirement,
 }
 
 impl AccessUnit {
+    /// Creates `units` from input.
+    /// 创建 `units` 来自 输入.
     pub fn from_units(units: Vec<Bytes>) -> Self {
         Self {
             units,
@@ -24,6 +36,8 @@ impl AccessUnit {
         }
     }
 
+    /// Creates `frame_units` from input.
+    /// 创建 `frame_units` 来自 输入.
     pub fn from_frame_units(
         frame: &AVFrame,
         units: Vec<Bytes>,
@@ -40,16 +54,28 @@ impl AccessUnit {
         })
     }
 
+    /// Returns `true` if `empty` is true.
+    /// 返回 `真` 如果 `empty` is 真.
     pub fn is_empty(&self) -> bool {
         self.units.is_empty()
     }
 }
 
+/// `AccessUnitTiming` data structure.
+/// `AccessUnitTiming` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AccessUnitTiming {
+    /// `pts` field of type `i64`.
+    /// `pts` 字段，类型为 `i64`.
     pub pts: i64,
+    /// `dts` field of type `i64`.
+    /// `dts` 字段，类型为 `i64`.
     pub dts: i64,
+    /// `duration` field of type `i64`.
+    /// `duration` 字段，类型为 `i64`.
     pub duration: i64,
+    /// `timebase` field of type `Timebase`.
+    /// `timebase` 字段，类型为 `Timebase`.
     pub timebase: Timebase,
 }
 
@@ -64,32 +90,52 @@ impl AccessUnitTiming {
     }
 }
 
+/// `ParameterSetRequirement` enumeration.
+/// `ParameterSetRequirement` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ParameterSetRequirement {
+    /// `NotRequired` variant.
+    /// `NotRequired` 变体.
     #[default]
     NotRequired,
+    /// `RequiredPresent` variant.
+    /// `RequiredPresent` 变体.
     RequiredPresent,
+    /// `RequiredMissing` variant.
+    /// `RequiredMissing` 变体.
     RequiredMissing,
 }
 
+/// `AccessUnitBuildError` enumeration.
+/// `AccessUnitBuildError` 枚举.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum AccessUnitBuildError {
+    /// `InvalidTiming` variant.
+    /// `InvalidTiming` 变体.
     #[error("invalid frame timing when building access unit: {0}")]
     InvalidTiming(#[from] FrameTimingError),
 }
 
+/// `LengthPrefixedParseError` enumeration.
+/// `LengthPrefixedParseError` 枚举.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum LengthPrefixedParseError {
+    /// `IncompleteLengthPrefix` variant.
+    /// `IncompleteLengthPrefix` 变体.
     #[error("incomplete NAL length prefix at byte offset {offset}: remaining {remaining_bytes}")]
     IncompleteLengthPrefix {
         offset: usize,
         remaining_bytes: usize,
     },
+    /// `ZeroLengthUnit` variant.
+    /// `ZeroLengthUnit` 变体.
     #[error("zero-length NAL unit at byte offset {offset}")]
     ZeroLengthUnit { offset: usize },
     #[error(
         "truncated NAL unit at byte offset {offset}: declared {declared_size} bytes, remaining {remaining_bytes}"
     )]
+    /// `TruncatedUnit` variant.
+    /// `TruncatedUnit` 变体.
     TruncatedUnit {
         offset: usize,
         declared_size: usize,
@@ -104,20 +150,32 @@ pub enum LengthPrefixedParseError {
 /// memory growth from malformed or adversarial input.
 pub const PARAMETER_SET_MAX_SIZE: usize = 4096;
 
+/// `ParameterSetCache` data structure.
+/// `ParameterSetCache` 数据结构.
 #[derive(Debug, Clone, Default)]
 pub struct ParameterSetCache {
+    /// `vps` field.
+    /// `vps` 字段.
     pub vps: Option<Bytes>,
+    /// `sps` field.
+    /// `sps` 字段.
     pub sps: Option<Bytes>,
+    /// `pps` field.
+    /// `pps` 字段.
     pub pps: Option<Bytes>,
 }
 
 impl ParameterSetCache {
+    /// `clear` function.
+    /// `clear` 函数.
     pub fn clear(&mut self) {
         self.vps = None;
         self.sps = None;
         self.pps = None;
     }
 
+    /// `update_from_annexb` function.
+    /// `update_from_annexb` 函数.
     pub fn update_from_annexb(&mut self, codec: CodecId, payload: &[u8]) -> bool {
         let mut changed = false;
         for unit in split_annexb_units(payload) {
@@ -126,11 +184,15 @@ impl ParameterSetCache {
         changed
     }
 
+    /// `update_from_length_prefixed` function.
+    /// `update_from_length_prefixed` 函数.
     pub fn update_from_length_prefixed(&mut self, codec: CodecId, payload: &[u8]) -> bool {
         self.update_from_length_prefixed_checked(codec, payload)
             .unwrap_or(false)
     }
 
+    /// `update_from_length_prefixed_checked` function.
+    /// `update_from_length_prefixed_checked` 函数.
     pub fn update_from_length_prefixed_checked(
         &mut self,
         codec: CodecId,
@@ -144,6 +206,8 @@ impl ParameterSetCache {
         Ok(changed)
     }
 
+    /// `update_from_extradata` function.
+    /// `update_from_extradata` 函数.
     pub fn update_from_extradata(&mut self, extradata: &CodecExtradata) -> bool {
         let mut changed = false;
         match extradata {
@@ -167,6 +231,8 @@ impl ParameterSetCache {
         changed
     }
 
+    /// `prepend_to_access_unit` function.
+    /// `prepend_to_access_unit` 函数.
     pub fn prepend_to_access_unit(&self, codec: CodecId, access_unit: &mut AccessUnit) {
         let mut prefix = Vec::new();
         match codec {
@@ -198,6 +264,8 @@ impl ParameterSetCache {
         access_unit.units = prefix;
     }
 
+    /// `prepend_to_annexb_access_unit` function.
+    /// `prepend_to_annexb_access_unit` 函数.
     pub fn prepend_to_annexb_access_unit(&self, codec: CodecId, payload: &[u8]) -> Bytes {
         let units = split_annexb_units(payload);
         if units.is_empty() {
@@ -214,6 +282,8 @@ impl ParameterSetCache {
         annexb_from_access_unit(&access_unit)
     }
 
+    /// `has_required_sets` function.
+    /// `has_required_sets` 函数.
     pub fn has_required_sets(&self, codec: CodecId) -> bool {
         match codec {
             CodecId::H264 => self.sps.is_some() && self.pps.is_some(),
@@ -224,6 +294,8 @@ impl ParameterSetCache {
         }
     }
 
+    /// `requirement_for_frame` function.
+    /// `requirement_for_frame` 函数.
     pub fn requirement_for_frame(
         &self,
         codec: CodecId,
@@ -240,6 +312,8 @@ impl ParameterSetCache {
         }
     }
 
+    /// `extradata_for_codec` function.
+    /// `extradata_for_codec` 函数.
     pub fn extradata_for_codec(&self, codec: CodecId) -> Option<CodecExtradata> {
         match codec {
             CodecId::H264 => Some(CodecExtradata::H264 {
@@ -262,6 +336,8 @@ impl ParameterSetCache {
         }
     }
 
+    /// `repair_h26x_keyframe_frame` function.
+    /// `repair_h26x_keyframe_frame` 函数.
     pub fn repair_h26x_keyframe_frame(&mut self, frame: &mut AVFrame) -> Option<CodecExtradata> {
         if frame.format != FrameFormat::CanonicalH26x {
             return None;
@@ -376,26 +452,38 @@ fn annexb_from_access_unit(access_unit: &AccessUnit) -> Bytes {
     Bytes::from(out)
 }
 
+/// `AccessUnitAssembler` data structure.
+/// `AccessUnitAssembler` 数据结构.
 #[derive(Debug, Default)]
 pub struct AccessUnitAssembler {
+    /// `pending` field.
+    /// `pending` 字段.
     pending: Vec<Bytes>,
 }
 
 impl AccessUnitAssembler {
+    /// `push_unit` function.
+    /// `push_unit` 函数.
     pub fn push_unit(&mut self, unit: Bytes) {
         self.pending.push(unit);
     }
 
+    /// `push_annexb` function.
+    /// `push_annexb` 函数.
     pub fn push_annexb(&mut self, payload: &[u8]) {
         for unit in split_annexb_units(payload) {
             self.push_unit(Bytes::copy_from_slice(unit));
         }
     }
 
+    /// `push_length_prefixed` function.
+    /// `push_length_prefixed` 函数.
     pub fn push_length_prefixed(&mut self, payload: &[u8]) {
         let _ = self.push_length_prefixed_checked(payload);
     }
 
+    /// `push_length_prefixed_checked` function.
+    /// `push_length_prefixed_checked` 函数.
     pub fn push_length_prefixed_checked(
         &mut self,
         payload: &[u8],
@@ -405,11 +493,15 @@ impl AccessUnitAssembler {
         Ok(())
     }
 
+    /// `take_access_unit` function.
+    /// `take_access_unit` 函数.
     pub fn take_access_unit(&mut self) -> AccessUnit {
         AccessUnit::from_units(mem::take(&mut self.pending))
     }
 }
 
+/// `split_annexb_units` function.
+/// `split_annexb_units` 函数.
 pub(crate) fn split_annexb_units(mut payload: &[u8]) -> Vec<&[u8]> {
     let mut out = Vec::new();
     while let Some((start, code_len)) = find_start_code(payload) {
@@ -425,6 +517,8 @@ pub(crate) fn split_annexb_units(mut payload: &[u8]) -> Vec<&[u8]> {
     out
 }
 
+/// `find_start_code` function.
+/// `find_start_code` 函数.
 pub(crate) fn find_start_code(data: &[u8]) -> Option<(usize, usize)> {
     if data.len() < 3 {
         return None;
@@ -476,6 +570,8 @@ fn parse_length_prefixed_units(payload: &[u8]) -> Result<Vec<Bytes>, LengthPrefi
     Ok(units)
 }
 
+/// `video_payload_is_random_access` function.
+/// `video_payload_is_random_access` 函数.
 pub fn video_payload_is_random_access(codec: CodecId, format: FrameFormat, payload: &[u8]) -> bool {
     match (codec, format) {
         (CodecId::H264 | CodecId::H265 | CodecId::H266, FrameFormat::CanonicalH26x) => {
@@ -489,12 +585,16 @@ pub fn video_payload_is_random_access(codec: CodecId, format: FrameFormat, paylo
     }
 }
 
+/// `h26x_annexb_has_random_access` function.
+/// `h26x_annexb_has_random_access` 函数.
 pub fn h26x_annexb_has_random_access(codec: CodecId, payload: &[u8]) -> bool {
     split_annexb_units(payload)
         .into_iter()
         .any(|unit| h26x_nalu_is_random_access(codec, unit))
 }
 
+/// `h26x_nalu_is_random_access` function.
+/// `h26x_nalu_is_random_access` 函数.
 pub fn h26x_nalu_is_random_access(codec: CodecId, unit: &[u8]) -> bool {
     match codec {
         CodecId::H264 => unit.first().is_some_and(|header| (header & 0x1f) == 5),
@@ -508,6 +608,8 @@ pub fn h26x_nalu_is_random_access(codec: CodecId, unit: &[u8]) -> bool {
     }
 }
 
+/// `av1_obu_payload_has_keyframe` function.
+/// `av1_obu_payload_has_keyframe` 函数.
 pub fn av1_obu_payload_has_keyframe(payload: &[u8]) -> bool {
     let mut cursor = payload;
     while !cursor.is_empty() {
@@ -552,10 +654,14 @@ pub fn av1_obu_payload_has_keyframe(payload: &[u8]) -> bool {
     false
 }
 
+/// `vp8_frame_is_keyframe` function.
+/// `vp8_frame_is_keyframe` 函数.
 pub fn vp8_frame_is_keyframe(payload: &[u8]) -> bool {
     payload.first().is_some_and(|byte| (byte & 0x01) == 0)
 }
 
+/// `vp9_frame_is_keyframe` function.
+/// `vp9_frame_is_keyframe` 函数.
 pub fn vp9_frame_is_keyframe(payload: &[u8]) -> bool {
     if payload.is_empty() {
         return false;

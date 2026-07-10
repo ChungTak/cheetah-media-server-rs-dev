@@ -1,13 +1,23 @@
 use std::fmt;
 
+/// `RtspRtpInfoError` enumeration.
+/// `RtspRtpInfoError` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspRtpInfoError {
+    /// `EmptyHeader` variant.
+    /// `EmptyHeader` 变体.
     #[error("empty rtp-info header")]
     EmptyHeader,
+    /// `EmptyStreamEntry` variant.
+    /// `EmptyStreamEntry` 变体.
     #[error("empty rtp-info stream entry")]
     EmptyStreamEntry,
+    /// `MissingUrl` variant.
+    /// `MissingUrl` 变体.
     #[error("missing url in rtp-info stream")]
     MissingUrl,
+    /// `InvalidParameter` variant.
+    /// `InvalidParameter` 变体.
     #[error("invalid {parameter} value: {value}")]
     InvalidParameter {
         parameter: &'static str,
@@ -18,16 +28,22 @@ pub enum RtspRtpInfoError {
 /// RTSP RTP-Info 头语义（RFC 2326 Section 12.33）。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RtspRtpInfo {
+    /// `streams` field.
+    /// `streams` 字段.
     pub streams: Vec<RtspRtpInfoStream>,
 }
 
 impl RtspRtpInfo {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             streams: Vec::new(),
         }
     }
 
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(header_value: &str) -> Result<Self, RtspRtpInfoError> {
         let value = header_value.trim();
         if value.is_empty() {
@@ -48,10 +64,14 @@ impl RtspRtpInfo {
         Ok(Self { streams })
     }
 
+    /// `add_stream` function.
+    /// `add_stream` 函数.
     pub fn add_stream(&mut self, stream: RtspRtpInfoStream) {
         self.streams.push(stream);
     }
 
+    /// `find_by_url` function.
+    /// `find_by_url` 函数.
     pub fn find_by_url(&self, url: &str) -> Option<&RtspRtpInfoStream> {
         self.streams.iter().find(|stream| stream.url == url)
     }
@@ -67,12 +87,20 @@ impl fmt::Display for RtspRtpInfo {
 /// RTP-Info 中单个流条目。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspRtpInfoStream {
+    /// `url` field of type `String`.
+    /// `url` 字段，类型为 `String`.
     pub url: String,
+    /// `seq` field.
+    /// `seq` 字段.
     pub seq: Option<u16>,
+    /// `rtptime` field.
+    /// `rtptime` 字段.
     pub rtptime: Option<u32>,
 }
 
 impl RtspRtpInfoStream {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
@@ -81,11 +109,15 @@ impl RtspRtpInfoStream {
         }
     }
 
+    /// Returns a copy with `seq` set.
+    /// 返回 一个 copy 带有 `seq` 设置.
     pub fn with_seq(mut self, seq: u16) -> Self {
         self.seq = Some(seq);
         self
     }
 
+    /// Returns a copy with `rtptime` set.
+    /// 返回 一个 copy 带有 `rtptime` 设置.
     pub fn with_rtptime(mut self, rtptime: u32) -> Self {
         self.rtptime = Some(rtptime);
         self

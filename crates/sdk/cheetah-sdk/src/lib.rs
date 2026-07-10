@@ -1,10 +1,26 @@
+/// `config` module.
+/// `config` 模块.
 pub mod config;
+/// `error` module.
+/// `error` 模块.
 pub mod error;
+/// `event` module.
+/// `event` 模块.
 pub mod event;
+/// `ids` module.
+/// `ids` 模块.
 pub mod ids;
+/// `module` module.
+/// `模块` 模块.
 pub mod module;
+/// `service` module.
+/// `service` 模块.
 pub mod service;
+/// `stream` module.
+/// `stream` 模块.
 pub mod stream;
+/// `task` module.
+/// `task` 模块.
 pub mod task;
 
 #[cfg(feature = "macros")]

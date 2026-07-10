@@ -3,29 +3,65 @@
 #[macro_use]
 extern crate alloc;
 
+/// `prelude` module.
+/// `prelude` 模块.
 pub(crate) mod prelude {
     pub use alloc::borrow::ToOwned;
     pub use alloc::string::{String, ToString};
     pub use alloc::vec::Vec;
 }
 
+/// `amf` module.
+/// `amf` 模块.
 pub mod amf;
+/// `amf0` module.
+/// `amf0` 模块.
 pub mod amf0;
+/// `amf3` module.
+/// `amf3` 模块.
 pub mod amf3;
+/// `bytes` module.
+/// `bytes` 模块.
 pub mod bytes;
+/// `chunk` module.
+/// `chunk` 模块.
 pub mod chunk;
+/// `command` module.
+/// `command` 模块.
 pub mod command;
+/// `core` module.
+/// `core` 模块.
 pub mod core;
+/// `error` module.
+/// `error` 模块.
 pub mod error;
+/// `flv` module.
+/// `flv` 模块.
 pub mod flv;
+/// `flv_ingest` module.
+/// `flv_ingest` 模块.
 pub mod flv_ingest;
+/// `handshake` module.
+/// `handshake` 模块.
 pub mod handshake;
+/// `handshake_complex` module.
+/// `handshake_complex` 模块.
 #[cfg(feature = "complex-handshake")]
 pub mod handshake_complex;
+/// `media` module.
+/// `media` 模块.
 pub mod media;
+/// `message` module.
+/// `message` 模块.
 pub mod message;
+/// `timestamp` module.
+/// `timestamp` 模块.
 pub mod timestamp;
+/// `url` module.
+/// `url` 模块.
 pub mod url;
+/// `user_control` module.
+/// `user_control` 模块.
 pub mod user_control;
 
 pub use amf::{AmfValue, AmfValueRef, AmfVersion, Pair};

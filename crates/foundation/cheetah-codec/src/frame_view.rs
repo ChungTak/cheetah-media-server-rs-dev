@@ -20,27 +20,51 @@ use crate::audio::{adts_wrap, AacAudioSpecificConfig};
 use crate::frame::AVFrame;
 use crate::track::CodecId;
 
+/// `FrameViewKind` enumeration.
+/// `FrameViewKind` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameViewKind {
+    /// `Native` variant.
+    /// `Native` 变体.
     Native,
+    /// `AnnexB` variant.
+    /// `AnnexB` 变体.
     AnnexB,
+    /// `Avcc` variant.
+    /// `Avcc` 变体.
     Avcc,
+    /// `H26xLengthPrefixed` variant.
+    /// `H26xLengthPrefixed` 变体.
     H26xLengthPrefixed,
+    /// `Adts` variant.
+    /// `Adts` 变体.
     Adts,
 }
 
+/// `FrameViewCache` data structure.
+/// `FrameViewCache` 数据结构.
 #[derive(Debug, Default)]
 pub struct FrameViewCache {
+    /// `annexb` field.
+    /// `annexb` 字段.
     annexb: LazyCell<Bytes>,
+    /// `h26x_length_prefixed` field.
+    /// `h26x_length_prefixed` 字段.
     h26x_length_prefixed: LazyCell<Bytes>,
+    /// `adts` field.
+    /// `adts` 字段.
     adts: LazyCell<Bytes>,
 }
 
 impl FrameViewCache {
+    /// `native` function.
+    /// `native` 函数.
     pub fn native(frame: &AVFrame) -> Bytes {
         frame.payload.clone()
     }
 
+    /// `annexb` function.
+    /// `annexb` 函数.
     pub fn annexb(&self, frame: &AVFrame) -> Bytes {
         if !matches!(frame.codec, CodecId::H264 | CodecId::H265 | CodecId::H266) {
             return frame.payload.clone();
@@ -50,10 +74,14 @@ impl FrameViewCache {
             .clone()
     }
 
+    /// `avcc` function.
+    /// `avcc` 函数.
     pub fn avcc(&self, frame: &AVFrame) -> Bytes {
         self.h26x_length_prefixed(frame)
     }
 
+    /// `h26x_length_prefixed` function.
+    /// `h26x_length_prefixed` 函数.
     pub fn h26x_length_prefixed(&self, frame: &AVFrame) -> Bytes {
         if !matches!(frame.codec, CodecId::H264 | CodecId::H265 | CodecId::H266) {
             return frame.payload.clone();
@@ -63,6 +91,8 @@ impl FrameViewCache {
             .clone()
     }
 
+    /// `adts` function.
+    /// `adts` 函数.
     pub fn adts(&self, frame: &AVFrame, asc: Option<AacAudioSpecificConfig>) -> Bytes {
         if frame.codec != CodecId::AAC {
             return frame.payload.clone();
@@ -76,10 +106,14 @@ impl FrameViewCache {
     }
 }
 
+/// `h26x_length_prefixed_from_payload` function.
+/// `h26x_length_prefixed_from_payload` 函数.
 pub fn h26x_length_prefixed_from_payload(payload: Bytes) -> Bytes {
     convert_to_h26x_length_prefixed(payload)
 }
 
+/// `annexb_from_payload` function.
+/// `annexb_from_payload` 函数.
 pub fn annexb_from_payload(payload: Bytes) -> Bytes {
     convert_to_annexb(payload)
 }

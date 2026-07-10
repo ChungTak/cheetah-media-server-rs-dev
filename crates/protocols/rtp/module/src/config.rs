@@ -3,20 +3,40 @@
 use cheetah_rtp_core::RtpPayloadMode;
 use serde::{Deserialize, Serialize};
 
+/// `RtpModuleConfig` data structure.
+/// `RtpModuleConfig` 数据结构.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RtpModuleConfig {
+    /// `enabled` field of type `bool`.
+    /// `enabled` 字段，类型为 `bool`.
     pub enabled: bool,
+    /// `listen_udp` field.
+    /// `listen_udp` 字段.
     pub listen_udp: Option<String>,
+    /// `listen_tcp` field.
+    /// `listen_tcp` 字段.
     pub listen_tcp: Option<String>,
+    /// `rtcp_listen_udp` field.
+    /// `rtcp_listen_udp` 字段.
     pub rtcp_listen_udp: Option<String>,
+    /// `write_queue_capacity` field of type `usize`.
+    /// `write_queue_capacity` 字段，类型为 `usize`.
     #[serde(default = "default_write_queue_capacity")]
     pub write_queue_capacity: usize,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     #[serde(default = "default_read_buffer_size")]
     pub read_buffer_size: usize,
+    /// `max_reassembly_bytes` field of type `usize`.
+    /// `max_reassembly_bytes` 字段，类型为 `usize`.
     #[serde(default = "default_max_reassembly_bytes")]
     pub max_reassembly_bytes: usize,
+    /// `max_tracks` field of type `usize`.
+    /// `max_tracks` 字段，类型为 `usize`.
     #[serde(default = "default_max_tracks")]
     pub max_tracks: usize,
+    /// `idle_timeout_ms` field of type `u64`.
+    /// `idle_timeout_ms` 字段，类型为 `u64`.
     #[serde(default = "default_idle_timeout_ms")]
     pub idle_timeout_ms: u64,
     #[serde(
@@ -24,7 +44,11 @@ pub struct RtpModuleConfig {
         serialize_with = "serialize_payload_mode",
         deserialize_with = "deserialize_payload_mode"
     )]
+    /// `default_payload` field of type `RtpPayloadMode`.
+    /// `default_payload` 字段，类型为 `RtpPayloadMode`.
     pub default_payload: RtpPayloadMode,
+    /// `allow_unaligned_payload` field of type `bool`.
+    /// `allow_unaligned_payload` 字段，类型为 `bool`.
     #[serde(default = "default_true")]
     pub allow_unaligned_payload: bool,
     /// Video RTP MTU in bytes. Default 1400 to leave room for IP/UDP headers.
@@ -62,25 +86,43 @@ pub struct RtpModuleConfig {
     /// Hard upper bound for the dynamic `nMaxRtpLength` learner.
     #[serde(default = "default_max_rtp_len_cap")]
     pub max_rtp_len_cap: usize,
+    /// `pull_jobs` field.
+    /// `pull_jobs` 字段.
     #[serde(default)]
     pub pull_jobs: Vec<RtpClientJobConfig>,
 }
 
+/// `RtpClientJobConfig` data structure.
+/// `RtpClientJobConfig` 数据结构.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RtpClientJobConfig {
+    /// `name` field of type `String`.
+    /// `name` 字段，类型为 `String`.
     pub name: String,
+    /// `enabled` field of type `bool`.
+    /// `enabled` 字段，类型为 `bool`.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// `destination` field of type `String`.
+    /// `destination` 字段，类型为 `String`.
     pub destination: String,
+    /// `ssrc` field of type `u32`.
+    /// `ssrc` 字段，类型为 `u32`.
     pub ssrc: u32,
     #[serde(
         default = "default_payload_mode",
         serialize_with = "serialize_payload_mode",
         deserialize_with = "deserialize_payload_mode"
     )]
+    /// `payload_mode` field of type `RtpPayloadMode`.
+    /// `payload_mode` 字段，类型为 `RtpPayloadMode`.
     pub payload_mode: RtpPayloadMode,
+    /// `retry_backoff_ms` field of type `u64`.
+    /// `retry_backoff_ms` 字段，类型为 `u64`.
     #[serde(default = "default_retry_backoff_ms")]
     pub retry_backoff_ms: u64,
+    /// `max_retry_backoff_ms` field of type `u64`.
+    /// `max_retry_backoff_ms` 字段，类型为 `u64`.
     #[serde(default = "default_max_retry_backoff_ms")]
     pub max_retry_backoff_ms: u64,
 }
@@ -115,14 +157,20 @@ impl Default for RtpModuleConfig {
 }
 
 impl RtpModuleConfig {
+    /// `default_json` function.
+    /// `default_json` 函数.
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap_or_default()
     }
 
+    /// Creates `value` from input.
+    /// 创建 `值` 来自 输入.
     pub fn from_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
     }
 
+    /// `validate` function.
+    /// `validate` 函数.
     pub fn validate(&self) -> Result<(), String> {
         let mut errors = Vec::new();
 

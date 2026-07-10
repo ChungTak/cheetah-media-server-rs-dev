@@ -32,17 +32,27 @@ struct ConfigState {
     module_schemas: HashMap<ModuleId, SchemaEntry>,
 }
 
+/// `ConfigStore` data structure.
+/// `ConfigStore` 数据结构.
 #[derive(Default)]
 pub struct ConfigStore {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: RwLock<ConfigState>,
+    /// `event_bus` field.
+    /// `event_bus` 字段.
     event_bus: RwLock<Option<Arc<dyn EventBus>>>,
 }
 
 impl ConfigStore {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Sets the `event_bus` value.
+    /// Sets `event_bus` 值.
     pub fn set_event_bus(&self, event_bus: Arc<dyn EventBus>) {
         *self.event_bus.write() = Some(event_bus);
     }
@@ -64,18 +74,24 @@ impl ConfigStore {
         }
     }
 
+    /// `register_module_default` function.
+    /// `register_module_default` 函数.
     pub fn register_module_default(&self, module_id: ModuleId, value: Value) {
         let mut state = self.inner.write();
         state.module_default.insert(module_id, value);
         state.version += 1;
     }
 
+    /// Sets the `global_default` value.
+    /// Sets `global_default` 值.
     pub fn set_global_default(&self, value: Value) {
         let mut state = self.inner.write();
         state.global_default = value;
         state.version += 1;
     }
 
+    /// `load_yaml_str` function.
+    /// `load_yaml_str` 函数.
     pub fn load_yaml_str(&self, yaml: &str) -> Result<(), SdkError> {
         let parsed: Value = serde_yaml::from_str(yaml)
             .map_err(|e| SdkError::InvalidArgument(format!("yaml parse error: {e}")))?;
@@ -96,6 +112,8 @@ impl ConfigStore {
         Ok(())
     }
 
+    /// `load_env` function.
+    /// `load_env` 函数.
     pub fn load_env(&self, prefix: &str) {
         let mut state = self.inner.write();
         let global_prefix = format!("{prefix}GLOBAL__");

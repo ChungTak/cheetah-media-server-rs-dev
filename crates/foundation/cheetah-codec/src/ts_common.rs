@@ -5,9 +5,17 @@ use bytes::{BufMut, BytesMut};
 
 use crate::track::CodecId;
 
+/// `TS_PACKET_SIZE` constant.
+/// `TS_PACKET_SIZE` 常量.
 pub const TS_PACKET_SIZE: usize = 188;
+/// `SYNC_BYTE` constant.
+/// `SYNC_BYTE` 常量.
 pub const SYNC_BYTE: u8 = 0x47;
+/// `PAT_PID` constant.
+/// `PAT_PID` 常量.
 pub const PAT_PID: u16 = 0x0000;
+/// `PMT_PID` constant.
+/// `PMT_PID` 常量.
 pub const PMT_PID: u16 = 0x1000;
 
 /// H.264 Access Unit Delimiter: 00 00 00 01 09 F0

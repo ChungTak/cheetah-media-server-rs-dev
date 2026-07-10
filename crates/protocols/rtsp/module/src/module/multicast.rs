@@ -12,34 +12,62 @@ struct MulticastTrackKey {
     track_id: TrackId,
 }
 
+/// `MulticastSender` data structure.
+/// `MulticastSender` 数据结构.
 #[derive(Clone)]
 pub(super) struct MulticastSender {
+    /// `destination` field of type `Ipv4Addr`.
+    /// `destination` 字段，类型为 `Ipv4Addr`.
     pub destination: Ipv4Addr,
+    /// `rtp_port` field of type `u16`.
+    /// `rtp_port` 字段，类型为 `u16`.
     pub rtp_port: u16,
+    /// `rtcp_port` field of type `u16`.
+    /// `rtcp_port` 字段，类型为 `u16`.
     pub rtcp_port: u16,
+    /// `ttl` field of type `u8`.
+    /// `ttl` 字段，类型为 `u8`.
     pub ttl: u8,
+    /// `rtp_socket` field.
+    /// `rtp_socket` 字段.
     pub rtp_socket: Arc<dyn AsyncUdpSocket>,
+    /// `rtcp_socket` field.
+    /// `rtcp_socket` 字段.
     pub rtcp_socket: Arc<dyn AsyncUdpSocket>,
 }
 
 impl MulticastSender {
+    /// `target_rtp` function.
+    /// `target_rtp` 函数.
     pub fn target_rtp(&self) -> SocketAddr {
         SocketAddr::new(self.destination.into(), self.rtp_port)
     }
 
+    /// `target_rtcp` function.
+    /// `target_rtcp` 函数.
     pub fn target_rtcp(&self) -> SocketAddr {
         SocketAddr::new(self.destination.into(), self.rtcp_port)
     }
 }
 
+/// `MulticastAcquireError` enumeration.
+/// `MulticastAcquireError` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MulticastAcquireError {
+    /// `CapacityExhausted` variant.
+    /// `CapacityExhausted` 变体.
     CapacityExhausted,
+    /// `SocketBindFailure` variant.
+    /// `SocketBindFailure` 变体.
     SocketBindFailure,
+    /// `SocketOptionFailure` variant.
+    /// `SocketOptionFailure` 变体.
     SocketOptionFailure,
 }
 
 impl MulticastAcquireError {
+    /// `rtsp_response` function.
+    /// `rtsp_response` 函数.
     pub fn rtsp_response(self) -> RtspErrorResponse {
         match self {
             Self::CapacityExhausted => (
@@ -75,12 +103,20 @@ struct MulticastRegistryState {
     allocation_cursor: u64,
 }
 
+/// `MulticastSenderRegistry` data structure.
+/// `MulticastSenderRegistry` 数据结构.
 pub(super) struct MulticastSenderRegistry {
+    /// `config` field of type `RtspMulticastConfig`.
+    /// `config` 字段，类型为 `RtspMulticastConfig`.
     config: RtspMulticastConfig,
+    /// `state` field.
+    /// `state` 字段.
     state: Arc<Mutex<MulticastRegistryState>>,
 }
 
 impl MulticastSenderRegistry {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: RtspMulticastConfig) -> Self {
         Self {
             config,
@@ -88,6 +124,8 @@ impl MulticastSenderRegistry {
         }
     }
 
+    /// `acquire` function.
+    /// `acquire` 函数.
     pub fn acquire(
         &self,
         runtime_api: &Arc<dyn RuntimeApi>,
@@ -201,6 +239,8 @@ impl MulticastSenderRegistry {
         }
     }
 
+    /// `release` function.
+    /// `release` 函数.
     pub fn release(
         &self,
         runtime_api: &Arc<dyn RuntimeApi>,
@@ -243,6 +283,8 @@ impl MulticastSenderRegistry {
         }
     }
 
+    /// `should_forward_rtp` function.
+    /// `should_forward_rtp` 函数.
     pub fn should_forward_rtp(
         &self,
         connection_id: RtspConnectionId,

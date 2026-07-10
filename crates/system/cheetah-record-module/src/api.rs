@@ -14,14 +14,24 @@ use crate::metadata::{RecordFileQuery, RecordFormatStr, RecordTaskState};
 use crate::registry::{RecordRegistry, RegistryError};
 use crate::task::{RecordTaskTemplate, TaskExecutor, TaskExecutorError};
 
+/// `RecordApiError` enumeration.
+/// `RecordApiError` 枚举.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum RecordApiError {
+    /// `InvalidRequest` variant.
+    /// `InvalidRequest` 变体.
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+    /// `Registry` variant.
+    /// `Registry` 变体.
     #[error("registry error: {0}")]
     Registry(#[from] RegistryError),
+    /// `Executor` variant.
+    /// `Executor` 变体.
     #[error("executor error: {0}")]
     Executor(#[from] TaskExecutorError),
+    /// `UnsupportedFormat` variant.
+    /// `UnsupportedFormat` 变体.
     #[error("unsupported format: {0}")]
     UnsupportedFormat(String),
 }
@@ -29,105 +39,205 @@ pub enum RecordApiError {
 /// `POST /api/v1/record/start` body.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartRecordRequest {
+    /// `format` field of type `String`.
+    /// `format` 字段，类型为 `String`.
     pub format: String,
+    /// `app` field of type `String`.
+    /// `app` 字段，类型为 `String`.
     pub app: String,
+    /// `stream` field of type `String`.
+    /// `stream` 字段，类型为 `String`.
     pub stream: String,
+    /// `uri` field.
+    /// `uri` 字段.
     #[serde(default)]
     pub uri: Option<String>,
+    /// `task_id` field.
+    /// `task_id` 字段.
     #[serde(default)]
     pub task_id: Option<String>,
+    /// `record_template` field.
+    /// `record_template` 字段.
     #[serde(rename = "recordTemplate", default)]
     pub record_template: Option<RecordTemplate>,
 }
 
+/// `RecordTemplate` data structure.
+/// `RecordTemplate` 数据结构.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RecordTemplate {
+    /// `duration` field.
+    /// `duration` 字段.
     #[serde(default)]
     pub duration: Option<u64>,
+    /// `segment_duration` field.
+    /// `segment_duration` 字段.
     #[serde(rename = "segmentDuration", default)]
     pub segment_duration: Option<u64>,
+    /// `segment_count` field.
+    /// `segment_count` 字段.
     #[serde(rename = "segmentCount", default)]
     pub segment_count: Option<u32>,
 }
 
+/// `StartRecordResponse` data structure.
+/// `StartRecordResponse` 数据结构.
 #[derive(Debug, Clone, Serialize)]
 pub struct StartRecordResponse {
+    /// `code` field of type `u16`.
+    /// `code` 字段，类型为 `u16`.
     pub code: u16,
+    /// `msg` field of type `String`.
+    /// `msg` 字段，类型为 `String`.
     pub msg: String,
+    /// `task_id` field of type `String`.
+    /// `task_id` 字段，类型为 `String`.
     #[serde(rename = "taskId")]
     pub task_id: String,
 }
 
+/// `StopRecordRequest` data structure.
+/// `StopRecordRequest` 数据结构.
 #[derive(Debug, Clone, Deserialize)]
 pub struct StopRecordRequest {
+    /// `task_id` field of type `String`.
+    /// `task_id` 字段，类型为 `String`.
     #[serde(rename = "taskId")]
     pub task_id: String,
 }
 
+/// `StopRecordResponse` data structure.
+/// `StopRecordResponse` 数据结构.
 #[derive(Debug, Clone, Serialize)]
 pub struct StopRecordResponse {
+    /// `code` field of type `u16`.
+    /// `code` 字段，类型为 `u16`.
     pub code: u16,
+    /// `msg` field of type `String`.
+    /// `msg` 字段，类型为 `String`.
     pub msg: String,
 }
 
+/// `ListTasksResponse` data structure.
+/// `ListTasksResponse` 数据结构.
 #[derive(Debug, Clone, Serialize)]
 pub struct ListTasksResponse {
+    /// `code` field of type `u16`.
+    /// `code` 字段，类型为 `u16`.
     pub code: u16,
+    /// `msg` field of type `String`.
+    /// `msg` 字段，类型为 `String`.
     pub msg: String,
+    /// `data` field.
+    /// `data` 字段.
     pub data: Vec<TaskBrief>,
 }
 
+/// `TaskBrief` data structure.
+/// `TaskBrief` 数据结构.
 #[derive(Debug, Clone, Serialize)]
 pub struct TaskBrief {
+    /// `task_id` field of type `String`.
+    /// `task_id` 字段，类型为 `String`.
     #[serde(rename = "taskId")]
     pub task_id: String,
+    /// `format` field of type `String`.
+    /// `format` 字段，类型为 `String`.
     pub format: String,
+    /// `app` field of type `String`.
+    /// `app` 字段，类型为 `String`.
     pub app: String,
+    /// `stream` field of type `String`.
+    /// `stream` 字段，类型为 `String`.
     pub stream: String,
+    /// `state` field of type `String`.
+    /// `state` 字段，类型为 `String`.
     pub state: String,
 }
 
+/// `FileQueryRequest` data structure.
+/// `FileQueryRequest` 数据结构.
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct FileQueryRequest {
+    /// `app` field.
+    /// `app` 字段.
     #[serde(default)]
     pub app: Option<String>,
+    /// `stream` field.
+    /// `stream` 字段.
     #[serde(default)]
     pub stream: Option<String>,
+    /// `format` field.
+    /// `format` 字段.
     #[serde(default)]
     pub format: Option<String>,
+    /// `start_time_ms` field.
+    /// `start_time_ms` 字段.
     #[serde(rename = "startTime", default)]
     pub start_time_ms: Option<i64>,
+    /// `end_time_ms` field.
+    /// `end_time_ms` 字段.
     #[serde(rename = "endTime", default)]
     pub end_time_ms: Option<i64>,
+    /// `limit` field.
+    /// `limit` 字段.
     #[serde(default)]
     pub limit: Option<u32>,
 }
 
+/// `FileQueryResponse` data structure.
+/// `FileQueryResponse` 数据结构.
 #[derive(Debug, Clone, Serialize)]
 pub struct FileQueryResponse {
+    /// `code` field of type `u16`.
+    /// `code` 字段，类型为 `u16`.
     pub code: u16,
+    /// `msg` field of type `String`.
+    /// `msg` 字段，类型为 `String`.
     pub msg: String,
+    /// `data` field.
+    /// `data` 字段.
     pub data: Vec<FileBrief>,
 }
 
+/// `FileBrief` data structure.
+/// `FileBrief` 数据结构.
 #[derive(Debug, Clone, Serialize)]
 pub struct FileBrief {
+    /// `file_id` field of type `String`.
+    /// `file_id` 字段，类型为 `String`.
     #[serde(rename = "fileId")]
     pub file_id: String,
+    /// `format` field of type `String`.
+    /// `format` 字段，类型为 `String`.
     pub format: String,
+    /// `path` field of type `String`.
+    /// `path` 字段，类型为 `String`.
     pub path: String,
+    /// `duration_ms` field of type `u64`.
+    /// `duration_ms` 字段，类型为 `u64`.
     #[serde(rename = "durationMs")]
     pub duration_ms: u64,
+    /// `size_bytes` field of type `u64`.
+    /// `size_bytes` 字段，类型为 `u64`.
     #[serde(rename = "sizeBytes")]
     pub size_bytes: u64,
+    /// `start_time_ms` field of type `i64`.
+    /// `start_time_ms` 字段，类型为 `i64`.
     #[serde(rename = "startTimeMs")]
     pub start_time_ms: i64,
+    /// `end_time_ms` field of type `i64`.
+    /// `end_time_ms` 字段，类型为 `i64`.
     #[serde(rename = "endTimeMs")]
     pub end_time_ms: i64,
 }
 
+/// `FileDeleteRequest` data structure.
+/// `FileDeleteRequest` 数据结构.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FileDeleteRequest {
+    /// `file_id` field of type `String`.
+    /// `file_id` 字段，类型为 `String`.
     #[serde(rename = "fileId")]
     pub file_id: String,
 }
@@ -135,19 +245,29 @@ pub struct FileDeleteRequest {
 /// Bundles a registry + executor for the HTTP service.
 #[derive(Clone)]
 pub struct RecordApi {
+    /// `registry` field.
+    /// `registry` 字段.
     registry: Arc<RecordRegistry>,
+    /// `executor` field.
+    /// `executor` 字段.
     executor: Arc<dyn TaskExecutor>,
 }
 
 impl RecordApi {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(registry: Arc<RecordRegistry>, executor: Arc<dyn TaskExecutor>) -> Self {
         Self { registry, executor }
     }
 
+    /// `registry` function.
+    /// `registry` 函数.
     pub fn registry(&self) -> Arc<RecordRegistry> {
         self.registry.clone()
     }
 
+    /// `start` function.
+    /// `start` 函数.
     pub async fn start(
         &self,
         req: StartRecordRequest,
@@ -208,6 +328,8 @@ impl RecordApi {
         })
     }
 
+    /// `stop` function.
+    /// `stop` 函数.
     pub async fn stop(&self, req: StopRecordRequest) -> Result<StopRecordResponse, RecordApiError> {
         self.executor.stop(&req.task_id).await?;
         let _ = self
@@ -219,6 +341,8 @@ impl RecordApi {
         })
     }
 
+    /// `list` function.
+    /// `list` 函数.
     pub fn list(&self) -> ListTasksResponse {
         let data = self
             .registry
@@ -239,6 +363,8 @@ impl RecordApi {
         }
     }
 
+    /// `query_files` function.
+    /// `query_files` 函数.
     pub fn query_files(&self, req: FileQueryRequest) -> Result<FileQueryResponse, RecordApiError> {
         let format = match req.format.as_deref() {
             Some(s) => Some(parse_format_str(s)?),
@@ -273,6 +399,8 @@ impl RecordApi {
         })
     }
 
+    /// `delete_file` function.
+    /// `delete_file` 函数.
     pub fn delete_file(&self, req: FileDeleteRequest) -> Result<(), RecordApiError> {
         // Path traversal guard: file path is metadata-driven, but we still
         // refuse traversal segments in the file id.

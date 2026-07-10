@@ -35,9 +35,17 @@ use crate::task::{RecordTask, TaskExecutor, TaskExecutorError};
 /// subscribes to the engine source stream, drives a `RecordContainerWriter`,
 /// and finalizes the output on cancel/EOS.
 pub struct RecordExecutor {
+    /// `engine` field of type `EngineContext`.
+    /// `engine` 字段，类型为 `EngineContext`.
     engine: EngineContext,
+    /// `config` field of type `RecordModuleConfig`.
+    /// `config` 字段，类型为 `RecordModuleConfig`.
     config: RecordModuleConfig,
+    /// `registry` field.
+    /// `registry` 字段.
     registry: Arc<RecordRegistry>,
+    /// `handles` field.
+    /// `处理` 字段.
     handles: Mutex<HashMap<String, TaskHandle>>,
 }
 
@@ -47,6 +55,8 @@ struct TaskHandle {
 }
 
 impl RecordExecutor {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(
         engine: EngineContext,
         config: RecordModuleConfig,

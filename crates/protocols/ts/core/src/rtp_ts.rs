@@ -17,6 +17,8 @@ enum SessionDemuxer {
 }
 
 impl SessionDemuxer {
+    /// `flush` function.
+    /// `flush` 函数.
     pub fn flush(&mut self) -> Vec<MpegTsDemuxEvent> {
         match self {
             SessionDemuxer::Pending => Vec::new(),
@@ -120,14 +122,24 @@ pub enum RtpTsIngestEvent {
 /// Detected payload type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PayloadProbe {
+    /// `Ts` variant.
+    /// `Ts` 变体.
     Ts,
+    /// `Ps` variant.
+    /// `Ps` 变体.
     Ps,
+    /// `Es` variant.
+    /// `Es` 变体.
     Es,
+    /// `Ehome` variant.
+    /// `Ehome` 变体.
     Ehome,
     /// Hikvision / vendor private XHB container.
     Xhb,
     /// JT/T 1078 vehicle terminal payload.
     Jtt1078,
+    /// `Unknown` variant.
+    /// `Unknown` 变体.
     Unknown,
 }
 
@@ -143,11 +155,17 @@ struct RtpTsSession {
 
 /// Sans-I/O RTP-TS ingest router.
 pub struct RtpTsIngest {
+    /// `config` field of type `RtpTsIngestConfig`.
+    /// `config` 字段，类型为 `RtpTsIngestConfig`.
     config: RtpTsIngestConfig,
+    /// `sessions` field.
+    /// `sessions` 字段.
     sessions: HashMap<u32, RtpTsSession>,
 }
 
 impl RtpTsIngest {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: RtpTsIngestConfig) -> Self {
         Self {
             config,
@@ -450,13 +468,23 @@ pub fn probe_payload(payload: &[u8]) -> PayloadProbe {
 /// Per-session publish state tracker for module-level integration.
 /// Tracks discovered tracks and frame rate estimation for a single RTP-TS session.
 pub struct RtpTsPublishSession {
+    /// `ssrc` field of type `u32`.
+    /// `ssrc` 字段，类型为 `u32`.
     pub ssrc: u32,
+    /// `tracks` field.
+    /// `tracks` 字段.
     tracks: Vec<cheetah_codec::TrackInfo>,
+    /// `frame_rate_estimator` field.
+    /// `frame_rate_estimator` 字段.
     frame_rate_estimator: cheetah_codec::FrameRateEstimator,
+    /// `tracks_dirty` field of type `bool`.
+    /// `tracks_dirty` 字段，类型为 `bool`.
     tracks_dirty: bool,
 }
 
 impl RtpTsPublishSession {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(ssrc: u32) -> Self {
         Self {
             ssrc,

@@ -52,10 +52,14 @@ use crate::sdp::LocalCandidateCounts;
 pub struct ShardId(pub usize);
 
 impl ShardId {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub const fn new(value: usize) -> Self {
         Self(value)
     }
 
+    /// `as_usize` function.
+    /// `as_usize` 函数.
     pub fn as_usize(self) -> usize {
         self.0
     }
@@ -147,7 +151,11 @@ struct DirectoryInner {
 /// without churning callers.
 #[derive(Debug)]
 pub struct RouteDirectory {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: Mutex<DirectoryInner>,
+    /// `config` field of type `RouteDirectoryConfig`.
+    /// `config` 字段，类型为 `RouteDirectoryConfig`.
     config: RouteDirectoryConfig,
 }
 
@@ -158,6 +166,8 @@ impl Default for RouteDirectory {
 }
 
 impl RouteDirectory {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: RouteDirectoryConfig) -> Self {
         Self {
             inner: Mutex::new(DirectoryInner::default()),
@@ -461,9 +471,17 @@ impl RouteDirectory {
 /// an operator triggers a recovery flow after a shard panic.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RouteDirectoryEvictionStats {
+    /// `sessions` field of type `usize`.
+    /// `sessions` 字段，类型为 `usize`.
     pub sessions: usize,
+    /// `addresses` field of type `usize`.
+    /// `addresses` 字段，类型为 `usize`.
     pub addresses: usize,
+    /// `ufrags` field of type `usize`.
+    /// `ufrags` 字段，类型为 `usize`.
     pub ufrags: usize,
+    /// `stale` field of type `usize`.
+    /// `stale` 字段，类型为 `usize`.
     pub stale: usize,
     /// Number of TCP writer entries removed when an operator-driven
     /// `evict_shard` (or supervisor auto-evict) cascades into the
@@ -482,9 +500,17 @@ pub struct RouteDirectoryEvictionStats {
 /// [`RouteDirectory::stats_snapshot`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RouteDirectoryStats {
+    /// `sessions` field of type `usize`.
+    /// `sessions` 字段，类型为 `usize`.
     pub sessions: usize,
+    /// `addresses` field of type `usize`.
+    /// `addresses` 字段，类型为 `usize`.
     pub addresses: usize,
+    /// `ufrags` field of type `usize`.
+    /// `ufrags` 字段，类型为 `usize`.
     pub ufrags: usize,
+    /// `stale_addresses` field of type `usize`.
+    /// `stale_addresses` 字段，类型为 `usize`.
     pub stale_addresses: usize,
 }
 
@@ -494,7 +520,11 @@ pub struct RouteDirectoryStats {
 /// The driver's single-shard mode reports one entry with `shard_id = 0`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WebRtcShardStats {
+    /// `shard_id` field of type `ShardId`.
+    /// `shard_id` 字段，类型为 `ShardId`.
     pub shard_id: ShardId,
+    /// `session_count` field of type `usize`.
+    /// `session_count` 字段，类型为 `usize`.
     pub session_count: usize,
     /// Number of addresses currently bound to a session on this shard.
     pub active_routes: usize,
@@ -508,7 +538,11 @@ pub struct WebRtcShardStats {
 /// events themselves.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WebRtcShardCandidateStats {
+    /// `shard_id` field of type `ShardId`.
+    /// `shard_id` 字段，类型为 `ShardId`.
     pub shard_id: ShardId,
+    /// `counts` field of type `LocalCandidateCounts`.
+    /// `counts` 字段，类型为 `LocalCandidateCounts`.
     pub counts: LocalCandidateCounts,
 }
 
@@ -520,6 +554,8 @@ pub struct WebRtcShardCandidateStats {
 /// stores candidate counts instead of session/route load.
 #[derive(Debug)]
 pub struct ShardCandidateTable {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: RwLock<Vec<LocalCandidateCounts>>,
 }
 

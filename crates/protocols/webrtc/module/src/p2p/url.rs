@@ -26,9 +26,17 @@ pub const SIGNALING_URL_MAX_BYTES: usize = 2048;
 /// Parsed `ws://` / `wss://` URL.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SignalingUrl {
+    /// `secure` field of type `bool`.
+    /// `secure` 字段，类型为 `bool`.
     pub secure: bool,
+    /// `host` field of type `String`.
+    /// `host` 字段，类型为 `String`.
     pub host: String,
+    /// `port` field of type `u16`.
+    /// `port` 字段，类型为 `u16`.
     pub port: u16,
+    /// `path` field of type `String`.
+    /// `path` 字段，类型为 `String`.
     pub path: String,
 }
 
@@ -51,20 +59,36 @@ impl SignalingUrl {
     }
 }
 
+/// `SignalingUrlError` enumeration.
+/// `SignalingUrlError` 枚举.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum SignalingUrlError {
+    /// `TooLong` variant.
+    /// `TooLong` 变体.
     #[error("signaling url exceeds {max} bytes")]
     TooLong { max: usize },
+    /// `MissingScheme` variant.
+    /// `MissingScheme` 变体.
     #[error("missing scheme; expected ws:// or wss://")]
     MissingScheme,
+    /// `InvalidScheme` variant.
+    /// `InvalidScheme` 变体.
     #[error("invalid scheme `{0}`; expected ws or wss")]
     InvalidScheme(String),
+    /// `MissingAuthority` variant.
+    /// `MissingAuthority` 变体.
     #[error("missing authority")]
     MissingAuthority,
+    /// `InvalidAuthority` variant.
+    /// `InvalidAuthority` 变体.
     #[error("invalid authority `{0}`")]
     InvalidAuthority(String),
+    /// `InvalidPort` variant.
+    /// `InvalidPort` 变体.
     #[error("invalid port `{value}`: {reason}")]
     InvalidPort { value: String, reason: String },
+    /// `Blocked` variant.
+    /// `Blocked` 变体.
     #[error("destination blocked: {0}")]
     Blocked(String),
 }

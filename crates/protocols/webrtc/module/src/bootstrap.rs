@@ -60,6 +60,8 @@ pub enum BootstrapAction {
 }
 
 impl PlayBootstrapView {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self::default()
     }

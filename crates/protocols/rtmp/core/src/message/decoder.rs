@@ -8,17 +8,27 @@ use crate::message::{RtmpMessage, RtmpMessageHeader, RtmpMessageType, SetPeerBan
 use crate::prelude::*;
 use crate::user_control::RtmpUserControlEvent;
 
+/// `RtmpMessageDecoder` data structure.
+/// `RtmpMessageDecoder` 数据结构.
 #[derive(Debug, Default)]
 pub struct RtmpMessageDecoder {
+    /// `chunk_decoder` field of type `RtmpChunkDecoder`.
+    /// `chunk_decoder` 字段，类型为 `RtmpChunkDecoder`.
     chunk_decoder: RtmpChunkDecoder,
+    /// `buf` field of type `Buf`.
+    /// `buf` 字段，类型为 `Buf`.
     buf: Buf,
 }
 
 impl RtmpMessageDecoder {
+    /// `feed_buf` function.
+    /// `feed_buf` 函数.
     pub fn feed_buf(&mut self, buf: &[u8]) {
         self.buf.feed(buf);
     }
 
+    /// `decode` function.
+    /// `decode` 函数.
     pub fn decode(&mut self) -> Result<Option<RtmpMessage>, Error> {
         loop {
             let chunk = match self.chunk_decoder.decode(self.buf.get()) {
@@ -51,6 +61,8 @@ impl RtmpMessageDecoder {
     }
 }
 
+/// `decode_rtmp_chunk_to_message` function.
+/// `decode_rtmp_chunk_to_message` 函数.
 pub fn decode_rtmp_chunk_to_message(chunk: RtmpChunk) -> Result<RtmpMessage, Error> {
     let header = RtmpMessageHeader {
         stream_id: chunk.message_stream_id,

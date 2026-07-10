@@ -15,17 +15,33 @@ use crate::track_muxer::{TrackMuxer, TrackMuxerOutput};
 /// Configuration for the demuxed stream muxer.
 #[derive(Debug, Clone)]
 pub struct DemuxedMuxerConfig {
+    /// `segment_duration_ms` field of type `u64`.
+    /// `segment_duration_ms` 字段，类型为 `u64`.
     pub segment_duration_ms: u64,
+    /// `segment_count` field of type `usize`.
+    /// `segment_count` 字段，类型为 `usize`.
     pub segment_count: usize,
+    /// `force_segment_after_ms` field of type `u64`.
+    /// `force_segment_after_ms` 字段，类型为 `u64`.
     pub force_segment_after_ms: u64,
+    /// `part_target_ms` field of type `u64`.
+    /// `part_target_ms` 字段，类型为 `u64`.
     pub part_target_ms: u64,
+    /// `max_completed_segments` field of type `usize`.
+    /// `max_completed_segments` 字段，类型为 `usize`.
     pub max_completed_segments: usize,
 }
 
 /// Demuxed audio/video LLHLS muxer.
 pub struct DemuxedStreamMuxer {
+    /// `config` field of type `DemuxedMuxerConfig`.
+    /// `config` 字段，类型为 `DemuxedMuxerConfig`.
     config: DemuxedMuxerConfig,
+    /// `video` field.
+    /// `video` 字段.
     video: Option<TrackMuxer>,
+    /// `audio` field.
+    /// `audio` 字段.
     audio: Option<TrackMuxer>,
     /// Shared wallclock offset for PROGRAM-DATE-TIME across lanes.
     wallclock_offset_ms: Option<i64>,
@@ -33,10 +49,14 @@ pub struct DemuxedStreamMuxer {
     dts_origin_ms: Option<u64>,
     /// Whether we're waiting for the first video keyframe before starting.
     waiting_for_keyframe: bool,
+    /// `concluded` field of type `bool`.
+    /// `concluded` 字段，类型为 `bool`.
     concluded: bool,
 }
 
 impl DemuxedStreamMuxer {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(config: DemuxedMuxerConfig) -> Self {
         Self {
             config,
@@ -225,6 +245,8 @@ impl DemuxedStreamMuxer {
         self.concluded = true;
     }
 
+    /// Returns `true` if `concluded` is true.
+    /// 返回 `真` 如果 `concluded` is 真.
     pub fn is_concluded(&self) -> bool {
         self.concluded
     }
@@ -239,18 +261,26 @@ impl DemuxedStreamMuxer {
         self.video.is_some() && self.audio.is_some()
     }
 
+    /// `video` function.
+    /// `video` 函数.
     pub fn video(&self) -> Option<&TrackMuxer> {
         self.video.as_ref()
     }
 
+    /// `audio` function.
+    /// `audio` 函数.
     pub fn audio(&self) -> Option<&TrackMuxer> {
         self.audio.as_ref()
     }
 
+    /// `video_mut` function.
+    /// `video_mut` 函数.
     pub fn video_mut(&mut self) -> Option<&mut TrackMuxer> {
         self.video.as_mut()
     }
 
+    /// `audio_mut` function.
+    /// `audio_mut` 函数.
     pub fn audio_mut(&mut self) -> Option<&mut TrackMuxer> {
         self.audio.as_mut()
     }

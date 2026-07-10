@@ -58,8 +58,14 @@ impl std::fmt::Display for PlayDisconnectReason {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NetworkType {
+    /// `Udp` variant.
+    /// `Udp` 变体.
     Udp,
+    /// `Tcp` variant.
+    /// `Tcp` 变体.
     Tcp,
+    /// `Unknown` variant.
+    /// `Unknown` 变体.
     Unknown,
 }
 
@@ -81,11 +87,23 @@ impl std::fmt::Display for NetworkType {
 /// app, stream, networkType, key, ip, port, playDuration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebRtcPlayDisconnectEvent {
+    /// `stream_key` field of type `String`.
+    /// `stream_key` 字段，类型为 `String`.
     pub stream_key: String,
+    /// `session_id` field of type `u64`.
+    /// `session_id` 字段，类型为 `u64`.
     pub session_id: u64,
+    /// `network_type` field of type `NetworkType`.
+    /// `network_type` 字段，类型为 `NetworkType`.
     pub network_type: NetworkType,
+    /// `remote_addr` field of type `String`.
+    /// `remote_addr` 字段，类型为 `String`.
     pub remote_addr: String,
+    /// `duration_ms` field of type `u64`.
+    /// `duration_ms` 字段，类型为 `u64`.
     pub duration_ms: u64,
+    /// `close_reason` field of type `String`.
+    /// `close_reason` 字段，类型为 `String`.
     pub close_reason: String,
 }
 
@@ -150,6 +168,8 @@ pub fn publish_play_disconnect_event(event_bus: &dyn EventBus, event: &WebRtcPla
     }));
 }
 
+/// `close_reason_to_play_disconnect_reason` function.
+/// `close_reason_to_play_disconnect_reason` 函数.
 pub fn close_reason_to_play_disconnect_reason(
     reason: &cheetah_webrtc_core::WebRtcCloseReason,
 ) -> PlayDisconnectReason {

@@ -16,15 +16,27 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::warn;
 
+/// `RtmpConnectionId` type alias.
+/// `RtmpConnectionId` 类型别名.
 pub type RtmpConnectionId = u64;
 
 const MAX_CONSECUTIVE_WRITE_ERRORS: u32 = 30;
 
+/// `DriverConfig` data structure.
+/// `DriverConfig` 数据结构.
 #[derive(Debug, Clone)]
 pub struct DriverConfig {
+    /// `write_queue_capacity` field of type `usize`.
+    /// `write_queue_capacity` 字段，类型为 `usize`.
     pub write_queue_capacity: usize,
+    /// `command_queue_capacity` field of type `usize`.
+    /// `command_queue_capacity` 字段，类型为 `usize`.
     pub command_queue_capacity: usize,
+    /// `event_queue_capacity` field of type `usize`.
+    /// `event_queue_capacity` 字段，类型为 `usize`.
     pub event_queue_capacity: usize,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     pub read_buffer_size: usize,
 }
 
@@ -39,45 +51,69 @@ impl Default for DriverConfig {
     }
 }
 
+/// `DriverEvent` enumeration.
+/// `DriverEvent` 枚举.
 #[derive(Debug)]
 pub enum DriverEvent {
+    /// `ConnectionOpened` variant.
+    /// `ConnectionOpened` 变体.
     ConnectionOpened {
         connection_id: RtmpConnectionId,
         peer: Option<SocketAddr>,
     },
+    /// `ConnectionClosed` variant.
+    /// `ConnectionClosed` 变体.
     ConnectionClosed {
         connection_id: RtmpConnectionId,
         reason: String,
     },
+    /// `Core` variant.
+    /// `Core` 变体.
     Core {
         connection_id: RtmpConnectionId,
         event: RtmpEvent,
     },
 }
 
+/// `RtmpDriverCommand` enumeration.
+/// `RtmpDriverCommand` 枚举.
 #[derive(Debug, Clone)]
 pub enum RtmpDriverCommand {
+    /// `Core` variant.
+    /// `Core` 变体.
     Core {
         connection_id: RtmpConnectionId,
         command: RtmpCoreCommand,
     },
-    CloseConnection {
-        connection_id: RtmpConnectionId,
-    },
+    /// `CloseConnection` variant.
+    /// `CloseConnection` 变体.
+    CloseConnection { connection_id: RtmpConnectionId },
+    /// `Shutdown` variant.
+    /// `Shutdown` 变体.
     Shutdown,
 }
 
+/// `RtmpCoreCommandSender` data structure.
+/// `RtmpCoreCommandSender` 数据结构.
 #[derive(Clone)]
 pub struct RtmpCoreCommandSender {
+    /// `tx` field.
+    /// `tx` 字段.
     tx: mpsc::Sender<RtmpDriverCommand>,
 }
 
+/// `DriverSendError` enumeration.
+/// `DriverSendError` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverSendError {
+    /// `ChannelClosed` variant.
+    /// `ChannelClosed` 变体.
     ChannelClosed,
 }
 
 impl RtmpCoreCommandSender {
+    /// `send` function.
+    /// `send` 函数.
     pub async fn send(&self, command: RtmpDriverCommand) -> Result<(), DriverSendError> {
         self.tx
             .send(command)
@@ -85,6 +121,8 @@ impl RtmpCoreCommandSender {
             .map_err(|_| DriverSendError::ChannelClosed)
     }
 
+    /// `send_core` function.
+    /// `send_core` 函数.
     pub async fn send_core(
         &self,
         connection_id: RtmpConnectionId,
@@ -97,6 +135,8 @@ impl RtmpCoreCommandSender {
         .await
     }
 
+    /// `close_connection` function.
+    /// `close_connection` 函数.
     pub async fn close_connection(
         &self,
         connection_id: RtmpConnectionId,
@@ -112,18 +152,32 @@ enum ConnectionCommand {
     Close,
 }
 
+/// `RtmpServerHandle` data structure.
+/// `RtmpServerHandle` 数据结构.
 pub struct RtmpServerHandle {
+    /// `events_rx` field.
+    /// `events_rx` 字段.
     events_rx: mpsc::Receiver<DriverEvent>,
+    /// `cmd_tx` field of type `RtmpCoreCommandSender`.
+    /// `cmd_tx` 字段，类型为 `RtmpCoreCommandSender`.
     cmd_tx: RtmpCoreCommandSender,
+    /// `cancel` field of type `CancellationToken`.
+    /// `cancel` 字段，类型为 `CancellationToken`.
     cancel: CancellationToken,
+    /// `join` field.
+    /// `join` 字段.
     join: Box<dyn JoinHandle>,
 }
 
 impl RtmpServerHandle {
+    /// `recv_event` function.
+    /// `recv_event` 函数.
     pub async fn recv_event(&mut self) -> Option<DriverEvent> {
         self.events_rx.recv().await
     }
 
+    /// `send_driver_command` function.
+    /// `send_driver_command` 函数.
     pub async fn send_driver_command(
         &self,
         command: RtmpDriverCommand,
@@ -131,19 +185,27 @@ impl RtmpServerHandle {
         self.cmd_tx.send(command).await
     }
 
+    /// `core_command_sender` function.
+    /// `core_command_sender` 函数.
     pub fn core_command_sender(&self) -> RtmpCoreCommandSender {
         self.cmd_tx.clone()
     }
 
+    /// `shutdown` function.
+    /// `shutdown` 函数.
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
+    /// `wait` function.
+    /// `wait` 函数.
     pub async fn wait(self) -> Result<(), TaskJoinError> {
         self.join.wait().await
     }
 }
 
+/// `start_server` function.
+/// `start_server` 函数.
 pub fn start_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,

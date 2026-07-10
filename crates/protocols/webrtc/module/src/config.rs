@@ -15,22 +15,38 @@ use serde::{Deserialize, Serialize};
 use crate::codec_policy::AudioOutputStrategy;
 use crate::compat::{parse_ome_transport_mode, OmeTransportMode};
 
+/// `WebRtcIceServerConfig` data structure.
+/// `WebRtcIceServerConfig` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebRtcIceServerConfig {
+    /// `urls` field.
+    /// `urls` 字段.
     #[serde(default)]
     pub urls: Vec<String>,
+    /// `username` field.
+    /// `username` 字段.
     #[serde(default)]
     pub username: Option<String>,
+    /// `credential` field.
+    /// `credential` 字段.
     #[serde(default)]
     pub credential: Option<String>,
 }
 
+/// `WebRtcModuleConfig` data structure.
+/// `WebRtcModuleConfig` 数据结构.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebRtcModuleConfig {
+    /// `enabled` field of type `bool`.
+    /// `enabled` 字段，类型为 `bool`.
     #[serde(default = "default_enabled")]
     pub enabled: bool,
+    /// `listen_udp` field of type `String`.
+    /// `listen_udp` 字段，类型为 `String`.
     #[serde(default = "default_listen_udp")]
     pub listen_udp: String,
+    /// `listen_tcp` field.
+    /// `listen_tcp` 字段.
     #[serde(default)]
     pub listen_tcp: Option<String>,
     /// Minimum UDP port for the driver listener. When both
@@ -43,10 +59,16 @@ pub struct WebRtcModuleConfig {
     /// Maximum UDP port for the driver listener. See `udp_port_min`.
     #[serde(default)]
     pub udp_port_max: Option<u16>,
+    /// `public_ips` field.
+    /// `public_ips` 字段.
     #[serde(default)]
     pub public_ips: Vec<String>,
+    /// `candidate_hostname` field.
+    /// `candidate_hostname` 字段.
     #[serde(default)]
     pub candidate_hostname: Option<String>,
+    /// `ice_lite` field of type `bool`.
+    /// `ice_lite` 字段，类型为 `bool`.
     #[serde(default)]
     pub ice_lite: bool,
     /// ICE candidate gathering policy: `all`, `relay-only`, or `p2p-only`.
@@ -80,20 +102,36 @@ pub struct WebRtcModuleConfig {
     /// OME WebSocket handshake timeout in milliseconds.
     #[serde(default = "default_ome_ws_handshake_timeout_ms")]
     pub ome_ws_handshake_timeout_ms: u64,
+    /// `enable_udp` field of type `bool`.
+    /// `enable_udp` 字段，类型为 `bool`.
     #[serde(default = "default_true")]
     pub enable_udp: bool,
+    /// `enable_tcp` field of type `bool`.
+    /// `enable_tcp` 字段，类型为 `bool`.
     #[serde(default)]
     pub enable_tcp: bool,
+    /// `max_sessions` field of type `usize`.
+    /// `max_sessions` 字段，类型为 `usize`.
     #[serde(default = "default_max_sessions")]
     pub max_sessions: usize,
+    /// `shard_count` field of type `usize`.
+    /// `shard_count` 字段，类型为 `usize`.
     #[serde(default = "default_shard_count")]
     pub shard_count: usize,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     #[serde(default = "default_read_buffer")]
     pub read_buffer_size: usize,
+    /// `write_queue_capacity` field of type `usize`.
+    /// `write_queue_capacity` 字段，类型为 `usize`.
     #[serde(default = "default_write_queue")]
     pub write_queue_capacity: usize,
+    /// `event_queue_capacity` field of type `usize`.
+    /// `event_queue_capacity` 字段，类型为 `usize`.
     #[serde(default = "default_event_queue")]
     pub event_queue_capacity: usize,
+    /// `session_idle_timeout_ms` field of type `u64`.
+    /// `session_idle_timeout_ms` 字段，类型为 `u64`.
     #[serde(default = "default_session_idle_timeout_ms")]
     pub session_idle_timeout_ms: u64,
     /// Idle timeout (ms) for an accepted TCP connection. The driver
@@ -101,14 +139,24 @@ pub struct WebRtcModuleConfig {
     /// disables the timeout.
     #[serde(default = "default_tcp_idle_timeout_ms")]
     pub tcp_idle_timeout_ms: u64,
+    /// `handshake_timeout_ms` field of type `u64`.
+    /// `handshake_timeout_ms` 字段，类型为 `u64`.
     #[serde(default = "default_handshake_timeout_ms")]
     pub handshake_timeout_ms: u64,
+    /// `migration_route_ttl_ms` field of type `u64`.
+    /// `migration_route_ttl_ms` 字段，类型为 `u64`.
     #[serde(default = "default_migration_route_ttl_ms")]
     pub migration_route_ttl_ms: u64,
+    /// `codec_profile` field of type `CodecProfileWire`.
+    /// `codec_profile` 字段，类型为 `CodecProfileWire`.
     #[serde(default)]
     pub codec_profile: CodecProfileWire,
+    /// `prefer_video_codec` field of type `String`.
+    /// `prefer_video_codec` 字段，类型为 `String`.
     #[serde(default = "default_prefer_video_codec")]
     pub prefer_video_codec: String,
+    /// `prefer_audio_codec` field of type `String`.
+    /// `prefer_audio_codec` 字段，类型为 `String`.
     #[serde(default = "default_prefer_audio_codec")]
     pub prefer_audio_codec: String,
     /// Audio output strategy for WebRTC playback. Controls how the module
@@ -121,6 +169,8 @@ pub struct WebRtcModuleConfig {
     /// - `passthrough`: Pass through source codec unchanged.
     #[serde(default)]
     pub audio_output_strategy: AudioOutputStrategy,
+    /// `enable_simulcast` field of type `bool`.
+    /// `enable_simulcast` 字段，类型为 `bool`.
     #[serde(default = "default_true")]
     pub enable_simulcast: bool,
     /// Simulcast layer selection policy when multiple RIDs are
@@ -128,8 +178,12 @@ pub struct WebRtcModuleConfig {
     /// `highest` is the SMS default.
     #[serde(default = "default_simulcast_policy")]
     pub simulcast_default_policy: String,
+    /// `enable_bwe` field of type `bool`.
+    /// `enable_bwe` 字段，类型为 `bool`.
     #[serde(default = "default_true")]
     pub enable_bwe: bool,
+    /// `bwe_initial_bitrate_kbps` field of type `u64`.
+    /// `bwe_initial_bitrate_kbps` 字段，类型为 `u64`.
     #[serde(default = "default_bwe_initial")]
     pub bwe_initial_bitrate_kbps: u64,
     /// Lower BWE estimate (in kilobits per second) below which the
@@ -174,18 +228,32 @@ pub struct WebRtcModuleConfig {
     /// SDP. Default `false` for conservative compatibility.
     #[serde(default)]
     pub enable_red_ulpfec: bool,
+    /// `rtx_cache_packets` field of type `usize`.
+    /// `rtx_cache_packets` 字段，类型为 `usize`.
     #[serde(default = "default_rtx_cache_packets")]
     pub rtx_cache_packets: usize,
+    /// `rtx_cache_age_ms` field of type `u64`.
+    /// `rtx_cache_age_ms` 字段，类型为 `u64`.
     #[serde(default = "default_rtx_cache_age_ms")]
     pub rtx_cache_age_ms: u64,
+    /// `video_reorder_packets` field of type `usize`.
+    /// `video_reorder_packets` 字段，类型为 `usize`.
     #[serde(default = "default_video_reorder")]
     pub video_reorder_packets: usize,
+    /// `audio_reorder_packets` field of type `usize`.
+    /// `audio_reorder_packets` 字段，类型为 `usize`.
     #[serde(default = "default_audio_reorder")]
     pub audio_reorder_packets: usize,
+    /// `bootstrap_frame_count` field of type `usize`.
+    /// `bootstrap_frame_count` 字段，类型为 `usize`.
     #[serde(default = "default_bootstrap_frames")]
     pub bootstrap_frame_count: usize,
+    /// `bootstrap_max_age_ms` field of type `u64`.
+    /// `bootstrap_max_age_ms` 字段，类型为 `u64`.
     #[serde(default = "default_bootstrap_max_age_ms")]
     pub bootstrap_max_age_ms: u64,
+    /// `wait_stream_timeout_ms` field of type `u64`.
+    /// `wait_stream_timeout_ms` 字段，类型为 `u64`.
     #[serde(default = "default_wait_stream_ms")]
     pub wait_stream_timeout_ms: u64,
     /// Maximum DataChannel message size in bytes the core will accept
@@ -237,6 +305,8 @@ pub struct WebRtcModuleConfig {
     /// ABL 2025-12-26/29 `getOutList` exposes a similar URL.
     #[serde(default)]
     pub public_webrtc_base_url: Option<String>,
+    /// `server_label` field.
+    /// `server_label` 字段.
     #[serde(default)]
     pub server_label: Option<String>,
 }
@@ -248,9 +318,15 @@ pub struct WebRtcModuleConfig {
 /// are not selected get dropped before reaching the engine.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum SimulcastPolicy {
+    /// `Highest` variant.
+    /// `Highest` 变体.
     #[default]
     Highest,
+    /// `Lowest` variant.
+    /// `Lowest` 变体.
     Lowest,
+    /// `Rid` variant.
+    /// `Rid` 变体.
     Rid(String),
     /// Adaptive layer selection driven by upstream BWE / loss
     /// feedback. The bridge maintains a per-session estimate and
@@ -271,6 +347,8 @@ pub enum SimulcastPolicy {
 }
 
 impl SimulcastPolicy {
+    /// `parse` function.
+    /// `parse` 函数.
     pub fn parse(input: &str) -> Self {
         let trimmed = input.trim();
         if trimmed.eq_ignore_ascii_case("highest") || trimmed.is_empty() {
@@ -296,12 +374,20 @@ impl SimulcastPolicy {
     }
 }
 
+/// `CodecProfileWire` enumeration.
+/// `CodecProfileWire` 枚举.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CodecProfileWire {
+    /// `Browser` variant.
+    /// `Browser` 变体.
     #[default]
     Browser,
+    /// `Device` variant.
+    /// `Device` 变体.
     Device,
+    /// `Passthrough` variant.
+    /// `Passthrough` 变体.
     Passthrough,
 }
 
@@ -381,14 +467,20 @@ impl Default for WebRtcModuleConfig {
 }
 
 impl WebRtcModuleConfig {
+    /// `default_json` function.
+    /// `default_json` 函数.
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).expect("default WebRtcModuleConfig serialises")
     }
 
+    /// Creates `value` from input.
+    /// 创建 `值` 来自 输入.
     pub fn from_value(value: serde_json::Value) -> Result<Self, String> {
         serde_json::from_value(value).map_err(|err| err.to_string())
     }
 
+    /// `validate` function.
+    /// `validate` 函数.
     pub fn validate(&self) -> Result<(), String> {
         if self.listen_udp.is_empty() {
             return Err("listen_udp must not be empty".into());
@@ -513,6 +605,8 @@ impl WebRtcModuleConfig {
         Ok(())
     }
 
+    /// `simulcast_policy` function.
+    /// `simulcast_policy` 函数.
     pub fn simulcast_policy(&self) -> SimulcastPolicy {
         SimulcastPolicy::parse(&self.simulcast_default_policy)
     }
@@ -522,6 +616,8 @@ impl WebRtcModuleConfig {
         self.audio_output_strategy
     }
 
+    /// `ome_default_transport_mode` function.
+    /// `ome_default_transport_mode` 函数.
     pub fn ome_default_transport_mode(&self) -> Result<OmeTransportMode, String> {
         parse_ome_transport_mode(&self.ome_default_transport).map_err(|err| err.to_string())
     }
@@ -548,6 +644,8 @@ impl WebRtcModuleConfig {
         )
     }
 
+    /// Converts to `driver_config` representation.
+    /// Converts 为 `driver_config` 表示.
     pub fn to_driver_config(&self) -> Result<WebRtcDriverConfig, String> {
         self.validate()?;
         let listen_udp = self

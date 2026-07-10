@@ -17,22 +17,46 @@ use crate::compat::{OmeDirection, OmeTransportMode, OmeWebRtcRequest};
 use crate::config::WebRtcIceServerConfig;
 use crate::session::WebRtcApiKind;
 
+/// `OME_WS_DEFAULT_MAX_MESSAGE_BYTES` constant.
+/// `OME_WS_DEFAULT_MAX_MESSAGE_BYTES` 常量.
 pub const OME_WS_DEFAULT_MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+/// `OME_WS_DEFAULT_MAX_SDP_BYTES` constant.
+/// `OME_WS_DEFAULT_MAX_SDP_BYTES` 常量.
 pub const OME_WS_DEFAULT_MAX_SDP_BYTES: usize = 64 * 1024;
+/// `OME_WS_DEFAULT_MAX_CANDIDATE_BYTES` constant.
+/// `OME_WS_DEFAULT_MAX_CANDIDATE_BYTES` 常量.
 pub const OME_WS_DEFAULT_MAX_CANDIDATE_BYTES: usize = 1024;
+/// `OME_WS_DEFAULT_MAX_FIELD_BYTES` constant.
+/// `OME_WS_DEFAULT_MAX_FIELD_BYTES` 常量.
 pub const OME_WS_DEFAULT_MAX_FIELD_BYTES: usize = 128;
 
+/// `OmeIceServersJson` data structure.
+/// `OmeIceServersJson` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OmeIceServersJson {
+    /// `standard` field of type `Value`.
+    /// `standard` 字段，类型为 `Value`.
     pub standard: Value,
+    /// `legacy` field of type `Value`.
+    /// `legacy` 字段，类型为 `Value`.
     pub legacy: Value,
 }
 
+/// `OmeWsDecoderConfig` data structure.
+/// `OmeWsDecoderConfig` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OmeWsDecoderConfig {
+    /// `max_message_bytes` field of type `usize`.
+    /// `max_message_bytes` 字段，类型为 `usize`.
     pub max_message_bytes: usize,
+    /// `max_sdp_bytes` field of type `usize`.
+    /// `max_sdp_bytes` 字段，类型为 `usize`.
     pub max_sdp_bytes: usize,
+    /// `max_candidate_bytes` field of type `usize`.
+    /// `max_candidate_bytes` 字段，类型为 `usize`.
     pub max_candidate_bytes: usize,
+    /// `max_field_bytes` field of type `usize`.
+    /// `max_field_bytes` 字段，类型为 `usize`.
     pub max_field_bytes: usize,
 }
 
@@ -47,75 +71,123 @@ impl Default for OmeWsDecoderConfig {
     }
 }
 
+/// `OmeWsMessageError` enumeration.
+/// `OmeWsMessageError` 枚举.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum OmeWsMessageError {
+    /// `PayloadTooLarge` variant.
+    /// `PayloadTooLarge` 变体.
     #[error("payload exceeds {limit} bytes")]
     PayloadTooLarge { limit: usize },
+    /// `InvalidJson` variant.
+    /// `InvalidJson` 变体.
     #[error("invalid json: {0}")]
     InvalidJson(String),
+    /// `MissingField` variant.
+    /// `MissingField` 变体.
     #[error("missing required field `{0}`")]
     MissingField(&'static str),
+    /// `UnsupportedCommand` variant.
+    /// `UnsupportedCommand` 变体.
     #[error("unsupported command `{0}`")]
     UnsupportedCommand(String),
+    /// `FieldTooLarge` variant.
+    /// `FieldTooLarge` 变体.
     #[error("field `{field}` exceeds {limit} bytes (was {actual})")]
     FieldTooLarge {
         field: &'static str,
         limit: usize,
         actual: usize,
     },
+    /// `InvalidField` variant.
+    /// `InvalidField` 变体.
     #[error("invalid field `{field}`: {reason}")]
     InvalidField { field: &'static str, reason: String },
+    /// `InvalidSessionId` variant.
+    /// `InvalidSessionId` 变体.
     #[error("invalid signaling session id {actual}, expected {expected}")]
     InvalidSessionId { expected: u64, actual: u64 },
 }
 
+/// `OmeWsCandidate` data structure.
+/// `OmeWsCandidate` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OmeWsCandidate {
+    /// `candidate` field of type `String`.
+    /// `candidate` 字段，类型为 `String`.
     pub candidate: String,
+    /// `sdp_mid` field.
+    /// `sdp_mid` 字段.
     pub sdp_mid: Option<String>,
+    /// `sdp_mline_index` field.
+    /// `sdp_mline_index` 字段.
     pub sdp_mline_index: Option<u32>,
+    /// `username_fragment` field.
+    /// `username_fragment` 字段.
     pub username_fragment: Option<String>,
 }
 
+/// `OmeWsMessage` enumeration.
+/// `OmeWsMessage` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OmeWsMessage {
+    /// `RequestOffer` variant.
+    /// `RequestOffer` 变体.
     RequestOffer {
         id: Option<u64>,
         peer_id: Option<u64>,
     },
+    /// `Answer` variant.
+    /// `Answer` 变体.
     Answer {
         id: Option<u64>,
         peer_id: Option<u64>,
         sdp: String,
     },
+    /// `Candidate` variant.
+    /// `Candidate` 变体.
     Candidate {
         id: Option<u64>,
         peer_id: Option<u64>,
         candidates: Vec<OmeWsCandidate>,
     },
+    /// `Stop` variant.
+    /// `Stop` 变体.
     Stop {
         id: Option<u64>,
         peer_id: Option<u64>,
     },
 }
 
+/// `OmeWsAction` enumeration.
+/// `OmeWsAction` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OmeWsAction {
+    /// `RequestOffer` variant.
+    /// `RequestOffer` 变体.
     RequestOffer,
+    /// `ApplyAnswer` variant.
+    /// `ApplyAnswer` 变体.
     ApplyAnswer {
         session_id: Option<cheetah_webrtc_core::WebRtcSessionId>,
         sdp: String,
     },
+    /// `AddRemoteCandidates` variant.
+    /// `AddRemoteCandidates` 变体.
     AddRemoteCandidates {
         session_id: Option<cheetah_webrtc_core::WebRtcSessionId>,
         candidates: Vec<String>,
     },
+    /// `Stop` variant.
+    /// `Stop` 变体.
     Stop {
         session_id: Option<cheetah_webrtc_core::WebRtcSessionId>,
     },
 }
 
 impl OmeWsMessage {
+    /// `id` function.
+    /// `id` 函数.
     pub fn id(&self) -> Option<u64> {
         match self {
             OmeWsMessage::RequestOffer { id, .. }
@@ -125,6 +197,8 @@ impl OmeWsMessage {
         }
     }
 
+    /// Converts to `action` representation.
+    /// Converts 为 `action` 表示.
     pub fn to_action(
         &self,
         session_id: Option<cheetah_webrtc_core::WebRtcSessionId>,
@@ -147,54 +221,116 @@ impl OmeWsMessage {
     }
 }
 
+/// `OmeWsOfferResponse` data structure.
+/// `OmeWsOfferResponse` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OmeWsOfferResponse {
+    /// `id` field of type `u64`.
+    /// `id` 字段，类型为 `u64`.
     pub id: u64,
+    /// `peer_id` field of type `u64`.
+    /// `peer_id` 字段，类型为 `u64`.
     pub peer_id: u64,
+    /// `sdp` field of type `String`.
+    /// `sdp` 字段，类型为 `String`.
     pub sdp: String,
+    /// `candidates` field.
+    /// `candidates` 字段.
     pub candidates: Vec<OmeWsCandidate>,
+    /// `ice_servers` field.
+    /// `ice_servers` 字段.
     pub ice_servers: Option<OmeIceServersJson>,
 }
 
+/// `OmeWsRequestOfferPlan` data structure.
+/// `OmeWsRequestOfferPlan` 数据结构.
 #[derive(Debug, Clone)]
 pub struct OmeWsRequestOfferPlan {
+    /// `session_id` field of type `WebRtcSessionId`.
+    /// `session_id` 字段，类型为 `WebRtcSessionId`.
     pub session_id: WebRtcSessionId,
+    /// `stream_key` field of type `StreamKey`.
+    /// `stream_key` 字段，类型为 `StreamKey`.
     pub stream_key: StreamKey,
+    /// `role` field of type `WebRtcSessionRole`.
+    /// `role` 字段，类型为 `WebRtcSessionRole`.
     pub role: WebRtcSessionRole,
+    /// `api_kind` field of type `WebRtcApiKind`.
+    /// `api_kind` 字段，类型为 `WebRtcApiKind`.
     pub api_kind: WebRtcApiKind,
+    /// `offer_spec` field of type `WebRtcOfferSpec`.
+    /// `offer_spec` 字段，类型为 `WebRtcOfferSpec`.
     pub offer_spec: WebRtcOfferSpec,
+    /// `candidate_transport_policy` field of type `CandidateTransportPolicy`.
+    /// `candidate_transport_policy` 字段，类型为 `CandidateTransportPolicy`.
     pub candidate_transport_policy: CandidateTransportPolicy,
+    /// `ice_servers` field.
+    /// `ice_servers` 字段.
     pub ice_servers: Option<OmeIceServersJson>,
 }
 
+/// `OmeWsRequestOfferInput` data structure.
+/// `OmeWsRequestOfferInput` 数据结构.
 pub struct OmeWsRequestOfferInput<'a> {
+    /// `target` field of type `&'a OmeWebRtcRequest`.
+    /// `target` 字段，类型为 `&'一个 OmeWebRtcRequest`.
     pub target: &'a OmeWebRtcRequest,
+    /// `session_id` field of type `WebRtcSessionId`.
+    /// `session_id` 字段，类型为 `WebRtcSessionId`.
     pub session_id: WebRtcSessionId,
+    /// `request_id` field.
+    /// `request_id` 字段.
     pub request_id: Option<u64>,
+    /// `peer_id` field.
+    /// `peer_id` 字段.
     pub peer_id: Option<u64>,
+    /// `tcp_relay_force` field of type `bool`.
+    /// `tcp_relay_force` 字段，类型为 `bool`.
     pub tcp_relay_force: bool,
+    /// `ice_server_configs` field of type `&'a [WebRtcIceServerConfig]`.
+    /// `ice_server_configs` 字段，类型为 `&'一个 [WebRtcIceServerConfig]`.
     pub ice_server_configs: &'a [WebRtcIceServerConfig],
+    /// `offer_timeout` field of type `Duration`.
+    /// `offer_timeout` 字段，类型为 `Duration`.
     pub offer_timeout: Duration,
 }
 
+/// `OmeWsRequestOfferOutcome` data structure.
+/// `OmeWsRequestOfferOutcome` 数据结构.
 pub struct OmeWsRequestOfferOutcome {
+    /// `session` field.
+    /// `session` 字段.
     pub session: crate::session::WebRtcModuleSession,
+    /// `response_json` field of type `String`.
+    /// `response_json` 字段，类型为 `String`.
     pub response_json: String,
 }
 
+/// `OmeWsEstablishedOutcome` data structure.
+/// `OmeWsEstablishedOutcome` 数据结构.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OmeWsEstablishedOutcome {
+    /// `closed` field of type `bool`.
+    /// `closed` 字段，类型为 `bool`.
     pub closed: bool,
 }
 
+/// `OmeWsSessionError` enumeration.
+/// `OmeWsSessionError` 枚举.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum OmeWsSessionError {
+    /// `OfferFailed` variant.
+    /// `OfferFailed` 变体.
     #[error("driver offer failed: {0}")]
     OfferFailed(String),
+    /// `Message` variant.
+    /// `Message` 变体.
     #[error(transparent)]
     Message(#[from] OmeWsMessageError),
 }
 
+/// `OmeWsDriverSink` trait.
+/// `OmeWsDriverSink` trait.
 #[async_trait]
 pub trait OmeWsDriverSink: Send + Sync {
     async fn send_command(&self, command: WebRtcDriverCommand);
@@ -207,6 +343,8 @@ impl OmeWsDriverSink for std::sync::Arc<cheetah_webrtc_driver_tokio::WebRtcDrive
     }
 }
 
+/// `OmeWsOfferWaiter` trait.
+/// `OmeWsOfferWaiter` trait.
 pub trait OmeWsOfferWaiter: Send + Sync {
     fn wait_for_offer(
         &self,
@@ -216,6 +354,8 @@ pub trait OmeWsOfferWaiter: Send + Sync {
 }
 
 impl OmeWsRequestOfferPlan {
+    /// `create_offer_command` function.
+    /// `create_offer_command` 函数.
     pub fn create_offer_command(&self) -> WebRtcDriverCommand {
         WebRtcDriverCommand::CreateOffer {
             session_id: self.session_id,
@@ -225,6 +365,8 @@ impl OmeWsRequestOfferPlan {
         }
     }
 
+    /// `registry_session` function.
+    /// `registry_session` 函数.
     pub fn registry_session(&self) -> crate::session::WebRtcModuleSession {
         crate::session::WebRtcModuleSession::new(
             self.session_id,
@@ -235,6 +377,8 @@ impl OmeWsRequestOfferPlan {
     }
 }
 
+/// `handle_request_offer` function.
+/// `handle_request_offer` 函数.
 pub async fn handle_request_offer<D, W>(
     input: OmeWsRequestOfferInput<'_>,
     driver: &D,
@@ -270,6 +414,8 @@ where
     })
 }
 
+/// `handle_established_message` function.
+/// `handle_established_message` 函数.
 pub async fn handle_established_message<D>(
     session_id: WebRtcSessionId,
     expected_signaling_id: u64,
@@ -327,10 +473,14 @@ where
     }
 }
 
+/// `should_include_ice_servers` function.
+/// `should_include_ice_servers` 函数.
 pub fn should_include_ice_servers(transport: OmeTransportMode, tcp_relay_force: bool) -> bool {
     tcp_relay_force || matches!(transport, OmeTransportMode::Relay | OmeTransportMode::All)
 }
 
+/// `ome_transport_to_candidate_policy` function.
+/// `ome_transport_to_candidate_policy` 函数.
 pub fn ome_transport_to_candidate_policy(
     transport: OmeTransportMode,
     tcp_relay_force: bool,
@@ -347,6 +497,8 @@ pub fn ome_transport_to_candidate_policy(
     }
 }
 
+/// `plan_request_offer` function.
+/// `plan_request_offer` 函数.
 pub fn plan_request_offer(
     target: &OmeWebRtcRequest,
     session_id: WebRtcSessionId,
@@ -381,6 +533,8 @@ pub fn plan_request_offer(
     }
 }
 
+/// Parses `ome_ws_message` from input.
+/// 解析 `ome_ws_message` 来自 输入.
 pub fn parse_ome_ws_message(
     raw: &str,
     config: OmeWsDecoderConfig,
@@ -419,6 +573,8 @@ pub fn parse_ome_ws_message(
     }
 }
 
+/// `render_offer_response` function.
+/// `render_offer_response` 函数.
 pub fn render_offer_response(response: &OmeWsOfferResponse) -> Result<String, OmeWsMessageError> {
     let mut object = Map::new();
     object.insert("command".into(), Value::String("offer".into()));
@@ -451,6 +607,8 @@ pub fn render_offer_response(response: &OmeWsOfferResponse) -> Result<String, Om
         .map_err(|err| OmeWsMessageError::InvalidJson(err.to_string()))
 }
 
+/// `render_error_response` function.
+/// `render_error_response` 函数.
 pub fn render_error_response(
     id: u64,
     peer_id: Option<u64>,
@@ -466,6 +624,8 @@ pub fn render_error_response(
         .map_err(|err| OmeWsMessageError::InvalidJson(err.to_string()))
 }
 
+/// `render_ome_ice_servers_json` function.
+/// `render_ome_ice_servers_json` 函数.
 pub fn render_ome_ice_servers_json(
     servers: &[WebRtcIceServerConfig],
     transport: OmeTransportMode,
@@ -490,6 +650,8 @@ pub fn render_ome_ice_servers_json(
     })
 }
 
+/// `ice_server_link_headers` function.
+/// `ice_server_link_headers` 函数.
 pub fn ice_server_link_headers(
     servers: &[WebRtcIceServerConfig],
     transport: OmeTransportMode,
@@ -711,6 +873,8 @@ fn candidate_json(candidate: &OmeWsCandidate) -> Value {
     Value::Object(object)
 }
 
+/// `extract_ome_candidates_from_sdp` function.
+/// `extract_ome_candidates_from_sdp` 函数.
 pub fn extract_ome_candidates_from_sdp(sdp: &str) -> Vec<OmeWsCandidate> {
     let mut current_mid: Option<String> = None;
     let mut current_mline_index: Option<u32> = None;

@@ -27,6 +27,8 @@ use crate::zlm_compat::{
 
 const MODULE_ID: &str = "record";
 
+/// `RecordModuleFactory` data structure.
+/// `RecordModuleFactory` 数据结构.
 pub struct RecordModuleFactory;
 
 impl ModuleFactory for RecordModuleFactory {
@@ -65,15 +67,29 @@ impl ModuleFactory for RecordModuleFactory {
 
 /// Record module instance.
 pub struct RecordModule {
+    /// `state` field of type `ModuleState`.
+    /// `state` 字段，类型为 `ModuleState`.
     state: ModuleState,
+    /// `config` field of type `RecordModuleConfig`.
+    /// `config` 字段，类型为 `RecordModuleConfig`.
     config: RecordModuleConfig,
+    /// `ctx` field.
+    /// `ctx` 字段.
     ctx: Option<EngineContext>,
+    /// `registry` field.
+    /// `registry` 字段.
     registry: Arc<RecordRegistry>,
+    /// `executor` field.
+    /// `executor` 字段.
     executor: Option<Arc<RecordExecutor>>,
+    /// `api` field.
+    /// `api` 字段.
     api: Option<Arc<RecordApi>>,
 }
 
 impl RecordModule {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self {
             state: ModuleState::Created,

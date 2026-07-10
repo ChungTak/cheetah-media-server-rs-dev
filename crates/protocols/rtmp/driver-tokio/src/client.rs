@@ -18,19 +18,39 @@ use tracing::warn;
 
 const DEFAULT_FLASH_VER: &str = "FMLE/3.0 (compatible; FME/3.0)";
 
+/// `RtmpClientMode` enumeration.
+/// `RtmpClientMode` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpClientMode {
+    /// `Play` variant.
+    /// `Play` 变体.
     Play,
+    /// `Publish` variant.
+    /// `Publish` 变体.
     Publish,
 }
 
+/// `RtmpClientDriverConfig` data structure.
+/// `RtmpClientDriverConfig` 数据结构.
 #[derive(Debug, Clone)]
 pub struct RtmpClientDriverConfig {
+    /// `command_queue_capacity` field of type `usize`.
+    /// `command_queue_capacity` 字段，类型为 `usize`.
     pub command_queue_capacity: usize,
+    /// `event_queue_capacity` field of type `usize`.
+    /// `event_queue_capacity` 字段，类型为 `usize`.
     pub event_queue_capacity: usize,
+    /// `write_queue_capacity` field of type `usize`.
+    /// `write_queue_capacity` 字段，类型为 `usize`.
     pub write_queue_capacity: usize,
+    /// `read_buffer_size` field of type `usize`.
+    /// `read_buffer_size` 字段，类型为 `usize`.
     pub read_buffer_size: usize,
+    /// `ack_window_size` field of type `u32`.
+    /// `ack_window_size` 字段，类型为 `u32`.
     pub ack_window_size: u32,
+    /// `chunk_size` field of type `u32`.
+    /// `chunk_size` 字段，类型为 `u32`.
     pub chunk_size: u32,
 }
 
@@ -47,31 +67,57 @@ impl Default for RtmpClientDriverConfig {
     }
 }
 
+/// `ClientDriverEvent` enumeration.
+/// `ClientDriverEvent` 枚举.
 #[derive(Debug)]
 pub enum ClientDriverEvent {
+    /// `Connected` variant.
+    /// `Connected` 变体.
     Connected { peer: Option<SocketAddr> },
+    /// `Core` variant.
+    /// `Core` 变体.
     Core { event: RtmpEvent },
+    /// `Closed` variant.
+    /// `Closed` 变体.
     Closed { reason: String },
 }
 
+/// `RtmpClientDriverCommand` enumeration.
+/// `RtmpClientDriverCommand` 枚举.
 #[derive(Debug, Clone)]
 pub enum RtmpClientDriverCommand {
+    /// `Core` variant.
+    /// `Core` 变体.
     Core(RtmpCoreCommand),
+    /// `CloseConnection` variant.
+    /// `CloseConnection` 变体.
     CloseConnection,
+    /// `Shutdown` variant.
+    /// `Shutdown` 变体.
     Shutdown,
 }
 
+/// `ClientSendError` enumeration.
+/// `ClientSendError` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientSendError {
+    /// `ChannelClosed` variant.
+    /// `ChannelClosed` 变体.
     ChannelClosed,
 }
 
+/// `RtmpClientCommandSender` data structure.
+/// `RtmpClientCommandSender` 数据结构.
 #[derive(Clone)]
 pub struct RtmpClientCommandSender {
+    /// `tx` field.
+    /// `tx` 字段.
     tx: mpsc::Sender<RtmpClientDriverCommand>,
 }
 
 impl RtmpClientCommandSender {
+    /// `send` function.
+    /// `send` 函数.
     pub async fn send(&self, command: RtmpClientDriverCommand) -> Result<(), ClientSendError> {
         self.tx
             .send(command)
@@ -79,27 +125,45 @@ impl RtmpClientCommandSender {
             .map_err(|_| ClientSendError::ChannelClosed)
     }
 
+    /// `send_core` function.
+    /// `send_core` 函数.
     pub async fn send_core(&self, command: RtmpCoreCommand) -> Result<(), ClientSendError> {
         self.send(RtmpClientDriverCommand::Core(command)).await
     }
 
+    /// `close_connection` function.
+    /// `close_connection` 函数.
     pub async fn close_connection(&self) -> Result<(), ClientSendError> {
         self.send(RtmpClientDriverCommand::CloseConnection).await
     }
 }
 
+/// `RtmpClientHandle` data structure.
+/// `RtmpClientHandle` 数据结构.
 pub struct RtmpClientHandle {
+    /// `events_rx` field.
+    /// `events_rx` 字段.
     events_rx: mpsc::Receiver<ClientDriverEvent>,
+    /// `cmd_tx` field of type `RtmpClientCommandSender`.
+    /// `cmd_tx` 字段，类型为 `RtmpClientCommandSender`.
     cmd_tx: RtmpClientCommandSender,
+    /// `cancel` field of type `CancellationToken`.
+    /// `cancel` 字段，类型为 `CancellationToken`.
     cancel: CancellationToken,
+    /// `join` field.
+    /// `join` 字段.
     join: Box<dyn JoinHandle>,
 }
 
 impl RtmpClientHandle {
+    /// `recv_event` function.
+    /// `recv_event` 函数.
     pub async fn recv_event(&mut self) -> Option<ClientDriverEvent> {
         self.events_rx.recv().await
     }
 
+    /// `send_driver_command` function.
+    /// `send_driver_command` 函数.
     pub async fn send_driver_command(
         &self,
         command: RtmpClientDriverCommand,
@@ -107,14 +171,20 @@ impl RtmpClientHandle {
         self.cmd_tx.send(command).await
     }
 
+    /// `core_command_sender` function.
+    /// `core_command_sender` 函数.
     pub fn core_command_sender(&self) -> RtmpClientCommandSender {
         self.cmd_tx.clone()
     }
 
+    /// `shutdown` function.
+    /// `shutdown` 函数.
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
+    /// `wait` function.
+    /// `wait` 函数.
     pub async fn wait(self) -> Result<(), TaskJoinError> {
         self.join.wait().await
     }
@@ -236,6 +306,8 @@ impl ClientAutomation {
     }
 }
 
+/// `start_client` function.
+/// `start_client` 函数.
 pub fn start_client(
     runtime_api: Arc<dyn RuntimeApi>,
     url: RtmpUrl,
@@ -279,14 +351,32 @@ pub fn start_client(
     })
 }
 
+/// `ClientConnectionParams` data structure.
+/// `ClientConnectionParams` 数据结构.
 pub(crate) struct ClientConnectionParams<'a> {
+    /// `stream` field.
+    /// `stream` 字段.
     pub stream: Box<dyn AsyncTcpStream>,
+    /// `runtime_api` field of type `&'a Arc<dyn RuntimeApi>`.
+    /// `runtime_api` 字段，类型为 `&'一个 Arc<dyn RuntimeApi>`.
     pub runtime_api: &'a Arc<dyn RuntimeApi>,
+    /// `mode` field of type `RtmpClientMode`.
+    /// `mode` 字段，类型为 `RtmpClientMode`.
     pub mode: RtmpClientMode,
+    /// `url` field of type `RtmpUrl`.
+    /// `url` 字段，类型为 `RtmpUrl`.
     pub url: RtmpUrl,
+    /// `config` field of type `RtmpClientDriverConfig`.
+    /// `config` 字段，类型为 `RtmpClientDriverConfig`.
     pub config: RtmpClientDriverConfig,
+    /// `cancel` field of type `CancellationToken`.
+    /// `cancel` 字段，类型为 `CancellationToken`.
     pub cancel: CancellationToken,
+    /// `event_tx` field of type `&'a mpsc::Sender<ClientDriverEvent>`.
+    /// `event_tx` 字段，类型为 `&'一个 mpsc::Sender<ClientDriverEvent>`.
     pub event_tx: &'a mpsc::Sender<ClientDriverEvent>,
+    /// `cmd_rx` field of type `&'a mut mpsc::Receiver<RtmpClientDriverCommand>`.
+    /// `cmd_rx` 字段，类型为 `&'一个 mut mpsc::Receiver<RtmpClientDriverCommand>`.
     pub cmd_rx: &'a mut mpsc::Receiver<RtmpClientDriverCommand>,
 }
 

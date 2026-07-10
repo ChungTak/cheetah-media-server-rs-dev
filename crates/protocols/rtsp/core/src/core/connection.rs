@@ -1,20 +1,36 @@
 use super::{RtspMessageLimits, RtspMethod};
 
+/// `RtspInterleavedEncodeError` enumeration.
+/// `RtspInterleavedEncodeError` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspInterleavedEncodeError {
+    /// `PayloadTooLarge` variant.
+    /// `PayloadTooLarge` 变体.
     #[error("interleaved payload too large: {actual} > {max}")]
     PayloadTooLarge { max: usize, actual: usize },
 }
+/// `RtspSessionError` enumeration.
+/// `RtspSessionError` 枚举.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspSessionError {
+    /// `EmptyHeader` variant.
+    /// `EmptyHeader` 变体.
     #[error("empty session header")]
     EmptyHeader,
+    /// `MissingSessionId` variant.
+    /// `MissingSessionId` 变体.
     #[error("missing session id")]
     MissingSessionId,
+    /// `InvalidSessionId` variant.
+    /// `InvalidSessionId` 变体.
     #[error("invalid session id: {0}")]
     InvalidSessionId(String),
+    /// `InvalidTimeout` variant.
+    /// `InvalidTimeout` 变体.
     #[error("invalid timeout value: {0}")]
     InvalidTimeout(String),
+    /// `InvalidHeaderValue` variant.
+    /// `InvalidHeaderValue` 变体.
     #[error("invalid session header value")]
     InvalidHeaderValue,
 }
@@ -33,11 +49,23 @@ pub struct RtspSession {
 /// 该结构用于承接连接级限制配置，再转换为 `RtspMessageLimits` 注入 core。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspConnectionLimits {
+    /// `max_buffer_size` field of type `usize`.
+    /// `max_buffer_size` 字段，类型为 `usize`.
     pub max_buffer_size: usize,
+    /// `max_headers_count` field of type `usize`.
+    /// `max_headers_count` 字段，类型为 `usize`.
     pub max_headers_count: usize,
+    /// `max_header_line_size` field of type `usize`.
+    /// `max_header_line_size` 字段，类型为 `usize`.
     pub max_header_line_size: usize,
+    /// `max_body_size` field of type `usize`.
+    /// `max_body_size` 字段，类型为 `usize`.
     pub max_body_size: usize,
+    /// `max_interleaved_frame_size` field of type `usize`.
+    /// `max_interleaved_frame_size` 字段，类型为 `usize`.
     pub max_interleaved_frame_size: usize,
+    /// `validate_version` field of type `bool`.
+    /// `validate_version` 字段，类型为 `bool`.
     pub validate_version: bool,
 }
 
@@ -71,10 +99,14 @@ pub struct RtspInterleavedFrameHeader {
 }
 
 impl RtspSession {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Returns a copy with `id` set.
+    /// 返回 一个 copy 带有 `id` 设置.
     pub fn with_id(id: &str) -> Self {
         Self {
             id: Some(id.to_string()),
@@ -129,6 +161,8 @@ impl RtspSession {
         Ok(session)
     }
 
+    /// Converts to `header` representation.
+    /// Converts 为 `header` 表示.
     pub fn to_header(&self) -> Result<Option<String>, RtspSessionError> {
         let Some(id) = self.id.as_deref() else {
             return Ok(None);
@@ -237,6 +271,8 @@ impl Default for RtspConnectionLimits {
 }
 
 impl RtspConnectionLimits {
+    /// Converts to `message_limits` representation.
+    /// Converts 为 `message_limits` 表示.
     pub fn to_message_limits(&self) -> RtspMessageLimits {
         self.clone().into()
     }

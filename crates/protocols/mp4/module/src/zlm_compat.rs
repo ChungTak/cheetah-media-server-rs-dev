@@ -13,12 +13,20 @@ use serde::Deserialize;
 use crate::api::{StartVodRequest, VodApi, VodApiError};
 use crate::session_registry::SessionError;
 
+/// `ZlmVodError` enumeration.
+/// `ZlmVodError` 枚举.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum ZlmVodError {
+    /// `InvalidRequest` variant.
+    /// `InvalidRequest` 变体.
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+    /// `SessionNotFound` variant.
+    /// `SessionNotFound` 变体.
     #[error("session not found: {0}")]
     SessionNotFound(String),
+    /// `Api` variant.
+    /// `Api` 变体.
     #[error("api: {0}")]
     Api(#[from] VodApiError),
 }
@@ -26,15 +34,29 @@ pub enum ZlmVodError {
 /// `POST /index/api/loadMP4File` body.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ZlmLoadMp4 {
+    /// `vhost` field.
+    /// `vhost` 字段.
     #[serde(default)]
     pub vhost: Option<String>,
+    /// `app` field of type `String`.
+    /// `app` 字段，类型为 `String`.
     pub app: String,
+    /// `stream` field of type `String`.
+    /// `stream` 字段，类型为 `String`.
     pub stream: String,
+    /// `file_path` field of type `String`.
+    /// `file_path` 字段，类型为 `String`.
     pub file_path: String,
+    /// `seek_ms` field.
+    /// `seek_ms` 字段.
     #[serde(default)]
     pub seek_ms: Option<i64>,
+    /// `speed` field.
+    /// `speed` 字段.
     #[serde(default)]
     pub speed: Option<f32>,
+    /// `file_repeat` field.
+    /// `file_repeat` 字段.
     #[serde(default)]
     pub file_repeat: Option<bool>,
 }
@@ -42,34 +64,56 @@ pub struct ZlmLoadMp4 {
 /// `POST /index/api/seekRecordStamp` body.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ZlmSeekRecord {
+    /// `vhost` field.
+    /// `vhost` 字段.
     #[serde(default)]
     pub vhost: Option<String>,
+    /// `app` field of type `String`.
+    /// `app` 字段，类型为 `String`.
     pub app: String,
+    /// `stream` field of type `String`.
+    /// `stream` 字段，类型为 `String`.
     pub stream: String,
+    /// `stamp` field of type `i64`.
+    /// `stamp` 字段，类型为 `i64`.
     pub stamp: i64,
 }
 
 /// `POST /index/api/setRecordSpeed` body.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ZlmSetSpeed {
+    /// `vhost` field.
+    /// `vhost` 字段.
     #[serde(default)]
     pub vhost: Option<String>,
+    /// `app` field of type `String`.
+    /// `app` 字段，类型为 `String`.
     pub app: String,
+    /// `stream` field of type `String`.
+    /// `stream` 字段，类型为 `String`.
     pub stream: String,
+    /// `speed` field of type `f32`.
+    /// `speed` 字段，类型为 `f32`.
     pub speed: f32,
 }
 
 /// ZLM compat surface for the MP4 VOD module.
 #[derive(Clone)]
 pub struct ZlmVodCompat {
+    /// `inner` field.
+    /// `inner` 字段.
     inner: Arc<VodApi>,
 }
 
 impl ZlmVodCompat {
+    /// Creates a new instance.
+    /// 创建 新的 实例.
     pub fn new(inner: Arc<VodApi>) -> Self {
         Self { inner }
     }
 
+    /// `load_mp4` function.
+    /// `load_mp4` 函数.
     pub async fn load_mp4(&self, req: ZlmLoadMp4) -> Result<serde_json::Value, ZlmVodError> {
         let session_id = vod_session_id(&req.app, &req.stream);
         let normalized = normalize_rtmp_mp4_uri(&req.file_path);
@@ -102,6 +146,8 @@ impl ZlmVodCompat {
         }))
     }
 
+    /// `seek_record` function.
+    /// `seek_record` 函数.
     pub fn seek_record(&self, req: ZlmSeekRecord) -> Result<serde_json::Value, ZlmVodError> {
         let session_id = vod_session_id(&req.app, &req.stream);
         let handle = self
@@ -117,6 +163,8 @@ impl ZlmVodCompat {
         Ok(serde_json::json!({ "code": 0, "result": true }))
     }
 
+    /// Sets the `speed` value.
+    /// Sets `speed` 值.
     pub fn set_speed(&self, req: ZlmSetSpeed) -> Result<serde_json::Value, ZlmVodError> {
         if !(0.1..=20.0).contains(&req.speed) {
             return Err(ZlmVodError::InvalidRequest(format!(

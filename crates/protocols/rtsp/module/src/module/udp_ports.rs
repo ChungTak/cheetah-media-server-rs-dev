@@ -2,15 +2,27 @@ use super::*;
 use cheetah_sdk::AsyncUdpSocket;
 use std::net::IpAddr;
 
+/// `MAX_UDP_PORT_PAIR_BIND_ATTEMPTS` constant.
+/// `MAX_UDP_PORT_PAIR_BIND_ATTEMPTS` 常量.
 pub(super) const MAX_UDP_PORT_PAIR_BIND_ATTEMPTS: usize = 256;
+/// `UdpSocketPair` type alias.
+/// `UdpSocketPair` 类型别名.
 pub(super) type UdpSocketPair = (Arc<dyn AsyncUdpSocket>, Arc<dyn AsyncUdpSocket>, u16, u16);
 
+/// `UdpSocketPairBindError` enumeration.
+/// `UdpSocketPairBindError` 枚举.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UdpSocketPairBindError {
+    /// `PoolExhausted` variant.
+    /// `PoolExhausted` 变体.
     PoolExhausted,
+    /// `BindFailure` variant.
+    /// `BindFailure` 变体.
     BindFailure,
 }
 
+/// `bind_udp_socket_pair` function.
+/// `bind_udp_socket_pair` 函数.
 pub(super) fn bind_udp_socket_pair(
     runtime_api: &Arc<dyn RuntimeApi>,
     bind_addr: SocketAddr,
@@ -83,6 +95,8 @@ pub(super) fn bind_udp_socket_pair(
     Err(UdpSocketPairBindError::BindFailure)
 }
 
+/// `send_udp_hole_punch_probe` function.
+/// `send_udp_hole_punch_probe` 函数.
 pub(super) async fn send_udp_hole_punch_probe(
     rtp_socket: &Arc<dyn AsyncUdpSocket>,
     rtcp_socket: &Arc<dyn AsyncUdpSocket>,
@@ -103,6 +117,8 @@ pub(super) async fn send_udp_hole_punch_probe(
     Ok(())
 }
 
+/// `validate_udp_server_port_pair_shape` function.
+/// `validate_udp_server_port_pair_shape` 函数.
 pub(super) fn validate_udp_server_port_pair_shape(
     rtp_port: u16,
     rtcp_port: u16,
@@ -114,6 +130,8 @@ pub(super) fn validate_udp_server_port_pair_shape(
     }
 }
 
+/// `validate_udp_server_port_pool_range` function.
+/// `validate_udp_server_port_pool_range` 函数.
 pub(super) fn validate_udp_server_port_pool_range(
     pool_start: u16,
     pool_end: u16,
@@ -130,6 +148,8 @@ pub(super) fn validate_udp_server_port_pool_range(
     }
 }
 
+/// `resolve_udp_destination_ip` function.
+/// `resolve_udp_destination_ip` 函数.
 pub(super) fn resolve_udp_destination_ip(
     peer: SocketAddr,
     destination: Option<IpAddr>,

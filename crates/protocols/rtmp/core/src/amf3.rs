@@ -23,22 +23,42 @@ const MARKER_DOUBLE_VECTOR: u8 = 0x0F;
 const MARKER_OBJECT_VECTOR: u8 = 0x10;
 const MARKER_DICTIONARY: u8 = 0x11;
 
+/// `Amf3Value` enumeration.
+/// `Amf3Value` 枚举.
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Amf3Value {
+    /// `Undefined` variant.
+    /// `Undefined` 变体.
     Undefined,
+    /// `Null` variant.
+    /// `Null` 变体.
     Null,
+    /// `Boolean` variant.
+    /// `Boolean` 变体.
     Boolean(bool),
+    /// `Integer` variant.
+    /// `Integer` 变体.
     Integer(i32),
+    /// `Double` variant.
+    /// `Double` 变体.
     Double(f64),
+    /// `String` variant.
+    /// `String` 变体.
     String(String),
+    /// `XmlDocument` variant.
+    /// `XmlDocument` 变体.
     XmlDocument(String),
-    Date {
-        unix_time_ms: i64,
-    },
+    /// `Date` variant.
+    /// `Date` 变体.
+    Date { unix_time_ms: i64 },
+    /// `Array` variant.
+    /// `Array` 变体.
     Array {
         assoc_entries: Vec<Pair<String, Self>>,
         dense_entries: Vec<Self>,
     },
+    /// `Object` variant.
+    /// `Object` 变体.
     Object {
         // `None` 表示匿名对象
         class_name: Option<String>,
@@ -48,26 +68,31 @@ pub enum Amf3Value {
 
         entries: Vec<Pair<String, Self>>,
     },
+    /// `Xml` variant.
+    /// `Xml` 变体.
     Xml(String),
+    /// `ByteArray` variant.
+    /// `ByteArray` 变体.
     ByteArray(Vec<u8>),
-    IntVector {
-        is_fixed: bool,
-        entries: Vec<i32>,
-    },
-    UintVector {
-        is_fixed: bool,
-        entries: Vec<u32>,
-    },
-    DoubleVector {
-        is_fixed: bool,
-        entries: Vec<f64>,
-    },
+    /// `IntVector` variant.
+    /// `IntVector` 变体.
+    IntVector { is_fixed: bool, entries: Vec<i32> },
+    /// `UintVector` variant.
+    /// `UintVector` 变体.
+    UintVector { is_fixed: bool, entries: Vec<u32> },
+    /// `DoubleVector` variant.
+    /// `DoubleVector` 变体.
+    DoubleVector { is_fixed: bool, entries: Vec<f64> },
+    /// `ObjectVector` variant.
+    /// `ObjectVector` 变体.
     ObjectVector {
         // `None` 表示元素可以是任意类型
         class_name: Option<String>,
         is_fixed: bool,
         entries: Vec<Self>,
     },
+    /// `Dictionary` variant.
+    /// `Dictionary` 变体.
     Dictionary {
         is_weak: bool,
         entries: Vec<Pair<Self, Self>>,
@@ -75,6 +100,8 @@ pub enum Amf3Value {
 }
 
 impl Amf3Value {
+    /// `decode` function.
+    /// `decode` 函数.
     pub fn decode(buf: &[u8]) -> Result<(usize, Self), Error> {
         let original_len = buf.len();
         let mut decoder = Decoder {
@@ -88,6 +115,8 @@ impl Amf3Value {
         Ok((original_len - decoder.buf.len(), value))
     }
 
+    /// `encode` function.
+    /// `encode` 函数.
     pub fn encode(&self, buf: &mut Vec<u8>) {
         let mut encoder = Encoder { buf };
         encoder.encode_value(self);

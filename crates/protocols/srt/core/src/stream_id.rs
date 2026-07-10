@@ -3,16 +3,32 @@ use std::collections::BTreeMap;
 use crate::config::SrtStreamMode;
 use crate::error::{SrtCoreError, SrtCoreResult};
 
+/// `ParsedSrtStreamId` data structure.
+/// `ParsedSrtStreamId` 数据结构.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedSrtStreamId {
+    /// `stream_key` field of type `String`.
+    /// `stream_key` 字段，类型为 `String`.
     pub stream_key: String,
+    /// `mode` field.
+    /// `mode` 字段.
     pub mode: Option<SrtStreamMode>,
+    /// `user` field.
+    /// `user` 字段.
     pub user: Option<String>,
+    /// `host` field.
+    /// `host` 字段.
     pub host: Option<String>,
+    /// `session` field.
+    /// `session` 字段.
     pub session: Option<String>,
+    /// `extras` field.
+    /// `extras` 字段.
     pub extras: BTreeMap<String, String>,
 }
 
+/// Parses `srt_stream_id` from input.
+/// 解析 `srt_stream_id` 来自 输入.
 pub fn parse_srt_stream_id(input: &str) -> SrtCoreResult<ParsedSrtStreamId> {
     let input = input.trim();
     if input.is_empty() {
@@ -101,6 +117,8 @@ fn normalize_stream_key(input: &str) -> SrtCoreResult<String> {
     Ok(stream_key)
 }
 
+/// `percent_decode` function.
+/// `percent_decode` 函数.
 pub(crate) fn percent_decode(input: &str) -> SrtCoreResult<String> {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
