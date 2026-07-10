@@ -77,7 +77,7 @@ impl HlsPlaybackPacer {
             .unwrap_or(0);
         let force_drain = buffer_span_ms > self.max_buffer_ms;
 
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(self.buffer.len());
         while let Some(front) = self.buffer.front() {
             let frame_offset_ms = front.dts_ms.saturating_sub(first_dts);
             if frame_offset_ms <= elapsed_ms || force_drain {
