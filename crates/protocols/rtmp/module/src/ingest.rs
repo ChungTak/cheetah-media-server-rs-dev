@@ -34,8 +34,19 @@ const ENHANCED_RTMP_AUDIO_SEQUENCE_START: u8 = 0;
 const ENHANCED_RTMP_AUDIO_CODED_FRAMES: u8 = 1;
 const ENHANCED_RTMP_AUDIO_METADATA: u8 = 4;
 
+/// Handles an RTMP data tag (currently a no-op placeholder).
+///
+/// 处理 RTMP 数据标签（当前为占位空实现）。
 pub(crate) fn handle_data_ingest(_session: &mut PublishSession, _payload: &[u8]) {}
 
+/// Applies `onMetaData` values to the publish session's audio and video tracks.
+///
+/// Delegates to the core FLV metadata parser to extract codec hints, dimensions,
+/// and frame-rate fields.
+///
+/// 将 `onMetaData` 值应用到发布会话的音频与视频轨道。
+///
+/// 委托给核心 FLV 元数据解析器，提取编解码器提示、分辨率与帧率字段。
 pub(crate) fn apply_metadata_to_tracks(session: &mut PublishSession, values: &[AmfValue]) {
     core_apply_flv_metadata_to_tracks(&mut session.tracks.video, &mut session.tracks.audio, values);
 }
@@ -57,6 +68,15 @@ pub(crate) fn handle_video_ingest(
     )
 }
 
+/// Parses an RTMP video tag into an internal `AVFrame`.
+///
+/// Handles sequence headers, normalizes DTS/PTS with composition offsets, converts
+/// length-prefixed NALUs to AnnexB, and sets key-frame/discontinuity flags.
+///
+/// 将 RTMP 视频标签解析为内部 `AVFrame`。
+///
+/// 处理序列头、归一化含合成偏移的 DTS/PTS、将长度前缀 NALU 转换为 AnnexB，
+/// 并设置关键帧/不连续标记。
 pub(crate) fn handle_video_ingest_with_alert_threshold(
     session: &mut PublishSession,
     timestamp_ms: u32,
@@ -181,6 +201,9 @@ pub(crate) fn handle_video_ingest_with_alert_threshold(
     Some(frame)
 }
 
+/// Applies a video sequence header (AVCC/HVCC/VPCC/AV1 config) to the track.
+///
+/// 将视频序列头（AVCC/HVCC/VPCC/AV1 配置）应用到轨道。
 pub(crate) fn apply_video_config(
     session: &mut PublishSession,
     codec: CodecId,
@@ -189,6 +212,13 @@ pub(crate) fn apply_video_config(
     core_apply_flv_video_config(&mut session.tracks.video, codec, config_payload);
 }
 
+/// Determines the NAL length size to use for H.264/H.265/H.266 ingress.
+///
+/// Falls back to 4 bytes when no track config is available or the codec has changed.
+///
+/// 确定 H.264/H.265/H.266 输入使用的 NAL 长度大小。
+///
+/// 没有可用轨道配置或编解码器改变时回退为 4 字节。
 fn configured_h26x_nal_length_size(session: &PublishSession, codec: CodecId) -> usize {
     let Some(track) = session.tracks.video.as_ref() else {
         return 4;
@@ -214,6 +244,9 @@ fn configured_h26x_nal_length_size(session: &PublishSession, codec: CodecId) -> 
     normalize_nal_length_size(parsed.unwrap_or(4))
 }
 
+/// Ensures a video track exists for the session, creating one with default timing if needed.
+///
+/// 确保会话存在视频轨道，需要时使用默认时序创建。
 fn ensure_video_track(session: &mut PublishSession, codec: CodecId) {
     let mut track = session
         .tracks
@@ -246,6 +279,13 @@ pub(crate) fn handle_audio_ingest(
     )
 }
 
+/// Handles an enhanced RTMP audio tag (fourcc header), currently supporting Opus.
+///
+/// Sequence start packets update the Opus track; coded frames produce an audio frame.
+///
+/// 处理增强 RTMP 音频标签（fourcc 头），当前支持 Opus。
+///
+/// 序列开始包更新 Opus 轨道；编码帧生成音频帧。
 fn handle_enhanced_audio_ingest(
     session: &mut PublishSession,
     timestamp_ms: u32,
@@ -277,10 +317,20 @@ fn handle_enhanced_audio_ingest(
     }
 }
 
+/// Checks whether an audio payload is an enhanced RTMP Opus packet.
+///
+/// 判断音频负载是否为增强 RTMP Opus 包。
 fn is_enhanced_opus_audio_payload(payload: &[u8]) -> bool {
     payload.len() >= 5 && payload[0] & 0x80 != 0 && &payload[1..5] == RTMP_AUDIO_FOURCC_OPUS
 }
 
+/// Updates the audio track from an enhanced Opus `OpusHead` sequence header.
+///
+/// Parses channel count, sample rate, and channel mapping from the header.
+///
+/// 从增强 Opus 的 `OpusHead` 序列头更新音频轨道。
+///
+/// 解析头部中的声道数、采样率与声道映射。
 fn update_opus_track_from_sequence_header(session: &mut PublishSession, opus_head: &[u8]) {
     let mut track = session.tracks.audio.clone().unwrap_or_else(|| {
         TrackInfo::new(
@@ -318,6 +368,9 @@ fn update_opus_track_from_sequence_header(session: &mut PublishSession, opus_hea
     session.tracks.audio = Some(track);
 }
 
+/// Ensures a default Opus audio track exists in the session.
+///
+/// 确保会话中存在默认 Opus 音频轨道。
 fn ensure_opus_audio_track(session: &mut PublishSession) {
     if session
         .tracks
@@ -338,6 +391,14 @@ fn ensure_opus_audio_track(session: &mut PublishSession) {
     session.tracks.audio = Some(track);
 }
 
+/// Builds a normalized audio `AVFrame` from the parsed payload and timestamp.
+///
+/// Infers a fallback duration from the codec and track metadata, normalizes the
+/// timestamp, and attaches the source timestamp.
+///
+/// 根据解析后的负载与时间戳构建归一化的音频 `AVFrame`。
+///
+/// 从编解码器与轨道元数据推断回退时长，归一化时间戳，并附加源时间戳。
 fn build_normalized_audio_frame(
     session: &mut PublishSession,
     timestamp_ms: u32,
@@ -416,6 +477,14 @@ fn build_normalized_audio_frame(
     Some(frame)
 }
 
+/// Parses an RTMP audio tag into an internal `AVFrame`.
+///
+/// Handles AAC sequence headers, Opus enhanced audio, and legacy FLV sound formats.
+/// Normalizes timestamps and preserves source timestamps.
+///
+/// 将 RTMP 音频标签解析为内部 `AVFrame`。
+///
+/// 处理 AAC 序列头、Opus 增强音频与旧版 FLV 声音格式；归一化时间戳并保留源时间戳。
 pub(crate) fn handle_audio_ingest_with_alert_threshold(
     session: &mut PublishSession,
     timestamp_ms: u32,
@@ -634,6 +703,13 @@ fn source_timestamp_from_rtmp_ms(raw_timestamp_ms: u32) -> SourceTimestamp {
     core_source_timestamp_from_rtmp_ms(raw_timestamp_ms)
 }
 
+/// Logs a timestamp repair event, throttling to avoid log spam.
+///
+/// Emits once when the repair count reaches the alert threshold and multiples.
+///
+/// 记录时间戳修复事件，并进行限速以避免日志风暴。
+///
+/// 在修复计数达到告警阈值及倍数时触发一次。
 fn log_timestamp_repair_sample(
     session: &PublishSession,
     context: TimestampRepairLogContext<'_>,
@@ -660,6 +736,9 @@ fn log_timestamp_repair_sample(
     );
 }
 
+/// Context captured for a timestamp repair log sample.
+///
+/// 时间戳修复日志采样捕获的上下文。
 struct TimestampRepairLogContext<'a> {
     track_id: TrackId,
     codec: CodecId,
@@ -670,6 +749,9 @@ struct TimestampRepairLogContext<'a> {
     message: &'static str,
 }
 
+/// Resets the timestamp normalizer when the raw timestamp wraps or jumps backward.
+///
+/// 当 raw 时间戳回绕或大幅向后跳变时重置时间戳归一器。
 fn maybe_reset_rtmp_timestamp_normalizer(
     state: &mut PublishTrackTimestampState,
     raw_timestamp_ms: u32,
@@ -682,6 +764,9 @@ fn maybe_reset_rtmp_timestamp_normalizer(
     );
 }
 
+/// Updates the running timestamp repair counter and returns a sampling flag.
+///
+/// 更新累计的时间戳修复计数并返回采样标志。
 fn update_repair_counter(
     normalized: &TimestampNormalizeOutput,
     repair_count: &mut u64,
@@ -689,10 +774,20 @@ fn update_repair_counter(
     core_update_timestamp_repair_counter(normalized, repair_count)
 }
 
+/// Returns true when a counter crosses or repeats an alert threshold.
+///
+/// 当计数器跨越或重复告警阈值时返回 true。
 pub(crate) fn should_emit_alert_threshold(count: u64, threshold: u64) -> bool {
     cheetah_codec::should_emit_alert_threshold(count, threshold)
 }
 
+/// Ensures an audio track exists for the session, deriving sample rate and channels.
+///
+/// For non-AAC codecs, the FLV sound rate bits are preferred because metadata may be stale.
+///
+/// 确保会话存在音频轨道，并推导采样率与声道数。
+///
+/// 对于非 AAC 编解码器，优先使用 FLV 声音速率位，因为元数据可能过时。
 fn ensure_audio_track(session: &mut PublishSession, codec: CodecId, rate: u8, channels_flag: u8) {
     let mut track = session.tracks.audio.clone().unwrap_or_else(|| {
         TrackInfo::new(
@@ -729,6 +824,9 @@ fn ensure_audio_track(session: &mut PublishSession, codec: CodecId, rate: u8, ch
     session.tracks.audio = Some(track);
 }
 
+/// Derives the audio sample rate from the payload/header for codec-specific cases.
+///
+/// 从负载/头部推导特定编解码器的音频采样率。
 fn audio_sample_rate_from_payload(codec: CodecId, rate: u8) -> Option<u32> {
     match codec {
         CodecId::Opus | CodecId::G711A | CodecId::G711U | CodecId::ADPCM => {
@@ -738,6 +836,9 @@ fn audio_sample_rate_from_payload(codec: CodecId, rate: u8) -> Option<u32> {
     }
 }
 
+/// Returns the default clock rate for an audio codec.
+///
+/// 返回音频编解码器的默认时钟率。
 fn default_audio_clock(codec: CodecId) -> u32 {
     match codec {
         CodecId::ADPCM => 8_000,
@@ -748,6 +849,9 @@ fn default_audio_clock(codec: CodecId) -> u32 {
     }
 }
 
+/// Returns the default sample rate for an audio codec, if known.
+///
+/// 返回音频编解码器的默认采样率（如果已知）。
 fn default_audio_sample_rate(codec: CodecId) -> Option<u32> {
     match codec {
         CodecId::ADPCM => Some(8_000),
@@ -759,6 +863,14 @@ fn default_audio_sample_rate(codec: CodecId) -> Option<u32> {
     }
 }
 
+/// Infers the audio frame duration in milliseconds from codec and payload.
+///
+/// Uses codec-specific samples-per-frame and the track sample rate. PCM-like codecs
+/// derive duration from payload length and channel count.
+///
+/// 根据编解码器与负载推断音频帧时长（毫秒）。
+///
+/// 使用编解码器特定的每帧采样数与轨道采样率；类 PCM 编解码器按负载长度与声道数推导。
 fn infer_audio_duration_ms(codec: CodecId, track: &TrackInfo, payload: &[u8]) -> i64 {
     let sample_rate = track
         .sample_rate
@@ -780,6 +892,9 @@ fn infer_audio_duration_ms(codec: CodecId, track: &TrackInfo, payload: &[u8]) ->
     duration.max(1)
 }
 
+/// Infers the number of samples per MP3 frame from the frame header.
+///
+/// 从 MP3 帧头推断每帧采样数。
 fn infer_mp3_samples_per_frame(payload: &[u8]) -> Option<u32> {
     if payload.len() < 4 {
         return None;
@@ -805,6 +920,9 @@ fn infer_mp3_samples_per_frame(payload: &[u8]) -> Option<u32> {
     Some(samples)
 }
 
+/// Maps an AAC sampling frequency index to the sample rate in Hz.
+///
+/// 将 AAC 采样频率索引映射为 Hz 采样率。
 fn sample_rate_from_index(idx: u8) -> Option<u32> {
     const TABLE: [u32; 13] = [
         96_000, 88_200, 64_000, 48_000, 44_100, 32_000, 24_000, 22_050, 16_000, 12_000, 11_025,
@@ -813,6 +931,9 @@ fn sample_rate_from_index(idx: u8) -> Option<u32> {
     TABLE.get(idx as usize).copied()
 }
 
+/// Maps an FLV sound rate code to the sample rate in Hz.
+///
+/// 将 FLV 声音速率码映射为 Hz 采样率。
 fn flv_sample_rate(code: u8) -> Option<u32> {
     match code {
         0 => Some(5_512),
@@ -828,10 +949,16 @@ pub(crate) fn parse_avcc_parameter_sets(avcc: &[u8]) -> (Vec<Bytes>, Vec<Bytes>)
     core_parse_flv_avcc_parameter_sets(avcc)
 }
 
+/// Attaches the original RTMP video payload as opaque side data for direct proxy.
+///
+/// 将原始 RTMP 视频负载作为 opaque side data 附加到帧，用于直接代理。
 pub(crate) fn attach_raw_rtmp_video_payload(frame: &mut AVFrame, payload: &[u8]) {
     core_attach_raw_rtmp_video_payload(frame, payload);
 }
 
+/// Attaches the original RTMP audio payload as opaque side data for direct proxy.
+///
+/// 将原始 RTMP 音频负载作为 opaque side data 附加到帧，用于直接代理。
 pub(crate) fn attach_raw_rtmp_audio_payload(frame: &mut AVFrame, payload: &[u8]) {
     core_attach_raw_rtmp_audio_payload(frame, payload);
 }
@@ -841,6 +968,9 @@ pub(crate) fn length_prefixed_to_annexb(payload: &[u8]) -> Bytes {
     length_prefixed_to_annexb_with_size(payload, 4)
 }
 
+/// Converts a length-prefixed NALU payload into AnnexB start-code format.
+///
+/// 将长度前缀的 NALU 负载转换为 AnnexB 起始码格式。
 pub(crate) fn length_prefixed_to_annexb_with_size(payload: &[u8], nal_length_size: usize) -> Bytes {
     core_length_prefixed_to_annexb_with_size(payload, nal_length_size)
 }
@@ -886,6 +1016,9 @@ pub(crate) fn annexb_to_length_prefixed_with_size(payload: &[u8], nal_length_siz
 }
 
 #[cfg(test)]
+/// Splits an AnnexB payload into individual NAL units.
+///
+/// 将 AnnexB 负载拆分为独立 NAL 单元。
 fn split_annexb_units(payload: &[u8]) -> Vec<&[u8]> {
     let mut out = Vec::new();
     let mut data = payload;
@@ -905,6 +1038,13 @@ fn split_annexb_units(payload: &[u8]) -> Vec<&[u8]> {
 }
 
 #[cfg(test)]
+/// Finds the next H.264/H.265-style start code (`0x000001` or `0x00000001`).
+///
+/// Returns the start index and the length of the start code (3 or 4 bytes).
+///
+/// 查找下一个 H.264/H.265 风格起始码（`0x000001` 或 `0x00000001`）。
+///
+/// 返回起始索引与起始码长度（3 或 4 字节）。
 fn find_start_code(data: &[u8]) -> Option<(usize, usize)> {
     if data.len() < 3 {
         return None;

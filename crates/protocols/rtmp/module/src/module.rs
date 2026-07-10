@@ -70,9 +70,18 @@ const H264_RELEASE_GRACE_MS: u64 = 800;
 const RTMP_EGRESS_BACKWARD_REPAIR_THRESHOLD_MS: u32 = 3_000;
 const RTMP_PLAY_PACING_MAX_FORWARD_DELTA_MS: u32 = 30_000;
 
+/// Factory that creates RTMP module instances and registers them with the engine.
+///
+/// 创建 RTMP 模块实例并向引擎注册的工厂。
 pub struct RtmpModuleFactory;
 
+/// `ModuleFactory` implementation exposing the RTMP manifest, factory, and config schema.
+///
+/// `ModuleFactory` 实现，暴露 RTMP manifest、工厂与配置 schema。
 impl ModuleFactory for RtmpModuleFactory {
+    /// Returns the module manifest: id, display name, and capabilities.
+    ///
+    /// 返回模块 manifest：id、显示名称与能力。
     fn manifest(&self) -> ModuleManifest {
         ModuleManifest {
             module_id: ModuleId::new(MODULE_ID),
@@ -89,10 +98,16 @@ impl ModuleFactory for RtmpModuleFactory {
         }
     }
 
+    /// Creates a new `RtmpModule` instance.
+    ///
+    /// 创建新的 `RtmpModule` 实例。
     fn create(&self) -> Box<dyn Module> {
         Box::new(RtmpModule::new())
     }
 
+    /// Returns the JSON schema and validator for the RTMP module config.
+    ///
+    /// 返回 RTMP 模块配置的 JSON schema 与校验器。
     fn config_schema(&self) -> Option<ModuleSchemaRegistration> {
         Some(ModuleSchemaRegistration {
             module_id: ModuleId::new(MODULE_ID),
@@ -107,6 +122,13 @@ impl ModuleFactory for RtmpModuleFactory {
     }
 }
 
+/// RTMP module runtime state and lifecycle holder.
+///
+/// Tracks the module state, engine context, config, and active runtime loops.
+///
+/// RTMP 模块运行时状态与生命周期持有器。
+///
+/// 跟踪模块状态、引擎上下文、配置与活跃运行时循环。
 pub struct RtmpModule {
     info: ModuleInfo,
     state: ModuleState,
@@ -117,6 +139,9 @@ pub struct RtmpModule {
 }
 
 impl RtmpModule {
+    /// Creates a new module in the `Created` state.
+    ///
+    /// 创建处于 `Created` 状态的新模块。
     pub fn new() -> Self {
         Self {
             info: ModuleInfo {
@@ -134,6 +159,9 @@ impl RtmpModule {
 }
 
 impl Default for RtmpModule {
+    /// Returns a default module instance.
+    ///
+    /// 返回默认模块实例。
     fn default() -> Self {
         Self::new()
     }
@@ -310,11 +338,16 @@ impl Module for RtmpModule {
     }
 }
 
+/// HTTP service handler for the RTMP module's REST endpoints.
+///
+/// RTMP 模块 REST 端点的 HTTP 服务处理器。
 struct RtmpHttpService {
     engine: EngineContext,
 }
 
-/// Check publish authorization based on config token.
+/// Checks whether a publish request is authorized by the configured token.
+///
+/// 检查发布请求是否被配置的 token 授权。
 fn check_publish_auth(config: &RtmpModuleConfig, stream_name: &str) -> bool {
     if !config.auth.enabled || config.auth.publish_token.is_empty() {
         return true;
@@ -323,7 +356,9 @@ fn check_publish_auth(config: &RtmpModuleConfig, stream_name: &str) -> bool {
     token == Some(config.auth.publish_token.as_str())
 }
 
-/// Check play authorization based on config token.
+/// Checks whether a play request is authorized by the configured token.
+///
+/// 检查播放请求是否被配置的 token 授权。
 fn check_play_auth(config: &RtmpModuleConfig, stream_name: &str) -> bool {
     if !config.auth.enabled || config.auth.play_token.is_empty() {
         return true;
@@ -334,6 +369,9 @@ fn check_play_auth(config: &RtmpModuleConfig, stream_name: &str) -> bool {
 
 #[async_trait]
 impl ModuleHttpService for RtmpHttpService {
+    /// Handles `/streams` and `/stats` HTTP requests by querying the stream manager.
+    ///
+    /// 通过查询流管理器处理 `/streams` 与 `/stats` HTTP 请求。
     async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
         match (req.method, req.path.as_str()) {
             (HttpMethod::Get, "/streams") => {
@@ -368,6 +406,9 @@ impl ModuleHttpService for RtmpHttpService {
     }
 }
 
+/// Spawns a future on the runtime and returns a one-shot receiver for completion.
+///
+/// 在运行时上生成一个 future，并返回用于完成通知的 one-shot 接收端。
 fn spawn_runtime_task<F>(runtime_api: Arc<dyn RuntimeApi>, fut: F) -> OneShotReceiver
 where
     F: Future<Output = ()> + Send + 'static,
@@ -381,6 +422,9 @@ where
     done_rx
 }
 
+/// Spawns a future on the runtime without waiting for completion.
+///
+/// 在运行时上生成一个无需等待完成的 future。
 fn spawn_runtime_detached<F>(runtime_api: Arc<dyn RuntimeApi>, fut: F)
 where
     F: Future<Output = ()> + Send + 'static,
@@ -388,10 +432,16 @@ where
     let _ = runtime_api.spawn(Box::pin(fut));
 }
 
+/// Returns the current runtime time in microseconds.
+///
+/// 返回当前运行时时间（微秒）。
 fn runtime_now_micros(runtime_api: &Arc<dyn RuntimeApi>) -> u64 {
     runtime_api.now().as_micros()
 }
 
+/// Computes the pending-play source wait timeout from the config, if enabled.
+///
+/// 根据配置计算待播放源等待超时（如果启用）。
 fn pending_play_source_wait_timeout(config: &RtmpModuleConfig) -> Option<Duration> {
     if config.play_wait_source_timeout_ms == 0 {
         None
@@ -400,17 +450,26 @@ fn pending_play_source_wait_timeout(config: &RtmpModuleConfig) -> Option<Duratio
     }
 }
 
+/// Computes a `MonoTime` deadline `duration` after the current runtime time.
+///
+/// 计算当前运行时时间之后 `duration` 的 `MonoTime` 截止时间。
 fn runtime_deadline_after(runtime_api: &Arc<dyn RuntimeApi>, duration: Duration) -> MonoTime {
     let duration_micros = duration.as_micros();
     let delta = u64::try_from(duration_micros).unwrap_or(u64::MAX);
     MonoTime::from_micros(runtime_now_micros(runtime_api).saturating_add(delta))
 }
 
+/// Sleeps for the given duration using the runtime's timer API.
+///
+/// 使用运行时的定时器 API 睡眠指定时长。
 async fn runtime_sleep(runtime_api: &Arc<dyn RuntimeApi>, duration: Duration) {
     let mut timer = runtime_api.sleep_until(runtime_deadline_after(runtime_api, duration));
     timer.wait().await;
 }
 
+/// Spawns supervisor loops for all enabled pull, push, and relay jobs.
+///
+/// 为所有启用的拉流、推流与转发任务生成监控循环。
 fn spawn_static_job_loops(
     engine: EngineContext,
     config: RtmpModuleConfig,
@@ -444,6 +503,9 @@ fn spawn_static_job_loops(
     loops
 }
 
+/// Waits for `duration` or until the cancellation token fires, returning `true` on cancel.
+///
+/// 等待 `duration` 或直到取消 token 触发，取消时返回 `true`。
 async fn wait_or_cancel(
     runtime_api: &Arc<dyn RuntimeApi>,
     cancel: &CancellationToken,
@@ -458,11 +520,21 @@ async fn wait_or_cancel(
     }
 }
 
+/// Computes the next retry backoff, doubling up to the configured cap.
+///
+/// 计算下一次重试退避，按倍数增长直到配置上限。
 fn next_retry_backoff_ms(current_ms: u64, max_ms: u64) -> u64 {
     let cap = max_ms.max(1);
     current_ms.saturating_mul(2).min(cap)
 }
 
+/// Supervisor loop for an RTMP pull job: connect, ingest, retry with backoff.
+///
+/// Stops when the job is cancelled or the target stream is already occupied.
+///
+/// RTMP 拉流任务监控循环：连接、摄取、按退避重试。
+///
+/// 任务取消或目标流已被占用时停止。
 async fn run_pull_job_supervisor(
     engine: EngineContext,
     module_config: RtmpModuleConfig,
@@ -512,7 +584,9 @@ enum PullJobResult {
     Occupied,
 }
 
-/// Start an RTMP client, automatically using TLS when the URL scheme is `rtmps://`.
+/// Starts an RTMP client, using TLS when the URL scheme is `rtmps://`.
+///
+/// 启动 RTMP 客户端；URL 方案为 `rtmps://` 时使用 TLS。
 fn start_rtmp_client(
     runtime_api: Arc<dyn RuntimeApi>,
     url: RtmpUrl,
@@ -528,6 +602,9 @@ fn start_rtmp_client(
     }
 }
 
+/// Executes a single pull attempt: connect, acquire publisher, and ingest events.
+///
+/// 执行单次拉流尝试：连接、获取发布者并摄取事件。
 async fn run_pull_job_once(
     engine: &EngineContext,
     module_config: &RtmpModuleConfig,
@@ -683,6 +760,9 @@ async fn run_pull_job_once(
     PullJobResult::Ok
 }
 
+/// Supervisor loop for an RTMP push job: subscribe, connect, and forward frames.
+///
+/// RTMP 推流任务监控循环：订阅、连接并转发帧。
 async fn run_push_job_supervisor(
     engine: EngineContext,
     module_config: RtmpModuleConfig,
@@ -729,6 +809,9 @@ async fn run_push_job_supervisor(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Executes a single push attempt: subscribe to source, connect to target, forward frames.
+///
+/// 执行单次推流尝试：订阅源、连接目标并转发帧。
 async fn run_push_job_once(
     engine: &EngineContext,
     module_config: &RtmpModuleConfig,
@@ -995,6 +1078,9 @@ struct FrameObservabilityFields {
     dts: i64,
 }
 
+/// Extracts common frame fields used for logging and tracing.
+///
+/// 提取用于日志与跟踪的公共帧字段。
 fn frame_observability_fields(frame: &AVFrame) -> FrameObservabilityFields {
     FrameObservabilityFields {
         track_id: frame.track_id.0,
@@ -1004,6 +1090,9 @@ fn frame_observability_fields(frame: &AVFrame) -> FrameObservabilityFields {
     }
 }
 
+/// Sends sequence headers and metadata to a client before media frames.
+///
+/// 在发送媒体帧前向客户端发送序列头与元数据。
 async fn send_client_bootstrap(
     command_tx: &RtmpClientCommandSender,
     stream_id: u32,
@@ -1024,6 +1113,9 @@ async fn send_client_bootstrap(
     Ok(())
 }
 
+/// Tracks the last emitted RTMP timestamp per media type for egress.
+///
+/// 跟踪输出时每种媒体类型最后发送的 RTMP 时间戳。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct MediaTimestampState {
     video_last_ms: Option<u32>,
@@ -1032,6 +1124,9 @@ struct MediaTimestampState {
 }
 
 impl MediaTimestampState {
+    /// Clears the remembered last timestamps.
+    ///
+    /// 清除记录的最后时间戳。
     fn reset(&mut self) {
         self.video_last_ms = None;
         self.audio_last_ms = None;
@@ -1039,13 +1134,21 @@ impl MediaTimestampState {
     }
 }
 
+/// Rebases playback timestamps to start near zero for each play session.
+///
+/// 将播放时间戳重置为每个播放会话接近零的起始值。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct PlayTimestampRebaseState {
     base_media_ms: Option<u32>,
 }
 
 /// Monitors audio/video timestamp drift and applies micro-corrections.
+///
 /// Checks every 500ms; if drift exceeds threshold, adjusts video DTS by ±step_ms.
+///
+/// 监控音视频时间戳漂移并应用微调修正。
+///
+/// 每 500ms 检查一次；若漂移超过阈值，则按 ±step_ms 调整视频 DTS。
 #[derive(Debug, Clone, Copy, Default)]
 struct AvSyncState {
     last_check_micros: u64,
@@ -1067,7 +1170,9 @@ impl AvSyncState {
         self.last_audio_ms = ts_ms;
     }
 
-    /// Returns correction to apply to video timestamp (ms).
+    /// Returns the correction to apply to the video timestamp (ms) for A/V sync.
+    ///
+    /// 返回用于音视频同步的、应应用到视频时间戳（毫秒）的修正值。
     fn check(&mut self, now_micros: u64) -> i32 {
         if self.last_check_micros == 0 {
             self.last_check_micros = now_micros;
@@ -1093,16 +1198,25 @@ impl AvSyncState {
 }
 
 impl PlayTimestampRebaseState {
+    /// Rebases the given timestamp relative to the session start.
+    ///
+    /// 将给定时间戳相对于会话起点重新计算。
     fn rebase(&mut self, timestamp_ms: u32) -> u32 {
         let base = *self.base_media_ms.get_or_insert(timestamp_ms);
         timestamp_ms.saturating_sub(base)
     }
 
+    /// Clears the rebase anchor.
+    ///
+    /// 清除 rebase 锚点。
     fn reset(&mut self) {
         self.base_media_ms = None;
     }
 }
 
+/// Paces the start of a play stream by aligning media time with runtime time.
+///
+/// 通过将媒体时间与运行时时间对齐，控制播放流的起始节奏。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct PlayStartPacingState {
     anchor_media_ms: Option<u32>,
@@ -1111,6 +1225,8 @@ struct PlayStartPacingState {
 }
 
 /// Enforces a minimum interval between consecutive sends to smooth bursty output.
+///
+/// 强制两次发送之间的最小间隔，以平滑突发输出。
 #[derive(Debug, Clone, Copy)]
 struct PacedSenderState {
     min_interval_micros: u64,
@@ -1129,7 +1245,9 @@ impl PacedSenderState {
         self.min_interval_micros > 0
     }
 
-    /// Returns additional delay needed to enforce the minimum send interval.
+    /// Returns the additional delay needed to enforce the minimum send interval.
+    ///
+    /// 返回强制最小发送间隔所需的额外延迟。
     fn delay_for(&mut self, now_micros: u64) -> Duration {
         if self.min_interval_micros == 0 {
             return Duration::ZERO;
@@ -1153,6 +1271,9 @@ impl PacedSenderState {
 }
 
 impl PlayStartPacingState {
+    /// Returns the pacing delay needed to keep playback aligned with real time.
+    ///
+    /// 返回使播放与实时对齐所需的节奏延迟。
     fn delay_for(
         &mut self,
         media_timestamp_ms: u32,
@@ -1196,6 +1317,9 @@ impl PlayStartPacingState {
         }
     }
 
+    /// Resets the play pacing anchor to the current media and runtime time.
+    ///
+    /// 将播放节奏锚点重置为当前媒体与运行时时间。
     fn reset_anchor(&mut self, media_timestamp_ms: u32, now_micros: u64) {
         self.anchor_media_ms = Some(media_timestamp_ms);
         self.anchor_runtime_micros = now_micros;
@@ -1203,6 +1327,9 @@ impl PlayStartPacingState {
     }
 }
 
+/// Repairs monotonic timestamps on egress commands to avoid backward jumps.
+///
+/// 修复输出命令上的单调时间戳，避免向后跳变。
 fn clamp_media_command_timestamp(command: &mut RtmpCoreCommand, state: &mut MediaTimestampState) {
     let (timestamp, last_timestamp_ms) = match command {
         RtmpCoreCommand::SendVideo { timestamp_ms, .. } => (timestamp_ms, &mut state.video_last_ms),
@@ -1224,6 +1351,9 @@ fn clamp_media_command_timestamp(command: &mut RtmpCoreCommand, state: &mut Medi
     *last_timestamp_ms = Some(*timestamp);
 }
 
+/// Rebases audio/video command timestamps to a near-zero base for each play session.
+///
+/// 将每个播放会话的音频/视频命令时间戳重置为接近零的基准。
 fn rebase_play_media_command_timestamp(
     command: &mut RtmpCoreCommand,
     state: &mut PlayTimestampRebaseState,
@@ -1237,6 +1367,9 @@ fn rebase_play_media_command_timestamp(
     }
 }
 
+/// Extracts the media timestamp from an audio/video RTMP core command.
+///
+/// 从音频/视频 RTMP 核心命令中提取媒体时间戳。
 fn command_media_timestamp_ms(command: &RtmpCoreCommand) -> Option<u32> {
     match command {
         RtmpCoreCommand::SendVideo { timestamp_ms, .. }
@@ -1245,6 +1378,9 @@ fn command_media_timestamp_ms(command: &RtmpCoreCommand) -> Option<u32> {
     }
 }
 
+/// Applies an A/V sync correction to a video command timestamp.
+///
+/// 将音视频同步修正应用到视频命令时间戳。
 fn apply_timestamp_correction(command: &mut RtmpCoreCommand, correction_ms: i32) {
     let ts = match command {
         RtmpCoreCommand::SendVideo { timestamp_ms, .. } => timestamp_ms,
@@ -1253,6 +1389,9 @@ fn apply_timestamp_correction(command: &mut RtmpCoreCommand, correction_ms: i32)
     *ts = (*ts as i64 + correction_ms as i64).max(0) as u32;
 }
 
+/// Returns the mutable "last timestamp" slot for the given command type.
+///
+/// 返回给定命令类型对应的“最后时间戳”可变槽位。
 fn command_last_timestamp_slot_mut<'a>(
     command: &RtmpCoreCommand,
     state: &'a mut MediaTimestampState,
@@ -1265,6 +1404,9 @@ fn command_last_timestamp_slot_mut<'a>(
     }
 }
 
+/// Detects a large backward timestamp jump that requires an egress timeline reset.
+///
+/// 检测需要重置输出时间轴的大幅向后时间戳跳变。
 fn should_reset_rtmp_egress_timeline_for_discontinuity(
     command: &RtmpCoreCommand,
     state: &mut MediaTimestampState,
@@ -1282,6 +1424,9 @@ fn should_reset_rtmp_egress_timeline_for_discontinuity(
         && last_ms.wrapping_sub(timestamp_ms) > RTMP_EGRESS_BACKWARD_REPAIR_THRESHOLD_MS
 }
 
+/// Resets the egress timeline state, including rebase, clamp, and mute-audio markers.
+///
+/// 重置输出时间轴状态，包括 rebase、clamp 与静音音频标记。
 fn reset_rtmp_egress_timeline_state(
     rebase: Option<&mut PlayTimestampRebaseState>,
     clamp: &mut MediaTimestampState,
@@ -1294,6 +1439,13 @@ fn reset_rtmp_egress_timeline_state(
     *last_mute_ts = None;
 }
 
+/// Supervisor loop for an RTMP relay job: pull from source and push to target.
+///
+/// Builds synthetic pull/push jobs and runs them concurrently, cancelling both when one stops.
+///
+/// RTMP 转发任务监控循环：从源拉流并推向目标。
+///
+/// 构造合成拉流/推流任务并并发运行，任一任务停止时取消两者。
 async fn run_relay_job_supervisor(
     engine: EngineContext,
     module_config: RtmpModuleConfig,
@@ -1366,6 +1518,9 @@ async fn run_relay_job_supervisor(
     relay_cancel.cancel();
 }
 
+/// Main RTMP server event loop: dispatches driver events and manages shutdown.
+///
+/// 主 RTMP 服务事件循环：分发驱动事件并管理关闭。
 async fn run_event_loop(
     engine: EngineContext,
     config: RtmpModuleConfig,
@@ -1477,6 +1632,9 @@ async fn run_event_loop(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Dispatches a single RTMP driver event to publish, play, or connection cleanup logic.
+///
+/// 将单个 RTMP 驱动事件分发给发布、播放或连接清理逻辑。
 async fn handle_driver_event(
     event: DriverEvent,
     engine: &EngineContext,
@@ -1827,6 +1985,14 @@ async fn handle_driver_event(
     }
 }
 
+/// Cleans up a closed connection: release publish lease or keep it alive briefly.
+///
+/// On publish disconnect, enters keepalive state if configured, or releases immediately.
+/// Stops and aborts play sessions.
+///
+/// 清理关闭的连接：释放发布租约或短暂保持。
+///
+/// 发布端断开时，若配置则进入保活状态，否则立即释放；停止并中止播放会话。
 async fn cleanup_connection(
     connection_id: RtmpConnectionId,
     engine: &EngineContext,
@@ -1903,6 +2069,9 @@ async fn cleanup_connection(
     }
 }
 
+/// Replaces an active or pending play session, cancelling the previous one.
+///
+/// 替换活跃或待播放会话，取消上一个会话。
 fn replace_play_session(
     play_sessions: &Arc<Mutex<HashMap<RtmpConnectionId, PlaySession>>>,
     connection_id: RtmpConnectionId,
@@ -1915,6 +2084,9 @@ fn replace_play_session(
     }
 }
 
+/// Sends a reject command and closes the connection after a short flush delay.
+///
+/// 发送拒绝命令并在短暂刷新延迟后关闭连接。
 async fn send_reject_then_close(
     runtime_api: &Arc<dyn RuntimeApi>,
     command_tx: &RtmpCoreCommandSender,
@@ -1931,6 +2103,9 @@ async fn send_reject_then_close(
     });
 }
 
+/// Computes the bootstrap frame count for a play session.
+///
+/// 计算播放会话的引导帧数。
 fn play_bootstrap_max_frames(
     config: &RtmpModuleConfig,
     tracks: &[cheetah_codec::TrackInfo],
@@ -1939,6 +2114,9 @@ fn play_bootstrap_max_frames(
     config.bootstrap_max_frames.max(floor)
 }
 
+/// Computes the bootstrap frame count for a push job.
+///
+/// 计算推流任务的引导帧数。
 fn push_bootstrap_max_frames(
     config: &RtmpModuleConfig,
     tracks: &[cheetah_codec::TrackInfo],
@@ -1951,6 +2129,9 @@ fn push_bootstrap_max_frames(
     play_bootstrap_max_frames(config, tracks)
 }
 
+/// Returns the codec-dependent bootstrap floor to ensure a full GOP is buffered.
+///
+/// 返回依赖编解码器的引导下限，确保缓存完整 GOP。
 fn video_bootstrap_floor(tracks: &[cheetah_codec::TrackInfo]) -> usize {
     if !track_list_has_video(tracks) {
         return 0;
@@ -1965,6 +2146,9 @@ fn video_bootstrap_floor(tracks: &[cheetah_codec::TrackInfo]) -> usize {
     1024
 }
 
+/// Checks whether the track list has enough metadata to start an RTMP play bootstrap.
+///
+/// 判断轨道列表是否具备足够元数据以启动 RTMP 播放引导。
 fn track_list_ready_for_rtmp_play_bootstrap(tracks: &[cheetah_codec::TrackInfo]) -> bool {
     if tracks.is_empty() {
         return false;
@@ -1979,6 +2163,9 @@ fn track_list_ready_for_rtmp_play_bootstrap(tracks: &[cheetah_codec::TrackInfo])
         .any(video_track_ready_for_rtmp_play_bootstrap)
 }
 
+/// Checks whether a single video track has enough metadata to start an RTMP play bootstrap.
+///
+/// 判断单个视频轨道是否具备足够元数据以启动 RTMP 播放引导。
 fn video_track_ready_for_rtmp_play_bootstrap(track: &cheetah_codec::TrackInfo) -> bool {
     if !rtmp_playback_codec_supported(track.media_kind, track.codec) {
         return false;
@@ -2030,14 +2217,23 @@ fn video_track_ready_for_rtmp_play_bootstrap(track: &cheetah_codec::TrackInfo) -
     }
 }
 
+/// Returns true if the codec requires a complete config for play bootstrap.
+///
+/// 判断该编解码器是否需要完整配置才能进行播放引导。
 fn codec_requires_strict_play_bootstrap(codec: CodecId) -> bool {
     matches!(codec, CodecId::AV1)
 }
 
+/// Computes the subscriber queue capacity, ensuring it is at least the bootstrap size.
+///
+/// 计算订阅者队列容量，确保至少为引导大小。
 fn play_subscriber_queue_capacity(config: &RtmpModuleConfig, bootstrap_max_frames: usize) -> usize {
     config.subscriber_queue_capacity.max(bootstrap_max_frames)
 }
 
+/// Returns true if the codec requires a keyframe before play bootstrap is complete.
+///
+/// 判断该编解码器是否需要在播放引导完成前收到关键帧。
 fn rtmp_play_codec_requires_keyframe_bootstrap(codec: CodecId) -> bool {
     matches!(
         codec,
@@ -2045,6 +2241,9 @@ fn rtmp_play_codec_requires_keyframe_bootstrap(codec: CodecId) -> bool {
     )
 }
 
+/// Returns true if the play session must wait for a video keyframe before starting.
+///
+/// 判断播放会话是否必须在开始前等待视频关键帧。
 fn rtmp_play_waits_for_video_keyframe(tracks: &[cheetah_codec::TrackInfo]) -> bool {
     tracks.iter().any(|track| {
         track.media_kind == MediaKind::Video
@@ -2052,6 +2251,9 @@ fn rtmp_play_waits_for_video_keyframe(tracks: &[cheetah_codec::TrackInfo]) -> bo
     })
 }
 
+/// Returns true if play can start immediately without waiting for a video keyframe.
+///
+/// 判断播放是否可以无需等待视频关键帧立即开始。
 fn initial_rtmp_play_video_started(tracks: &[cheetah_codec::TrackInfo]) -> bool {
     if tracks.is_empty() {
         return false;
@@ -2059,6 +2261,13 @@ fn initial_rtmp_play_video_started(tracks: &[cheetah_codec::TrackInfo]) -> bool 
     !rtmp_play_waits_for_video_keyframe(tracks)
 }
 
+/// Recomputes the "video started" gate after track metadata changes.
+///
+/// Re-arms the gate when transitioning from audio-only/unknown into a keyframe-required codec.
+///
+/// 在轨道元数据变化后重新计算“视频已开始”门控。
+///
+/// 当从仅音频/未知过渡到需要关键帧的编解码器时重新打开门控。
 fn reconcile_rtmp_play_video_started_on_track_refresh(
     video_started: bool,
     previous_tracks: &[cheetah_codec::TrackInfo],
@@ -2081,6 +2290,13 @@ fn reconcile_rtmp_play_video_started_on_track_refresh(
     video_started
 }
 
+/// Decides whether a frame should be forwarded to an RTMP player.
+///
+/// Drops non-key frames before the `video_started` gate has opened.
+///
+/// 判断帧是否应该转发给 RTMP 播放器。
+///
+/// 在 `video_started` 门控打开前丢弃非关键帧。
 fn should_forward_rtmp_play_frame(
     current_tracks: &[cheetah_codec::TrackInfo],
     video_started: &mut bool,
@@ -2106,6 +2322,9 @@ fn should_forward_rtmp_play_frame(
     true
 }
 
+/// Decides whether to refresh the play bootstrap (sequence headers) on a key frame.
+///
+/// 判断是否在关键帧处刷新播放引导（序列头）。
 fn should_refresh_play_bootstrap(
     frame: &AVFrame,
     current_tracks: &[cheetah_codec::TrackInfo],
@@ -2116,6 +2335,9 @@ fn should_refresh_play_bootstrap(
             && !track_list_ready_for_rtmp_play_bootstrap(current_tracks))
 }
 
+/// Context passed to the play stream task for a single RTMP player.
+///
+/// 传递给单个 RTMP 播放器播放流任务的上下文。
 struct PlayTaskContext {
     engine: EngineContext,
     config: RtmpModuleConfig,
@@ -2127,6 +2349,13 @@ struct PlayTaskContext {
     subscribe_reject_description: Option<&'static str>,
 }
 
+/// Main loop for an RTMP play stream: subscribe, bootstrap, then forward frames.
+///
+/// Handles A/V sync, pacing, mute-audio injection, and bootstrap refresh.
+///
+/// RTMP 播放流主循环：订阅、引导，然后转发帧。
+///
+/// 处理音视频同步、节奏控制、静音音频注入与引导刷新。
 async fn run_play_stream(
     ctx: PlayTaskContext,
     mut current_tracks: Vec<cheetah_codec::TrackInfo>,
@@ -2493,6 +2722,13 @@ async fn run_play_stream(
     }
 }
 
+/// Spawns a background task that waits for the source stream to become ready.
+///
+/// If the source does not appear in time, the play request is rejected.
+///
+/// 生成后台任务等待源流就绪。
+///
+/// 若源未在超时内出现，则拒绝播放请求。
 fn spawn_pending_play(
     engine: EngineContext,
     config: RtmpModuleConfig,
