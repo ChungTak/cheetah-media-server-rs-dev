@@ -167,7 +167,8 @@ impl Engine {
             event_bus: self.event_bus.clone(),
             config_provider: self.config_provider.clone(),
             config_apply_api: self.config_apply_api.clone(),
-            module_manager_api: self.module_manager.clone(),
+            module_manager_api: Arc::downgrade(&self.module_manager)
+                as std::sync::Weak<dyn ModuleManagerApi>,
             room_service_api: self.room_service.clone(),
             metrics_api: self.metrics.clone(),
             health_api: self.health.clone(),
