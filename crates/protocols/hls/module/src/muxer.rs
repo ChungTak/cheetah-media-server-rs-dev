@@ -1,4 +1,13 @@
 //! Per-stream HLS muxer: receives AVFrames, produces TS/fMP4 segments, manages playlist.
+//!
+//! Switches to fMP4 for AV1/VP9, supports LL-HLS part generation, and maintains a
+//! ring buffer of segments, cached playlists, and DVR rewind metadata.
+//!
+//! 每个流的 HLS 复用器：接收 AVFrame，生成 TS/fMP4 分段，并管理播放列表。
+//!
+//! 在检测到 AV1/VP9 时自动切换为 fMP4，支持 LL-HLS 分片生成，并维护分段环形缓冲区、
+//! 缓存播放列表及 DVR 回退元数据。
+//!
 
 use bytes::Bytes;
 use cheetah_codec::{
@@ -12,34 +21,35 @@ use cheetah_hls_core::{
 
 use crate::demuxed_muxer::{DemuxedMuxerConfig, DemuxedStreamMuxer};
 
-/// Configuration for the stream muxer.
+/// Configuration for the per-stream HLS muxer.
+///
+/// Drives segment/part timing, container selection, LL-HLS packaging, and
+/// publisher-ready behavior.
+///
+/// 每个流 HLS 复用器的配置。
+///
+/// 控制分段/分片时序、容器选择、LL-HLS 封装以及发布就绪行为。
 #[derive(Debug, Clone)]
 pub struct StreamMuxerConfig {
     pub segment_duration_ms: u64,
     pub segment_count: usize,
     pub ready_threshold: usize,
     pub force_segment_after_ms: u64,
-    /// Force first 2 segments to cut on any keyframe for fast stream discovery.
     pub fast_register: bool,
-    /// Container format: Ts or Fmp4.
     pub container: HlsContainer,
-    /// Enable LL-HLS part generation (requires fMP4 container).
     pub ll_hls_enabled: bool,
-    /// Part target duration in milliseconds (default 200).
     pub part_target_ms: u64,
-    /// Maximum number of completed segment part-lists to retain.
     pub max_completed_segments: usize,
-    /// LL-HLS packaging mode.
     pub ll_hls_packaging_mode: LlHlsPackagingMode,
-    /// Origin mode hint retained for config compatibility; validation keys are always random.
     #[allow(dead_code)]
     pub origin_mode: bool,
-    /// Stream name retained for config compatibility; not used for validation key generation.
     #[allow(dead_code)]
     pub stream_name: String,
 }
 
 /// Lightweight segment metadata kept for DVR/rewind playlist generation.
+///
+/// 为 DVR/回退播放列表生成保存的轻量分段元数据。
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct SegmentMeta {
@@ -50,7 +60,13 @@ pub struct SegmentMeta {
     pub markers: Vec<cheetah_hls_core::CueMarker>,
 }
 
-/// Output event from the muxer when a segment or part is produced.
+/// Output event produced by the stream muxer.
+///
+/// Either a completed segment or a finalized LL-HLS part.
+///
+/// 流复用器产生的事件。
+///
+/// 一个已完成的分段或最终化的 LL-HLS 分片。
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum MuxerOutput {
@@ -63,67 +79,52 @@ pub enum MuxerOutput {
 }
 
 /// Per-stream HLS muxer state.
+///
+/// Owns either a TS or fMP4 muxer, optional LL-HLS state, a segment ring, and a
+/// demuxed sub-muxer. It normalizes AAC and H.26x payload formats and keeps rewind
+/// metadata for DVR playlists.
+///
+/// 每个流的 HLS 复用器状态。
+///
+/// 拥有 TS 或 fMP4 复用器、可选 LL-HLS 状态、分段环和可选 demuxed 子复用器。
+/// 它归一化 AAC 和 H.26x 负载格式，并保留 DVR 播放列表的回退元数据。
 pub struct StreamMuxer {
     config: StreamMuxerConfig,
     ts_muxer: Option<TsMuxer>,
     fmp4_muxer: Option<Fmp4Muxer>,
-    /// Cached fMP4 init segment.
     fmp4_init: Option<Bytes>,
-    /// Pending fMP4 samples for current segment.
     pending_fmp4_samples: Vec<Fmp4Sample>,
-    /// Pending fMP4 samples for current part (LL-HLS).
     pending_part_samples: Vec<Fmp4Sample>,
-    /// Accumulated part binary data for current segment (LL-HLS).
-    /// Segment = concatenation of all its parts.
     pending_segment_part_data: Vec<Bytes>,
     ring: SegmentRing,
-    /// LL-HLS state (None when ll_hls disabled or container is TS).
     ll_state: Option<LowLatencyState>,
     video_codec: CodecId,
     audio_codec: CodecId,
     has_video: bool,
     has_audio: bool,
-    /// AAC AudioSpecificConfig for ADTS wrapping.
     aac_config: Option<AacAudioSpecificConfig>,
-    /// Cached parameter sets (SPS/PPS/VPS as Annex-B) for segment-start prepending.
     parameter_sets: Option<Bytes>,
-    /// Raw extradata bytes for fMP4 codec config boxes.
     video_extradata: Bytes,
     audio_extradata: Bytes,
     video_width: u16,
     video_height: u16,
     audio_sample_rate: u32,
     audio_channels: u8,
-    /// Segment timing state.
     segment_start_dts: Option<u64>,
     segment_last_dts: u64,
-    /// Last observed inter-frame DTS interval for video (microseconds).
-    /// Used as a fallback to estimate the last frame's display duration when
-    /// the next segment's start DTS is not yet known (e.g. flush at end-of-stream).
     last_video_frame_interval_us: Option<u64>,
-    /// DTS of the previous video frame (microseconds), tracked to compute
-    /// `last_video_frame_interval_us`.
     prev_video_dts_us: Option<u64>,
     segment_has_keyframe: bool,
     segment_seq: u64,
     ready: bool,
-    /// Whether muxing is enabled (for hls_demand mode).
     pub enabled: bool,
-    /// Cached default playlist (regenerated on each part/segment).
     cached_playlist: Option<String>,
-    /// Cached gzip-compressed playlist (pre-generated to avoid per-request compression).
     cached_playlist_gzip: Option<Bytes>,
-    /// Stream has been concluded (EXT-X-ENDLIST).
     concluded: bool,
-    /// Wallclock offset: publish_time_ms - first_sample_dts_ms.
     wallclock_offset_ms: Option<i64>,
-    /// Stream key for URL validation (prevents URL guessing).
     stream_key: String,
-    /// History of evicted segment metadata for DVR/rewind playlist.
     rewind_history: Vec<SegmentMeta>,
-    /// Pending CUE markers to be associated with the next segment.
     pending_markers: Vec<cheetah_hls_core::CueMarker>,
-    /// Demuxed LLHLS muxer (active when packaging_mode = DemuxedAv).
     demuxed: Option<DemuxedStreamMuxer>,
 }
 
@@ -179,7 +180,14 @@ impl StreamMuxer {
         }
     }
 
-    /// Initialize or update tracks.
+    /// Initialize or update tracks and select the effective container.
+    ///
+    /// Auto-upgrades TS to fMP4 for AV1/VP9, resolves AAC channel layouts from the
+    /// ASC, and instantiates the regular fMP4 muxer or the demuxed sub-muxer.
+    ///
+    /// 初始化或更新轨道并选择有效容器。
+    ///
+    /// 对 AV1/VP9 自动将 TS 升级为 fMP4，从 ASC 解析 AAC 声道布局，并实例化常规 fMP4 复用器或 demuxed 子复用器。
     pub fn set_tracks(&mut self, tracks: &[TrackInfo]) {
         self.has_video = tracks.iter().any(|t| t.media_kind == MediaKind::Video);
         self.has_audio = tracks.iter().any(|t| t.media_kind == MediaKind::Audio);
@@ -281,6 +289,13 @@ impl StreamMuxer {
         }
     }
 
+    /// Build the `Fmp4Muxer` and init segment from the current track list.
+    ///
+    /// Skips audio in LLHLS video-only mode and drops non-AV tracks.
+    ///
+    /// 根据当前轨道列表构建 `Fmp4Muxer` 与 init segment。
+    ///
+    /// 在 LLHLS 仅视频模式下跳过音频，并丢弃非音视频轨道。
     fn init_fmp4_muxer(&mut self, tracks: &[TrackInfo]) {
         let mut fmp4_tracks = Vec::new();
         for t in tracks {
@@ -322,7 +337,14 @@ impl StreamMuxer {
         self.fmp4_muxer = Some(muxer);
     }
 
-    /// Feed a frame into the muxer. Returns outputs (segment/part ready events).
+    /// Feed a frame into the muxer and produce segment/part events.
+    ///
+    /// Dispatches to the demuxed muxer when active, handles CONFIG frames and
+    /// parameter sets, then routes to TS or fMP4 path depending on the container.
+    ///
+    /// 将帧送入复用器并生成分段/分片事件。
+    ///
+    /// 在 demuxed 复用器激活时转发，处理 CONFIG 帧和参数集，然后根据容器选择 TS 或 fMP4 路径。
     pub fn push_frame(&mut self, frame: &AVFrame) -> Vec<MuxerOutput> {
         // On-demand mode: skip muxing when disabled
         if !self.enabled || self.concluded {
@@ -400,6 +422,14 @@ impl StreamMuxer {
         }
     }
 
+    /// Push a frame through the fMP4 muxing path.
+    ///
+    /// Auto-initializes the fMP4 muxer from the first keyframe if needed, detects
+    /// timestamp rollbacks, decides segment cuts, and emits LL-HLS parts.
+    ///
+    /// 通过 fMP4 复用路径推送帧。
+    ///
+    /// 必要时从首个关键帧自动初始化 fMP4 复用器，检测时间戳回退，决定分段切割并输出 LL-HLS 分片。
     fn push_frame_fmp4(&mut self, frame: &AVFrame) -> Vec<MuxerOutput> {
         let is_video = frame.media_kind == MediaKind::Video;
         let is_keyframe = frame.flags.contains(FrameFlags::KEY);
@@ -539,12 +569,23 @@ impl StreamMuxer {
         outputs
     }
 
+    /// Whether the muxer must drop frames until the first video keyframe.
+    ///
+    /// 复用器是否必须丢弃帧直到首个视频关键帧。
     fn waiting_for_initial_video_keyframe(&self, frame: &AVFrame) -> bool {
         self.has_video
             && self.segment_start_dts.is_none()
             && !(frame.media_kind == MediaKind::Video && frame.flags.contains(FrameFlags::KEY))
     }
 
+    /// Push a frame through the TS muxing path.
+    ///
+    /// Initializes the `TsMuxer` on first keyframe, prepends parameter sets on
+    /// segment-start keyframes, and wraps raw AAC into ADTS.
+    ///
+    /// 通过 TS 复用路径推送帧。
+    ///
+    /// 在首个关键帧初始化 `TsMuxer`，在分段起始关键帧前追加参数集，并将原始 AAC 包装为 ADTS。
     fn push_frame_ts(&mut self, frame: &AVFrame) -> bool {
         if self.ts_muxer.is_none() {
             if frame.media_kind == MediaKind::Video && frame.flags.contains(FrameFlags::KEY) {
@@ -665,7 +706,9 @@ impl StreamMuxer {
         produced_segment
     }
 
-    /// Force finalize the current segment.
+    /// Force-finalize the current segment at end-of-stream.
+    ///
+    /// 在流结束时强制完成当前分段。
     pub fn flush(&mut self) {
         if self.segment_start_dts.is_some() {
             self.try_finalize_current_part();
@@ -676,10 +719,16 @@ impl StreamMuxer {
         }
     }
 
+    /// Whether the stream has produced enough segments to be considered ready.
+    ///
+    /// 流是否已生成足够分段以被视为就绪。
     pub fn is_ready(&self) -> bool {
         self.ready
     }
 
+    /// Return the media playlist, using the cached version when no session token is needed.
+    ///
+    /// 返回媒体播放列表，当不需要会话令牌时使用缓存版本。
     pub fn playlist(&self, session_id: Option<u64>) -> String {
         // Use cached playlist when no special parameters
         if session_id.is_none() {
@@ -690,6 +739,9 @@ impl StreamMuxer {
         self.playlist_with_options(session_id, false)
     }
 
+    /// Generate a playlist with legacy mode and optional stream-key validation token.
+    ///
+    /// 生成支持 legacy 模式与可选流密钥验证令牌的播放列表。
     pub fn playlist_with_options_and_token(
         &self,
         session_id: Option<u64>,
@@ -704,12 +756,16 @@ impl StreamMuxer {
         }
     }
 
-    /// Get pre-compressed gzip cached playlist (avoids per-request compression).
+    /// Return the pre-compressed gzip playlist, if available.
+    ///
+    /// 返回预压缩的 gzip 播放列表（如有）。
     pub fn cached_playlist_gzip(&self) -> Option<Bytes> {
         self.cached_playlist_gzip.clone()
     }
 
-    /// Generate playlist with legacy mode option.
+    /// Generate a media playlist with the requested legacy and session options.
+    ///
+    /// 生成带有指定 legacy 与会话选项的媒体播放列表。
     pub fn playlist_with_options(&self, session_id: Option<u64>, legacy: bool) -> String {
         // In demuxed mode, return video lane chunklist for legacy compat
         if let Some(ref demuxed) = self.demuxed {
@@ -732,7 +788,13 @@ impl StreamMuxer {
         }
     }
 
-    /// Rebuild the cached default playlist. Call after each part/segment change.
+    /// Rebuild the cached default playlist and gzip version.
+    ///
+    /// Call after each part/segment boundary to keep the hot-path response fast.
+    ///
+    /// 重建默认缓存播放列表与 gzip 版本。
+    ///
+    /// 在每次分片/分段边界后调用，以保持热路径响应快速。
     fn rebuild_playlist_cache(&mut self) {
         if self.ready {
             let content = self.playlist_with_options(None, false);
@@ -742,7 +804,14 @@ impl StreamMuxer {
         }
     }
 
-    /// Compute frame-aligned part duration based on video fps or audio sample rate.
+    /// Compute a frame-aligned part target from video FPS or audio frame size.
+    ///
+    /// Aligning part boundaries to frame boundaries avoids partial frames and
+    /// reduces player drift.
+    ///
+    /// 根据视频 FPS 或音频帧大小计算帧对齐的分片目标。
+    ///
+    /// 将分片边界对齐到帧边界可避免不完整帧并减少播放器漂移。
     fn compute_optimal_part_duration_static(
         config: &StreamMuxerConfig,
         tracks: &[TrackInfo],
@@ -779,7 +848,13 @@ impl StreamMuxer {
         config.part_target_ms
     }
 
-    /// Conclude the live stream (append EXT-X-ENDLIST). No more frames accepted.
+    /// Conclude the live stream and append `EXT-X-ENDLIST`.
+    ///
+    /// No more frames are accepted after this call.
+    ///
+    /// 结束直播流并追加 `EXT-X-ENDLIST`。
+    ///
+    /// 调用后不再接受新帧。
     pub fn conclude(&mut self) {
         if let Some(ref mut demuxed) = self.demuxed {
             demuxed.conclude();
@@ -791,23 +866,35 @@ impl StreamMuxer {
     }
 
     /// Whether the stream has been concluded.
+    ///
+    /// 流是否已结束。
     #[allow(dead_code)]
     pub fn is_concluded(&self) -> bool {
         self.concluded
     }
 
-    /// Insert a CUE marker to be associated with the next finalized segment.
+    /// Insert a CUE marker to be attached to the next finalized segment.
+    ///
+    /// 插入一个 CUE 标记，附加到下一个完成的分段。
     #[allow(dead_code)]
     pub fn insert_marker(&mut self, marker: cheetah_hls_core::CueMarker) {
         self.pending_markers.push(marker);
     }
 
-    /// Get the stream key for URL validation.
+    /// Return the stream validation key used to sign playlist/segment URIs.
+    ///
+    /// 返回用于签名播放列表/分段 URI 的流验证密钥。
     pub fn stream_key(&self) -> &str {
         &self.stream_key
     }
 
-    /// Generate a rewind playlist containing all segments (for DVR/timeshift).
+    /// Generate a rewind playlist covering all retrievable segments.
+    ///
+    /// Used for DVR/timeshift by listing segments still present in the ring.
+    ///
+    /// 生成覆盖所有可获取分段的回退播放列表。
+    ///
+    /// 通过列出仍在环形缓冲区中的分段来支持 DVR/时移。
     pub fn playlist_rewind(&self, session_id: Option<u64>) -> String {
         if self.rewind_history.is_empty() {
             return self.playlist_with_options(session_id, false);
@@ -871,6 +958,9 @@ impl StreamMuxer {
         out
     }
 
+    /// Generate a rewind playlist with optional stream-key validation token.
+    ///
+    /// 生成带可选流密钥验证令牌的回退播放列表。
     pub fn playlist_rewind_with_token(
         &self,
         session_id: Option<u64>,
@@ -884,6 +974,9 @@ impl StreamMuxer {
         }
     }
 
+    /// Return a completed segment by name, with demuxed lane fallback.
+    ///
+    /// 按名称返回已完成的分段，支持 demuxed 轨道回退。
     pub fn get_segment(&self, name: &str) -> Option<Bytes> {
         if let Some(ref demuxed) = self.demuxed {
             // Try exact name first, then with video_ prefix for legacy URLs
@@ -894,7 +987,9 @@ impl StreamMuxer {
         self.ring.get(name).map(|s| s.data.clone())
     }
 
-    /// Get a part by its global sequence number (LL-HLS).
+    /// Return a finalized LL-HLS part by global sequence.
+    ///
+    /// 根据全局序列号返回已完成化的 LL-HLS 分片。
     pub fn get_part(&self, part_seq: u64) -> Option<Bytes> {
         if let Some(ref demuxed) = self.demuxed {
             return demuxed.track_part(TrackLane::Video, part_seq);
@@ -905,7 +1000,9 @@ impl StreamMuxer {
             .map(|p| p.data.clone())
     }
 
-    /// Get the fMP4 init segment (only available in fMP4 mode after set_tracks).
+    /// Return the fMP4 init segment.
+    ///
+    /// 返回 fMP4 init segment。
     pub fn init_segment(&self) -> Option<Bytes> {
         if let Some(ref demuxed) = self.demuxed {
             return demuxed.track_init_segment(TrackLane::Video);
@@ -914,64 +1011,89 @@ impl StreamMuxer {
     }
 
     /// Whether this muxer is in demuxed mode.
+    ///
+    /// 该复用器是否处于 demuxed 模式。
     pub fn is_demuxed(&self) -> bool {
         self.demuxed.is_some()
     }
 
-    /// Video codec ID.
+    /// Return the video codec.
+    ///
+    /// 返回视频编解码器。
     pub fn video_codec(&self) -> CodecId {
         self.video_codec
     }
 
-    /// Video dimensions (width, height). Returns (0,0) if unknown.
+    /// Return the video width and height.
+    ///
+    /// 返回视频宽高。
     pub fn video_dimensions(&self) -> (u16, u16) {
         (self.video_width, self.video_height)
     }
 
-    /// Audio codec ID.
+    /// Return the audio codec.
+    ///
+    /// 返回音频编解码器。
     pub fn audio_codec(&self) -> CodecId {
         self.audio_codec
     }
 
-    /// Audio channels count.
+    /// Return the audio channel count.
+    ///
+    /// 返回音频声道数。
     pub fn audio_channels(&self) -> u8 {
         self.audio_channels
     }
 
-    /// Whether the muxer is still missing the AAC AudioSpecificConfig needed to wrap raw
-    /// AAC frames as ADTS. The HLS module uses this to decide if it should re-fetch the
-    /// stream snapshot in case the publisher delivered the AAC config after the initial
-    /// `set_tracks` call.
+    /// Whether the muxer still needs the AAC AudioSpecificConfig.
+    ///
+    /// The module may re-fetch the stream snapshot if the config arrived late.
+    ///
+    /// 复用器是否仍需要 AAC AudioSpecificConfig。
+    ///
+    /// 如果配置到达较晚，模块可能重新获取流快照。
     pub fn needs_aac_config_refresh(&self) -> bool {
         self.has_audio && self.audio_codec == CodecId::AAC && self.aac_config.is_none()
     }
 
-    /// Video extradata (avcC/hvcC) for codec string generation.
+    /// Return raw video extradata for codec string generation.
+    ///
+    /// 返回用于 codec 字符串生成的原始视频 extradata。
     pub fn video_extradata(&self) -> &[u8] {
         &self.video_extradata
     }
 
-    /// Audio extradata (AudioSpecificConfig) for codec string generation.
+    /// Return raw audio extradata for codec string generation.
+    ///
+    /// 返回用于 codec 字符串生成的原始音频 extradata。
     pub fn audio_extradata(&self) -> &[u8] {
         &self.audio_extradata
     }
 
-    /// Get init segment for a specific lane (demuxed mode).
+    /// Return the init segment for a demuxed lane.
+    ///
+    /// 返回 demuxed 轨道的 init segment。
     pub fn track_init_segment(&self, lane: TrackLane) -> Option<Bytes> {
         self.demuxed.as_ref()?.track_init_segment(lane)
     }
 
-    /// Get a part for a specific lane (demuxed mode).
+    /// Return a part for a demuxed lane.
+    ///
+    /// 返回 demuxed 轨道的分片。
     pub fn track_part(&self, lane: TrackLane, seq: u64) -> Option<Bytes> {
         self.demuxed.as_ref()?.track_part(lane, seq)
     }
 
-    /// Get a segment for a specific lane (demuxed mode).
+    /// Return a segment for a demuxed lane.
+    ///
+    /// 返回 demuxed 轨道的分段。
     pub fn track_segment(&self, lane: TrackLane, name: &str) -> Option<Bytes> {
         self.demuxed.as_ref()?.track_segment(lane, name)
     }
 
-    /// Generate per-track chunklist (demuxed mode).
+    /// Generate a per-track chunklist for a demuxed lane.
+    ///
+    /// 生成 demuxed 轨道的每轨分片列表。
     pub fn track_playlist(
         &self,
         lane: TrackLane,
@@ -986,12 +1108,16 @@ impl StreamMuxer {
         )
     }
 
-    /// Get rendition state (last_msn, last_part_index) for a lane.
+    /// Return the (last_msn, last_part_index) for a demuxed lane.
+    ///
+    /// 返回 demuxed 轨道的 (last_msn, last_part_index)。
     pub fn rendition_state(&self, lane: TrackLane) -> Option<(u64, u64)> {
         self.demuxed.as_ref()?.rendition_state(lane)
     }
 
-    /// Check if a blocking request for a specific lane is satisfied.
+    /// Check whether a blocking request for a demuxed lane is satisfied.
+    ///
+    /// 检查 demuxed 轨道的阻塞请求是否满足。
     pub fn is_track_blocking_satisfied(
         &self,
         lane: TrackLane,
@@ -1011,29 +1137,39 @@ impl StreamMuxer {
         }
     }
 
-    /// Get the most recently added segment (name, data).
+    /// Return the most recently added segment name and data.
+    ///
+    /// 返回最近添加的分段名称与数据。
     pub fn latest_segment(&self) -> Option<(String, Bytes)> {
         self.ring.latest().map(|s| (s.name.clone(), s.data.clone()))
     }
 
-    /// Get the container format.
+    /// Return the effective container format.
+    ///
+    /// 返回有效容器格式。
     pub fn container(&self) -> HlsContainer {
         self.config.container
     }
 
     /// Whether LL-HLS mode is active.
+    ///
+    /// 是否启用 LL-HLS 模式。
     #[allow(dead_code)]
     pub fn is_ll_hls(&self) -> bool {
         self.ll_state.is_some()
     }
 
-    /// Current media sequence number (segment sequence).
+    /// Current segment media sequence number.
+    ///
+    /// 当前分段媒体序列号。
     #[allow(dead_code)]
     pub fn current_msn(&self) -> u64 {
         self.segment_seq
     }
 
-    /// Next part sequence number (the part that will be produced next).
+    /// Next part sequence number to be produced.
+    ///
+    /// 下一个待生成分片的序列号。
     pub fn next_part_seq(&self) -> u64 {
         if let Some(ref demuxed) = self.demuxed {
             return demuxed.video().map(|v| v.next_part_seq()).unwrap_or(0);
@@ -1044,7 +1180,9 @@ impl StreamMuxer {
             .unwrap_or(0)
     }
 
-    /// Next part sequence for a specific lane.
+    /// Next part sequence number for a specific demuxed lane.
+    ///
+    /// 指定 demuxed 轨道的下一个待生成分片序列号。
     pub fn track_next_part_seq(&self, lane: TrackLane) -> u64 {
         self.demuxed
             .as_ref()
@@ -1053,9 +1191,14 @@ impl StreamMuxer {
             .unwrap_or(0)
     }
 
-    /// Check if a blocking playlist request is satisfied.
-    /// A request for (msn, part) is satisfied when our current state has progressed past it.
-    /// msn = segment media sequence number, part = part index within that segment (0-based).
+    /// Check whether a blocking playlist request is satisfied.
+    ///
+    /// A request for (MSN, part) is satisfied when the current state has progressed
+    /// past it, or the stream has concluded.
+    ///
+    /// 检查阻塞播放列表请求是否满足。
+    ///
+    /// 当当前状态已超过该 (MSN, part) 或流已结束时，请求视为满足。
     pub fn is_blocking_satisfied(&self, target_msn: u64, target_part: Option<u64>) -> bool {
         if self.concluded {
             return true;
@@ -1087,13 +1230,21 @@ impl StreamMuxer {
         }
     }
 
-    /// Finalize the current part if there are pending part samples.
+    /// Finalize the current part if there are pending samples.
+    ///
+    /// 如果存在待处理采样，则完成当前分片。
     fn try_finalize_current_part(&mut self) -> Option<HlsPart> {
         self.finalize_part_inner_with_end(None)
     }
 
-    /// Internal: finalize current part from pending_part_samples.
-    /// `end_dts_ms`: DTS of the next sample (precise end boundary), or None for flush/estimate.
+    /// Finalize the pending LL-HLS part from `pending_part_samples`.
+    ///
+    /// Writes the part via `Fmp4Muxer`, queues its data for the segment, and updates
+    /// the cached playlist.
+    ///
+    /// 从 `pending_part_samples` 完成待处理 LL-HLS 分片。
+    ///
+    /// 通过 `Fmp4Muxer` 写入分片，将其数据排队用于分段，并更新缓存播放列表。
     fn finalize_part_inner_with_end(&mut self, end_dts_ms: Option<u64>) -> Option<HlsPart> {
         if self.pending_part_samples.is_empty() {
             return None;
@@ -1122,15 +1273,16 @@ impl StreamMuxer {
         Some(part)
     }
 
-    /// Finalize the current segment.
+    /// Finalize the current segment and push it into the ring.
     ///
-    /// `next_video_start_dts_us` is the DTS of the keyframe that triggered the cut,
-    /// i.e. the *first* sample of the next segment. When provided, EXTINF is computed
-    /// from `(next_start - this_start)` so that the reported duration includes the
-    /// display time of the segment's last frame and matches the segment's actual
-    /// wall-clock coverage (and the next segment's tfdt). When `None` (e.g. flush
-    /// at end-of-stream), we fall back to `last_dts - start_dts` plus a one-frame
-    /// estimate so EXTINF still does not under-report.
+    /// Computes EXTINF from the next segment's start DTS when available, otherwise
+    /// estimates the last frame's duration to avoid player drift. Also sets CUE markers
+    /// and rewind history.
+    ///
+    /// 完成当前分段并推入环形缓冲区。
+    ///
+    /// 在可用时根据下一个分段起始 DTS 计算 EXTINF，否则估算最后一帧时长以避免播放器漂移。
+    /// 同时设置 CUE 标记与回退历史。
     fn finalize_segment(&mut self, next_video_start_dts_us: Option<u64>) {
         let Some(start_dts) = self.segment_start_dts.take() else {
             return;
@@ -1261,6 +1413,14 @@ impl StreamMuxer {
     }
 }
 
+/// Generate a high-entropy hex stream validation key.
+///
+/// Appended to segment/part URIs when `stream_key_validation` is enabled so
+/// random URL guessing is ineffective.
+///
+/// 生成高熵十六进制流验证密钥。
+///
+/// 在启用 `stream_key_validation` 时附加到分段/分片 URI，使随机 URL 猜测无效。
 pub(crate) fn generate_stream_validation_key() -> String {
     let mut random = [0_u8; 16];
     getrandom::getrandom(&mut random).expect("secure random stream validation key");
@@ -1273,7 +1433,13 @@ pub(crate) fn generate_stream_validation_key() -> String {
     out
 }
 
-/// Gzip compress bytes. Returns compressed data.
+/// Gzip-compress data with fast compression.
+///
+/// Falls back to the original bytes if compression fails.
+///
+/// 使用快速压缩对数据进行 gzip 压缩。
+///
+/// 压缩失败时回退到原始字节。
 fn gzip_compress(data: &[u8]) -> Bytes {
     use flate2::write::GzEncoder;
     use flate2::Compression;
@@ -1287,6 +1453,13 @@ fn gzip_compress(data: &[u8]) -> Bytes {
     Bytes::copy_from_slice(data)
 }
 
+/// Append the stream-key token to all media URIs in a playlist.
+///
+/// Rewrites init, part, preload-hint, and segment URIs to include `?k=<token>`.
+///
+/// 将流密钥令牌追加到播放列表中的所有媒体 URI。
+///
+/// 重写 init、分片、预加载提示和分段 URI 以包含 `?k=<token>`。
 fn append_stream_key_to_playlist_uris(playlist: &str, stream_key: &str) -> String {
     let mut out = String::with_capacity(playlist.len() + stream_key.len() * 4);
     for line in playlist.lines() {
@@ -1330,7 +1503,13 @@ fn append_query_to_uri(uri: &str, key: &str, value: &str) -> String {
     format!("{uri}{separator}{key}={value}")
 }
 
-/// Extract parameter sets from CodecExtradata as Annex-B byte sequence.
+/// Extract SPS/PPS/VPS parameter sets as Annex-B start-code bytes.
+///
+/// These are prepended to TS keyframes and used for codec string generation.
+///
+/// 以 Annex-B 起始码字节形式提取 SPS/PPS/VPS 参数集。
+///
+/// 将其前置到 TS 关键帧并用于 codec 字符串生成。
 fn extract_parameter_sets(extradata: &CodecExtradata) -> Option<Bytes> {
     match extradata {
         CodecExtradata::H264 { sps, pps, .. } => {
@@ -1373,7 +1552,9 @@ fn extract_parameter_sets(extradata: &CodecExtradata) -> Option<Bytes> {
     }
 }
 
-/// Extract AacAudioSpecificConfig from CodecExtradata.
+/// Extract the AAC AudioSpecificConfig from track extradata.
+///
+/// 从轨道 extradata 提取 AAC AudioSpecificConfig。
 fn extract_aac_config(extradata: &CodecExtradata) -> Option<AacAudioSpecificConfig> {
     match extradata {
         CodecExtradata::AAC { asc } => AacAudioSpecificConfig::from_bytes(asc),
@@ -1381,10 +1562,13 @@ fn extract_aac_config(extradata: &CodecExtradata) -> Option<AacAudioSpecificConf
     }
 }
 
-/// Map a track-level channel count to the AAC channelConfiguration enum that ADTS frames
-/// can carry. ADTS reserves only 3 bits for channel_configuration (values 0–7), so values
-/// like 11 (7 channels in MPEG-4 ASC) cannot round-trip through ADTS. The caller should
-/// fall back to a stereo configuration (2) when this returns `None`.
+/// Map a channel count to the ADTS `channel_configuration` enum.
+///
+/// ADTS reserves only 3 bits, so some layouts require a stereo fallback.
+///
+/// 将声道数映射到 ADTS 的 `channel_configuration` 枚举。
+///
+/// ADTS 仅保留 3 位，因此某些声道布局需要回退到立体声。
 fn channels_to_aac_channel_configuration(channels: u8) -> Option<u8> {
     match channels {
         1 => Some(1),
@@ -1401,14 +1585,14 @@ fn channels_to_aac_channel_configuration(channels: u8) -> Option<u8> {
     }
 }
 
-/// Patch a parsed AAC AudioSpecificConfig so that channel_configuration is non-zero.
+/// Patch an AAC config so `channel_configuration` is non-zero.
 ///
-/// MPEG-4 ASC permits channelConfiguration=0 to signal that a Program Config Element
-/// describes the layout (common for FLV-sourced 5.1 streams). ADTS frames have no PCE,
-/// so writing ch_cfg=0 produces frames where decoders interpret the layout as
-/// "channels=0, sample_rate=0" and refuse to play. When that happens we copy the
-/// channel layout from the track's reported channel count so that ADTS consumers
-/// (ffmpeg, hls.js, native HLS players) see a consistent channel configuration.
+/// Preserves PCE-based multichannel layouts when present and rewrites `ch_cfg=0`
+/// for ADTS consumers.
+///
+/// 修补 AAC 配置，使 `channel_configuration` 非零。
+///
+/// 在存在 PCE 时保留多声道布局，并为 ADTS 消费者重写 `ch_cfg=0`。
 fn patch_aac_config_channels(
     asc: Option<AacAudioSpecificConfig>,
     track_channels: u8,
@@ -1421,7 +1605,13 @@ fn patch_aac_config_channels(
     Some(cfg)
 }
 
-/// Extract raw extradata bytes suitable for fMP4 codec config boxes.
+/// Extract raw extradata suitable for fMP4 codec config boxes.
+///
+/// Builds avcC/hvcC from SPS/PPS/VPS when an explicit config is not present.
+///
+/// 提取适用于 fMP4 编解码器配置盒的原始 extradata。
+///
+/// 当没有显式配置时，根据 SPS/PPS/VPS 构建 avcC/hvcC。
 pub(crate) fn extract_raw_extradata(extradata: &CodecExtradata) -> Bytes {
     match extradata {
         CodecExtradata::H264 { sps, pps, avcc } => avcc
@@ -1446,6 +1636,13 @@ pub(crate) fn extract_raw_extradata(extradata: &CodecExtradata) -> Bytes {
     }
 }
 
+/// Build an H.264 avcC decoder configuration record.
+///
+/// Assembles profile/compat/level, SPS count and length, and PPS count and length.
+///
+/// 构建 H.264 avcC 解码器配置记录。
+///
+/// 组装 profile/compat/level、SPS 数量与长度以及 PPS 数量与长度。
 fn build_h264_avcc(sps: &[Bytes], pps: &[Bytes]) -> Bytes {
     let Some(first_sps) = sps.first() else {
         return Bytes::new();
@@ -1489,6 +1686,13 @@ fn build_h264_avcc(sps: &[Bytes], pps: &[Bytes]) -> Bytes {
     Bytes::from(out)
 }
 
+/// Build an H.265 hvcC decoder configuration record.
+///
+/// Parses profile_tier_level from the SPS and emits the VPS/SPS/PPS arrays.
+///
+/// 构建 H.265 hvcC 解码器配置记录。
+///
+/// 从 SPS 解析 profile_tier_level 并输出 VPS/SPS/PPS 数组。
 fn build_h265_hvcc(vps: &[Bytes], sps: &[Bytes], pps: &[Bytes]) -> Bytes {
     if vps.is_empty() || sps.is_empty() || pps.is_empty() {
         return Bytes::new();
@@ -1541,6 +1745,9 @@ fn build_h265_hvcc(vps: &[Bytes], sps: &[Bytes], pps: &[Bytes]) -> Bytes {
     Bytes::from(out)
 }
 
+/// Append one hvcC array (NAL type, count, and length-prefixed units).
+///
+/// 向 hvcC 追加一个数组（NAL 类型、数量与长度前缀单元）。
 fn append_hvcc_array(out: &mut Vec<u8>, nal_unit_type: u8, units: &[Bytes]) {
     out.push(0x80 | (nal_unit_type & 0x3f)); // array_completeness + NAL unit type
     out.extend_from_slice(&(units.len().min(u16::MAX as usize) as u16).to_be_bytes());
@@ -1551,6 +1758,13 @@ fn append_hvcc_array(out: &mut Vec<u8>, nal_unit_type: u8, units: &[Bytes]) {
     }
 }
 
+/// Convert a frame payload into the fMP4 sample format.
+///
+/// Canonical H.26x is converted from Annex-B start codes to 4-byte length prefix.
+///
+/// 将帧负载转换为 fMP4 采样格式。
+///
+/// 将标准 H.26x 从 Annex-B 起始码转换为 4 字节长度前缀。
 pub(crate) fn fmp4_sample_payload(frame: &AVFrame) -> Bytes {
     if frame.format != cheetah_codec::FrameFormat::CanonicalH26x {
         return frame.payload.clone();
@@ -1561,12 +1775,20 @@ pub(crate) fn fmp4_sample_payload(frame: &AVFrame) -> Bytes {
     h26x_length_prefixed_from_payload(frame.payload.clone())
 }
 
+/// Convert microsecond DTS to 90 kHz clock ticks for MPEG-TS.
+///
+/// 将微秒 DTS 转换为 MPEG-TS 使用的 90 kHz 时钟刻度。
 fn us_to_90k(us: u64) -> u64 {
     us * 9 / 100
 }
 
-/// Convert length-prefixed H.26x NALUs to Annex-B format (start code prefixed).
-/// If already in Annex-B format, returns as-is.
+/// Convert length-prefixed H.26x NALUs to Annex-B start-code format.
+///
+/// If the payload is already Annex-B, it is returned unchanged.
+///
+/// 将长度前缀 H.26x NALU 转换为 Annex-B 起始码格式。
+///
+/// 如果负载已经是 Annex-B，则原样返回。
 fn to_annexb(payload: &[u8]) -> Vec<u8> {
     // Quick check: if starts with start code, already Annex-B
     if payload.len() >= 4 && payload[0] == 0 && payload[1] == 0 {
@@ -1599,6 +1821,12 @@ fn to_annexb(payload: &[u8]) -> Vec<u8> {
 }
 
 /// Health tracking for muxer crash recovery.
+///
+/// Tracks crash frequency and exponential backoff delay for rebuild attempts.
+///
+/// 复用器崩溃恢复的健康跟踪。
+///
+/// 记录崩溃频率与重建尝试的指数退避延迟。
 #[allow(dead_code)]
 pub struct MuxerHealth {
     crash_count: u32,
@@ -1607,6 +1835,9 @@ pub struct MuxerHealth {
 }
 
 #[allow(dead_code)]
+/// Create a healthy muxer state with no crashes.
+///
+/// 创建无崩溃的健康复用器状态。
 impl MuxerHealth {
     pub fn new() -> Self {
         Self {
@@ -1616,7 +1847,13 @@ impl MuxerHealth {
         }
     }
 
-    /// Record a crash, returns delay before next rebuild attempt (ms).
+    /// Record a crash and return the next rebuild delay in milliseconds.
+    ///
+    /// Uses exponential backoff capping at 30 s.
+    ///
+    /// 记录崩溃并返回下次重建延迟（毫秒）。
+    ///
+    /// 使用指数退避，上限 30 秒。
     pub fn on_crash(&mut self, now_us: u64) -> u64 {
         self.crash_count += 1;
         self.last_crash_us = now_us;
@@ -1625,23 +1862,32 @@ impl MuxerHealth {
         self.rebuild_delay_ms
     }
 
-    /// Called on successful rebuild — resets backoff.
+    /// Reset backoff after a successful rebuild.
+    ///
+    /// 成功重建后重置退避。
     pub fn on_rebuild_success(&mut self) {
         self.crash_count = 0;
         self.rebuild_delay_ms = 0;
     }
 
-    /// Whether we should give up rebuilding (too many crashes).
+    /// Whether too many crashes have occurred to keep rebuilding.
+    ///
+    /// 是否因崩溃次数过多而放弃重建。
     pub fn should_give_up(&self) -> bool {
         self.crash_count >= 10
     }
 
-    /// Number of crashes so far.
+    /// Return the number of recorded crashes.
+    ///
+    /// 返回已记录的崩溃次数。
     pub fn crash_count(&self) -> u32 {
         self.crash_count
     }
 }
 
+/// Default `MuxerHealth` with no crash history.
+///
+/// 没有崩溃历史的默认 `MuxerHealth`。
 impl Default for MuxerHealth {
     fn default() -> Self {
         Self::new()
@@ -2058,17 +2304,6 @@ mod tests {
         assert!(!playlist.contains("#EXT-X-SERVER-CONTROL"));
     }
 
-    /// Regression test for the EXTINF-vs-trun-duration bug that caused periodic
-    /// 1 s stalls on long-running HLS playback.
-    ///
-    /// `finalize_segment` used to compute EXTINF as `last_dts - first_dts`,
-    /// which drops the display time of the segment's last frame. With a 20 fps
-    /// source that under-reports each segment by 50 ms; over ~20 segments the
-    /// drift reached ~1 s and ffplay's playlist-reload window started missing
-    /// the next segment, producing the stutter.
-    ///
-    /// EXTINF MUST equal `next_seg_first_dts - this_seg_first_dts`, which is
-    /// also what tfdt and trun durations describe.
     #[test]
     fn extinf_includes_last_frame_duration_at_keyframe_cut() {
         let mut config = make_config_llhls();

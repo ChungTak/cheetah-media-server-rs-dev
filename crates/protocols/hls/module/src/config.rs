@@ -1,82 +1,80 @@
+//! HLS module configuration structures.
+//!
+//! Defines the serde-decodable config tree, defaults, and helper methods used by
+//! the engine to initialize and validate the HLS module.
+//!
+//! HLS 模块配置结构。
+//!
+//! 定义引擎用于初始化与校验 HLS 模块的可 serde 解码配置树、默认值和辅助方法。
+//!
+
 use serde::{Deserialize, Serialize};
 
+/// Top-level HLS module configuration.
+///
+/// Drives the HTTP server binding, segment/part timing, LL-HLS packaging, CDN
+/// origin mode, session limits, and disk/recording options.
+///
+/// HLS 模块顶层配置。
+///
+/// 控制 HTTP 服务绑定、分段/分片时序、LL-HLS 封装、CDN 源站模式、
+/// 会话限制以及磁盘/录制选项。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HlsModuleConfig {
     pub enabled: bool,
     pub listen: String,
-    /// Target segment duration in milliseconds.
     pub segment_duration_ms: u64,
-    /// Maximum number of segments kept in the ring buffer per stream.
     pub segment_count: usize,
-    /// Number of segments required before the stream is considered ready.
     pub ready_threshold: usize,
-    /// Force segment cut even without keyframe after this multiple of segment_duration_ms.
     pub force_segment_after_ms: u64,
-    /// Player session timeout in seconds (evict inactive sessions).
     pub session_timeout_secs: u64,
-    /// How long to keep a muxer alive after its publisher disconnects so late-joining
-    /// clients can finish the stream (in seconds). When set to 0, the muxer is removed
-    /// immediately on EOS — useful only for tests and pure passthrough setups.
     #[serde(default = "default_concluded_retention_secs")]
     pub concluded_retention_secs: u64,
-    /// Enable on-demand HLS generation (stop muxing when no viewers).
     #[serde(default)]
     pub hls_demand: bool,
-    /// Force first segments to cut immediately on keyframe for fast stream discovery.
     #[serde(default)]
     pub fast_register: bool,
-    /// Container format: "ts" (default) or "fmp4" (reserved for future).
     #[serde(default = "default_container")]
     pub container: String,
-    /// Enable Low-Latency HLS (requires fMP4 container).
     #[serde(default = "default_true")]
     pub ll_hls_enabled: bool,
-    /// LL-HLS part target duration in milliseconds (default 200).
     #[serde(default = "default_part_target_ms")]
     pub part_target_ms: u64,
-    /// LL-HLS packaging mode: "demuxed-av" (default), "video-only", "muxed".
     #[serde(default = "default_ll_hls_packaging_mode")]
     pub ll_hls_packaging_mode: String,
-    /// Maximum pending blocking requests per stream (default 10).
     #[serde(default = "default_max_pending_requests")]
     pub max_pending_requests: usize,
-    /// Blocking request timeout in milliseconds (default 30000).
     #[serde(default = "default_blocking_timeout_ms")]
     pub blocking_timeout_ms: u64,
-    /// CDN Bearer token secret (empty = CDN mode disabled).
     #[serde(default)]
     pub cdn_secret: String,
-    /// CDN Origin mode: skip per-connection session management.
     #[serde(default)]
     pub origin_mode: bool,
-    /// Enable stream_key validation on segment/part requests.
     #[serde(default)]
     pub stream_key_validation: bool,
-    /// Cache-Control configuration.
     #[serde(default)]
     pub cache_control: CacheControlConfig,
-    /// Maximum concurrent sessions per stream (0 = unlimited).
     #[serde(default)]
     pub max_sessions_per_stream: usize,
-    /// HLS recording mode configuration.
     #[serde(default)]
     pub recording: HlsRecordingConfig,
-    /// HTTPS/TLS configuration (optional).
     #[serde(default)]
     pub tls: Option<HlsTlsConfig>,
-    /// Master playlist multi-bitrate variants (optional).
     #[serde(default)]
     pub master_playlists: Vec<HlsMasterPlaylistConfig>,
-    /// Enable writing HLS segments to disk.
     #[serde(default)]
     pub file_output: HlsFileOutputConfig,
-    /// HLS pull jobs (relay from remote HLS sources).
     #[serde(default)]
     pub pull_jobs: Vec<HlsPullJobConfig>,
 }
 
 /// Fine-grained Cache-Control header configuration.
-/// Values: -1 = don't set header, 0 = no-cache/no-store, >0 = max-age seconds.
+///
+/// Values map to HTTP `max-age`, `no-cache/no-store`, or omit the header.
+///
+/// 细粒度的 Cache-Control 头部配置。
+///
+/// 取值映射到 HTTP `max-age`、`no-cache/no-store` 或省略头部。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CacheControlConfig {
@@ -87,6 +85,9 @@ pub struct CacheControlConfig {
     pub partial_segment_max_age: i32,
 }
 
+/// Default Cache-Control: live chunklists uncached, with-directives cached for 60 s.
+///
+/// 默认 Cache-Control：直播分片列表不缓存，带指令分片列表缓存 60 秒。
 impl Default for CacheControlConfig {
     fn default() -> Self {
         Self {
@@ -100,19 +101,25 @@ impl Default for CacheControlConfig {
 }
 
 /// Configuration for HLS recording mode.
+///
+/// When enabled, the muxer keeps a longer segment window and can emit an
+/// `EXT-X-ENDLIST` VOD playlist on stream end.
+///
+/// HLS 录制模式配置。
+///
+/// 启用时，复用器保留更长的分段窗口，并可在流结束时生成带 `EXT-X-ENDLIST` 的 VOD 播放列表。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HlsRecordingConfig {
-    /// Enable HLS recording mode (keep all segments, generate VOD playlist).
     pub enabled: bool,
-    /// Maximum recording duration in seconds (0 = unlimited).
     pub max_duration_secs: u64,
-    /// Maximum number of segments to keep (0 = unlimited).
     pub max_segments: usize,
-    /// Generate VOD playlist with EXT-X-ENDLIST on stream end.
     pub generate_vod_playlist: bool,
 }
 
+/// Default recording config: disabled with unlimited duration and VOD playlist.
+///
+/// 默认录制配置：禁用、时长无限制并生成 VOD 播放列表。
 impl Default for HlsRecordingConfig {
     fn default() -> Self {
         Self {
@@ -124,54 +131,57 @@ impl Default for HlsRecordingConfig {
     }
 }
 
-/// HTTPS/TLS configuration.
+/// HTTPS/TLS configuration for the HLS HTTP server.
+///
+/// HLS HTTP 服务器的 HTTPS/TLS 配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HlsTlsConfig {
     pub cert_path: String,
     pub key_path: String,
 }
 
-/// Master playlist multi-bitrate configuration.
+/// Multi-bitrate master playlist configuration.
+///
+/// 多码率主播放列表配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HlsMasterPlaylistConfig {
-    /// Virtual stream name for the master playlist URL.
     pub name: String,
-    /// Variant streams.
     pub variants: Vec<HlsVariantConfig>,
 }
 
 /// A single variant in a master playlist.
+///
+/// 主播放列表中的单个码率变体。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HlsVariantConfig {
-    /// Stream key of the source stream.
     pub stream_key: String,
-    /// Bandwidth in bits/sec.
     pub bandwidth: u64,
-    /// Resolution (e.g., "1920x1080").
     #[serde(default)]
     pub resolution: Option<String>,
 }
 
-/// Configuration for HLS file output (disk-based segments).
+/// Configuration for writing HLS segments to disk.
+///
+/// Controls memory/disk/hybrid storage and the cleanup policy after a stream ends.
+///
+/// HLS 分段写入磁盘的配置。
+///
+/// 控制内存/磁盘/混合存储以及流结束后的清理策略。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HlsFileOutputConfig {
-    /// Enable writing segments to disk.
     pub enabled: bool,
-    /// Root directory for HLS file output.
     pub output_dir: String,
-    /// Storage mode: "memory" (default), "disk", or "hybrid".
     pub storage_mode: String,
-    /// Maximum number of segment files to retain on disk per stream.
     pub max_disk_segments: usize,
-    /// Number of extra segments to retain on disk after removal from m3u8.
     pub segment_retain: usize,
-    /// Delay in seconds before deleting files after stream ends.
     pub delete_delay_secs: u64,
-    /// Whether to clean up stream directory when stream ends.
     pub cleanup_on_unpublish: bool,
 }
 
+/// Default file output: disabled, writing to `/tmp/hls` with cleanup.
+///
+/// 默认文件输出：禁用，写入 `/tmp/hls` 并启用清理。
 impl Default for HlsFileOutputConfig {
     fn default() -> Self {
         Self {
@@ -187,21 +197,26 @@ impl Default for HlsFileOutputConfig {
 }
 
 /// Configuration for a single HLS pull job.
+///
+/// Pull jobs relay remote HLS sources into the engine as local streams.
+///
+/// 单个 HLS 拉流任务的配置。
+///
+/// 拉流任务将远程 HLS 源作为本地流中继到引擎。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HlsPullJobConfig {
     pub name: String,
     pub enabled: bool,
-    /// Remote HLS source URL (master or media playlist).
     pub source_url: String,
-    /// Local stream key to publish pulled content as.
     pub target_stream_key: String,
-    /// Retry backoff in milliseconds.
     pub retry_backoff_ms: u64,
-    /// Maximum retry backoff in milliseconds.
     pub max_retry_backoff_ms: u64,
 }
 
+/// Default pull job: disabled, with 1 s initial backoff and 10 s max backoff.
+///
+/// 默认拉流任务：禁用，初始退避 1 秒，最大退避 10 秒。
 impl Default for HlsPullJobConfig {
     fn default() -> Self {
         Self {
@@ -243,6 +258,9 @@ fn default_blocking_timeout_ms() -> u64 {
     30000
 }
 
+/// Default HLS module config: 8080-bound TS HLS with 4 s segments and LL-HLS.
+///
+/// 默认 HLS 模块配置：绑定 8080 端口的 TS HLS，4 秒分段并启用 LL-HLS。
 impl Default for HlsModuleConfig {
     fn default() -> Self {
         Self {
@@ -276,11 +294,26 @@ impl Default for HlsModuleConfig {
     }
 }
 
+/// Parse a JSON value into `HlsModuleConfig`.
+///
+/// Used by the engine config validation path to turn a module-specific config blob
+/// into a typed struct.
+///
+/// 将 JSON 值解析为 `HlsModuleConfig`。
+///
+/// 引擎配置校验路径使用它将模块专属配置块转换为类型化结构体。
 impl HlsModuleConfig {
     pub fn from_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
     }
 
+    /// Return the default config as a JSON value.
+    ///
+    /// Provides the schema default displayed in control plane and config editors.
+    ///
+    /// 以 JSON 值形式返回默认配置。
+    ///
+    /// 为控制面和配置编辑器提供默认 schema。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap()
     }
