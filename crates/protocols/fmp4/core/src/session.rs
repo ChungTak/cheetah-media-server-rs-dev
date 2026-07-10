@@ -1,4 +1,6 @@
 //! Sans-I/O fMP4 session state machine.
+//!
+//! Sans-I/O fMP4 会话状态机。
 
 use bytes::Bytes;
 
@@ -8,6 +10,8 @@ use crate::request::{
 };
 
 /// Input events to the fMP4 core state machine.
+///
+/// fMP4 core 状态机的输入事件。
 #[derive(Debug, Clone)]
 pub enum Fmp4CoreInput {
     RequestHead(HttpRequestHead),
@@ -16,6 +20,8 @@ pub enum Fmp4CoreInput {
 }
 
 /// Commands from module/driver to the core.
+///
+/// 模块/驱动到 core 的命令。
 #[derive(Debug, Clone)]
 pub enum Fmp4CoreCommand {
     SendFmp4Bytes(Bytes),
@@ -23,6 +29,8 @@ pub enum Fmp4CoreCommand {
 }
 
 /// Output actions from the core state machine.
+///
+/// core 状态机的输出动作。
 #[derive(Debug, Clone)]
 pub enum Fmp4CoreOutput {
     SendHttpResponse(HttpResponseHead),
@@ -34,6 +42,8 @@ pub enum Fmp4CoreOutput {
 }
 
 /// Events emitted by the core for the module layer.
+///
+/// core 向模块层发出的事件。
 #[derive(Debug, Clone)]
 pub enum Fmp4CoreEvent {
     PlayRequested {
@@ -44,6 +54,8 @@ pub enum Fmp4CoreEvent {
 }
 
 /// Reason for closing a connection.
+///
+/// 关闭连接的原因。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseReason {
     Normal,
@@ -54,15 +66,26 @@ pub enum CloseReason {
 }
 
 /// Sans-I/O fMP4 core state machine.
+///
+/// Sans-I/O fMP4 core 状态机。
 pub struct Fmp4Core {
     transport: Option<Fmp4Transport>,
 }
 
+/// `Fmp4Core` API: process inputs and handle request/WS/command paths.
+///
+/// `Fmp4Core` API：处理输入并处理请求/WS/命令路径。
 impl Fmp4Core {
+    /// Create a new fMP4 core state machine.
+    ///
+    /// 创建新的 fMP4 core 状态机。
     pub fn new() -> Self {
         Self { transport: None }
     }
 
+    /// Process one input and produce the corresponding outputs.
+    ///
+    /// 处理一个输入并产生对应的输出。
     pub fn process(&mut self, input: Fmp4CoreInput) -> Vec<Fmp4CoreOutput> {
         match input {
             Fmp4CoreInput::RequestHead(head) => self.handle_request(head),
@@ -71,6 +94,9 @@ impl Fmp4Core {
         }
     }
 
+    /// Handle an HTTP request head, routing to playback or WebSocket upgrade.
+    ///
+    /// 处理 HTTP 请求头，路由到播放或 WebSocket 升级。
     fn handle_request(&mut self, head: HttpRequestHead) -> Vec<Fmp4CoreOutput> {
         match head.method {
             HttpMethod::Options => {
@@ -159,6 +185,9 @@ impl Fmp4Core {
         ]
     }
 
+    /// Handle a WebSocket message after the upgrade is complete.
+    ///
+    /// 升级完成后处理 WebSocket 消息。
     fn handle_ws_message(&mut self, msg: WebSocketMessage) -> Vec<Fmp4CoreOutput> {
         match msg {
             WebSocketMessage::Ping(data) => vec![Fmp4CoreOutput::SendWebSocketPong(data)],
@@ -175,6 +204,9 @@ impl Fmp4Core {
         }
     }
 
+    /// Handle a driver command, sending bytes over the active transport.
+    ///
+    /// 处理驱动命令，通过活动传输发送字节。
     fn handle_command(&mut self, cmd: Fmp4CoreCommand) -> Vec<Fmp4CoreOutput> {
         match cmd {
             Fmp4CoreCommand::SendFmp4Bytes(data) => match self.transport {
@@ -195,6 +227,9 @@ impl Default for Fmp4Core {
     }
 }
 
+/// Build a 204 CORS preflight response.
+///
+/// 构建 204 CORS 预检响应。
 fn cors_preflight_response() -> HttpResponseHead {
     HttpResponseHead {
         status_code: 204,
@@ -211,6 +246,9 @@ fn cors_preflight_response() -> HttpResponseHead {
     }
 }
 
+/// Build a 200 HEAD response with the MP4 content type.
+///
+/// 构建 200 HEAD 响应，包含 MP4 内容类型。
 fn head_response() -> HttpResponseHead {
     HttpResponseHead {
         status_code: 200,
@@ -223,6 +261,9 @@ fn head_response() -> HttpResponseHead {
     }
 }
 
+/// Build a 200 chunked fMP4 play response.
+///
+/// 构建 200 分块 fMP4 播放响应。
 fn fmp4_play_response() -> HttpResponseHead {
     HttpResponseHead {
         status_code: 200,
@@ -237,6 +278,9 @@ fn fmp4_play_response() -> HttpResponseHead {
     }
 }
 
+/// Build a 101 WebSocket upgrade response.
+///
+/// 构建 101 WebSocket 升级响应。
 fn websocket_upgrade_response(accept_key: &str) -> HttpResponseHead {
     HttpResponseHead {
         status_code: 101,
@@ -249,6 +293,9 @@ fn websocket_upgrade_response(accept_key: &str) -> HttpResponseHead {
     }
 }
 
+/// Build a generic error response with CORS headers.
+///
+/// 构建带 CORS 头部的通用错误响应。
 fn error_response(status: u16, reason: &'static str) -> HttpResponseHead {
     HttpResponseHead {
         status_code: status,
