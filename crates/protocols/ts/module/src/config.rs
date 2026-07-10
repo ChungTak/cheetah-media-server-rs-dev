@@ -1,7 +1,12 @@
 //! TS module configuration.
+//!
+//! TS 模块配置。
 
 use serde::{Deserialize, Serialize};
 
+/// Configuration for the TS module.
+///
+/// TS 模块配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TsModuleConfig {
     pub enabled: bool,
@@ -25,6 +30,8 @@ pub struct TsModuleConfig {
     #[serde(default = "default_pat_pmt_interval_ms")]
     pub pat_pmt_interval_ms: u64,
     /// When true, TS mux only runs while at least one player is connected.
+    ///
+    /// 为 true 时，TS 复用器仅在至少一个播放器连接时运行。
     #[serde(default)]
     pub demand_mode: bool,
     #[serde(default)]
@@ -33,6 +40,9 @@ pub struct TsModuleConfig {
     pub pull_jobs: Vec<TsPullJobConfig>,
 }
 
+/// TLS configuration for the TS module.
+///
+/// TS 模块 TLS 配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TsTlsConfig {
     pub enabled: bool,
@@ -43,6 +53,9 @@ pub struct TsTlsConfig {
     pub handshake_timeout_ms: u64,
 }
 
+/// Configuration for a TS pull job.
+///
+/// TS 拉流任务配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TsPullJobConfig {
     pub name: String,
@@ -88,7 +101,9 @@ impl TsModuleConfig {
         serde_json::from_value(value)
     }
 
-    /// Validate config constraints. Returns list of errors.
+    /// Validate config constraints. Returns a list of errors as a single string.
+    ///
+    /// 校验配置约束，将错误列表合并为一个字符串返回。
     pub fn validate(&self) -> Result<(), String> {
         let mut errors = Vec::new();
 
@@ -159,39 +174,75 @@ impl TsModuleConfig {
     }
 }
 
+/// Default write queue capacity for TS connections.
+///
+/// TS 连接默认写队列容量。
 fn default_write_queue_capacity() -> usize {
     256
 }
+/// Default TCP read buffer size.
+///
+/// 默认 TCP 读缓冲区大小。
 fn default_read_buffer_size() -> usize {
     65536
 }
+/// Default subscriber queue capacity.
+///
+/// 默认订阅者队列容量。
 fn default_subscriber_queue_capacity() -> usize {
     256
 }
+/// Default max frames for the subscriber bootstrap.
+///
+/// 订阅者引导默认最大帧数。
 fn default_bootstrap_max_frames() -> usize {
     150
 }
+/// Default timeout for waiting on a source before a play session starts.
+///
+/// 播放会话等待源的默认超时（毫秒）。
 fn default_play_wait_source_timeout_ms() -> u64 {
     15000
 }
+/// Default maximum number of tracks to mux.
+///
+/// 复用的最大轨道数默认值。
 fn default_max_tracks() -> usize {
     32
 }
+/// Default maximum reassembly buffer for the TS demuxer.
+///
+/// TS 解复用器重组缓冲区默认最大值。
 fn default_max_reassembly_bytes() -> usize {
     4 * 1024 * 1024
 }
+/// Default PAT/PMT retransmission interval.
+///
+/// PAT/PMT 重传间隔默认值（毫秒）。
 fn default_pat_pmt_interval_ms() -> u64 {
     500
 }
+/// Default TLS handshake timeout.
+///
+/// TLS 握手默认超时（毫秒）。
 fn default_handshake_timeout_ms() -> u64 {
     5000
 }
+/// Default retry backoff for pull jobs.
+///
+/// 拉流任务默认重试退避（毫秒）。
 fn default_retry_backoff_ms() -> u64 {
     500
 }
+/// Default maximum retry backoff for pull jobs.
+///
+/// 拉流任务默认最大重试退避（毫秒）。
 fn default_max_retry_backoff_ms() -> u64 {
     5000
 }
+/// Default `true` for serde `#[serde(default)]`.
+///
+/// 用于 serde `#[serde(default)]` 的默认 `true`。
 fn default_true() -> bool {
     true
 }
