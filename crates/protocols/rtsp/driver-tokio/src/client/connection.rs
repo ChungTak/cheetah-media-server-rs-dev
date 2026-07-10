@@ -17,6 +17,15 @@ use super::command::RtspClientCommand;
 use super::http_tunnel::{build_http_tunnel_get_request, build_http_tunnel_post_request};
 use super::{RtspClientConfig, RtspClientEvent};
 
+/// Context required to open and run an HTTP-tunnelled RTSP client connection.
+///
+/// RTSP-over-HTTP uses two parallel TCP streams: a GET stream for downstream data and
+/// a POST stream for upstream data. Both streams share the same session cookie.
+///
+/// 打开并运行 HTTP 隧道 RTSP 客户端连接所需的上下文。
+///
+/// RTSP-over-HTTP 使用两条并行 TCP 流：GET 流用于下行数据，POST 流用于上行数据。
+/// 两条流共享同一个会话 cookie。
 pub(super) struct HttpTunnelClientContext {
     pub(super) peer: SocketAddr,
     pub(super) path: String,
@@ -26,6 +35,18 @@ pub(super) struct HttpTunnelClientContext {
     pub(super) config: RtspClientConfig,
 }
 
+/// Run the RTSP client over a plain TCP or TLS stream.
+///
+/// The connection task multiplexes three sources: a command channel for outbound requests,
+/// a stream read for inbound responses and interleaved frames, and a cancellation token.
+/// Writes are queued and flushed one at a time; when the queue is non-empty, `try_recv`
+/// and a zero-timeout read are used to keep the pipeline moving without blocking.
+///
+/// 在普通 TCP 或 TLS 流上运行 RTSP 客户端。
+///
+/// 连接任务复用三个来源：出站请求的命令通道、入站响应与交错帧的流读取以及取消令牌。
+/// 写入操作排队并逐个刷新；当队列非空时，使用 `try_recv` 和零超时读取保持流水线
+/// 运转而不阻塞。
 pub(super) async fn run_tcp_client_connection(
     mut stream: Box<dyn AsyncTcpStream>,
     mut cmd_rx: mpsc::Receiver<RtspClientCommand>,
@@ -129,6 +150,16 @@ pub(super) async fn run_tcp_client_connection(
     let _ = event_tx.send(RtspClientEvent::Closed { reason }).await;
 }
 
+/// Run the RTSP client over an HTTP tunnel (GET/POST pair).
+///
+/// First opens the tunnel by sending GET and POST HTTP requests and validating 200
+/// responses. After that, the GET stream is used for reading RTSP responses and
+/// interleaved frames, while the POST stream is used for Base64-encoded outbound traffic.
+///
+/// 通过 HTTP 隧道（GET/POST 对）运行 RTSP 客户端。
+///
+/// 首先发送 GET 和 POST HTTP 请求并验证 200 响应以打开隧道。之后，GET 流用于读取
+/// RTSP 响应与交错帧，POST 流用于发送 Base64 编码的出站流量。
 pub(super) async fn run_http_tunnel_client_connection(
     mut get_stream: Box<dyn AsyncTcpStream>,
     mut post_stream: Box<dyn AsyncTcpStream>,
@@ -271,6 +302,9 @@ pub(super) async fn run_http_tunnel_client_connection(
     finish_http_tunnel(get_stream.as_mut(), post_stream.as_mut(), &event_tx, reason).await;
 }
 
+/// Write a queued byte slice to the stream, aborting if the cancellation token fires.
+///
+/// 将队列中的字节切片写入流，若取消令牌触发则中止。
 async fn write_pending_bytes(
     stream: &mut dyn AsyncTcpStream,
     bytes: &[u8],
@@ -285,6 +319,15 @@ async fn write_pending_bytes(
     }
 }
 
+/// Open the HTTP tunnel by performing the GET and POST handshake.
+///
+/// Sends both HTTP requests, reads the HTTP response headers, and returns any bytes that
+/// arrived after the GET response header (which may already contain the first RTSP bytes).
+///
+/// 通过 GET 与 POST 握手打开 HTTP 隧道。
+///
+/// 发送两条 HTTP 请求，读取 HTTP 响应头，并返回 GET 响应头之后收到的所有字节
+///（可能已包含首个 RTSP 字节）。
 async fn open_http_tunnel_pair(
     get_stream: &mut dyn AsyncTcpStream,
     post_stream: &mut dyn AsyncTcpStream,
@@ -320,11 +363,23 @@ async fn open_http_tunnel_pair(
     Ok(get_open.remaining)
 }
 
+/// Parsed HTTP response header including any body bytes that already arrived.
+///
+/// 已解析的 HTTP 响应头，包含已提前到达的体字节。
 struct HttpResponseHeader {
     status_code: u16,
     remaining: Bytes,
 }
 
+/// Read an HTTP response header from a tunnel stream.
+///
+/// Accumulates bytes until `\r\n\r\n` is found, then parses the status line and returns the
+/// trailing bytes as `remaining`. Enforces a configurable header size limit.
+///
+/// 从隧道流读取 HTTP 响应头。
+///
+/// 累积字节直到找到 `\r\n\r\n`，然后解析状态行并将剩余字节作为 `remaining` 返回。
+/// 强制执行可配置的响应头大小限制。
 async fn read_http_response_header(
     stream: &mut dyn AsyncTcpStream,
     cancel: &CancellationToken,
@@ -376,6 +431,9 @@ async fn read_http_response_header(
     }
 }
 
+/// Parse the status code from the first line of an HTTP response.
+///
+/// 从 HTTP 响应的第一行解析状态码。
 fn parse_http_status_code(header: &str) -> Result<u16, &'static str> {
     let Some(line) = header.lines().next() else {
         return Err("missing status line");
@@ -394,6 +452,9 @@ fn parse_http_status_code(header: &str) -> Result<u16, &'static str> {
     Ok(code)
 }
 
+/// Find the index of the first `\r\n\r\n` sequence in the byte slice.
+///
+/// 返回字节切片中首个 `\r\n\r\n` 序列的索引。
 fn find_header_end(data: &[u8]) -> Option<usize> {
     if data.len() < 4 {
         return None;
@@ -401,6 +462,9 @@ fn find_header_end(data: &[u8]) -> Option<usize> {
     data.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
+/// Shut down both tunnel streams and emit a `Closed` event.
+///
+/// 关闭两条隧道流并发出 `Closed` 事件。
 async fn finish_http_tunnel(
     get_stream: &mut dyn AsyncTcpStream,
     post_stream: &mut dyn AsyncTcpStream,
@@ -412,6 +476,15 @@ async fn finish_http_tunnel(
     let _ = event_tx.send(RtspClientEvent::Closed { reason }).await;
 }
 
+/// Convert a command into bytes and append it to the pending write queue.
+///
+/// `SendRequest` is encoded as an RTSP request. `SendInterleaved` is encoded as an
+/// interleaved `$` frame. `Close` sets `close_requested` so the loop drains existing writes.
+///
+/// 将命令转换为字节并追加到待写队列。
+///
+/// `SendRequest` 编码为 RTSP 请求。`SendInterleaved` 编码为交错 `$` 帧。`Close` 设置
+/// `close_requested`，使循环刷新完现有写入后再退出。
 fn queue_client_command(
     command: RtspClientCommand,
     pending_writes: &mut VecDeque<Bytes>,
@@ -442,6 +515,15 @@ fn queue_client_command(
     Ok(())
 }
 
+/// Handle a result from `AsyncTcpStream::read`.
+///
+/// EOF is treated as a closed peer. Successful reads are appended to the parse buffer and
+/// flushed, which may produce `Response` or `InterleavedFrame` events.
+///
+/// 处理 `AsyncTcpStream::read` 的结果。
+///
+/// EOF 视为对端关闭。成功读取的字节追加到解析缓冲区并刷新，可能产生 `Response` 或
+/// `InterleavedFrame` 事件。
 async fn handle_tcp_read(
     read_res: Result<usize, std::io::Error>,
     parse_buf: &mut BytesMut,
@@ -462,6 +544,15 @@ async fn handle_tcp_read(
     }
 }
 
+/// Flush the parse buffer by decoding complete RTSP responses and interleaved frames.
+///
+/// If the buffer starts with `$` it is parsed as an interleaved frame; otherwise it is treated
+/// as one or more RTSP text messages. The loop drains as many complete messages as possible.
+///
+/// 通过解析完整的 RTSP 响应与交错帧来刷新解析缓冲区。
+///
+/// 若缓冲区以 `$` 开头，按交错帧解析；否则按一个或多个 RTSP 文本消息处理。循环尽可能
+/// 排空所有完整消息。
 async fn flush_parse_buffer(
     parse_buf: &mut BytesMut,
     response_decoder: &mut RtspResponseDecoder,
@@ -510,6 +601,9 @@ async fn flush_parse_buffer(
     }
 }
 
+/// Check whether appending `incoming_len` bytes would exceed the configured buffer limit.
+///
+/// 检查追加 `incoming_len` 字节是否会超出配置的缓冲区限制。
 fn validate_parse_buffer_growth(
     parse_buf: &BytesMut,
     incoming_len: usize,
@@ -528,6 +622,15 @@ fn validate_parse_buffer_growth(
     Ok(())
 }
 
+/// Peek at the buffer and return the total byte length of the next RTSP message.
+///
+/// Uses `\r\n\r\n` to find the header boundary, then parses `Content-Length` to compute the
+/// full message length. Returns `None` while the header is incomplete.
+///
+/// 查看缓冲区并返回下一条 RTSP 消息的总字节长度。
+///
+/// 使用 `\r\n\r\n` 定位头边界，然后解析 `Content-Length` 计算完整消息长度。当头不完整时
+/// 返回 `None`。
 fn peek_rtsp_message_len(
     input: &[u8],
     response_limits: &RtspMessageLimits,
@@ -559,6 +662,9 @@ fn peek_rtsp_message_len(
     Ok(Some(total_len))
 }
 
+/// Locate the end of the RTSP header block (`\r\n\r\n`).
+///
+/// 定位 RTSP 头块结束位置（`\r\n\r\n`）。
 fn find_rtsp_header_end(input: &[u8]) -> Option<usize> {
     if input.len() < 4 {
         return None;
@@ -566,6 +672,13 @@ fn find_rtsp_header_end(input: &[u8]) -> Option<usize> {
     input.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
+/// Parse the `Content-Length` header from the response header bytes.
+///
+/// Returns `0` if the header is absent, which is correct for RTSP responses without a body.
+///
+/// 从响应头字节中解析 `Content-Length`。
+///
+/// 若头不存在则返回 `0`，对应无体的 RTSP 响应。
 fn parse_content_length(header: &[u8]) -> Result<usize, String> {
     let header_text =
         std::str::from_utf8(header).map_err(|_| "response header is not utf8".to_string())?;

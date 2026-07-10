@@ -23,6 +23,12 @@ use super::connection::{run_connection, ConnectionRuntime};
 use super::{DriverConfig, DriverEvent, RtspServerHandle};
 
 /// TLS configuration for the RTSPS listener.
+///
+/// Contains the listen address, the `rustls` server configuration, and a handshake timeout.
+///
+/// RTSPS 监听器的 TLS 配置。
+///
+/// 包含监听地址、`rustls` 服务器配置以及握手超时。
 #[derive(Debug, Clone)]
 pub struct DriverTlsConfig {
     pub listen: SocketAddr,
@@ -32,7 +38,14 @@ pub struct DriverTlsConfig {
 
 /// Start a TLS-enabled RTSP server (RTSPS).
 ///
-/// Accepted connections are TLS-terminated then handled identically to plain RTSP.
+/// Listens on `tls_config.listen`, accepts TCP connections, performs TLS handshakes with
+/// a timeout, and spawns `run_connection` for each successfully terminated TLS stream.
+/// On shutdown, the listener cancels all child connection tokens.
+///
+/// 启动 TLS 加密的 RTSP 服务器（RTSPS）。
+///
+/// 在 `tls_config.listen` 监听，接受 TCP 连接，在超时内完成 TLS 握手，并为每个成功
+/// 终止 TLS 的流生成 `run_connection`。关闭时，监听器取消所有子连接令牌。
 pub fn start_tls_server(
     runtime_api: Arc<dyn RuntimeApi>,
     tls_config: DriverTlsConfig,
@@ -117,6 +130,14 @@ pub fn start_tls_server(
     })
 }
 
+/// Accept and handshake a single TLS connection, then run it as a normal RTSP connection.
+///
+/// Performs the TLS handshake with a timeout, registers the connection, and calls
+/// `run_connection`. Failures are logged and the connection is dropped.
+///
+/// 接受并握手单个 TLS 连接，然后作为普通 RTSP 连接运行。
+///
+/// 在超时内完成 TLS 握手，注册连接，并调用 `run_connection`。失败时记录日志并丢弃连接。
 #[allow(clippy::too_many_arguments)]
 async fn handle_tls_accept(
     connection_id: u64,
@@ -181,6 +202,8 @@ async fn handle_tls_accept(
 }
 
 /// Wrapper around `tokio_rustls::server::TlsStream<TcpStream>` implementing `AsyncTcpStream`.
+///
+/// `tokio_rustls::server::TlsStream<TcpStream>` 的包装器，实现 `AsyncTcpStream`。
 struct TlsStreamWrapper {
     inner: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
     peer: SocketAddr,

@@ -9,21 +9,50 @@ use std::sync::OnceLock;
 type DigestNonceKey = (String, String, String);
 const MAX_TRACKED_DIGEST_NONCES: usize = 4096;
 
+/// State for tracking per-(username, realm, nonce) digest nonce counts.
+///
+/// Keeps an LRU of recently used challenge keys so that `nc` values remain
+/// monotonic per challenge and bounded in memory.
+///
+/// 用于追踪每个 (username, realm, nonce) 的 digest nonce 计数状态。
+///
+/// 保留最近使用挑战键的 LRU，使每个挑战的 `nc` 值保持单调且内存占用有界。
 #[derive(Default)]
 struct DigestNonceCountState {
     counts: HashMap<DigestNonceKey, u32>,
     lru: VecDeque<DigestNonceKey>,
 }
 
+/// Global counter for producing unique `cnonce` values.
+///
+/// 用于生成唯一 `cnonce` 值的全局计数器。
 static DIGEST_CNONCE_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+/// Global nonce-count state protected by a mutex.
+///
+/// 受互斥锁保护的全局 nonce 计数状态。
 static DIGEST_NONCE_COUNT: OnceLock<Mutex<DigestNonceCountState>> = OnceLock::new();
 
+/// Credentials used by the RTSP client for Basic or Digest authentication.
+///
+/// RTSP 客户端用于 Basic 或 Digest 认证的凭据。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspClientCredentials {
     pub username: String,
     pub password: String,
 }
 
+/// Inspect a 401 response and build an `Authorization` header if a supported scheme is found.
+///
+/// Iterates over `WWW-Authenticate` headers and picks the first supported challenge.
+/// Basic is handled by Base64 encoding `username:password`. Digest follows RFC 7616/2617
+/// with `qop=auth` when advertised, using either MD5 or SHA-256 as the hash algorithm.
+///
+/// 检查 401 响应，若发现支持的认证方案则构建 `Authorization` 头。
+///
+/// 遍历 `WWW-Authenticate` 头并选择第一个支持的挑战。Basic 通过 Base64 编码
+/// `username:password` 处理。Digest 遵循 RFC 7616/2617，当提供 `qop=auth` 时使用
+/// MD5 或 SHA-256 作为哈希算法。
 pub fn authorization_header_from_response(
     response: &RtspResponseMessage,
     method: RtspMethod,
@@ -42,6 +71,9 @@ pub fn authorization_header_from_response(
         })
 }
 
+/// Build the authorization header for a single `WWW-Authenticate` challenge.
+///
+/// 为单个 `WWW-Authenticate` 挑战构建认证头。
 fn build_authorization_header(
     challenge: &str,
     method: RtspMethod,
@@ -58,6 +90,9 @@ fn build_authorization_header(
     None
 }
 
+/// Strip the authentication scheme prefix and return the remaining challenge payload.
+///
+/// 去除认证方案前缀并返回剩余挑战负载。
 fn trim_scheme_prefix<'a>(value: &'a str, scheme: &str) -> Option<&'a str> {
     let mut parts = value.splitn(2, char::is_whitespace);
     let prefix = parts.next().unwrap_or_default();
@@ -67,12 +102,31 @@ fn trim_scheme_prefix<'a>(value: &'a str, scheme: &str) -> Option<&'a str> {
     Some(parts.next().unwrap_or_default().trim())
 }
 
+/// Build a Basic `Authorization` header.
+///
+/// Encodes `username:password` with Base64 and prefixes the scheme.
+///
+/// 构建 Basic `Authorization` 头。
+///
+/// 使用 Base64 编码 `username:password` 并加上方案前缀。
 fn basic_authorization_header(credentials: &RtspClientCredentials) -> String {
     let raw = format!("{}:{}", credentials.username, credentials.password);
     let encoded = base64::engine::general_purpose::STANDARD.encode(raw.as_bytes());
     format!("Basic {encoded}")
 }
 
+/// Build a Digest `Authorization` header from a challenge payload.
+///
+/// Parses comma-separated `key=value` parameters, computes `HA1` and `HA2`, and
+/// generates the response digest. When `qop=auth` is present, it includes `nc`,
+/// `cnonce`, and `qop` fields. Nonce counts are tracked per (username, realm, nonce)
+/// so the same challenge can be reused across requests with monotonically increasing `nc`.
+///
+/// 从挑战负载构建 Digest `Authorization` 头。
+///
+/// 解析逗号分隔的 `key=value` 参数，计算 `HA1` 与 `HA2`，并生成响应摘要。
+/// 若存在 `qop=auth`，则包含 `nc`、`cnonce`、`qop` 字段。按 (username, realm, nonce)
+/// 追踪 nonce 计数，使同一挑战可在多个请求中复用且 `nc` 单调递增。
 fn digest_authorization_header(
     challenge_payload: &str,
     method: RtspMethod,
@@ -131,6 +185,14 @@ fn digest_authorization_header(
     Some(header)
 }
 
+/// Parse comma-separated digest challenge parameters while respecting quoted values.
+///
+/// State machine toggles `in_quote` on double quotes so commas inside values are not
+/// treated as separators. Outer quotes are stripped from the value.
+///
+/// 解析逗号分隔的 digest 挑战参数，同时尊重带引号的值。
+///
+/// 状态机在双引号上切换 `in_quote`，因此值内的逗号不会被当作分隔符。外层引号从值中剥离。
 fn parse_digest_params(value: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut current = String::new();
@@ -154,6 +216,9 @@ fn parse_digest_params(value: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Parse a single `name=value` pair and append it to the output vector.
+///
+/// 解析单个 `name=value` 对并追加到输出向量。
 fn parse_digest_pair(value: &str, out: &mut Vec<(String, String)>) {
     let Some((raw_name, raw_value)) = value.split_once('=') else {
         return;
@@ -169,6 +234,9 @@ fn parse_digest_pair(value: &str, out: &mut Vec<(String, String)>) {
     out.push((name.to_string(), parsed_value.to_string()));
 }
 
+/// Return a required digest parameter by case-insensitive name.
+///
+/// 按不区分大小写的名称返回必需的 digest 参数。
 fn required_digest_param<'a>(params: &'a [(String, String)], key: &str) -> Option<&'a str> {
     params
         .iter()
@@ -176,6 +244,15 @@ fn required_digest_param<'a>(params: &'a [(String, String)], key: &str) -> Optio
         .map(|(_, value)| value.as_str())
 }
 
+/// Parse the `qop` parameter and confirm that `auth` is supported.
+///
+/// Returns `Some(None)` if `qop` is absent, `Some(Some("auth"))` if `auth` is present,
+/// and `None` if `qop` is present but does not contain `auth`.
+///
+/// 解析 `qop` 参数并确认是否支持 `auth`。
+///
+/// 若 `qop` 缺失返回 `Some(None)`；若包含 `auth` 返回 `Some(Some("auth"))`；
+/// 若 `qop` 存在但不包含 `auth` 返回 `None`。
 fn parse_digest_qop_auth(params: &[(String, String)]) -> Option<Option<&str>> {
     let Some(raw_qop) = required_digest_param(params, "qop") else {
         return Some(None);
@@ -191,6 +268,14 @@ fn parse_digest_qop_auth(params: &[(String, String)]) -> Option<Option<&str>> {
     }
 }
 
+/// Get the next nonce count for a given challenge and bump the LRU.
+///
+/// Per-key counts are incremented and stored in an LRU bounded by
+/// `MAX_TRACKED_DIGEST_NONCES` to avoid unbounded memory growth.
+///
+/// 获取给定挑战的下一个 nonce 计数并更新 LRU。
+///
+/// 按键递增计数并存储在受 `MAX_TRACKED_DIGEST_NONCES` 限制的 LRU 中，防止内存无限增长。
 fn next_digest_nonce_count(username: &str, realm: &str, nonce: &str) -> u32 {
     let state = DIGEST_NONCE_COUNT.get_or_init(|| Mutex::new(DigestNonceCountState::default()));
     let mut guard = state.lock();
@@ -211,6 +296,13 @@ fn next_digest_nonce_count(username: &str, realm: &str, nonce: &str) -> u32 {
     *entry
 }
 
+/// Build a unique client nonce for the digest response.
+///
+/// Combines username, nonce, method, URI, and a global counter into an MD5 hex digest.
+///
+/// 为 digest 响应构建唯一客户端 nonce。
+///
+/// 将用户名、nonce、方法、URI 和全局计数器组合为 MD5 十六进制摘要。
 fn build_digest_cnonce(
     credentials: &RtspClientCredentials,
     nonce: &str,
@@ -228,10 +320,16 @@ fn build_digest_cnonce(
     ))
 }
 
+/// Compute the MD5 hex digest of a UTF-8 string.
+///
+/// 计算 UTF-8 字符串的 MD5 十六进制摘要。
 fn md5_hex(value: &str) -> String {
     format!("{:x}", md5::compute(value.as_bytes()))
 }
 
+/// Compute the SHA-256 hex digest of a UTF-8 string.
+///
+/// 计算 UTF-8 字符串的 SHA-256 十六进制摘要。
 fn sha256_hex(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());

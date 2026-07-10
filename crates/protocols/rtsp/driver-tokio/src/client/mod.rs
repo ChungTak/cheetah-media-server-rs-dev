@@ -20,6 +20,17 @@ pub use udp::{
     RtspClientPortRange, RtspClientUdpEndpoint, RtspClientUdpRemote,
 };
 
+/// Configuration for the RTSP client driver.
+///
+/// Capacities and buffer sizes are bounded to prevent unbounded memory growth under
+/// backpressure. The `udp_port_range` and `http_tunnel_header_limit` fields are optional
+/// and default to unconstrained UDP and a 64 KiB tunnel header limit.
+///
+/// RTSP 客户端驱动配置。
+///
+/// 容量与缓冲区大小均有界，防止背压下内存无限增长。`udp_port_range` 与
+/// `http_tunnel_header_limit` 为可选字段，默认不限制 UDP 端口并将隧道头大小限制
+/// 设为 64 KiB。
 #[derive(Debug, Clone)]
 pub struct RtspClientConfig {
     pub command_queue_capacity: usize,
@@ -43,35 +54,67 @@ impl Default for RtspClientConfig {
     }
 }
 
+/// Events emitted by the RTSP client driver to the application.
+///
+/// `Connected` is emitted once the transport is ready. `Response` carries parsed RTSP
+/// responses. `InterleavedFrame` carries RTP/RTCP frames received over TCP or HTTP tunnel.
+/// `UdpRtp`/`UdpRtcp` carry UDP payloads for a track. `Closed` is emitted once before the
+/// driver task exits.
+///
+/// RTSP 客户端驱动向应用层发出的事件。
+///
+/// `Connected` 在传输就绪时发出一次。`Response` 携带解析后的 RTSP 响应。`InterleavedFrame`
+/// 携带通过 TCP 或 HTTP 隧道收到的 RTP/RTCP 帧。`UdpRtp`/`UdpRtcp` 携带轨道的 UDP 负载。
+/// `Closed` 在驱动任务退出前发出一次。
 #[derive(Debug, Clone)]
 pub enum RtspClientEvent {
-    Connected {
-        peer: SocketAddr,
-    },
-    Response {
-        response: RtspResponseMessage,
-    },
-    InterleavedFrame {
-        channel: u8,
-        payload: Bytes,
-    },
+    /// Transport is connected and ready for commands.
+    ///
+    /// 传输已连接并准备好接收命令。
+    Connected { peer: SocketAddr },
+
+    /// A complete RTSP response was received.
+    ///
+    /// 收到完整的 RTSP 响应。
+    Response { response: RtspResponseMessage },
+
+    /// An interleaved RTP/RTCP frame was received on the TCP/TLS/HTTP tunnel.
+    ///
+    /// 在 TCP/TLS/HTTP 隧道上收到交错 RTP/RTCP 帧。
+    InterleavedFrame { channel: u8, payload: Bytes },
+
+    /// A UDP RTP payload was received for a track.
+    ///
+    /// 收到某个轨道的 UDP RTP 负载。
     UdpRtp {
         track_id: u32,
         from: SocketAddr,
         payload: Bytes,
     },
+
+    /// A UDP RTCP payload was received for a track.
+    ///
+    /// 收到某个轨道的 UDP RTCP 负载。
     UdpRtcp {
         track_id: u32,
         from: SocketAddr,
         payload: Bytes,
     },
-    Closed {
-        reason: String,
-    },
+
+    /// The driver task is shutting down.
+    ///
+    /// 驱动任务正在关闭。
+    Closed { reason: String },
 }
 
+/// Error returned when a command cannot be sent to the client driver.
+///
+/// 向客户端驱动发送命令失败时返回的错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtspClientSendError {
+    /// The command channel has closed.
+    ///
+    /// 命令通道已关闭。
     ChannelClosed,
 }
 
@@ -85,6 +128,15 @@ impl std::fmt::Display for RtspClientSendError {
 
 impl std::error::Error for RtspClientSendError {}
 
+/// Handle to a running RTSP client driver.
+///
+/// Owns the event receiver, the command sender, the cancellation token, and the task join
+/// handle. Dropping the handle does not stop the task; call `shutdown` or `wait` explicitly.
+///
+/// 运行中 RTSP 客户端驱动的句柄。
+///
+/// 拥有事件接收器、命令发送器、取消令牌和任务句柄。丢弃句柄不会停止任务；需要显式
+/// 调用 `shutdown` 或 `wait`。
 pub struct RtspClientHandle {
     events_rx: mpsc::Receiver<RtspClientEvent>,
     event_tx: mpsc::Sender<RtspClientEvent>,
@@ -94,10 +146,20 @@ pub struct RtspClientHandle {
 }
 
 impl RtspClientHandle {
+    /// Receive the next event from the driver.
+    ///
+    /// Returns `None` when the event channel has closed.
+    ///
+    /// 从驱动接收下一个事件。
+    ///
+    /// 事件通道关闭时返回 `None`。
     pub async fn recv_event(&mut self) -> Option<RtspClientEvent> {
         self.events_rx.recv().await
     }
 
+    /// Send a command to the client driver.
+    ///
+    /// 向客户端驱动发送命令。
     pub async fn send_command(
         &self,
         command: RtspClientCommand,
@@ -105,23 +167,44 @@ impl RtspClientHandle {
         self.cmd_tx.send(command).await
     }
 
+    /// Clone the command sender so other tasks can drive the client.
+    ///
+    /// 克隆命令发送器，使其他任务也能控制客户端。
     pub fn command_sender(&self) -> RtspClientCommandSender {
         self.cmd_tx.clone()
     }
 
+    /// Clone the event sender; useful when forwarding events to another consumer.
+    ///
+    /// 克隆事件发送器；适用于将事件转发给其他消费者。
     pub fn event_sender(&self) -> mpsc::Sender<RtspClientEvent> {
         self.event_tx.clone()
     }
 
+    /// Request a graceful shutdown of the client driver.
+    ///
+    /// 请求优雅关闭客户端驱动。
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
+    /// Wait for the driver task to complete.
+    ///
+    /// 等待驱动任务完成。
     pub async fn wait(self) -> Result<(), TaskJoinError> {
         self.join.wait().await
     }
 }
 
+/// Start a plain TCP RTSP client connection.
+///
+/// The `RuntimeApi::connect_tcp` call must be synchronous; the actual async I/O is then
+/// driven by a spawned task. The caller receives events through `RtspClientHandle`.
+///
+/// 启动一个普通 TCP RTSP 客户端连接。
+///
+/// `RuntimeApi::connect_tcp` 调用为同步；真正的异步 I/O 由生成的任务驱动。调用者通过
+/// `RtspClientHandle` 接收事件。
 pub fn start_tcp_client(
     runtime_api: Arc<dyn RuntimeApi>,
     peer: SocketAddr,
@@ -160,7 +243,14 @@ pub fn start_tcp_client(
 
 /// Start a TLS-encrypted RTSP client connection (rtsps://).
 ///
-/// Performs TLS handshake over the TCP connection, then operates identically to `start_tcp_client`.
+/// Performs a TCP connect, then a TLS handshake using the supplied `ClientConfig` and
+/// `ServerName`. After the handshake succeeds, the connection is driven identically to
+/// `start_tcp_client`.
+///
+/// 启动 TLS 加密的 RTSP 客户端连接（rtsps://）。
+///
+/// 先进行 TCP 连接，再使用给定的 `ClientConfig` 与 `ServerName` 完成 TLS 握手。握手
+/// 成功后，连接以与 `start_tcp_client` 相同的方式运行。
 pub fn start_tls_client(
     runtime_api: Arc<dyn RuntimeApi>,
     peer: SocketAddr,
@@ -227,7 +317,9 @@ pub fn start_tls_client(
     })
 }
 
-/// Wrapper for client-side TLS stream implementing `AsyncTcpStream`.
+/// Wrapper for a client-side TLS stream implementing `AsyncTcpStream`.
+///
+/// 客户端 TLS 流的包装器，实现 `AsyncTcpStream`。
 struct TlsClientStreamWrapper {
     inner: tokio_rustls::client::TlsStream<tokio::net::TcpStream>,
     peer: SocketAddr,
@@ -255,6 +347,15 @@ impl cheetah_runtime_api::AsyncTcpStream for TlsClientStreamWrapper {
     }
 }
 
+/// Start an RTSP client over a pair of HTTP tunnels.
+///
+/// Requires two TCP connections to the same peer: a GET connection for downstream data and
+/// a POST connection for upstream data. Both are opened with the same `x-sessioncookie`.
+///
+/// 通过一对 HTTP 隧道启动 RTSP 客户端。
+///
+/// 需要到同一对端的两个 TCP 连接：GET 连接用于下行数据，POST 连接用于上行数据。
+/// 两者使用相同的 `x-sessioncookie` 打开。
 pub fn start_http_tunnel_client(
     runtime_api: Arc<dyn RuntimeApi>,
     peer: SocketAddr,

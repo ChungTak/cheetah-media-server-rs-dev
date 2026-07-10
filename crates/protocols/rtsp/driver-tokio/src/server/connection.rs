@@ -10,6 +10,14 @@ use tokio::sync::mpsc::error::TryRecvError;
 use super::command::{ConnectionCommand, ConnectionMap};
 use super::{DriverConfig, DriverEvent, RtspConnectionId};
 
+/// Runtime resources passed to each connection task.
+///
+/// Contains the event sender, the shared connection map, the cancellation token, and
+/// the driver configuration used by the connection loop.
+///
+/// 传递给每个连接任务的运行时资源。
+///
+/// 包含事件发送器、共享连接映射、取消令牌以及连接循环使用的驱动配置。
 pub(super) struct ConnectionRuntime {
     pub(super) event_tx: mpsc::Sender<DriverEvent>,
     pub(super) conn_map: ConnectionMap,
@@ -17,6 +25,18 @@ pub(super) struct ConnectionRuntime {
     pub(super) config: DriverConfig,
 }
 
+/// Run a single plain TCP or TLS server connection.
+///
+/// The connection owns a `RtspCore` instance. It feeds incoming bytes and outbound core
+/// commands into the core, then flushes the resulting outputs (bytes to write, events to
+/// emit, or close). The write loop is the same as the client: one pending write at a time,
+/// with `try_recv` and zero-timeout reads while the queue is non-empty.
+///
+/// 运行单个普通 TCP 或 TLS 服务器连接。
+///
+/// 连接拥有一个 `RtspCore` 实例。将入站字节与出站核心命令输入核心，然后刷新产生的
+/// 输出（待写字节、待发出事件或关闭）。写入循环与客户端一致：一次处理一个待写项，
+/// 队列非空时使用 `try_recv` 与零超时读取。
 pub(super) async fn run_connection(
     connection_id: RtspConnectionId,
     mut stream: Box<dyn AsyncTcpStream>,
@@ -190,6 +210,9 @@ pub(super) async fn run_connection(
         .await;
 }
 
+/// Write a queued byte slice to the stream, aborting if the cancellation token fires.
+///
+/// 将队列中的字节切片写入流，若取消令牌触发则中止。
 async fn write_pending_bytes(
     stream: &mut dyn AsyncTcpStream,
     bytes: &[u8],
@@ -220,6 +243,16 @@ pub(super) async fn write_pending_bytes_for_test(
     .await
 }
 
+/// Handle a command delivered to the connection task.
+///
+/// `Core` commands are passed into `RtspCore` and the resulting outputs are flushed.
+/// `Close` sets `close_requested` so the loop drains writes. `None` means the command
+/// channel closed.
+///
+/// 处理传递到连接任务的命令。
+///
+/// `Core` 命令被输入 `RtspCore` 并刷新其输出。`Close` 设置 `close_requested`，使循环
+/// 刷新写入。`None` 表示命令通道已关闭。
 async fn handle_connection_command(
     maybe_cmd: Option<ConnectionCommand>,
     core: &mut RtspCore,
@@ -252,6 +285,15 @@ async fn handle_connection_command(
     }
 }
 
+/// Handle a result from `AsyncTcpStream::read`.
+///
+/// EOF forwards `PeerClosed` into the core so it can flush any final response. A successful
+/// read is fed into `CoreInput::Bytes`. Errors are treated as fatal read failures.
+///
+/// 处理 `AsyncTcpStream::read` 的结果。
+///
+/// EOF 将 `PeerClosed` 输入核心，使其可刷新最终响应。成功读取的字节输入
+/// `CoreInput::Bytes`。错误被视为致命的读取失败。
 async fn handle_connection_read(
     read_res: Result<usize, std::io::Error>,
     core: &mut RtspCore,
@@ -294,6 +336,15 @@ async fn handle_connection_read(
     }
 }
 
+/// Flush `CoreOutput` values produced by `RtspCore`.
+///
+/// `Write` outputs are queued to be sent over the transport. `Event` outputs are forwarded
+/// as `DriverEvent::Core`. `Close` returns immediately to let the connection loop exit.
+///
+/// 刷新 `RtspCore` 产生的 `CoreOutput`。
+///
+/// `Write` 输出被排队并通过传输发送。`Event` 输出作为 `DriverEvent::Core` 转发。
+/// `Close` 立即返回，使连接循环退出。
 async fn flush_outputs(
     outputs: Vec<CoreOutput>,
     connection_id: RtspConnectionId,

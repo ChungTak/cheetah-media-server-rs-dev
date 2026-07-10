@@ -11,8 +11,18 @@ use super::command::ConnectionCommand;
 use super::connection::ConnectionRuntime;
 use super::{DriverEvent, RtspConnectionId};
 
+/// Maximum size allowed for an HTTP tunnel open request header.
+///
+/// HTTP 隧道打开请求头的最大允许大小。
 const HTTP_TUNNEL_HEADER_LIMIT: usize = 64 * 1024;
 
+/// Configuration for the HTTP tunnel pending-pair registry.
+///
+/// Derived from `DriverConfig` with lower bounds to avoid zero-sized queues or buffers.
+///
+/// HTTP 隧道待配对注册表的配置。
+///
+/// 从 `DriverConfig` 派生，并带有下限以避免零大小的队列或缓冲区。
 #[derive(Debug, Clone)]
 pub(super) struct HttpTunnelRegistryConfig {
     pub(super) max_pending_tunnels: usize,
@@ -32,12 +42,18 @@ impl HttpTunnelRegistryConfig {
     }
 }
 
+/// The GET half of a pending HTTP tunnel pair.
+///
+/// HTTP 隧道对待配对 GET 半侧。
 pub(super) struct PendingGetHalf {
     pub(super) stream: Box<dyn AsyncTcpStream>,
     pub(super) path: String,
     pub(super) expires_at_micros: u64,
 }
 
+/// The POST half of a pending HTTP tunnel pair.
+///
+/// HTTP 隧道对待配对 POST 半侧。
 pub(super) struct PendingPostHalf {
     pub(super) stream: Box<dyn AsyncTcpStream>,
     pub(super) peer: std::net::SocketAddr,
@@ -46,12 +62,27 @@ pub(super) struct PendingPostHalf {
     pub(super) expires_at_micros: u64,
 }
 
+/// A matched GET/POST pair ready to be promoted into a connection.
+///
+/// 已匹配的 GET/POST 对，准备提升为连接。
 pub(super) struct PendingPair {
     pub(super) cookie: String,
     pub(super) get: PendingGetHalf,
     pub(super) post: PendingPostHalf,
 }
 
+/// Registry that pairs HTTP tunnel GET and POST halves by session cookie.
+///
+/// Two clients (or the same client from two sockets) open a GET and a POST request with the
+/// same `x-sessioncookie`. The registry stores the first half and pairs it when the second
+/// half arrives. Entries expire after `pending_timeout_ms` and are evicted when the registry
+/// is full. The FIFO list preserves insertion order for eviction and expiry scans.
+///
+/// 按会话 cookie 配对 HTTP 隧道 GET 与 POST 半侧的注册表。
+///
+/// 两个客户端（或同一客户端的两个套接字）使用相同 `x-sessioncookie` 打开 GET 和 POST
+/// 请求。注册表保存先到达的半侧，并在另一半到达时配对。条目在 `pending_timeout_ms` 后
+/// 过期，注册表满时淘汰。FIFO 列表用于维护淘汰与过期扫描的插入顺序。
 pub(super) struct HttpTunnelRegistry {
     config: HttpTunnelRegistryConfig,
     gets: HashMap<String, PendingGetHalf>,
@@ -73,6 +104,16 @@ impl HttpTunnelRegistry {
         &self.config
     }
 
+    /// Store or pair a GET half.
+    ///
+    /// If the matching POST half is already pending and the path matches, a `PendingPair` is
+    /// returned. Otherwise the GET half is stored and `None` is returned. Path mismatches are
+    /// treated as errors and the existing pending half is preserved.
+    ///
+    /// 存储或配对 GET 半侧。
+    ///
+    /// 若匹配的 POST 半侧已在等待且路径一致，返回 `PendingPair`；否则保存 GET 半侧并
+    /// 返回 `None`。路径不匹配视为错误，保留现有待配对半侧。
     pub(super) fn upsert_get(
         &mut self,
         cookie: String,
@@ -112,6 +153,15 @@ impl HttpTunnelRegistry {
         Ok(None)
     }
 
+    /// Store or pair a POST half.
+    ///
+    /// If the matching GET half is already pending and the path matches, a `PendingPair` is
+    /// returned. Otherwise the POST half is stored and `None` is returned.
+    ///
+    /// 存储或配对 POST 半侧。
+    ///
+    /// 若匹配的 GET 半侧已在等待且路径一致，返回 `PendingPair`；否则保存 POST 半侧并
+    /// 返回 `None`。
     pub(super) fn upsert_post(
         &mut self,
         cookie: String,
@@ -157,6 +207,14 @@ impl HttpTunnelRegistry {
         Ok(None)
     }
 
+    /// Remove and return all expired pending halves.
+    ///
+    /// Scans the FIFO list for entries whose `expires_at_micros` has passed. Also cleans
+    /// the FIFO of entries whose halves have already been removed.
+    ///
+    /// 移除并返回所有过期的待配对半侧。
+    ///
+    /// 扫描 FIFO 列表中 `expires_at_micros` 已过的条目，并清理半侧已被移除的 FIFO 条目。
     pub(super) fn drain_expired(
         &mut self,
         now_micros: u64,
@@ -188,6 +246,9 @@ impl HttpTunnelRegistry {
         expired
     }
 
+    /// Evict the oldest entry if the registry is at capacity.
+    ///
+    /// 若注册表已满，淘汰最旧的条目。
     fn evict_if_needed(&mut self) -> Result<(), &'static str> {
         let pending_count = self.gets.len().saturating_add(self.posts.len());
         if pending_count < self.config.max_pending_tunnels {
@@ -204,12 +265,18 @@ impl HttpTunnelRegistry {
     }
 }
 
+/// HTTP method used to open an HTTP tunnel.
+///
+/// HTTP 隧道打开时使用的 HTTP 方法。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum HttpTunnelMethod {
     Get,
     Post,
 }
 
+/// Parsed HTTP tunnel open request.
+///
+/// 已解析的 HTTP 隧道打开请求。
 pub(super) struct HttpTunnelOpenRequest {
     pub(super) method: HttpTunnelMethod,
     pub(super) cookie: String,
@@ -217,16 +284,43 @@ pub(super) struct HttpTunnelOpenRequest {
     pub(super) initial_post_body: Bytes,
 }
 
+/// Result of parsing the HTTP tunnel open request.
+///
+/// `Tunnel` means the request is a valid tunnel open request. `NotTunnel` means the bytes
+/// should be treated as an ordinary HTTP or RTSP stream.
+///
+/// 解析 HTTP 隧道打开请求的结果。
+///
+/// `Tunnel` 表示有效的隧道打开请求。`NotTunnel` 表示这些字节应被视为普通 HTTP 或
+/// RTSP 流。
 pub(super) enum HttpTunnelParseResult {
     Tunnel(HttpTunnelOpenRequest),
     NotTunnel(Bytes),
 }
 
+/// Result of probing for a complete HTTP tunnel open request.
+///
+/// `Parsed` is returned once the header terminator is found. `TimedOut` is returned when the
+/// probe deadline expires before the header is complete.
+///
+/// HTTP 隧道打开请求探测结果。
+///
+/// 找到头终止符后返回 `Parsed`。在头完成前探测超时时返回 `TimedOut`。
 pub(super) enum HttpTunnelProbeResult {
     Parsed(Result<HttpTunnelParseResult, &'static str>),
     TimedOut(Bytes),
 }
 
+/// Read bytes from the stream until an HTTP tunnel header is complete or the probe times out.
+///
+/// This is the server-side counterpart to the client's HTTP tunnel open handshake. It allows
+/// the header to arrive in multiple reads and returns the trailing body bytes as part of the
+/// open request.
+///
+/// 从流读取字节直到 HTTP 隧道头完整或探测超时。
+///
+/// 这是客户端 HTTP 隧道打开握手的对应服务端实现。允许头分多次到达，并将后续体字节
+/// 作为打开请求的一部分返回。
 pub(super) async fn probe_http_tunnel_open_request(
     stream: &mut Box<dyn AsyncTcpStream>,
     initial_bytes: Bytes,
@@ -263,6 +357,17 @@ pub(super) async fn probe_http_tunnel_open_request(
     }
 }
 
+/// Parse the HTTP tunnel open request header.
+///
+/// Validates the request line, method, HTTP version, `x-sessioncookie`, and content type.
+/// For POST, `Content-Type: application/x-rtsp-tunnelled` is required. If the method is not
+/// `GET`/`POST` or the version is unsupported, the data is classified as `NotTunnel`.
+///
+/// 解析 HTTP 隧道打开请求头。
+///
+/// 验证请求行、方法、HTTP 版本、`x-sessioncookie` 与 Content-Type。POST 要求
+/// `Content-Type: application/x-rtsp-tunnelled`。若方法不是 `GET`/`POST` 或版本不受
+/// 支持，数据被归类为 `NotTunnel`。
 fn parse_http_tunnel_header(
     raw: Vec<u8>,
     header_end: usize,
@@ -344,20 +449,32 @@ fn parse_http_tunnel_header(
     }))
 }
 
+/// Quick check whether the first bytes of a connection look like an HTTP request.
+///
+/// 快速检查连接的首字节是否看起来像 HTTP 请求。
 pub(super) fn looks_like_http_tunnel_candidate(input: &[u8]) -> bool {
     input.starts_with(b"GET ") || input.starts_with(b"POST ")
 }
 
+/// Build the 200 OK response for the GET half of the tunnel.
+///
+/// 构建隧道 GET 半侧的 200 OK 响应。
 pub(super) fn build_http_tunnel_get_ok_response() -> Bytes {
     Bytes::from_static(
         b"HTTP/1.0 200 OK\r\nContent-Type: application/x-rtsp-tunnelled\r\nCache-Control: no-cache\r\nPragma: no-cache\r\n\r\n",
     )
 }
 
+/// Build the 200 OK response for the POST half of the tunnel.
+///
+/// 构建隧道 POST 半侧的 200 OK 响应。
 pub(super) fn build_http_tunnel_post_ok_response() -> Bytes {
     Bytes::from_static(b"HTTP/1.0 200 OK\r\nCache-Control: no-cache\r\nPragma: no-cache\r\n\r\n")
 }
 
+/// Find the index of the first `\r\n\r\n` sequence in the byte slice.
+///
+/// 返回字节切片中首个 `\r\n\r\n` 序列的索引。
 fn find_header_end(data: &[u8]) -> Option<usize> {
     if data.len() < 4 {
         return None;
@@ -365,6 +482,16 @@ fn find_header_end(data: &[u8]) -> Option<usize> {
     data.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
+/// Stateful Base64 decoder for the HTTP tunnel POST stream.
+///
+/// The client sends Base64-encoded RTSP bytes in the POST body. The server must decode
+/// them incrementally, handling whitespace and padding only at the end of the stream.
+/// The decoder maintains a small buffer of unquantized characters and enforces size limits.
+///
+/// HTTP 隧道 POST 流的有状态 Base64 解码器。
+///
+/// 客户端在 POST 请求体中发送 Base64 编码的 RTSP 字节。服务器必须增量解码，处理空白
+/// 并仅允许流末尾出现填充。解码器维护少量未量化字符的缓冲区并强制执行大小限制。
 struct Base64StreamDecoder {
     buffer: Vec<u8>,
     max_base64_buffer_bytes: usize,
@@ -380,6 +507,16 @@ impl Base64StreamDecoder {
         }
     }
 
+    /// Decode incoming Base64 bytes and emit complete decoded chunks.
+    ///
+    /// Whitespace is skipped. Padding characters mark the end of a quantum; decoding stops
+    /// until enough characters are buffered to form a full padded quantum. Non-padded data
+    /// is decoded in multiples of four characters.
+    ///
+    /// 解码入站 Base64 字节并输出完整的解码块。
+    ///
+    /// 跳过空白字符。填充字符标记量子结束；直到缓冲足够字符形成完整填充量子才解码。
+    /// 无填充数据以 4 个字符为单位解码。
     fn push(&mut self, input: &[u8]) -> Result<Vec<Bytes>, String> {
         for byte in input {
             if byte.is_ascii_whitespace() {
@@ -422,6 +559,16 @@ impl Base64StreamDecoder {
     }
 }
 
+/// Run an HTTP tunnel connection for the server.
+///
+/// The GET stream is used for outbound (server to client) writes: RTSP responses and
+/// interleaved frames. The POST stream is used for inbound (client to server) data: the
+/// body is Base64 decoded and fed into `RtspCore`.
+///
+/// 运行服务器侧 HTTP 隧道连接。
+///
+/// GET 流用于出站（服务端到客户端）写入：RTSP 响应与交错帧。POST 流用于入站（客户端到
+/// 服务端）数据：请求体经 Base64 解码后输入 `RtspCore`。
 pub(super) async fn run_http_tunnel_connection(
     connection_id: RtspConnectionId,
     mut get_stream: Box<dyn AsyncTcpStream>,
@@ -549,6 +696,14 @@ pub(super) async fn run_http_tunnel_connection(
         .await;
 }
 
+/// Decode POST payload as Base64 and feed the resulting chunks into `RtspCore`.
+///
+/// Each decoded chunk is treated as `CoreInput::Bytes`. The resulting outputs are flushed
+/// to the pending write queue and event channel.
+///
+/// 将 POST 负载作为 Base64 解码，并将解码后的块输入 `RtspCore`。
+///
+/// 每个解码块被视为 `CoreInput::Bytes`。产生的输出被刷新到待写队列与事件通道。
 async fn feed_post_payload_to_core(
     core: &mut RtspCore,
     decoder: &mut Base64StreamDecoder,
@@ -575,6 +730,9 @@ async fn feed_post_payload_to_core(
     Ok(())
 }
 
+/// Write a queued byte slice to the stream, aborting if the cancellation token fires.
+///
+/// 将队列中的字节切片写入流，若取消令牌触发则中止。
 async fn write_pending_bytes(
     stream: &mut dyn AsyncTcpStream,
     bytes: &[u8],
@@ -589,6 +747,15 @@ async fn write_pending_bytes(
     }
 }
 
+/// Flush `CoreOutput` values into the pending write queue and event channel.
+///
+/// `Write` outputs are queued on the GET stream. `Event` outputs are forwarded as
+/// `DriverEvent::Core`. `Close` returns immediately.
+///
+/// 将 `CoreOutput` 刷新到待写队列与事件通道。
+///
+/// `Write` 输出排队在 GET 流上发送。`Event` 输出作为 `DriverEvent::Core` 转发。
+/// `Close` 立即返回。
 async fn flush_outputs(
     outputs: Vec<CoreOutput>,
     connection_id: RtspConnectionId,
