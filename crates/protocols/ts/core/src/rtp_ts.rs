@@ -22,8 +22,8 @@ impl SessionDemuxer {
             SessionDemuxer::Pending => Vec::new(),
             SessionDemuxer::Ts(demuxer) => demuxer.flush(),
             SessionDemuxer::Ps(demuxer) => {
-                let mut events = Vec::new();
                 let ps_events = demuxer.flush();
+                let mut events = Vec::with_capacity(ps_events.len());
                 for ev in ps_events {
                     match ev {
                         cheetah_codec::PsDemuxEvent::TrackInfo(tracks) => {
@@ -476,10 +476,10 @@ impl RtpTsPublishSession {
                     return true;
                 }
             }
-            MpegTsDemuxEvent::Frame(frame) => {
-                if frame.media_kind == cheetah_codec::MediaKind::Video {
-                    self.frame_rate_estimator.on_frame(frame.pts_us);
-                }
+            MpegTsDemuxEvent::Frame(frame)
+                if frame.media_kind == cheetah_codec::MediaKind::Video =>
+            {
+                self.frame_rate_estimator.on_frame(frame.pts_us);
             }
             _ => {}
         }
