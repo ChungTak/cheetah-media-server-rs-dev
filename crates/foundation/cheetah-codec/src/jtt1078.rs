@@ -8,6 +8,7 @@
 //! - Video: PT 98 (H.264), PT 99 (H.265)
 //! - Audio: PT 6 (G.711A, PCMA), PT 7 (G.711U, PCMU), PT 19 (G.726)
 
+use crate::prelude::*;
 use bytes::{Bytes, BytesMut};
 
 /// JT/T 1078 protocol version variant.
@@ -337,13 +338,13 @@ struct AssemblyBuffer {
 /// estimated from the delta between successive complete frames.
 pub struct Jtt1078FrameAssembler {
     /// Per-channel assembly buffers.
-    buffers: std::collections::HashMap<AssemblyKey, AssemblyBuffer>,
+    buffers: HashMap<AssemblyKey, AssemblyBuffer>,
     /// Maximum number of bytes allowed per assembly buffer.
     max_cache_bytes: usize,
     /// Last completed frame timestamp per channel (for interval estimation).
-    last_frame_ts: std::collections::HashMap<AssemblyKey, u64>,
+    last_frame_ts: HashMap<AssemblyKey, u64>,
     /// Learned frame interval in milliseconds (rolling average, per channel).
-    frame_interval_ms: std::collections::HashMap<AssemblyKey, u32>,
+    frame_interval_ms: HashMap<AssemblyKey, u32>,
 }
 
 impl Jtt1078FrameAssembler {
@@ -351,10 +352,10 @@ impl Jtt1078FrameAssembler {
     /// channel's reassembly buffer; typical values are 512 KiB–4 MiB.
     pub fn new(max_cache_bytes: usize) -> Self {
         Self {
-            buffers: std::collections::HashMap::new(),
+            buffers: HashMap::new(),
             max_cache_bytes,
-            last_frame_ts: std::collections::HashMap::new(),
-            frame_interval_ms: std::collections::HashMap::new(),
+            last_frame_ts: HashMap::new(),
+            frame_interval_ms: HashMap::new(),
         }
     }
 

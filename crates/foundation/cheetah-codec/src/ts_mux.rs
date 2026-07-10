@@ -3,6 +3,7 @@
 //! Produces 188-byte aligned TS packets from `AVFrame` + `TrackInfo`.
 //! Supports multi-track, PAT/PMT, PES, PCR, AUD injection, and parameter set prepend.
 
+use crate::prelude::*;
 use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::track::{CodecId, MediaKind, TrackId, TrackInfo};

@@ -4,7 +4,6 @@ use crate::time::Timebase;
 use crate::track::{CodecId, MediaKind, TrackId, TrackInfo};
 use crate::video::video_payload_is_random_access;
 use bytes::Bytes;
-use std::collections::HashMap;
 
 fn default_frame_format(codec: CodecId) -> FrameFormat {
     match codec {
@@ -633,7 +632,7 @@ impl PsDemuxer {
                 pts_converted,
                 dts_converted,
                 Timebase::new(1, track.clock_rate.max(1)),
-                Bytes::from(std::mem::take(&mut self.video_buffer)),
+                Bytes::from(core::mem::take(&mut self.video_buffer)),
             );
             if is_keyframe {
                 frame.flags.insert(crate::frame::FrameFlags::KEY);

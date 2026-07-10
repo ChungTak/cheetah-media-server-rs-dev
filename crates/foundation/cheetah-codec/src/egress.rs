@@ -1,4 +1,6 @@
+use crate::prelude::*;
 use crate::{AVFrame, CodecId, MediaKind, Timebase};
+use alloc::collections::VecDeque;
 
 fn round_half_away_from_zero(value: i128, divisor: i128) -> i128 {
     let half = divisor / 2;
@@ -200,7 +202,7 @@ impl Default for AvSyncAligner {
 /// This handles B-frame reordering (IBBP patterns) more accurately than
 /// step estimation alone.
 pub struct SortingWindowDtsGenerator {
-    window: std::collections::VecDeque<i64>,
+    window: VecDeque<i64>,
     window_size: usize,
     last_output_dts: i64,
     initialized: bool,
@@ -209,7 +211,7 @@ pub struct SortingWindowDtsGenerator {
 impl SortingWindowDtsGenerator {
     pub fn new(window_size: usize) -> Self {
         Self {
-            window: std::collections::VecDeque::with_capacity(window_size.max(1)),
+            window: VecDeque::with_capacity(window_size.max(1)),
             window_size: window_size.max(1),
             last_output_dts: 0,
             initialized: false,
@@ -317,7 +319,7 @@ impl IncrementalRtpTimestampGenerator {
         let delta_us = dts_us.saturating_sub(self.last_dts_us);
         let exact_ticks =
             delta_us as f64 * self.clock_rate as f64 / 1_000_000.0 + self.fractional_ticks;
-        let int_ticks = exact_ticks.round() as i64;
+        let int_ticks = round_f64(exact_ticks) as i64;
         self.fractional_ticks = exact_ticks - int_ticks as f64;
 
         self.rtp_timestamp = self.rtp_timestamp.wrapping_add(int_ticks as u32);
@@ -326,7 +328,7 @@ impl IncrementalRtpTimestampGenerator {
         // PTS offset for B-frames: compute PTS-based timestamp
         let pts_delta_us = pts_us.saturating_sub(dts_us);
         let pts_offset =
-            (pts_delta_us as f64 * self.clock_rate as f64 / 1_000_000.0).round() as i32;
+            round_f64(pts_delta_us as f64 * self.clock_rate as f64 / 1_000_000.0) as i32;
         let rtp_timestamp_pts = self.rtp_timestamp.wrapping_add(pts_offset as u32);
 
         RtpEgressTimestamp {
@@ -339,7 +341,7 @@ impl IncrementalRtpTimestampGenerator {
 /// Estimates video frame rate from PTS deltas by collecting samples and averaging.
 /// Used when metadata-declared frame rate is missing or inaccurate.
 pub struct FrameRateEstimator {
-    samples: std::collections::VecDeque<i64>,
+    samples: VecDeque<i64>,
     max_samples: usize,
     last_pts_us: Option<i64>,
     /// Number of initial frames to skip before collecting samples (ABL: 15).
@@ -355,7 +357,7 @@ pub struct FrameRateEstimator {
 impl FrameRateEstimator {
     pub fn new(max_samples: usize) -> Self {
         Self {
-            samples: std::collections::VecDeque::with_capacity(max_samples.max(1)),
+            samples: VecDeque::with_capacity(max_samples.max(1)),
             max_samples: max_samples.max(1),
             last_pts_us: None,
             warmup_frames: 0,
@@ -416,7 +418,7 @@ impl FrameRateEstimator {
         }
         let avg_us = sum as f64 / self.samples.len() as f64;
         let fps = 1_000_000.0 / avg_us;
-        Some(fps.clamp(self.min_fps, self.max_fps))
+        Some(clamp_f64(fps, self.min_fps, self.max_fps))
     }
 
     pub fn reset(&mut self) {
@@ -783,7 +785,7 @@ mod tests {
 
         // Expected: total_duration_us * clock_rate / 1_000_000
         let total_us = (num_frames - 1) * frame_duration_us;
-        let expected_ticks = (total_us as f64 * 90_000.0 / 1_000_000.0).round() as u32;
+        let expected_ticks = round_f64(total_us as f64 * 90_000.0 / 1_000_000.0) as u32;
         let actual_ticks = gen.rtp_timestamp;
 
         // Allow at most 1 tick of error over 1 hour

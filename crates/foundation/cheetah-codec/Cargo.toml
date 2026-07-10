@@ -12,8 +12,20 @@ std = []
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 bitflags = { version = "2", default-features = false }
 bytes = { version = "1", default-features = false }
+hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "inline-more"] }
+libm = { version = "0.2", default-features = false }
 smallvec = { version = "1", default-features = false }
 thiserror = { version = "2", default-features = false }
 
 [dev-dependencies]
+criterion = { workspace = true }
+dhat = { workspace = true }
 proptest = "1.6.0"
+
+[[bench]]
+name = "codec_bench"
+harness = false
+
+[[bench]]
+name = "dhat_alloc"
+harness = false

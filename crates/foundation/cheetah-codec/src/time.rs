@@ -1,3 +1,5 @@
+#[cfg(test)]
+use crate::prelude::*;
 use core::fmt;
 use smallvec::SmallVec;
 

@@ -639,15 +639,25 @@ async fn flush_outputs(
 
 fn resolve_url_addr(url: &RtmpUrl) -> io::Result<SocketAddr> {
     let host = url.host.trim_matches(|c| c == '[' || c == ']');
-    let mut addrs = (host, url.port).to_socket_addrs()?;
-    if let Some(addr) = addrs.next() {
-        Ok(addr)
-    } else {
-        Err(io::Error::new(
+    let addrs = (host, url.port).to_socket_addrs()?;
+    // Prefer IPv4 when both families are available: in many test/dev
+    // environments an IPv6 localhost address is returned first but the
+    // server may only be listening on IPv4.
+    let mut preferred = None;
+    let mut fallback = None;
+    for addr in addrs {
+        if addr.is_ipv4() {
+            preferred = Some(addr);
+            break;
+        }
+        fallback = fallback.or(Some(addr));
+    }
+    preferred.or(fallback).ok_or_else(|| {
+        io::Error::new(
             io::ErrorKind::AddrNotAvailable,
             format!("failed to resolve {}", url.host),
-        ))
-    }
+        )
+    })
 }
 
 fn next_timer_generation(seed: &mut u64) -> u64 {

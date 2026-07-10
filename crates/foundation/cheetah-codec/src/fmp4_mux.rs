@@ -3,6 +3,7 @@
 //! Generates init segments (ftyp+moov) and media segments (styp+moof+mdat).
 //! Supports H264/H265/H266/VP8/VP9/AV1/MJPEG video and AAC/G711A/G711U/MP3/MP2/Opus audio.
 
+use crate::prelude::*;
 use bytes::{BufMut, Bytes, BytesMut};
 
 use crate::track::{CodecExtradata, CodecId, MediaKind, TrackInfo};

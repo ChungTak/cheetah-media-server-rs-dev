@@ -30,6 +30,42 @@ pub(crate) mod prelude {
         vec,
         vec::Vec,
     };
+
+    // Container types that are available in both `std` and `no_std+alloc` builds.
+    pub use alloc::boxed::Box;
+    pub use hashbrown::HashMap;
+
+    /// Round an `f64` to the nearest integer. Half-way cases are rounded away from zero.
+    #[inline]
+    pub fn round_f64(x: f64) -> f64 {
+        #[cfg(feature = "std")]
+        {
+            x.round()
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            libm::round(x)
+        }
+    }
+
+    /// Compute the ceiling of an `f64`.
+    #[inline]
+    pub fn ceil_f64(x: f64) -> f64 {
+        #[cfg(feature = "std")]
+        {
+            x.ceil()
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            libm::ceil(x)
+        }
+    }
+
+    /// Clamp an `f64` between `min` and `max`.
+    #[inline]
+    pub fn clamp_f64(x: f64, min: f64, max: f64) -> f64 {
+        x.max(min).min(max)
+    }
 }
 
 pub mod adapter;
