@@ -1,4 +1,14 @@
-// 来源: vendor-ref/rtsp-rs/pbt/tests/pbt_http.rs
+//! Property-based tests for RTSP request/response message parsing.
+//!
+//! These tests verify that `encode_rtsp_request` and `encode_rtsp_response` are
+//! inverses of `RtspRequestDecoder` and `RtspResponseDecoder` for both empty and
+//! non-empty bodies, and that the encoder correctly auto-derives `Content-Length`.
+//!
+//! RTSP 请求/响应消息解析属性测试。
+//!
+//! 这些测试验证 `encode_rtsp_request`/`encode_rtsp_response` 与
+//! `RtspRequestDecoder`/`RtspResponseDecoder` 在空 body 与非空 body 下互逆，
+//! 并且编码器自动推导出 `Content-Length`。
 
 use bytes::Bytes;
 use cheetah_rtsp_core::{
@@ -7,38 +17,50 @@ use cheetah_rtsp_core::{
 };
 use proptest::prelude::*;
 
-/// 生成有效的 RTSP token（排除控制字符和分隔符）。
+/// Generate a valid RTSP token (no control characters or separators).
+///
+/// 生成有效 RTSP token（不含控制字符与分隔符）。
 fn valid_token() -> impl Strategy<Value = String> {
     prop::string::string_regex("[A-Za-z][A-Za-z0-9_-]{0,30}")
         .expect("valid token regex")
         .prop_filter("non-empty", |s| !s.is_empty())
 }
 
-/// 生成有效的 RTSP URI。
+/// Generate a valid RTSP URI.
+///
+/// 生成有效 RTSP URI。
 fn valid_uri() -> impl Strategy<Value = String> {
     prop::string::string_regex("rtsp://[a-z0-9.-]+/[A-Za-z0-9/_.-]*")
         .expect("valid uri regex")
         .prop_filter("non-empty", |s| !s.is_empty())
 }
 
-/// 生成有效的协议版本字符串。
+/// Generate a valid protocol version string.
+///
+/// 生成有效协议版本字符串。
 fn valid_version() -> impl Strategy<Value = String> {
     prop_oneof![Just("RTSP/1.0".to_string()), Just("RTSP/2.0".to_string()),]
 }
 
-/// 生成有效的头字段名。
+/// Generate a valid header field name.
+///
+/// 生成有效头字段名。
 fn valid_header_name() -> impl Strategy<Value = String> {
     prop::string::string_regex("[A-Za-z][A-Za-z0-9-]{0,20}")
         .expect("valid header name regex")
         .prop_filter("non-empty", |s| !s.is_empty())
 }
 
-/// 生成有效的头字段值（不含 CRLF）。
+/// Generate a valid header field value (no CRLF).
+///
+/// 生成有效头字段值（不含 CRLF）。
 fn valid_header_value() -> impl Strategy<Value = String> {
     prop::string::string_regex("[A-Za-z0-9 ,;:=/_.-]{0,100}").expect("valid header value regex")
 }
 
-/// 生成可携带 body 的状态码（排除 1xx/204/304）。
+/// Generate a status code that may carry a body (excludes 1xx/204/304).
+///
+/// 生成可带 body 的状态码（排除 1xx/204/304）。
 fn valid_status_code_with_body() -> impl Strategy<Value = u16> {
     prop_oneof![
         Just(200u16),
@@ -51,6 +73,8 @@ fn valid_status_code_with_body() -> impl Strategy<Value = u16> {
     ]
 }
 
+/// Generate a reason phrase.
+///
 /// 生成 reason phrase。
 fn valid_reason_phrase() -> impl Strategy<Value = String> {
     prop_oneof![
@@ -61,7 +85,9 @@ fn valid_reason_phrase() -> impl Strategy<Value = String> {
     ]
 }
 
-/// 生成头字段列表（排除 Content-Length/Transfer-Encoding，避免与编码器自动逻辑冲突）。
+/// Generate a list of headers that excludes `Content-Length` and `Transfer-Encoding`.
+///
+/// 生成头列表，排除 `Content-Length` 与 `Transfer-Encoding`，避免与编码器自动逻辑冲突。
 fn valid_headers() -> impl Strategy<Value = Vec<RtspHeader>> {
     prop::collection::vec((valid_header_name(), valid_header_value()), 0..5)
         .prop_filter("no Content-Length or Transfer-Encoding", |headers| {
@@ -81,7 +107,9 @@ fn valid_headers() -> impl Strategy<Value = Vec<RtspHeader>> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
 
-    /// RTSP 请求 encode/decode roundtrip（无 body）。
+    /// RTSP request encode/decode round-trip with no body.
+    ///
+    /// RTSP 请求无 body 编码/解码往返。
     #[test]
     fn test_http_request_roundtrip_no_body(
         method in valid_token(),
@@ -112,7 +140,9 @@ proptest! {
         prop_assert!(decoded.body.is_empty());
     }
 
-    /// RTSP 请求 encode/decode roundtrip（带 body）。
+    /// RTSP request encode/decode round-trip with a body.
+    ///
+    /// RTSP 请求带 body 编码/解码往返。
     #[test]
     fn test_http_request_roundtrip_with_body(
         method in valid_token(),
@@ -141,11 +171,13 @@ proptest! {
         prop_assert_eq!(decoded.uri, uri);
         prop_assert_eq!(decoded.version, version);
         prop_assert_eq!(decoded.body.as_ref(), body.as_slice());
-        // 编码器会自动补充 Content-Length。
+        // The encoder adds an automatic Content-Length header.
         prop_assert_eq!(decoded.headers.len(), headers.len() + 1);
     }
 
-    /// RTSP 响应 encode/decode roundtrip（无 body）。
+    /// RTSP response encode/decode round-trip with no body.
+    ///
+    /// RTSP 响应无 body 编码/解码往返。
     #[test]
     fn test_http_response_roundtrip_no_body(
         version in valid_version(),
@@ -172,12 +204,14 @@ proptest! {
         prop_assert_eq!(decoded.version, version);
         prop_assert_eq!(decoded.status_code, status_code);
         prop_assert_eq!(decoded.reason_phrase, reason_phrase);
-        // 编码器会自动补充 Content-Length: 0。
+        // The encoder adds an automatic Content-Length: 0.
         prop_assert_eq!(decoded.headers.len(), headers.len() + 1);
         prop_assert!(decoded.body.is_empty());
     }
 
-    /// RTSP 响应 encode/decode roundtrip（带 body）。
+    /// RTSP response encode/decode round-trip with a body.
+    ///
+    /// RTSP 响应带 body 编码/解码往返。
     #[test]
     fn test_http_response_roundtrip_with_body(
         version in valid_version(),
@@ -206,11 +240,13 @@ proptest! {
         prop_assert_eq!(decoded.status_code, status_code);
         prop_assert_eq!(decoded.reason_phrase, reason_phrase);
         prop_assert_eq!(decoded.body.as_ref(), body.as_slice());
-        // 编码器会自动补充 Content-Length。
+        // The encoder adds an automatic Content-Length header.
         prop_assert_eq!(decoded.headers.len(), headers.len() + 1);
     }
 
-    /// 验证按字节分块输入时，请求解码器仅在最后一个字节到达后完成解析。
+    /// Feeding a request one byte at a time only completes after the final byte.
+    ///
+    /// 逐字节喂入请求仅在最后一个字节到达后完成解析。
     #[test]
     fn test_http_request_chunked_feed(
         method in valid_token(),

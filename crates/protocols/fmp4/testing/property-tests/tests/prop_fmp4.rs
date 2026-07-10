@@ -1,3 +1,28 @@
+//! Property-based tests for the fMP4 muxer/demuxer round-trip.
+//!
+//! These tests exercise `cheetah-codec::Fmp4Muxer` and `Fmp4Demuxer` on random
+//! frame counts, payload sizes, and chunk boundaries. Invariants checked:
+//! - frame count and keyframe flags survive a mux → demux round-trip,
+//! - arbitrary byte-level chunking of the demuxer input does not change the
+//!   emitted frames,
+//! - multi-track tracks keep unique track identifiers,
+//! - empty sample batches produce no output,
+//! - `sidx.referenced_size` matches the actual `moof` + `mdat` size,
+//! - multi-track `traf` data offsets point into the correct `mdat` region,
+//! - per-track DTS values are monotonically non-decreasing.
+//!
+//! fMP4 复用器/解复用器往返属性测试。
+//!
+//! 这些测试使用随机帧数、负载大小与分块边界驱动 `cheetah-codec::Fmp4Muxer` 与
+//! `Fmp4Demuxer`。校验的不变量包括：
+//! - 帧数与关键帧标志在复用→解复用往返后保留，
+//! - 对解复用器输入进行任意字节级分块不会影响输出帧，
+//! - 多轨道保持唯一轨道标识，
+//! - 空样本批次不产生输出，
+//! - `sidx.referenced_size` 与实际 `moof + mdat` 大小一致，
+//! - 多轨道 `traf` 数据偏移指向正确的 `mdat` 区域，
+//! - 每轨 DTS 单调不降。
+
 use bytes::Bytes;
 use cheetah_codec::{
     track::CodecExtradata, CodecId, Fmp4DemuxEvent, Fmp4Demuxer, Fmp4DemuxerConfig, Fmp4MuxEvent,
@@ -5,6 +30,9 @@ use cheetah_codec::{
 };
 use proptest::prelude::*;
 
+/// Build a single H.264 video track fixture with AVCC extradata for fMP4 tests.
+///
+/// 构造带 AVCC extradata 的单 H.264 视频轨道 fixture，用于 fMP4 测试。
 fn h264_track() -> TrackInfo {
     let mut t = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90_000);
     t.width = Some(1920);
@@ -20,6 +48,9 @@ fn h264_track() -> TrackInfo {
     t
 }
 
+/// Build a single AAC audio track fixture with AudioSpecificConfig.
+///
+/// 构造带 AudioSpecificConfig 的单 AAC 音频轨道 fixture。
 fn aac_track() -> TrackInfo {
     let mut t = TrackInfo::new(TrackId(2), MediaKind::Audio, CodecId::AAC, 44_100);
     t.sample_rate = Some(44_100);
@@ -31,7 +62,9 @@ fn aac_track() -> TrackInfo {
 }
 
 proptest! {
-    /// Mux then demux roundtrip preserves frame count and keyframe flags.
+    /// Mux then demux round-trip preserves frame count and keyframe flags.
+    ///
+    /// 复用/解复用往返保持帧数与关键帧标志一致。
     #[test]
     fn prop_mux_demux_roundtrip_frame_count(
         frame_count in 1usize..16,
@@ -71,7 +104,9 @@ proptest! {
         }
     }
 
-    /// Arbitrary chunk splitting of demux input produces same result as single push.
+    /// Arbitrary chunk splitting of demux input produces the same result as single push.
+    ///
+    /// 对解复用器输入进行任意字节分块，与一次性喂入产生的结果相同。
     #[test]
     fn prop_chunk_split_invariant(
         split_points in proptest::collection::vec(1usize..100, 1..8),
@@ -124,6 +159,8 @@ proptest! {
     }
 
     /// Multi-track mux produces unique track IDs in demuxed TrackInfo.
+    ///
+    /// 多轨道复用会在解复用后的 TrackInfo 中产生唯一的轨道 ID。
     #[test]
     fn prop_multi_track_ids_unique(
         num_audio_tracks in 1usize..4,
@@ -159,6 +196,8 @@ proptest! {
     }
 
     /// Empty samples produce no media segment output.
+    ///
+    /// 空样本批次不产生媒体段输出。
     #[test]
     fn prop_empty_samples_no_output(_dummy in 0u8..1) {
         let tracks = vec![h264_track()];
@@ -168,6 +207,8 @@ proptest! {
     }
 
     /// sidx referenced_size matches actual moof+mdat size.
+    ///
+    /// `sidx.referenced_size` 与实际 `moof + mdat` 大小一致。
     #[test]
     fn prop_sidx_referenced_size_correct(
         frame_count in 1usize..8,
@@ -211,6 +252,8 @@ proptest! {
     }
 
     /// Multi-track segment: trun.data_offset correctly points into mdat for each track.
+    ///
+    /// 多轨道段：`trun.data_offset` 正确指向每个轨道的 `mdat` 区域。
     #[test]
     fn prop_multi_traf_data_offset(
         video_payload_len in 1usize..64,
@@ -260,6 +303,8 @@ proptest! {
     }
 
     /// Demuxed timestamps are monotonically non-decreasing per track.
+    ///
+    /// 解复用后的时间戳按轨道单调不降。
     #[test]
     fn prop_timestamp_monotonicity(
         frame_count in 2usize..16,

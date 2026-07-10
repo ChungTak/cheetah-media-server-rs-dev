@@ -1,11 +1,21 @@
-// 来源: vendor-ref/rtsp-rs/pbt/tests/pbt_rtsp.rs
+//! Property-based tests for RTSP transport, range, and method parsing.
+//!
+//! These tests verify `RtspTransport` parse/display round-trips, comma-separated
+//! transport lists, SMPTE/NPT range round-trips, and extension method parsing.
+//!
+//! RTSP 传输、区间与方法解析属性测试。
+//!
+//! 这些测试验证 `RtspTransport` 解析/显示往返、逗号分隔的 transport 列表、
+//! SMPTE/NPT 区间往返以及扩展方法解析。
 
 use cheetah_rtsp_core::{
     NptRange, NptTime, RtspMethod, RtspRange, RtspTransport, SmpteRange, SmpteTime, SmpteType,
 };
 use proptest::prelude::*;
 
-/// 生成有效的 Transport 协议字段。
+/// Generate a valid transport protocol string.
+///
+/// 生成有效 transport 协议字符串。
 fn valid_transport_protocol() -> impl Strategy<Value = String> {
     prop_oneof![
         Just("RTP/AVP".to_string()),
@@ -14,7 +24,9 @@ fn valid_transport_protocol() -> impl Strategy<Value = String> {
     ]
 }
 
-/// 生成有效的 Transport 头结构。
+/// Generate a valid `RtspTransport` structure.
+///
+/// 生成有效 `RtspTransport` 结构。
 fn valid_transport() -> impl Strategy<Value = RtspTransport> {
     (
         valid_transport_protocol(),
@@ -65,7 +77,9 @@ fn valid_transport() -> impl Strategy<Value = RtspTransport> {
         )
 }
 
-/// 生成有效的 SMPTE 类型。
+/// Generate a valid SMPTE type.
+///
+/// 生成有效 SMPTE 类型。
 fn valid_smpte_type() -> impl Strategy<Value = SmpteType> {
     prop_oneof![
         Just(SmpteType::Smpte),
@@ -74,7 +88,9 @@ fn valid_smpte_type() -> impl Strategy<Value = SmpteType> {
     ]
 }
 
-/// 生成有效的 SMPTE 时间戳。
+/// Generate a valid SMPTE timestamp.
+///
+/// 生成有效 SMPTE 时间戳。
 fn valid_smpte_time() -> impl Strategy<Value = SmpteTime> {
     (0..24_u8, 0..60_u8, 0..60_u8, 0..30_u8).prop_map(|(hours, minutes, seconds, frames)| {
         SmpteTime {
@@ -87,7 +103,9 @@ fn valid_smpte_time() -> impl Strategy<Value = SmpteTime> {
     })
 }
 
-/// 生成有效的扩展 RTSP 方法名（排除标准方法）。
+/// Generate a valid extension method name (excludes standard methods).
+///
+/// 生成有效扩展方法名（排除标准方法）。
 fn valid_extension_method() -> impl Strategy<Value = String> {
     prop::string::string_regex("[A-Z][A-Z_]{2,20}")
         .expect("valid extension method regex")
@@ -112,7 +130,9 @@ fn valid_extension_method() -> impl Strategy<Value = String> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
 
-    /// Transport 头应可完成 to_header/parse roundtrip。
+    /// Transport header parse/display round-trip.
+    ///
+    /// Transport 头解析/显示往返。
     #[test]
     fn test_transport_roundtrip(transport in valid_transport()) {
         let header = transport.to_header();
@@ -130,7 +150,9 @@ proptest! {
         prop_assert_eq!(parsed.ttl, transport.ttl);
     }
 
-    /// 多个 Transport 头值应可按逗号分隔正确解析。
+    /// Multiple comma-separated Transport values parse correctly.
+    ///
+    /// 多个逗号分隔的 Transport 值正确解析。
     #[test]
     fn test_transport_parse_multiple(
         t1 in valid_transport(),
@@ -144,7 +166,9 @@ proptest! {
         prop_assert_eq!(&parsed[1].protocol, &t2.protocol);
     }
 
-    /// SMPTE 类型应在 parse/display roundtrip 后保持一致。
+    /// SMPTE type is preserved through parse/display round-trip.
+    ///
+    /// SMPTE 类型在解析/显示往返后保持一致。
     #[test]
     fn test_smpte_type_roundtrip(
         smpte_type in valid_smpte_type(),
@@ -166,7 +190,9 @@ proptest! {
         }
     }
 
-    /// NPT 区间应可完成 parse/display roundtrip。
+    /// NPT range parse/display round-trip.
+    ///
+    /// NPT 区间解析/显示往返。
     #[test]
     fn test_npt_roundtrip(seconds in 0.0f64..86400.0) {
         let range = RtspRange::Npt(NptRange {
@@ -188,7 +214,9 @@ proptest! {
         }
     }
 
-    /// 扩展方法应可保持 parse/as_str/display roundtrip。
+    /// Extension methods round-trip through parse/as_str/display.
+    ///
+    /// 扩展方法通过 parse/as_str/display 保持往返。
     #[test]
     fn test_extension_method_roundtrip(name in valid_extension_method()) {
         let method: RtspMethod = name.parse().expect("infallible parse");
@@ -202,7 +230,10 @@ proptest! {
         }
     }
 
-    /// 标准方法应保持大小写敏感：大写命中标准方法，小写保持扩展方法。
+    /// Standard methods are case-sensitive: uppercase matches a standard method,
+    /// lowercase becomes an extension method.
+    ///
+    /// 标准方法大小写敏感：大写命中标准方法，小写保持扩展方法。
     #[test]
     fn test_standard_method_case_sensitive(
         method_name in prop_oneof![

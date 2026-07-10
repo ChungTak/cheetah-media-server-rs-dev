@@ -1,24 +1,41 @@
-// 来源: vendor-ref/rtsp-rs/pbt/tests/pbt_rtp.rs
+//! Property-based tests for RTP packet build/parse round-trips.
+//!
+//! These tests cover the RTP fixed header, marker bit, CSRC list, extension
+//! header, padding, and the combination of all options, plus the packet size
+//! invariant. A final unit test verifies safe handling of invalid RTP data.
+//!
+//! RTP 包构造/解析往返属性测试。
+//!
+//! 测试覆盖 RTP 固定头、marker 位、CSRC 列表、扩展头、padding、全选项组合
+//! 以及包大小不变量。最后的单元测试验证对非法 RTP 数据的安全处理。
 
 use cheetah_rtsp_core::{RtpError, RtpExtension, RtpHeader, RtpPacket};
 use proptest::prelude::*;
 
+/// Generate a valid RTP payload type (0-127).
+///
 /// 生成有效 RTP payload type（0-127）。
 fn valid_payload_type() -> impl Strategy<Value = u8> {
     0..128_u8
 }
 
+/// Generate an RTP payload.
+///
 /// 生成 RTP payload。
 fn valid_payload() -> impl Strategy<Value = Vec<u8>> {
     prop::collection::vec(any::<u8>(), 0..1024)
 }
 
+/// Generate a valid CSRC list (0-15 elements).
+///
 /// 生成有效 CSRC 列表（0-15 个元素）。
 fn valid_csrc_list() -> impl Strategy<Value = Vec<u32>> {
     prop::collection::vec(any::<u32>(), 0..15)
 }
 
-/// 生成 RTP 扩展数据（按 4 字节边界补齐）。
+/// Generate RTP extension data padded to a 4-byte boundary.
+///
+/// 生成按 4 字节边界补齐的 RTP 扩展数据。
 fn valid_extension_data() -> impl Strategy<Value = Vec<u8>> {
     prop::collection::vec(any::<u8>(), 0..64).prop_map(|mut data| {
         while data.len() % 4 != 0 {
@@ -28,6 +45,8 @@ fn valid_extension_data() -> impl Strategy<Value = Vec<u8>> {
     })
 }
 
+/// Generate an optional RTP extension header.
+///
 /// 生成可选 RTP 扩展头。
 fn valid_extension() -> impl Strategy<Value = Option<RtpExtension>> {
     prop_oneof![
@@ -37,6 +56,8 @@ fn valid_extension() -> impl Strategy<Value = Option<RtpExtension>> {
     ]
 }
 
+/// Generate an RTP padding size (0 means no padding).
+///
 /// 生成 RTP padding 大小（0 表示无 padding）。
 fn valid_padding_size() -> impl Strategy<Value = u8> {
     prop_oneof![Just(0_u8), 1..32_u8]
@@ -45,7 +66,9 @@ fn valid_padding_size() -> impl Strategy<Value = u8> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(200))]
 
-    /// RTP 包 build/parse roundtrip（基础场景）。
+    /// RTP packet build/parse round-trip (basic).
+    ///
+    /// RTP 包构造/解析往返（基础场景）。
     #[test]
     fn test_rtp_packet_roundtrip_basic(
         payload_type in valid_payload_type(),
@@ -68,7 +91,9 @@ proptest! {
         prop_assert_eq!(decoded.payload, payload);
     }
 
-    /// RTP 包 build/parse roundtrip（带 marker 标志）。
+    /// RTP packet build/parse round-trip with marker bit.
+    ///
+    /// RTP 包构造/解析往返（带 marker 标志）。
     #[test]
     fn test_rtp_packet_roundtrip_with_marker(
         payload_type in valid_payload_type(),
@@ -94,7 +119,9 @@ proptest! {
         prop_assert_eq!(decoded.payload, payload);
     }
 
-    /// RTP 包 build/parse roundtrip（带 CSRC 列表）。
+    /// RTP packet build/parse round-trip with CSRC list.
+    ///
+    /// RTP 包构造/解析往返（带 CSRC 列表）。
     #[test]
     fn test_rtp_packet_roundtrip_with_csrc(
         payload_type in valid_payload_type(),
@@ -120,7 +147,9 @@ proptest! {
         prop_assert_eq!(decoded.payload, payload);
     }
 
-    /// RTP 包 build/parse roundtrip（带 extension 扩展头）。
+    /// RTP packet build/parse round-trip with extension header.
+    ///
+    /// RTP 包构造/解析往返（带 extension 扩展头）。
     #[test]
     fn test_rtp_packet_roundtrip_with_extension(
         payload_type in valid_payload_type(),
@@ -150,7 +179,9 @@ proptest! {
         prop_assert_eq!(decoded.payload, payload);
     }
 
-    /// RTP 包 build/parse roundtrip（带 padding）。
+    /// RTP packet build/parse round-trip with padding.
+    ///
+    /// RTP 包构造/解析往返（带 padding）。
     #[test]
     fn test_rtp_packet_roundtrip_with_padding(
         payload_type in valid_payload_type(),
@@ -171,7 +202,9 @@ proptest! {
         prop_assert_eq!(decoded.payload, payload);
     }
 
-    /// RTP 包 build/parse roundtrip（全选项组合）。
+    /// RTP packet build/parse round-trip with all options combined.
+    ///
+    /// RTP 包构造/解析往返（全选项组合）。
     #[test]
     fn test_rtp_packet_roundtrip_full(
         payload_type in valid_payload_type(),
@@ -206,7 +239,9 @@ proptest! {
         prop_assert_eq!(decoded.payload, payload);
     }
 
-    /// RTP 包长度计算应与实际编码结果一致。
+    /// The computed packet size matches the actual encoded length.
+    ///
+    /// 计算出的包大小与实际编码长度一致。
     #[test]
     fn test_rtp_packet_size(
         payload_type in valid_payload_type(),
@@ -228,7 +263,9 @@ proptest! {
     }
 }
 
-/// 无效 RTP 输入应返回显式错误，不得误解析成功。
+/// Invalid RTP inputs must return explicit errors, not bogus success.
+///
+/// 非法 RTP 输入应返回显式错误，不得误解析成功。
 #[test]
 fn test_rtp_parse_invalid_data() {
     let short_empty = RtpPacket::parse(&[]).expect_err("empty packet must fail");

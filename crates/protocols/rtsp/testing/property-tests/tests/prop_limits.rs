@@ -1,4 +1,13 @@
-// 来源: vendor-ref/rtsp-rs/pbt/tests/pbt_limits.rs
+//! Property-based tests for RTSP message and connection limits.
+//!
+//! These tests verify that `RtspRequestDecoder` and `RtspCore` enforce the
+//! configured bounds for buffer size, header count, header line length, body
+//! size, and interleaved frame size.
+//!
+//! RTSP 消息与连接限制属性测试。
+//!
+//! 这些测试验证 `RtspRequestDecoder` 与 `RtspCore` 对缓冲区大小、头数量、
+//! 头行长度、body 大小与交错帧大小等配置边界的执行。
 
 use bytes::Bytes;
 use cheetah_rtsp_core::{
@@ -8,7 +17,9 @@ use cheetah_rtsp_core::{
 };
 use proptest::prelude::*;
 
-/// 创建带小限制的 RTSP 请求解码器，用于覆盖限制命中路径。
+/// Build an `RtspRequestDecoder` with small limits to exercise the limit-hit paths.
+///
+/// 构造带小限制的 RTSP 请求解码器，用于覆盖限制命中路径。
 fn request_decoder_with_small_limits() -> RtspRequestDecoder {
     RtspRequestDecoder::with_limits(RtspMessageLimits {
         max_buffer_size: 1024,
@@ -22,7 +33,9 @@ fn request_decoder_with_small_limits() -> RtspRequestDecoder {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(50))]
 
-    /// 验证喂入数据超过 buffer 限制时会立即返回错误。
+    /// Feeding more bytes than the buffer limit produces an error immediately.
+    ///
+    /// 喂入超过缓冲区限制的数据会立即返回错误。
     #[test]
     fn test_buffer_size_limit_exceeded(
         data in prop::collection::vec(any::<u8>(), 2000..3000)
@@ -32,7 +45,9 @@ proptest! {
         prop_assert!(result.is_err());
     }
 
-    /// 验证喂入数据处于 buffer 限制内时不会返回错误。
+    /// Feeding fewer bytes than the buffer limit does not produce an error.
+    ///
+    /// 喂入未超过缓冲区限制的数据不会返回错误。
     #[test]
     fn test_buffer_size_within_limit(
         data in prop::collection::vec(any::<u8>(), 0..500)
@@ -42,7 +57,9 @@ proptest! {
         prop_assert!(result.is_ok());
     }
 
-    /// 验证请求头数量超过限制时会返回错误。
+    /// Exceeding the header count limit returns a structured error.
+    ///
+    /// 超过头数量限制会返回结构化错误。
     #[test]
     fn test_header_count_limit_exceeded(
         header_count in 10usize..20usize
@@ -64,7 +81,9 @@ proptest! {
         prop_assert!(is_header_count_limit_error);
     }
 
-    /// 验证请求头数量处于限制内时可以成功解析。
+    /// A header count within the limit decodes successfully.
+    ///
+    /// 头数量在限制内时可成功解析。
     #[test]
     fn test_header_count_within_limit(
         header_count in 1usize..=5usize
@@ -82,7 +101,9 @@ proptest! {
         prop_assert!(result.is_some());
     }
 
-    /// 验证请求 body 大小超过限制时会返回错误。
+    /// Exceeding the body size limit returns a structured error.
+    ///
+    /// 超过 body 大小限制会返回结构化错误。
     #[test]
     fn test_body_size_limit_exceeded(
         body_size in 500usize..1000usize
@@ -103,7 +124,9 @@ proptest! {
         prop_assert!(is_body_size_limit_error);
     }
 
-    /// 验证请求 body 大小处于限制内时可以成功解析。
+    /// A body size within the limit decodes successfully and preserves the body bytes.
+    ///
+    /// body 大小在限制内时可成功解析并保留 body 字节。
     #[test]
     fn test_body_size_within_limit(
         body_size in 1usize..100usize
@@ -123,7 +146,9 @@ proptest! {
         prop_assert_eq!(request.body.len(), body_size);
     }
 
-    /// 验证请求头单行长度超过限制时会返回错误。
+    /// Exceeding the per-header line length limit returns a structured error.
+    ///
+    /// 超过单行头长度限制会返回结构化错误。
     #[test]
     fn test_header_line_size_limit_exceeded(
         value_len in 200usize..500usize
@@ -149,7 +174,9 @@ proptest! {
         prop_assert!(is_header_line_limit_error);
     }
 
-    /// 验证请求在限制范围内 encode/decode 可以稳定 roundtrip。
+    /// Request encode/decode round-trip stays within the configured limits.
+    ///
+    /// 请求编码/解码往返在配置限制内保持稳定。
     #[test]
     fn test_request_roundtrip_with_limits(
         method in "[A-Z]{3,10}",
@@ -179,7 +206,9 @@ proptest! {
         prop_assert!(decoded.is_some());
     }
 
-    /// 验证响应在限制范围内 encode/decode 可以稳定 roundtrip。
+    /// Response encode/decode round-trip stays within the configured limits.
+    ///
+    /// 响应编码/解码往返在配置限制内保持稳定。
     #[test]
     fn test_response_roundtrip_with_limits(
         status_code in prop::sample::select(vec![200u16, 301, 400, 404, 500]),
@@ -218,7 +247,9 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(50))]
 
-    /// 验证 interleaved 帧长度超过连接限制时会立即返回错误。
+    /// An interleaved frame larger than the connection limit is rejected immediately.
+    ///
+    /// 超过连接限制的交错帧会被立即拒绝。
     #[test]
     fn test_interleaved_frame_size_limit_exceeded(
         frame_size in 2000u16..10000u16
@@ -241,7 +272,9 @@ proptest! {
         prop_assert!(is_expected_error);
     }
 
-    /// 验证 interleaved 帧长度处于限制内时可被 core 正常接收。
+    /// An interleaved frame within the connection limit is accepted by the core.
+    ///
+    /// 在连接限制内的交错帧可被 core 正常接收。
     #[test]
     fn test_interleaved_frame_within_limit(
         frame_size in 12u16..1000u16

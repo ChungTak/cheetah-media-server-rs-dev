@@ -1,3 +1,21 @@
+//! Property-based tests for RTP, Ehome, and PS mux/demux behavior.
+//!
+//! Three surfaces are exercised:
+//! * RTP over TCP framing (RFC 4571-style length prefix) — arbitrary byte splits
+//!   must still reassemble the original `RtpPacket`.
+//! * The Ehome protocol decoder — arbitrary byte splits must not lose the SSRC,
+//!   codec, or media payload handshakes.
+//! * PS (Program Stream) mux/demux round-trip — arbitrary byte splits must still
+//!   recover the frame identity and payload for the last decoded frame.
+//!
+//! RTP、Ehome 与 PS 复用/解复用行为属性测试。
+//!
+//! 三个表面被测试：
+//! * RTP over TCP 成帧（类 RFC 4571 长度前缀）——任意字节切分仍须重组原始
+//!   `RtpPacket`。
+//! * Ehome 协议解码器——任意字节切分不能丢失 SSRC、codec 或媒体 payload 握手。
+//! * PS 复用/解复用往返——任意字节切分仍须恢复最后一帧的帧标识与 payload。
+
 use bytes::{Bytes, BytesMut};
 use cheetah_codec::{
     encode_tcp_rtp_frame, parse_tcp_rtp_frame, AVFrame, CodecId, EhomeDecoder, EhomeOutput,
@@ -6,17 +24,23 @@ use cheetah_codec::{
 };
 use proptest::prelude::*;
 
+/// Generate a valid RTP payload type (0-127).
+///
 /// 生成有效 RTP payload type（0-127）。
 fn valid_payload_type() -> impl Strategy<Value = u8> {
     0..128_u8
 }
 
-/// 生成 RTP payload。
+/// Generate an arbitrary RTP payload.
+///
+/// 生成任意 RTP payload。
 fn valid_payload() -> impl Strategy<Value = Vec<u8>> {
     prop::collection::vec(any::<u8>(), 0..1024)
 }
 
-/// 生成有效切分位置。
+/// Generate sorted, deduplicated split positions for arbitrary TCP framing tests.
+///
+/// 生成有序去重的切分位置，用于任意 TCP 成帧测试。
 fn split_positions(max_len: usize) -> impl Strategy<Value = Vec<usize>> {
     prop::collection::vec(1..max_len, 0..5).prop_map(move |mut v| {
         v.sort();
@@ -28,7 +52,9 @@ fn split_positions(max_len: usize) -> impl Strategy<Value = Vec<usize>> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
 
-    /// 测试 RTP over TCP frame 在任意字节切分下的接收与还原
+    /// RTP over TCP frame reassembly works under arbitrary byte splits.
+    ///
+    /// RTP over TCP 帧在任意字节切分下可正确还原。
     #[test]
     fn test_tcp_rtp_framing_arbitrary_splits(
         payload_type in valid_payload_type(),
@@ -54,7 +80,7 @@ proptest! {
         let tcp_frame = encode_tcp_rtp_frame(&packet);
         let frame_bytes = tcp_frame.to_vec();
 
-        // 根据随机切分点切成 chunks
+        // Split the wire bytes at the generated positions.
         let mut chunks = Vec::new();
         let mut last_idx = 0;
         for &idx in &splits {
@@ -65,7 +91,7 @@ proptest! {
         }
         chunks.push(&frame_bytes[last_idx..]);
 
-        // 模拟 TCP Stream 拼包与解析
+        // Simulate a TCP stream: accumulate chunks until a full frame parses.
         let mut buffer = Vec::new();
         let mut parsed_packet = None;
 
@@ -74,11 +100,11 @@ proptest! {
             if let Some((parsed, consumed)) = parse_tcp_rtp_frame(&buffer) {
                 parsed_packet = Some(parsed);
                 buffer.drain(0..consumed);
-                break; // 只要还原出这一个完整的包即可
+                break;
             }
         }
 
-        let decoded = parsed_packet.expect("Must decode the packet successfully after receiving all chunks");
+        let decoded = parsed_packet.expect("must decode the packet successfully after receiving all chunks");
         prop_assert_eq!(decoded.header.payload_type, packet.header.payload_type);
         prop_assert_eq!(decoded.header.sequence_number, packet.header.sequence_number);
         prop_assert_eq!(decoded.header.timestamp, packet.header.timestamp);
@@ -87,7 +113,9 @@ proptest! {
         prop_assert!(buffer.is_empty());
     }
 
-    /// 测试 EhomeDecoder 在任意字节切分下握手与媒体解析的正确性
+    /// EhomeDecoder correctly parses SSRC, codec, and media payload under arbitrary splits.
+    ///
+    /// EhomeDecoder 在任意字节切分下正确解析 SSRC、codec 与媒体 payload。
     #[test]
     fn test_ehome_decoder_arbitrary_splits(
         is_ehome2 in any::<bool>(),
@@ -100,7 +128,7 @@ proptest! {
         let ssrc_str = ssrc_num.to_string();
         let mut full_bytes = Vec::new();
 
-        // 1. 首包握手，如有必要加入 Ehome2 的 256 字节前缀
+        // Optional Ehome2 256-byte prefix.
         if is_ehome2 {
             let mut prefix = vec![0; 256];
             prefix[0] = 0x01;
@@ -109,16 +137,16 @@ proptest! {
             full_bytes.extend_from_slice(&prefix);
         }
 
-        // 2. Handshake SSRC 包
+        // Handshake SSRC packet.
         let mut ssrc_payload = vec![0; 32];
         let ssrc_bytes = ssrc_str.as_bytes();
         ssrc_payload[..ssrc_bytes.len()].copy_from_slice(ssrc_bytes);
-        // Ehome 封包：[0, 0, len_hi, len_lo] + payload
+        // Ehome framing: [0, 0, len_hi, len_lo] + payload
         let len = ssrc_payload.len() as u16;
         full_bytes.extend_from_slice(&[0, 0, (len >> 8) as u8, (len & 0xFF) as u8]);
         full_bytes.extend_from_slice(&ssrc_payload);
 
-        // 3. Handshake Codec 包
+        // Handshake codec packet.
         let mut codec_payload = vec![0; 32];
         codec_payload[12] = 2; // payload_type = ps
         let video_le = video_codec_val.to_le_bytes();
@@ -137,10 +165,9 @@ proptest! {
         full_bytes.extend_from_slice(&[0, 0, (len >> 8) as u8, (len & 0xFF) as u8]);
         full_bytes.extend_from_slice(&codec_payload);
 
-        // 4. Media Payload 包
+        // Media payload packet.
         if !media_payload.is_empty() {
-            // Ehome 媒体包结构包含 4 字节前缀头，然后 inner_payload.len() > 4，
-            // 且 media_payload = inner_payload[4..]
+            // Ehome media packet has a 4-byte prefix, then media_payload = inner_payload[4..]
             let mut inner_media = vec![0; 4];
             inner_media.extend_from_slice(&media_payload);
             let len = inner_media.len() as u16;
@@ -148,7 +175,7 @@ proptest! {
             full_bytes.extend_from_slice(&inner_media);
         }
 
-        // 按照 splits 随机切片
+        // Split the wire bytes at the generated positions.
         let mut chunks = Vec::new();
         let mut last_idx = 0;
         for &idx in &splits {
@@ -159,7 +186,7 @@ proptest! {
         }
         chunks.push(&full_bytes[last_idx..]);
 
-        // 逐个喂入 EhomeDecoder
+        // Feed each chunk into the Ehome decoder.
         let mut decoder = EhomeDecoder::new();
         let mut all_outputs = Vec::new();
         let mut incoming_buffer = BytesMut::new();
@@ -170,7 +197,7 @@ proptest! {
             all_outputs.extend(outs);
         }
 
-        // 检验解析到的 Ssrc
+        // Verify the SSRC handshake output.
         let ssrc_out = all_outputs.iter().find_map(|out| {
             if let EhomeOutput::HandshakeSsrc(s) = out {
                 Some(s)
@@ -180,7 +207,7 @@ proptest! {
         });
         prop_assert_eq!(ssrc_out, Some(&ssrc_str));
 
-        // 检验解析到的 Codec
+        // Verify the codec handshake output.
         let codec_out = all_outputs.iter().find_map(|out| {
             if let EhomeOutput::HandshakeCodec(info) = out {
                 Some(info)
@@ -207,7 +234,7 @@ proptest! {
         };
         prop_assert_eq!(info.audio_codec.as_deref(), Some(expected_audio));
 
-        // 检验 Media Payload
+        // Verify the media payload output.
         if !media_payload.is_empty() {
             let media_out = all_outputs.iter().find_map(|out| {
                 if let EhomeOutput::MediaPayload(p) = out {
@@ -221,7 +248,9 @@ proptest! {
         }
     }
 
-    /// 测试 PS Mux/Demux 在任意字节切片下的拼包与属性一致性
+    /// PS mux/demux round-trip holds under arbitrary byte splits.
+    ///
+    /// PS 复用/解复用往返在任意字节切分下保持属性一致。
     #[test]
     fn test_ps_mux_demux_roundtrip_arbitrary_splits(
         payload in valid_payload(),
@@ -248,10 +277,10 @@ proptest! {
             frame.flags.insert(cheetah_codec::FrameFlags::KEY);
         }
 
-        let muxed = muxer.mux(&frame).expect("Mux PS frame");
+        let muxed = muxer.mux(&frame).expect("mux PS frame");
         let muxed_bytes = muxed.to_vec();
 
-        // 随机切片
+        // Split the muxed bytes at the generated positions.
         let mut chunks = Vec::new();
         let mut last_idx = 0;
         for &idx in &splits {
@@ -262,7 +291,7 @@ proptest! {
         }
         chunks.push(&muxed_bytes[last_idx..]);
 
-        // 依次喂给 PsDemuxer
+        // Feed each chunk into the PS demuxer.
         let mut demuxer = PsDemuxer::new(PsDemuxerConfig {
             max_reassembly_bytes: 10 * 1024 * 1024,
             max_tracks: 8,
@@ -278,7 +307,7 @@ proptest! {
             }
         }
 
-        // 只要有一帧解码出来，我们就验证其基本属性与 payload
+        // If any frame was decoded, its basic properties and payload must match.
         if !decoded_frames.is_empty() {
             let last_decoded = decoded_frames.last().unwrap();
             prop_assert_eq!(last_decoded.track_id, frame.track_id);

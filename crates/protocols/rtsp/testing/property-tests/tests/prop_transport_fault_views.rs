@@ -1,3 +1,14 @@
+//! Property-based tests for transport fault-view generators and related helpers.
+//!
+//! These tests verify `RtspTransport` parse/display round-trip over multiple
+//! candidates, HTTP-tunnel base64 split reassembly, and RTP sequence reordering
+//! over the UDP fault-view generator.
+//!
+//! 传输层故障视图生成器与相关 helper 的属性测试。
+//!
+//! 这些测试验证多候选 `RtspTransport` 解析/显示往返、HTTP 隧道 base64 分片
+//! 重组以及基于 UDP 故障视图生成器的 RTP 序列重排。
+
 #[allow(dead_code)]
 #[path = "support/rtsp_capture_fixture.rs"]
 mod rtsp_capture_fixture;
@@ -8,6 +19,9 @@ use rtsp_capture_fixture::{
     build_transport_fault_views, build_udp_rtp_fault_views, CaptureRecord, CaptureRecordKind,
 };
 
+/// Generate a valid transport protocol string.
+///
+/// 生成有效 transport 协议字符串。
 fn valid_transport_protocol() -> impl Strategy<Value = String> {
     prop_oneof![
         Just("RTP/AVP".to_string()),
@@ -16,6 +30,9 @@ fn valid_transport_protocol() -> impl Strategy<Value = String> {
     ]
 }
 
+/// Generate a valid `RtspTransport` structure.
+///
+/// 生成有效 `RtspTransport` 结构。
 fn valid_transport() -> impl Strategy<Value = RtspTransport> {
     (
         valid_transport_protocol(),
@@ -66,6 +83,9 @@ fn valid_transport() -> impl Strategy<Value = RtspTransport> {
         )
 }
 
+/// Find a fault view by name and panic if it is missing.
+///
+/// 按名称查找故障视图，缺失时 panic。
 fn find_view<'a>(views: &'a [rtsp_capture_fixture::NamedPayloadView], name: &str) -> &'a [Vec<u8>] {
     views
         .iter()
@@ -74,6 +94,9 @@ fn find_view<'a>(views: &'a [rtsp_capture_fixture::NamedPayloadView], name: &str
         .unwrap_or_else(|| panic!("missing view {name}"))
 }
 
+/// Decode a standard base64 byte stream (no line breaks).
+///
+/// 解码标准 base64 字节流（无换行）。
 fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     fn val(byte: u8) -> Option<u8> {
         match byte {
@@ -134,6 +157,9 @@ fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Build a minimal 12-byte RTP packet with 3 bytes of payload.
+///
+/// 构造一个带 3 字节 payload 的最小 12 字节 RTP 包。
 fn build_rtp_packet(seq: u16) -> Vec<u8> {
     let mut packet = vec![0u8; 12 + 3];
     packet[0] = 0x80;
@@ -148,6 +174,9 @@ fn build_rtp_packet(seq: u16) -> Vec<u8> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
+    /// Parse/display round-trip across a comma-separated list of three transports.
+    ///
+    /// 三个逗号分隔 transport 的解析/显示往返。
     #[test]
     fn prop_transport_parse_roundtrip_with_candidates(
         t1 in valid_transport(),
@@ -180,6 +209,9 @@ proptest! {
         }
     }
 
+    /// HTTP tunnel base64 payload split reassembles the original TCP bytes.
+    ///
+    /// HTTP 隧道 base64 payload 分片后能重组为原始 TCP 字节。
     #[test]
     fn prop_http_tunnel_base64_split_reassembles(
         suffix in prop::string::string_regex("[A-Za-z0-9_/]{4,24}").expect("suffix regex"),
@@ -190,14 +222,14 @@ proptest! {
             flags: 0x01,
             flow_id: 1,
             delta_us: 0,
-            payload: format!("OPTIONS rtsp://127.0.0.1/live/{suffix} RTSP/1.0\\r\\nCSeq: 1\\r\\n\\r\\n").into_bytes(),
+            payload: format!("OPTIONS rtsp://127.0.0.1/live/{suffix} RTSP/1.0\r\nCSeq: 1\r\n\r\n").into_bytes(),
         });
         records.push(CaptureRecord {
             kind: CaptureRecordKind::RtspTcpS2c,
             flags: 0x01,
             flow_id: 1,
             delta_us: 10,
-            payload: b"RTSP/1.0 200 OK\\r\\nCSeq: 1\\r\\n\\r\\n".to_vec(),
+            payload: b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n".to_vec(),
         });
 
         let views = build_transport_fault_views(&records, 2, 2, 2)
@@ -221,6 +253,9 @@ proptest! {
         prop_assert!(base64_decode(&invalid[0]).is_none());
     }
 
+    /// RTP sequence reordering preserves the original packet multiset.
+    ///
+    /// RTP 序列重排保持原始包的多重集合。
     #[test]
     fn prop_rtp_reorder_sequence_wrap_preserves_packet_multiset(start in 65534u16..=65535u16) {
         let s0 = start;

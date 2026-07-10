@@ -1,8 +1,12 @@
 //! Property and regression tests for MP4 VOD core/codec.
 //!
-//! These tests are not part of the runtime crates; they live here so the
-//! `cheetah-mp4-core` and `cheetah-codec::mp4` crates remain free of
-//! property-test dependencies.
+//! These tests live outside the runtime crates so that `cheetah-mp4-core` and
+//! `cheetah-codec::mp4` remain free of property-test dependencies.
+//!
+//! MP4 VOD core/codec 的属性与回归测试。
+//!
+//! 这些测试位于运行时 crate 之外，以便 `cheetah-mp4-core` 与 `cheetah-codec::mp4`
+//! 不依赖属性测试库。
 
 #[cfg(test)]
 mod tests {
@@ -13,6 +17,9 @@ mod tests {
     };
     use cheetah_mp4_core::{VodControlCommand, VodCoreInput, VodOutput, VodSession};
 
+    /// Build a single H.264 video track fixture with AVCC extradata.
+    ///
+    /// 构造带 AVCC extradata 的单 H.264 视频轨道 fixture。
     fn h264_track() -> TrackInfo {
         let mut t = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90_000);
         t.width = Some(640);
@@ -28,6 +35,9 @@ mod tests {
         t
     }
 
+    /// Build a single AAC audio track fixture with AudioSpecificConfig.
+    ///
+    /// 构造带 AudioSpecificConfig 的单 AAC 音频轨道 fixture。
     fn aac_track() -> TrackInfo {
         let mut t = TrackInfo::new(TrackId(2), MediaKind::Audio, CodecId::AAC, 44_100);
         t.sample_rate = Some(44_100);
@@ -38,6 +48,9 @@ mod tests {
         t
     }
 
+    /// Build a multi-track MP4 file with a fixed number of video and audio samples.
+    ///
+    /// 构造包含固定数量视频与音频样本的多轨道 MP4 文件。
     fn build_multi_track_mp4(num_video: u32, num_audio: u32) -> Bytes {
         let mut w =
             Mp4Writer::new(Mp4WriterConfig::default(), &[h264_track(), aac_track()]).unwrap();
@@ -53,6 +66,13 @@ mod tests {
         buf
     }
 
+    /// Drive an `Mp4Reader` to EOF by feeding `NeedBytes` requests.
+    ///
+    /// Returns the emitted track metadata and the total frame count.
+    ///
+    /// 通过满足 `NeedBytes` 请求将 `Mp4Reader` 驱动到 EOF。
+    ///
+    /// 返回发出的轨道元数据与总帧数。
     fn drive_reader_to_eof(buf: &[u8]) -> (Vec<TrackInfo>, usize) {
         let mut reader = Mp4Reader::new(Mp4ReaderConfig::default());
         reader.set_file_size(buf.len() as u64);
@@ -77,6 +97,9 @@ mod tests {
         (tracks, frames)
     }
 
+    /// Multi-track writer/reader round-trip preserves track count and frame counts.
+    ///
+    /// 多轨道写/读往返保持轨道数与帧数。
     #[test]
     fn writer_reader_roundtrip_multi_track_preserves_frame_counts() {
         let buf = build_multi_track_mp4(10, 20);
@@ -85,6 +108,14 @@ mod tests {
         assert_eq!(frames, 30);
     }
 
+    /// Seeking during a VOD session keeps the video timeline monotonic.
+    ///
+    /// The test drives the session through `Start`, then triggers a `Seek` after
+    /// two frames and verifies that video timestamps do not regress.
+    ///
+    /// VOD 会话中的跳转保持视频时间线单调。
+    ///
+    /// 测试通过 `Start` 驱动会话，在两帧后触发 `Seek` 并验证视频时间戳不回退。
     #[test]
     fn vod_session_seek_keeps_timeline_monotonic() {
         let buf = build_multi_track_mp4(5, 5);
@@ -139,6 +170,9 @@ mod tests {
         }
     }
 
+    /// Track metadata is emitted exactly once at the start of reading.
+    ///
+    /// 轨道元数据在读取开始时只发出一次。
     #[test]
     fn reader_handles_repeated_track_emit_only_once() {
         let buf = build_multi_track_mp4(3, 3);
@@ -147,6 +181,9 @@ mod tests {
         assert_eq!(tracks.len(), 2);
     }
 
+    /// B-frames with non-zero composition offsets emit a `ctts` box.
+    ///
+    /// B 帧（非零合成偏移）会写出 `cttts` 盒子。
     #[test]
     fn writer_with_b_frames_emits_ctts() {
         let mut w = Mp4Writer::new(Mp4WriterConfig::default(), &[h264_track()]).unwrap();
@@ -158,6 +195,9 @@ mod tests {
         assert!(buf.windows(4).any(|w| w == b"ctts"));
     }
 
+    /// A stream without B-frames omits the `ctts` box.
+    ///
+    /// 没有 B 帧的流不输出 `ctts` 盒子。
     #[test]
     fn writer_omits_ctts_when_no_b_frames() {
         let mut w = Mp4Writer::new(Mp4WriterConfig::default(), &[h264_track()]).unwrap();
@@ -169,6 +209,9 @@ mod tests {
         assert!(!buf.windows(4).any(|w| w == b"ctts"));
     }
 
+    /// Malformed zero-size boxes are rejected safely and do not loop forever.
+    ///
+    /// 畸形零长度 box 被安全拒绝，不会无限循环。
     #[test]
     fn malformed_size_box_rejected_safely() {
         let buf = b"\x00\x00\x00\x00xxxx\x00\x00\x00\x00";

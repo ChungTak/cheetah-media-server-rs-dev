@@ -2,8 +2,15 @@
 //!
 //! Two surfaces are exercised:
 //! * `cheetah-codec` MPEG-TS mux/demux (the shared container the TS protocol
-//!   relies on) — packet framing invariants and mux→demux roundtrips.
+//!   relies on) — packet framing invariants and mux→demux round-trips.
 //! * `cheetah-ts-core` request-target / WebSocket-accept parsing.
+//!
+//! TS 协议属性测试。
+//!
+//! 两个表面被测试：
+//! * `cheetah-codec` 的 MPEG-TS 复用/解复用（TS 协议依赖的共享容器）——包成帧
+//!   不变量与复用→解复用往返。
+//! * `cheetah-ts-core` 请求目标 / WebSocket 接受键解析。
 
 use bytes::Bytes;
 use cheetah_codec::{
@@ -14,21 +21,39 @@ use cheetah_ts_core::request::TsCoreError;
 use cheetah_ts_core::{parse_ts_request_target, websocket_accept_key};
 use proptest::prelude::*;
 
+/// MPEG-TS packet size in bytes.
+///
+/// MPEG-TS 包字节大小。
 const TS_PACKET_SIZE: usize = 188;
+
+/// MPEG-TS sync byte.
+///
+/// MPEG-TS 同步字节。
 const TS_SYNC_BYTE: u8 = 0x47;
 
+/// Build a single H.264 video track fixture.
+///
+/// 构造单 H.264 视频轨道 fixture。
 fn h264_track() -> TrackInfo {
     TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90_000)
 }
 
-/// Annex-B H264 access unit with a leading start code so the muxer/demuxer
-/// treat it as a complete NAL. `nal_type` 5 = IDR (keyframe), 1 = non-IDR.
+/// Build an Annex-B H.264 access unit with a leading start code.
+///
+/// `nal_type` 5 means IDR (keyframe), 1 means non-IDR.
+///
+/// 构造带前导起始码的 Annex-B H.264 访问单元。
+///
+/// `nal_type` 5 为 IDR（关键帧），1 为非 IDR。
 fn annexb_au(nal_type: u8, extra_len: usize) -> Bytes {
     let mut buf = vec![0x00, 0x00, 0x00, 0x01, nal_type];
     buf.extend(std::iter::repeat_n(0xAA, extra_len));
     Bytes::from(buf)
 }
 
+/// Build an H.264 video frame with the given timestamps and payload.
+///
+/// 用给定时间戳与 payload 构造 H.264 视频帧。
 fn video_frame(dts_us: i64, pts_us: i64, keyframe: bool, payload: Bytes) -> AVFrame {
     let mut frame = AVFrame::new(
         TrackId(1),
@@ -46,6 +71,9 @@ fn video_frame(dts_us: i64, pts_us: i64, keyframe: bool, payload: Bytes) -> AVFr
     frame
 }
 
+/// Mux a sequence of frames into a contiguous TS byte stream.
+///
+/// 将一序列帧复用为连续的 TS 字节流。
 fn mux_stream(frames: &[AVFrame]) -> Vec<u8> {
     let tracks = vec![h264_track()];
     let mut muxer = MpegTsMuxer::new(&MpegTsMuxerConfig::default(), &tracks);
@@ -68,6 +96,8 @@ fn mux_stream(frames: &[AVFrame]) -> Vec<u8> {
 proptest! {
     /// Every byte produced by the muxer is 188-byte aligned and each packet
     /// begins with the TS sync byte 0x47.
+    ///
+    /// 复用器输出的每个字节都按 188 字节对齐，每个包以 TS 同步字节 0x47 开头。
     #[test]
     fn prop_ts_packets_are_aligned_and_synced(
         frame_count in 1usize..8,
@@ -95,6 +125,8 @@ proptest! {
 
     /// Mux then demux yields at least one track and one frame regardless of the
     /// payload size / frame count, and the demuxer never panics.
+    ///
+    /// 复用再解复用至少产生一个轨道与一帧，且不 panic。
     #[test]
     fn prop_mux_demux_roundtrip_recovers_track_and_frames(
         frame_count in 1usize..8,
@@ -133,6 +165,9 @@ proptest! {
 
     /// Arbitrary chunk splitting of the demuxer input recovers the same frame
     /// count as a single push (the driver may deliver bytes in any framing).
+    ///
+    /// 解复用器输入的任意分块切分恢复的单次推送帧数相同（驱动可能以任意成帧
+    /// 交付字节）。
     #[test]
     fn prop_demux_chunk_split_invariant(
         split_points in proptest::collection::vec(1usize..200, 1..12),
@@ -182,8 +217,10 @@ proptest! {
         prop_assert_eq!(single_frames, chunked_frames);
     }
 
-    /// A well-formed `/{ns}/{stream}.ts` (and `.live.ts`) target parses back to
+    /// A well-formed `/{ns}/{stream}.ts` (or `.live.ts`) target parses back to
     /// the original namespace and stream path.
+    ///
+    /// 格式正确的 `/{ns}/{stream}.ts`（或 `.live.ts`）目标解析回原始命名空间与流路径。
     #[test]
     fn prop_request_target_roundtrip(
         namespace in "[a-zA-Z0-9_-]{1,20}",
@@ -198,6 +235,8 @@ proptest! {
     }
 
     /// A trailing query string never changes the parsed stream key.
+    ///
+    /// 尾部查询字符串不会改变解析出的流 key。
     #[test]
     fn prop_request_target_ignores_query(
         namespace in "[a-zA-Z0-9_-]{1,20}",
@@ -211,7 +250,9 @@ proptest! {
         prop_assert_eq!(plain.stream_key, with_query.stream_key);
     }
 
-    /// Path traversal / percent-escapes are always rejected as InvalidPath.
+    /// Path traversal / percent-escapes are always rejected as `InvalidPath`.
+    ///
+    /// 路径穿越 / 百分号转义始终作为 `InvalidPath` 被拒绝。
     #[test]
     fn prop_request_target_rejects_traversal(
         prefix in "[a-zA-Z0-9/_-]{0,10}",
@@ -227,6 +268,9 @@ proptest! {
 
     /// The WebSocket accept key is deterministic and a fixed-length base64 SHA-1
     /// digest (28 chars ending with `=`) for any non-empty client key.
+    ///
+    /// WebSocket 接受键对任意非空客户端密钥都是确定性的、固定长度 28 字符、以
+    /// `=` 结尾的 base64 SHA-1 摘要。
     #[test]
     fn prop_websocket_accept_key_deterministic(
         key in "[A-Za-z0-9+/]{1,40}",
