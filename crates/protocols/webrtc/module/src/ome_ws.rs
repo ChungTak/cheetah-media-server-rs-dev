@@ -17,6 +17,9 @@ use thiserror::Error;
 
 use crate::ome_signaling::{parse_ome_ws_message, OmeWsDecoderConfig, OmeWsMessage};
 
+/// Error type for the OME-compatible WebSocket transport adapter.
+///
+/// OME 兼容 WebSocket 传输适配器的错误类型。
 #[derive(Debug, Error)]
 pub enum WebSocketOmeTransportError {
     #[error("transport closed")]
@@ -27,6 +30,9 @@ pub enum WebSocketOmeTransportError {
     Decode(String),
 }
 
+/// Configuration for the OME WebSocket signaling server.
+///
+/// OME WebSocket 信令服务器配置。
 #[derive(Debug, Clone)]
 pub struct OmeWsServerConfig {
     pub max_connections: usize,
@@ -44,18 +50,27 @@ impl Default for OmeWsServerConfig {
     }
 }
 
+/// Metadata for an accepted inbound OME WebSocket connection.
+///
+/// 已接受的 OME WebSocket 入站连接元数据。
 #[derive(Debug, Clone)]
 pub struct OmeWsInboundConnection {
     pub remote_addr: std::net::SocketAddr,
     pub path_and_query: String,
 }
 
+/// Handler signature for an accepted OME WebSocket connection.
+///
+/// 已接受的 OME WebSocket 连接的处理函数签名。
 pub type OmeWsConnectionHandler = Arc<
     dyn Fn(OmeWsInboundConnection, WebSocketOmeTransport) -> futures::future::BoxFuture<'static, ()>
         + Send
         + Sync,
 >;
 
+/// Error type for binding or accepting the OME WebSocket server.
+///
+/// OME WebSocket 服务器绑定或接受的错误类型。
 #[derive(Debug, Error)]
 pub enum OmeWsServerError {
     #[error("bind failed: {0}")]
@@ -64,7 +79,9 @@ pub enum OmeWsServerError {
     Accept(String),
 }
 
-/// OME signaling transport over a runtime-neutral [`WsConnection`].
+/// OME signaling transport wrapping a runtime-neutral WebSocket connection.
+///
+/// OME 信令传输，封装了与 runtime 无关的 WebSocket 连接。
 pub struct WebSocketOmeTransport {
     connection: Box<dyn WsConnection>,
     decoder: OmeWsDecoderConfig,
@@ -72,9 +89,7 @@ pub struct WebSocketOmeTransport {
 
 /// Run the OME WebSocket signaling server on a driver-bound listener.
 ///
-/// Wraps each accepted [`WsConnection`] into a [`WebSocketOmeTransport`]
-/// and forwards it to `handler`. Returns when the listener errors or
-/// `cancel` fires.
+/// 在 driver 绑定的监听器上运行 OME WebSocket 信令服务器。
 pub async fn run_ome_ws_server(
     listener: WsServerListener,
     config: OmeWsServerConfig,
@@ -110,7 +125,9 @@ pub async fn run_ome_ws_server(
 }
 
 impl WebSocketOmeTransport {
-    /// Wrap a neutral [`WsConnection`] with OME signaling codec.
+    /// Wrap a runtime-neutral WsConnection with the OME message decoder.
+    ///
+    /// 用 OME 消息解码器封装与 runtime 无关的 WsConnection。
     pub fn new(connection: Box<dyn WsConnection>, decoder: OmeWsDecoderConfig) -> Self {
         Self {
             connection,
@@ -118,6 +135,9 @@ impl WebSocketOmeTransport {
         }
     }
 
+    /// Receive and decode the next OME message, or None when the connection closes.
+    ///
+    /// 接收并解码下一条 OME 消息，连接关闭时返回 None。
     pub async fn recv_message(&self) -> Result<Option<OmeWsMessage>, WebSocketOmeTransportError> {
         match self.connection.recv().await {
             Ok(WsFrame::Text(text)) => {
@@ -133,6 +153,9 @@ impl WebSocketOmeTransport {
         }
     }
 
+    /// Send a text frame over the WebSocket.
+    ///
+    /// 通过 WebSocket 发送文本帧。
     pub async fn send_text(&self, text: String) -> Result<(), WebSocketOmeTransportError> {
         self.connection
             .send_text(text)
@@ -143,6 +166,9 @@ impl WebSocketOmeTransport {
             })
     }
 
+    /// Close the underlying WebSocket connection.
+    ///
+    /// 关闭底层 WebSocket 连接。
     pub async fn close(&self) {
         self.connection.close().await;
     }

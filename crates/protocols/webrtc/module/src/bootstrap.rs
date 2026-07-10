@@ -28,11 +28,10 @@ use cheetah_codec::{
 use tracing::{debug, warn};
 
 /// Codec bootstrap state for a single WebRTC play subscriber.
+/// Delegates parameter-set caching and prepend logic to cheetah-codec, tracks whether the first decodable keyframe has been sent, and stays orthogonal to the H264 B-frame filter.
 ///
-/// Wraps `cheetah_codec::ParameterSetCache` and tracks whether the
-/// subscriber has received its first decodable keyframe. The module
-/// does not maintain any private parameter set storage — all caching
-/// is delegated to the codec layer.
+/// 单个 WebRTC 播放订阅者的编解码器引导状态。
+/// 将参数集缓存与前置逻辑委托给 cheetah-codec，跟踪是否已发送首个可解码关键帧，并与 H264 B 帧过滤器保持正交。
 #[derive(Debug, Default)]
 pub struct PlayBootstrapView {
     /// Shared parameter set cache from `cheetah-codec`. This is the
@@ -46,6 +45,10 @@ pub struct PlayBootstrapView {
 }
 
 /// Result of processing a frame through the bootstrap view.
+/// PassThrough means the frame is unchanged, Prepended means parameter sets were prepended to a keyframe, and KeyframeMissingParameterSets means a keyframe arrived without cached parameter sets.
+///
+/// 帧经过引导视图处理后的结果。
+/// PassThrough 表示帧未修改，Prepended 表示已为关键帧前置参数集，KeyframeMissingParameterSets 表示关键帧到达时缓存中尚无参数集。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BootstrapAction {
     /// Frame should be sent as-is (no modification needed).
@@ -77,18 +80,10 @@ impl PlayBootstrapView {
     }
 
     /// Process a frame through the bootstrap view.
+    /// Discovers parameter sets from Annex-B or extradata, prepends cached parameter sets to H264/H265/H266 keyframes, and updates the first-decodable flag.
     ///
-    /// This method:
-    /// 1. Discovers parameter sets from the frame payload and updates
-    ///    the cache (delegated to `cheetah-codec`).
-    /// 2. For keyframes of H264/H265/H266 codecs, prepends cached
-    ///    parameter sets if available.
-    /// 3. Returns the appropriate action for the caller.
-    ///
-    /// The B-frame filter is orthogonal to this logic: B-frame
-    /// filtering is a frame-level admission decision (drop or keep)
-    /// that happens independently. This method only concerns itself
-    /// with ensuring keyframes carry parameter sets.
+    /// 处理经过引导视图的一帧。
+    /// 从 Annex-B 或 extradata 发现参数集，为 H264/H265/H266 关键帧前置缓存的参数集，并更新首个可解码标志。
     pub fn process_frame(&mut self, frame: &AVFrame) -> BootstrapAction {
         let codec = frame.codec;
 
@@ -166,34 +161,28 @@ impl PlayBootstrapView {
         }
     }
 
-    /// Seed the cache from codec extradata (e.g., from TrackInfo).
+    /// Seed the parameter-set cache from codec extradata when the subscriber first connects.
+    /// This pre-populates the cache so the first keyframe can be bootstrapped immediately.
     ///
-    /// Called when the subscriber first connects and track info is
-    /// available from the engine. This pre-populates the cache so
-    /// the first keyframe can be bootstrapped immediately.
+    /// 订阅者首次连接时从编解码器 extradata 为参数集缓存播种。
+    /// 这会预填充缓存，使首个关键帧可立即被引导。
     pub fn seed_from_extradata(&mut self, extradata: &cheetah_codec::CodecExtradata) {
         self.cache.update_from_extradata(extradata);
     }
 
-    /// Check if the cache has the required parameter sets for a codec.
+    /// Check whether the cache has the required parameter sets for a given codec.
+    ///
+    /// 检查缓存是否包含指定编解码器所需的参数集。
     pub fn has_required_sets(&self, codec: CodecId) -> bool {
         self.cache.has_required_sets(codec)
     }
 }
 
-/// Determines whether a frame should be filtered by the H264 B-frame
-/// filter.
+/// Determine whether a frame should be dropped by the H264 B-frame filter.
+/// This is a frame-level admission decision that is independent of parameter-set prepend logic.
 ///
-/// This is intentionally separate from parameter set prepend logic.
-/// The B-frame filter is a frame-level admission decision: frames
-/// with `FrameFlags::B_FRAME` set are dropped to avoid decode
-/// glitches on WebRTC clients that don't support reordering.
-///
-/// Parameter set prepend operates on admitted frames only, so the two
-/// features compose cleanly:
-///   1. B-frame filter decides: admit or drop
-///   2. Bootstrap view processes admitted frames: discover params,
-///      prepend to keyframes
+/// 判断一帧是否应被 H264 B 帧过滤器丢弃。
+/// 这是与参数集前置逻辑无关的帧级准入决策。
 pub fn should_filter_bframe(frame: &AVFrame, filter_enabled: bool) -> bool {
     if !filter_enabled {
         return false;

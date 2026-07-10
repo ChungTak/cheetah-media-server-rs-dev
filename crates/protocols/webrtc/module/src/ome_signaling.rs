@@ -22,12 +22,18 @@ pub const OME_WS_DEFAULT_MAX_SDP_BYTES: usize = 64 * 1024;
 pub const OME_WS_DEFAULT_MAX_CANDIDATE_BYTES: usize = 1024;
 pub const OME_WS_DEFAULT_MAX_FIELD_BYTES: usize = 128;
 
+/// ICE servers rendered in both standard and legacy OME JSON shapes.
+///
+/// 以标准与遗留 OME JSON 形式渲染的 ICE 服务器。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OmeIceServersJson {
     pub standard: Value,
     pub legacy: Value,
 }
 
+/// Limits for OME WebSocket message parsing to prevent oversized payloads.
+///
+/// 防止超大 payload 的 OME WebSocket 消息解析限制。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OmeWsDecoderConfig {
     pub max_message_bytes: usize,
@@ -47,6 +53,9 @@ impl Default for OmeWsDecoderConfig {
     }
 }
 
+/// Error taxonomy for parsing OME WebSocket messages.
+///
+/// 解析 OME WebSocket 消息的错误分类。
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum OmeWsMessageError {
     #[error("payload exceeds {limit} bytes")]
@@ -69,6 +78,9 @@ pub enum OmeWsMessageError {
     InvalidSessionId { expected: u64, actual: u64 },
 }
 
+/// A single ICE candidate carried inside an OME candidate message.
+///
+/// OME candidate 消息中携带的单个 ICE candidate。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OmeWsCandidate {
     pub candidate: String,
@@ -77,6 +89,9 @@ pub struct OmeWsCandidate {
     pub username_fragment: Option<String>,
 }
 
+/// OME WebSocket message types: RequestOffer, Answer, Candidate, and Stop.
+///
+/// OME WebSocket 消息类型：RequestOffer、Answer、Candidate 与 Stop。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OmeWsMessage {
     RequestOffer {
@@ -99,6 +114,9 @@ pub enum OmeWsMessage {
     },
 }
 
+/// Action derived from an OME message for the driver: RequestOffer, ApplyAnswer, AddRemoteCandidates, or Stop.
+///
+/// 从 OME 消息派生出的驱动动作：RequestOffer、ApplyAnswer、AddRemoteCandidates 或 Stop。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OmeWsAction {
     RequestOffer,
@@ -147,6 +165,9 @@ impl OmeWsMessage {
     }
 }
 
+/// Offer response rendered to the OME client, including SDP, candidates, and optional ICE servers.
+///
+/// 渲染给 OME 客户端的 offer 响应，包含 SDP、candidate 与可选 ICE 服务器。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OmeWsOfferResponse {
     pub id: u64,
@@ -156,6 +177,11 @@ pub struct OmeWsOfferResponse {
     pub ice_servers: Option<OmeIceServersJson>,
 }
 
+/// Plan for generating a local offer for an OME request.
+/// Maps direction and transport to session role, offer spec, and candidate policy.
+///
+/// 为 OME 请求生成本地 offer 的计划。
+/// 将方向与传输映射到会话角色、offer 规范与 candidate 策略。
 #[derive(Debug, Clone)]
 pub struct OmeWsRequestOfferPlan {
     pub session_id: WebRtcSessionId,
@@ -167,6 +193,9 @@ pub struct OmeWsRequestOfferPlan {
     pub ice_servers: Option<OmeIceServersJson>,
 }
 
+/// Input bundle for the request-offer handler.
+///
+/// 请求 offer 处理器的输入绑定。
 pub struct OmeWsRequestOfferInput<'a> {
     pub target: &'a OmeWebRtcRequest,
     pub session_id: WebRtcSessionId,
@@ -177,16 +206,25 @@ pub struct OmeWsRequestOfferInput<'a> {
     pub offer_timeout: Duration,
 }
 
+/// Outcome of a request-offer handler: a registry session and the JSON response.
+///
+/// 请求 offer 处理器的结果：注册表会话与 JSON 响应。
 pub struct OmeWsRequestOfferOutcome {
     pub session: crate::session::WebRtcModuleSession,
     pub response_json: String,
 }
 
+/// Outcome of handling an established-phase message: closed indicates the session should stop.
+///
+/// 处理 established 阶段消息的结果：closed 表示会话应停止。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OmeWsEstablishedOutcome {
     pub closed: bool,
 }
 
+/// Error type for OME session-level failures.
+///
+/// OME 会话级失败的错误类型。
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum OmeWsSessionError {
     #[error("driver offer failed: {0}")]
@@ -195,6 +233,9 @@ pub enum OmeWsSessionError {
     Message(#[from] OmeWsMessageError),
 }
 
+/// Trait abstraction for sending WebRtcDriverCommand values during OME signaling.
+///
+/// 在 OME 信令过程中发送 WebRtcDriverCommand 的 trait 抽象。
 #[async_trait]
 pub trait OmeWsDriverSink: Send + Sync {
     async fn send_command(&self, command: WebRtcDriverCommand);
@@ -207,6 +248,9 @@ impl OmeWsDriverSink for std::sync::Arc<cheetah_webrtc_driver_tokio::WebRtcDrive
     }
 }
 
+/// Trait abstraction for waiting for the local offer SDP.
+///
+/// 等待本地 offer SDP 的 trait 抽象。
 pub trait OmeWsOfferWaiter: Send + Sync {
     fn wait_for_offer(
         &self,
@@ -216,6 +260,9 @@ pub trait OmeWsOfferWaiter: Send + Sync {
 }
 
 impl OmeWsRequestOfferPlan {
+    /// Build the WebRtcDriverCommand::CreateOffer from the plan.
+    ///
+    /// 根据计划构建 WebRtcDriverCommand::CreateOffer。
     pub fn create_offer_command(&self) -> WebRtcDriverCommand {
         WebRtcDriverCommand::CreateOffer {
             session_id: self.session_id,
@@ -225,6 +272,9 @@ impl OmeWsRequestOfferPlan {
         }
     }
 
+    /// Build a WebRtcModuleSession from the plan for insertion into the session registry.
+    ///
+    /// 根据计划构建 WebRtcModuleSession 以插入会话注册表。
     pub fn registry_session(&self) -> crate::session::WebRtcModuleSession {
         crate::session::WebRtcModuleSession::new(
             self.session_id,
@@ -235,6 +285,11 @@ impl OmeWsRequestOfferPlan {
     }
 }
 
+/// Handle an OME request_offer message.
+/// Subscribes for the offer before sending CreateOffer to avoid dropping a fast-path offer, then renders the offer response.
+///
+/// 处理 OME request_offer 消息。
+/// 在发送 CreateOffer 前订阅 offer，避免丢弃快速路径生成的 offer，然后渲染 offer 响应。
 pub async fn handle_request_offer<D, W>(
     input: OmeWsRequestOfferInput<'_>,
     driver: &D,
@@ -270,6 +325,11 @@ where
     })
 }
 
+/// Handle an established-phase OME message.
+/// Validates the signaling id and dispatches Answer, Candidate, and Stop messages to the driver.
+///
+/// 处理 established 阶段的 OME 消息。
+/// 验证信令 id 并将 Answer、Candidate 与 Stop 消息分派给驱动。
 pub async fn handle_established_message<D>(
     session_id: WebRtcSessionId,
     expected_signaling_id: u64,
@@ -327,10 +387,16 @@ where
     }
 }
 
+/// Return true when ICE servers should be advertised for the transport and tcp_relay_force flag.
+///
+/// 当应针对传输模式与 tcp_relay_force 标志播发 ICE 服务器时返回 true。
 pub fn should_include_ice_servers(transport: OmeTransportMode, tcp_relay_force: bool) -> bool {
     tcp_relay_force || matches!(transport, OmeTransportMode::Relay | OmeTransportMode::All)
 }
 
+/// Map an OME transport mode to a driver CandidateTransportPolicy.
+///
+/// 将 OME 传输模式映射到驱动 CandidateTransportPolicy。
 pub fn ome_transport_to_candidate_policy(
     transport: OmeTransportMode,
     tcp_relay_force: bool,
@@ -347,6 +413,11 @@ pub fn ome_transport_to_candidate_policy(
     }
 }
 
+/// Plan a request-offer from the parsed OME target.
+/// Selects publisher/player role, offer direction, candidate policy, and ICE server advertisement.
+///
+/// 根据解析的 OME 目标规划 request-offer。
+/// 选择发布者/播放者角色、offer 方向、candidate 策略与 ICE 服务器播发。
 pub fn plan_request_offer(
     target: &OmeWebRtcRequest,
     session_id: WebRtcSessionId,
@@ -381,6 +452,9 @@ pub fn plan_request_offer(
     }
 }
 
+/// Parse a JSON text frame into an OmeWsMessage, enforcing size limits and required fields.
+///
+/// 将 JSON 文本帧解析为 OmeWsMessage，强制执行大小限制与必填字段。
 pub fn parse_ome_ws_message(
     raw: &str,
     config: OmeWsDecoderConfig,
@@ -419,6 +493,9 @@ pub fn parse_ome_ws_message(
     }
 }
 
+/// Render an OmeWsOfferResponse as a JSON offer command.
+///
+/// 将 OmeWsOfferResponse 渲染为 JSON offer 命令。
 pub fn render_offer_response(response: &OmeWsOfferResponse) -> Result<String, OmeWsMessageError> {
     let mut object = Map::new();
     object.insert("command".into(), Value::String("offer".into()));
@@ -451,6 +528,9 @@ pub fn render_offer_response(response: &OmeWsOfferResponse) -> Result<String, Om
         .map_err(|err| OmeWsMessageError::InvalidJson(err.to_string()))
 }
 
+/// Render an OME error response JSON with command, id, peer_id, and reason.
+///
+/// 渲染 OME 错误响应 JSON，包含 command、id、peer_id 与 reason。
 pub fn render_error_response(
     id: u64,
     peer_id: Option<u64>,
@@ -466,6 +546,9 @@ pub fn render_error_response(
         .map_err(|err| OmeWsMessageError::InvalidJson(err.to_string()))
 }
 
+/// Render configured ICE servers in both standard and legacy OME JSON shapes.
+///
+/// 以标准与遗留 OME JSON 形式渲染配置的 ICE 服务器。
 pub fn render_ome_ice_servers_json(
     servers: &[WebRtcIceServerConfig],
     transport: OmeTransportMode,
@@ -490,6 +573,9 @@ pub fn render_ome_ice_servers_json(
     })
 }
 
+/// Render ICE server Link headers for HTTP WHIP/WHEP responses.
+///
+/// 为 HTTP WHIP/WHEP 响应渲染 ICE 服务器 Link 头。
 pub fn ice_server_link_headers(
     servers: &[WebRtcIceServerConfig],
     transport: OmeTransportMode,
@@ -711,6 +797,9 @@ fn candidate_json(candidate: &OmeWsCandidate) -> Value {
     Value::Object(object)
 }
 
+/// Extract candidate lines from a local SDP and pair them with their m-line index and mid.
+///
+/// 从本地 SDP 中提取 candidate 行，并与 m-line index 和 mid 配对。
 pub fn extract_ome_candidates_from_sdp(sdp: &str) -> Vec<OmeWsCandidate> {
     let mut current_mid: Option<String> = None;
     let mut current_mline_index: Option<u32> = None;

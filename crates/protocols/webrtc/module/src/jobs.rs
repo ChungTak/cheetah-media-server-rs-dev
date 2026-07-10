@@ -35,6 +35,9 @@ use crate::http::AnswerDispatcher;
 use crate::http_client::{HttpClientRequest, WhipWhepHttpClient};
 use crate::session::WebRtcSessionIdAllocator;
 
+/// Direction of a client job: Pull ingests from a remote endpoint, Push sends to a remote endpoint.
+///
+/// 客户端 job 方向：Pull 从远端端点拉取，Push 向远端端点推送。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcJobKind {
     Pull,
@@ -42,6 +45,9 @@ pub enum WebRtcJobKind {
 }
 
 impl WebRtcJobKind {
+    /// Return the lowercase string label for the job kind.
+    ///
+    /// 返回 job 类型的小写字符串标签。
     pub fn label(self) -> &'static str {
         match self {
             WebRtcJobKind::Pull => "pull",
@@ -50,6 +56,9 @@ impl WebRtcJobKind {
     }
 }
 
+/// Signaling protocol used for a client job: WHIP or WHEP.
+///
+/// 客户端 job 使用的信令协议：WHIP 或 WHEP。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WebRtcSignalingProtocol {
@@ -57,6 +66,11 @@ pub enum WebRtcSignalingProtocol {
     Whep,
 }
 
+/// Specification for a client pull/push job.
+/// Includes stream key, target URL, protocol, timeouts, retry policy, and SSRF controls.
+///
+/// 客户端 pull/push job 的规范。
+/// 包含 stream key、目标 URL、协议、超时、重试策略与 SSRF 控制。
 #[derive(Debug, Clone)]
 pub struct WebRtcClientJobSpec {
     pub kind: WebRtcJobKind,
@@ -72,6 +86,9 @@ pub struct WebRtcClientJobSpec {
     pub allow_private_ips: bool,
 }
 
+/// Runtime state of a client job surfaced to list endpoints.
+///
+/// 暴露给列表端点的客户端 job 运行时状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcJobState {
     Pending,
@@ -81,6 +98,9 @@ pub enum WebRtcJobState {
     Stopped,
 }
 
+/// Error taxonomy for client job operations.
+///
+/// 客户端 job 操作错误分类。
 #[derive(Debug, Error)]
 pub enum WebRtcJobError {
     #[error("job already exists for stream {0}")]
@@ -95,7 +115,9 @@ pub enum WebRtcJobError {
     Driver(String),
 }
 
-/// Per-job runtime state surfaced to HTTP `*list` endpoints.
+/// Per-job runtime snapshot returned by the list endpoints.
+///
+/// 列表端点返回的每个 job 运行时快照。
 #[derive(Debug, Clone)]
 pub struct WebRtcJobSnapshot {
     pub kind: WebRtcJobKind,
@@ -108,6 +130,9 @@ pub struct WebRtcJobSnapshot {
     pub local_session_id: Option<WebRtcSessionId>,
 }
 
+/// Registry of active client jobs keyed by stream key.
+///
+/// 按 stream key 索引的活跃客户端 job 注册表。
 #[derive(Default)]
 pub struct WebRtcJobRegistry {
     pull: HashMap<String, JobEntry>,
@@ -120,6 +145,9 @@ struct JobEntry {
 }
 
 impl WebRtcJobRegistry {
+    /// Return snapshots of all jobs for the given kind.
+    ///
+    /// 返回指定类型所有 job 的快照。
     pub fn list(&self, kind: WebRtcJobKind) -> Vec<WebRtcJobSnapshot> {
         let map = match kind {
             WebRtcJobKind::Pull => &self.pull,
@@ -128,6 +156,9 @@ impl WebRtcJobRegistry {
         map.values().map(|e| e.snapshot.lock().clone()).collect()
     }
 
+    /// Cancel all active jobs, typically during module stop.
+    ///
+    /// 取消所有活跃 job，通常在模块停止时使用。
     pub fn cancel_all(&mut self) {
         for (_, entry) in self.pull.drain() {
             entry.cancel.cancel();
@@ -137,6 +168,9 @@ impl WebRtcJobRegistry {
         }
     }
 
+    /// Stop and remove a job by kind and stream key.
+    ///
+    /// 按类型与 stream key 停止并移除 job。
     pub fn stop(&mut self, kind: WebRtcJobKind, stream_key: &str) -> bool {
         let map = match kind {
             WebRtcJobKind::Pull => &mut self.pull,
@@ -183,22 +217,10 @@ impl WebRtcJobRegistry {
 }
 
 /// Spawn a supervised pull/push job.
+/// The supervisor allocates a local session, creates an offer, POSTs it to the remote endpoint, applies the remote answer, and retries with exponential backoff on transient failures.
 ///
-/// Spawn a supervised pull/push job.
-///
-/// The supervisor performs the full WebRTC client handshake:
-///   1. Allocate a local session id.
-///   2. Subscribe to the answer-dispatcher for that id (the offer
-///      arrives as `OfferReady` from the driver and is delivered via
-///      the same dispatcher path that handles WHIP/WHEP server-side
-///      answers).
-///   3. Issue `WebRtcDriverCommand::CreateOffer` to ask the local
-///      WebRTC core to produce an SDP offer.
-///   4. POST the offer to the remote signaling endpoint, parse the
-///      response, and apply the remote answer through
-///      `WebRtcDriverCommand::ApplyRemoteAnswer`.
-///   5. Park on cancel; on cancel, send `DELETE` to the resource
-///      `Location` and `StopSession` to release driver state.
+/// 启动一个受监管的 pull/push job。
+/// 监管器分配本地会话、创建 offer、POST 到远端端点、应用远端 answer，并在临时失败时按指数退避重试。
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn spawn_job(
     registry: Arc<Mutex<WebRtcJobRegistry>>,

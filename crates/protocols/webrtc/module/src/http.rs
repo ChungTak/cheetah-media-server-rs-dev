@@ -45,6 +45,11 @@ use crate::session::{
     WebRtcSessionRegistry,
 };
 
+/// HTTP service handling all /api/v1/rtc routes.
+/// Dispatches WHIP/WHEP, SMS, session management, metrics, jobs, P2P, and echo endpoints.
+///
+/// 处理所有 /api/v1/rtc 路由的 HTTP 服务。
+/// 分发 WHIP/WHEP、SMS、会话管理、指标、job、P2P 与回声端点。
 pub(crate) struct WebRtcHttpService {
     pub driver: Arc<Mutex<Option<Arc<WebRtcDriverHandle>>>>,
     pub config: Arc<Mutex<WebRtcModuleConfig>>,
@@ -195,6 +200,9 @@ impl WebRtcHttpService {
 
 #[async_trait]
 impl ModuleHttpService for WebRtcHttpService {
+    /// Dispatch an incoming HTTP request to the appropriate handler based on method and path.
+    ///
+    /// 根据方法与路径将入站 HTTP 请求分派到对应处理器。
     async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
         let method = req.method;
         let path = req.path.clone();
@@ -1586,6 +1594,11 @@ impl WebRtcHttpService {
         crate::metrics::WebRtcModuleMetricsSnapshot::assemble(counters, active, publish, play)
     }
 
+    /// Wait for a per-session SDP answer with a bounded timeout.
+    /// The timeout is driven by the runtime API so the module stays runtime-neutral.
+    ///
+    /// 在有限超时内等待每会话 SDP answer。
+    /// 超时由运行时 API 驱动，使模块保持与 runtime 无关。
     async fn wait_answer(
         &self,
         waiter: oneshot::Receiver<AnswerOutcome>,
@@ -1632,6 +1645,11 @@ impl WebRtcHttpService {
         None
     }
 
+    /// Unified cleanup path for a session.
+    /// Stops the driver session, removes the session from the registry, closes the publish bridge, cancels the play subscriber, and observes play disconnect metrics.
+    ///
+    /// 会话的统一清理路径。
+    /// 停止驱动会话、从注册表移除会话、关闭发布桥、取消播放订阅者并观察播放断开指标。
     async fn cleanup_session(
         &self,
         session_id: cheetah_webrtc_core::WebRtcSessionId,
@@ -2369,9 +2387,11 @@ fn keeper_config_from_body(body: &Value) -> Result<crate::p2p::P2pRoomKeeperConf
     Ok(cfg)
 }
 
-/// Notifier shared between the HTTP service and the driver-event worker
-/// so that incoming `AnswerReady` events can be routed back to the
-/// pending HTTP request.
+/// Shared notifier between the HTTP service and the driver event worker.
+/// Routes incoming AnswerReady and OfferReady SDP events back to the waiting HTTP request.
+///
+/// HTTP 服务与驱动事件工作线程之间的共享通知器。
+/// 将入站的 AnswerReady 与 OfferReady SDP 事件路由回等待的 HTTP 请求。
 pub(crate) struct AnswerDispatcher {
     waiters: Mutex<
         std::collections::HashMap<
@@ -2381,6 +2401,9 @@ pub(crate) struct AnswerDispatcher {
     >,
 }
 
+/// Outcome delivered by the dispatcher: an SDP string or a failure reason.
+///
+/// 调度器交付的结果：SDP 字符串或失败原因。
 #[derive(Debug, Clone)]
 pub(crate) enum AnswerOutcome {
     Sdp(String),
@@ -2388,12 +2411,18 @@ pub(crate) enum AnswerOutcome {
 }
 
 impl AnswerDispatcher {
+    /// Create a new answer dispatcher with an empty waiter map.
+    ///
+    /// 创建一个新的 answer dispatcher，等待者映射为空。
     pub(crate) fn new() -> Self {
         Self {
             waiters: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
+    /// Subscribe to the SDP delivery for a session, returning a one-shot receiver.
+    ///
+    /// 订阅某会话的 SDP 交付，返回一次性接收器。
     pub(crate) fn subscribe(
         &self,
         session_id: cheetah_webrtc_core::WebRtcSessionId,
@@ -2404,6 +2433,9 @@ impl AnswerDispatcher {
         rx
     }
 
+    /// Deliver an SDP answer or offer to the waiter for a session.
+    ///
+    /// 向某会话的等待者交付 SDP answer 或 offer。
     pub(crate) fn deliver_sdp(
         &self,
         session_id: cheetah_webrtc_core::WebRtcSessionId,
@@ -2415,6 +2447,9 @@ impl AnswerDispatcher {
         }
     }
 
+    /// Signal a failure to the waiter for a session, typically when the session closes before an answer is ready.
+    ///
+    /// 向某会话的等待者发送失败信号，通常在 answer 就绪前会话关闭时使用。
     pub(crate) fn deliver_failure(
         &self,
         session_id: cheetah_webrtc_core::WebRtcSessionId,
@@ -2426,12 +2461,9 @@ impl AnswerDispatcher {
         }
     }
 
-    /// Subscribe to the next SDP delivery for the given session,
-    /// returning a [`DispatcherOfferOutcome`]-shaped channel suitable
-    /// for `crate::p2p::DispatcherOfferWaiter`. A small bridge task
-    /// converts the internal `AnswerOutcome` enum into the public
-    /// shape so the P2P bridge code stays free of `pub(crate)`
-    /// types.
+    /// Subscribe to SDP delivery and adapt the internal AnswerOutcome into the public DispatcherOfferOutcome shape used by the P2P bridge.
+    ///
+    /// 订阅 SDP 交付并将内部 AnswerOutcome 转换为 P2P 桥使用的公共 DispatcherOfferOutcome 形式。
     pub(crate) fn subscribe_p2p(
         &self,
         session_id: cheetah_webrtc_core::WebRtcSessionId,
@@ -2485,9 +2517,9 @@ async fn await_answer_with_timeout(
     }
 }
 
-/// OME WebSocket offer waiter: pairs the shared [`AnswerDispatcher`] with a
-/// [`RuntimeApi`] handle so the offer wait can be bounded without pulling
-/// `tokio::time` into the module.
+/// OME WebSocket offer waiter that pairs the answer dispatcher with a runtime API.
+///
+/// 将 answer dispatcher 与运行时 API 配对的 OME WebSocket offer 等待者。
 pub(crate) struct OmeAnswerWaiter {
     dispatcher: Arc<AnswerDispatcher>,
     runtime: Arc<dyn RuntimeApi>,

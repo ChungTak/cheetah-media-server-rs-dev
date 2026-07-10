@@ -27,6 +27,9 @@ use futures::FutureExt;
 use parking_lot::Mutex;
 use tracing::{debug, warn};
 
+/// Snapshot of the currently elected simulcast rendition for a single MID.
+///
+/// 单个 MID 当前选中的 simulcast  rendition 快照。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebRtcRenditionSnapshot {
     pub mid: String,
@@ -34,12 +37,22 @@ pub struct WebRtcRenditionSnapshot {
     pub seen_rids: Vec<String>,
 }
 
+/// Audio output policy for a play subscriber.
+/// Carries the configured codec profile and audio output strategy so the play path can decide whether to pass through or transcode to Opus.
+///
+/// 播放订阅者的音频输出策略。
+/// 携带配置的编解码器配置与音频输出策略，使播放路径可决定直通或转码为 Opus。
 #[derive(Debug, Clone, Copy)]
 pub struct PlaybackAudioPolicy {
     pub profile: crate::config::CodecProfileWire,
     pub strategy: crate::codec_policy::AudioOutputStrategy,
 }
 
+/// Playout timing policy for a play subscriber.
+/// Combines jitter-buffer target and playout-delay bounds to compute the effective smoothing delay.
+///
+/// 播放订阅者的播放时序策略。
+/// 结合抖动缓冲目标与播放延迟上下界，计算有效平滑延迟。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PlaybackTimingPolicy {
     pub jitter_buffer_ms: u64,
@@ -53,7 +66,11 @@ pub(crate) struct PlaybackCodecMapping {
     pub clock_rate: u32,
 }
 
-/// Engine ingress state for a publish session.
+/// Engine ingress state for a WebRTC publish session.
+/// Acquires a PublisherSink, converts WebRTC media events into AVFrames, applies simulcast layer selection, and handles MultiStream sub-stream sinks.
+///
+/// WebRTC 发布会话的引擎入口状态。
+/// 获取 PublisherSink，将 WebRTC 媒体事件转换为 AVFrame，应用 simulcast 层选择，并处理多流子流 sink。
 pub struct WebRtcPublishBridge {
     stream_key: StreamKey,
     lease: PublishLease,
@@ -370,7 +387,11 @@ struct TrackMeta {
 }
 
 impl WebRtcPublishBridge {
-    /// Acquire a publisher lease and return a new bridge.
+    /// Acquire a publisher lease and create a new publish bridge.
+    /// Initializes simulcast selection state and, for MultiStream mode, keeps a reference to the publisher API so per-RID sub-stream sinks can be acquired lazily.
+    ///
+    /// 获取发布租约并创建新的发布桥。
+    /// 初始化 simulcast 选择状态；在多流模式下保留 publisher API 引用，以便按需获取每个 RID 的子流 sink。
     pub async fn acquire(
         publisher_api: &Arc<dyn PublisherApi>,
         stream_key: StreamKey,
@@ -413,51 +434,54 @@ impl WebRtcPublishBridge {
         &self.lease
     }
 
-    /// Update the simulcast layer-selection BWE estimate (bits per
-    /// second). The next inbound `(mid, rid)` frame re-runs the
-    /// election so layers switch on the next decision boundary.
-    /// Only meaningful for `SimulcastPolicy::Adaptive`; ignored
-    /// otherwise.
+    /// Update the BWE estimate used for adaptive simulcast layer selection.
+    ///
+    /// 更新用于自适应 simulcast 层选择的 BWE 估计值。
     pub fn set_bwe_estimate(&mut self, estimate_bps: u64) {
         self.simulcast.set_bwe_estimate(estimate_bps);
     }
 
-    /// Update the REMB-driven rate cap (bits per second). When both
-    /// the local BWE estimate and a remote REMB cap are present, the
-    /// adaptive simulcast policy uses `min(bwe, remb)` so a tighter
-    /// REMB actually pulls the elected layer down (the original
-    /// elect-on-arrival logic only consulted BWE and would otherwise
-    /// silently overshoot the receiver-suggested ceiling).
+    /// Update the REMB-driven bitrate cap used for adaptive simulcast layer selection.
+    /// When both BWE and REMB are present the policy uses the lower of the two, preventing overshoot of the receiver-suggested ceiling.
+    ///
+    /// 更新用于自适应 simulcast 层选择的 REMB 驱动码率上限。
+    /// 当 BWE 与 REMB 同时存在时，策略取二者较小值，防止超出接收端建议上限。
     pub fn set_remb_cap(&mut self, cap_bps: u64) {
         self.simulcast.set_remb_cap(cap_bps);
     }
 
-    /// Feed a fresh egress NACK counter into the bridge's storm
-    /// detector. Returns `true` when this sample tripped the storm
-    /// threshold so the caller can emit a metric / diagnostic.
-    /// While in the recovery window the adaptive simulcast policy
-    /// pins to the lowest layer regardless of the BWE / REMB cap,
-    /// matching SMS / ZLM "stay-on-low" semantics during sustained
-    /// loss bursts.
+    /// Feed an egress NACK counter into the bridge's NACK-storm detector.
+    /// Returns true when the storm threshold is tripped, causing the adaptive simulcast policy to pin to the lowest layer for a recovery window.
+    ///
+    /// 将出口 NACK 计数器送入桥的 NACK 风暴检测器。
+    /// 当触发风暴阈值时返回 true，使自适应 simulcast 策略在恢复窗口内固定到最低层。
     pub fn observe_nack_in(&mut self, nack_in: u64) -> bool {
         self.simulcast.observe_nack_in(nack_in)
     }
 
-    /// Returns `true` and resets the flag if the adaptive simulcast
-    /// policy just upgraded to a higher layer. The caller should
-    /// request a PLI/keyframe from the publisher so the new layer
-    /// starts with a decodable frame.
+    /// Return and clear the pending layer-upgrade flag.
+    /// The caller should request a keyframe so the newly elected higher layer starts with a decodable frame.
+    ///
+    /// 返回并清除待处理的层升级标志。
+    /// 调用方应请求关键帧，使新选中的更高层从可解码帧开始。
     pub fn take_layer_upgrade_pending(&mut self) -> bool {
         let pending = self.layer_upgrade_pending;
         self.layer_upgrade_pending = false;
         pending
     }
 
+    /// Return a snapshot of currently elected simulcast rids per MID.
+    ///
+    /// 返回每个 MID 当前选中的 simulcast rid 快照。
     pub fn rendition_snapshot(&self) -> Vec<WebRtcRenditionSnapshot> {
         self.simulcast.rendition_snapshot()
     }
 
-    /// Push a media frame into the engine.
+    /// Push a WebRTC media event into the engine as an AVFrame.
+    /// Applies simulcast admission, converts RTP timestamp to a canonical microsecond timeline, maps codec kind to CodecId, updates track metadata, and routes to the primary or per-RID sub-stream sink.
+    ///
+    /// 将 WebRTC 媒体事件作为 AVFrame 推入引擎。
+    /// 应用 simulcast 准入，将 RTP 时间戳转换为规范微秒时间线，映射编解码器类型到 CodecId，更新 track 元数据，并路由到主 sink 或按 RID 子流 sink。
     pub fn push_frame(&mut self, event: WebRtcMediaEvent) {
         let WebRtcMediaEvent::Frame {
             mid,
@@ -694,10 +718,11 @@ impl WebRtcPublishBridge {
         }
     }
 
-    /// Check if there are RIDs that have been seen but don't have
-    /// sub-stream sinks yet. Returns the list of RIDs needing acquisition.
-    /// Deduplicates RIDs across MIDs since the same RID label may appear
-    /// in multiple m-line sections. Skips RIDs already in flight.
+    /// Return RIDs that have been seen but do not yet have sub-stream sinks in MultiStream mode.
+    /// Skips RIDs that are already in flight so async acquisition does not duplicate work.
+    ///
+    /// 返回在多流模式下已出现但尚无子流 sink 的 RID 列表。
+    /// 跳过已在进行中的 RID，避免异步获取重复工作。
     pub fn pending_multistream_rids(&self) -> Vec<String> {
         if !matches!(
             self.simulcast.policy,
@@ -718,34 +743,34 @@ impl WebRtcPublishBridge {
         seen.into_iter().collect()
     }
 
-    /// Mark a set of RIDs as having an in-flight `acquire_publisher`
-    /// task. Subsequent calls to `pending_multistream_rids` will skip
-    /// them until the task completes (which calls `insert_multistream_sink`
-    /// or `clear_multistream_inflight` on failure).
+    /// Mark a set of RIDs as having an in-flight acquire_publisher task.
+    ///
+    /// 将一组 RID 标记为正在进行 acquire_publisher 任务。
     pub fn mark_multistream_inflight(&mut self, rids: &[String]) {
         for rid in rids {
             self.multistream_inflight.insert(rid.clone());
         }
     }
 
-    /// Clear the in-flight marker for a RID without inserting a sink
-    /// (used when async acquisition fails so the RID becomes pending
-    /// again on the next frame).
+    /// Clear the in-flight marker for a RID without inserting a sink, allowing the RID to become pending again on the next frame.
+    ///
+    /// 清除某个 RID 的进行中标记而不插入 sink，使该 RID 在下一帧再次变为待处理。
     pub fn clear_multistream_inflight(&mut self, rid: &str) {
         self.multistream_inflight.remove(rid);
     }
 
-    /// Get the publisher API and base stream key for async sub-stream
-    /// acquisition. Returns `None` if not in MultiStream mode.
+    /// Get the publisher API and base stream key for async sub-stream acquisition.
+    ///
+    /// 获取异步子流获取所需的 publisher API 与基础 stream key。
     pub fn publisher_api_and_stream_key(&self) -> Option<(Arc<dyn PublisherApi>, StreamKey)> {
         self.publisher_api
             .as_ref()
             .map(|api| (api.clone(), self.stream_key.clone()))
     }
 
-    /// Insert a pre-acquired sub-stream sink for a specific RID.
-    /// Called from the async acquisition task after the lock is
-    /// re-acquired. Clears the in-flight marker.
+    /// Insert a pre-acquired sub-stream sink for a specific RID and clear the in-flight marker.
+    ///
+    /// 为指定 RID 插入预获取的子流 sink 并清除进行中标记。
     pub fn insert_multistream_sink(
         &mut self,
         rid: String,
@@ -757,7 +782,9 @@ impl WebRtcPublishBridge {
         self.multistream_sinks.insert(rid, (key, lease, sink));
     }
 
-    /// Close the bridge by closing the publisher sink.
+    /// Close the bridge and all its MultiStream sub-stream sinks.
+    ///
+    /// 关闭桥及其所有多流子流 sink。
     pub fn close(&self) {
         let _ = self.sink.close();
         for (_key, _lease, sink) in self.multistream_sinks.values() {
@@ -793,11 +820,11 @@ impl WebRtcPublishBridge {
     }
 }
 
-/// Derive a sub-stream key for multi-stream simulcast mode.
+/// Derive a sub-stream key for MultiStream simulcast mode.
+/// Appends @rid:<name> to the base stream path so downstream subscribers can select individual layers.
 ///
-/// Given a base stream key like `live/cam` and a RID like `h`, produces
-/// `live/cam@rid:h`. This naming convention allows downstream subscribers
-/// to select individual simulcast layers by subscribing to the derived key.
+/// 为多流 simulcast 模式派生子流 key。
+/// 将 @rid:<name> 附加到基础流路径，使下游订阅者可选择独立层。
 pub fn derive_multistream_key(base: &StreamKey, rid: &str) -> StreamKey {
     let path = format!("{}@rid:{}", base.path, rid);
     StreamKey::new(&base.namespace, path)
@@ -824,10 +851,9 @@ fn codec_id_is_video(codec: CodecId) -> bool {
     )
 }
 
-/// Per-session MID assignments observed via [`WebRtcCoreEvent::MediaTrackAdded`].
+/// Per-session mapping of MIDs to audio and video tracks for play sessions.
 ///
-/// Used by play sessions to route engine `AVFrame`s to the correct
-/// outgoing track.
+/// 播放会话中 MID 到音频与视频 track 的映射。
 #[derive(Debug, Default)]
 pub struct PlayTrackMap {
     pub video_mid: Option<MidLabel>,
@@ -835,6 +861,9 @@ pub struct PlayTrackMap {
 }
 
 impl PlayTrackMap {
+    /// Record a MID assignment for a given media kind.
+    ///
+    /// 记录指定媒体类型对应的 MID 分配。
     pub fn record(&mut self, mid: MidLabel, kind: cheetah_webrtc_core::WebRtcMediaKind) {
         match kind {
             cheetah_webrtc_core::WebRtcMediaKind::Audio => self.audio_mid = Some(mid),
@@ -843,7 +872,9 @@ impl PlayTrackMap {
     }
 }
 
-/// Registry of active publish bridges, keyed by WebRTC session id.
+/// Registry of active publish bridges and play subscriber tokens, keyed by WebRTC session id.
+///
+/// 按 WebRTC 会话 id 索引的活跃发布桥与播放订阅者 token 注册表。
 #[derive(Default)]
 pub struct WebRtcBridgeRegistry {
     publish: HashMap<WebRtcSessionId, WebRtcPublishBridge>,
@@ -852,18 +883,11 @@ pub struct WebRtcBridgeRegistry {
     play_stats: HashMap<WebRtcSessionId, WebRtcPlayBootstrapStats>,
 }
 
-/// GOP bootstrap timing for a player session.
+/// GOP bootstrap timing and frame counts for a player session.
+/// Tracks how long it takes from subscriber start to first frame, first keyframe, and first decodable frame, plus playout delay and delayed-frame metrics.
 ///
-/// ZLM `WebRtcPlayer::sendConfigFrames` is the closest analogue: it
-/// pre-sends config frames and the most recent keyframe so the remote
-/// can decode immediately. We do not duplicate that logic in the
-/// module — the engine bootstrap policy already preloads frames — but
-/// we record the timing so operators can monitor whether GOP-tail
-/// preload is actually delivering decodable frames quickly.
-///
-/// `*_micros` values are micros since the play subscriber started
-/// pumping frames into the driver. `None` means the event has not
-/// been observed yet.
+/// 播放会话的 GOP 引导时序与帧计数。
+/// 记录从订阅者启动到首帧、首个关键帧、首个可解码帧的耗时，以及播放延迟和延迟帧指标。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WebRtcPlayBootstrapStats {
     /// Wall-clock micros from subscriber start to the first frame the
@@ -901,14 +925,23 @@ pub struct WebRtcPlayBootstrapStats {
 }
 
 impl WebRtcBridgeRegistry {
+    /// Insert a publish bridge for a session.
+    ///
+    /// 为会话插入发布桥。
     pub fn insert_publish(&mut self, session_id: WebRtcSessionId, bridge: WebRtcPublishBridge) {
         self.publish.insert(session_id, bridge);
     }
 
+    /// Remove and return the publish bridge for a session.
+    ///
+    /// 移除并返回会话的发布桥。
     pub fn remove_publish(&mut self, session_id: WebRtcSessionId) -> Option<WebRtcPublishBridge> {
         self.publish.remove(&session_id)
     }
 
+    /// Insert a cancellation token for a play subscriber.
+    ///
+    /// 为播放订阅者插入取消 token。
     pub fn insert_play(
         &mut self,
         session_id: WebRtcSessionId,
@@ -917,6 +950,9 @@ impl WebRtcBridgeRegistry {
         self.play.insert(session_id, cancel);
     }
 
+    /// Remove the play subscriber token and its associated track and stats entries.
+    ///
+    /// 移除播放订阅者 token 及其关联的 track 和 stats 条目。
     pub fn remove_play(
         &mut self,
         session_id: WebRtcSessionId,
@@ -926,6 +962,9 @@ impl WebRtcBridgeRegistry {
         self.play.remove(&session_id)
     }
 
+    /// Push a media event into the publish bridge for a session.
+    ///
+    /// 将媒体事件推送到会话的发布桥。
     pub fn push_publish_frame(
         &mut self,
         session_id: WebRtcSessionId,
@@ -939,9 +978,9 @@ impl WebRtcBridgeRegistry {
         }
     }
 
-    /// Returns `true` and resets the flag if the publish bridge for
-    /// `session_id` has a pending layer upgrade. The caller should
-    /// request a PLI/keyframe from the publisher.
+    /// Return and clear the pending layer-upgrade flag for a publish bridge.
+    ///
+    /// 返回并清除发布桥的待处理层升级标志。
     pub fn take_publish_layer_upgrade(&mut self, session_id: WebRtcSessionId) -> bool {
         self.publish
             .get_mut(&session_id)
@@ -949,13 +988,18 @@ impl WebRtcBridgeRegistry {
             .unwrap_or(false)
     }
 
+    /// Check whether a publish bridge exists for a session.
+    ///
+    /// 检查会话是否存在发布桥。
     pub fn contains_publish(&self, session_id: WebRtcSessionId) -> bool {
         self.publish.contains_key(&session_id)
     }
 
     /// Get a mutable reference to the publish bridge for a session.
-    /// Used by the module event worker for async MultiStream sink
-    /// acquisition.
+    /// Used by the module event worker for async MultiStream sink acquisition.
+    ///
+    /// 获取会话发布桥的可变引用。
+    /// 模块事件工作线程用于异步多流 sink 获取。
     pub fn publish_mut(&mut self, session_id: WebRtcSessionId) -> Option<&mut WebRtcPublishBridge> {
         self.publish.get_mut(&session_id)
     }
@@ -969,10 +1013,9 @@ impl WebRtcBridgeRegistry {
             .unwrap_or_default()
     }
 
-    /// Update the BWE estimate on a publish bridge. Returns `true`
-    /// when the bridge was found. Used by the driver event worker to
-    /// thread `WebRtcCoreEvent::Bwe` snapshots into the simulcast
-    /// adaptive policy.
+    /// Thread a BWE estimate into the publish bridge for a session.
+    ///
+    /// 将 BWE 估计值传入会话的发布桥。
     pub fn set_publish_bwe_estimate(
         &mut self,
         session_id: WebRtcSessionId,
@@ -986,11 +1029,9 @@ impl WebRtcBridgeRegistry {
         }
     }
 
-    /// Update the REMB cap on a publish bridge. Returns `true` when
-    /// the bridge was found. Used by the driver event worker to
-    /// thread `WebRtcRtcpFeedback::Remb` snapshots into the simulcast
-    /// adaptive policy so a remote receiver's bitrate ceiling
-    /// actually pulls down the elected layer.
+    /// Thread a REMB cap into the publish bridge for a session.
+    ///
+    /// 将 REMB 上限传入会话的发布桥。
     pub fn set_publish_remb_cap(&mut self, session_id: WebRtcSessionId, cap_bps: u64) -> bool {
         if let Some(bridge) = self.publish.get_mut(&session_id) {
             bridge.set_remb_cap(cap_bps);
@@ -1000,10 +1041,9 @@ impl WebRtcBridgeRegistry {
         }
     }
 
-    /// Feed an egress NACK counter snapshot into the publish bridge's
-    /// storm detector. Returns `true` when this sample tripped the
-    /// storm threshold so the caller can surface a metric. Returns
-    /// `false` for unknown sessions or sub-threshold samples.
+    /// Feed an egress NACK counter into the publish bridge's storm detector.
+    ///
+    /// 将出口 NACK 计数器送入发布桥的风暴检测器。
     pub fn record_publish_nack_in(&mut self, session_id: WebRtcSessionId, nack_in: u64) -> bool {
         if let Some(bridge) = self.publish.get_mut(&session_id) {
             bridge.observe_nack_in(nack_in)
@@ -1012,6 +1052,9 @@ impl WebRtcBridgeRegistry {
         }
     }
 
+    /// Record a MID-to-kind mapping for a play session.
+    ///
+    /// 记录播放会话的 MID 到媒体类型映射。
     pub fn record_play_track(
         &mut self,
         session_id: WebRtcSessionId,
@@ -1024,6 +1067,9 @@ impl WebRtcBridgeRegistry {
             .record(mid, kind);
     }
 
+    /// Look up the MID for a given media kind in a play session.
+    ///
+    /// 在播放会话中查找指定媒体类型的 MID。
     pub fn play_track_for(
         &self,
         session_id: WebRtcSessionId,
@@ -1036,13 +1082,11 @@ impl WebRtcBridgeRegistry {
         }
     }
 
-    /// Record a frame forwarded by the play subscriber.
+    /// Record that a play subscriber forwarded a frame.
+    /// Updates first-frame, first-keyframe, and first-decodable timing in microseconds since subscriber start.
     ///
-    /// `now_micros` is the offset since the subscriber started; the
-    /// caller (typically `spawn_play_subscriber`) computes it from a
-    /// captured `start_instant`. This avoids relying on a global
-    /// wall clock and matches the time discipline of the rest of the
-    /// crate.
+    /// 记录播放订阅者转发了一帧。
+    /// 更新自订阅者启动以来的首帧、首个关键帧、首个可解码帧的微秒级时序。
     pub fn record_play_frame(
         &mut self,
         session_id: WebRtcSessionId,
@@ -1111,7 +1155,9 @@ impl WebRtcBridgeRegistry {
     }
 }
 
-/// Convenience: spawn a deferred close of all bridges on shutdown.
+/// Close all publish bridges and cancel all play subscribers on shutdown.
+///
+/// 关闭时关闭所有发布桥并取消所有播放订阅者。
 pub fn close_all(registry: Arc<Mutex<WebRtcBridgeRegistry>>) {
     let mut guard = registry.lock();
     for (_, bridge) in guard.publish.drain() {
