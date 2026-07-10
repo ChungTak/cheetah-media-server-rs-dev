@@ -4,9 +4,19 @@ use std::net::SocketAddr;
 use crate::error::Gb28181Diagnostic;
 use crate::message::{SipMessage, StartLine};
 
+/// String identifier for a registered GB28181 device, typically the SIP username.
+///
+/// 已注册 GB28181 设备的字符串标识，通常为 SIP 用户名。
 pub type GbDeviceId = String;
+
+/// String identifier for a single INVITE or talk dialog.
+///
+/// 单个 INVITE 或语音对讲会话的字符串标识。
 pub type GbSessionId = String;
 
+/// Lifecycle state of a SIP dialog created by `INVITE` or `BYE`.
+///
+/// 由 `INVITE` 或 `BYE` 创建的 SIP 会话生命周期状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DialogState {
     Trying,
@@ -14,6 +24,9 @@ pub enum DialogState {
     Terminated,
 }
 
+/// A registered device record, indexed by `GbDeviceId` in the core.
+///
+/// 核心中按 `GbDeviceId` 索引的已注册设备记录。
 #[derive(Debug, Clone)]
 pub struct GbDevice {
     pub id: GbDeviceId,
@@ -22,6 +35,9 @@ pub struct GbDevice {
     pub last_keepalive_ms: u64,
 }
 
+/// Parameters for starting a server-initiated media INVITE.
+///
+/// 服务端发起媒体 INVITE 的参数。
 #[derive(Debug, Clone)]
 pub struct GbInviteSpec {
     pub session_key: String,
@@ -31,11 +47,18 @@ pub struct GbInviteSpec {
     pub stream_name: String,
     pub is_video: bool,
     /// Local IP for the SDP `c=IN IP4 ...` line and the `m=` media address.
+    ///
+    /// SDP `c=IN IP4 ...` 与 `m=` 媒体地址所用的本地 IP。
     pub local_ip: String,
     /// Local RTP port to advertise in the SDP `m=` line for receiving media.
+    ///
+    /// SDP `m=` 行中用于接收媒体的本地 RTP 端口。
     pub local_port: u16,
 }
 
+/// Parameters for starting a two-way voice talk session.
+///
+/// 发起双向语音对讲会话的参数。
 #[derive(Debug, Clone)]
 pub struct GbTalkSpec {
     pub session_key: String,
@@ -44,11 +67,18 @@ pub struct GbTalkSpec {
     pub app_name: String,
     pub stream_name: String,
     /// Local IP for the SDP `c=IN IP4 ...` line.
+    ///
+    /// SDP `c=IN IP4 ...` 行使用的本地 IP。
     pub local_ip: String,
     /// Local RTP port to advertise for the talk session.
+    ///
+    /// 语音对讲会话中宣传的本地 RTP 端口。
     pub local_port: u16,
 }
 
+/// External command injected into the core by the module layer.
+///
+/// 由模块层注入到核心的外部命令。
 #[derive(Debug, Clone)]
 pub enum Gb28181Command {
     RegisterChallenge {
@@ -61,6 +91,9 @@ pub enum Gb28181Command {
     StopTalk(GbSessionId),
 }
 
+/// Events emitted by the core for the module layer to act on.
+///
+/// 核心产生、供模块层处理的事件。
 #[derive(Debug, Clone)]
 pub enum Gb28181Event {
     DeviceRegistered {
@@ -82,12 +115,18 @@ pub enum Gb28181Event {
     },
 }
 
+/// A SIP message that must be sent to a specific peer address.
+///
+/// 需要发送到特定对端地址的 SIP 消息。
 #[derive(Debug, Clone)]
 pub struct SipSendAction {
     pub destination: SocketAddr,
     pub message: SipMessage,
 }
 
+/// Input events that drive the Sans-I/O state machine.
+///
+/// 驱动无 I/O 状态机的输入事件。
 #[derive(Debug, Clone)]
 pub enum Gb28181CoreInput {
     SipMessage {
@@ -100,6 +139,9 @@ pub enum Gb28181CoreInput {
     Command(Gb28181Command),
 }
 
+/// Output actions produced by the state machine in response to an input.
+///
+/// 状态机针对输入产生的输出动作。
 #[derive(Debug, Clone)]
 pub enum Gb28181CoreOutput {
     SendSip(SipSendAction),
@@ -119,11 +161,23 @@ struct GbInviteSession {
     _last_activity_ms: u64,
 }
 
+/// Sans-I/O core for GB28181: device registration, keepalive, and INVITE/BYE routing.
+///
+/// The state machine consumes `Gb28181CoreInput` and pushes `Gb28181CoreOutput` into a
+/// caller-provided vector. It does not perform socket I/O; the driver is responsible for
+/// sending and receiving `SipMessage` values.
+///
+/// 无 I/O 的 GB28181 核心：设备注册、保活以及 INVITE/BYE 路由。
+///
+/// 状态机消费 `Gb28181CoreInput` 并将 `Gb28181CoreOutput` 推入调用方提供的向量。
+/// 它不执行 socket I/O；`SipMessage` 的收发由 driver 负责。
 pub struct Gb28181Core {
     devices: HashMap<GbDeviceId, GbDevice>,
     sessions: HashMap<GbSessionId, GbInviteSession>,
     next_call_id_seq: u64,
     /// Last known time from Tick input; 0 if no Tick received yet.
+    ///
+    /// 上一次 Tick 输入提供的时间；尚未收到 Tick 时为 0。
     now_ms: u64,
 }
 
@@ -134,6 +188,9 @@ impl Default for Gb28181Core {
 }
 
 impl Gb28181Core {
+    /// Create a new empty core instance.
+    ///
+    /// 创建一个新的空核心实例。
     pub fn new() -> Self {
         Self {
             devices: HashMap::new(),
@@ -143,6 +200,16 @@ impl Gb28181Core {
         }
     }
 
+    /// Main entry point: dispatch a single input to the appropriate handler and append outputs.
+    ///
+    /// `Tick` updates the internal clock and triggers keepalive timeout checks. `SipMessage`
+    /// is routed by start-line and method. `Command` originates from the module layer and
+    /// generates outgoing requests such as `INVITE` or `BYE`.
+    ///
+    /// 主入口：将单个输入分派到对应处理程序并追加输出。
+    ///
+    /// `Tick` 更新内部时钟并触发保活超时检查。`SipMessage` 按起始行与方法路由。
+    /// `Command` 来自模块层，会生成 `INVITE` 或 `BYE` 等出向请求。
     pub fn handle_input(&mut self, input: Gb28181CoreInput, outputs: &mut Vec<Gb28181CoreOutput>) {
         match input {
             Gb28181CoreInput::SipMessage { source, message } => {
@@ -714,6 +781,9 @@ impl Gb28181Core {
         }
     }
 
+    /// Return a snapshot of all currently registered devices.
+    ///
+    /// 返回当前所有已注册设备的快照。
     pub fn list_devices(&self) -> Vec<GbDevice> {
         self.devices.values().cloned().collect()
     }
