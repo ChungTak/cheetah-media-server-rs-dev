@@ -42,12 +42,13 @@ pub fn frame_composition_time_ms(frame: &AVFrame) -> i32 {
     pts_ms.saturating_sub(dts_ms).clamp(-0x80_0000, 0x7F_FFFF) as i32
 }
 
-pub fn select_egress_timestamps(media_kind: MediaKind, pts: i64, dts: i64) -> (i64, i64) {
-    if matches!(media_kind, MediaKind::Video) {
-        (pts, dts)
-    } else {
-        (dts, pts)
-    }
+/// Selects the primary and secondary timestamps for cross-protocol egress.
+///
+/// RTP/RTMP/WebRTC all require a monotonic decode timeline on the wire. The
+/// primary value is therefore the DTS for both audio and video; the PTS is
+/// retained as the secondary fallback and used for RTMP composition offsets.
+pub fn select_egress_timestamps(_media_kind: MediaKind, pts: i64, dts: i64) -> (i64, i64) {
+    (dts, pts)
 }
 
 pub fn media_ts_to_rtp_ticks(
@@ -490,8 +491,9 @@ pub struct RtpTimestampInput {
 /// # Strategy
 ///
 /// - **Live mode**: Uses the canonical PTS/DTS converted to the codec
-///   clock rate. For video, PTS is preferred; for audio, DTS is preferred
-///   (matching `select_egress_timestamps` semantics).
+///   clock rate. For both video and audio, DTS is preferred to keep the
+///   RTP timestamp stream monotonic (matching `select_egress_timestamps`
+///   semantics).
 ///
 /// - **Replay mode**: Prefers `source_frame_number * samples_per_frame`
 ///   when both are available. Falls back to converting `source_pts` from
@@ -651,18 +653,18 @@ mod tests {
     }
 
     #[test]
-    fn media_ts_to_rtp_ticks_prefers_media_kind_priority() {
+    fn media_ts_to_rtp_ticks_prefers_dts_for_video_and_audio() {
         let (video_primary, video_secondary) =
             select_egress_timestamps(MediaKind::Video, 9_000, 3_000);
-        assert_eq!(video_primary, 9_000);
-        assert_eq!(video_secondary, 3_000);
+        assert_eq!(video_primary, 3_000);
+        assert_eq!(video_secondary, 9_000);
         let video_ticks = media_ts_to_rtp_ticks(
             video_primary,
             video_secondary,
             Timebase::new(1, 90_000),
             90_000,
         );
-        assert_eq!(video_ticks, 9_000);
+        assert_eq!(video_ticks, 3_000);
 
         let (audio_primary, audio_secondary) =
             select_egress_timestamps(MediaKind::Audio, 9_000, 3_000);
@@ -859,7 +861,7 @@ mod tests {
     }
 
     #[test]
-    fn compute_rtp_timestamp_live_video_uses_pts() {
+    fn compute_rtp_timestamp_live_video_uses_dts() {
         let input = RtpTimestampInput {
             pts: 9_000,
             dts: 6_000,
@@ -873,8 +875,8 @@ mod tests {
             source_timebase: None,
             samples_per_frame: None,
         };
-        // Video uses PTS as primary → 9000 ticks at 90kHz/90kHz = 9000
-        assert_eq!(compute_rtp_timestamp(&input), 9_000);
+        // Video uses DTS as primary → 6000 ticks at 90kHz/90kHz = 6000
+        assert_eq!(compute_rtp_timestamp(&input), 6_000);
     }
 
     #[test]

@@ -181,6 +181,14 @@ compare_metric() {
   local actual="$2"
   local threshold="$3"
   local operator
+  local effective_threshold="${threshold}"
+
+  # For short exploratory runs, the effective playback target cannot exceed the
+  # configured scenario duration. This keeps the acceptance matrix unchanged for
+  # full 300s runs while allowing shorter runs to validate continuous playback.
+  if [[ "${key}" == "continuous_play" && -n "${SCENARIO_DURATION_SECONDS:-}" && "${threshold}" -gt "${SCENARIO_DURATION_SECONDS}" ]]; then
+    effective_threshold="${SCENARIO_DURATION_SECONDS}"
+  fi
 
   operator="$(acceptance_operator "${key}")"
   if (( actual < 0 )); then
@@ -193,13 +201,13 @@ compare_metric() {
 
   case "${operator}" in
     "<=")
-      (( actual <= threshold ))
+      (( actual <= effective_threshold ))
       ;;
     ">=")
-      (( actual >= threshold ))
+      (( actual >= effective_threshold ))
       ;;
     "==")
-      (( actual == threshold ))
+      (( actual == effective_threshold ))
       ;;
     *)
       fail "unsupported acceptance operator '${operator}'"
@@ -488,7 +496,13 @@ list_profiles() {
 
 pull_target_from_command() {
   local pull_cmd="$1"
-  awk '{print $NF}' <<< "${pull_cmd}"
+  # Pull commands now use '-i <url> ... [sink]' so extract the URL after '-i'.
+  awk '{
+    for (i=1; i<NF; i++) {
+      if ($i == "-i") { print $(i+1); exit }
+    }
+    print $NF
+  }' <<< "${pull_cmd}"
 }
 
 pull_rtsp_transport_from_command() {
@@ -509,10 +523,13 @@ build_ffprobe_command_for_pull() {
   local rtsp_transport
   rtsp_transport="$(pull_rtsp_transport_from_command "${pull_cmd}")"
   if [[ "${target_url}" == rtsp://* ]]; then
+    # For RTSP/RTP H.264, a small probe keeps ffprobe from applying SPS-based
+    # num_reorder_frames inference to the decode timestamps; the wire RTP
+    # timestamps are already monotonic.
     if [[ -n "${rtsp_transport}" ]]; then
-      echo "${FFPROBE_BIN} -v error -rtsp_transport ${rtsp_transport} -select_streams v:0 -show_entries packet=pts_time,dts_time,flags -of csv=p=0 -read_intervals %+4 \"${target_url}\""
+      echo "${FFPROBE_BIN} -v error -probesize 32 -analyzeduration 0 -rtsp_transport ${rtsp_transport} -select_streams v:0 -show_entries packet=pts_time,dts_time,flags -of csv=p=0 -read_intervals %+4 \"${target_url}\""
     else
-      echo "${FFPROBE_BIN} -v error -select_streams v:0 -show_entries packet=pts_time,dts_time,flags -of csv=p=0 -read_intervals %+4 \"${target_url}\""
+      echo "${FFPROBE_BIN} -v error -probesize 32 -analyzeduration 0 -select_streams v:0 -show_entries packet=pts_time,dts_time,flags -of csv=p=0 -read_intervals %+4 \"${target_url}\""
     fi
   else
     echo "${FFPROBE_BIN} -v error -select_streams v:0 -show_entries packet=pts_time,dts_time,flags -of csv=p=0 -read_intervals %+4 \"${target_url}\""

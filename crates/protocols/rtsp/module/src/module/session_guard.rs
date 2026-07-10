@@ -289,6 +289,7 @@ mod tests {
                 last_rtp_timestamp: 0,
                 timestamp_repair_count: 0,
                 sdes_sent: false,
+                first_raw_timestamp: None,
             },
         );
         let next = next_play_interleaved_channels(&play_tracks, TrackId(2))

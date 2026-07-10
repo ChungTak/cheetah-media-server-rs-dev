@@ -21,16 +21,14 @@ fn is_video_frame(frame: &AVFrame) -> bool {
 }
 
 pub fn source_timeline_mode_for_rtp_ingress(frame: &AVFrame) -> TimestampNormalizeMode {
-    if is_video_frame(frame) {
-        TimestampNormalizeMode::DtsPts {
-            dts: TimestampValue::Wrapped(i64_to_wrapped_u64(frame.pts)),
-            pts: TimestampValue::Wrapped(i64_to_wrapped_u64(frame.pts)),
-        }
-    } else {
-        TimestampNormalizeMode::DtsPts {
-            dts: TimestampValue::Wrapped(i64_to_wrapped_u64(frame.dts)),
-            pts: TimestampValue::Wrapped(i64_to_wrapped_u64(frame.pts)),
-        }
+    // RTP ingress always provides a single wall-clock timestamp. For audio it
+    // is supplied as both DTS and PTS; for video the same presentation value is
+    // used as both the source decode and presentation candidate so the
+    // normalizer can clamp to a monotonic DTS while preserving the original PTS
+    // for composition offsets.
+    TimestampNormalizeMode::DtsPts {
+        dts: TimestampValue::Wrapped(i64_to_wrapped_u64(frame.pts)),
+        pts: TimestampValue::Wrapped(i64_to_wrapped_u64(frame.pts)),
     }
 }
 
@@ -82,7 +80,7 @@ mod tests {
     use bytes::Bytes;
 
     #[test]
-    fn source_mode_uses_pts_for_video_dts_pts_and_audio_keeps_dts() {
+    fn source_mode_uses_dts_pts_with_presentation_as_dts_for_video() {
         let video = AVFrame::new(
             TrackId(1),
             MediaKind::Video,
@@ -114,7 +112,7 @@ mod tests {
 
         match source_timeline_mode_for_rtp_ingress(&audio) {
             TimestampNormalizeMode::DtsPts { dts, pts } => {
-                assert_eq!(dts, TimestampValue::Wrapped(1024));
+                assert_eq!(dts, TimestampValue::Wrapped(2048));
                 assert_eq!(pts, TimestampValue::Wrapped(2048));
             }
             _ => panic!("unexpected mode"),

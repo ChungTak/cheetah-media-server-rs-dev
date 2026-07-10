@@ -207,14 +207,12 @@ fn has_pending_selected_video_gate(
 }
 
 fn preserve_raw_rtp_timestamps(codec: cheetah_codec::CodecId) -> bool {
+    // Only audio codecs preserve the original source RTP timestamp on egress.
+    // Video always derives the RTP timestamp from the canonical monotonic DTS
+    // so that H.264/H.265/AV1/VP8/VP9 all produce a continuous decode timeline.
     matches!(
         codec,
-        cheetah_codec::CodecId::H265
-            | cheetah_codec::CodecId::H266
-            | cheetah_codec::CodecId::AV1
-            | cheetah_codec::CodecId::VP8
-            | cheetah_codec::CodecId::VP9
-            | cheetah_codec::CodecId::Opus
+        cheetah_codec::CodecId::Opus
             | cheetah_codec::CodecId::ADPCM
             | cheetah_codec::CodecId::G711A
             | cheetah_codec::CodecId::G711U
@@ -233,6 +231,13 @@ fn source_rtp_timestamp_for_egress(
         return None;
     };
     Some(source.raw_timestamp)
+}
+
+fn play_frame_raw_rtp_timestamp(frame: &cheetah_codec::AVFrame, track: &TrackInfo) -> u32 {
+    let (primary, secondary) = media_timestamp_priority(track.media_kind, frame.pts, frame.dts);
+    let canonical =
+        media_ts_to_rtp_ticks(primary, secondary, frame.timebase, track.clock_rate.max(1));
+    source_rtp_timestamp_for_egress(frame, track.codec).unwrap_or(canonical)
 }
 
 fn play_packet_mtu(transport: &PlayTransport, configured_mtu: usize) -> usize {
@@ -264,21 +269,6 @@ fn media_timestamp_priority(
 }
 
 const RTP_TIMESTAMP_BACKWARD_REPAIR_THRESHOLD_TICKS: u32 = 3_000;
-
-/// Video codecs that may produce B-frames should not have their PTS-based RTP
-/// timestamps forced monotonic, since PTS rollback is legitimate (RFC 6184).
-fn should_skip_monotonic_repair_for_b_frames(
-    media_kind: cheetah_codec::MediaKind,
-    codec: cheetah_codec::CodecId,
-) -> bool {
-    matches!(media_kind, cheetah_codec::MediaKind::Video)
-        && matches!(
-            codec,
-            cheetah_codec::CodecId::H264
-                | cheetah_codec::CodecId::H265
-                | cheetah_codec::CodecId::H266
-        )
-}
 
 const RTSP_PLAY_PACING_BACKWARD_RESET_THRESHOLD_MS: u32 = 3_000;
 const RTSP_PLAY_PACING_MAX_FORWARD_DELTA_MS: u32 = 30_000;
@@ -1323,6 +1313,7 @@ pub(super) async fn handle_setup(
                                     last_rtp_timestamp: 0,
                                     timestamp_repair_count: 0,
                                     sdes_sent: false,
+                                    first_raw_timestamp: None,
                                 };
                                 let previous =
                                     state.play_tracks.insert(track_id, next_track.clone());
@@ -1530,6 +1521,9 @@ pub(super) async fn handle_play(
         state.packets_sent = 0;
         state.octets_sent = 0;
         state.sdes_sent = false;
+        // Each PLAY session starts a fresh RTP epoch so the first egress RTP
+        // packet is rebased to 0 and matches RTP-Info rtptime=0.
+        state.first_raw_timestamp = None;
     }
     let play_cancel = module_cancel.child_token();
     let play_cancel_child = play_cancel.child_token();
@@ -1596,361 +1590,386 @@ pub(super) async fn handle_play(
                 recv = recv_fut => {
                     match recv {
                         Ok(Some(frame)) => {
-                            if !startup_alert_emitted
-                                && has_pending_selected_video_gate(
-                                    &track_map,
-                                    &per_track,
-                                    &started_tracks,
-                                    wait_for_video_keyframe,
-                                )
-                            {
-                                let elapsed_micros =
-                                    runtime_api_for_task
-                                        .now()
-                                        .as_micros()
-                                        .saturating_sub(play_start_micros);
-                                let elapsed_ms = elapsed_micros / 1_000;
-                                if elapsed_ms >= startup_alert_threshold_ms {
-                                    startup_alert_emitted = true;
-                                    warn!(
-                                        connection_id,
-                                        stream_key = %stream_key_for_logs,
-                                        startup_elapsed_ms = elapsed_ms,
-                                        startup_alert_threshold_ms,
-                                        "rtsp play startup wait exceeded alert threshold"
-                                    );
-                                }
-                            }
-                            let Some(track) = track_map.get(&frame.track_id) else {
-                                continue;
-                            };
-                            if !should_forward_play_frame(
-                                &per_track,
-                                &mut started_tracks,
-                                wait_for_video_keyframe,
-                                track,
-                                frame.track_id,
-                                frame.flags,
-                            ) {
-                                continue;
-                            }
-                            let Some(state) = per_track.get_mut(&frame.track_id) else {
-                                continue;
-                            };
-                            let fields = frame_observability_fields(frame.as_ref());
-                            let packet_mtu = play_packet_mtu(&state.transport, configured_mtu);
-                            if let Some(media_timestamp_ms) = frame_media_timestamp_ms(
-                                track.media_kind,
-                                frame.pts,
-                                frame.dts,
-                                frame.timebase,
-                            ) {
-                                let pacing_delay = play_start_pacing.delay_for(
-                                    media_timestamp_ms,
-                                    runtime_now_micros(&runtime_api_for_task),
-                                    frame.flags.contains(cheetah_codec::FrameFlags::DISCONTINUITY),
-                                );
-                                if !pacing_delay.is_zero()
-                                    && wait_or_cancel(
-                                        &runtime_api_for_task,
-                                        &play_cancel_child,
-                                        pacing_delay,
-                                    )
-                                    .await
-                                {
-                                    break;
-                                }
-                            }
 
-                            let (primary_ts, secondary_ts) =
-                                media_timestamp_priority(track.media_kind, frame.pts, frame.dts);
-                            // A/V sync alignment: adjust timestamps so audio and video
-                            // share a common epoch for cross-protocol egress.
-                            av_sync_aligner.on_frame(track.media_kind, frame.dts_us);
-                            let canonical_raw_timestamp = media_ts_to_rtp_ticks(
-                                primary_ts,
-                                secondary_ts,
-                                frame.timebase,
-                                track.clock_rate.max(1),
+            if !startup_alert_emitted
+                && has_pending_selected_video_gate(
+                    &track_map,
+                    &per_track,
+                    &started_tracks,
+                    wait_for_video_keyframe,
+                )
+            {
+                let elapsed_micros = runtime_api_for_task
+                    .now()
+                    .as_micros()
+                    .saturating_sub(play_start_micros);
+                let elapsed_ms = elapsed_micros / 1_000;
+                if elapsed_ms >= startup_alert_threshold_ms {
+                    startup_alert_emitted = true;
+                    warn!(
+                        connection_id,
+                        stream_key = %stream_key_for_logs,
+                        startup_elapsed_ms = elapsed_ms,
+                        startup_alert_threshold_ms,
+                        "rtsp play startup wait exceeded alert threshold"
+                    );
+                }
+            }
+            let Some(track) = track_map.get(&frame.track_id) else {
+                continue;
+            };
+            if !should_forward_play_frame(
+                &per_track,
+                &mut started_tracks,
+                wait_for_video_keyframe,
+                track,
+                frame.track_id,
+                frame.flags,
+            ) {
+                continue;
+            }
+            let Some(state) = per_track.get_mut(&frame.track_id) else {
+                continue;
+            };
+            let fields = frame_observability_fields(frame.as_ref());
+            tracing::info!(
+                connection_id,
+                stream_key = %stream_key_for_logs,
+                track_id = fields.track_id,
+                pts = fields.pts,
+                dts = fields.dts,
+                key = frame.flags.contains(cheetah_codec::FrameFlags::KEY),
+                "rtsp play recv frame"
+            );
+            let packet_mtu = play_packet_mtu(&state.transport, configured_mtu);
+            if let Some(media_timestamp_ms) =
+                frame_media_timestamp_ms(track.media_kind, frame.pts, frame.dts, frame.timebase)
+            {
+                let pacing_delay = play_start_pacing.delay_for(
+                    media_timestamp_ms,
+                    runtime_now_micros(&runtime_api_for_task),
+                    frame
+                        .flags
+                        .contains(cheetah_codec::FrameFlags::DISCONTINUITY),
+                );
+                if !pacing_delay.is_zero()
+                    && wait_or_cancel(&runtime_api_for_task, &play_cancel_child, pacing_delay).await
+                {
+                    break;
+                }
+            }
+
+            let (primary_ts, secondary_ts) =
+                media_timestamp_priority(track.media_kind, frame.pts, frame.dts);
+            // A/V sync alignment: adjust timestamps so audio and video
+            // share a common epoch for cross-protocol egress.
+            av_sync_aligner.on_frame(track.media_kind, frame.dts_us);
+            let canonical_raw_timestamp = media_ts_to_rtp_ticks(
+                primary_ts,
+                secondary_ts,
+                frame.timebase,
+                track.clock_rate.max(1),
+            );
+            let raw_timestamp = play_frame_raw_rtp_timestamp(frame.as_ref(), track);
+            // Rebase each track's egress RTP timeline to 0 at the start of the
+            // PLAY session. This makes RTP-Info rtptime=0 and Range npt=0.000-
+            // always match the first transmitted RTP packet, and aligns cross-
+            // protocol RTSP/HTTP/RTMP replay on a single, monotonic epoch.
+            if frame
+                .flags
+                .contains(cheetah_codec::FrameFlags::DISCONTINUITY)
+            {
+                state.first_raw_timestamp = None;
+            }
+            let base_timestamp = state.first_raw_timestamp.get_or_insert(raw_timestamp);
+            let rebased_timestamp = raw_timestamp.wrapping_sub(*base_timestamp);
+            tracing::info!(
+                connection_id,
+                stream_key = %stream_key_for_logs,
+                track_id = fields.track_id,
+                pts = fields.pts,
+                dts = fields.dts,
+                timebase_num = frame.timebase.num,
+                timebase_den = frame.timebase.den,
+                canonical_raw_timestamp,
+                raw_timestamp,
+                rebased_timestamp,
+                source_timestamp = ?frame.source_timestamp(),
+                codec = ?fields.codec,
+                "rtsp play rtp timestamp computed"
+            );
+            let normalized_timestamp = if state.packets_sent == 0
+                || frame
+                    .flags
+                    .contains(cheetah_codec::FrameFlags::DISCONTINUITY)
+            {
+                rebased_timestamp
+            } else {
+                let repaired = cheetah_codec::repair_monotonic_timestamp(
+                    rebased_timestamp,
+                    Some(state.last_rtp_timestamp),
+                    RTP_TIMESTAMP_BACKWARD_REPAIR_THRESHOLD_TICKS,
+                );
+                if repaired.repaired {
+                    state.timestamp_repair_count = state.timestamp_repair_count.saturating_add(1);
+                    let repair_count = state.timestamp_repair_count;
+                    if cheetah_codec::should_sample_timestamp_repair(repair_count) {
+                        warn!(
+                            connection_id,
+                            stream_key = %stream_key_for_logs,
+                            track_id = fields.track_id,
+                            codec = ?fields.codec,
+                            protocol_ingress = "rtsp-play",
+                            pts = fields.pts,
+                            dts = fields.dts,
+                            canonical_raw_timestamp,
+                            raw_timestamp,
+                            rebased_timestamp,
+                            repaired_timestamp = repaired.timestamp,
+                            repair_count,
+                            "rtsp play rtp timestamp repaired for monotonic egress"
+                        );
+                    }
+                    if cheetah_codec::should_emit_alert_threshold(
+                        repair_count,
+                        timestamp_repair_alert_threshold,
+                    ) {
+                        warn!(
+                            connection_id,
+                            stream_key = %stream_key_for_logs,
+                            track_id = fields.track_id,
+                            codec = ?fields.codec,
+                            protocol_ingress = "rtsp-play",
+                            pts = fields.pts,
+                            dts = fields.dts,
+                            canonical_raw_timestamp,
+                            raw_timestamp,
+                            rebased_timestamp,
+                            repaired_timestamp = repaired.timestamp,
+                            repair_count,
+                            repair_alert_threshold = timestamp_repair_alert_threshold,
+                            "rtsp play timestamp disorder alert threshold reached"
+                        );
+                    }
+                    repaired.timestamp
+                } else {
+                    rebased_timestamp
+                }
+            };
+            if let PlayTransport::UdpMulticast {
+                stream_key,
+                track_id,
+                ..
+            } = &state.transport
+            {
+                if !multicast_for_task.should_forward_rtp(connection_id, stream_key, *track_id) {
+                    continue;
+                }
+            }
+            // For cross-protocol scenarios (e.g. RTMP source), keyframes may
+            // not contain inline parameter sets. Prepend SPS/PPS/VPS from cache
+            // so RTP subscribers can decode without relying solely on SDP.
+            let effective_payload;
+            let effective_frame;
+            let frame_ref = if frame.flags.contains(cheetah_codec::FrameFlags::KEY) {
+                if let Some(ps_cache) = play_parameter_set_caches.get_mut(&frame.track_id) {
+                    // Update cache from frame in case parameter sets changed in-band
+                    ps_cache.update_from_annexb(frame.codec, frame.payload.as_ref());
+                    if ps_cache.has_required_sets(frame.codec)
+                        && frame.format == cheetah_codec::FrameFormat::CanonicalH26x
+                    {
+                        effective_payload = ps_cache
+                            .prepend_to_annexb_access_unit(frame.codec, frame.payload.as_ref());
+                        effective_frame = cheetah_codec::AVFrame {
+                            payload: effective_payload,
+                            ..frame.as_ref().clone()
+                        };
+                        &effective_frame
+                    } else {
+                        frame.as_ref()
+                    }
+                } else {
+                    frame.as_ref()
+                }
+            } else {
+                // Non-keyframes: still update cache if parameter sets appear
+                if let Some(ps_cache) = play_parameter_set_caches.get_mut(&frame.track_id) {
+                    ps_cache.update_from_annexb(frame.codec, frame.payload.as_ref());
+                }
+                frame.as_ref()
+            };
+            let packets = packetize_frame_to_rtp_with_timestamp(
+                frame_ref,
+                track,
+                state.payload_type,
+                &mut state.seq,
+                state.ssrc,
+                packet_mtu,
+                normalized_timestamp,
+            );
+            if packets.is_empty() {
+                warn!(
+                    connection_id,
+                    stream_key = %stream_key_for_logs,
+                    track_id = fields.track_id,
+                    codec = ?fields.codec,
+                    pts = fields.pts,
+                    dts = fields.dts,
+                    packet_mtu,
+                    "packetize play frame produced no RTP packets; drop frame"
+                );
+                continue;
+            }
+            for packet in packets {
+                let payload = packet.encode();
+                state.packets_sent = state.packets_sent.wrapping_add(1);
+                state.octets_sent = state
+                    .octets_sent
+                    .wrapping_add(packet.payload.len().min(u32::MAX as usize) as u32);
+                state.last_rtp_timestamp = packet.header.timestamp;
+                let mut rtp_send_failed = false;
+                match &state.transport {
+                    PlayTransport::TcpInterleaved { rtp_channel, .. } => {
+                        if command_tx_clone
+                            .send_core(
+                                connection_id,
+                                RtspCommand::SendInterleaved {
+                                    channel: *rtp_channel,
+                                    payload,
+                                },
+                            )
+                            .await
+                            .is_err()
+                        {
+                            rtp_send_failed = true;
+                        }
+                    }
+                    PlayTransport::UdpUnicast {
+                        rtp_socket,
+                        target_rtp,
+                        ..
+                    } => {
+                        if rtp_socket.send_to(&payload, *target_rtp).await.is_err() {
+                            rtp_send_failed = true;
+                        }
+                    }
+                    PlayTransport::UdpMulticast {
+                        rtp_socket,
+                        target_rtp,
+                        ..
+                    } => {
+                        if rtp_socket.send_to(&payload, *target_rtp).await.is_err() {
+                            rtp_send_failed = true;
+                        }
+                    }
+                }
+                if rtp_send_failed {
+                    warn!(
+                        connection_id,
+                        stream_key = %stream_key_for_logs,
+                        track_id = fields.track_id,
+                        codec = ?fields.codec,
+                        pts = fields.pts,
+                        dts = fields.dts,
+                        "send play rtp packet failed"
+                    );
+                    return;
+                }
+
+                if !state.sdes_sent {
+                    let sdes_packet = PlayRtcpPacket::SdesCname {
+                        ssrc: state.ssrc,
+                        cname: format!("cheetah-play-{connection_id}"),
+                    };
+                    match send_play_rtcp_packet(
+                        &command_tx_clone,
+                        connection_id,
+                        &state.transport,
+                        sdes_packet,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            state.sdes_sent = true;
+                        }
+                        Err(PlayRtcpSendError::Build { packet, detail }) => {
+                            warn!(
+                                connection_id,
+                                stream_key = %stream_key_for_logs,
+                                track_id = fields.track_id,
+                                codec = ?fields.codec,
+                                pts = fields.pts,
+                                dts = fields.dts,
+                                "build play rtcp {packet} failed: {detail}"
                             );
-                            let raw_timestamp =
-                                source_rtp_timestamp_for_egress(frame.as_ref(), track.codec)
-                                    .unwrap_or(canonical_raw_timestamp);
-                            let normalized_timestamp = if state.packets_sent == 0
-                                || frame.flags.contains(cheetah_codec::FrameFlags::DISCONTINUITY)
-                                || should_skip_monotonic_repair_for_b_frames(
-                                    track.media_kind,
-                                    track.codec,
-                                )
-                            {
-                                raw_timestamp
-                            } else {
-                                let repaired = cheetah_codec::repair_monotonic_timestamp(
-                                    raw_timestamp,
-                                    Some(state.last_rtp_timestamp),
-                                    RTP_TIMESTAMP_BACKWARD_REPAIR_THRESHOLD_TICKS,
-                                );
-                                if repaired.repaired {
-                                    state.timestamp_repair_count =
-                                        state.timestamp_repair_count.saturating_add(1);
-                                    let repair_count = state.timestamp_repair_count;
-                                    if cheetah_codec::should_sample_timestamp_repair(repair_count)
-                                    {
-                                        warn!(
-                                            connection_id,
-                                            stream_key = %stream_key_for_logs,
-                                            track_id = fields.track_id,
-                                            codec = ?fields.codec,
-                                            protocol_ingress = "rtsp-play",
-                                            pts = fields.pts,
-                                            dts = fields.dts,
-                                            canonical_raw_timestamp,
-                                            raw_timestamp,
-                                            repaired_timestamp = repaired.timestamp,
-                                            repair_count,
-                                            "rtsp play rtp timestamp repaired for monotonic egress"
-                                        );
-                                    }
-                                    if cheetah_codec::should_emit_alert_threshold(
-                                        repair_count,
-                                        timestamp_repair_alert_threshold,
-                                    ) {
-                                        warn!(
-                                            connection_id,
-                                            stream_key = %stream_key_for_logs,
-                                            track_id = fields.track_id,
-                                            codec = ?fields.codec,
-                                            protocol_ingress = "rtsp-play",
-                                            pts = fields.pts,
-                                            dts = fields.dts,
-                                            canonical_raw_timestamp,
-                                            raw_timestamp,
-                                            repaired_timestamp = repaired.timestamp,
-                                            repair_count,
-                                            repair_alert_threshold = timestamp_repair_alert_threshold,
-                                            "rtsp play timestamp disorder alert threshold reached"
-                                        );
-                                    }
-                                    repaired.timestamp
-                                } else {
-                                    raw_timestamp
-                                }
-                            };
-                            if let PlayTransport::UdpMulticast {
-                                stream_key,
-                                track_id,
-                                ..
-                            } = &state.transport
-                            {
-                                if !multicast_for_task
-                                    .should_forward_rtp(connection_id, stream_key, *track_id)
-                                {
-                                    continue;
-                                }
-                            }
-                            // For cross-protocol scenarios (e.g. RTMP source), keyframes may
-                            // not contain inline parameter sets. Prepend SPS/PPS/VPS from cache
-                            // so RTP subscribers can decode without relying solely on SDP.
-                            let effective_payload;
-                            let effective_frame;
-                            let frame_ref = if frame.flags.contains(cheetah_codec::FrameFlags::KEY) {
-                                if let Some(ps_cache) = play_parameter_set_caches.get_mut(&frame.track_id) {
-                                    // Update cache from frame in case parameter sets changed in-band
-                                    ps_cache.update_from_annexb(frame.codec, frame.payload.as_ref());
-                                    if ps_cache.has_required_sets(frame.codec) && frame.format == cheetah_codec::FrameFormat::CanonicalH26x {
-                                        effective_payload = ps_cache.prepend_to_annexb_access_unit(frame.codec, frame.payload.as_ref());
-                                        effective_frame = cheetah_codec::AVFrame {
-                                            payload: effective_payload,
-                                            ..frame.as_ref().clone()
-                                        };
-                                        &effective_frame
-                                    } else {
-                                        frame.as_ref()
-                                    }
-                                } else {
-                                    frame.as_ref()
-                                }
-                            } else {
-                                // Non-keyframes: still update cache if parameter sets appear
-                                if let Some(ps_cache) = play_parameter_set_caches.get_mut(&frame.track_id) {
-                                    ps_cache.update_from_annexb(frame.codec, frame.payload.as_ref());
-                                }
-                                frame.as_ref()
-                            };
-                            let packets = packetize_frame_to_rtp_with_timestamp(
-                                frame_ref,
-                                track,
-                                state.payload_type,
-                                &mut state.seq,
-                                state.ssrc,
-                                packet_mtu,
-                                normalized_timestamp,
+                            continue;
+                        }
+                        Err(PlayRtcpSendError::Send { packet }) => {
+                            warn!(
+                                connection_id,
+                                stream_key = %stream_key_for_logs,
+                                track_id = fields.track_id,
+                                codec = ?fields.codec,
+                                pts = fields.pts,
+                                dts = fields.dts,
+                                "send play rtcp {packet} failed"
                             );
-                            if packets.is_empty() {
-                                warn!(
-                                    connection_id,
-                                    stream_key = %stream_key_for_logs,
-                                    track_id = fields.track_id,
-                                    codec = ?fields.codec,
-                                    pts = fields.pts,
-                                    dts = fields.dts,
-                                    packet_mtu,
-                                    "packetize play frame produced no RTP packets; drop frame"
-                                );
-                                continue;
-                            }
-                            for packet in packets {
-                                let payload = packet.encode();
-                                state.packets_sent = state.packets_sent.wrapping_add(1);
-                                state.octets_sent = state
-                                    .octets_sent
-                                    .wrapping_add(packet.payload.len().min(u32::MAX as usize) as u32);
-                                state.last_rtp_timestamp = packet.header.timestamp;
-                                let mut rtp_send_failed = false;
-                                match &state.transport {
-                                    PlayTransport::TcpInterleaved { rtp_channel, .. } => {
-                                        if command_tx_clone
-                                            .send_core(
-                                                connection_id,
-                                                RtspCommand::SendInterleaved {
-                                                    channel: *rtp_channel,
-                                                    payload,
-                                                },
-                                            )
-                                            .await
-                                            .is_err()
-                                        {
-                                            rtp_send_failed = true;
-                                        }
-                                    }
-                                    PlayTransport::UdpUnicast {
-                                        rtp_socket,
-                                        target_rtp,
-                                        ..
-                                    } => {
-                                        if rtp_socket.send_to(&payload, *target_rtp).await.is_err() {
-                                            rtp_send_failed = true;
-                                        }
-                                    }
-                                    PlayTransport::UdpMulticast {
-                                        rtp_socket,
-                                        target_rtp,
-                                        ..
-                                    } => {
-                                        if rtp_socket.send_to(&payload, *target_rtp).await.is_err() {
-                                            rtp_send_failed = true;
-                                        }
-                                    }
-                                }
-                                if rtp_send_failed {
-                                    warn!(
-                                        connection_id,
-                                        stream_key = %stream_key_for_logs,
-                                        track_id = fields.track_id,
-                                        codec = ?fields.codec,
-                                        pts = fields.pts,
-                                        dts = fields.dts,
-                                        "send play rtp packet failed"
-                                    );
-                                    return;
-                                }
+                            return;
+                        }
+                    }
+                }
 
-                                if !state.sdes_sent {
-                                    let sdes_packet = PlayRtcpPacket::SdesCname {
-                                        ssrc: state.ssrc,
-                                        cname: format!("cheetah-play-{connection_id}"),
-                                    };
-                                    match send_play_rtcp_packet(
-                                        &command_tx_clone,
-                                        connection_id,
-                                        &state.transport,
-                                        sdes_packet,
-                                    )
-                                    .await
-                                    {
-                                        Ok(()) => {
-                                            state.sdes_sent = true;
-                                        }
-                                        Err(PlayRtcpSendError::Build { packet, detail }) => {
-                                            warn!(
-                                                connection_id,
-                                                stream_key = %stream_key_for_logs,
-                                                track_id = fields.track_id,
-                                                codec = ?fields.codec,
-                                                pts = fields.pts,
-                                                dts = fields.dts,
-                                                "build play rtcp {packet} failed: {detail}"
-                                            );
-                                            continue;
-                                        }
-                                        Err(PlayRtcpSendError::Send { packet }) => {
-                                            warn!(
-                                                connection_id,
-                                                stream_key = %stream_key_for_logs,
-                                                track_id = fields.track_id,
-                                                codec = ?fields.codec,
-                                                pts = fields.pts,
-                                                dts = fields.dts,
-                                                "send play rtcp {packet} failed"
-                                            );
-                                            return;
-                                        }
-                                    }
-                                }
+                if should_emit_sender_report(state.packets_sent) {
+                    let sr_packet = PlayRtcpPacket::SenderReport {
+                        ssrc: state.ssrc,
+                        rtp_timestamp: state.last_rtp_timestamp,
+                        packets_sent: state.packets_sent,
+                        octets_sent: state.octets_sent,
+                        unix_time_micros: runtime_unix_time_micros(&runtime_api_ref),
+                    };
+                    match send_play_rtcp_packet(
+                        &command_tx_clone,
+                        connection_id,
+                        &state.transport,
+                        sr_packet,
+                    )
+                    .await
+                    {
+                        Ok(()) => {}
+                        Err(PlayRtcpSendError::Build { packet, detail }) => {
+                            warn!(
+                                connection_id,
+                                stream_key = %stream_key_for_logs,
+                                track_id = fields.track_id,
+                                codec = ?fields.codec,
+                                pts = fields.pts,
+                                dts = fields.dts,
+                                "build play rtcp {packet} failed: {detail}"
+                            );
+                            continue;
+                        }
+                        Err(PlayRtcpSendError::Send { packet }) => {
+                            warn!(
+                                connection_id,
+                                stream_key = %stream_key_for_logs,
+                                track_id = fields.track_id,
+                                codec = ?fields.codec,
+                                pts = fields.pts,
+                                dts = fields.dts,
+                                "send play rtcp {packet} failed"
+                            );
+                            return;
+                        }
+                    }
+                }
+            }
 
-                                if should_emit_sender_report(state.packets_sent) {
-                                    let sr_packet = PlayRtcpPacket::SenderReport {
-                                        ssrc: state.ssrc,
-                                        rtp_timestamp: state.last_rtp_timestamp,
-                                        packets_sent: state.packets_sent,
-                                        octets_sent: state.octets_sent,
-                                        unix_time_micros: runtime_unix_time_micros(&runtime_api_ref),
-                                    };
-                                    match send_play_rtcp_packet(
-                                        &command_tx_clone,
-                                        connection_id,
-                                        &state.transport,
-                                        sr_packet,
-                                    )
-                                    .await
-                                    {
-                                        Ok(()) => {}
-                                        Err(PlayRtcpSendError::Build { packet, detail }) => {
-                                            warn!(
-                                                connection_id,
-                                                stream_key = %stream_key_for_logs,
-                                                track_id = fields.track_id,
-                                                codec = ?fields.codec,
-                                                pts = fields.pts,
-                                                dts = fields.dts,
-                                                "build play rtcp {packet} failed: {detail}"
-                                            );
-                                            continue;
-                                        }
-                                        Err(PlayRtcpSendError::Send { packet }) => {
-                                            warn!(
-                                                connection_id,
-                                                stream_key = %stream_key_for_logs,
-                                                track_id = fields.track_id,
-                                                codec = ?fields.codec,
-                                                pts = fields.pts,
-                                                dts = fields.dts,
-                                                "send play rtcp {packet} failed"
-                                            );
-                                            return;
-                                        }
-                                    }
-                                }
-                            }
-
-                            let updated_state = state.clone();
-                            if let Some(connection_state) =
-                                sessions_for_task.lock().get_mut(&connection_id)
-                            {
-                                connection_state
-                                    .play_tracks
-                                    .insert(frame.track_id, updated_state);
-                            }
+            let updated_state = state.clone();
+            if let Some(connection_state) = sessions_for_task.lock().get_mut(&connection_id) {
+                connection_state
+                    .play_tracks
+                    .insert(frame.track_id, updated_state);
+            }
                         }
                         Ok(None) => break,
                         Err(_) => break,
@@ -2235,6 +2254,7 @@ mod tests {
             last_rtp_timestamp: 0,
             timestamp_repair_count: 0,
             sdes_sent: false,
+            first_raw_timestamp: None,
         }
     }
 
@@ -2465,17 +2485,23 @@ mod tests {
     fn media_ts_to_rtp_ticks_keeps_primary_zero_timestamp() {
         let video_ticks =
             media_ts_to_rtp_ticks(0, 9_000, cheetah_codec::Timebase::new(1, 1_000), 90_000);
-        assert_eq!(video_ticks, 0, "video must keep pts=0 as valid timestamp");
+        assert_eq!(
+            video_ticks, 0,
+            "primary=0 must stay valid as zero timestamp"
+        );
 
         let audio_ticks =
             media_ts_to_rtp_ticks(0, 1_024, cheetah_codec::Timebase::new(1, 1_000), 48_000);
-        assert_eq!(audio_ticks, 0, "audio must keep dts=0 as valid timestamp");
+        assert_eq!(
+            audio_ticks, 0,
+            "primary=0 must stay valid as zero timestamp"
+        );
     }
 
     #[test]
-    fn media_timestamp_priority_prefers_pts_for_video_and_dts_for_audio() {
+    fn media_timestamp_priority_prefers_dts_for_video_and_audio() {
         let video = media_timestamp_priority(cheetah_codec::MediaKind::Video, 9_000, 3_000);
-        assert_eq!(video, (9_000, 3_000));
+        assert_eq!(video, (3_000, 9_000));
 
         let audio = media_timestamp_priority(cheetah_codec::MediaKind::Audio, 9_000, 3_000);
         assert_eq!(audio, (3_000, 9_000));
@@ -2687,10 +2713,6 @@ mod tests {
     #[test]
     fn raw_rtp_timestamp_preservation_codec_matrix() {
         for codec in [
-            cheetah_codec::CodecId::H265,
-            cheetah_codec::CodecId::AV1,
-            cheetah_codec::CodecId::VP8,
-            cheetah_codec::CodecId::VP9,
             cheetah_codec::CodecId::Opus,
             cheetah_codec::CodecId::ADPCM,
             cheetah_codec::CodecId::G711A,
@@ -2699,11 +2721,19 @@ mod tests {
         ] {
             assert!(
                 preserve_raw_rtp_timestamps(codec),
-                "{codec:?} should preserve raw RTP timestamps for bridge consistency"
+                "{codec:?} should preserve raw RTP timestamps for audio continuity"
             );
         }
 
-        for codec in [cheetah_codec::CodecId::H264, cheetah_codec::CodecId::AAC] {
+        for codec in [
+            cheetah_codec::CodecId::H264,
+            cheetah_codec::CodecId::H265,
+            cheetah_codec::CodecId::H266,
+            cheetah_codec::CodecId::AV1,
+            cheetah_codec::CodecId::VP8,
+            cheetah_codec::CodecId::VP9,
+            cheetah_codec::CodecId::AAC,
+        ] {
             assert!(
                 !preserve_raw_rtp_timestamps(codec),
                 "{codec:?} should keep monotonic normalization enabled"
@@ -2715,12 +2745,12 @@ mod tests {
     fn source_rtp_timestamp_for_egress_uses_supported_codec_only() {
         let mut frame = AVFrame::new(
             TrackId(99),
-            cheetah_codec::MediaKind::Video,
-            cheetah_codec::CodecId::VP9,
-            FrameFormat::CanonicalVp9Frame,
-            9_000,
-            9_000,
-            Timebase::new(1, 90_000),
+            cheetah_codec::MediaKind::Audio,
+            cheetah_codec::CodecId::Opus,
+            FrameFormat::OpusPacket,
+            9_600,
+            9_600,
+            Timebase::new(1, 48_000),
             Bytes::from_static(&[0x90, 0x80]),
         );
         frame.set_source_timestamp(cheetah_codec::SourceTimestamp::Rtp(
@@ -2728,7 +2758,7 @@ mod tests {
         ));
 
         assert_eq!(
-            source_rtp_timestamp_for_egress(&frame, cheetah_codec::CodecId::VP9),
+            source_rtp_timestamp_for_egress(&frame, cheetah_codec::CodecId::Opus),
             Some(3_000_001)
         );
         assert_eq!(
@@ -2808,14 +2838,14 @@ mod tests {
     }
 
     #[test]
-    fn frame_media_timestamp_ms_uses_media_kind_priority_and_timebase() {
+    fn frame_media_timestamp_ms_uses_dts_primary_for_both_video_and_audio() {
         let video = frame_media_timestamp_ms(
             cheetah_codec::MediaKind::Video,
             9_000,
             6_000,
             Timebase::new(1, 90_000),
         );
-        assert_eq!(video, Some(100));
+        assert_eq!(video, Some(67));
 
         let audio = frame_media_timestamp_ms(
             cheetah_codec::MediaKind::Audio,

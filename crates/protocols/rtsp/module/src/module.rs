@@ -608,6 +608,7 @@ mod tests {
                 last_rtp_timestamp: 3456,
                 timestamp_repair_count: 0,
                 sdes_sent: false,
+                first_raw_timestamp: None,
             },
         );
         play_tracks.insert(
@@ -625,6 +626,7 @@ mod tests {
                 last_rtp_timestamp: 1234,
                 timestamp_repair_count: 0,
                 sdes_sent: false,
+                first_raw_timestamp: None,
             },
         );
 
@@ -913,6 +915,7 @@ mod tests {
                 last_rtp_timestamp: 0,
                 timestamp_repair_count: 0,
                 sdes_sent: false,
+                first_raw_timestamp: None,
             },
         );
         play_tracks.insert(
@@ -932,6 +935,7 @@ mod tests {
                 last_rtp_timestamp: 0,
                 timestamp_repair_count: 0,
                 sdes_sent: false,
+                first_raw_timestamp: None,
             },
         );
 
