@@ -1,8 +1,13 @@
 //! fMP4 module configuration.
+//!
+//! fMP4 模块配置。
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Top-level configuration for the fMP4 module.
+///
+/// fMP4 模块的顶层配置。
 pub struct Fmp4ModuleConfig {
     pub enabled: bool,
     pub listen: String,
@@ -37,6 +42,9 @@ pub struct Fmp4ModuleConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// TLS configuration for the fMP4 module listener.
+///
+/// fMP4 模块监听器的 TLS 配置。
 pub struct Fmp4TlsConfig {
     pub enabled: bool,
     pub listen: String,
@@ -47,6 +55,9 @@ pub struct Fmp4TlsConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Pull job that ingests a remote fMP4 source into a local stream key.
+///
+/// 将远程 fMP4 源拉取到本地流密钥的拉取任务。
 pub struct Fmp4PullJobConfig {
     pub name: String,
     #[serde(default = "default_true")]
@@ -61,6 +72,9 @@ pub struct Fmp4PullJobConfig {
     pub insecure_tls: bool,
 }
 
+/// Default values for `Fmp4ModuleConfig`.
+///
+/// `Fmp4ModuleConfig` 的默认值。
 impl Default for Fmp4ModuleConfig {
     fn default() -> Self {
         Self {
@@ -84,15 +98,27 @@ impl Default for Fmp4ModuleConfig {
     }
 }
 
+/// `Fmp4ModuleConfig` helpers for serialization, deserialization, and validation.
+///
+/// `Fmp4ModuleConfig` 的序列化、反序列化与校验辅助。
 impl Fmp4ModuleConfig {
+    /// Serialize the default config to JSON.
+    ///
+    /// 将默认配置序列化为 JSON。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap_or_default()
     }
 
+    /// Deserialize from a JSON value.
+    ///
+    /// 从 JSON 值反序列化。
     pub fn from_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
     }
 
+    /// Validate the module and job configuration.
+    ///
+    /// 校验模块与任务配置。
     pub fn validate(&self) -> Result<(), String> {
         let mut errors = Vec::new();
         if self.listen.parse::<std::net::SocketAddr>().is_err() {
