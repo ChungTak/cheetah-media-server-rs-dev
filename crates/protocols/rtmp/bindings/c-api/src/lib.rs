@@ -14,6 +14,9 @@ const NULL_POINTER_ERROR: &[u8] = b"null pointer\0";
 #[repr(C)]
 #[expect(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// C error codes returned by the RTMP core C API.
+///
+/// RTMP core C API 返回的错误码。
 pub enum RtmpCoreApiError {
     RTMP_CORE_API_ERROR_OK = 0,
     RTMP_CORE_API_ERROR_INVALID_ARGUMENT,
@@ -26,6 +29,9 @@ pub enum RtmpCoreApiError {
 #[repr(C)]
 #[expect(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// C enum identifying the kind of output produced by the RTMP core.
+///
+/// 标识 RTMP core 输出类型的 C 枚举。
 pub enum RtmpCoreOutputKind {
     RTMP_CORE_OUTPUT_KIND_NONE = 0,
     RTMP_CORE_OUTPUT_KIND_WRITE,
@@ -53,6 +59,9 @@ pub enum RtmpCoreOutputKind {
 #[repr(C)]
 #[expect(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// C enum for the media type carried in an output event.
+///
+/// 输出事件中携带的媒体类型的 C 枚举。
 pub enum RtmpCoreOutputMediaType {
     RTMP_CORE_OUTPUT_MEDIA_TYPE_NONE = 0,
     RTMP_CORE_OUTPUT_MEDIA_TYPE_AUDIO,
@@ -62,6 +71,9 @@ pub enum RtmpCoreOutputMediaType {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
+/// C-compatible view of a pending output; pointers reference owned Rust bytes.
+///
+/// 待处理输出的 C 兼容视图；指针指向 Rust 拥有的字节。
 pub struct RtmpCoreOutputView {
     pub kind: RtmpCoreOutputKind,
     pub timer_id: u64,
@@ -92,6 +104,9 @@ impl Default for RtmpCoreOutputView {
     }
 }
 
+/// Rust-owned output with primary/secondary byte buffers; converted to a C view on demand.
+///
+/// 拥有主/次字节缓冲区的 Rust 端输出；按需转换为 C 视图。
 struct OwnedOutput {
     kind: RtmpCoreOutputKind,
     timer_id: u64,
@@ -104,6 +119,9 @@ struct OwnedOutput {
 }
 
 impl OwnedOutput {
+    /// Create an output with empty buffers and the given kind.
+    ///
+    /// 用空缓冲区和指定类型创建输出。
     fn empty(kind: RtmpCoreOutputKind) -> Self {
         Self {
             kind,
@@ -117,6 +135,9 @@ impl OwnedOutput {
         }
     }
 
+    /// Convert a `CoreOutput` into an owned C-API representation.
+    ///
+    /// 将 `CoreOutput` 转换为拥有的 C API 表示。
     fn from_core(output: CoreOutput) -> Self {
         match output {
             CoreOutput::Write(payload) => Self {
@@ -153,6 +174,9 @@ impl OwnedOutput {
         }
     }
 
+    /// Convert an `RtmpEvent` into an owned output.
+    ///
+    /// 将 `RtmpEvent` 转换为拥有的输出。
     fn from_event(event: RtmpEvent) -> Self {
         match event {
             RtmpEvent::Connected { app, .. } => Self {
@@ -286,6 +310,9 @@ impl OwnedOutput {
         }
     }
 
+    /// Build a C-safe view of the output without copying the underlying bytes.
+    ///
+    /// 构建不复制底层字节的 C 安全视图。
     fn view(&self) -> Result<RtmpCoreOutputView, RtmpCoreApiError> {
         let primary_len = u32::try_from(self.primary.len())
             .map_err(|_| RtmpCoreApiError::RTMP_CORE_API_ERROR_OVERFLOW)?;
@@ -306,6 +333,9 @@ impl OwnedOutput {
     }
 }
 
+/// Encode AMF values into a bytes payload for C API consumers.
+///
+/// 将 AMF 值编码为供 C API 消费者使用的字节负载。
 fn encode_amf_values(values: &[AmfValue]) -> Bytes {
     let mut payload = Vec::new();
     for value in values {
@@ -314,6 +344,9 @@ fn encode_amf_values(values: &[AmfValue]) -> Bytes {
     Bytes::from(payload)
 }
 
+/// Opaque handle that owns an `RtmpCore` and a queue of pending outputs.
+///
+/// 拥有 `RtmpCore` 与待处理输出队列的不透明句柄。
 pub struct RtmpCoreHandle {
     core: RtmpCore,
     output_queue: VecDeque<OwnedOutput>,
@@ -322,6 +355,9 @@ pub struct RtmpCoreHandle {
 }
 
 impl RtmpCoreHandle {
+    /// Create a new handle with an empty output queue and an empty error buffer.
+    ///
+    /// 创建输出队列为空、错误缓冲区为空的新句柄。
     fn new() -> Self {
         Self {
             core: RtmpCore::new(),
@@ -331,16 +367,25 @@ impl RtmpCoreHandle {
         }
     }
 
+    /// Clear the cached last error message.
+    ///
+    /// 清除缓存的上次错误消息。
     fn clear_last_error(&mut self) {
         self.last_error_string = None;
     }
 
+    /// Store a UTF-8 error message and return the corresponding API error code.
+    ///
+    /// 保存 UTF-8 错误消息并返回对应的 API 错误码。
     fn set_last_error(&mut self, message: impl AsRef<str>) {
         self.last_error_string = CString::new(message.as_ref())
             .ok()
             .or_else(|| CString::new("ffi error message contains NUL byte").ok());
     }
 
+    /// Push an input into the core and enqueue all produced outputs.
+    ///
+    /// 将输入推入 core 并将所有产生的输出入队。
     fn apply_input(&mut self, input: CoreInput) -> RtmpCoreApiError {
         self.clear_last_error();
         match self.core.handle_input(input) {
@@ -356,11 +401,17 @@ impl RtmpCoreHandle {
         }
     }
 
+    /// Return the number of pending outputs in the queue.
+    ///
+    /// 返回队列中待处理输出的数量。
     fn pending_output_count(&self) -> u32 {
         u32::try_from(self.output_queue.len()).unwrap_or(u32::MAX)
     }
 }
 
+/// Map an internal RTMP media type to the C output media type enum.
+///
+/// 将内部 RTMP 媒体类型映射到 C 输出媒体类型枚举。
 fn map_media_type(media_type: RtmpMediaType) -> RtmpCoreOutputMediaType {
     match media_type {
         RtmpMediaType::Audio => RtmpCoreOutputMediaType::RTMP_CORE_OUTPUT_MEDIA_TYPE_AUDIO,
@@ -393,16 +444,25 @@ unsafe fn read_utf8<'a>(data: *const u8, len: u32) -> Result<&'a str, RtmpCoreAp
 }
 
 #[unsafe(no_mangle)]
+/// Return the library version string as a static C string.
+///
+/// 将库版本字符串作为静态 C 字符串返回。
 pub extern "C" fn rtmp_library_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
 }
 
 #[unsafe(no_mangle)]
+/// Allocate a new RTMP core handle.
+///
+/// 分配新的 RTMP core 句柄。
 pub extern "C" fn rtmp_core_new() -> *mut RtmpCoreHandle {
     Box::into_raw(Box::new(RtmpCoreHandle::new()))
 }
 
 #[unsafe(no_mangle)]
+/// Free an RTMP core handle previously created by `rtmp_core_new`.
+///
+/// 释放之前由 `rtmp_core_new` 创建的 RTMP core 句柄。
 pub unsafe extern "C" fn rtmp_core_free(handle: *mut RtmpCoreHandle) {
     if handle.is_null() {
         return;
@@ -411,6 +471,9 @@ pub unsafe extern "C" fn rtmp_core_free(handle: *mut RtmpCoreHandle) {
 }
 
 #[unsafe(no_mangle)]
+/// Return the last error message for the handle, or an empty string if none.
+///
+/// 返回句柄的上次错误消息，若无则返回空字符串。
 pub unsafe extern "C" fn rtmp_core_get_last_error(handle: *const RtmpCoreHandle) -> *const c_char {
     if handle.is_null() {
         return NULL_POINTER_ERROR.as_ptr().cast();
@@ -423,6 +486,9 @@ pub unsafe extern "C" fn rtmp_core_get_last_error(handle: *const RtmpCoreHandle)
 }
 
 #[unsafe(no_mangle)]
+/// Return the number of outputs queued on the handle.
+///
+/// 返回句柄上已排队的输出数量。
 pub unsafe extern "C" fn rtmp_core_pending_output_count(handle: *const RtmpCoreHandle) -> u32 {
     if handle.is_null() {
         return 0;
@@ -432,6 +498,9 @@ pub unsafe extern "C" fn rtmp_core_pending_output_count(handle: *const RtmpCoreH
 }
 
 #[unsafe(no_mangle)]
+/// Drop all pending outputs from the handle.
+///
+/// 丢弃句柄上所有待处理输出。
 pub unsafe extern "C" fn rtmp_core_clear_outputs(handle: *mut RtmpCoreHandle) {
     let Some(handle_ref) = (unsafe { handle_mut(handle) }) else {
         return;
@@ -441,6 +510,9 @@ pub unsafe extern "C" fn rtmp_core_clear_outputs(handle: *mut RtmpCoreHandle) {
 }
 
 #[unsafe(no_mangle)]
+/// Drop the next pending output from the handle.
+///
+/// 丢弃句柄上的下一个待处理输出。
 pub unsafe extern "C" fn rtmp_core_clear_output(handle: *mut RtmpCoreHandle) {
     let Some(handle_ref) = (unsafe { handle_mut(handle) }) else {
         return;
@@ -449,6 +521,9 @@ pub unsafe extern "C" fn rtmp_core_clear_output(handle: *mut RtmpCoreHandle) {
 }
 
 #[unsafe(no_mangle)]
+/// Pop the next pending output and return a C view into its buffers.
+///
+/// 弹出下一个待处理输出并返回其缓冲区的 C 视图。
 pub unsafe extern "C" fn rtmp_core_next_output(
     handle: *mut RtmpCoreHandle,
     output: *mut RtmpCoreOutputView,
@@ -481,6 +556,9 @@ pub unsafe extern "C" fn rtmp_core_next_output(
 }
 
 #[unsafe(no_mangle)]
+/// Feed raw bytes into the core and enqueue any outputs.
+///
+/// 将原始字节喂入 core 并入队任何输出。
 pub unsafe extern "C" fn rtmp_core_handle_bytes(
     handle: *mut RtmpCoreHandle,
     data: *const u8,
@@ -497,6 +575,9 @@ pub unsafe extern "C" fn rtmp_core_handle_bytes(
 }
 
 #[unsafe(no_mangle)]
+/// Notify the core that a timer has expired.
+///
+/// 通知 core 定时器已到期。
 pub unsafe extern "C" fn rtmp_core_handle_timeout(
     handle: *mut RtmpCoreHandle,
     timer_id: u64,
@@ -507,6 +588,9 @@ pub unsafe extern "C" fn rtmp_core_handle_timeout(
     handle_ref.apply_input(CoreInput::Timeout { id: timer_id })
 }
 
+/// Build a zero-payload command input for the core.
+///
+/// 为 core 构建无负载的命令输入。
 fn command_no_payload(
     handle_ref: &mut RtmpCoreHandle,
     command: RtmpCoreCommand,
@@ -515,6 +599,9 @@ fn command_no_payload(
 }
 
 #[unsafe(no_mangle)]
+/// Accept a publish request for the given stream.
+///
+/// 接受指定流的发布请求。
 pub unsafe extern "C" fn rtmp_core_command_accept_publish(
     handle: *mut RtmpCoreHandle,
     stream_id: u32,
@@ -526,6 +613,9 @@ pub unsafe extern "C" fn rtmp_core_command_accept_publish(
 }
 
 #[unsafe(no_mangle)]
+/// Reject a publish request for the given stream with a description.
+///
+/// 以描述信息拒绝指定流的发布请求。
 pub unsafe extern "C" fn rtmp_core_command_reject_publish(
     handle: *mut RtmpCoreHandle,
     stream_id: u32,
@@ -549,6 +639,9 @@ pub unsafe extern "C" fn rtmp_core_command_reject_publish(
 }
 
 #[unsafe(no_mangle)]
+/// Accept a play request for the given stream.
+///
+/// 接受指定流的播放请求。
 pub unsafe extern "C" fn rtmp_core_command_accept_play(
     handle: *mut RtmpCoreHandle,
     stream_id: u32,
@@ -560,6 +653,9 @@ pub unsafe extern "C" fn rtmp_core_command_accept_play(
 }
 
 #[unsafe(no_mangle)]
+/// Accept a play request with optional status/sample-access messages.
+///
+/// 接受播放请求，并可选择发送状态与 sample-access 消息。
 pub unsafe extern "C" fn rtmp_core_command_accept_play_configured(
     handle: *mut RtmpCoreHandle,
     stream_id: u32,
@@ -580,6 +676,9 @@ pub unsafe extern "C" fn rtmp_core_command_accept_play_configured(
 }
 
 #[unsafe(no_mangle)]
+/// Reject a play request for the given stream with a description.
+///
+/// 以描述信息拒绝指定流的播放请求。
 pub unsafe extern "C" fn rtmp_core_command_reject_play(
     handle: *mut RtmpCoreHandle,
     stream_id: u32,
@@ -618,6 +717,9 @@ unsafe fn read_payload(
 }
 
 #[unsafe(no_mangle)]
+/// Send metadata to the given stream.
+///
+/// 向指定流发送元数据。
 pub unsafe extern "C" fn rtmp_core_command_send_metadata(
     handle: *mut RtmpCoreHandle,
     stream_id: u32,
@@ -642,6 +744,9 @@ pub unsafe extern "C" fn rtmp_core_command_send_metadata(
 }
 
 #[unsafe(no_mangle)]
+/// Send audio data to the given stream.
+///
+/// 向指定流发送音频数据。
 pub unsafe extern "C" fn rtmp_core_command_send_audio(
     handle: *mut RtmpCoreHandle,
     stream_id: u32,
@@ -666,6 +771,9 @@ pub unsafe extern "C" fn rtmp_core_command_send_audio(
 }
 
 #[unsafe(no_mangle)]
+/// Send video data to the given stream.
+///
+/// 向指定流发送视频数据。
 pub unsafe extern "C" fn rtmp_core_command_send_video(
     handle: *mut RtmpCoreHandle,
     stream_id: u32,
@@ -690,6 +798,9 @@ pub unsafe extern "C" fn rtmp_core_command_send_video(
 }
 
 #[unsafe(no_mangle)]
+/// Send a notify message to the given stream.
+///
+/// 向指定流发送通知消息。
 pub unsafe extern "C" fn rtmp_core_command_send_notify(
     handle: *mut RtmpCoreHandle,
     stream_id: u32,
@@ -714,6 +825,9 @@ pub unsafe extern "C" fn rtmp_core_command_send_notify(
 }
 
 #[unsafe(no_mangle)]
+/// Close a stream by ID.
+///
+/// 按 ID 关闭流。
 pub unsafe extern "C" fn rtmp_core_command_close_stream(
     handle: *mut RtmpCoreHandle,
     stream_id: u32,
@@ -725,6 +839,9 @@ pub unsafe extern "C" fn rtmp_core_command_close_stream(
 }
 
 #[unsafe(no_mangle)]
+/// Close the connection entirely.
+///
+/// 完全关闭连接。
 pub unsafe extern "C" fn rtmp_core_command_close_connection(
     handle: *mut RtmpCoreHandle,
 ) -> RtmpCoreApiError {
