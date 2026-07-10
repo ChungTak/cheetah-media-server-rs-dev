@@ -245,6 +245,7 @@ impl WebRtcCore {
 
     /// Drain queued outputs into the caller-provided buffer.
     pub fn pump_outputs(&mut self, sink: &mut Vec<WebRtcCoreOutput>) {
+        sink.reserve(self.pending_outputs.len());
         while let Some(out) = self.pending_outputs.pop_front() {
             sink.push(out);
         }
