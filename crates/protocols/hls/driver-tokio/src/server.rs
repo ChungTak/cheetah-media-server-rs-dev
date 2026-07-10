@@ -1,3 +1,7 @@
+//! HLS HTTP server and request handling.
+//!
+//! HLS HTTP 服务器与请求处理。
+
 use std::collections::HashMap;
 use std::io;
 use std::net::SocketAddr;
@@ -12,8 +16,14 @@ use parking_lot::Mutex;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
+/// HLS connection identifier.
+///
+/// HLS 连接标识。
 pub type HlsConnectionId = u64;
 
+/// Configuration for the HLS HTTP driver.
+///
+/// HLS HTTP 驱动配置。
 #[derive(Debug, Clone)]
 pub struct HlsDriverConfig {
     pub read_buffer_size: usize,
@@ -22,10 +32,16 @@ pub struct HlsDriverConfig {
     pub event_queue_capacity: usize,
     /// Optional module response timeout in milliseconds. `None` lets the module own
     /// LL-HLS blocking reload/preload timeouts.
+    ///
+    /// 可选的模块响应超时（毫秒）。为 `None` 时由模块控制 LL-HLS 阻塞重载/预载超时。
     pub module_response_timeout_ms: Option<u64>,
     /// Whether the driver should issue HLS_SESSION cookies when clients have none.
+    ///
+    /// 客户端无 HLS_SESSION cookie 时，驱动是否下发新的 cookie。
     pub set_session_cookie: bool,
     /// Optional root directory for serving HLS files from disk.
+    ///
+    /// 从磁盘提供 HLS 文件的可选根目录。
     pub file_root: Option<std::path::PathBuf>,
 }
 
@@ -43,6 +59,9 @@ impl Default for HlsDriverConfig {
     }
 }
 
+/// Events emitted by the HLS driver to the module.
+///
+/// HLS 驱动向模块发出的事件。
 #[derive(Debug)]
 pub enum HlsDriverEvent {
     ConnectionOpened {
@@ -58,6 +77,9 @@ pub enum HlsDriverEvent {
     },
 }
 
+/// Commands sent by the module to the HLS driver.
+///
+/// 模块发送给 HLS 驱动的命令。
 #[derive(Debug)]
 pub enum HlsDriverCommand {
     /// Send a complete HTTP response to a connection.
@@ -74,21 +96,36 @@ pub enum HlsDriverCommand {
     Shutdown,
 }
 
+/// Sender handle for `HlsDriverCommand`.
+///
+/// `HlsDriverCommand` 发送句柄。
 #[derive(Clone)]
 pub struct HlsCommandSender {
     tx: mpsc::Sender<HlsDriverCommand>,
 }
 
+/// Error returned when the HLS driver command channel is closed.
+///
+/// HLS 驱动命令通道关闭时返回的错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverSendError {
     ChannelClosed,
 }
 
+/// `HlsCommandSender` API.
+///
+/// `HlsCommandSender` API。
 impl HlsCommandSender {
+    /// Create a new command sender from the underlying mpsc channel.
+    ///
+    /// 基于底层 mpsc 通道创建新的命令发送器。
     pub(crate) fn new(tx: mpsc::Sender<HlsDriverCommand>) -> Self {
         Self { tx }
     }
 
+    /// Send a command to the driver. Returns `ChannelClosed` if the driver has shut down.
+    ///
+    /// 向驱动发送命令。若驱动已关闭则返回 `ChannelClosed`。
     pub async fn send(&self, command: HlsDriverCommand) -> Result<(), DriverSendError> {
         self.tx
             .send(command)
@@ -97,6 +134,9 @@ impl HlsCommandSender {
     }
 }
 
+/// Handle for the running HLS HTTP server.
+///
+/// 运行中 HLS HTTP 服务器的句柄。
 pub struct HlsServerHandle {
     listen: SocketAddr,
     events_rx: mpsc::Receiver<HlsDriverEvent>,
@@ -105,7 +145,13 @@ pub struct HlsServerHandle {
     join: Box<dyn JoinHandle>,
 }
 
+/// `HlsServerHandle` API.
+///
+/// `HlsServerHandle` API。
 impl HlsServerHandle {
+    /// Construct a new server handle.
+    ///
+    /// 构造新的服务器句柄。
     pub(crate) fn new(
         listen: SocketAddr,
         events_rx: mpsc::Receiver<HlsDriverEvent>,
@@ -122,32 +168,53 @@ impl HlsServerHandle {
         }
     }
 
+    /// Receive the next driver event.
+    ///
+    /// 接收下一个驱动事件。
     pub async fn recv_event(&mut self) -> Option<HlsDriverEvent> {
         self.events_rx.recv().await
     }
 
+    /// Return the local socket address the server is listening on.
+    ///
+    /// 返回服务器监听的本地地址。
     pub fn local_addr(&self) -> SocketAddr {
         self.listen
     }
 
+    /// Return a clone of the command sender.
+    ///
+    /// 返回命令发送器的克隆。
     pub fn command_sender(&self) -> HlsCommandSender {
         self.cmd_tx.clone()
     }
 
+    /// Cancel the server.
+    ///
+    /// 取消服务器。
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
+    /// Wait for the server task to complete.
+    ///
+    /// 等待服务器任务完成。
     pub async fn wait(self) -> Result<(), TaskJoinError> {
         self.join.wait().await
     }
 }
 
+/// Per-connection state for response routing and cancellation.
+///
+/// 用于响应路由与取消的每个连接状态。
 struct ConnectionState {
     response_tx: mpsc::Sender<HttpResponseData>,
     cancel: CancellationToken,
 }
 
+/// HTTP response data passed from the module to the connection task.
+///
+/// 从模块传递到连接任务的 HTTP 响应数据。
 pub(crate) struct HttpResponseData {
     pub(crate) status: u16,
     pub(crate) content_type: &'static str,
@@ -155,6 +222,9 @@ pub(crate) struct HttpResponseData {
     pub(crate) headers: Vec<(&'static str, String)>,
 }
 
+/// Start the HTTP HLS server and return a handle.
+///
+/// 启动 HTTP HLS 服务器并返回句柄。
 pub fn start_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,
@@ -279,14 +349,25 @@ pub fn start_server(
 }
 
 /// Maximum bytes per write chunk for segment data (128KB).
+///
+/// 分片数据每次写入的最大字节数（128KB）。
 const SEND_CHUNK_SIZE: usize = 128 * 1024;
 /// Keep-Alive idle timeout in seconds.
+///
+/// Keep-Alive 空闲超时（秒）。
 const KEEP_ALIVE_TIMEOUT_SECS: u64 = 30;
 /// Maximum requests per connection before closing.
+///
+/// 连接关闭前最多处理请求数。
 const KEEP_ALIVE_MAX_REQUESTS: u32 = 100;
 /// Write timeout per chunk in seconds.
+///
+/// 每次写分片超时（秒）。
 const WRITE_TIMEOUT_SECS: u64 = 10;
 
+/// Run a single HTTP connection: parse requests, dispatch to `HlsCore`, and write responses.
+///
+/// 运行单个 HTTP 连接：解析请求、分派到 `HlsCore`、写入响应。
 pub(crate) async fn run_connection(
     connection_id: HlsConnectionId,
     mut stream: Box<dyn cheetah_runtime_api::AsyncTcpStream>,
@@ -482,6 +563,8 @@ pub(crate) async fn run_connection(
 }
 
 /// Write a complete HTTP response with chunked body sending and write timeout.
+///
+/// 写入完整 HTTP 响应，分块发送并带写入超时。
 async fn write_response(
     stream: &mut Box<dyn cheetah_runtime_api::AsyncTcpStream>,
     status: u16,
@@ -544,6 +627,8 @@ async fn write_response(
 }
 
 /// Write data with a timeout to detect slow/dead clients.
+///
+/// 带超时写入数据，用于检测慢速或已死客户端。
 async fn write_with_timeout(
     stream: &mut Box<dyn cheetah_runtime_api::AsyncTcpStream>,
     data: &[u8],
@@ -559,6 +644,9 @@ async fn write_with_timeout(
     }
 }
 
+/// Read an HTTP request head (up to `\r\n\r\n`) with cancellation support.
+///
+/// 读取 HTTP 请求头（直到 `\r\n\r\n`），支持取消。
 async fn read_request_head(
     stream: &mut Box<dyn cheetah_runtime_api::AsyncTcpStream>,
     config: &HlsDriverConfig,
@@ -589,6 +677,8 @@ async fn read_request_head(
 }
 
 /// Format a Set-Cookie header with 2-minute expiry and path scoped to stream.
+///
+/// 格式化 2 分钟有效期、按流路径限定作用域的 Set-Cookie 头。
 fn format_session_cookie(session_id: u64, target: &str) -> String {
     // Extract path scope: /{app}/{stream}/ from target like /live/test.m3u8
     let path_scope = target.rfind('/').map(|i| &target[..=i]).unwrap_or("/");
@@ -597,6 +687,8 @@ fn format_session_cookie(session_id: u64, target: &str) -> String {
 
 /// Validate request for security (illegal chars, path traversal, length).
 /// Returns Err with HTTP status code if request should be rejected.
+///
+/// 校验请求安全性（非法字符、路径穿越、长度），失败时返回 HTTP 状态码。
 fn validate_request(target: &str) -> Result<(), u16> {
     // Reject % encoding (potential injection/traversal)
     if target.contains('%') {
@@ -613,11 +705,16 @@ fn validate_request(target: &str) -> Result<(), u16> {
     Ok(())
 }
 
+/// Locate the end of the HTTP header block (`\r\n\r\n`).
+///
+/// 定位 HTTP 头块结束位置（`\r\n\r\n`）。
 fn find_header_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4)
 }
 
 /// Parsed request: (method, target, cookie_session, wants_close, authorization, user_agent, accept_gzip)
+///
+/// 解析后的请求：方法、目标、会话 cookie、关闭标志、授权、UA、是否接受 gzip。
 type ParsedRequest = (
     HttpMethod,
     String,
@@ -628,6 +725,9 @@ type ParsedRequest = (
     bool,
 );
 
+/// Parse an HTTP request head into method, target, and relevant headers.
+///
+/// 将 HTTP 请求头解析为方法、目标与相关头。
 fn parse_request_line(raw: &[u8]) -> Result<ParsedRequest, String> {
     let text = std::str::from_utf8(raw).map_err(|_| "not utf8")?;
     let first_line = text.lines().next().ok_or("empty")?;
@@ -695,6 +795,9 @@ fn parse_request_line(raw: &[u8]) -> Result<ParsedRequest, String> {
     ))
 }
 
+/// Determine whether `Accept-Encoding` permits gzip responses.
+///
+/// 判断 `Accept-Encoding` 是否允许 gzip 响应。
 fn accept_encoding_allows_gzip(value: &str) -> bool {
     let mut wildcard_q = None;
     for token in value.split(',') {
