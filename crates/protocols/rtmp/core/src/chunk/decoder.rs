@@ -118,6 +118,7 @@ impl RtmpChunkDecoder {
                 };
                 chunk_stream.timestamp = RtmpTimestamp::ZERO;
                 chunk_stream.message_size = message_size;
+                chunk_stream.acc_payload.reserve(message_size);
                 chunk_stream.message_type = RtmpMessageType::from_type_id(message_type)?;
                 chunk_stream.message_stream_id = RtmpMessageStreamId::new(message_stream_id);
             }
@@ -137,6 +138,8 @@ impl RtmpChunkDecoder {
                     RtmpTimestamp::from_millis(timestamp_delta)
                 };
                 chunk_stream.message_size = message_size;
+                chunk_stream.acc_payload.clear();
+                chunk_stream.acc_payload.reserve(message_size);
                 chunk_stream.message_type = RtmpMessageType::from_type_id(message_type)?;
             }
             MessageHeaderFormat::F2 => {
