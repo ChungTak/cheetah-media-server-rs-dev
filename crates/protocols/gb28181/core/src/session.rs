@@ -696,7 +696,7 @@ impl Gb28181Core {
     }
 
     fn check_timeouts(&mut self, now_ms: u64, outputs: &mut Vec<Gb28181CoreOutput>) {
-        let mut offline_devices = Vec::new();
+        let mut offline_devices = Vec::with_capacity(self.devices.len());
         for (id, dev) in &self.devices {
             if now_ms > dev.expires_at_ms {
                 offline_devices.push(id.clone());
