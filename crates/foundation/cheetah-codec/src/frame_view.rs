@@ -20,6 +20,15 @@ use crate::audio::{adts_wrap, AacAudioSpecificConfig};
 use crate::frame::AVFrame;
 use crate::track::CodecId;
 
+/// Supported payload views that can be produced from a canonical `AVFrame`.
+///
+/// `Native` returns the payload unchanged; `AnnexB` and `H26xLengthPrefixed` convert
+/// H.26x NALUs; `Adts` wraps AAC raw frames with an ADTS header.
+///
+/// 可从标准 `AVFrame` 生成的支持负载视图。
+///
+/// `Native` 返回原负载；`AnnexB` 和 `H26xLengthPrefixed` 转换 H.26x NALU；
+/// `Adts` 用 ADTS 头包装 AAC 原始帧。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameViewKind {
     Native,
@@ -29,6 +38,14 @@ pub enum FrameViewKind {
     Adts,
 }
 
+/// Lazy cache for the different payload views of a single frame.
+///
+/// Each view is computed once on first access and then reused. This avoids repeated
+/// format conversion while keeping the canonical `AVFrame` payload untouched.
+///
+/// 单帧不同 payload 视图的惰性缓存。
+///
+/// 每种视图首次访问时计算并复用。避免重复格式转换，同时保持标准 `AVFrame` 负载不变。
 #[derive(Debug, Default)]
 pub struct FrameViewCache {
     annexb: LazyCell<Bytes>,
@@ -37,10 +54,16 @@ pub struct FrameViewCache {
 }
 
 impl FrameViewCache {
+    /// Return the payload in its native canonical format.
+    ///
+    /// 以原生标准格式返回负载。
     pub fn native(frame: &AVFrame) -> Bytes {
         frame.payload.clone()
     }
 
+    /// Return an Annex-B view of the frame payload, converting if necessary.
+    ///
+    /// 返回帧负载的 Annex-B 视图，必要时转换。
     pub fn annexb(&self, frame: &AVFrame) -> Bytes {
         if !matches!(frame.codec, CodecId::H264 | CodecId::H265 | CodecId::H266) {
             return frame.payload.clone();
@@ -50,10 +73,16 @@ impl FrameViewCache {
             .clone()
     }
 
+    /// Alias for `h26x_length_prefixed` for AVCC compatibility.
+    ///
+    /// `h26x_length_prefixed` 的别名，用于 AVCC 兼容。
     pub fn avcc(&self, frame: &AVFrame) -> Bytes {
         self.h26x_length_prefixed(frame)
     }
 
+    /// Return an H.26x length-prefixed view of the frame payload, converting if necessary.
+    ///
+    /// 返回帧负载的 H.26x 长度前缀视图，必要时转换。
     pub fn h26x_length_prefixed(&self, frame: &AVFrame) -> Bytes {
         if !matches!(frame.codec, CodecId::H264 | CodecId::H265 | CodecId::H266) {
             return frame.payload.clone();
@@ -63,6 +92,9 @@ impl FrameViewCache {
             .clone()
     }
 
+    /// Return an ADTS-wrapped view for AAC audio, if an ASC is provided.
+    ///
+    /// 若提供 ASC，返回 AAC 音频的 ADTS 包装视图。
     pub fn adts(&self, frame: &AVFrame, asc: Option<AacAudioSpecificConfig>) -> Bytes {
         if frame.codec != CodecId::AAC {
             return frame.payload.clone();
@@ -76,14 +108,23 @@ impl FrameViewCache {
     }
 }
 
+/// Convert an H.26x payload to length-prefixed form.
+///
+/// 将 H.26x 负载转换为长度前缀形式。
 pub fn h26x_length_prefixed_from_payload(payload: Bytes) -> Bytes {
     convert_to_h26x_length_prefixed(payload)
 }
 
+/// Convert an H.26x payload to Annex-B form.
+///
+/// 将 H.26x 负载转换为 Annex-B 形式。
 pub fn annexb_from_payload(payload: Bytes) -> Bytes {
     convert_to_annexb(payload)
 }
 
+/// Convert a length-prefixed H.26x payload to Annex-B.
+///
+/// 将长度前缀 H.26x 负载转换为 Annex-B。
 fn convert_to_annexb(payload: Bytes) -> Bytes {
     if looks_like_annexb(&payload) {
         return payload;
@@ -108,6 +149,9 @@ fn convert_to_annexb(payload: Bytes) -> Bytes {
     }
 }
 
+/// Convert an Annex-B or raw H.26x payload to length-prefixed form.
+///
+/// 将 Annex-B 或原始 H.26x 负载转换为长度前缀形式。
 fn convert_to_h26x_length_prefixed(payload: Bytes) -> Bytes {
     if payload.is_empty() {
         return payload;
@@ -139,6 +183,9 @@ fn convert_to_h26x_length_prefixed(payload: Bytes) -> Bytes {
     Bytes::from(out)
 }
 
+/// Heuristic: check whether the payload is already length-prefixed H.26x.
+///
+/// 启发式检查：负载是否已经是长度前缀 H.26x。
 fn looks_like_h26x_length_prefixed(data: &[u8]) -> bool {
     let mut cursor = data;
     let mut unit_count = 0usize;
@@ -154,6 +201,9 @@ fn looks_like_h26x_length_prefixed(data: &[u8]) -> bool {
     unit_count > 0 && cursor.is_empty()
 }
 
+/// Heuristic: check whether the payload starts with an Annex-B start code.
+///
+/// 启发式检查：负载是否以 Annex-B 起始码开头。
 fn looks_like_annexb(data: &[u8]) -> bool {
     if data.len() < 3 {
         return false;

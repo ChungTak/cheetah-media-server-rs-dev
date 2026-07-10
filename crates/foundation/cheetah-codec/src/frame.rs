@@ -6,6 +6,16 @@ use smallvec::SmallVec;
 use crate::time::Timebase;
 use crate::track::{CodecId, MediaKind, TrackId};
 
+/// Canonical payload layout used by [`AVFrame`] after ingress normalization.
+///
+/// Codecs share a small set of wire formats so the downstream engine does not
+/// need to handle protocol-specific encapsulation. For example H.264/5/6 frames
+/// are always stored in Annex-B start-code form inside the engine.
+///
+/// [`AVFrame`] 在入口归一化后使用的标准负载格式。
+///
+/// 编解码器共享少量内部线性格式，使下游引擎无需处理协议相关的封装。
+/// 例如，H.264/5/6 帧在引擎内部统一使用 Annex-B 起始码形式存储。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameFormat {
     CanonicalH26x,
@@ -23,6 +33,16 @@ pub enum FrameFormat {
     Unknown,
 }
 
+/// Origin of a frame inside the pipeline.
+///
+/// This distinguishes externally ingested media, internally generated filler
+/// frames (e.g. mute audio), recovered frames after packet loss, and relayed
+/// frames that did not pass through ingress normalization.
+///
+/// 帧在流水线中的来源。
+///
+/// 用于区分外部接入的媒体、内部生成的填充帧（如静音音频）、
+/// 丢包后恢复的帧，以及未经过入口归一化的转发帧。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameOrigin {
     Ingest,
@@ -31,12 +51,30 @@ pub enum FrameOrigin {
     Recovered,
 }
 
+/// Cross-reference between an RTP timestamp and an RTCP sender report.
+///
+/// `lsr` (last sender report) and the local unix receive time let the receiver
+/// map RTP clock ticks to wall-clock time for A/V sync and jitter calculations.
+///
+/// RTP 时间戳与 RTCP 发送者报告之间的交叉引用。
+///
+/// `lsr`（上一个发送者报告）和本地 Unix 接收时间使接收端能够将 RTP 时钟刻度
+/// 映射到墙上时间，用于音视频同步和抖动计算。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtpRtcpMapping {
     pub lsr: u32,
     pub arrival_unix_micros: u64,
 }
 
+/// RTP timestamp with both the raw 32-bit wire value and the unwrapped 64-bit value.
+///
+/// RTP timestamps wrap at 2^32. The unwrapped value is used for ordering and
+/// timebase conversion while the raw value is preserved for egress or RTCP.
+///
+/// 包含原始 32 位线值和解绕后 64 位值的 RTP 时间戳。
+///
+/// RTP 时间戳在 2^32 处回绕。解绕后的值用于排序和 timebase 转换，
+/// 原始值则保留用于出口或 RTCP。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtpTimestamp {
     pub raw_timestamp: u32,
@@ -47,6 +85,13 @@ pub struct RtpTimestamp {
 }
 
 impl RtpTimestamp {
+    /// Build an RTP timestamp from the raw 32-bit wire value and the unwrapped 64-bit value.
+    ///
+    /// The epoch offset is the saturating difference between the unwrapped and raw values.
+    ///
+    /// 根据原始 32 位线值和解绕后 64 位值构建 RTP 时间戳。
+    ///
+    /// epoch 偏移是 unwrapped 与 raw 之间的饱和差值。
     pub fn new(raw_timestamp: u32, unwrapped_timestamp: u64) -> Self {
         Self {
             raw_timestamp,
@@ -58,6 +103,15 @@ impl RtpTimestamp {
     }
 }
 
+/// RTMP timestamp with the raw 32-bit wire value and the unwrapped 64-bit value.
+///
+/// RTMP timestamps are in milliseconds and wrap at 2^32. The unwrapped value
+/// keeps a linear timeline while the raw value is preserved for egress.
+///
+/// 包含原始 32 位线值和解绕后 64 位值的 RTMP 时间戳。
+///
+/// RTMP 时间戳以毫秒为单位，在 2^32 处回绕。解绕后的值保持线性时间线，
+/// 原始值则保留用于出口。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtmpTimestamp {
     pub raw_timestamp_ms: u32,
@@ -66,6 +120,9 @@ pub struct RtmpTimestamp {
 }
 
 impl RtmpTimestamp {
+    /// Build an RTMP timestamp from the raw millisecond wire value and the unwrapped value.
+    ///
+    /// 根据原始毫秒线值和解绕后值构建 RTMP 时间戳。
     pub fn new(raw_timestamp_ms: u32, unwrapped_timestamp_ms: u64) -> Self {
         Self {
             raw_timestamp_ms,
@@ -75,12 +132,29 @@ impl RtmpTimestamp {
     }
 }
 
+/// Source-specific timestamp carried as side data of an [`AVFrame`].
+///
+/// This preserves the original wire timestamp format so the egress path can
+/// map the normalized frame back to protocol-specific timing.
+///
+/// 作为 [`AVFrame`] 边数据携带的源相关时间戳。
+///
+/// 它保留原始线格式时间戳，使出口路径能够将归一化帧映射回协议相关的时间。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceTimestamp {
     Rtp(RtpTimestamp),
     Rtmp(RtmpTimestamp),
 }
 
+/// Additional metadata attached to an [`AVFrame`] that is not part of the payload.
+///
+/// Side data carries provenance, parameter-set digests, sequence numbers and
+/// opaque protocol tags without changing the canonical frame payload.
+///
+/// 附加到 [`AVFrame`] 的额外元数据，不属于负载本身。
+///
+/// 边数据携带来源、参数集摘要、序列号和不透明的协议标记，
+/// 而无需更改标准帧负载。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FrameSideData {
     ParameterSetDigest(u64),
@@ -91,6 +165,15 @@ pub enum FrameSideData {
 }
 
 bitflags! {
+    /// Bit flags describing the role and state of an [`AVFrame`].
+    ///
+    /// Flags indicate key frames, parameter-set frames, access-unit boundaries,
+    /// discontinuities, generated filler frames and corruption/droppability.
+    ///
+    /// 描述 [`AVFrame`] 角色与状态的位标志。
+    ///
+    /// 标志用于指示关键帧、参数集帧、访问单元边界、不连续、
+    /// 生成填充帧以及损坏/可丢弃状态。
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct FrameFlags: u32 {
         const KEY = 1 << 0;
@@ -106,6 +189,15 @@ bitflags! {
     }
 }
 
+/// Errors raised when an [`AVFrame`] timing or timebase is invalid.
+///
+/// These errors are checked during ingress normalization and before any
+/// timebase conversion to prevent overflow or negative composition times.
+///
+/// [`AVFrame`] 时间或 timebase 无效时引发的错误。
+///
+/// 这些错误在入口归一化期间以及任何 timebase 转换之前进行检查，
+/// 以防止溢出或负合成时间。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum FrameTimingError {
     #[error("track {track_id:?} has invalid timebase {timebase_num}/{timebase_den}")]
@@ -126,6 +218,16 @@ pub enum FrameTimingError {
     },
 }
 
+/// Unified media frame exchanged inside the engine.
+///
+/// `AVFrame` separates protocol-specific ingress from protocol-specific
+/// egress by normalizing payloads into canonical formats, storing timing in
+/// `timebase` ticks plus microseconds, and carrying side data for provenance.
+///
+/// 引擎内部统一的媒体帧。
+///
+/// `AVFrame` 通过将负载归一化为标准格式、以 `timebase` 刻度加微秒存储时间，
+/// 并携带来源边数据，将协议相关的入口与协议相关的出口分离开。
 #[derive(Debug, Clone)]
 pub struct AVFrame {
     pub track_id: TrackId,
@@ -153,6 +255,15 @@ pub struct AVFrame {
 }
 
 impl AVFrame {
+    /// Construct a new frame with normalized microsecond timing.
+    ///
+    /// `pts_us` and `dts_us` are computed eagerly from the supplied `timebase`
+    /// so downstream code can compare and schedule frames without repeated conversion.
+    ///
+    /// 构造一个具有归一化微秒时间的新帧。
+    ///
+    /// `pts_us` 和 `dts_us` 根据提供的 `timebase` 预先计算，
+    /// 以便下游代码无需重复转换即可比较和调度帧。
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         track_id: TrackId,
@@ -193,6 +304,15 @@ impl AVFrame {
         self.flags.insert(FrameFlags::DISCONTINUITY);
     }
 
+    /// Store or replace the source timestamp side data for this frame.
+    ///
+    /// If a `SourceTimestamp` entry already exists it is updated in place;
+    /// otherwise a new entry is pushed, keeping the side-data list compact.
+    ///
+    /// 存储或替换此帧的源时间戳边数据。
+    ///
+    /// 如果已存在 `SourceTimestamp` 条目则原地更新；否则压入新条目，
+    /// 以保持边数据列表紧凑。
     pub fn set_source_timestamp(&mut self, source_timestamp: SourceTimestamp) {
         if let Some(existing) = self
             .side_data
@@ -206,6 +326,9 @@ impl AVFrame {
             .push(FrameSideData::SourceTimestamp(source_timestamp));
     }
 
+    /// Look up the source timestamp side data, if any.
+    ///
+    /// 查找源时间戳边数据（如果存在）。
     pub fn source_timestamp(&self) -> Option<SourceTimestamp> {
         self.side_data.iter().find_map(|entry| {
             let FrameSideData::SourceTimestamp(source) = entry else {
@@ -220,6 +343,15 @@ impl AVFrame {
         Ok(self)
     }
 
+    /// Set the frame duration and update the microsecond duration.
+    ///
+    /// Rejects negative durations and validates the timebase before converting
+    /// the duration to microseconds so overflow cannot be silently ignored.
+    ///
+    /// 设置帧时长并更新微秒时长。
+    ///
+    /// 拒绝负时长，并在将时长转换为微秒之前验证 timebase，
+    /// 以避免溢出被静默忽略。
     pub fn set_duration(&mut self, duration: i64) -> Result<(), FrameTimingError> {
         if duration < 0 {
             return Err(FrameTimingError::NegativeDuration {
@@ -241,6 +373,15 @@ impl AVFrame {
         self.pts_us.saturating_sub(self.dts_us)
     }
 
+    /// Verify that the frame timing is internally consistent and safe to process.
+    ///
+    /// This checks the timebase, rejects negative durations, prevents microsecond
+    /// overflow, and enforces `pts >= dts` for non-B-frame video.
+    ///
+    /// 验证帧时间是否内部一致且可安全处理。
+    ///
+    /// 检查 timebase、拒绝负时长、防止微秒溢出，
+    /// 并对非 B 帧视频强制 `pts >= dts`。
     pub fn validate_media_timing(&self) -> Result<(), FrameTimingError> {
         self.ensure_valid_timebase()?;
         if self.duration < 0 {
@@ -263,6 +404,13 @@ impl AVFrame {
         Ok(())
     }
 
+    /// Ensure the timebase numerator and denominator are non-zero.
+    ///
+    /// A zero timebase would make all downstream duration conversions invalid.
+    ///
+    /// 确保 timebase 的分子和分母均非零。
+    ///
+    /// 零 timebase 将使所有下游时长转换无效。
     fn ensure_valid_timebase(&self) -> Result<(), FrameTimingError> {
         if self.timebase.num == 0 || self.timebase.den == 0 {
             return Err(FrameTimingError::InvalidTimebase {
@@ -274,6 +422,14 @@ impl AVFrame {
         Ok(())
     }
 
+    /// Convert a duration in `timebase` ticks to microseconds with overflow checks.
+    ///
+    /// Uses 128-bit intermediate arithmetic to detect multiplication and i64
+    /// overflow before the final value is stored.
+    ///
+    /// 将 `timebase` 刻度表示的时长转换为微秒，并检查溢出。
+    ///
+    /// 使用 128 位中间运算，在最终值存储之前检测乘法和 i64 溢出。
     fn duration_to_micros_checked(&self, duration: i64) -> Result<i64, FrameTimingError> {
         let scaled = i128::from(duration)
             .checked_mul(i128::from(self.timebase.num))
@@ -290,6 +446,13 @@ impl AVFrame {
     }
 }
 
+/// Compute the saturating offset between an unwrapped and a raw timestamp.
+///
+/// The result is clamped to `i64` range so minor overflow cannot corrupt the epoch.
+///
+/// 计算 unwrapped 时间戳与 raw 时间戳之间的饱和偏移。
+///
+/// 结果被限制在 `i64` 范围内，以避免轻微溢出破坏 epoch。
 fn saturating_epoch_offset(unwrapped_timestamp: u64, raw_timestamp: u32) -> i64 {
     let delta = i128::from(unwrapped_timestamp).saturating_sub(i128::from(raw_timestamp));
     delta.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
