@@ -18,6 +18,9 @@ pub struct MetricsRegistry {
 }
 
 impl MetricsRegistry {
+    /// Increment a counter by the given delta.
+    ///
+    /// 用给定增量递增计数器。
     pub fn inc(&self, key: &str, value: u64) {
         let entry = self
             .counters
@@ -67,7 +70,13 @@ impl MetricsRegistry {
     }
 }
 
+/// `MetricsApi` implementation that renders counters and gauges as text.
+///
+/// `MetricsApi` 实现，将计数器和仪表盘渲染为文本。
 impl MetricsApi for MetricsRegistry {
+    /// Render all counters and gauges as simple key-value lines.
+    ///
+    /// 将所有计数器和仪表盘渲染为简单键值行。
     fn render(&self) -> String {
         let mut out = String::new();
         for item in self.counters.iter() {

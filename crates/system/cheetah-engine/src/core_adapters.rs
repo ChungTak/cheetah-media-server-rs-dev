@@ -9,17 +9,26 @@ use cheetah_sdk::{
 use dashmap::DashMap;
 use parking_lot::Mutex;
 
+/// Internal adapter that holds a publisher lease and a sink for a stream.
+///
+/// 内部适配器，持有流的发布者租约与 sink。
 struct AdapterPublisher {
     lease: PublishLease,
     sink: Mutex<Box<dyn PublisherSink>>,
 }
 
+/// Runtime-neutral core adapter that multiplexes per-stream publishers.
+///
+/// 运行时无关的核心适配器，按流复用发布者。
 pub struct LocalCoreAdapters {
     publisher_api: Arc<dyn PublisherApi>,
     publishers: DashMap<StreamKey, Arc<AdapterPublisher>>,
 }
 
 impl LocalCoreAdapters {
+    /// Create a core adapter with the given publisher API.
+    ///
+    /// 用指定发布者 API 创建核心适配器。
     pub fn new(publisher_api: Arc<dyn PublisherApi>) -> Self {
         Self {
             publisher_api,
@@ -27,6 +36,9 @@ impl LocalCoreAdapters {
         }
     }
 
+    /// Get or create a publisher for `stream_key`, deduplicating races.
+    ///
+    /// 获取或创建 `stream_key` 的发布者，并对竞争去重。
     async fn ensure_publisher(
         &self,
         stream_key: StreamKey,
@@ -60,6 +72,9 @@ impl LocalCoreAdapters {
         Ok(publisher)
     }
 
+    /// Close and release a publisher that lost the race to be cached.
+    ///
+    /// 关闭并释放未在缓存中胜出的发布者。
     async fn release_orphan_publisher(&self, publisher: &AdapterPublisher) -> Result<(), SdkError> {
         let close_res = publisher.sink.lock().close();
         let release_res = self.publisher_api.release_publisher(&publisher.lease).await;
@@ -73,6 +88,9 @@ impl LocalCoreAdapters {
         }
     }
 
+    /// Remove and release the publisher for `stream_key` if present.
+    ///
+    /// 若存在，则移除并释放 `stream_key` 的发布者。
     async fn close_publisher(&self, stream_key: &StreamKey) -> Result<(), SdkError> {
         let Some((_, publisher)) = self.publishers.remove(stream_key) else {
             return Ok(());
@@ -82,6 +100,9 @@ impl LocalCoreAdapters {
     }
 }
 
+/// `CoreAdaptersApi` implementation with publisher acquisition and retry.
+///
+/// `CoreAdaptersApi` 实现，包含发布者获取与重试。
 #[async_trait]
 impl CoreAdaptersApi for LocalCoreAdapters {
     async fn publish_frame(

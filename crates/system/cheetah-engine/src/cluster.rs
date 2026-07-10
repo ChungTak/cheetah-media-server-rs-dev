@@ -2,12 +2,18 @@ use cheetah_sdk::{ClusterApi, ClusterNode, SdkError};
 use dashmap::DashMap;
 use parking_lot::RwLock;
 
+/// In-memory cluster node registry.
+///
+/// 内存集群节点注册表。
 #[derive(Default)]
 pub struct LocalCluster {
     local: RwLock<Option<ClusterNode>>,
     peers: DashMap<String, ClusterNode>,
 }
 
+/// `ClusterApi` implementation that tracks the local node and peer nodes.
+///
+/// `ClusterApi` 实现，跟踪本地节点与对等节点。
 impl ClusterApi for LocalCluster {
     fn set_local_node(&self, node: ClusterNode) -> Result<(), SdkError> {
         self.peers.remove(&node.node_id);

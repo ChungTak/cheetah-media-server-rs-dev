@@ -1,11 +1,17 @@
 use cheetah_sdk::{DatabaseApi, SdkError};
 use dashmap::DashMap;
 
+/// In-memory key-value store for engine use.
+///
+/// 引擎使用的内存键值存储。
 #[derive(Default)]
 pub struct InMemoryDatabase {
     entries: DashMap<String, Vec<u8>>,
 }
 
+/// `DatabaseApi` implementation backed by a `DashMap`.
+///
+/// 由 `DashMap` 支持的 `DatabaseApi` 实现。
 impl DatabaseApi for InMemoryDatabase {
     fn put(&self, key: &str, value: &[u8]) -> Result<(), SdkError> {
         self.entries.insert(key.to_string(), value.to_vec());

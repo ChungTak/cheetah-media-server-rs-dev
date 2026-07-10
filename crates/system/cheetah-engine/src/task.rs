@@ -10,11 +10,17 @@ use cheetah_sdk::{
 use dashmap::DashMap;
 use parking_lot::RwLock;
 
+/// Internal state and cancellation token for one task.
+///
+/// 单个任务的内部状态与取消 token。
 struct TaskNode {
     snapshot: RwLock<TaskSnapshot>,
     token: CancellationToken,
 }
 
+/// In-memory task tree with lifecycle events and cancellation propagation.
+///
+/// 内存任务树，支持生命周期事件与取消传播。
 #[derive(Default)]
 pub struct TaskSystem {
     next_id: AtomicU64,
@@ -22,6 +28,9 @@ pub struct TaskSystem {
     event_bus: RwLock<Option<Arc<dyn EventBus>>>,
 }
 
+/// Summary of a task finishing, used to propagate completion to parent jobs.
+///
+/// 任务完成摘要，用于向父任务（job）传播完成状态。
 struct TerminalTransition {
     parent_id: Option<TaskId>,
     state: TaskState,
@@ -29,6 +38,9 @@ struct TerminalTransition {
     message: Option<String>,
 }
 
+/// Current timestamp in milliseconds for task lifecycle metadata.
+///
+/// 任务生命周期元数据使用的当前毫秒时间戳。
 fn unix_millis_now() -> u64 {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -36,6 +48,9 @@ fn unix_millis_now() -> u64 {
     now.as_millis() as u64
 }
 
+/// Returns true for final task states.
+///
+/// 判断是否为任务终态。
 fn is_terminal_state(state: TaskState) -> bool {
     matches!(
         state,
@@ -44,16 +59,25 @@ fn is_terminal_state(state: TaskState) -> bool {
 }
 
 impl TaskSystem {
+    /// Attach the event bus used for task lifecycle events.
+    ///
+    /// 附加用于任务生命周期事件的事件总线。
     pub fn set_event_bus(&self, event_bus: Arc<dyn EventBus>) {
         *self.event_bus.write() = Some(event_bus);
     }
 
+    /// Publish a task event to the event bus if configured.
+    ///
+    /// 若已配置，则向事件总线发布任务事件。
     fn publish_task_event(&self, event: TaskEvent) {
         if let Some(bus) = self.event_bus.read().as_ref() {
             bus.publish(SystemEvent::Task(event));
         }
     }
 
+    /// Look up a task node by ID.
+    ///
+    /// 按 ID 查找任务节点。
     fn get_node(&self, task_id: TaskId) -> Result<Arc<TaskNode>, SdkError> {
         self.tasks
             .get(&task_id)
@@ -61,6 +85,9 @@ impl TaskSystem {
             .ok_or_else(|| SdkError::NotFound(format!("task {task_id}")))
     }
 
+    /// Apply a terminal outcome to a task and cancel its token.
+    ///
+    /// 对任务应用终态结果并取消其 token。
     fn apply_terminal(
         &self,
         task_id: TaskId,
@@ -114,6 +141,9 @@ impl TaskSystem {
         }))
     }
 
+    /// Walk up the parent chain and finalize jobs once all children are terminal.
+    ///
+    /// 沿父链向上，当所有子任务都到达终态时完成 job。
     fn maybe_finalize_jobs_from(&self, mut parent_id: Option<TaskId>) {
         while let Some(task_id) = parent_id {
             let (next_parent, decision) = match self.tasks.get(&task_id) {
@@ -189,6 +219,9 @@ impl TaskSystem {
         }
     }
 
+    /// Recursively cancel a task and all descendants.
+    ///
+    /// 递归取消任务及其所有子任务。
     fn cancel_recursive(&self, task_id: TaskId, reason: Option<&str>) {
         let Some(entry) = self.tasks.get(&task_id) else {
             return;
@@ -236,8 +269,14 @@ impl TaskSystem {
     }
 }
 
+/// `TaskSystemApi` implementation: task tree lifecycle and cancellation.
+///
+/// `TaskSystemApi` 实现：任务树生命周期与取消。
 impl TaskSystemApi for TaskSystem {
     #[track_caller]
+    /// Create a new task with the given parent and initialize its token.
+    ///
+    /// 用指定父任务创建新任务并初始化其 token。
     fn create_task(
         &self,
         parent_id: Option<TaskId>,
@@ -307,12 +346,18 @@ impl TaskSystemApi for TaskSystem {
         Ok(task_id)
     }
 
+    /// Cancel a task and propagate to its descendants.
+    ///
+    /// 取消任务并传播到其后代。
     fn cancel(&self, task_id: TaskId, reason: Option<&str>) -> Result<(), SdkError> {
         self.get_node(task_id)?;
         self.cancel_recursive(task_id, reason);
         Ok(())
     }
 
+    /// Finish a task and finalize parent jobs if all children are terminal.
+    ///
+    /// 完成任务；若所有子任务均已终态，则完成父 job。
     fn finish(&self, task_id: TaskId, outcome: TaskOutcome) -> Result<(), SdkError> {
         let transition = self.apply_terminal(task_id, outcome)?.ok_or_else(|| {
             SdkError::Conflict(format!("task {} already in terminal state", task_id.0))
@@ -329,11 +374,17 @@ impl TaskSystemApi for TaskSystem {
         Ok(())
     }
 
+    /// Return the cancellation token for a task.
+    ///
+    /// 返回任务的取消 token。
     fn token(&self, task_id: TaskId) -> Result<CancellationToken, SdkError> {
         let node = self.get_node(task_id)?;
         Ok(node.token.clone())
     }
 
+    /// Return snapshots of all active tasks.
+    ///
+    /// 返回所有活跃任务的快照。
     fn snapshot(&self) -> Vec<TaskSnapshot> {
         self.tasks
             .iter()

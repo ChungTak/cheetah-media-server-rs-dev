@@ -4,12 +4,18 @@ use cheetah_sdk::{RoomId, RoomParticipant, RoomServiceApi, RoomSnapshot, SdkErro
 use dashmap::DashMap;
 use parking_lot::RwLock;
 
+/// In-memory room state with participants and bound streams.
+///
+/// 内存房间状态，包含参与者与绑定的流。
 struct RoomEntry {
     name: String,
     participants: RwLock<Vec<RoomParticipant>>,
     streams: RwLock<Vec<StreamKey>>,
 }
 
+/// In-memory room manager with participant/stream bindings.
+///
+/// 内存房间管理器，支持参与者/流绑定。
 #[derive(Default)]
 pub struct RoomService {
     next_id: AtomicU64,
@@ -17,6 +23,9 @@ pub struct RoomService {
 }
 
 impl RoomService {
+    /// Build a public `RoomSnapshot` from a room entry.
+    ///
+    /// 从房间条目构建公共 `RoomSnapshot`。
     fn snapshot_from(room_id: RoomId, entry: &RoomEntry) -> RoomSnapshot {
         RoomSnapshot {
             room_id,
@@ -27,6 +36,9 @@ impl RoomService {
     }
 }
 
+/// `RoomServiceApi` implementation backed by `DashMap`.
+///
+/// 由 `DashMap` 支持的 `RoomServiceApi` 实现。
 impl RoomServiceApi for RoomService {
     fn create_room(&self, name: &str) -> Result<RoomId, SdkError> {
         let id = RoomId(self.next_id.fetch_add(1, Ordering::Relaxed) + 1);

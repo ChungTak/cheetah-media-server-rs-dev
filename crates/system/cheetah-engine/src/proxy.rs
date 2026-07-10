@@ -1,11 +1,17 @@
 use cheetah_sdk::{ProxyManager, ProxyRoute, SdkError};
 use dashmap::DashMap;
 
+/// In-memory proxy route manager.
+///
+/// 内存代理路由管理器。
 #[derive(Default)]
 pub struct LocalProxyManager {
     routes: DashMap<String, ProxyRoute>,
 }
 
+/// `ProxyManager` implementation backed by a `DashMap`.
+///
+/// 由 `DashMap` 支持的 `ProxyManager` 实现。
 impl ProxyManager for LocalProxyManager {
     fn register_route(&self, route: ProxyRoute) -> Result<(), SdkError> {
         if self.routes.contains_key(&route.path_prefix) {
