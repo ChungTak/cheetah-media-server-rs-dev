@@ -15,14 +15,23 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::warn;
 
+/// Unique identifier for an HTTP-FLV connection.
+///
+/// HTTP-FLV 连接的唯一标识符。
 pub type HttpFlvConnectionId = u64;
 
+/// Per-connection command channel and cancellation token.
+///
+/// 每个连接的命令通道与取消 token。
 #[derive(Clone)]
 pub(crate) struct ConnectionControl {
     pub(crate) tx: mpsc::Sender<ConnectionCommand>,
     pub(crate) cancel: CancellationToken,
 }
 
+/// TCP/HTTP server tuning parameters.
+///
+/// TCP/HTTP 服务器调优参数。
 #[derive(Debug, Clone)]
 pub struct HttpFlvDriverConfig {
     pub write_queue_capacity: usize,
@@ -34,6 +43,9 @@ pub struct HttpFlvDriverConfig {
     pub event_queue_capacity: usize,
 }
 
+/// Sensible default server buffer sizes and queue capacities.
+///
+/// 合理的默认服务器缓冲与队列容量。
 impl Default for HttpFlvDriverConfig {
     fn default() -> Self {
         Self {
@@ -48,6 +60,9 @@ impl Default for HttpFlvDriverConfig {
     }
 }
 
+/// Outbound events from the driver to the module layer.
+///
+/// 驱动向模块层发出的出站事件。
 #[derive(Debug)]
 pub enum HttpFlvDriverEvent {
     ConnectionOpened {
@@ -64,6 +79,9 @@ pub enum HttpFlvDriverEvent {
     },
 }
 
+/// Commands from the module layer to the driver.
+///
+/// 模块层到驱动的命令。
 #[derive(Debug, Clone)]
 pub enum HttpFlvDriverCommand {
     SendFlvBytes {
@@ -76,16 +94,25 @@ pub enum HttpFlvDriverCommand {
     Shutdown,
 }
 
+/// Cloneable handle to send commands into the driver loop.
+///
+/// 可克隆句柄，用于向驱动循环发送命令。
 #[derive(Clone)]
 pub struct HttpFlvCoreCommandSender {
     pub(crate) tx: mpsc::Sender<HttpFlvDriverCommand>,
 }
 
+/// Error when the driver command channel is closed.
+///
+/// 驱动命令通道关闭时返回的错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverSendError {
     ChannelClosed,
 }
 
+/// `HttpFlvCoreCommandSender` API.
+///
+/// `HttpFlvCoreCommandSender` API。
 impl HttpFlvCoreCommandSender {
     pub async fn send(&self, command: HttpFlvDriverCommand) -> Result<(), DriverSendError> {
         self.tx
@@ -115,6 +142,9 @@ impl HttpFlvCoreCommandSender {
     }
 }
 
+/// Handle returned by `start_server` to control and observe the server.
+///
+/// `start_server` 返回的句柄，用于控制和观察服务器。
 pub struct HttpFlvServerHandle {
     pub(crate) listen: SocketAddr,
     pub(crate) events_rx: mpsc::Receiver<HttpFlvDriverEvent>,
@@ -123,6 +153,9 @@ pub struct HttpFlvServerHandle {
     pub(crate) join: Box<dyn JoinHandle>,
 }
 
+/// `HttpFlvServerHandle` API.
+///
+/// `HttpFlvServerHandle` API。
 impl HttpFlvServerHandle {
     pub async fn recv_event(&mut self) -> Option<HttpFlvDriverEvent> {
         self.events_rx.recv().await
@@ -145,12 +178,18 @@ impl HttpFlvServerHandle {
     }
 }
 
+/// Per-connection commands sent by the driver task.
+///
+/// 驱动任务发送的每个连接的命令。
 #[derive(Debug)]
 pub(crate) enum ConnectionCommand {
     SendFlvBytes(Bytes),
     Close,
 }
 
+/// Bind a TCP listener and start the HTTP-FLV server task.
+///
+/// 绑定 TCP 监听器并启动 HTTP-FLV 服务器任务。
 pub fn start_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,
@@ -246,6 +285,9 @@ pub fn start_server(
     })
 }
 
+/// Route a driver command to a connection or signal server shutdown.
+///
+/// 将驱动命令路由到某个连接，或通知服务器关闭。
 pub(crate) fn handle_driver_command_with_map(
     command: HttpFlvDriverCommand,
     conn_map: &Arc<Mutex<HashMap<HttpFlvConnectionId, ConnectionControl>>>,
@@ -270,6 +312,9 @@ pub(crate) fn handle_driver_command_with_map(
     }
 }
 
+/// Send a command to a connection's channel, closing on send failure.
+///
+/// 向连接的通道发送命令，发送失败时关闭连接。
 fn send_connection_command(
     connection_id: HttpFlvConnectionId,
     command: ConnectionCommand,
@@ -291,6 +336,9 @@ fn send_connection_command(
     }
 }
 
+/// Handle a single TCP connection: read request, then play or publish.
+///
+/// 处理单个 TCP 连接：读取请求，然后播放或发布。
 pub(crate) async fn run_connection(
     connection_id: HttpFlvConnectionId,
     mut stream: Box<dyn cheetah_runtime_api::AsyncTcpStream>,
@@ -434,6 +482,9 @@ pub(crate) async fn run_connection(
     let _ = stream.shutdown().await;
 }
 
+/// Apply outputs from `HttpFlvCore` to the TCP stream and event channel.
+///
+/// 将 `HttpFlvCore` 的输出应用到 TCP 流和事件通道。
 async fn apply_core_outputs(
     connection_id: HttpFlvConnectionId,
     stream: &mut Box<dyn cheetah_runtime_api::AsyncTcpStream>,
@@ -479,6 +530,9 @@ async fn apply_core_outputs(
     Ok(())
 }
 
+/// Read bytes until the HTTP request head is complete.
+///
+/// 读取字节直到 HTTP 请求头完整。
 async fn read_request_head(
     stream: &mut Box<dyn cheetah_runtime_api::AsyncTcpStream>,
     config: &HttpFlvDriverConfig,
@@ -508,12 +562,18 @@ async fn read_request_head(
     }
 }
 
+/// Locate the end of an HTTP header block (`\r\n\r\n`).
+///
+/// 定位 HTTP 头块结束位置（`\r\n\r\n`）。
 fn find_header_end(buf: &[u8]) -> Option<usize> {
     buf.windows(4)
         .position(|win| win == b"\r\n\r\n")
         .map(|idx| idx + 4)
 }
 
+/// Parse a raw HTTP request head into the core `HttpRequestHead`.
+///
+/// 将原始 HTTP 请求头解析为 core 的 `HttpRequestHead`。
 fn parse_http_request_head(raw: &[u8]) -> Result<HttpRequestHead, String> {
     let text = std::str::from_utf8(raw).map_err(|_| "request head is not utf8")?;
     let mut lines = text.split("\r\n").filter(|line| !line.is_empty());
@@ -544,6 +604,9 @@ fn parse_http_request_head(raw: &[u8]) -> Result<HttpRequestHead, String> {
     })
 }
 
+/// Serialize an HTTP response head to wire format.
+///
+/// 将 HTTP 响应头序列化为线上格式。
 fn encode_http_response(head: cheetah_http_flv_core::HttpResponseHead) -> String {
     let mut out = format!("HTTP/1.1 {} {}\r\n", head.status_code, head.reason);
     for (name, value) in head.headers {
@@ -556,6 +619,9 @@ fn encode_http_response(head: cheetah_http_flv_core::HttpResponseHead) -> String
     out
 }
 
+/// Encode a payload as a single WebSocket binary frame.
+///
+/// 将负载编码为单个 WebSocket 二进制帧。
 fn encode_ws_binary_frame(payload: &[u8]) -> Bytes {
     let mut out = Vec::with_capacity(payload.len() + 16);
     out.push(0x82);

@@ -48,7 +48,9 @@ impl AsyncTcpStream for TlsStreamWrapper {
     }
 }
 
-/// Start an HTTPS-FLV server with TLS encryption.
+/// Start an HTTPS-FLV/WSS-FLV server with TLS encryption.
+///
+/// 启动带 TLS 加密的 HTTPS-FLV/WSS-FLV 服务器。
 pub fn start_tls_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,
@@ -157,6 +159,9 @@ pub fn start_tls_server(
     })
 }
 
+/// Load PEM certificate and private key to build a rustls `ServerConfig`.
+///
+/// 加载 PEM 证书与私钥以构建 rustls `ServerConfig`。
 fn load_tls_config(cert_path: &str, key_path: &str) -> io::Result<rustls::ServerConfig> {
     let cert_data =
         std::fs::read(cert_path).map_err(|e| io::Error::other(format!("read cert: {e}")))?;
