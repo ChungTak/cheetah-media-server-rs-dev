@@ -5,19 +5,39 @@ use bytes::{BufMut, BytesMut};
 
 use crate::track::CodecId;
 
+/// Size of an MPEG-TS packet in bytes.
+///
+/// MPEG-TS 包的字节数。
 pub const TS_PACKET_SIZE: usize = 188;
+/// MPEG-TS sync byte value.
+///
+/// MPEG-TS 同步字节值。
 pub const SYNC_BYTE: u8 = 0x47;
+/// PID for the Program Association Table.
+///
+/// 节目关联表 PID。
 pub const PAT_PID: u16 = 0x0000;
+/// PID for the Program Map Table (assigned by the muxer).
+///
+/// 节目映射表 PID（由复用器分配）。
 pub const PMT_PID: u16 = 0x1000;
 
 /// H.264 Access Unit Delimiter: 00 00 00 01 09 F0
+///
+/// H.264 访问单元分隔符：00 00 00 01 09 F0。
 pub const AUD_H264: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x09, 0xF0];
 /// H.265 Access Unit Delimiter: 00 00 00 01 46 01 50
+///
+/// H.265 访问单元分隔符：00 00 00 01 46 01 50。
 pub const AUD_H265: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x46, 0x01, 0x50];
 /// H.266/VVC Access Unit Delimiter.
+///
+/// H.266/VVC 访问单元分隔符。
 pub const AUD_H266: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x00, 0xA0, 0x01];
 
 /// Map CodecId to MPEG-TS stream_type.
+///
+/// 将 CodecId 映射为 MPEG-TS 的 stream_type。
 pub fn stream_type_for_codec(codec: CodecId) -> u8 {
     match codec {
         CodecId::H264 => 0x1B,
@@ -37,6 +57,8 @@ pub fn stream_type_for_codec(codec: CodecId) -> u8 {
 }
 
 /// Map stream_type to CodecId (input direction).
+///
+/// 将 stream_type 映射为 CodecId（输入方向）。
 pub fn codec_from_stream_type(stream_type: u8) -> Option<(CodecId, crate::MediaKind)> {
     match stream_type {
         0x1B => Some((CodecId::H264, crate::MediaKind::Video)),
@@ -56,6 +78,8 @@ pub fn codec_from_stream_type(stream_type: u8) -> Option<(CodecId, crate::MediaK
 }
 
 /// Build ES_info descriptors for codecs that need them in the PMT.
+///
+/// 为需要在 PMT 中携带 ES_info 描述符的编解码器构建注册描述符。
 pub fn registration_descriptor(codec: CodecId) -> &'static [u8] {
     match codec {
         CodecId::AV1 => &[0x05, 0x04, b'A', b'V', b'0', b'1'],
@@ -69,6 +93,8 @@ pub fn registration_descriptor(codec: CodecId) -> &'static [u8] {
 }
 
 /// Encode a 33-bit PTS/DTS timestamp into 5 bytes.
+///
+/// 将 33 位 PTS/DTS 时间戳编码为 5 字节。
 pub fn encode_timestamp(buf: &mut Vec<u8>, marker: u8, ts: u64) {
     let ts = ts & 0x1_FFFF_FFFF;
     buf.push((marker << 4) | ((ts >> 29) as u8 & 0x0E) | 0x01);
@@ -79,6 +105,8 @@ pub fn encode_timestamp(buf: &mut Vec<u8>, marker: u8, ts: u64) {
 }
 
 /// Decode a 33-bit PTS/DTS timestamp from 5 bytes.
+///
+/// 从 5 字节解码 33 位 PTS/DTS 时间戳。
 pub fn decode_timestamp(buf: &[u8]) -> u64 {
     let b0 = buf[0] as u64;
     let b1 = buf[1] as u64;
@@ -89,6 +117,8 @@ pub fn decode_timestamp(buf: &[u8]) -> u64 {
 }
 
 /// CRC-32/MPEG-2 used in PAT/PMT.
+///
+/// PAT/PMT 使用的 CRC-32/MPEG-2 校验算法。
 pub fn crc32_mpeg2(data: &[u8]) -> u32 {
     let mut crc: u32 = 0xFFFF_FFFF;
     for &byte in data {
@@ -105,6 +135,8 @@ pub fn crc32_mpeg2(data: &[u8]) -> u32 {
 }
 
 /// Write PES data into multiple 188-byte TS packets.
+///
+/// 将 PES 数据写入多个 188 字节的 TS 包，处理 adaptation field、PCR 与填充。
 pub fn write_pes_packets(
     buf: &mut BytesMut,
     pid: u16,
@@ -196,6 +228,9 @@ pub fn write_pes_packets(
 
 /// Derive G711 frame duration in microseconds from payload length.
 /// G711A/G711U: 1 byte = 1 sample at 8000Hz.
+///
+/// 根据负载长度推导 G711 帧时长（微秒）。
+/// G711A/G711U：1 字节 = 8000Hz 下 1 个采样。
 pub fn g711_duration_us(payload_len: usize, sample_rate: u32) -> u64 {
     if sample_rate == 0 {
         return 0;
@@ -204,6 +239,8 @@ pub fn g711_duration_us(payload_len: usize, sample_rate: u32) -> u64 {
 }
 
 /// Derive G711 frame duration in 90kHz ticks from payload length.
+///
+/// 根据负载长度推导 G711 帧在 90kHz 刻度数。
 pub fn g711_duration_90k(payload_len: usize, sample_rate: u32) -> u64 {
     if sample_rate == 0 {
         return 0;
@@ -212,6 +249,8 @@ pub fn g711_duration_90k(payload_len: usize, sample_rate: u32) -> u64 {
 }
 
 /// Identify a private stream (stream_type=0x06) by parsing ES_info descriptors.
+///
+/// 通过解析 ES_info 描述符识别私有流（stream_type=0x06）。
 pub fn identify_private_stream(es_info: &[u8]) -> Option<(CodecId, crate::MediaKind)> {
     let mut offset = 0;
     while offset + 2 <= es_info.len() {
@@ -240,6 +279,8 @@ pub fn identify_private_stream(es_info: &[u8]) -> Option<(CodecId, crate::MediaK
 }
 
 /// Find a sync byte (0x47) confirmed by a second 0x47 at +188.
+///
+/// 查找由 +188 字节处另一个 0x47 确认的同步字节（0x47）。
 pub fn find_sync(data: &[u8], start: usize) -> Option<usize> {
     let end = data.len().saturating_sub(TS_PACKET_SIZE);
     for i in start..end {

@@ -16,11 +16,17 @@ use crate::ts_common::{
 use crate::video::{av1_obu_payload_has_keyframe, vp9_frame_is_keyframe, ParameterSetCache};
 
 /// Configuration for the shared TS demuxer.
+///
+/// 共享 TS 解复用器的配置。
 #[derive(Debug, Clone)]
 pub struct MpegTsDemuxerConfig {
     /// Maximum reassembly buffer size per PID (default 4 MiB).
+    ///
+    /// 每个 PID 重组缓冲区的最大字节数（默认 4 MiB）。
     pub max_reassembly_bytes: usize,
     /// Strict CRC mode: reject PAT/PMT with bad CRC (default false).
+    ///
+    /// 严格 CRC 模式：遇到 CRC 错误的 PAT/PMT 时拒绝（默认 false）。
     pub strict_crc: bool,
 }
 
@@ -34,25 +40,56 @@ impl Default for MpegTsDemuxerConfig {
 }
 
 /// Events emitted by the demuxer.
+///
+/// 解复用器发出的事件。
 #[derive(Debug, Clone)]
 pub enum MpegTsDemuxEvent {
     /// A track was discovered from PMT.
+    ///
+    /// 从 PMT 中发现一条轨道。
     TrackFound(TrackInfo),
     /// A complete frame was reassembled from PES.
+    ///
+    /// 从 PES 重组得到完整帧。
     Frame(AVFrame),
     /// Diagnostic message (non-fatal).
+    ///
+    /// 非致命诊断信息。
     Diagnostic(MpegTsDemuxDiagnostic),
 }
 
 /// Diagnostic messages from the demuxer.
+///
+/// 解复用器发出的诊断信息。
 #[derive(Debug, Clone)]
 pub enum MpegTsDemuxDiagnostic {
+    /// MPEG-TS sync was lost.
+    ///
+    /// MPEG-TS 同步丢失。
     SyncLoss,
+    /// Continuity counter discontinuity for a PID.
+    ///
+    /// PID 的连续性计数器不连续。
     ContinuityGap { pid: u16, expected: u8, got: u8 },
+    /// CRC mismatch in a PSI section.
+    ///
+    /// PSI 段 CRC 校验错误。
     CrcError { pid: u16 },
+    /// PES reassembly buffer exceeded the configured limit.
+    ///
+    /// PES 重组缓冲区超过配置限制。
     PesOverflow { pid: u16 },
+    /// PMT listed a stream_type we cannot map to a codec.
+    ///
+    /// PMT 列出无法映射到编解码器的 stream_type。
     UnknownStreamType { stream_type: u8, pid: u16 },
+    /// Adaptation field length exceeds packet bounds.
+    ///
+    /// 自适应字段长度超出包边界。
     AdaptationFieldOverflow { pid: u16 },
+    /// Invalid AAC ADTS frame encountered.
+    ///
+    /// 遇到无效的 AAC ADTS 帧。
     AdtsError { pid: u16, reason: &'static str },
 }
 
@@ -84,6 +121,9 @@ struct DemuxTrackState {
 }
 
 /// Shared MPEG-TS demuxer state machine.
+///
+/// 共享的 MPEG-TS 解复用状态机，负责 PAT/PMT 发现、PID 过滤、
+/// 连续性计数校验与 PES 重组。
 pub struct MpegTsDemuxer {
     config: MpegTsDemuxerConfig,
     pmt_pid: Option<u16>,
@@ -95,6 +135,9 @@ pub struct MpegTsDemuxer {
 }
 
 impl MpegTsDemuxer {
+    /// Create a new TS demuxer with the given configuration.
+    ///
+    /// 使用给定配置创建新的 TS 解复用器。
     pub fn new(config: MpegTsDemuxerConfig) -> Self {
         Self {
             config,
@@ -108,6 +151,8 @@ impl MpegTsDemuxer {
     }
 
     /// Feed raw bytes (any alignment). Returns events.
+    ///
+    /// 接收任意对齐的原始字节，查找同步、解析 PAT/PMT、重组 PES 并返回事件。
     pub fn push(&mut self, data: &[u8]) -> Vec<MpegTsDemuxEvent> {
         let mut events = Vec::new();
         let mut buf = core::mem::take(&mut self.remainder);
@@ -150,6 +195,8 @@ impl MpegTsDemuxer {
     }
 
     /// Flush remaining PES buffers.
+    ///
+    /// 刷新剩余 PES 缓冲区，将未完成的帧强制输出。
     pub fn flush(&mut self) -> Vec<MpegTsDemuxEvent> {
         let mut events = Vec::new();
         for track in &mut self.tracks {

@@ -1,8 +1,17 @@
 use crate::prelude::*;
 
+/// Settings for the RTP sequence-number reorder buffer.
+///
+/// RTP 序列号重排缓冲区的配置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtpReorderSettings {
+    /// Maximum number of out-of-order packets held before forced release.
+    ///
+    /// 强制释放前缓存的乱序包数量上限。
     pub max_packets: usize,
+    /// Maximum time an out-of-order packet may wait for its predecessors.
+    ///
+    /// 乱序包等待前驱包的最大时间（毫秒）。
     pub max_delay_ms: u64,
 }
 
@@ -22,6 +31,9 @@ struct PendingPacket<T> {
     packet: T,
 }
 
+/// Generic RTP sequence-number reorder buffer with bounded latency.
+///
+/// 具有有界延迟的通用 RTP 序列号重排缓冲区。
 #[derive(Debug, Clone)]
 pub struct RtpReorderBuffer<T> {
     settings: RtpReorderSettings,
@@ -30,6 +42,9 @@ pub struct RtpReorderBuffer<T> {
 }
 
 impl<T> RtpReorderBuffer<T> {
+    /// Create a new reorder buffer with the given settings.
+    ///
+    /// 使用给定配置创建新的重排缓冲区。
     pub fn new(settings: RtpReorderSettings) -> Self {
         Self {
             settings,
@@ -38,6 +53,10 @@ impl<T> RtpReorderBuffer<T> {
         }
     }
 
+    /// Insert a packet by sequence number and arrival time, returning any packets
+    /// that are now in order and ready for release.
+    ///
+    /// 按序列号和到达时间插入包，返回已形成顺序并可释放的包。
     pub fn push(&mut self, sequence_number: u16, arrival_ms: u64, packet: T) -> Vec<T> {
         let Some(expected) = self.expected_seq else {
             self.expected_seq = Some(sequence_number.wrapping_add(1));
@@ -91,11 +110,17 @@ impl<T> RtpReorderBuffer<T> {
         Vec::new()
     }
 
+    /// Reset the buffer, discarding all pending packets and expected state.
+    ///
+    /// 重置缓冲区，丢弃所有待处理包与期望状态。
     pub fn reset(&mut self) {
         self.expected_seq = None;
         self.pending.clear();
     }
 
+    /// Number of packets currently buffered waiting for their predecessors.
+    ///
+    /// 当前缓存中等待前驱包的数量。
     pub fn pending_len(&self) -> usize {
         self.pending.len()
     }

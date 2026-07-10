@@ -21,22 +21,34 @@ use crate::time::TimestampAlert;
 
 /// Explicit high-frequency threshold used to decide whether canonical/egress
 /// repair volume should escalate to an anomaly warning (see §4).
+///
+/// 用于判断 canonical/egress 层修复量是否应升级为异常告警的显式高频阈值（见 §4）。
 pub const REPAIR_WARN_HIGH_FREQUENCY_THRESHOLD: u64 = 32;
 
 /// The timeline layer a repair event is attributed to.
+///
+/// 修复事件被归属到的时间线层。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RepairLayer {
     /// Source-timeline reorder/repair observations (including B-frame reorder
     /// noise). Never escalates canonical/egress warnings.
+    ///
+    /// 源时间线重排/修复观察（包括 B 帧重排噪声）。不会升级 canonical/egress 告警。
     Source,
     /// Canonical-timeline monotonic repair events.
+    ///
+    /// 标准时间线上的单调修复事件。
     Canonical,
     /// Protocol-export monotonic repair events.
+    ///
+    /// 协议导出时间线上的单调修复事件。
     Egress,
 }
 
 impl RepairLayer {
     /// Stable lowercase label used as a metric/attribute name.
+    ///
+    /// 用作指标/属性名的稳定小写标签。
     pub fn label(self) -> &'static str {
         match self {
             RepairLayer::Source => "source",
@@ -51,6 +63,11 @@ impl RepairLayer {
 /// Pure discontinuity/reset markers (`TimelineDiscontinuityDetected`,
 /// `ResetApplied`) are *not* repairs and return `None` so they are never
 /// counted as repair events.
+///
+/// 将时间戳归一化告警分类到其所属的修复层。
+///
+/// 纯不连续/重置标记（`TimelineDiscontinuityDetected`、`ResetApplied`）不是修复，
+/// 返回 `None`，因此不会被计为修复事件。
 pub fn classify_timestamp_alert(alert: TimestampAlert) -> Option<RepairLayer> {
     match alert {
         // Source timeline reconstruction / reorder noise.
@@ -67,6 +84,8 @@ pub fn classify_timestamp_alert(alert: TimestampAlert) -> Option<RepairLayer> {
 }
 
 /// Layer-classified repair counters (see §4 observability baseline).
+///
+/// 分层统计的修复计数器（见 §4 可观测性基线）。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RepairEventCounters {
     pub source_repair_events: u64,
@@ -76,6 +95,8 @@ pub struct RepairEventCounters {
 
 impl RepairEventCounters {
     /// Count a repair on an explicit layer.
+    ///
+    /// 在显式层上计数一次修复。
     pub fn record_layer(&mut self, layer: RepairLayer) {
         let slot = match layer {
             RepairLayer::Source => &mut self.source_repair_events,
@@ -87,6 +108,8 @@ impl RepairEventCounters {
 
     /// Count a normalizer alert, attributing it to its layer. Non-repair alerts
     /// (discontinuity/reset) are ignored.
+    ///
+    /// 将归一化告警归属到对应层进行计数。非修复告警（不连续/重置）被忽略。
     pub fn record_alert(&mut self, alert: TimestampAlert) {
         if let Some(layer) = classify_timestamp_alert(alert) {
             self.record_layer(layer);
@@ -95,11 +118,15 @@ impl RepairEventCounters {
 
     /// Count an egress-layer monotonic repair (e.g. the `repaired` result of
     /// [`crate::repair_monotonic_timestamp`]).
+    ///
+    /// 计数一次 egress 层单调修复（例如 [`crate::repair_monotonic_timestamp`] 的修复结果）。
     pub fn record_egress_repair(&mut self) {
         self.record_layer(RepairLayer::Egress);
     }
 
     /// Total count for a given layer.
+    ///
+    /// 返回指定层的修复总数。
     pub fn count(&self, layer: RepairLayer) -> u64 {
         match layer {
             RepairLayer::Source => self.source_repair_events,
@@ -114,6 +141,11 @@ impl RepairEventCounters {
     /// The source layer never escalates (B-frame reorder noise is expected);
     /// canonical/egress escalate only at/above
     /// [`REPAIR_WARN_HIGH_FREQUENCY_THRESHOLD`].
+    ///
+    /// 判断指定层的修复量是否应升级为高频异常告警。
+    ///
+    /// source 层永远不会升级（B 帧重排噪声属于预期）；canonical/egress 仅在达到或超过
+    /// [`REPAIR_WARN_HIGH_FREQUENCY_THRESHOLD`] 时升级。
     pub fn is_high_frequency_anomaly(&self, layer: RepairLayer) -> bool {
         match layer {
             RepairLayer::Source => false,
@@ -126,29 +158,41 @@ impl RepairEventCounters {
 
 /// Runtime observability report schema (see §4).
 ///
-/// Each timing metric is optional because it is only defined once the relevant
-/// event has been observed (first frame / first keyframe / a media span).
+/// Runtime 可观测性报告模式（见 §4）。
+///
+/// 每个时间指标都是可选的，因为仅在观察到相关事件（首帧、首个关键帧、一段媒体跨度）后才定义。
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct RuntimeObservabilityReport {
     /// Wall-clock delay from session start to the first delivered frame.
+    ///
+    /// 从会话开始到首帧交付的墙上时间延迟。
     pub startup_latency_ms: Option<f64>,
     /// Average inter-frame wall-clock interval over the first second of output.
+    ///
+    /// 输出首秒内帧间墙上时间间隔的平均值。
     pub first_second_avg_frame_interval_ms: Option<f64>,
     /// Observed playback speed: media time advanced / wall time elapsed.
+    ///
+    /// 观察到的播放速度：媒体时间推进量 / 墙上时间经过量。
     pub average_playback_rate_x: Option<f64>,
     /// Wall-clock delay from session start to the first keyframe.
+    ///
+    /// 从会话开始到首个关键帧的墙上时间延迟。
     pub first_keyframe_delay_ms: Option<f64>,
     /// Layer-classified repair counters.
+    ///
+    /// 分层统计的修复计数器。
     pub repairs: RepairEventCounters,
 }
 
 /// Accumulates timing samples for a single session/stream and produces a
 /// [`RuntimeObservabilityReport`].
 ///
-/// Sans-I/O: the caller injects a monotonic wall clock (`now_us`) and canonical
-/// media presentation timestamps (`pts_us`); this type performs no I/O and reads
-/// no clock. Feed it via [`RuntimeReportBuilder::on_frame`] on the egress path
-/// and via the `record_*` helpers when repairs are observed.
+/// 为单个会话/流累积时间样本并生成 [`RuntimeObservabilityReport`]。
+///
+/// Sans-I/O：调用方注入单调墙上时钟（`now_us`）和标准媒体显示时间戳（`pts_us`）；
+/// 本类型不执行 I/O，也不读取时钟。在 egress 路径通过 [`RuntimeReportBuilder::on_frame`]
+/// 输入，在观察到修复时通过 `record_*` 辅助方法记录。
 #[derive(Debug, Clone)]
 pub struct RuntimeReportBuilder {
     session_start_us: i64,
@@ -167,6 +211,8 @@ pub struct RuntimeReportBuilder {
 impl RuntimeReportBuilder {
     /// Start a report for a session that began at `session_start_us` (monotonic
     /// wall clock, microseconds).
+    ///
+    /// 为在 `session_start_us`（单调墙上时钟，微秒）开始的会话启动报告。
     pub fn new(session_start_us: i64) -> Self {
         Self {
             session_start_us,
@@ -185,6 +231,8 @@ impl RuntimeReportBuilder {
 
     /// Record an egress frame delivered at wall-clock `now_us` carrying canonical
     /// presentation timestamp `pts_us`.
+    ///
+    /// 记录在墙上时间 `now_us` 交付的 egress 帧，其携带标准显示时间戳 `pts_us`。
     pub fn on_frame(&mut self, now_us: i64, pts_us: i64, is_keyframe: bool) {
         match self.first_frame_wall_us {
             None => {
@@ -215,21 +263,29 @@ impl RuntimeReportBuilder {
     }
 
     /// Record a repair on an explicit layer.
+    ///
+    /// 在显式层上记录一次修复。
     pub fn record_repair(&mut self, layer: RepairLayer) {
         self.repairs.record_layer(layer);
     }
 
     /// Record a normalizer alert (attributed to its layer, non-repairs ignored).
+    ///
+    /// 记录一条归一化告警（按其层归属，非修复告警被忽略）。
     pub fn record_alert(&mut self, alert: TimestampAlert) {
         self.repairs.record_alert(alert);
     }
 
     /// Current repair counters.
+    ///
+    /// 当前修复计数器。
     pub fn repairs(&self) -> RepairEventCounters {
         self.repairs
     }
 
     /// Produce the report from the samples accumulated so far.
+    ///
+    /// 根据截至目前累积的样本生成报告。
     pub fn build(&self) -> RuntimeObservabilityReport {
         let startup_latency_ms = self
             .first_frame_wall_us

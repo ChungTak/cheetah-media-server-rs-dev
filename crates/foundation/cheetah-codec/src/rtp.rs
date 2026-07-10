@@ -1,6 +1,9 @@
 use crate::prelude::*;
 use bytes::{Buf, Bytes, BytesMut};
 
+/// RTP fixed header fields (RFC 3550).
+///
+/// RTP 固定头部字段（RFC 3550）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtpHeader {
     pub version: u8,
@@ -12,6 +15,9 @@ pub struct RtpHeader {
 }
 
 impl RtpHeader {
+    /// Parse an RTP header from a byte slice, returning the header and payload offset.
+    ///
+    /// 从字节切片解析 RTP 头部，返回头部和负载起始偏移。
     pub fn parse(raw: &[u8]) -> Option<(Self, usize)> {
         if raw.len() < 12 {
             return None;
@@ -60,6 +66,9 @@ impl RtpHeader {
         ))
     }
 
+    /// Encode the RTP header into the canonical 12-byte form.
+    ///
+    /// 将 RTP 头部编码为标准 12 字节形式。
     pub fn encode(self) -> [u8; 12] {
         let mut out = [0u8; 12];
         out[0] = (self.version & 0x03) << 6;
@@ -71,6 +80,9 @@ impl RtpHeader {
     }
 }
 
+/// RTP packet with header and payload.
+///
+/// 包含头部和负载的 RTP 包。
 #[derive(Debug, Clone)]
 pub struct RtpPacket {
     pub header: RtpHeader,
@@ -78,6 +90,9 @@ pub struct RtpPacket {
 }
 
 impl RtpPacket {
+    /// Parse a complete RTP packet (header + payload) from bytes.
+    ///
+    /// 从字节解析完整 RTP 包（头部 + 负载）。
     pub fn parse(raw: &[u8]) -> Option<Self> {
         let (header, header_len) = RtpHeader::parse(raw)?;
         let payload_end = if (raw[0] & 0x20) != 0 {
@@ -95,6 +110,9 @@ impl RtpPacket {
         })
     }
 
+    /// Encode the RTP packet as bytes.
+    ///
+    /// 将 RTP 包编码为字节。
     pub fn encode(&self) -> Bytes {
         let mut out = Vec::with_capacity(12 + self.payload.len());
         out.extend_from_slice(&self.header.encode());
@@ -103,12 +121,18 @@ impl RtpPacket {
     }
 }
 
+/// RTP clock rate helper for timestamp conversion.
+///
+/// 用于时间戳转换的 RTP 时钟速率辅助结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtpClock {
     pub rate: u32,
 }
 
 impl RtpClock {
+    /// Convert RTP clock ticks to microseconds.
+    ///
+    /// 将 RTP 时钟刻度转换为微秒。
     pub fn ticks_to_micros(self, ticks: u32) -> i64 {
         if self.rate == 0 {
             return 0;
@@ -116,6 +140,9 @@ impl RtpClock {
         (i64::from(ticks) * 1_000_000_i64) / i64::from(self.rate)
     }
 
+    /// Convert microseconds to RTP clock ticks.
+    ///
+    /// 将微秒转换为 RTP 时钟刻度。
     pub fn micros_to_ticks(self, micros: i64) -> u32 {
         if self.rate == 0 || micros <= 0 {
             return 0;
@@ -124,6 +151,9 @@ impl RtpClock {
     }
 }
 
+/// Split a payload into MTU-sized RTP packets with incrementing sequence numbers.
+///
+/// 将负载拆分为 MTU 大小的 RTP 包，序列号递增，最后一个包标记 marker。
 pub fn packetize_payload(payload: &[u8], mtu: usize, mut header: RtpHeader) -> Vec<RtpPacket> {
     let payload_mtu = mtu.saturating_sub(12).max(1);
     let mut out = Vec::new();
@@ -151,6 +181,13 @@ pub fn packetize_payload(payload: &[u8], mtu: usize, mut header: RtpHeader) -> V
 /// `sample_rate` is the audio sample rate (typically 8000 Hz for G711).
 /// `header.timestamp` is the starting RTP timestamp; it advances by samples-per-packet.
 /// `header.sequence_number` is the starting sequence number; it advances by 1 per packet.
+///
+/// 将 G711 音频帧按目标包时长（毫秒）打包为 RTP 包。ZLMediaKit 默认按 100ms 对齐 G711
+/// 以兼容 GB28181；较小值（如 20ms）在 WebRTC 桥接下更优。
+///
+/// `sample_rate` 为音频采样率（G711 通常为 8000 Hz）。
+/// `header.timestamp` 为起始 RTP 时间戳，按每包采样数递增。
+/// `header.sequence_number` 为起始序列号，每包递增 1。
 pub fn packetize_g711(
     payload: &[u8],
     sample_rate: u32,
@@ -187,6 +224,9 @@ pub fn packetize_g711(
     out
 }
 
+/// Reassemble payloads from RTP packets, sorting by sequence number and handling wraparound.
+///
+/// 从 RTP 包重组负载，按序列号排序并处理序列号回绕。
 pub fn depacketize_payload(mut packets: Vec<RtpPacket>) -> Bytes {
     if packets.is_empty() {
         return Bytes::new();
@@ -227,21 +267,52 @@ pub fn depacketize_payload(mut packets: Vec<RtpPacket>) -> Bytes {
     Bytes::from(out)
 }
 
+/// Detected higher-level payload encapsulation inside an RTP packet.
+///
+/// 检测到的 RTP 包内更高层负载封装类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtpPayloadMode {
+    /// Program Stream (PS) over RTP.
+    ///
+    /// RTP 上承载的节目流（PS）。
     Ps,
+    /// Transport Stream (TS) over RTP.
+    ///
+    /// RTP 上承载的传输流（TS）。
     Ts,
+    /// Elementary Stream (ES) over RTP.
+    ///
+    /// RTP 上承载的基本流（ES）。
     Es,
+    /// Hikvision Ehome2 private protocol.
+    ///
+    /// 海康 Ehome2 私有协议。
     Ehome,
     /// Hikvision XHB private container (also seen as `xhb`/`hk` in vendor stacks).
+    ///
+    /// 海康 XHB 私有容器（厂商栈中亦写作 `xhb`/`hk`）。
     Xhb,
     /// JT/T 1078 vehicle terminal video transport.
+    ///
+    /// JT/T 1078 车载终端视频传输。
     Jtt1078,
+    /// Raw elementary audio stream.
+    ///
+    /// 原始音频基本流。
     RawAudio,
+    /// Raw elementary video stream.
+    ///
+    /// 原始视频基本流。
     RawVideo,
+    /// Payload mode could not be determined.
+    ///
+    /// 无法确定负载模式。
     Unknown,
 }
 
+/// Probe an RTP payload to determine the higher-level encapsulation mode.
+///
+/// 探测 RTP 负载以确定更高层封装模式。
 pub fn probe_rtp_payload(payload: &[u8]) -> RtpPayloadMode {
     if payload.is_empty() {
         return RtpPayloadMode::Unknown;
@@ -304,6 +375,9 @@ pub fn probe_rtp_payload(payload: &[u8]) -> RtpPayloadMode {
 
 /// Parses an RFC 4571 TCP RTP frame (2-byte big-endian length prefix + RTP packet).
 /// Returns the parsed RTP packet and the total number of bytes consumed.
+///
+/// 解析 RFC 4571 TCP RTP 帧（2 字节大端长度前缀 + RTP 包）。
+/// 返回解析后的 RTP 包与总共消费的字节数。
 pub fn parse_tcp_rtp_frame(raw: &[u8]) -> Option<(RtpPacket, usize)> {
     if raw.len() < 2 {
         return None;
@@ -317,6 +391,8 @@ pub fn parse_tcp_rtp_frame(raw: &[u8]) -> Option<(RtpPacket, usize)> {
 }
 
 /// Encodes an RTP packet as an RFC 4571 TCP RTP frame (2-byte big-endian length prefix + RTP packet).
+///
+/// 将 RTP 包编码为 RFC 4571 TCP RTP 帧（2 字节大端长度前缀 + RTP 包）。
 pub fn encode_tcp_rtp_frame(packet: &RtpPacket) -> Bytes {
     let encoded = packet.encode();
     let len = encoded.len();
@@ -328,25 +404,41 @@ pub fn encode_tcp_rtp_frame(packet: &RtpPacket) -> Bytes {
 
 /// TCP RTP framing variants observed across vendor stacks.
 ///
+/// 在厂商栈中观察到的 TCP RTP 分帧变体。
+///
 /// `TwoByte` is the RFC 4571 framing (2-byte big-endian length, then RTP packet).
+///
+/// `TwoByte` 为 RFC 4571 分帧（2 字节大端长度后跟 RTP 包）。
 ///
 /// `Interleaved4Byte` is RTSP-style RTP-over-TCP framing (`$ + channel + 2-byte length + RTP packet`).
 /// ABLMediaServer / Hikvision sub-platforms occasionally negotiate this variant when carrying
 /// GB28181 RTP over a TCP control channel.
+///
+/// `Interleaved4Byte` 为 RTSP 风格 RTP over TCP 分帧（`$ + channel + 2 字节长度 + RTP 包`）。
+/// ABLMediaServer/海康子平台在通过 TCP 控制通道承载 GB28181 RTP 时偶尔会协商此变体。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtpTcpFraming {
     /// RFC 4571 — 2-byte big-endian length prefix + RTP packet.
+    ///
+    /// RFC 4571 — 2 字节大端长度前缀 + RTP 包。
     TwoByte,
     /// RTSP-style interleaved framing — `$ + channel(u8) + length(u16 BE) + RTP`.
+    ///
+    /// RTSP 风格交错分帧 — `$ + channel(u8) + 长度(u16 大端) + RTP`。
     Interleaved4Byte,
     /// Auto-detect: try `Interleaved4Byte` first when the leading byte is `$`, otherwise
     /// fall back to `TwoByte`.
+    ///
+    /// 自动检测：当首字节为 `$` 时优先尝试 `Interleaved4Byte`，否则回退到 `TwoByte`。
     AutoDetect,
 }
 
 /// Parse a 4-byte interleaved TCP RTP frame (`$ + channel + length(u16) + payload`).
 ///
 /// Returns the parsed RTP packet, the channel number, and the total number of bytes consumed.
+///
+/// 解析 4 字节交错 TCP RTP 帧（`$ + channel + length(u16) + payload`）。
+/// 返回解析后的 RTP 包、通道号和总共消费的字节数。
 pub fn parse_interleaved_rtp_frame(raw: &[u8]) -> Option<(RtpPacket, u8, usize)> {
     if raw.len() < 4 {
         return None;
@@ -364,6 +456,8 @@ pub fn parse_interleaved_rtp_frame(raw: &[u8]) -> Option<(RtpPacket, u8, usize)>
 }
 
 /// Encode an RTP packet using 4-byte interleaved framing.
+///
+/// 使用 4 字节交错分帧编码 RTP 包。
 pub fn encode_interleaved_rtp_frame(packet: &RtpPacket, channel: u8) -> Bytes {
     let encoded = packet.encode();
     let len = encoded.len();
@@ -376,13 +470,25 @@ pub fn encode_interleaved_rtp_frame(packet: &RtpPacket, channel: u8) -> Bytes {
 }
 
 /// Result of parsing a single TCP RTP frame in `AutoDetect` mode.
+///
+/// `AutoDetect` 模式下解析单条 TCP RTP 帧的结果。
 #[derive(Debug, Clone)]
 pub struct ParsedTcpRtpFrame {
+    /// Parsed RTP packet.
+    ///
+    /// 解析出的 RTP 包。
     pub packet: RtpPacket,
     /// Number of bytes consumed from the input buffer.
+    ///
+    /// 从输入缓冲区消费的字节数。
     pub consumed: usize,
     /// `Some(channel)` for `Interleaved4Byte` framing, `None` for `TwoByte`.
+    ///
+    /// `Interleaved4Byte` 分帧时为 `Some(channel)`，`TwoByte` 时为 `None`。
     pub channel: Option<u8>,
+    /// Detected framing mode.
+    ///
+    /// 检测到的分帧模式。
     pub framing: RtpTcpFraming,
 }
 
@@ -390,6 +496,11 @@ pub struct ParsedTcpRtpFrame {
 ///
 /// `AutoDetect` prefers the interleaved variant when the buffer starts with `$`. If that fails
 /// it falls back to the 2-byte length form. Returns `None` when more bytes are needed.
+///
+/// 使用配置的分帧模式从 `raw` 解析单条 TCP RTP 帧。
+///
+/// `AutoDetect` 在缓冲区以 `$` 开头时优先尝试交错模式；失败则回退到 2 字节长度模式。
+/// 需要更多字节时返回 `None`。
 pub fn parse_tcp_rtp_frame_with(raw: &[u8], mode: RtpTcpFraming) -> Option<ParsedTcpRtpFrame> {
     match mode {
         RtpTcpFraming::TwoByte => {
@@ -733,23 +844,59 @@ mod tests {
     }
 }
 
+/// Codec information extracted from the Hikvision Ehome handshake packet.
+///
+/// 从海康 Ehome 握手包中提取的编解码器信息。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EhomeCodecInfo {
-    pub payload_type: String,        // "ps" or "nalu"
-    pub video_codec: Option<String>, // "h264", "h265"
-    pub audio_codec: Option<String>, // "g711a", "g711u", "aac"
+    /// Payload encapsulation type: "ps" or "nalu".
+    ///
+    /// 负载封装类型："ps" 或 "nalu"。
+    pub payload_type: String,
+    /// Video codec identifier: "h264" or "h265".
+    ///
+    /// 视频编解码器标识："h264" 或 "h265"。
+    pub video_codec: Option<String>,
+    /// Audio codec identifier: "g711a", "g711u" or "aac".
+    ///
+    /// 音频编解码器标识："g711a"、"g711u" 或 "aac"。
+    pub audio_codec: Option<String>,
+    /// Audio channel count.
+    ///
+    /// 音频通道数。
     pub channels: u8,
+    /// Audio sample bit depth.
+    ///
+    /// 音频采样位深。
     pub sample_bit: u8,
+    /// Audio sample rate in Hz.
+    ///
+    /// 音频采样率（Hz）。
     pub sample_rate: u32,
 }
 
+/// Output of the Ehome decoder.
+///
+/// Ehome 解码器的输出。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EhomeOutput {
+    /// SSRC handshake payload.
+    ///
+    /// SSRC 握手负载。
     HandshakeSsrc(String),
+    /// Codec handshake payload.
+    ///
+    /// 编解码器握手负载。
     HandshakeCodec(EhomeCodecInfo),
+    /// Media payload.
+    ///
+    /// 媒体负载。
     MediaPayload(Bytes),
 }
 
+/// Decoder for the Hikvision Ehome2 TCP stream format.
+///
+/// 海康 Ehome2 TCP 流格式解码器。
 pub struct EhomeDecoder {
     packet_seq: u32,
     ssrc: Option<String>,
@@ -765,6 +912,9 @@ impl Default for EhomeDecoder {
 }
 
 impl EhomeDecoder {
+    /// Create a new Ehome decoder.
+    ///
+    /// 创建新的 Ehome 解码器。
     pub fn new() -> Self {
         Self {
             packet_seq: 0,
@@ -775,10 +925,21 @@ impl EhomeDecoder {
         }
     }
 
+    /// Return the discovered codec info, if the handshake has completed.
+    ///
+    /// 返回已发现的编解码器信息（若握手已完成）。
     pub fn codec_info(&self) -> Option<EhomeCodecInfo> {
         self.codec_info.clone()
     }
 
+    /// Decode available Ehome frames from the buffer.
+    ///
+    /// Each call consumes complete 4-byte length-prefixed packets from `buf`,
+    /// producing handshake or media outputs.
+    ///
+    /// 从缓冲区解码可用的 Ehome 帧。
+    ///
+    /// 每次调用从 `buf` 消费完整的 4 字节长度前缀包，产生握手或媒体输出。
     pub fn decode(&mut self, buf: &mut BytesMut) -> Vec<EhomeOutput> {
         let mut outputs = Vec::new();
 

@@ -18,8 +18,9 @@ const AAC_SILENT_FRAME: &[u8] = &[0x21, 0x10, 0x05, 0x00, 0xa0, 0x19, 0x33];
 
 /// Generates silent AAC audio frames driven by video timestamps.
 ///
-/// When a stream has video but no audio, this fills the audio timeline
-/// so that players requiring audio don't stall.
+/// 根据视频时间戳生成静音 AAC 音频帧。
+///
+/// 当流只有视频没有音频时，填充音频时间线，避免需要音频的播放器卡住。
 #[derive(Debug, Clone)]
 pub struct MuteAudioMaker {
     track_id: TrackId,
@@ -38,12 +39,16 @@ pub struct MuteAudioMaker {
 impl MuteAudioMaker {
     /// Create a new silent audio generator.
     ///
-    /// Default: AAC-LC, 44100 Hz, stereo.
+    /// 创建一个新的静音音频生成器。
+    ///
+    /// 默认：AAC-LC，44100 Hz，立体声。
     pub fn new(track_id: TrackId) -> Self {
         Self::with_params(track_id, 44100, 2)
     }
 
     /// Create with custom sample rate and channel count.
+    ///
+    /// 使用自定义采样率和通道数创建。
     pub fn with_params(track_id: TrackId, sample_rate: u32, channels: u8) -> Self {
         let sampling_frequency_index = match sample_rate {
             96000 => 0,
@@ -77,25 +82,38 @@ impl MuteAudioMaker {
     }
 
     /// Returns the AudioSpecificConfig bytes for codec config signaling.
+    ///
+    /// 返回用于编解码器配置信令的 AudioSpecificConfig 字节。
     pub fn audio_specific_config(&self) -> [u8; 2] {
         self.asc.to_bytes()
     }
 
+    /// Audio sample rate in Hz.
+    ///
+    /// 音频采样率（Hz）。
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
     }
 
+    /// Audio channel count.
+    ///
+    /// 音频通道数。
     pub fn channels(&self) -> u8 {
         self.channels
     }
 
+    /// Track identifier for the generated audio frames.
+    ///
+    /// 生成音频帧的轨道标识。
     pub fn track_id(&self) -> TrackId {
         self.track_id
     }
 
     /// Generate silent audio frames to fill up to `video_pts_us` (microseconds).
     ///
-    /// Returns generated frames. Call this each time a video frame arrives.
+    /// 生成静音音频帧以填充到 `video_pts_us`（微秒）。
+    ///
+    /// 每次视频帧到达时调用，返回生成的帧。
     pub fn fill_until(&mut self, video_pts_us: i64) -> Vec<AVFrame> {
         if video_pts_us <= 0 {
             return Vec::new();
@@ -136,6 +154,8 @@ impl MuteAudioMaker {
     }
 
     /// Reset the generator (e.g., when real audio arrives).
+    ///
+    /// 重置生成器（例如当真实音频到达时）。
     pub fn reset(&mut self) {
         self.next_pts = 0;
     }

@@ -4,16 +4,40 @@ use base64::Engine;
 
 use crate::track::{CodecExtradata, CodecId, MediaKind, TrackInfo};
 
+/// SDP `m=` line description generated from a track.
+///
+/// 从轨道生成的 SDP `m=` 行描述。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdpMediaDescription {
+    /// Media type, e.g. "video", "audio", "application", "text".
+    ///
+    /// 媒体类型，例如 "video"、"audio"、"application"、"text"。
     pub media: String,
+    /// RTP payload type number.
+    ///
+    /// RTP 负载类型号。
     pub payload_type: u8,
+    /// SDP codec name.
+    ///
+    /// SDP 编解码器名称。
     pub codec: String,
+    /// RTP clock rate.
+    ///
+    /// RTP 时钟速率。
     pub clock_rate: u32,
+    /// Number of audio channels, if applicable.
+    ///
+    /// 音频通道数（如适用）。
     pub channels: Option<u8>,
+    /// `a=fmtp:` attribute value, if any.
+    ///
+    /// `a=fmtp:` 属性值（如有）。
     pub fmtp: Option<String>,
 }
 
+/// Build an SDP `m=` description from a `TrackInfo`.
+///
+/// 从 `TrackInfo` 构建 SDP `m=` 描述。
 pub fn export_media_description(track: &TrackInfo) -> Option<SdpMediaDescription> {
     let payload_type = track
         .payload_type
@@ -38,6 +62,15 @@ pub fn export_media_description(track: &TrackInfo) -> Option<SdpMediaDescription
     })
 }
 
+/// Build the `a=fmtp:` parameter string for a track.
+///
+/// Produces format-specific parameters such as H.264/H.265 sprop parameter sets,
+/// AV1 profile/level/tier, AAC config, or Opus fmtp.
+///
+/// 为轨道构建 `a=fmtp:` 参数字符串。
+///
+/// 生成格式相关参数，如 H.264/H.265 sprop 参数集、AV1 profile/level/tier、
+/// AAC 配置或 Opus fmtp。
 pub fn export_fmtp(track: &TrackInfo) -> Option<String> {
     if track.codec == CodecId::AV1 {
         let (profile, level_idx, tier) = match &track.extradata {

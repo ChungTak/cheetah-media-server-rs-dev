@@ -60,6 +60,8 @@ static ALAW_DECODE_TABLE: [i16; 256] = {
 };
 
 /// Decode G.711 μ-law samples to 16-bit PCM.
+///
+/// 将 G.711 μ-law 样本解码为 16 位 PCM。
 pub fn g711u_decode(input: &[u8]) -> Vec<i16> {
     input
         .iter()
@@ -68,6 +70,8 @@ pub fn g711u_decode(input: &[u8]) -> Vec<i16> {
 }
 
 /// Decode G.711 A-law samples to 16-bit PCM.
+///
+/// 将 G.711 A-law 样本解码为 16 位 PCM。
 pub fn g711a_decode(input: &[u8]) -> Vec<i16> {
     input
         .iter()
@@ -76,6 +80,8 @@ pub fn g711a_decode(input: &[u8]) -> Vec<i16> {
 }
 
 /// Decode G.711 samples based on codec ID.
+///
+/// 根据编解码器 ID 解码 G.711 样本。
 pub fn g711_decode(codec: CodecId, input: &[u8]) -> Vec<i16> {
     match codec {
         CodecId::G711A => g711a_decode(input),
@@ -120,11 +126,15 @@ fn pcm16_to_alaw_sample(sample: i16) -> u8 {
 }
 
 /// Encode 16-bit PCM samples to G.711 μ-law.
+///
+/// 将 16 位 PCM 样本编码为 G.711 μ-law。
 pub fn pcm16_to_g711u(pcm: &[i16]) -> Vec<u8> {
     pcm.iter().map(|&s| pcm16_to_ulaw_sample(s)).collect()
 }
 
 /// Encode 16-bit PCM samples to G.711 A-law.
+///
+/// 将 16 位 PCM 样本编码为 G.711 A-law。
 pub fn pcm16_to_g711a(pcm: &[i16]) -> Vec<u8> {
     pcm.iter().map(|&s| pcm16_to_alaw_sample(s)).collect()
 }
@@ -132,14 +142,26 @@ pub fn pcm16_to_g711a(pcm: &[i16]) -> Vec<u8> {
 // ─── AAC Decoder trait ──────────────────────────────────────────────────────
 
 /// Trait for AAC decoding. Implementations can wrap symphonia, fdk-aac, or FFmpeg.
+///
+/// AAC 解码 trait。实现可封装 symphonia、fdk-aac 或 FFmpeg。
 pub trait AacDecoder: Send {
     /// Decode an AAC frame to interleaved PCM i16 samples.
+    ///
+    /// 将 AAC 帧解码为交错 16 位 PCM 样本。
     fn decode(&mut self, aac_frame: &[u8]) -> Vec<i16>;
+    /// Output sample rate.
+    ///
+    /// 输出采样率。
     fn sample_rate(&self) -> u32;
+    /// Output channel count.
+    ///
+    /// 输出通道数。
     fn channels(&self) -> u8;
 }
 
 /// AAC → G.711 transcoding pipeline.
+///
+/// AAC 到 G.711 转码流水线。
 pub struct AacToG711Transcoder {
     decoder: Box<dyn AacDecoder>,
     target_codec: CodecId,
@@ -149,6 +171,9 @@ pub struct AacToG711Transcoder {
 }
 
 impl AacToG711Transcoder {
+    /// Create a new AAC → G.711 transcoder.
+    ///
+    /// 创建新的 AAC → G.711 转码器。
     pub fn new(
         decoder: Box<dyn AacDecoder>,
         target_codec: CodecId,
@@ -164,6 +189,8 @@ impl AacToG711Transcoder {
     }
 
     /// Transcode an AAC AVFrame to G.711 AVFrame(s).
+    ///
+    /// 将 AAC AVFrame 转码为一个或多个 G.711 AVFrame。
     pub fn transcode(&mut self, input: &AVFrame) -> Vec<AVFrame> {
         let pcm = self.decoder.decode(input.payload.as_ref());
         if pcm.is_empty() {
@@ -209,28 +236,42 @@ impl AacToG711Transcoder {
 // ─── AAC Encoder trait ──────────────────────────────────────────────────────
 
 /// Trait for AAC encoding. Implementations can wrap fdk-aac or other encoders.
+///
+/// AAC 编码 trait。实现可封装 fdk-aac 或其他编码器。
 pub trait AacEncoder: Send {
     /// Encode PCM samples (interleaved i16) to AAC raw frame data.
     /// Returns None if not enough samples accumulated yet.
+    ///
+    /// 将 PCM 样本（交错 i16）编码为 AAC 原始帧数据。
+    /// 样本数不足时返回 None。
     fn encode(&mut self, pcm: &[i16]) -> Option<Bytes>;
 
     /// Flush any remaining buffered samples.
+    ///
+    /// 刷新所有剩余缓冲样本。
     fn flush(&mut self) -> Option<Bytes>;
 
     /// Number of samples per AAC frame (typically 1024).
+    ///
+    /// 每 AAC 帧的采样数（通常为 1024）。
     fn frame_size(&self) -> usize;
 
     /// Output sample rate.
+    ///
+    /// 输出采样率。
     fn sample_rate(&self) -> u32;
 
     /// Output channel count.
+    ///
+    /// 输出通道数。
     fn channels(&self) -> u8;
 }
 
 /// G.711 → AAC transcoding pipeline.
 ///
-/// Decodes G.711 (A-law or μ-law) to PCM, optionally resamples, then encodes
-/// to AAC using the provided encoder.
+/// G.711 到 AAC 转码流水线。
+///
+/// 将 G.711（A-law 或 μ-law）解码为 PCM，按需重采样，然后用给定编码器编码为 AAC。
 pub struct G711ToAacTranscoder {
     source_codec: CodecId,
     source_sample_rate: u32,
@@ -241,6 +282,9 @@ pub struct G711ToAacTranscoder {
 }
 
 impl G711ToAacTranscoder {
+    /// Create a new G.711 → AAC transcoder.
+    ///
+    /// 创建新的 G.711 → AAC 转码器。
     pub fn new(
         source_codec: CodecId,
         source_sample_rate: u32,
@@ -258,6 +302,8 @@ impl G711ToAacTranscoder {
     }
 
     /// Transcode a G.711 AVFrame to zero or more AAC AVFrames.
+    ///
+    /// 将 G.711 AVFrame 转码为零个或多个 AAC AVFrame。
     pub fn transcode(&mut self, input: &AVFrame) -> Vec<AVFrame> {
         let pcm = g711_decode(self.source_codec, input.payload.as_ref());
         if pcm.is_empty() {
@@ -308,6 +354,9 @@ impl G711ToAacTranscoder {
         output
     }
 
+    /// Reset the internal PCM buffer and output PTS counter.
+    ///
+    /// 重置内部 PCM 缓冲区和输出 PTS 计数器。
     pub fn reset(&mut self) {
         self.pcm_buffer.clear();
         self.output_pts = 0;
@@ -315,43 +364,67 @@ impl G711ToAacTranscoder {
 }
 
 /// Trait for Opus decoding. Implementations can wrap libopus or audiopus.
+///
+/// Opus 解码 trait。实现可封装 libopus 或 audiopus。
 pub trait OpusDecoder: Send {
     /// Decode an Opus packet to interleaved PCM i16 samples.
+    ///
+    /// 将 Opus 包解码为交错 16 位 PCM 样本。
     fn decode(&mut self, packet: &[u8]) -> Vec<i16>;
 
     /// Output sample rate (typically 48000).
+    ///
+    /// 输出采样率（通常为 48000）。
     fn sample_rate(&self) -> u32;
 
     /// Output channel count.
+    ///
+    /// 输出通道数。
     fn channels(&self) -> u8;
 }
 
 /// Trait for Opus encoding. Implementations can wrap libopus or audiopus.
 ///
+/// Opus 编码 trait。实现可封装 libopus 或 audiopus。
+///
 /// The canonical WebRTC Opus output uses 48kHz, stereo, 960 samples per
 /// frame (20ms at 48kHz).
+///
+/// 标准 WebRTC Opus 输出为 48kHz、立体声、每帧 960 个采样（48kHz 下 20ms）。
 pub trait OpusEncoder: Send {
     /// Encode PCM samples (interleaved i16) to an Opus packet.
     /// Returns `None` if not enough samples have accumulated yet.
+    ///
+    /// 将 PCM 样本（交错 i16）编码为 Opus 包。
+    /// 样本数不足时返回 `None`。
     fn encode(&mut self, pcm: &[i16]) -> Option<Bytes>;
 
     /// Flush any remaining buffered samples.
+    ///
+    /// 刷新所有剩余缓冲样本。
     fn flush(&mut self) -> Option<Bytes>;
 
     /// Number of samples per Opus frame (typically 960 for 20ms at 48kHz).
+    ///
+    /// 每 Opus 帧的采样数（48kHz 下 20ms 通常为 960）。
     fn frame_size(&self) -> usize;
 
     /// Output sample rate (must be 48000 for WebRTC).
+    ///
+    /// 输出采样率（WebRTC 必须为 48000）。
     fn sample_rate(&self) -> u32;
 
     /// Output channel count (typically 2 for stereo).
+    ///
+    /// 输出通道数（立体声通常为 2）。
     fn channels(&self) -> u8;
 }
 
 /// Opus → AAC transcoding pipeline.
 ///
-/// Decodes Opus to PCM using the provided decoder, optionally resamples,
-/// then encodes to AAC using the provided encoder.
+/// Opus 到 AAC 转码流水线。
+///
+/// 使用给定解码器将 Opus 解码为 PCM，按需重采样，再用给定编码器编码为 AAC。
 pub struct OpusToAacTranscoder {
     output_track_id: TrackId,
     decoder: Box<dyn OpusDecoder>,
@@ -361,6 +434,9 @@ pub struct OpusToAacTranscoder {
 }
 
 impl OpusToAacTranscoder {
+    /// Create a new Opus → AAC transcoder.
+    ///
+    /// 创建新的 Opus → AAC 转码器。
     pub fn new(
         output_track_id: TrackId,
         decoder: Box<dyn OpusDecoder>,
@@ -376,6 +452,8 @@ impl OpusToAacTranscoder {
     }
 
     /// Transcode an Opus AVFrame to zero or more AAC AVFrames.
+    ///
+    /// 将 Opus AVFrame 转码为零个或多个 AAC AVFrame。
     pub fn transcode(&mut self, input: &AVFrame) -> Vec<AVFrame> {
         let pcm = self.decoder.decode(input.payload.as_ref());
         if pcm.is_empty() {
@@ -426,6 +504,9 @@ impl OpusToAacTranscoder {
         output
     }
 
+    /// Reset the internal PCM buffer and output PTS counter.
+    ///
+    /// 重置内部 PCM 缓冲区和输出 PTS 计数器。
     pub fn reset(&mut self) {
         self.pcm_buffer.clear();
         self.output_pts = 0;
@@ -434,9 +515,10 @@ impl OpusToAacTranscoder {
 
 /// AAC → Opus transcoding pipeline.
 ///
-/// Decodes AAC to PCM using the provided decoder, resamples to 48kHz if
-/// needed, then encodes to Opus using the provided encoder. The canonical
-/// WebRTC Opus output is 48kHz/stereo/960 samples per frame.
+/// AAC 到 Opus 转码流水线。
+///
+/// 使用给定解码器将 AAC 解码为 PCM，按需重采样到 48kHz，再用给定编码器编码为 Opus。
+/// 标准 WebRTC Opus 输出为 48kHz/立体声/每帧 960 采样。
 pub struct AacToOpusTranscoder {
     output_track_id: TrackId,
     decoder: Box<dyn AacDecoder>,
@@ -446,6 +528,9 @@ pub struct AacToOpusTranscoder {
 }
 
 impl AacToOpusTranscoder {
+    /// Create a new AAC → Opus transcoder.
+    ///
+    /// 创建新的 AAC → Opus 转码器。
     pub fn new(
         output_track_id: TrackId,
         decoder: Box<dyn AacDecoder>,
@@ -461,6 +546,8 @@ impl AacToOpusTranscoder {
     }
 
     /// Transcode an AAC AVFrame to zero or more Opus AVFrames.
+    ///
+    /// 将 AAC AVFrame 转码为零个或多个 Opus AVFrame。
     pub fn transcode(&mut self, input: &AVFrame) -> Vec<AVFrame> {
         let pcm = self.decoder.decode(input.payload.as_ref());
         if pcm.is_empty() {
@@ -511,6 +598,9 @@ impl AacToOpusTranscoder {
         output
     }
 
+    /// Reset the internal PCM buffer and output PTS counter.
+    ///
+    /// 重置内部 PCM 缓冲区和输出 PTS 计数器。
     pub fn reset(&mut self) {
         self.pcm_buffer.clear();
         self.output_pts = 0;
@@ -519,10 +609,10 @@ impl AacToOpusTranscoder {
 
 /// G.711 → Opus transcoding pipeline.
 ///
-/// Decodes G.711 (A-law or μ-law) to PCM, resamples from 8kHz to 48kHz,
-/// then encodes to Opus. Used when the source is G.711 but the client
-/// profile requires Opus output (e.g. Browser profile with no G.711 support
-/// in the offer).
+/// G.711 到 Opus 转码流水线。
+///
+/// 将 G.711（A-law 或 μ-law）解码为 PCM，从 8kHz 重采样到 48kHz，再编码为 Opus。
+/// 用于源为 G.711 但客户端配置要求 Opus 输出的场景。
 pub struct G711ToOpusTranscoder {
     source_codec: CodecId,
     source_sample_rate: u32,
@@ -533,6 +623,9 @@ pub struct G711ToOpusTranscoder {
 }
 
 impl G711ToOpusTranscoder {
+    /// Create a new G.711 → Opus transcoder.
+    ///
+    /// 创建新的 G.711 → Opus 转码器。
     pub fn new(
         source_codec: CodecId,
         source_sample_rate: u32,
@@ -550,6 +643,8 @@ impl G711ToOpusTranscoder {
     }
 
     /// Transcode a G.711 AVFrame to zero or more Opus AVFrames.
+    ///
+    /// 将 G.711 AVFrame 转码为零个或多个 Opus AVFrame。
     pub fn transcode(&mut self, input: &AVFrame) -> Vec<AVFrame> {
         let pcm = g711_decode(self.source_codec, input.payload.as_ref());
         if pcm.is_empty() {
@@ -600,6 +695,9 @@ impl G711ToOpusTranscoder {
         output
     }
 
+    /// Reset the internal PCM buffer and output PTS counter.
+    ///
+    /// 重置内部 PCM 缓冲区和输出 PTS 计数器。
     pub fn reset(&mut self) {
         self.pcm_buffer.clear();
         self.output_pts = 0;
@@ -607,6 +705,8 @@ impl G711ToOpusTranscoder {
 }
 
 /// Simple nearest-neighbor resampler (adequate for voice-grade audio → AAC).
+///
+/// 简单最近邻重采样器（适用于语音级音频转 AAC）。
 pub fn resample_nearest(input: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16> {
     if from_rate == to_rate || from_rate == 0 {
         return input.to_vec();

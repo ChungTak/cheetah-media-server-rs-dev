@@ -14,11 +14,17 @@ use crate::ts_common::{
 use crate::AVFrame;
 
 /// Configuration for the shared TS muxer.
+///
+/// 共享 TS 复用器的配置。
 #[derive(Debug, Clone)]
 pub struct MpegTsMuxerConfig {
     /// Video PID base (default 0x0100).
+    ///
+    /// 视频 PID 起始值（默认 0x0100）。
     pub video_pid_base: u16,
     /// Audio PID base (default 0x0110).
+    ///
+    /// 音频 PID 起始值（默认 0x0110）。
     pub audio_pid_base: u16,
 }
 
@@ -32,18 +38,28 @@ impl Default for MpegTsMuxerConfig {
 }
 
 /// Events emitted by the muxer.
+///
+/// 复用器发出的事件。
 #[derive(Debug, Clone)]
 pub enum MpegTsMuxEvent {
     /// One or more 188-byte TS packets.
+    ///
+    /// 一个或多个 188 字节 TS 包。
     Packet(Bytes),
     /// Diagnostic message (non-fatal).
+    ///
+    /// 非致命诊断信息。
     Diagnostic(MpegTsDiagnostic),
 }
 
 /// Diagnostic messages from the muxer.
+///
+/// 复用器发出的诊断信息。
 #[derive(Debug, Clone)]
 pub enum MpegTsDiagnostic {
     /// Codec not supported for TS muxing; frame skipped.
+    ///
+    /// 该编解码器不支持 TS 复用，帧被跳过。
     UnsupportedCodec { track_id: TrackId, codec: CodecId },
 }
 
@@ -59,6 +75,8 @@ struct MuxTrackEntry {
 }
 
 /// Shared multi-track MPEG-TS muxer.
+///
+/// 共享的多轨道 MPEG-TS 复用器。
 pub struct MpegTsMuxer {
     tracks: Vec<MuxTrackEntry>,
     pat_cc: u8,
@@ -68,6 +86,9 @@ pub struct MpegTsMuxer {
 
 impl MpegTsMuxer {
     /// Create a new muxer from track info and config.
+    ///
+    /// 根据轨道信息和配置创建新的复用器。按媒体类型（视频优先）与 TrackId
+    /// 排序以稳定分配 PID，并选择 PCR PID。
     pub fn new(config: &MpegTsMuxerConfig, tracks: &[TrackInfo]) -> Self {
         // Sort tracks by media_kind (video first) then by TrackId for stable PID assignment
         let mut sorted_tracks: Vec<&TrackInfo> = tracks
@@ -128,6 +149,8 @@ impl MpegTsMuxer {
     }
 
     /// Write PAT + PMT tables.
+    ///
+    /// 写入 PAT 与 PMT 表。
     pub fn write_tables(&mut self) -> Vec<MpegTsMuxEvent> {
         let mut buf = BytesMut::with_capacity(2 * TS_PACKET_SIZE);
         self.write_pat(&mut buf);
@@ -136,6 +159,9 @@ impl MpegTsMuxer {
     }
 
     /// Mux a single AVFrame into TS packets.
+    ///
+    /// 将单个 AVFrame 复用为 TS 包。按编解码器处理：关键帧前置 AUD 与参数集，
+    /// AAC 包装为 ADTS，并生成 PES 与 TS 包。
     pub fn push_frame(&mut self, frame: &AVFrame) -> Vec<MpegTsMuxEvent> {
         let Some(idx) = self
             .tracks
@@ -222,11 +248,15 @@ impl MpegTsMuxer {
     }
 
     /// Flush (no-op for muxer; included for API symmetry).
+    ///
+    /// 刷新（复用器无操作，为 API 对称保留）。
     pub fn flush(&mut self) -> Vec<MpegTsMuxEvent> {
         Vec::new()
     }
 
     /// Number of tracks.
+    ///
+    /// 轨道数量。
     pub fn track_count(&self) -> usize {
         self.tracks.len()
     }

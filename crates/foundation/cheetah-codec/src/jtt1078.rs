@@ -12,11 +12,17 @@ use crate::prelude::*;
 use bytes::{Bytes, BytesMut};
 
 /// JT/T 1078 protocol version variant.
+///
+/// JT/T 1078 协议版本变体。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Jtt1078Version {
     /// JT/T 1078-2013 / 2016 (26-byte fixed header).
+    ///
+    /// JT/T 1078-2013 / 2016（26 字节固定头部）。
     V2013,
     /// JT/T 1078-2019 (extended header, 30 bytes minimum).
+    ///
+    /// JT/T 1078-2019（扩展头部，最少 30 字节）。
     V2019,
 }
 
@@ -24,35 +30,63 @@ pub enum Jtt1078Version {
 /// `kt1078_keep_mode` field that selects between continuous live streaming, on-demand playback,
 /// bidirectional voice talk, and sub-stream lookup. The codec layer carries the variant as
 /// metadata; the actual networking lifecycle lives in the GB28181 / JTT1078 module.
+///
+/// JT/T 1078 会话保活语义。映射 ABLMediaServer 的 `kt1078_keep_mode` 字段，
+/// 用于在持续直播、按需回放、双向语音对讲和子码流查询之间选择。codec 层仅携带该变体作为元数据；
+/// 实际网络生命周期由 GB28181 / JTT1078 模块管理。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Jtt1078KeepOpenMode {
     /// Single-shot session — close after the response or after BYE.
+    ///
+    /// 单次会话 — 响应或 BYE 后关闭。
     #[default]
     Single,
     /// Live streaming session — keep the port open for continuous frames.
+    ///
+    /// 直播会话 — 为持续帧保持端口开放。
     Live,
     /// On-demand playback — keep open while the seek window has frames.
+    ///
+    /// 按需回放 — 在查找窗口有帧时保持开放。
     Playback,
     /// Bidirectional voice talk — keep open until the talk session is torn down.
+    ///
+    /// 双向语音对讲 — 直到对讲会话拆除前保持开放。
     Talk,
     /// Sub-stream / lower-bitrate negotiation — keep open while the sub stream is active.
+    ///
+    /// 子码流/低码率协商 — 子码流活跃时保持开放。
     Sub,
 }
 
 /// Frame type flags from the JTT1078 header.
+///
+/// JTT1078 头部的帧类型标志。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Jtt1078FrameType {
     /// I-frame (key frame).
+    ///
+    /// I 帧（关键帧）。
     IFrame,
     /// P-frame (predicted frame).
+    ///
+    /// P 帧（预测帧）。
     PFrame,
     /// B-frame.
+    ///
+    /// B 帧。
     BFrame,
     /// Audio frame.
+    ///
+    /// 音频帧。
     Audio,
     /// Pass-through / transparent transmission (`dataType == 4`).
+    ///
+    /// 透传/透明传输（`dataType == 4`）。
     Passthrough,
     /// Other / unknown.
+    ///
+    /// 其他/未知。
     Other(u8),
 }
 
@@ -73,15 +107,26 @@ impl Jtt1078FrameType {
 /// in 2013/2016, byte 19 in 2019). Reflects how a frame is fragmented across packets:
 /// `Atomic` means the whole frame fits in a single packet; the others form a
 /// `First → Intermediate* → Last` sequence.
+///
+/// JT/T 1078 RTP 头部的子包处理标记（2013/2016 为第 15 字节低 4 位，2019 为第 19 字节低 4 位）。
+/// 反映一帧如何跨包分片：`Atomic` 表示整帧在单个包中；其余形成 `First → Intermediate* → Last` 序列。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Jtt1078SubPackage {
     /// 0 — single packet contains a complete frame.
+    ///
+    /// 0 — 单包包含完整帧。
     Atomic,
     /// 1 — first packet of a fragmented frame.
+    ///
+    /// 1 — 分片帧的首包。
     First,
     /// 2 — last packet of a fragmented frame.
+    ///
+    /// 2 — 分片帧的尾包。
     Last,
     /// 3 — middle packet of a fragmented frame.
+    ///
+    /// 3 — 分片帧的中间包。
     Intermediate,
 }
 
@@ -98,30 +143,57 @@ impl Jtt1078SubPackage {
 }
 
 /// Parsed header of a single JT/T 1078 RTP packet.
+///
+/// 单个 JT/T 1078 RTP 包的解析后头部。
 #[derive(Debug, Clone)]
 pub struct Jtt1078Header {
+    /// Protocol version variant.
+    ///
+    /// 协议版本变体。
     pub version: Jtt1078Version,
     /// Payload type as carried in the M/PT byte (lower 7 bits).
+    ///
+    /// M/PT 字节携带的负载类型（低 7 位）。
     pub payload_type: u8,
     /// RTP `marker` bit from the M/PT byte (bit 7).
+    ///
+    /// M/PT 字节的 RTP `marker` 位（第 7 位）。
     pub marker: bool,
     /// SIM card number (BCD encoded, 6 or 10 bytes → 12 / 20 ASCII digits).
+    ///
+    /// SIM 卡号（BCD 编码，6 或 10 字节 → 12 / 20 位 ASCII 数字）。
     pub sim: String,
     /// Channel number.
+    ///
+    /// 通道号。
     pub channel: u8,
     /// Data type (4-bit `dataType` field).
+    ///
+    /// 数据类型（4 位 `dataType` 字段）。
     pub frame_type: Jtt1078FrameType,
     /// Sub-package handling mark (4-bit `subPackageHandleMark` field).
+    ///
+    /// 子包处理标记（4 位 `subPackageHandleMark` 字段）。
     pub sub_package: Jtt1078SubPackage,
     /// RTP sequence number from the header (bytes 6-7 / BE u16).
+    ///
+    /// RTP 序列号（第 6-7 字节，大端 u16）。
     pub packet_seq: u16,
     /// Frame timestamp in milliseconds (only present for video and audio frames).
+    ///
+    /// 帧时间戳（毫秒，仅视频和音频帧有）。
     pub timestamp_ms: u64,
     /// Last I-frame interval in milliseconds (video frames only).
+    ///
+    /// 上一个 I 帧间隔（毫秒，仅视频帧）。
     pub last_iframe_interval_ms: Option<u16>,
     /// Frame interval in milliseconds (video frames only).
+    ///
+    /// 帧间隔（毫秒，仅视频帧）。
     pub last_frame_interval_ms: Option<u16>,
     /// Length of the payload in bytes (`bodyLen`).
+    ///
+    /// 负载长度（字节，`bodyLen`）。
     pub payload_len: u16,
 }
 
@@ -131,19 +203,33 @@ impl Jtt1078Header {
     /// - Video (I/P/B): 30 bytes
     /// - Audio: 26 bytes
     /// - Pass-through: 18 bytes
+    ///
+    /// 可验证魔法的 JT/T 1078-2013/2016 包最小长度。实际头部长度取决于 `dataType`：
+    /// - 视频（I/P/B）：30 字节
+    /// - 音频：26 字节
+    /// - 透传：18 字节
     pub const MIN_SIZE_2013: usize = 18;
     /// Minimum size of a JT/T 1078-2019 packet (sim is 10 bytes, so add 4):
     /// - Video: 34 bytes
     /// - Audio: 30 bytes
     /// - Pass-through: 22 bytes
+    ///
+    /// JT/T 1078-2019 包最小长度（SIM 为 10 字节，因此增加 4）：
+    /// - 视频：34 字节
+    /// - 音频：30 字节
+    /// - 透传：22 字节
     pub const MIN_SIZE_2019: usize = 22;
 
     /// Parse a JT/T 1078-2013/2016 RTP packet.
+    ///
+    /// 解析 JT/T 1078-2013/2016 RTP 包。
     pub fn parse(data: &[u8]) -> Option<(Jtt1078Header, usize)> {
         Self::parse_with_version(data, Jtt1078Version::V2013)
     }
 
     /// Parse a JT/T 1078-2019 RTP packet (10-byte SIM).
+    ///
+    /// 解析 JT/T 1078-2019 RTP 包（10 字节 SIM）。
     pub fn parse_v2019(data: &[u8]) -> Option<(Jtt1078Header, usize)> {
         Self::parse_with_version(data, Jtt1078Version::V2019)
     }
@@ -270,25 +356,51 @@ impl Jtt1078Header {
 }
 
 /// A fully assembled JTT1078 media frame (after de-fragmentation).
+///
+/// 一个完整组装后的 JTT1078 媒体帧（去分片后）。
 #[derive(Debug, Clone)]
 pub struct Jtt1078Frame {
+    /// Payload type from the JTT1078 header.
+    ///
+    /// JTT1078 头部中的负载类型。
     pub payload_type: u8,
+    /// SIM card number (BCD encoded as ASCII digits).
+    ///
+    /// SIM 卡号（BCD 编码为 ASCII 数字）。
     pub sim: String,
+    /// Channel number.
+    ///
+    /// 通道号。
     pub channel: u8,
+    /// Frame type (I/P/B/Audio/Passthrough/Other).
+    ///
+    /// 帧类型（I/P/B/音频/透传/其他）。
     pub frame_type: Jtt1078FrameType,
+    /// Frame timestamp in milliseconds.
+    ///
+    /// 帧时间戳（毫秒）。
     pub timestamp_ms: u64,
     /// Estimated frame interval in milliseconds (learned from header or gap).
+    ///
+    /// 估计帧间隔（毫秒，从头部或相邻帧间隔学习得到）。
     pub frame_interval_ms: u32,
+    /// Assembled frame payload bytes.
+    ///
+    /// 组装后的帧负载字节。
     pub data: Bytes,
 }
 
 impl Jtt1078Frame {
     /// Whether this frame is a video keyframe (I-frame).
+    ///
+    /// 该帧是否为视频关键帧（I 帧）。
     pub fn is_key(&self) -> bool {
         matches!(self.frame_type, Jtt1078FrameType::IFrame)
     }
 
     /// Whether this frame carries audio payload.
+    ///
+    /// 该帧是否携带音频负载。
     pub fn is_audio(&self) -> bool {
         matches!(self.frame_type, Jtt1078FrameType::Audio)
             || matches!(self.payload_type, 6 | 7 | 19)
@@ -296,19 +408,29 @@ impl Jtt1078Frame {
 }
 
 /// Diagnostics emitted by the frame assembler.
+///
+/// 帧组装器发出的诊断信息。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Jtt1078Diagnostic {
     /// A fragment reassembly buffer exceeded the configured limit.
+    ///
+    /// 分片重组缓冲区超过配置上限。
     CacheOverflow {
         sim: String,
         channel: u8,
         dropped_bytes: usize,
     },
     /// A packet arrived with an unexpected sequence number.
+    ///
+    /// 收到序列号不连续的包。
     SequenceGap { expected: u16, got: u16 },
     /// A fragment arrived after the frame was already completed.
+    ///
+    /// 帧已完成组装后又收到迟到的分片。
     LateFragment { packet_seq: u16 },
     /// Header parse failed (bad magic or truncated data).
+    ///
+    /// 头部解析失败（魔法数字错误或数据截断）。
     BadHeader,
 }
 
@@ -329,27 +451,36 @@ struct AssemblyBuffer {
 
 /// JT/T 1078 frame assembler.
 ///
-/// Accepts individual RTP packets from a JTT1078 device and reassembles them
-/// into complete media frames. The assembly cache has a bounded maximum size per
-/// channel (`max_cache_bytes`), ensuring that a misbehaving sender cannot exhaust
-/// memory.
+/// JT/T 1078 帧组装器。
 ///
-/// Frame-rate is learned from `last_frame_interval_ms` in the 2019 header, or
-/// estimated from the delta between successive complete frames.
+/// 接收来自 JTT1078 设备的单个 RTP 包，并将它们重组成完整媒体帧。
+/// 每个通道的重组缓存有上限 `max_cache_bytes`，防止异常发送方耗尽内存。
+///
+/// 帧率从 2019 头部的 `last_frame_interval_ms` 学习，或从连续完整帧的时间差估计。
 pub struct Jtt1078FrameAssembler {
     /// Per-channel assembly buffers.
+    ///
+    /// 每通道的重组缓冲区。
     buffers: HashMap<AssemblyKey, AssemblyBuffer>,
     /// Maximum number of bytes allowed per assembly buffer.
+    ///
+    /// 每个重组缓冲区允许的最大字节数。
     max_cache_bytes: usize,
     /// Last completed frame timestamp per channel (for interval estimation).
+    ///
+    /// 每通道最近完成帧的时间戳（用于间隔估计）。
     last_frame_ts: HashMap<AssemblyKey, u64>,
     /// Learned frame interval in milliseconds (rolling average, per channel).
+    ///
+    /// 学习得到的帧间隔（毫秒，每通道滚动平均）。
     frame_interval_ms: HashMap<AssemblyKey, u32>,
 }
 
 impl Jtt1078FrameAssembler {
     /// Create a new assembler. `max_cache_bytes` is the upper bound on each
     /// channel's reassembly buffer; typical values are 512 KiB–4 MiB.
+    ///
+    /// 创建新的组装器。`max_cache_bytes` 为每通道重组缓存上限；典型值为 512 KiB–4 MiB。
     pub fn new(max_cache_bytes: usize) -> Self {
         Self {
             buffers: HashMap::new(),
@@ -361,6 +492,8 @@ impl Jtt1078FrameAssembler {
 
     /// Push one raw JTT1078 RTP packet. Returns completed frames and any
     /// diagnostics generated during processing.
+    ///
+    /// 压入一个原始 JTT1078 RTP 包，返回已完成的帧及处理过程中产生的诊断。
     pub fn push(&mut self, data: &[u8]) -> (Vec<Jtt1078Frame>, Vec<Jtt1078Diagnostic>) {
         let mut frames = Vec::new();
         let mut diags = Vec::new();
@@ -504,12 +637,14 @@ const DEFAULT_MAX_PACKET_PAYLOAD: usize = 1400;
 /// JT/T 1078 packetizer — splits a large frame into multiple RTP packets with
 /// correct sub-package handling marks (`Atomic` / `First` / `Intermediate` / `Last`).
 ///
-/// The output matches the JT/T 1078-2013/2016 wire format. Each packet has the form:
+/// JT/T 1078 分包器 — 将大帧拆分为多个带正确子包处理标记的 RTP 包。
+///
+/// 输出符合 JT/T 1078-2013/2016 线格式。每包格式为：
 ///
 /// `magic(4) | V/P/X/CC | M/PT | seq(2) | SIM(6 BCD) | channel | dataType<<4|subPkg`
 ///
-/// followed by the variable tail (timestamp + intervals + body_len for video,
-/// timestamp + body_len for audio, body_len for pass-through), and finally the payload.
+/// 后接可变尾部（视频：timestamp + iframe_interval + frame_interval + body_len；
+/// 音频：timestamp + body_len；透传：body_len），最后是负载。
 pub struct Jtt1078Packetizer {
     sim: [u8; 6],
     channel: u8,
@@ -520,8 +655,10 @@ pub struct Jtt1078Packetizer {
 impl Jtt1078Packetizer {
     /// Create a new packetizer.
     ///
-    /// `sim_digits` must be a 12-character ASCII decimal string (BCD encoded as
-    /// 6 bytes in the output header). `channel` is the 1-byte channel number.
+    /// 创建新的分包器。
+    ///
+    /// `sim_digits` 必须是 12 位 ASCII 十进制字符串（在输出头中 BCD 编码为 6 字节）。
+    /// `channel` 为 1 字节通道号。
     pub fn new(sim_digits: &str, channel: u8) -> Self {
         let mut sim = [0u8; 6];
         str_to_bcd(sim_digits, &mut sim);
@@ -534,6 +671,8 @@ impl Jtt1078Packetizer {
     }
 
     /// Override the maximum payload bytes per packet (default 1400).
+    ///
+    /// 覆盖每包最大负载字节数（默认 1400）。
     pub fn set_max_payload_bytes(&mut self, max: usize) {
         // Keep at least 1 to avoid empty packets, but allow small sizes for tests
         // that exercise fragmentation behaviour.
@@ -542,9 +681,11 @@ impl Jtt1078Packetizer {
 
     /// Packetize `frame_data` into one or more JTT1078 RTP byte buffers.
     ///
-    /// `payload_type` is the RTP PT (e.g. 98 for H.264 video, 6 for G.711A).
-    /// `timestamp_ms` is the frame timestamp in milliseconds.
-    /// `frame_type` controls the `dataType` field in the header.
+    /// 将 `frame_data` 分包为一个或多个 JTT1078 RTP 字节缓冲。
+    ///
+    /// `payload_type` 为 RTP PT（例如 98 表示 H.264 视频，6 表示 G.711A）。
+    /// `timestamp_ms` 为帧时间戳（毫秒）。
+    /// `frame_type` 控制头部中的 `dataType` 字段。
     pub fn packetize(
         &mut self,
         payload_type: u8,
