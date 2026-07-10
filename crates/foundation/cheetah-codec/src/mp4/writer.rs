@@ -1,5 +1,7 @@
 //! Classic ISO BMFF MP4 writer (`ftyp + mdat + moov`).
 //!
+//! 经典 ISO BMFF MP4 写入器（`ftyp + mdat + moov`）。
+//!
 //! Targets VOD/record file output. Not fragmented; emits a single `moov` after
 //! all samples are written. The driver layer is responsible for actually
 //! writing the bytes to disk; this module returns the byte plan as
@@ -18,6 +20,8 @@ use super::sample_table::{TrackBuilder, TrackSampleRecord};
 use super::Mp4Error;
 
 /// Configuration for the classic MP4 writer.
+///
+/// 经典 MP4 写入器配置。
 #[derive(Debug, Clone)]
 pub struct Mp4WriterConfig {
     /// Reserved for the future faststart layout (`moov` before `mdat`).
@@ -38,6 +42,8 @@ impl Default for Mp4WriterConfig {
 }
 
 /// Events emitted by the writer.
+///
+/// 写入器发出的事件。
 #[derive(Debug, Clone)]
 pub enum Mp4WriteEvent {
     /// The complete file as a single contiguous `Bytes`.
@@ -45,6 +51,8 @@ pub enum Mp4WriteEvent {
 }
 
 /// Sample-table aware writer.
+///
+/// 样本表感知写入器。
 pub struct Mp4Writer {
     config: Mp4WriterConfig,
     tracks: Vec<TrackBuilder>,
@@ -52,6 +60,9 @@ pub struct Mp4Writer {
 }
 
 impl Mp4Writer {
+    /// Create a writer for the given config and track set.
+    ///
+    /// 使用给定配置与轨道集创建写入器。
     pub fn new(config: Mp4WriterConfig, tracks: &[TrackInfo]) -> Result<Self, Mp4Error> {
         if tracks.is_empty() {
             return Err(Mp4Error::UnsupportedTrack("no tracks"));
@@ -63,8 +74,16 @@ impl Mp4Writer {
         })
     }
 
-    /// Append a sample for the given track. Sample data is buffered; the
-    /// final byte plan is produced by `finalize`.
+    /// Append a sample for the given track.
+    ///
+    /// Buffers the payload and records metadata. The previous sample's
+    /// duration is patched when the next sample arrives, so the caller must
+    /// push samples in decode order.
+    ///
+    /// 为给定轨道追加样本。
+    ///
+    /// 缓冲负载并记录元数据。上一个样本的时长会在下一个样本到达时被回补，
+    /// 因此调用方必须按解码顺序推送样本。
     pub fn push_sample(
         &mut self,
         track_id: u32,
@@ -104,7 +123,9 @@ impl Mp4Writer {
         Ok(())
     }
 
-    /// Finalize the file and return the encoded MP4 byte stream.
+    /// Finalize the file and emit the complete byte stream.
+    ///
+    /// 完成文件并输出完整字节流。
     pub fn finalize(mut self) -> Result<Mp4WriteEvent, Mp4Error> {
         // Faststart layout (`moov` before `mdat`) requires a two-pass
         // pre-compute of chunk offsets. The current implementation only

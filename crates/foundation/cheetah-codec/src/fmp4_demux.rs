@@ -2,6 +2,11 @@
 //!
 //! Supports streaming input (arbitrary chunk sizes), box reassembly,
 //! 32-bit/64-bit box sizes, unknown box skip, and all codec sample entries.
+//!
+//! ISO BMFF 分片 MP4 共享解复用器。
+//!
+//! 支持流式输入（任意分块大小）、Box 重组、32/64 位 Box 大小、
+//! 未知 Box 跳过以及所有编解码器样本条目。
 
 use crate::prelude::*;
 use bytes::{Bytes, BytesMut};
@@ -9,6 +14,8 @@ use bytes::{Bytes, BytesMut};
 use crate::track::{CodecId, MediaKind};
 
 /// Configuration for the fMP4 demuxer.
+///
+/// fMP4 解复用器配置。
 #[derive(Debug, Clone)]
 pub struct Fmp4DemuxerConfig {
     pub max_box_bytes: usize,
@@ -23,6 +30,8 @@ impl Default for Fmp4DemuxerConfig {
 }
 
 /// Track info extracted from init segment.
+///
+/// 从 init 片段提取的轨道信息。
 #[derive(Debug, Clone)]
 pub struct Fmp4DemuxTrack {
     pub track_id: u32,
@@ -33,6 +42,8 @@ pub struct Fmp4DemuxTrack {
 }
 
 /// Events produced by the demuxer.
+///
+/// 解复用器产生的事件。
 #[derive(Debug, Clone)]
 pub enum Fmp4DemuxEvent {
     TrackInfo(Vec<Fmp4DemuxTrack>),
@@ -49,6 +60,8 @@ pub enum Fmp4DemuxEvent {
 }
 
 /// Diagnostic messages from the demuxer.
+///
+/// 解复用器发出的诊断消息。
 #[derive(Debug, Clone)]
 pub enum Fmp4DemuxDiagnostic {
     MalformedBox {
@@ -73,6 +86,8 @@ pub enum Fmp4DemuxDiagnostic {
 }
 
 /// Streaming fMP4 demuxer with box reassembly.
+///
+/// 带 Box 重组的流式 fMP4 解复用器。
 pub struct Fmp4Demuxer {
     config: Fmp4DemuxerConfig,
     buffer: BytesMut,
@@ -84,6 +99,9 @@ pub struct Fmp4Demuxer {
 }
 
 impl Fmp4Demuxer {
+    /// Create a new demuxer with the given bounding configuration.
+    ///
+    /// 使用给定的边界配置创建新解复用器。
     pub fn new(config: Fmp4DemuxerConfig) -> Self {
         Self {
             config,
@@ -96,6 +114,8 @@ impl Fmp4Demuxer {
     }
 
     /// Push bytes into the demuxer. Returns events for any complete boxes parsed.
+    ///
+    /// 将字节推入解复用器，返回所有已完整解析 Box 对应的事件。
     pub fn push(&mut self, data: &[u8]) -> Vec<Fmp4DemuxEvent> {
         self.buffer.extend_from_slice(data);
         let mut events = Vec::new();
@@ -166,6 +186,8 @@ impl Fmp4Demuxer {
     }
 
     /// Flush remaining buffer. Returns any final events.
+    ///
+    /// 刷新剩余缓冲区。返回所有最终事件。
     pub fn flush(&mut self) -> Vec<Fmp4DemuxEvent> {
         // In streaming mode, incomplete boxes are discarded
         self.buffer.clear();
@@ -173,6 +195,8 @@ impl Fmp4Demuxer {
     }
 
     /// Get current track list.
+    ///
+    /// 获取当前轨道列表。
     pub fn tracks(&self) -> &[Fmp4DemuxTrack] {
         &self.tracks
     }

@@ -1,5 +1,7 @@
 //! Sans-I/O classic MP4 reader.
 //!
+//! 无 I/O 经典 MP4 读取器。
+//!
 //! The reader is driven by the runtime layer through a request/response
 //! pattern: it asks for byte ranges via `Mp4ReadRequest`, the runtime fulfils
 //! them via `feed_bytes`, and the reader then emits parsed track info,
@@ -24,6 +26,8 @@ use super::sample_table::{SampleIndex, SampleTable};
 use super::Mp4Error;
 
 /// Configuration for the MP4 reader.
+///
+/// MP4 读取器配置。
 #[derive(Debug, Clone)]
 pub struct Mp4ReaderConfig {
     pub max_box_bytes: u64,
@@ -43,6 +47,8 @@ impl Default for Mp4ReaderConfig {
 }
 
 /// Reader output event.
+///
+/// 读取器输出事件。
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum Mp4ReadEvent {
@@ -60,6 +66,9 @@ pub enum Mp4ReadEvent {
     Diagnostic(Mp4ReadDiagnostic),
 }
 
+/// Non-fatal diagnostic emitted while reading an MP4 file.
+///
+/// 读取 MP4 文件时发出的非致命诊断。
 #[derive(Debug, Clone)]
 pub enum Mp4ReadDiagnostic {
     UnknownBoxSkipped {
@@ -80,6 +89,9 @@ pub enum Mp4ReadDiagnostic {
     },
 }
 
+/// Request for a byte range that the runtime must provide.
+///
+/// 运行时必须提供的字节范围请求。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mp4ReadRequest {
     /// Absolute file offset of the requested byte range.
@@ -88,6 +100,9 @@ pub struct Mp4ReadRequest {
     pub length: u64,
 }
 
+/// Fulfilled read request returned by the runtime.
+///
+/// 运行时返回的已满足读取请求。
 #[derive(Debug, Clone)]
 pub struct Mp4ReadResult {
     pub offset: u64,
@@ -95,6 +110,8 @@ pub struct Mp4ReadResult {
 }
 
 /// Sans-I/O classic MP4 reader.
+///
+/// 无 I/O 经典 MP4 读取器。
 pub struct Mp4Reader {
     config: Mp4ReaderConfig,
     state: ReaderState,
@@ -127,6 +144,9 @@ enum ReaderState {
 }
 
 impl Mp4Reader {
+    /// Create a new reader in the `NeedHead` state.
+    ///
+    /// 创建处于 `NeedHead` 状态的新读取器。
     pub fn new(config: Mp4ReaderConfig) -> Self {
         Self {
             config,
@@ -142,11 +162,16 @@ impl Mp4Reader {
         }
     }
 
+    /// Set the total file size so the reader can compute tail-scan ranges.
+    ///
+    /// 设置文件总大小，以便读取器计算尾部扫描范围。
     pub fn set_file_size(&mut self, file_size: u64) {
         self.file_size = file_size;
     }
 
     /// Provide bytes the reader previously requested via `Mp4ReadEvent::NeedBytes`.
+    ///
+    /// 提供读取器之前通过 `Mp4ReadEvent::NeedBytes` 请求的字节。
     pub fn feed_bytes(&mut self, result: Mp4ReadResult) {
         self.pending_reads.push(result);
         if let Some(out) = &self.outstanding {
@@ -161,14 +186,23 @@ impl Mp4Reader {
         }
     }
 
+    /// Get the parsed track list.
+    ///
+    /// 获取已解析的轨道列表。
     pub fn tracks(&self) -> &[TrackInfo] {
         &self.tracks
     }
 
+    /// Get the per-track sample indices.
+    ///
+    /// 获取每个轨道的样本索引。
     pub fn indices(&self) -> &[SampleIndex] {
         &self.indices
     }
 
+    /// Total duration across all tracks in microseconds.
+    ///
+    /// 所有轨道中的最大时长（微秒）。
     pub fn duration_us(&self) -> i64 {
         self.indices
             .iter()
@@ -180,11 +214,16 @@ impl Mp4Reader {
     /// Request a logical seek to the given microsecond timestamp. The seek is
     /// applied at the next `step()` call and will rewind every track's
     /// cursor to the nearest sync sample.
+    ///
+    /// 请求按给定微秒时间戳逻辑定位。定位在下次 `step()` 调用时生效，
+    /// 并会将每个轨道的光标回退到最近的同步样本。
     pub fn seek(&mut self, position_us: i64) {
         self.seek_request_us = Some(position_us.max(0));
     }
 
     /// Advance the reader. Returns the next available event.
+    ///
+    /// 推进读取器。返回下一个可用事件。
     pub fn step(&mut self) -> Mp4ReadEvent {
         if let Some(ev) = self.handle_seek_request() {
             return ev;

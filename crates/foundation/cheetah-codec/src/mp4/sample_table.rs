@@ -1,5 +1,7 @@
 //! Classic MP4 sample table (`stbl`) modelling and seek index construction.
 //!
+//! 经典 MP4 样本表（`stbl`）建模与索引构建。
+//!
 //! A track's sample table is built from `stts` (sample durations), `ctts`
 //! (composition offsets, optional), `stsc` (samples-per-chunk), `stsz`
 //! (sample sizes), `stco`/`co64` (chunk offsets) and optional `stss` (sync
@@ -16,6 +18,8 @@ use crate::track::{CodecExtradata, CodecId, MediaKind, TrackId, TrackInfo};
 use super::Mp4Error;
 
 /// Per-sample seek-index entry.
+///
+/// 每个样本的索引条目。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SampleIndexEntry {
     /// Absolute file offset of this sample's payload.
@@ -33,12 +37,17 @@ pub struct SampleIndexEntry {
 }
 
 impl SampleIndexEntry {
+    /// Presentation timestamp in timescale ticks.
+    ///
+    /// 以 timescale 刻度表示的显示时间戳。
     pub fn pts(&self) -> i64 {
         self.dts.saturating_add(self.cts_offset as i64)
     }
 }
 
 /// Per-track materialised sample index.
+///
+/// 每个轨道物化的样本索引。
 #[derive(Debug, Clone)]
 pub struct SampleIndex {
     pub track_id: TrackId,
@@ -52,6 +61,9 @@ impl SampleIndex {
     /// Find the largest sample index whose `dts` is <= the requested
     /// timescale time, then walk backwards to the nearest sync sample.
     /// Returns `None` if the index is empty.
+    ///
+    /// 查找 `dts` 小于等于请求 timescale 时间的最大样本索引，
+    /// 然后回退到最近的同步样本。索引为空时返回 `None`。
     pub fn seek_to_dts(&self, dts: i64) -> Option<usize> {
         if self.samples.is_empty() {
             return None;
@@ -70,6 +82,9 @@ impl SampleIndex {
         Some(0)
     }
 
+    /// Total decoded duration in microseconds.
+    ///
+    /// 总解码时长（微秒）。
     pub fn duration_us(&self) -> i64 {
         if self.timescale == 0 {
             return 0;
@@ -80,6 +95,8 @@ impl SampleIndex {
 }
 
 /// Helper used by the writer to incrementally build a track's sample table.
+///
+/// 写入器用于逐步构建轨道样本表的辅助结构。
 #[derive(Debug, Clone)]
 pub struct TrackBuilder {
     pub track_id: TrackId,
@@ -94,6 +111,9 @@ pub struct TrackBuilder {
     pub samples: Vec<TrackSampleRecord>,
 }
 
+/// Per-sample record kept by `TrackBuilder` while the writer is buffering.
+///
+/// `TrackBuilder` 在写入器缓冲期间保留的每个样本记录。
 #[derive(Debug, Clone, Copy)]
 pub struct TrackSampleRecord {
     /// Sample data offset in the writer's payload buffer (relative).
@@ -106,6 +126,9 @@ pub struct TrackSampleRecord {
 }
 
 impl TrackBuilder {
+    /// Create a builder from a `TrackInfo`.
+    ///
+    /// 从 `TrackInfo` 创建构建器。
     pub fn new(track: &TrackInfo) -> Self {
         let mut tb = Self {
             track_id: track.track_id,
@@ -129,6 +152,9 @@ impl TrackBuilder {
         tb
     }
 
+    /// Duration from the first to the last sample plus the last sample duration.
+    ///
+    /// 从首个样本到末个样本的时长加上末个样本时长。
     pub fn duration_us(&self) -> i64 {
         if self.samples.is_empty() {
             return 0;
@@ -256,6 +282,8 @@ fn append_hvcc_array(out: &mut Vec<u8>, nal_unit_type: u8, units: &[Bytes]) {
 }
 
 /// Parsed `stbl` content.
+///
+/// 已解析的 `stbl` 内容。
 #[derive(Debug, Clone, Default)]
 pub struct SampleTable {
     pub stts: Vec<(u32, u32)>,      // (count, delta)
@@ -269,6 +297,14 @@ pub struct SampleTable {
 
 impl SampleTable {
     /// Materialise the per-sample seek index (Vec<SampleIndexEntry>).
+    ///
+    /// Walks chunks, sample sizes, durations and composition offsets to build
+    /// a flat array with absolute offsets and timestamps.
+    ///
+    /// 物化每个样本的索引（Vec<SampleIndexEntry>）。
+    ///
+    /// 遍历 chunk、样本大小、时长与合成偏移，构建包含绝对偏移与时间戳的
+    /// 扁平数组。
     pub fn build_index(&self, timescale: u32) -> Result<SampleIndex, Mp4Error> {
         // Hard cap so a hostile sample table cannot drive the reader into
         // OOM. 4 million samples is enough for ~37 hours of 30fps video and

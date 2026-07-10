@@ -3,6 +3,11 @@
 //! Wraps `cheetah_codec::Fmp4Muxer` to produce segments and emits a VOD
 //! playlist on `finalize`. The driver is responsible for actually writing
 //! init/segment files and the playlist.
+//!
+//! HLS 录制容器写入器（fMP4 片段 + VOD 播放列表）。
+//!
+//! 封装 `cheetah_codec::Fmp4Muxer` 生成片段，并在 `finalize` 时输出 VOD 播放列表。
+//! 驱动层负责实际写入 init/片段文件与播放列表。
 
 use crate::prelude::*;
 
@@ -15,6 +20,8 @@ use crate::track::TrackInfo;
 use super::{RecordContainerWriter, RecordError, RecordFormat, RecordWriteEvent};
 
 /// Configuration for HLS record output.
+///
+/// HLS 录制输出配置。
 #[derive(Debug, Clone)]
 pub struct HlsFileWriterConfig {
     pub segment_duration_ms: u64,
@@ -37,6 +44,8 @@ struct SegmentMeta {
 }
 
 /// Stateful HLS record writer.
+///
+/// 有状态 HLS 录制写入器。
 pub struct HlsFileWriter {
     config: HlsFileWriterConfig,
     muxer: Option<Fmp4Muxer>,
@@ -49,6 +58,9 @@ pub struct HlsFileWriter {
 }
 
 impl HlsFileWriter {
+    /// Create a new HLS writer with the given segment configuration.
+    ///
+    /// 使用给定的片段配置创建新的 HLS 写入器。
     pub fn new(config: HlsFileWriterConfig) -> Self {
         Self {
             config,
@@ -102,6 +114,9 @@ impl HlsFileWriter {
 }
 
 impl RecordContainerWriter for HlsFileWriter {
+    /// Create the underlying fMP4 muxer with the given tracks.
+    ///
+    /// 使用给定轨道创建底层 fMP4 复用器。
     fn update_tracks(&mut self, tracks: &[TrackInfo]) -> Result<(), RecordError> {
         if tracks.is_empty() {
             return Err(RecordError::InvalidTracks("no tracks"));
@@ -110,6 +125,12 @@ impl RecordContainerWriter for HlsFileWriter {
         Ok(())
     }
 
+    /// Buffer the frame into an fMP4 sample. Flushes a segment when the
+    /// configured duration is reached on a keyframe, then emits the init
+    /// segment on the first call.
+    ///
+    /// 将帧缓冲为 fMP4 样本。当关键帧达到配置时长时刷新片段，并在首次调用时
+    /// 输出 init 片段。
     fn push_frame(&mut self, frame: &AVFrame) -> Result<Vec<RecordWriteEvent>, RecordError> {
         if self.finalized {
             return Err(RecordError::Finalized);
@@ -147,6 +168,9 @@ impl RecordContainerWriter for HlsFileWriter {
         Ok(out)
     }
 
+    /// Flush the final segment and emit a VOD HLS playlist.
+    ///
+    /// 刷新最后一个片段并输出 VOD HLS 播放列表。
     fn finalize(&mut self) -> Result<Vec<RecordWriteEvent>, RecordError> {
         if self.finalized {
             return Ok(Vec::new());
@@ -184,6 +208,7 @@ impl RecordContainerWriter for HlsFileWriter {
         Ok(out)
     }
 
+    /// 返回 `RecordFormat::Hls`。
     fn format(&self) -> RecordFormat {
         RecordFormat::Hls
     }

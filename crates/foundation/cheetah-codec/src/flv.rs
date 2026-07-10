@@ -10,6 +10,15 @@ const FLV_TAG_HEADER_BYTES: usize = 11;
 const FLV_TAG_DATA_LEN_MAX: usize = 0xFF_FFFF;
 const FLV_DEMUX_DEFAULT_MAX_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 
+/// FLV tag stream type.
+///
+/// Maps to the one-byte tag type field used in the FLV file and chunk
+/// formats: 8 for audio, 9 for video, 18 for script.
+///
+/// FLV 标签流类型。
+///
+/// 映射到 FLV 文件与分块格式中使用的单字节标签类型字段：
+/// 8 表示音频，9 表示视频，18 表示脚本。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FlvTagType {
     Audio,
@@ -36,6 +45,13 @@ impl FlvTagType {
     }
 }
 
+/// FLV file header parsed from the first 9+ bytes of a stream.
+///
+/// Carries the audio/video presence flags and the data offset (usually 9).
+///
+/// 从流的前 9+ 字节解析的 FLV 文件头。
+///
+/// 携带音频/视频存在标志与数据偏移（通常为 9）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlvHeader {
     pub has_audio: bool,
@@ -43,6 +59,9 @@ pub struct FlvHeader {
 }
 
 impl FlvHeader {
+    /// Encode the FLV file header including the leading previous tag size (0).
+    ///
+    /// 编码 FLV 文件头，包含前导的上一标签大小（0）。
     pub fn encode(&self) -> Bytes {
         let mut out = Vec::with_capacity(FLV_FULL_HEADER_BYTES);
         out.extend_from_slice(b"FLV");
@@ -60,6 +79,9 @@ impl FlvHeader {
         Bytes::from(out)
     }
 
+    /// Parse the FLV file header from the start of a byte slice.
+    ///
+    /// 从字节切片开头解析 FLV 文件头。
     pub fn parse(raw: &[u8]) -> Result<Self, FlvStreamError> {
         let (header, _) = Self::parse_prefix(raw)?;
         Ok(header)
@@ -106,6 +128,15 @@ impl FlvHeader {
     }
 }
 
+/// A single FLV tag header plus payload.
+///
+/// `timestamp_ms` is stored as a 32-bit millisecond value (24 low bits plus
+/// 8 high bits). The payload is the tag body after the 11-byte header.
+///
+/// 单个 FLV 标签头及其负载。
+///
+/// `timestamp_ms` 以 32 位毫秒值存储（24 低位 + 8 高位）。
+/// payload 是 11 字节头部后的标签体。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlvTag {
     pub tag_type: FlvTagType,
@@ -114,6 +145,13 @@ pub struct FlvTag {
 }
 
 impl FlvTag {
+    /// Encode this tag as an 11-byte header followed by the payload.
+    ///
+    /// Payloads larger than `FLV_TAG_DATA_LEN_MAX` are truncated when encoded.
+    ///
+    /// 将本标签编码为 11 字节头部加负载。
+    ///
+    /// 编码时超过 `FLV_TAG_DATA_LEN_MAX` 的负载会被截断。
     pub fn encode(&self) -> Bytes {
         let data_len = self.payload.len().min(FLV_TAG_DATA_LEN_MAX);
         let mut out = Vec::with_capacity(FLV_TAG_HEADER_BYTES + data_len);
@@ -134,6 +172,9 @@ impl FlvTag {
         Bytes::from(out)
     }
 
+    /// Encode this tag followed by the 4-byte previous-tag-size trailer.
+    ///
+    /// 将本标签编码后追加 4 字节上一标签大小尾部。
     pub fn encode_with_previous_tag_size(&self) -> Bytes {
         let tag = self.encode();
         let mut out = Vec::with_capacity(tag.len() + FLV_PREVIOUS_TAG_SIZE_BYTES);
@@ -142,6 +183,13 @@ impl FlvTag {
         Bytes::from(out)
     }
 
+    /// Parse a tag from the start of `raw` if enough bytes are present.
+    ///
+    /// Returns `None` when the header or declared payload is not fully buffered.
+    ///
+    /// 当 `raw` 起始处有足够字节时解析标签。
+    ///
+    /// 头部或声明的负载未完全缓冲时返回 `None`。
     pub fn parse(raw: &[u8]) -> Option<Self> {
         if raw.len() < FLV_TAG_HEADER_BYTES {
             return None;
@@ -165,14 +213,35 @@ impl FlvTag {
     }
 }
 
+/// Alias for `FlvTag` used by the higher-level encoder helpers.
+///
+/// 高级编码辅助函数使用的 `FlvTag` 别名。
 pub type FlvTagBody = FlvTag;
 
+/// Diagnostic emitted when the previous tag size trailer does not match.
+///
+/// FLV places the size of the previous tag after each tag; this records the
+/// mismatch so the caller can decide whether to tolerate it.
+///
+/// 上一个标签大小尾部不匹配时发出的诊断。
+///
+/// FLV 在每个标签后放置上一个标签大小；此结构记录不匹配，
+/// 供调用方决定是否容忍。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FlvPreviousTagSizeMismatch {
     pub expected: u32,
     pub actual: u32,
 }
 
+/// Events produced by the streaming FLV demuxer.
+///
+/// The caller receives a header once, then tags and optional mismatch
+/// diagnostics as the parser advances through the byte stream.
+///
+/// 流式 FLV 解复用器产生的事件。
+///
+/// 调用方会收到一次头部，随后解析器在字节流中前进时产生标签
+/// 与可选的不匹配诊断。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FlvDemuxEvent {
     Header(FlvHeader),
@@ -180,6 +249,15 @@ pub enum FlvDemuxEvent {
     PreviousTagSizeMismatch(FlvPreviousTagSizeMismatch),
 }
 
+/// Errors that can occur while parsing an FLV byte stream.
+///
+/// These are fatal to the current demuxer state; the parser resets after
+/// reporting an error so the caller can feed a fresh stream.
+///
+/// 解析 FLV 字节流时可能发生的错误。
+///
+/// 这些错误对当前解复用器状态是致命的；报告错误后解析器会重置，
+/// 以便调用方送入新流。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum FlvStreamError {
     #[error("invalid FLV header signature: expected \"FLV\"")]
@@ -202,6 +280,16 @@ pub enum FlvStreamError {
     DemuxBufferTooLarge { buffered: usize, max_allowed: usize },
 }
 
+/// Streaming FLV demuxer with a reassembly buffer.
+///
+/// Accepts arbitrary byte chunks, parses the file header, then iteratively
+/// extracts tags and validates the previous-tag-size trailer. The buffer is
+/// bounded by `max_buffer_bytes` to prevent unbounded growth.
+///
+/// 带重组缓冲区的流式 FLV 解复用器。
+///
+/// 接受任意字节块，解析文件头，然后迭代提取标签并验证
+/// 上一个标签大小尾部。缓冲区受 `max_buffer_bytes` 限制，防止无限增长。
 #[derive(Debug, Clone)]
 pub struct FlvDemuxer {
     buffer: Vec<u8>,
@@ -216,6 +304,14 @@ impl Default for FlvDemuxer {
 }
 
 impl FlvDemuxer {
+    /// Create a new demuxer with the given per-buffer byte limit.
+    ///
+    /// The limit is clamped to at least the full header size so a single
+    /// header can always be parsed.
+    ///
+    /// 使用给定的缓冲区字节上限创建新的解复用器。
+    ///
+    /// 下限会被限制为完整文件头大小，确保单个头部总能被解析。
     pub fn new(max_buffer_bytes: usize) -> Self {
         Self {
             buffer: Vec::new(),
@@ -224,11 +320,23 @@ impl FlvDemuxer {
         }
     }
 
+    /// Reset the demuxer state so it can parse a new stream.
+    ///
+    /// 重置解复用器状态，以便解析新流。
     pub fn reset(&mut self) {
         self.buffer.clear();
         self.header_parsed = false;
     }
 
+    /// Push a chunk of bytes into the demuxer and parse as many complete
+    /// events as possible.
+    ///
+    /// Overflows the configured buffer if the chunk would exceed the limit,
+    /// returning `DemuxBufferTooLarge` and resetting state.
+    ///
+    /// 将字节块推入解复用器并解析尽可能多的完整事件。
+    ///
+    /// 若块会超出配置缓冲区限制，则返回 `DemuxBufferTooLarge` 并重置状态。
     pub fn push(&mut self, chunk: &[u8]) -> Result<Vec<FlvDemuxEvent>, FlvStreamError> {
         let next_len = self.buffer.len().saturating_add(chunk.len());
         if next_len > self.max_buffer_bytes {
@@ -324,6 +432,18 @@ impl FlvDemuxer {
     }
 }
 
+/// Build a FLV video sequence header tag for the track.
+///
+/// For H.264 this builds the AVCDecoderConfigurationRecord (avcC) and wraps
+/// it in a 0x17/0x00 key-frame sequence header. For H.265 it emits the hvcc
+/// configuration. Returns `None` when the codec is unsupported or parameters
+/// are missing.
+///
+/// 为轨道构建 FLV 视频序列头标签。
+///
+/// 对 H.264 构建 AVCDecoderConfigurationRecord（avcC）并封装为
+/// 0x17/0x00 关键帧序列头；对 H.265 输出 hvcc 配置。不支持该编解码器
+/// 或参数缺失时返回 `None`。
 pub fn build_video_sequence_header(track: &TrackInfo) -> Option<FlvTagBody> {
     let payload = match (&track.codec, &track.extradata) {
         (CodecId::H264, CodecExtradata::H264 { avcc, sps, pps }) => {
@@ -496,6 +616,14 @@ impl<'a> H264BitReader<'a> {
     }
 }
 
+/// Build a FLV audio sequence header tag for AAC tracks.
+///
+/// Produces the 0xaf/0x00 AudioSpecificConfig (ASC) packet needed by FLV
+/// players to configure the AAC decoder.
+///
+/// 为 AAC 轨道构建 FLV 音频序列头标签。
+///
+/// 生成 FLV 播放器配置 AAC 解码器所需的 0xaf/0x00 AudioSpecificConfig（ASC）包。
 pub fn build_audio_sequence_header(track: &TrackInfo) -> Option<FlvTagBody> {
     let payload = match (&track.codec, &track.extradata) {
         (CodecId::AAC, CodecExtradata::AAC { asc }) => {

@@ -1,4 +1,6 @@
 //! Generic ISO BMFF box parser/serializer helpers.
+//!
+//! 通用 ISO BMFF Box 解析/序列化辅助函数。
 
 use crate::prelude::*;
 use bytes::{BufMut, BytesMut};
@@ -6,9 +8,13 @@ use bytes::{BufMut, BytesMut};
 use super::Mp4Error;
 
 /// Maximum default box size enforced when parsing untrusted content.
+///
+/// 解析不可信内容时默认允许的最大 Box 大小。
 pub const DEFAULT_MAX_BOX_SIZE: u64 = 256 * 1024 * 1024;
 
 /// A parsed box header (size + 4cc).
+///
+/// 已解析的 Box 头部（大小 + 4cc）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BoxHeader {
     pub fourcc: [u8; 4],
@@ -18,26 +24,31 @@ pub struct BoxHeader {
 }
 
 impl BoxHeader {
+    /// 4cc as a printable string for diagnostics.
+    ///
+    /// 4cc 的可打印字符串，用于诊断。
     pub fn type_str(&self) -> String {
         String::from_utf8_lossy(&self.fourcc).into_owned()
     }
 
+    /// Payload size in bytes (total size minus header size).
+    ///
+    /// 负载字节大小（总大小减去头部大小）。
     pub fn payload_size(&self) -> u64 {
         self.size.saturating_sub(self.header_size as u64)
     }
 }
 
-/// Read a single box header from `buf` starting at `offset`. Returns the parsed
-/// header and the offset of the payload (i.e. `offset + header_size`).
+/// Parse a box header at `offset` inside the parent `[0, parent_end)` range.
 ///
-/// Allowed encodings:
-///   * `size32(4) + type(4)` (compact)
-///   * `size32 == 1 -> size64(4) + type(4) + largesize(8)` (extended)
-///   * `size32 == 0 -> extends to end of file/parent` (`is_extends_to_eof`)
+/// Handles compact 32-bit size, extended 64-bit size (`size == 1`), and
+/// end-of-parent size (`size == 0`). `uuid` boxes are reported with a 16-byte
+/// header; callers must account for the extra bytes.
 ///
-/// `uuid` boxes carry an additional 16-byte usertype that callers must skip
-/// based on `header_size`. The caller must validate the parent boundary and
-/// use `payload_size()` rather than treating the header as opaque.
+/// 在父范围 `[0, parent_end)` 的 `offset` 处解析 Box 头部。
+///
+/// 处理紧凑 32 位大小、扩展 64 位大小（`size == 1`）以及父容器结尾大小（`size == 0`）。
+/// `uuid` Box 的头部大小为 16 字节；调用方需额外处理。
 pub fn read_box_header(
     buf: &[u8],
     offset: usize,
@@ -116,6 +127,13 @@ pub fn read_box_header(
 
 /// Write a 4cc box with size header to `buf`. The closure receives the buffer
 /// and writes the payload; this helper patches the box size field afterwards.
+/// Write a 4cc box to `buf`, with `body` filling the payload.
+///
+/// The size field is patched after the body is written.
+///
+/// 向 `buf` 写入 4cc Box，由 `body` 填充负载。
+///
+/// 在 `body` 写入后回填大小字段。
 pub fn write_box<F>(buf: &mut BytesMut, fourcc: &[u8; 4], body: F)
 where
     F: FnOnce(&mut BytesMut),
@@ -129,6 +147,9 @@ where
 }
 
 /// Write a "full box" (version + flags) header.
+/// Write a full box (version + 24-bit flags) to `buf`.
+///
+/// 写入 full box（版本 + 24 位标志）。
 pub fn write_full_box<F>(buf: &mut BytesMut, fourcc: &[u8; 4], version: u8, flags: u32, body: F)
 where
     F: FnOnce(&mut BytesMut),
@@ -145,6 +166,10 @@ where
 /// Iterate over child boxes inside a parent box payload.
 ///
 /// Skips unknown boxes; returns the slice payload of every child box.
+///
+/// 迭代父 Box 负载内部的子 Box。
+///
+/// 跳过未知 Box，返回每个子 Box 的切片负载。
 pub struct BoxIter<'a> {
     pub buf: &'a [u8],
     pub offset: usize,
@@ -153,6 +178,9 @@ pub struct BoxIter<'a> {
 }
 
 impl<'a> BoxIter<'a> {
+    /// Create an iterator over the children of the parent range.
+    ///
+    /// 创建父范围子 Box 迭代器。
     pub fn new(buf: &'a [u8], offset: usize, parent_end: usize, max_box_size: u64) -> Self {
         Self {
             buf,
@@ -163,6 +191,9 @@ impl<'a> BoxIter<'a> {
     }
 }
 
+/// A child box with its parsed header and payload slice.
+///
+/// 包含已解析头部与负载切片的子 Box。
 #[derive(Debug, Clone)]
 pub struct ChildBox<'a> {
     pub header: BoxHeader,
@@ -197,6 +228,9 @@ impl<'a> Iterator for BoxIter<'a> {
 
 /// Read a big-endian u32 from `buf` at `offset`. Returns `Mp4Error` on
 /// underflow.
+/// Read a big-endian u32 at `offset` or return an underflow error.
+///
+/// 在 `offset` 处读取大端 u32，越界时返回 underflow 错误。
 pub fn read_u32(buf: &[u8], offset: usize) -> Result<u32, Mp4Error> {
     if offset + 4 > buf.len() {
         return Err(Mp4Error::InvalidBox {
@@ -212,6 +246,9 @@ pub fn read_u32(buf: &[u8], offset: usize) -> Result<u32, Mp4Error> {
     ]))
 }
 
+/// Read a big-endian u64 at `offset` or return an underflow error.
+///
+/// 在 `offset` 处读取大端 u64，越界时返回 underflow 错误。
 pub fn read_u64(buf: &[u8], offset: usize) -> Result<u64, Mp4Error> {
     if offset + 8 > buf.len() {
         return Err(Mp4Error::InvalidBox {
@@ -231,6 +268,9 @@ pub fn read_u64(buf: &[u8], offset: usize) -> Result<u64, Mp4Error> {
     ]))
 }
 
+/// Read a big-endian u16 at `offset` or return an underflow error.
+///
+/// 在 `offset` 处读取大端 u16，越界时返回 underflow 错误。
 pub fn read_u16(buf: &[u8], offset: usize) -> Result<u16, Mp4Error> {
     if offset + 2 > buf.len() {
         return Err(Mp4Error::InvalidBox {

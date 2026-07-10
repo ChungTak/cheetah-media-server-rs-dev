@@ -2,6 +2,11 @@
 //!
 //! Buffers samples until `finalize` is called, then emits a single MP4 file
 //! via `cheetah_codec::mp4::Mp4Writer`.
+//!
+//! 经典 MP4 录制容器写入器。
+//!
+//! 缓冲样本直到调用 `finalize`，然后通过 `cheetah_codec::mp4::Mp4Writer`
+//! 输出单个 MP4 文件。
 
 use crate::prelude::*;
 
@@ -13,6 +18,8 @@ use crate::track::{CodecId, TrackInfo};
 use super::{RecordContainerWriter, RecordDiagnostic, RecordError, RecordFormat, RecordWriteEvent};
 
 /// Writer configuration.
+///
+/// 写入器配置。
 #[derive(Debug, Clone, Default)]
 pub struct Mp4FileWriterConfig {
     /// Reserved for the future faststart layout. Currently must be false;
@@ -27,6 +34,8 @@ pub struct Mp4FileWriterConfig {
 }
 
 /// Stateful MP4 file record writer.
+///
+/// 有状态 MP4 文件录制写入器。
 pub struct Mp4FileWriter {
     config: Mp4FileWriterConfig,
     inner: Option<Mp4Writer>,
@@ -36,6 +45,9 @@ pub struct Mp4FileWriter {
 }
 
 impl Mp4FileWriter {
+    /// Create a new MP4 record writer with the given configuration.
+    ///
+    /// 使用给定配置创建新的 MP4 录制写入器。
     pub fn new(config: Mp4FileWriterConfig) -> Self {
         Self {
             config,
@@ -48,12 +60,17 @@ impl Mp4FileWriter {
 
     /// Number of frames the writer has rejected since open. Useful for
     /// surfacing health metrics through the record module.
+    ///
+    /// 写入器自打开以来拒绝的帧数。可用于记录模块的健康指标。
     pub fn drop_count(&self) -> u32 {
         self.drop_count
     }
 }
 
 impl RecordContainerWriter for Mp4FileWriter {
+    /// Create the underlying `Mp4Writer` with the given tracks and config.
+    ///
+    /// 使用给定轨道与配置创建底层 `Mp4Writer`。
     fn update_tracks(&mut self, tracks: &[TrackInfo]) -> Result<(), RecordError> {
         if tracks.is_empty() {
             return Err(RecordError::InvalidTracks("no tracks"));
@@ -69,6 +86,11 @@ impl RecordContainerWriter for Mp4FileWriter {
         Ok(())
     }
 
+    /// Convert H.26x payloads from Annex-B to length-prefixed and push into
+    /// `Mp4Writer`. Rejected samples increment `drop_count`.
+    ///
+    /// 将 H.26x 负载从 Annex-B 转换为长度前缀并推入 `Mp4Writer`。
+    /// 被拒绝的样本会增加 `drop_count`。
     fn push_frame(&mut self, frame: &AVFrame) -> Result<Vec<RecordWriteEvent>, RecordError> {
         if self.finalized {
             return Err(RecordError::Finalized);
@@ -107,6 +129,9 @@ impl RecordContainerWriter for Mp4FileWriter {
         Ok(Vec::new())
     }
 
+    /// Finalize the `Mp4Writer` and optionally drop files below a size threshold.
+    ///
+    /// 完成 `Mp4Writer` 并可选丢弃低于大小阈值的文件。
     fn finalize(&mut self) -> Result<Vec<RecordWriteEvent>, RecordError> {
         if self.finalized {
             return Ok(Vec::new());
@@ -127,6 +152,7 @@ impl RecordContainerWriter for Mp4FileWriter {
         Ok(vec![RecordWriteEvent::Bytes(buf)])
     }
 
+    /// 返回 `RecordFormat::Mp4`。
     fn format(&self) -> RecordFormat {
         RecordFormat::Mp4
     }

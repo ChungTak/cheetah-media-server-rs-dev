@@ -1,5 +1,7 @@
 //! Classic MP4 sample entry decoders/encoders for the supported codec matrix.
 //!
+//! 支持的编解码器矩阵对应的经典 MP4 样本条目解码/编码器。
+//!
 //! Maps `stsd` sample entry boxes to/from `(CodecId, CodecExtradata)`. Used by
 //! both the writer (when emitting `stsd`) and the reader (when ingesting an
 //! existing file's `stsd`).
@@ -11,6 +13,9 @@ use crate::track::{CodecExtradata, CodecId};
 
 /// Map a sample entry 4cc to a `CodecId`. Returns `Unknown` for codecs that
 /// the project knowingly cannot demux to canonical frames.
+///
+/// 将样本条目 4cc 映射为 `CodecId`。对项目已知无法解复用为标准帧的编解码器
+/// 返回 `Unknown`。
 pub fn codec_id_from_sample_entry(fourcc: &[u8; 4]) -> CodecId {
     match fourcc {
         b"avc1" | b"avc2" | b"avc3" | b"avc4" => CodecId::H264,
@@ -31,6 +36,8 @@ pub fn codec_id_from_sample_entry(fourcc: &[u8; 4]) -> CodecId {
 
 /// Build a `CodecExtradata` from a parsed sample entry's child config box, if
 /// any.
+///
+/// 从已解析样本条目的子配置 Box 构建 `CodecExtradata`（如果存在）。
 pub fn extradata_from_sample_entry(
     codec: CodecId,
     config_box_fourcc: Option<[u8; 4]>,
