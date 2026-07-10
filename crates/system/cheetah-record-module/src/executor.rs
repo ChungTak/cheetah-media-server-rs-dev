@@ -4,6 +4,11 @@
 //! V1 ships MP4 only (single-file finalize-on-stop). FLV / HLS / PS writers
 //! are wired to the same dispatch loop and can be enabled as their
 //! container writers stabilise.
+//!
+//! 真实 `TaskExecutor` 实现：订阅引擎流并驱动各格式 `RecordContainerWriter` 写入磁盘。
+//!
+//! V1 仅支持 MP4（停止时单次结束文件）。FLV / HLS / PS 写入器已接入同一分派循环，
+//! 待容器写入器稳定后即可启用。
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -34,6 +39,11 @@ use crate::task::{RecordTask, TaskExecutor, TaskExecutorError};
 /// Spawns one async task per `RecordTask` via `RuntimeApi::spawn`. Each task
 /// subscribes to the engine source stream, drives a `RecordContainerWriter`,
 /// and finalizes the output on cancel/EOS.
+///
+/// 实时录制执行器。
+///
+/// 通过 `RuntimeApi::spawn` 为每个 `RecordTask` 派生一个异步任务。
+/// 每个任务订阅引擎源流、驱动 `RecordContainerWriter`，并在取消或流结束时结束输出。
 pub struct RecordExecutor {
     engine: EngineContext,
     config: RecordModuleConfig,
@@ -41,12 +51,18 @@ pub struct RecordExecutor {
     handles: Mutex<HashMap<String, TaskHandle>>,
 }
 
+/// Internal handle for a spawned task, used for cancellation and joining.
+///
+/// 已派生任务的内部句柄，用于取消与等待完成。
 struct TaskHandle {
     cancel: CancellationToken,
     join: Option<Box<dyn JoinHandle>>,
 }
 
 impl RecordExecutor {
+    /// Create a new executor bound to the engine, config, and registry.
+    ///
+    /// 创建与引擎、配置和注册表绑定的新执行器。
     pub fn new(
         engine: EngineContext,
         config: RecordModuleConfig,
@@ -60,7 +76,13 @@ impl RecordExecutor {
         }
     }
 
-    /// Cancel all running tasks. Used during module stop.
+    /// Cancel all running tasks and wait for them to finish.
+    ///
+    /// Used during module stop.
+    ///
+    /// 取消所有运行中的任务并等待其完成。
+    ///
+    /// 在模块停止时使用。
     pub async fn shutdown(&self) {
         let snapshot: Vec<TaskHandle> = {
             let mut map = self.handles.lock();
@@ -77,13 +99,20 @@ impl RecordExecutor {
 
 #[async_trait]
 impl TaskExecutor for RecordExecutor {
+    /// Spawn a new record task after checking for duplicate task ids.
+    ///
+    /// The executor lock is held across the duplicate check, `runtime_api.spawn`,
+    /// and handle insert so the operation is atomic. `RuntimeApi::spawn` is
+    /// synchronous (it returns a join handle without awaiting), so holding the
+    /// lock is safe.
+    ///
+    /// 在检查重复任务 ID 后启动新的录制任务。
+    ///
+    /// 执行器锁跨越重复检查、`runtime_api.spawn` 与句柄插入，因此操作是原子的。
+    /// `RuntimeApi::spawn` 是同步的（无需 await 即可返回 join 句柄），因此持锁安全。
     async fn spawn(&self, task: RecordTask) -> Result<(), TaskExecutorError> {
         let task_id = task.task_id.clone();
 
-        // Hold the executor lock for the entire spawn so the duplicate
-        // check, the `runtime_api.spawn` call, and the handle insert happen
-        // atomically. `RuntimeApi::spawn` is synchronous (returns a join
-        // handle without awaiting) so this is safe.
         let mut handles = self.handles.lock();
         if handles.contains_key(&task_id) {
             return Err(TaskExecutorError::SpawnFailed(format!(
@@ -111,6 +140,9 @@ impl TaskExecutor for RecordExecutor {
         Ok(())
     }
 
+    /// Stop a task by id, cancel its token, and await its completion.
+    ///
+    /// 按 ID 停止任务，取消其 token 并等待完成。
     async fn stop(&self, task_id: &str) -> Result<(), TaskExecutorError> {
         let handle = {
             let mut handles = self.handles.lock();
@@ -127,6 +159,17 @@ impl TaskExecutor for RecordExecutor {
     }
 }
 
+/// Run a single record task from stream discovery to file finalization.
+///
+/// This is the per-task async body. It waits for the source stream, subscribes,
+/// pulls frames, writes them via the chosen container writer, and writes the
+/// resulting bytes to disk. Task state in the registry is updated on failure or
+/// completion.
+///
+/// 从流发现到文件结束的单个录制任务运行函数。
+///
+/// 这是每个任务的异步体。它等待源流、订阅、拉取帧、通过选定容器写入器写入，
+/// 并将最终字节写入磁盘。失败或完成时更新注册表中的任务状态。
 async fn run_record_task(
     task: RecordTask,
     engine: EngineContext,
@@ -364,13 +407,16 @@ async fn run_record_task(
     mark_stopped(&registry, &task_id);
 }
 
+/// Stage a mid-stream write event for later disk flush.
+///
+/// Bytes and segment events are accumulated and flushed in one place after the
+/// subscribe loop exits. Diagnostics are logged immediately.
+///
+/// 暂存流中的写事件以便后续统一落盘。
+///
+/// 字节与分片事件被累积，在订阅循环退出后统一写入磁盘。诊断信息立即记录。
 fn stage_event(ev: RecordWriteEvent, staged: &mut Vec<RecordWriteEvent>, task_id: &str) {
     match ev {
-        // Bytes / segment events produced mid-stream are flushed alongside
-        // any final-state events after the subscribe loop exits, so the disk
-        // I/O stays in one place. For MP4 the writer only emits the final
-        // file in `finalize()`, so this is exercised by HLS and similar
-        // segmented formats.
         RecordWriteEvent::Bytes(_)
         | RecordWriteEvent::Segment { .. }
         | RecordWriteEvent::InitSegment { .. }
@@ -381,11 +427,17 @@ fn stage_event(ev: RecordWriteEvent, staged: &mut Vec<RecordWriteEvent>, task_id
     }
 }
 
+/// Build subscriber options for the recording task.
+///
+/// Recording is a tail subscriber: it takes the full GOP from the bootstrap
+/// window so the file always begins on a keyframe, and keeps some headroom on
+/// top so live frames do not immediately collide with the bootstrap allocation.
+///
+/// 为录制任务构建订阅者选项。
+///
+/// 录制是尾部订阅者：从引导窗口获取完整 GOP，使文件始终从关键帧开始；
+/// 同时保留额外空间，避免直播帧立即与引导分配冲突。
 fn subscriber_options(config: &RecordModuleConfig) -> SubscriberOptions {
-    // Recording is a tail subscriber: take the full GOP from the bootstrap
-    // window so the file always begins on a keyframe, and keep some
-    // headroom on top so live frames do not immediately collide with the
-    // bootstrap allocation.
     let bootstrap = config.queue_capacity.max(64);
     let queue_capacity = bootstrap.saturating_add(bootstrap / 2).max(bootstrap + 64);
     SubscriberOptions {
@@ -395,6 +447,14 @@ fn subscriber_options(config: &RecordModuleConfig) -> SubscriberOptions {
     }
 }
 
+/// Parse a `source_stream_key` into a `StreamKey`.
+///
+/// SMS/cheetah convention is `app/stream`. If the source contains no slash,
+/// fall back to the `app`/`stream` fields from the template.
+///
+/// 将 `source_stream_key` 解析为 `StreamKey`。
+///
+/// SMS/cheetah 约定为 `app/stream`。若 source 不含斜杠，则回退到模板中的 `app`/`stream`。
 fn parse_stream_key(source: &str, template: &crate::task::RecordTaskTemplate) -> StreamKey {
     if let Some((ns, path)) = source.split_once('/') {
         StreamKey::new(ns, path)
@@ -403,6 +463,14 @@ fn parse_stream_key(source: &str, template: &crate::task::RecordTaskTemplate) ->
     }
 }
 
+/// Wait for the source stream to appear with exponential backoff.
+///
+/// Returns the stream snapshot once it has non-empty tracks, or `None` if the
+/// task is cancelled first.
+///
+/// 以指数退避等待源流出现。
+///
+/// 当流具有非空轨道时返回快照；若任务先被取消则返回 `None`。
 async fn wait_for_stream(
     engine: &EngineContext,
     stream_key: &StreamKey,
@@ -434,6 +502,16 @@ async fn wait_for_stream(
     }
 }
 
+/// Build the output file path for a recording task.
+///
+/// The layout is `{root_path}/{app}/{stream}/{YYYY-MM-DD}/{task_id}-{timestamp}.{ext}`.
+/// The same timestamp is used for the date directory and the filename so they
+/// cannot disagree across a midnight tick.
+///
+/// 为录制任务构建输出文件路径。
+///
+/// 布局为 `{root_path}/{app}/{stream}/{YYYY-MM-DD}/{task_id}-{timestamp}.{ext}`。
+/// 日期目录与文件名使用同一个时间戳，避免跨午夜时二者不一致。
 fn build_output_path(
     config: &RecordModuleConfig,
     task: &RecordTask,
@@ -455,6 +533,9 @@ fn build_output_path(
     path
 }
 
+/// Sanitize a path segment by replacing path separators and dots.
+///
+/// 通过替换路径分隔符与点号来清理路径段。
 fn sanitize_segment(input: &str) -> String {
     input
         .chars()
@@ -465,6 +546,9 @@ fn sanitize_segment(input: &str) -> String {
         .collect()
 }
 
+/// Current wall-clock time in milliseconds since the Unix epoch.
+///
+/// 自 Unix 纪元以来的当前墙上时间（毫秒）。
 fn wall_clock_ms() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -473,6 +557,9 @@ fn wall_clock_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Format a Unix timestamp in milliseconds as `YYYY-MM-DD`.
+///
+/// 将毫秒级 Unix 时间戳格式化为 `YYYY-MM-DD`。
 fn format_ymd(ms: i64) -> String {
     let secs = (ms / 1_000).max(0);
     let days = secs / 86_400;
@@ -482,6 +569,8 @@ fn format_ymd(ms: i64) -> String {
 
 /// Inverse of Howard Hinnant's `days_from_civil` (mirrors the helper used
 /// in `zlm_compat`).
+///
+/// Howard Hinnant `days_from_civil` 的逆运算（与 `zlm_compat` 中使用的辅助函数一致）。
 fn civil_from_days(z: i64) -> (i32, u32, u32) {
     let z = z + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
@@ -496,6 +585,9 @@ fn civil_from_days(z: i64) -> (i32, u32, u32) {
     (y, m, d)
 }
 
+/// Convert a `TrackInfo` into the lightweight `RecordTrackSummary`.
+///
+/// 将 `TrackInfo` 转换为轻量 `RecordTrackSummary`。
 fn track_summary_from_info(t: &TrackInfo) -> RecordTrackSummary {
     RecordTrackSummary {
         kind: format!("{:?}", t.media_kind).to_lowercase(),
@@ -503,10 +595,16 @@ fn track_summary_from_info(t: &TrackInfo) -> RecordTrackSummary {
     }
 }
 
+/// Mark a task as `Failed` in the registry, ignoring errors.
+///
+/// 在注册表中将任务标记为 `Failed`，忽略错误。
 fn mark_failed(registry: &RecordRegistry, task_id: &str) {
     let _ = registry.update_task_state(task_id, RecordTaskState::Failed);
 }
 
+/// Mark a task as `Stopped` in the registry, ignoring errors.
+///
+/// 在注册表中将任务标记为 `Stopped`，忽略错误。
 fn mark_stopped(registry: &RecordRegistry, task_id: &str) {
     let _ = registry.update_task_state(task_id, RecordTaskState::Stopped);
 }
