@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+/// JSON commands sent from the host into the WASM RTMP core.
+///
+/// 从宿主发送到 WASM RTMP core 的 JSON 命令。
 enum JsonCommand {
     Timeout {
         timer_id: u64,
@@ -58,6 +61,9 @@ enum JsonCommand {
 }
 
 #[derive(Debug, Serialize)]
+/// JSON representation of a core output, returned to the host.
+///
+/// 返回给宿主的 core 输出 JSON 表示。
 struct JsonOutput {
     kind: &'static str,
     timer_id: u64,
@@ -72,6 +78,9 @@ struct JsonOutput {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Internal classification of output kinds for JSON serialization.
+///
+/// 用于 JSON 序列化的输出类型内部分类。
 enum OutputKind {
     Write,
     EventConnected,
@@ -95,6 +104,9 @@ enum OutputKind {
     CancelTimer,
 }
 
+/// Map an `OutputKind` to its snake_case JSON string.
+///
+/// 将 `OutputKind` 映射为 snake_case JSON 字符串。
 fn output_kind_name(kind: OutputKind) -> &'static str {
     match kind {
         OutputKind::Write => "write",
@@ -120,6 +132,9 @@ fn output_kind_name(kind: OutputKind) -> &'static str {
     }
 }
 
+/// Map an internal `RtmpMediaType` to a JSON string.
+///
+/// 将内部 `RtmpMediaType` 映射为 JSON 字符串。
 fn media_type_name(media_type: RtmpMediaType) -> &'static str {
     match media_type {
         RtmpMediaType::Audio => "audio",
@@ -129,6 +144,9 @@ fn media_type_name(media_type: RtmpMediaType) -> &'static str {
 }
 
 #[unsafe(no_mangle)]
+/// Allocate a raw memory block of the given size for the host.
+///
+/// 为宿主分配指定大小的原始内存块。
 pub extern "C" fn rtmp_alloc(size: u32) -> *mut u8 {
     if size == 0 {
         return std::ptr::null_mut();
@@ -139,6 +157,9 @@ pub extern "C" fn rtmp_alloc(size: u32) -> *mut u8 {
 }
 
 #[unsafe(no_mangle)]
+/// Free a raw memory block previously allocated by `rtmp_alloc`.
+///
+/// 释放之前由 `rtmp_alloc` 分配的原始内存块。
 pub unsafe extern "C" fn rtmp_free(ptr: *mut u8, size: u32) {
     if ptr.is_null() || size == 0 {
         return;
@@ -149,6 +170,9 @@ pub unsafe extern "C" fn rtmp_free(ptr: *mut u8, size: u32) {
 }
 
 #[unsafe(no_mangle)]
+/// Return a pointer to the data of a `Vec<u8>` owned by Rust.
+///
+/// 返回 Rust 拥有的 `Vec<u8>` 数据指针。
 pub unsafe extern "C" fn rtmp_vec_ptr(v: *const Vec<u8>) -> *const u8 {
     if v.is_null() {
         return std::ptr::null();
@@ -157,6 +181,9 @@ pub unsafe extern "C" fn rtmp_vec_ptr(v: *const Vec<u8>) -> *const u8 {
 }
 
 #[unsafe(no_mangle)]
+/// Return the length of a `Vec<u8>` owned by Rust.
+///
+/// 返回 Rust 拥有的 `Vec<u8>` 长度。
 pub unsafe extern "C" fn rtmp_vec_len(v: *const Vec<u8>) -> u32 {
     if v.is_null() {
         return 0;
@@ -165,6 +192,9 @@ pub unsafe extern "C" fn rtmp_vec_len(v: *const Vec<u8>) -> u32 {
 }
 
 #[unsafe(no_mangle)]
+/// Free a `Vec<u8>` previously returned by the WASM binding.
+///
+/// 释放之前由 WASM 绑定返回的 `Vec<u8>`。
 pub unsafe extern "C" fn rtmp_vec_free(v: *mut Vec<u8>) {
     if v.is_null() {
         return;
@@ -172,6 +202,9 @@ pub unsafe extern "C" fn rtmp_vec_free(v: *mut Vec<u8>) {
     let _ = unsafe { Box::from_raw(v) };
 }
 
+/// Read a raw pointer/length pair as a byte slice, if non-null.
+///
+/// 若非空，则将原始指针/长度对读取为字节切片。
 unsafe fn read_bytes<'a>(json_bytes: *const u8, json_bytes_len: u32) -> Option<&'a [u8]> {
     if json_bytes.is_null() {
         return None;
@@ -179,18 +212,27 @@ unsafe fn read_bytes<'a>(json_bytes: *const u8, json_bytes_len: u32) -> Option<&
     Some(unsafe { std::slice::from_raw_parts(json_bytes, json_bytes_len as usize) })
 }
 
+/// Decode a base64 payload into bytes for core media commands.
+///
+/// 将 base64 负载解码为字节，用于 core 媒体命令。
 fn decode_payload_base64(payload_base64: &str) -> Option<Vec<u8>> {
     base64::engine::general_purpose::STANDARD
         .decode(payload_base64)
         .ok()
 }
 
+/// Opaque handle that owns an `RtmpCore` and a queue of JSON outputs.
+///
+/// 拥有 `RtmpCore` 与 JSON 输出队列的不透明句柄。
 pub struct WasmHandle {
     core: RtmpCore,
     output_queue: std::collections::VecDeque<JsonOutput>,
 }
 
 impl WasmHandle {
+    /// Create a new handle with an empty core and output queue.
+    ///
+    /// 用空的 core 与输出队列创建新句柄。
     fn new() -> Self {
         Self {
             core: RtmpCore::new(),
@@ -198,6 +240,9 @@ impl WasmHandle {
         }
     }
 
+    /// Push an input into the core and queue the converted JSON outputs.
+    ///
+    /// 将输入推入 core 并将转换后的 JSON 输出入队。
     fn apply_input(&mut self, input: CoreInput) {
         if let Ok(outputs) = self.core.handle_input(input) {
             for output in outputs {
@@ -207,6 +252,9 @@ impl WasmHandle {
     }
 }
 
+/// Convert a `CoreOutput` into a `JsonOutput` for the host.
+///
+/// 将 `CoreOutput` 转换为给宿主的 `JsonOutput`。
 fn convert_output(output: cheetah_rtmp_core::CoreOutput) -> JsonOutput {
     use cheetah_rtmp_core::CoreOutput;
 
@@ -251,6 +299,9 @@ fn convert_output(output: cheetah_rtmp_core::CoreOutput) -> JsonOutput {
     }
 }
 
+/// Convert an `RtmpEvent` into a `JsonOutput` for the host.
+///
+/// 将 `RtmpEvent` 转换为给宿主的 `JsonOutput`。
 fn convert_event(event: RtmpEvent) -> JsonOutput {
     match event {
         RtmpEvent::Connected { app, .. } => JsonOutput {
@@ -510,11 +561,17 @@ fn convert_event(event: RtmpEvent) -> JsonOutput {
 }
 
 #[unsafe(no_mangle)]
+/// Allocate a new WASM RTMP handle.
+///
+/// 分配新的 WASM RTMP 句柄。
 pub unsafe extern "C" fn rtmp_wasm_new() -> *mut WasmHandle {
     Box::into_raw(Box::new(WasmHandle::new()))
 }
 
 #[unsafe(no_mangle)]
+/// Free a WASM RTMP handle previously created by `rtmp_wasm_new`.
+///
+/// 释放之前由 `rtmp_wasm_new` 创建的 WASM RTMP 句柄。
 pub unsafe extern "C" fn rtmp_wasm_free(handle: *mut WasmHandle) {
     if handle.is_null() {
         return;
@@ -523,6 +580,9 @@ pub unsafe extern "C" fn rtmp_wasm_free(handle: *mut WasmHandle) {
 }
 
 #[unsafe(no_mangle)]
+/// Feed raw bytes into the core.
+///
+/// 将原始字节喂入 core。
 pub unsafe extern "C" fn rtmp_wasm_handle_bytes(
     handle: *mut WasmHandle,
     data: *const u8,
@@ -539,6 +599,9 @@ pub unsafe extern "C" fn rtmp_wasm_handle_bytes(
 }
 
 #[unsafe(no_mangle)]
+/// Notify the core that a timer has expired.
+///
+/// 通知 core 定时器已到期。
 pub unsafe extern "C" fn rtmp_wasm_handle_timeout(handle: *mut WasmHandle, timer_id: u64) -> u32 {
     let Some(handle) = (unsafe { handle_mut(handle) }) else {
         return 1;
@@ -548,6 +611,9 @@ pub unsafe extern "C" fn rtmp_wasm_handle_timeout(handle: *mut WasmHandle, timer
 }
 
 #[unsafe(no_mangle)]
+/// Parse a JSON command and feed the resulting core input.
+///
+/// 解析 JSON 命令并喂入对应的 core 输入。
 pub unsafe extern "C" fn rtmp_wasm_handle_command_json(
     handle: *mut WasmHandle,
     json_bytes: *const u8,
@@ -660,6 +726,9 @@ pub unsafe extern "C" fn rtmp_wasm_handle_command_json(
     0
 }
 
+/// Dereference a handle pointer, returning `None` if null.
+///
+/// 解引用句柄指针，若为空则返回 `None`。
 unsafe fn handle_mut<'a>(handle: *mut WasmHandle) -> Option<&'a mut WasmHandle> {
     if handle.is_null() {
         return None;
@@ -668,6 +737,9 @@ unsafe fn handle_mut<'a>(handle: *mut WasmHandle) -> Option<&'a mut WasmHandle> 
 }
 
 #[unsafe(no_mangle)]
+/// Return the number of JSON outputs queued on the handle.
+///
+/// 返回句柄上已排队的 JSON 输出数量。
 pub unsafe extern "C" fn rtmp_wasm_pending_output_count(handle: *const WasmHandle) -> u32 {
     if handle.is_null() {
         return 0;
@@ -677,6 +749,9 @@ pub unsafe extern "C" fn rtmp_wasm_pending_output_count(handle: *const WasmHandl
 }
 
 #[unsafe(no_mangle)]
+/// Pop the next JSON output and serialize it into a `Vec<u8>` owned by Rust.
+///
+/// 弹出下一个 JSON 输出并序列化为 Rust 拥有的 `Vec<u8>`。
 pub unsafe extern "C" fn rtmp_wasm_next_output_json(handle: *mut WasmHandle) -> *mut Vec<u8> {
     let Some(handle) = (unsafe { handle_mut(handle) }) else {
         return std::ptr::null_mut();
