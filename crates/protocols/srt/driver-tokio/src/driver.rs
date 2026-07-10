@@ -13,9 +13,15 @@ use tokio::sync::mpsc;
 use crate::config::SrtDriverConfig;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Opaque identifier for an SRT peer/connection.
+///
+/// SRT 对端/连接的不透明标识符。
 pub struct SrtPeerId(pub u64);
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// Aggregated byte/packet and SRT-specific stats for a peer.
+///
+/// 每个对端的字节/包以及 SRT 专用统计。
 pub struct SrtDriverStats {
     pub bytes_in: u64,
     pub bytes_out: u64,
@@ -39,6 +45,9 @@ pub struct SrtDriverStats {
 }
 
 #[derive(Debug, Clone)]
+/// Commands sent from the module into the SRT driver.
+///
+/// 从模块发送到 SRT 驱动的命令。
 pub enum SrtDriverCommand {
     ConnectCaller {
         peer_id: SrtPeerId,
@@ -57,6 +66,9 @@ pub enum SrtDriverCommand {
 }
 
 #[derive(Debug, Clone)]
+/// Events emitted by the SRT driver to the module.
+///
+/// SRT 驱动向模块发出的事件。
 pub enum SrtDriverEvent {
     ListenerStarted {
         local_addr: SocketAddr,
@@ -96,12 +108,18 @@ pub struct SrtDriverHandle {
     command_tx: mpsc::Sender<SrtDriverCommand>,
 }
 
+/// `SrtDriverHandle` API: send commands to the background driver.
+///
+/// `SrtDriverHandle` API：向后台驱动发送命令。
 impl SrtDriverHandle {
     pub async fn send(&self, command: SrtDriverCommand) {
         let _ = self.command_tx.send(command).await;
     }
 }
 
+/// Spawn the SRT driver task and return its handle and event receiver.
+///
+/// 派生 SRT 驱动任务并返回句柄与事件接收端。
 pub fn spawn_driver(
     config: SrtDriverConfig,
     cancel: CancellationToken,
@@ -112,6 +130,9 @@ pub fn spawn_driver(
     (SrtDriverHandle { command_tx }, event_rx)
 }
 
+/// Per-peer runtime state managed by the driver task.
+///
+/// 驱动任务管理的每个对端运行时状态。
 struct ConnectionSlot {
     peer_id: SrtPeerId,
     remote: SocketAddr,
@@ -125,6 +146,9 @@ struct ConnectionSlot {
     stats: SrtDriverStats,
 }
 
+/// Main driver loop: listen, accept peers, process commands and timers.
+///
+/// 驱动主循环：监听、接受对端、处理命令与定时器。
 async fn run_driver(
     config: SrtDriverConfig,
     mut command_rx: mpsc::Receiver<SrtDriverCommand>,
@@ -281,6 +305,9 @@ async fn run_driver(
     }
 }
 
+/// Apply a driver command: connect caller, send payload, or close peer.
+///
+/// 应用驱动命令：连接呼叫端、发送负载或关闭对端。
 async fn handle_command(
     socket: &tokio::net::UdpSocket,
     event_tx: &mpsc::Sender<SrtDriverEvent>,
@@ -393,6 +420,9 @@ async fn handle_command(
     }
 }
 
+/// Remove a peer from the driver maps by id.
+///
+/// 按 id 从驱动映射中移除对端。
 fn remove_slot(
     by_peer: &mut HashMap<SrtPeerId, ConnectionSlot>,
     by_remote: &mut HashMap<SocketAddr, SrtPeerId>,
@@ -403,6 +433,9 @@ fn remove_slot(
     }
 }
 
+/// Check if the connection send buffer has reached the configured capacity.
+///
+/// 检查连接发送缓冲是否已达到配置容量。
 fn is_send_queue_full(slot: &ConnectionSlot, config: &SrtDriverConfig) -> bool {
     slot.connection
         .sender_stats()
@@ -410,6 +443,9 @@ fn is_send_queue_full(slot: &ConnectionSlot, config: &SrtDriverConfig) -> bool {
         .unwrap_or(config.send_queue_capacity == 0)
 }
 
+/// Build `shiguredo_srt` listener `ConnectionOptions` from driver config.
+///
+/// 从驱动配置构建 `shiguredo_srt` 监听端 `ConnectionOptions`。
 fn connection_options(
     peer_id: SrtPeerId,
     stream_id: Option<String>,
@@ -434,6 +470,9 @@ fn connection_options(
     }
 }
 
+/// Build `shiguredo_srt` caller `ConnectionOptions` from session/driver config.
+///
+/// 从会话/驱动配置构建 `shiguredo_srt` 呼叫端 `ConnectionOptions`。
 fn caller_connection_options(
     peer_id: SrtPeerId,
     stream_id: Option<String>,
@@ -467,6 +506,9 @@ fn caller_connection_options(
     }
 }
 
+/// Drain connection outputs: send UDP packets, set/cancel timers.
+///
+/// 排空连接输出：发送 UDP 包、设置/取消定时器。
 async fn drain_slot_outputs(
     socket: &tokio::net::UdpSocket,
     event_tx: &mpsc::Sender<SrtDriverEvent>,
@@ -509,6 +551,9 @@ async fn drain_slot_outputs(
     let _ = start;
 }
 
+/// Drain connection events and emit them as `SrtDriverEvent`.
+///
+/// 排空连接事件并作为 `SrtDriverEvent` 发出。
 async fn drain_slot_events(
     event_tx: &mpsc::Sender<SrtDriverEvent>,
     slot: &mut ConnectionSlot,
@@ -568,6 +613,9 @@ async fn drain_slot_events(
     disconnected
 }
 
+/// Find the earliest timer/stats/connect/idle deadline among all peers.
+///
+/// 查找所有对端中最早的定时器/统计/连接/空闲截止时刻。
 fn nearest_deadline(
     by_peer: &HashMap<SrtPeerId, ConnectionSlot>,
     config: &SrtDriverConfig,
@@ -585,16 +633,25 @@ fn nearest_deadline(
         .min()
 }
 
+/// Compute the next stats emission deadline for a new slot.
+///
+/// 为新槽位计算下一个统计发送截止时刻。
 fn next_stats_deadline(config: &SrtDriverConfig) -> Option<Instant> {
     (config.stats_interval_ms > 0)
         .then(|| Instant::now() + Duration::from_millis(config.stats_interval_ms))
 }
 
+/// Compute the connection timeout deadline for a new slot.
+///
+/// 为新槽位计算连接超时截止时刻。
 fn connect_deadline(config: &SrtDriverConfig) -> Option<Instant> {
     (config.connect_timeout_ms > 0)
         .then(|| Instant::now() + Duration::from_millis(config.connect_timeout_ms))
 }
 
+/// Emit stats for peers whose stats deadline has passed.
+///
+/// 为统计截止时刻已到的对端发出统计事件。
 async fn emit_due_stats(
     event_tx: &mpsc::Sender<SrtDriverEvent>,
     by_peer: &mut HashMap<SrtPeerId, ConnectionSlot>,
@@ -621,6 +678,9 @@ async fn emit_due_stats(
     }
 }
 
+/// Pull latest sender/receiver stats from the connection into the slot.
+///
+/// 从连接中提取最新发送/接收统计到槽位。
 fn refresh_slot_stats(slot: &mut ConnectionSlot) {
     if let Some(sender) = slot.connection.sender_stats() {
         slot.stats.sender_packets_in_buffer = sender.packets_in_buffer;
@@ -643,11 +703,17 @@ fn refresh_slot_stats(slot: &mut ConnectionSlot) {
     }
 }
 
+/// Compute the idle timeout deadline for a slot.
+///
+/// 计算槽位的空闲超时截止时刻。
 fn idle_deadline(slot: &ConnectionSlot, config: &SrtDriverConfig) -> Option<Instant> {
     (config.idle_timeout_ms > 0)
         .then(|| slot.last_activity + Duration::from_millis(config.idle_timeout_ms))
 }
 
+/// Disconnect peers that have exceeded the idle timeout.
+///
+/// 断开超过空闲超时的对端。
 async fn disconnect_idle_slots(
     socket: &tokio::net::UdpSocket,
     event_tx: &mpsc::Sender<SrtDriverEvent>,
@@ -679,6 +745,9 @@ async fn disconnect_idle_slots(
     }
 }
 
+/// Disconnect peers that have exceeded the connect timeout.
+///
+/// 断开超过连接超时的对端。
 async fn disconnect_connect_timeouts(
     socket: &tokio::net::UdpSocket,
     event_tx: &mpsc::Sender<SrtDriverEvent>,
@@ -712,12 +781,18 @@ async fn disconnect_connect_timeouts(
     }
 }
 
+/// Sleep until the given deadline, or return immediately if None.
+///
+/// 睡到指定截止时刻，若为 None 则立即返回。
 async fn sleep_until_optional(deadline: Option<Instant>) {
     if let Some(deadline) = deadline {
         tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
     }
 }
 
+/// Convert elapsed runtime to an SRT `Timestamp`.
+///
+/// 将运行时间转换为 SRT `Timestamp`。
 fn timestamp(start: Instant) -> Timestamp {
     Timestamp::from_micros(start.elapsed().as_micros() as u64)
 }
