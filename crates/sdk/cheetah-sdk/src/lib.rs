@@ -1,3 +1,22 @@
+//! `cheetah-sdk` defines the module contract and runtime-neutral APIs used by
+//! feature modules and the engine.
+//!
+//! Core concepts:
+//! - `Module` / `ModuleFactory`: module lifecycle and registration.
+//! - `EngineContext`: injected capability set (runtime, streams, tasks, config, services).
+//! - `StreamKey`, `PublisherApi`, `SubscriberApi`, `StreamManagerApi`: stream addressing and publishing/subscribing.
+//! - `EventBus`: publish/subscribe system events across modules.
+//! - `Config*` traits: schema, validation, application, and rollback of runtime config.
+//!
+//! `cheetah-sdk` 定义了特性模块和引擎使用的模块契约与运行时无关 API。
+//!
+//! 核心概念：
+//! - `Module` / `ModuleFactory`：模块生命周期与注册。
+//! - `EngineContext`：注入的能力集（运行时、流、任务、配置、服务）。
+//! - `StreamKey`、`PublisherApi`、`SubscriberApi`、`StreamManagerApi`：流寻址与发布/订阅。
+//! - `EventBus`：跨模块发布/订阅系统事件。
+//! - `Config*` trait：运行时配置的 schema、校验、应用与回滚。
+
 pub mod config;
 pub mod error;
 pub mod event;
