@@ -1,43 +1,54 @@
-//! AMF0/AMF3 的 Property-Based Testing
+//! Property-based round-trip tests for the AMF0/AMF3 encoders.
 //!
-//! 进行 AMF 编码/解码的 roundtrip 测试。
+//! These tests generate random `Amf0Value`, `Amf3Value`, and `AmfValue` trees and
+//! assert that encode -> decode preserves the original value. Special care is taken
+//! for NaN, which cannot be compared with `==` and is skipped for aggregate
+//! round-trips, but is tested explicitly for bit-level preservation.
+//!
+//! AMF0/AMF3 编码器的属性测试往返测试。
+//!
+//! 这些测试生成随机 `Amf0Value`、`Amf3Value` 与 `AmfValue` 树，并断言 encode -> decode 保留原始值。
+//! 对于 NaN 会特别处理：它无法使用 `==` 比较，因此在聚合往返中跳过，但会单独测试其位级保持。
 
 use cheetah_rtmp_core::{Amf0Value, Amf3Value, AmfValue, AmfVersion, Pair};
 use proptest::collection::vec;
 use proptest::prelude::*;
 
 // =============================================================================
-// AMF0 Arbitrary 值生成策略
+// AMF0 arbitrary value strategies
 // =============================================================================
 
-/// 生成 AMF0 String 的策略（有长度限制）
+/// Generate an arbitrary AMF0 string of limited length.
+///
+/// 生成有限长度的任意 AMF0 字符串。
 fn arb_amf0_string() -> impl Strategy<Value = String> {
-    // AMF0 通常字符串最多 0xFFFF (65535) 字节
     prop::collection::vec(prop::char::any(), 0..100).prop_map(|chars| chars.into_iter().collect())
 }
 
-/// 生成 AMF0 Number 的策略（仅有效 f64）
+/// Generate an AMF0 number, including infinities, zeros, and NaN.
+///
+/// 生成 AMF0 数字，包括无穷大、零和 NaN。
 fn arb_amf0_number() -> impl Strategy<Value = f64> {
     prop_oneof![
-        // 通常的有限数值
         prop::num::f64::NORMAL,
-        // 特殊值
         Just(0.0),
         Just(-0.0),
         Just(f64::INFINITY),
         Just(f64::NEG_INFINITY),
-        // NaN 无法在 roundtrip 中比较，但编码/解码本身是可行的
         Just(f64::NAN),
     ]
 }
 
-/// 生成 AMF0 Date 用的 i64 (unix_time_ms) 的策略
+/// Generate an i64 timestamp safe for AMF0 Date round-trips.
+///
+/// 生成适合 AMF0 Date 往返的 i64 时间戳。
 fn arb_amf0_date() -> impl Strategy<Value = i64> {
-    // 与 f64 往返转换安全的有限范围
     -253402300799999i64..=253402300799999i64
 }
 
-/// 生成 AMF0 叶值（无递归）的策略
+/// Generate a leaf `Amf0Value` (no recursion).
+///
+/// 生成无递归的 `Amf0Value` 叶值。
 fn arb_amf0_leaf() -> impl Strategy<Value = Amf0Value> {
     prop_oneof![
         arb_amf0_number().prop_map(Amf0Value::Number),
@@ -50,84 +61,92 @@ fn arb_amf0_leaf() -> impl Strategy<Value = Amf0Value> {
     ]
 }
 
-/// 生成 AMF0 值的策略（有递归、带深度限制）
+/// Generate an arbitrary recursive `Amf0Value` with bounded depth and width.
+///
+/// 生成有界深度与宽度的任意递归 `Amf0Value`。
 fn arb_amf0_value() -> impl Strategy<Value = Amf0Value> {
-    arb_amf0_leaf().prop_recursive(
-        3,  // 最大深度
-        64, // 最大节点数
-        10, // 每层最大元素数
-        |inner| {
-            prop_oneof![
-                // Object (匿名)
-                vec((arb_amf0_string(), inner.clone()), 0..5).prop_map(|entries| {
+    arb_amf0_leaf().prop_recursive(3, 64, 10, |inner| {
+        prop_oneof![
+            vec((arb_amf0_string(), inner.clone()), 0..5).prop_map(|entries| {
+                Amf0Value::Object {
+                    class_name: None,
+                    entries: entries
+                        .into_iter()
+                        .map(|(key, value)| Pair { key, value })
+                        .collect(),
+                }
+            }),
+            (
+                arb_amf0_string(),
+                vec((arb_amf0_string(), inner.clone()), 0..5)
+            )
+                .prop_map(|(class_name, entries)| {
                     Amf0Value::Object {
-                        class_name: None,
+                        class_name: Some(class_name),
                         entries: entries
                             .into_iter()
                             .map(|(key, value)| Pair { key, value })
                             .collect(),
                     }
                 }),
-                // Object (具名)
-                (
-                    arb_amf0_string(),
-                    vec((arb_amf0_string(), inner.clone()), 0..5)
-                )
-                    .prop_map(|(class_name, entries)| {
-                        Amf0Value::Object {
-                            class_name: Some(class_name),
-                            entries: entries
-                                .into_iter()
-                                .map(|(key, value)| Pair { key, value })
-                                .collect(),
-                        }
-                    }),
-                // EcmaArray
-                vec((arb_amf0_string(), inner.clone()), 0..5).prop_map(|entries| {
-                    Amf0Value::EcmaArray {
-                        entries: entries
-                            .into_iter()
-                            .map(|(key, value)| Pair { key, value })
-                            .collect(),
-                    }
-                }),
-                // StrictArray
-                vec(inner, 0..5).prop_map(|entries| Amf0Value::Array { entries }),
-            ]
-        },
-    )
+            vec((arb_amf0_string(), inner.clone()), 0..5).prop_map(|entries| {
+                Amf0Value::EcmaArray {
+                    entries: entries
+                        .into_iter()
+                        .map(|(key, value)| Pair { key, value })
+                        .collect(),
+                }
+            }),
+            vec(inner, 0..5).prop_map(|entries| Amf0Value::Array { entries }),
+        ]
+    })
 }
 
 // =============================================================================
-// AMF3 Arbitrary 值生成策略
+// AMF3 arbitrary value strategies
 // =============================================================================
 
-/// 生成 AMF3 Integer 的策略（i29 范围）
+/// Generate an AMF3 integer in the valid i29 range.
+///
+/// 在有效 i29 范围内生成 AMF3 整数。
 fn arb_amf3_integer() -> impl Strategy<Value = i32> {
-    // AMF3 Integer 是 29-bit signed: -268435456 to 268435455
     -268435456i32..=268435455i32
 }
 
-/// 生成 AMF3 String 的策略
+/// Generate an arbitrary AMF3 string.
+///
+/// 生成任意 AMF3 字符串。
 fn arb_amf3_string() -> impl Strategy<Value = String> {
     prop::collection::vec(prop::char::any(), 0..100).prop_map(|chars| chars.into_iter().collect())
 }
 
-/// 生成可用作 AMF3 对象键的 String 的策略
-/// （AMF3 中空字符串被用作终止符，因此不能作为键使用）
+/// Generate a non-empty string usable as an AMF3 object key.
+///
+/// Empty strings are used as terminators in AMF3 arrays, so keys must be non-empty.
+///
+/// 生成可用作 AMF3 对象键的非空字符串。
+///
+/// AMF3 数组使用空字符串作为终止符，因此键必须非空。
 fn arb_amf3_key() -> impl Strategy<Value = String> {
     prop::collection::vec(prop::char::any(), 1..50).prop_map(|chars| chars.into_iter().collect())
 }
 
-/// 生成可用作 AMF3 ObjectVector 类名的 String 的策略
-/// （AMF3 中 "*" 意味着"任意类型"，因此不能作为类名使用）
+/// Generate a string usable as an AMF3 ObjectVector class name.
+///
+/// "*" is reserved for "any type" and cannot be used as a class name.
+///
+/// 生成可用作 AMF3 ObjectVector 类名的字符串。
+///
+/// "*" 保留为"任意类型"，不能用作类名。
 fn arb_amf3_class_name() -> impl Strategy<Value = String> {
     prop::collection::vec(prop::char::any(), 1..50)
         .prop_map(|chars| chars.into_iter().collect())
         .prop_filter("not asterisk", |s| s != "*")
 }
 
-/// 生成 AMF3 Double 的策略
+/// Generate an AMF3 double, including infinities, zeros, and NaN.
+///
+/// 生成 AMF3 double，包括无穷大、零和 NaN。
 fn arb_amf3_double() -> impl Strategy<Value = f64> {
     prop_oneof![
         prop::num::f64::NORMAL,
@@ -139,12 +158,16 @@ fn arb_amf3_double() -> impl Strategy<Value = f64> {
     ]
 }
 
-/// 生成 AMF3 Date 用的 i64 (unix_time_ms) 的策略
+/// Generate an i64 timestamp safe for AMF3 Date round-trips.
+///
+/// 生成适合 AMF3 Date 往返的 i64 时间戳。
 fn arb_amf3_date() -> impl Strategy<Value = i64> {
     -253402300799999i64..=253402300799999i64
 }
 
-/// 生成 AMF3 叶值（无递归）的策略
+/// Generate a leaf `Amf3Value` (no recursion).
+///
+/// 生成无递归的 `Amf3Value` 叶值。
 fn arb_amf3_leaf() -> impl Strategy<Value = Amf3Value> {
     prop_oneof![
         Just(Amf3Value::Undefined),
@@ -157,107 +180,97 @@ fn arb_amf3_leaf() -> impl Strategy<Value = Amf3Value> {
         arb_amf3_date().prop_map(|unix_time_ms| Amf3Value::Date { unix_time_ms }),
         arb_amf3_string().prop_map(Amf3Value::Xml),
         vec(any::<u8>(), 0..100).prop_map(Amf3Value::ByteArray),
-        // IntVector
         (any::<bool>(), vec(any::<i32>(), 0..10))
             .prop_map(|(is_fixed, entries)| Amf3Value::IntVector { is_fixed, entries }),
-        // UintVector
         (any::<bool>(), vec(any::<u32>(), 0..10))
             .prop_map(|(is_fixed, entries)| Amf3Value::UintVector { is_fixed, entries }),
-        // DoubleVector
         (any::<bool>(), vec(arb_amf3_double(), 0..10))
             .prop_map(|(is_fixed, entries)| Amf3Value::DoubleVector { is_fixed, entries }),
     ]
 }
 
-/// 生成 AMF3 值的策略（有递归、带深度限制）
+/// Generate an arbitrary recursive `Amf3Value` with bounded depth and width.
+///
+/// 生成有界深度与宽度的任意递归 `Amf3Value`。
 fn arb_amf3_value() -> impl Strategy<Value = Amf3Value> {
-    arb_amf3_leaf().prop_recursive(
-        3,  // 最大深度
-        64, // 最大节点数
-        10, // 每层最大元素数
-        |inner| {
-            prop_oneof![
-                // Array (assoc 键不可为空字符串)
-                (
-                    vec((arb_amf3_key(), inner.clone()), 0..3),
-                    vec(inner.clone(), 0..5)
-                )
-                    .prop_map(|(assoc_entries, dense_entries)| {
-                        Amf3Value::Array {
-                            assoc_entries: assoc_entries
-                                .into_iter()
-                                .map(|(key, value)| Pair { key, value })
-                                .collect(),
-                            dense_entries,
-                        }
-                    }),
-                // Object (匿名、dynamic) - 键不可为空字符串
-                vec((arb_amf3_key(), inner.clone()), 0..5).prop_map(|entries| {
-                    Amf3Value::Object {
-                        class_name: None,
-                        sealed_count: 0,
-                        entries: entries
+    arb_amf3_leaf().prop_recursive(3, 64, 10, |inner| {
+        prop_oneof![
+            (
+                vec((arb_amf3_key(), inner.clone()), 0..3),
+                vec(inner.clone(), 0..5)
+            )
+                .prop_map(|(assoc_entries, dense_entries)| {
+                    Amf3Value::Array {
+                        assoc_entries: assoc_entries
                             .into_iter()
                             .map(|(key, value)| Pair { key, value })
                             .collect(),
+                        dense_entries,
                     }
                 }),
-                // Object (具名、sealed + dynamic) - 键不可为空字符串
-                (arb_amf3_key(), vec((arb_amf3_key(), inner.clone()), 0..5)).prop_map(
-                    |(class_name, entries)| {
-                        let entries: Vec<_> = entries
-                            .into_iter()
-                            .map(|(key, value)| Pair { key, value })
-                            .collect();
-                        let sealed_count = entries.len() / 2;
-                        Amf3Value::Object {
-                            class_name: Some(class_name),
-                            sealed_count,
-                            entries,
-                        }
+            vec((arb_amf3_key(), inner.clone()), 0..5).prop_map(|entries| {
+                Amf3Value::Object {
+                    class_name: None,
+                    sealed_count: 0,
+                    entries: entries
+                        .into_iter()
+                        .map(|(key, value)| Pair { key, value })
+                        .collect(),
+                }
+            }),
+            (arb_amf3_key(), vec((arb_amf3_key(), inner.clone()), 0..5)).prop_map(
+                |(class_name, entries)| {
+                    let entries: Vec<_> = entries
+                        .into_iter()
+                        .map(|(key, value)| Pair { key, value })
+                        .collect();
+                    let sealed_count = entries.len() / 2;
+                    Amf3Value::Object {
+                        class_name: Some(class_name),
+                        sealed_count,
+                        entries,
                     }
-                ),
-                // ObjectVector (class_name "*" 意味着"任意类型"，因此不可使用)
-                (
-                    prop::option::of(arb_amf3_class_name()),
-                    any::<bool>(),
-                    vec(inner.clone(), 0..5)
-                )
-                    .prop_map(|(class_name, is_fixed, entries)| {
-                        Amf3Value::ObjectVector {
-                            class_name,
-                            is_fixed,
-                            entries,
-                        }
-                    }),
-                // Dictionary
-                (any::<bool>(), vec((inner.clone(), inner), 0..5)).prop_map(
-                    |(is_weak, entries)| {
-                        Amf3Value::Dictionary {
-                            is_weak,
-                            entries: entries
-                                .into_iter()
-                                .map(|(key, value)| Pair { key, value })
-                                .collect(),
-                        }
+                }
+            ),
+            (
+                prop::option::of(arb_amf3_class_name()),
+                any::<bool>(),
+                vec(inner.clone(), 0..5)
+            )
+                .prop_map(|(class_name, is_fixed, entries)| {
+                    Amf3Value::ObjectVector {
+                        class_name,
+                        is_fixed,
+                        entries,
                     }
-                ),
-            ]
-        },
-    )
+                }),
+            (any::<bool>(), vec((inner.clone(), inner), 0..5)).prop_map(|(is_weak, entries)| {
+                Amf3Value::Dictionary {
+                    is_weak,
+                    entries: entries
+                        .into_iter()
+                        .map(|(key, value)| Pair { key, value })
+                        .collect(),
+                }
+            }),
+        ]
+    })
 }
 
 // =============================================================================
-// AMF0 Proptest
+// AMF0 proptests
 // =============================================================================
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1000))]
 
-    /// AMF0 值的 roundtrip 测试: encode → decode → 与原值一致
+    /// Verify round-trip for arbitrary AMF0 values.
+    ///
+    /// Values containing NaN are skipped because NaN does not compare equal.
+    ///
+    /// 校验任意 AMF0 值的往返。包含 NaN 的值会被跳过，因为 NaN 不相等。
     #[test]
     fn amf0_roundtrip(value in arb_amf0_value()) {
-        // 包含 NaN 的值无法比较，因此跳过
         if contains_nan_amf0(&value) {
             return Ok(());
         }
@@ -272,7 +285,9 @@ proptest! {
         prop_assert_eq!(decoded_value, value, "roundtrip value mismatch");
     }
 
-    /// AMF0 Number 的特殊值测试
+    /// Verify special AMF0 number values, including NaN bit preservation.
+    ///
+    /// 校验特殊 AMF0 数字值，包括 NaN 的位保持。
     #[test]
     fn amf0_number_special_values(n in arb_amf0_number()) {
         let value = Amf0Value::Number(n);
@@ -295,14 +310,16 @@ proptest! {
         }
     }
 
-    /// AMF0 String 的边界值测试（短字符串和长字符串）
+    /// Verify AMF0 string round-trip at the short-string / long-string boundary.
+    ///
+    /// 在校短字符串与长字符串边界处校验 AMF0 字符串往返。
     #[test]
     fn amf0_string_boundary(len in prop_oneof![
         Just(0usize),
         Just(1usize),
         Just(0xFFFEusize),
         Just(0xFFFFusize),
-        Just(0x10000usize),  // LongString 边界
+        Just(0x10000usize),
         Just(0x10001usize),
     ]) {
         let s: String = (0..len).map(|_| 'a').collect();
@@ -322,7 +339,9 @@ proptest! {
         }
     }
 
-    /// AMF0 Date 的 roundtrip 测试
+    /// Verify AMF0 Date round-trip.
+    ///
+    /// 校验 AMF0 Date 往返。
     #[test]
     fn amf0_date_roundtrip(unix_time_ms in arb_amf0_date()) {
         let value = Amf0Value::Date { unix_time_ms };
@@ -343,16 +362,19 @@ proptest! {
 }
 
 // =============================================================================
-// AMF3 Proptest
+// AMF3 proptests
 // =============================================================================
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1000))]
 
-    /// AMF3 值的 roundtrip 测试: encode → decode → 与原值一致
+    /// Verify round-trip for arbitrary AMF3 values.
+    ///
+    /// Values containing NaN are skipped because NaN does not compare equal.
+    ///
+    /// 校验任意 AMF3 值的往返。包含 NaN 的值会被跳过，因为 NaN 不相等。
     #[test]
     fn amf3_roundtrip(value in arb_amf3_value()) {
-        // 包含 NaN 的值无法比较，因此跳过
         if contains_nan_amf3(&value) {
             return Ok(());
         }
@@ -367,22 +389,21 @@ proptest! {
         prop_assert_eq!(decoded_value, value, "roundtrip value mismatch");
     }
 
-    /// AMF3 Integer 的边界值测试（U29 编码）
+    /// Verify AMF3 integer encoding at U29 boundary values.
+    ///
+    /// 校验 AMF3 整数在 U29 边界值上的编码。
     #[test]
     fn amf3_integer_boundary(n in prop_oneof![
-            // 正的边界值
         Just(0i32),
-        Just(0x7Fi32),       // 1 字节上限
+        Just(0x7Fi32),
         Just(0x80i32),
-        Just(0x3FFFi32),     // 2 字节上限
+        Just(0x3FFFi32),
         Just(0x4000i32),
-        Just(0x1FFFFFi32),   // 3 字节上限
+        Just(0x1FFFFFi32),
         Just(0x200000i32),
-            Just(268435455i32),  // i29 最大值
-
-            // 负的边界值
+        Just(268435455i32),
         Just(-1i32),
-            Just(-268435456i32), // i29 最小值
+        Just(-268435456i32),
     ]) {
         let value = Amf3Value::Integer(n);
 
@@ -400,7 +421,9 @@ proptest! {
         }
     }
 
-    /// AMF3 Integer 的完整范围测试
+    /// Verify AMF3 integer round-trip across the entire i29 range.
+    ///
+    /// 校验整个 i29 范围内的 AMF3 整数往返。
     #[test]
     fn amf3_integer_full_range(n in arb_amf3_integer()) {
         let value = Amf3Value::Integer(n);
@@ -419,7 +442,9 @@ proptest! {
         }
     }
 
-    /// AMF3 Double 的特殊值测试
+    /// Verify special AMF3 double values, including NaN bit preservation.
+    ///
+    /// 校验特殊 AMF3 double 值，包括 NaN 的位保持。
     #[test]
     fn amf3_double_special_values(n in arb_amf3_double()) {
         let value = Amf3Value::Double(n);
@@ -442,7 +467,9 @@ proptest! {
         }
     }
 
-    /// AMF3 ByteArray 的 roundtrip 测试
+    /// Verify AMF3 `ByteArray` round-trip.
+    ///
+    /// 校验 AMF3 `ByteArray` 往返。
     #[test]
     fn amf3_byte_array_roundtrip(data in vec(any::<u8>(), 0..1000)) {
         let value = Amf3Value::ByteArray(data.clone());
@@ -461,7 +488,9 @@ proptest! {
         }
     }
 
-    /// AMF3 Vector 系列的 roundtrip 测试
+    /// Verify AMF3 `Vector.<int>` round-trip.
+    ///
+    /// 校验 AMF3 `Vector.<int>` 往返。
     #[test]
     fn amf3_int_vector_roundtrip(is_fixed in any::<bool>(), entries in vec(any::<i32>(), 0..100)) {
         let value = Amf3Value::IntVector { is_fixed, entries: entries.clone() };
@@ -481,7 +510,9 @@ proptest! {
         }
     }
 
-    /// AMF3 Date 的 roundtrip 测试
+    /// Verify AMF3 `Date` round-trip.
+    ///
+    /// 校验 AMF3 `Date` 往返。
     #[test]
     fn amf3_date_roundtrip(unix_time_ms in arb_amf3_date()) {
         let value = Amf3Value::Date { unix_time_ms };
@@ -502,13 +533,15 @@ proptest! {
 }
 
 // =============================================================================
-// AmfValue Proptest
+// `AmfValue` proptests
 // =============================================================================
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
 
-    /// AmfValue (AMF0) 的 roundtrip 测试
+    /// Verify `AmfValue` (AMF0) round-trip.
+    ///
+    /// 校验 `AmfValue`（AMF0）往返。
     #[test]
     fn amf_value_amf0_roundtrip(value in arb_amf0_value()) {
         if contains_nan_amf0(&value) {
@@ -527,7 +560,9 @@ proptest! {
         prop_assert_eq!(decoded_value, amf_value);
     }
 
-    /// AmfValue (AMF3) 的 roundtrip 测试
+    /// Verify `AmfValue` (AMF3) round-trip.
+    ///
+    /// 校验 `AmfValue`（AMF3）往返。
     #[test]
     fn amf_value_amf3_roundtrip(value in arb_amf3_value()) {
         if contains_nan_amf3(&value) {
@@ -548,42 +583,38 @@ proptest! {
 }
 
 // =============================================================================
-// 基于 AMF 规范的边界值测试
+// AMF specification boundary tests
 // =============================================================================
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
 
     // -------------------------------------------------------------------------
-    // AMF0 规范 Section 2: Type Markers 的测试
+    // AMF0 specification Section 2: type markers
     // -------------------------------------------------------------------------
 
-    /// AMF0 规范 Section 2.2: Number Type
-    /// IEEE-754 double precision floating point (8 bytes)
+    /// Verify AMF0 Number encoding follows the IEEE-754 double layout.
+    ///
+    /// 校验 AMF0 Number 编码遵循 IEEE-754 double 布局。
     #[test]
     fn amf0_number_ieee754_compliance(
         n in prop_oneof![
-            // 规格化数
             Just(1.0f64),
             Just(-1.0f64),
             Just(f64::MIN),
             Just(f64::MAX),
             Just(f64::MIN_POSITIVE),
-            // 零
             Just(0.0f64),
             Just(-0.0f64),
-            // 无穷大
             Just(f64::INFINITY),
             Just(f64::NEG_INFINITY),
-            // 非规格化数
-            Just(5e-324f64),  // 接近最小正非规格化数的值
+            Just(5e-324f64),
         ]
     ) {
         let value = Amf0Value::Number(n);
         let mut encoded = Vec::new();
         value.encode(&mut encoded);
 
-        // Number: marker (1 byte) + DOUBLE (8 bytes) = 9 bytes
         prop_assert_eq!(encoded.len(), 9, "AMF0 Number should be 9 bytes");
         prop_assert_eq!(encoded[0], 0x00, "AMF0 Number marker should be 0x00");
 
@@ -593,18 +624,17 @@ proptest! {
         }
     }
 
-    /// AMF0 规范 Section 2.3: Boolean Type
-    /// marker (1 byte) + U8 (1 byte)
+    /// Verify AMF0 Boolean encoding size and marker.
+    ///
+    /// 校验 AMF0 Boolean 编码大小与标记。
     #[test]
     fn amf0_boolean_encoding(b in any::<bool>()) {
         let value = Amf0Value::Boolean(b);
         let mut encoded = Vec::new();
         value.encode(&mut encoded);
 
-        // Boolean: marker (1 byte) + value (1 byte) = 2 bytes
         prop_assert_eq!(encoded.len(), 2, "AMF0 Boolean should be 2 bytes");
         prop_assert_eq!(encoded[0], 0x01, "AMF0 Boolean marker should be 0x01");
-        // 规范: 0 is false, <> 0 is true
         if b {
             prop_assert_ne!(encoded[1], 0, "true should be non-zero");
         } else {
@@ -615,9 +645,9 @@ proptest! {
         prop_assert_eq!(decoded, value);
     }
 
-    /// AMF0 规范 Section 2.4/2.14: String/LongString Type
-    /// String: marker + U16 length + UTF-8 chars (最大 65535 字节)
-    /// LongString: marker + U32 length + UTF-8 chars (最大 4GB)
+    /// Verify AMF0 String/LongString size and marker.
+    ///
+    /// 校验 AMF0 String/LongString 大小与标记。
     #[test]
     fn amf0_string_encoding_size(len in 0usize..=100usize) {
         let s: String = (0..len).map(|_| 'a').collect();
@@ -626,11 +656,9 @@ proptest! {
         value.encode(&mut encoded);
 
         if len <= 0xFFFF {
-            // String: marker (1) + U16 length (2) + chars
             prop_assert_eq!(encoded[0], 0x02, "String marker should be 0x02");
             prop_assert_eq!(encoded.len(), 1 + 2 + len);
         } else {
-            // LongString: marker (1) + U32 length (4) + chars
             prop_assert_eq!(encoded[0], 0x0C, "LongString marker should be 0x0C");
             prop_assert_eq!(encoded.len(), 1 + 4 + len);
         }
@@ -641,8 +669,9 @@ proptest! {
         }
     }
 
-    /// AMF0 规范 Section 2.7: null Type
-    /// marker only (1 byte)
+    /// Verify AMF0 Null encoding size and marker.
+    ///
+    /// 校验 AMF0 Null 编码大小与标记。
     #[test]
     fn amf0_null_encoding(_dummy in Just(())) {
         let value = Amf0Value::Null;
@@ -656,8 +685,9 @@ proptest! {
         prop_assert_eq!(decoded, value);
     }
 
-    /// AMF0 规范 Section 2.8: undefined Type
-    /// marker only (1 byte)
+    /// Verify AMF0 Undefined encoding size and marker.
+    ///
+    /// 校验 AMF0 Undefined 编码大小与标记。
     #[test]
     fn amf0_undefined_encoding(_dummy in Just(())) {
         let value = Amf0Value::Undefined;
@@ -671,8 +701,9 @@ proptest! {
         prop_assert_eq!(decoded, value);
     }
 
-    /// AMF0 规范 Section 2.13: Date Type
-    /// marker (1) + DOUBLE (8) + S16 timezone (2) = 11 bytes
+    /// Verify AMF0 Date encoding size and marker.
+    ///
+    /// 校验 AMF0 Date 编码大小与标记。
     #[test]
     fn amf0_date_encoding(unix_time_ms in arb_amf0_date()) {
         let value = Amf0Value::Date { unix_time_ms };
@@ -687,34 +718,29 @@ proptest! {
     }
 
     // -------------------------------------------------------------------------
-    // AMF3 规范 Section 1.3.1: U29 Variable Length Integer 的测试
+    // AMF3 specification Section 1.3.1: U29 variable-length integer
     // -------------------------------------------------------------------------
 
-    /// AMF3 U29 编码的字节数边界测试
-    /// 规范: 0x00-0x7F (1 byte), 0x80-0x3FFF (2 bytes),
-    ///       0x4000-0x1FFFFF (3 bytes), 0x200000-0x3FFFFFFF (4 bytes)
+    /// Verify AMF3 U29 integer encoding size at boundary values.
+    ///
+    /// 校验 AMF3 U29 整数在边界值上的编码大小。
     #[test]
     fn amf3_u29_encoding_size(
         (n, expected_extra_bytes) in prop_oneof![
-            // 1 byte encoding: 0x00 - 0x7F
             Just((0i32, 1)),
             Just((0x7Fi32, 1)),
-            // 2 byte encoding: 0x80 - 0x3FFF
             Just((0x80i32, 2)),
             Just((0x3FFFi32, 2)),
-            // 3 byte encoding: 0x4000 - 0x1FFFFF
             Just((0x4000i32, 3)),
             Just((0x1FFFFFi32, 3)),
-            // 4 byte encoding: 0x200000 - 0x0FFFFFFF (i29 max positive)
             Just((0x200000i32, 4)),
-            Just((268435455i32, 4)),  // 0x0FFFFFFF
+            Just((268435455i32, 4)),
         ]
     ) {
         let value = Amf3Value::Integer(n);
         let mut encoded = Vec::new();
         value.encode(&mut encoded);
 
-        // Integer: marker (1) + U29 (variable)
         let expected_size = 1 + expected_extra_bytes;
         prop_assert_eq!(encoded.len(), expected_size,
             "AMF3 Integer {} should be {} bytes", n, expected_size);
@@ -724,8 +750,9 @@ proptest! {
         prop_assert_eq!(decoded, value);
     }
 
-    /// AMF3 规范 Section 3.4/3.5: Boolean Types (true/false)
-    /// 仅有独立的标记 (1 byte each)
+    /// Verify AMF3 Boolean markers.
+    ///
+    /// 校验 AMF3 Boolean 标记。
     #[test]
     fn amf3_boolean_encoding(b in any::<bool>()) {
         let value = Amf3Value::Boolean(b);
@@ -743,7 +770,9 @@ proptest! {
         prop_assert_eq!(decoded, value);
     }
 
-    /// AMF3 规范 Section 3.2/3.3: undefined/null Types
+    /// Verify AMF3 Null/Undefined markers.
+    ///
+    /// 校验 AMF3 Null/Undefined 标记。
     #[test]
     fn amf3_undefined_null_encoding(is_null in any::<bool>()) {
         let value = if is_null { Amf3Value::Null } else { Amf3Value::Undefined };
@@ -761,8 +790,9 @@ proptest! {
         prop_assert_eq!(decoded, value);
     }
 
-    /// AMF3 规范 Section 3.7: Double Type
-    /// marker (1) + IEEE-754 double (8) = 9 bytes
+    /// Verify AMF3 Double encoding size and marker.
+    ///
+    /// 校验 AMF3 Double 编码大小与标记。
     #[test]
     fn amf3_double_encoding(
         n in prop_oneof![
@@ -789,8 +819,9 @@ proptest! {
         }
     }
 
-    /// AMF3 规范 Section 3.14: ByteArray Type
-    /// marker (1) + U29B-value + data
+    /// Verify AMF3 ByteArray marker and round-trip.
+    ///
+    /// 校验 AMF3 ByteArray 标记与往返。
     #[test]
     fn amf3_byte_array_encoding(data in vec(any::<u8>(), 0..50)) {
         let value = Amf3Value::ByteArray(data.clone());
@@ -806,10 +837,12 @@ proptest! {
     }
 
     // -------------------------------------------------------------------------
-    // AMF3 规范 Section 3.15: Vector Types 的测试
+    // AMF3 specification Section 3.15: Vector types
     // -------------------------------------------------------------------------
 
-    /// AMF3 Vector.<int> 测试
+    /// Verify `Vector.<int>` encoding and decoding.
+    ///
+    /// 校验 `Vector.<int>` 编码与解码。
     #[test]
     fn amf3_int_vector_encoding(is_fixed in any::<bool>(), entries in vec(any::<i32>(), 0..20)) {
         let value = Amf3Value::IntVector { is_fixed, entries: entries.clone() };
@@ -825,7 +858,9 @@ proptest! {
         }
     }
 
-    /// AMF3 Vector.<uint> 测试
+    /// Verify `Vector.<uint>` encoding and decoding.
+    ///
+    /// 校验 `Vector.<uint>` 编码与解码。
     #[test]
     fn amf3_uint_vector_encoding(is_fixed in any::<bool>(), entries in vec(any::<u32>(), 0..20)) {
         let value = Amf3Value::UintVector { is_fixed, entries: entries.clone() };
@@ -841,7 +876,9 @@ proptest! {
         }
     }
 
-    /// AMF3 Vector.<Number> 测试 (排除 NaN)
+    /// Verify `Vector.<Number>` encoding and decoding (excluding NaN for comparison).
+    ///
+    /// 校验 `Vector.<Number>` 编码与解码（为比较排除 NaN）。
     #[test]
     fn amf3_double_vector_encoding(
         is_fixed in any::<bool>(),
@@ -861,13 +898,14 @@ proptest! {
     }
 
     // -------------------------------------------------------------------------
-    // AMF3 规范 Section 3.16: Dictionary Type 的测试
+    // AMF3 specification Section 3.16: Dictionary type
     // -------------------------------------------------------------------------
 
-    /// AMF3 Dictionary 测试
+    /// Verify AMF3 Dictionary encoding and decoding.
+    ///
+    /// 校验 AMF3 Dictionary 编码与解码。
     #[test]
     fn amf3_dictionary_encoding(is_weak in any::<bool>()) {
-        // 简单的 Dictionary (键值对)
         let entries = vec![
             Pair {
                 key: Amf3Value::String("key1".to_string()),
@@ -893,10 +931,12 @@ proptest! {
 }
 
 // =============================================================================
-// 辅助函数
+// NaN helpers
 // =============================================================================
 
-/// 检查 AMF0 值是否包含 NaN
+/// Recursively check whether an `Amf0Value` contains a NaN float.
+///
+/// 递归检查 `Amf0Value` 是否包含 NaN 浮点数。
 fn contains_nan_amf0(value: &Amf0Value) -> bool {
     match value {
         Amf0Value::Number(n) => n.is_nan(),
@@ -908,7 +948,9 @@ fn contains_nan_amf0(value: &Amf0Value) -> bool {
     }
 }
 
-/// 检查 AMF3 值是否包含 NaN
+/// Recursively check whether an `Amf3Value` contains a NaN double.
+///
+/// 递归检查 `Amf3Value` 是否包含 NaN double。
 fn contains_nan_amf3(value: &Amf3Value) -> bool {
     match value {
         Amf3Value::Double(n) => n.is_nan(),

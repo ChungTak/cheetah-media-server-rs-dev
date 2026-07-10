@@ -1,3 +1,15 @@
+//! Capture fixture replay tests for `RtmpCore`.
+//!
+//! These tests load real RTMP byte captures (recorded from pcap files) and feed
+//! them into the Sans-I/O `RtmpCore` state machine under various transport views.
+//! The goal is to verify that the core remains bounded and that standard publish
+//! captures still connect, publish, and emit monotonic media timestamps.
+//!
+//! `RtmpCore` 的抓包 fixture 回放测试。
+//!
+//! 这些测试加载真实的 RTMP 字节捕获（从 pcap 文件记录），并在不同传输视图下喂入 Sans-I/O 状态机 `RtmpCore`。
+//! 目标是校验 core 在传输层被扰动时仍然保持有界，并且标准发布捕获仍能保持连接、发布以及单调媒体时间戳。
+
 #[path = "support/capture_fixture.rs"]
 mod capture_fixture;
 
@@ -15,6 +27,14 @@ use proptest::test_runner::TestCaseError;
 
 const MANIFEST: &str = include_str!("testdata/rtmp-capture/manifest.tsv");
 
+/// Summary of a replayed capture session.
+///
+/// Used to assert the high-level outcomes after feeding a complete byte sequence
+/// (possibly mutated) into the core.
+///
+/// 回放捕获会话后的汇总。
+///
+/// 用于在将完整字节序列（可能被变换）喂入 core 后断言高级结果。
 #[derive(Debug, Default)]
 struct ReplaySummary {
     connected: bool,
@@ -23,8 +43,14 @@ struct ReplaySummary {
     timestamps_monotonic: bool,
 }
 
+/// Lazy-loaded committed capture fixtures shared across all property tests.
+///
+/// 所有属性测试共享的延迟加载已提交捕获 fixtures。
 static FIXTURES: OnceLock<Vec<CaptureFixture>> = OnceLock::new();
 
+/// Return the cached set of capture fixtures.
+///
+/// 返回缓存的捕获 fixture 集合。
 fn fixtures() -> &'static [CaptureFixture] {
     FIXTURES
         .get_or_init(|| {
@@ -38,6 +64,15 @@ fn fixtures() -> &'static [CaptureFixture] {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
+    /// Verify that every transport view produces a bounded input set and that the
+    /// replay either fails gracefully or preserves monotonic timestamps.
+    ///
+    /// For standard publish fixtures with pristine records, the replay must also
+    /// connect, request publish, and emit the expected minimum number of media events.
+    ///
+    /// 校验每种传输视图产生有界输入集，并且回放要么优雅失败，要么保持时间戳单调。
+    ///
+    /// 对于 pristine 记录的标准发布 fixture，回放还必须连接、请求发布并发出期望的最小媒体事件数。
     #[test]
     fn capture_transport_views_are_bounded(
         case_index in any::<usize>(),
@@ -99,6 +134,14 @@ proptest! {
     }
 }
 
+/// Verify that standard publish fixtures keep strong assertions under the
+/// pristine transport view.
+///
+/// This is a deterministic regression test in addition to the property test above.
+///
+/// 校验标准发布 fixture 在 pristine 传输视图下保持强断言。
+///
+/// 这是上述属性测试之外的一个确定性回归测试。
 #[test]
 fn standard_pristine_capture_fixtures_keep_strong_assertions() {
     for fixture in fixtures()
@@ -138,6 +181,14 @@ fn standard_pristine_capture_fixtures_keep_strong_assertions() {
     }
 }
 
+/// Replay a sequence of transport byte chunks through `RtmpCore` and return a summary.
+///
+/// The core handles handshakes, connect, and publish commands. When a publish is
+/// requested, the test accepts it so that media events can be emitted.
+///
+/// 通过 `RtmpCore` 回放传输字节块序列并返回汇总。
+///
+/// core 处理握手、连接和发布命令。当请求发布时，测试会接受它，以便发出媒体事件。
 fn replay_capture_inputs(inputs: Vec<Bytes>) -> Result<ReplaySummary, RtmpCoreError> {
     let mut core = RtmpCore::new();
     let mut summary = ReplaySummary {
@@ -165,6 +216,16 @@ fn replay_capture_inputs(inputs: Vec<Bytes>) -> Result<ReplaySummary, RtmpCoreEr
     Ok(summary)
 }
 
+/// Process `CoreOutput` events and update the replay summary.
+///
+/// Accepts the first `PublishRequested` event and recursively handles any outputs
+/// produced by `AcceptPublish`. Media timestamps are tracked per type to assert
+/// monotonicity.
+///
+/// 处理 `CoreOutput` 事件并更新回放汇总。
+///
+/// 接受第一个 `PublishRequested` 事件，并递归处理 `AcceptPublish` 产生的输出。
+/// 按类型跟踪媒体时间戳以断言单调性。
 fn handle_outputs(
     core: &mut RtmpCore,
     outputs: Vec<CoreOutput>,
@@ -221,6 +282,9 @@ fn handle_outputs(
     Ok(())
 }
 
+/// Update the per-type last timestamp and flag monotonicity violations.
+///
+/// 更新每类型的最近时间戳，并标记单调性违规。
 fn update_timestamp_monotonic(
     summary: &mut ReplaySummary,
     last: &mut Option<u32>,

@@ -1,4 +1,15 @@
-//! RTMP Chunk 的 Property-Based Testing
+//! Property-based round-trip tests for the RTMP chunk layer.
+//!
+//! RTMP chunks consist of a basic header (chunk stream id), a message header
+//! (timestamp, length, type, message stream id), and a payload. This module tests
+//! chunk encoding/decoding, extended timestamps, chunk stream id encoding sizes,
+//! and the incremental state maintained by the decoder across consecutive chunks.
+//!
+//! RTMP chunk 层的属性测试往返测试。
+//!
+//! RTMP chunk 由 basic header（chunk stream id）、message header（时间戳、长度、类型、
+//! message stream id）以及 payload 组成。本模块测试 chunk 编码/解码、扩展时间戳、chunk stream id
+//! 编码大小，以及解码器在相邻 chunk 之间维护的增量状态。
 
 use cheetah_rtmp_core::{
     RtmpChunk, RtmpChunkDecoder, RtmpChunkEncoder, RtmpChunkStreamId, RtmpMessageStreamId,
@@ -8,31 +19,39 @@ use proptest::prelude::*;
 
 use bytes::Bytes;
 
-/// 生成 RtmpChunkStreamId 有效范围 [2, 65599] 的值的 Strategy
+/// Generate a valid `RtmpChunkStreamId` across all encoding sizes.
+///
+/// Valid ids are 2..=65599. The basic header uses 1 byte for ids 2-63, 2 bytes for
+/// ids 64-319, and 3 bytes for ids 320-65599.
+///
+/// 生成覆盖所有编码大小的有效 `RtmpChunkStreamId`。
+///
+/// 有效 id 范围为 2..=65599。basic header 对 2-63 使用 1 字节，64-319 使用 2 字节，320-65599 使用 3 字节。
 fn arb_chunk_stream_id() -> impl Strategy<Value = RtmpChunkStreamId> {
     prop_oneof![
-        // 1 字节编码范围 (2-63)
         (2u32..=63).prop_map(|id| RtmpChunkStreamId::new(id).unwrap()),
-        // 2 字节编码范围 (64-319)
         (64u32..=319).prop_map(|id| RtmpChunkStreamId::new(id).unwrap()),
-        // 3 字节编码范围 (320-65599)
         (320u32..=65599).prop_map(|id| RtmpChunkStreamId::new(id).unwrap()),
     ]
 }
 
-/// 生成 RtmpChunkStreamId 边界值的 Strategy
+/// Generate boundary values of `RtmpChunkStreamId`.
+///
+/// 生成 `RtmpChunkStreamId` 的边界值。
 fn arb_chunk_stream_id_boundary() -> impl Strategy<Value = RtmpChunkStreamId> {
     prop_oneof![
-        Just(RtmpChunkStreamId::new(2).unwrap()),     // MIN
-        Just(RtmpChunkStreamId::new(63).unwrap()),    // 1 字节上限
-        Just(RtmpChunkStreamId::new(64).unwrap()),    // 2 字节下限
-        Just(RtmpChunkStreamId::new(319).unwrap()),   // 2 字节上限
-        Just(RtmpChunkStreamId::new(320).unwrap()),   // 3 字节下限
-        Just(RtmpChunkStreamId::new(65599).unwrap()), // MAX
+        Just(RtmpChunkStreamId::new(2).unwrap()),
+        Just(RtmpChunkStreamId::new(63).unwrap()),
+        Just(RtmpChunkStreamId::new(64).unwrap()),
+        Just(RtmpChunkStreamId::new(319).unwrap()),
+        Just(RtmpChunkStreamId::new(320).unwrap()),
+        Just(RtmpChunkStreamId::new(65599).unwrap()),
     ]
 }
 
-/// 生成 RtmpMessageType 的 Strategy
+/// Generate a `RtmpMessageType`.
+///
+/// 生成 `RtmpMessageType`。
 fn arb_message_type() -> impl Strategy<Value = RtmpMessageType> {
     prop_oneof![
         Just(RtmpMessageType::SetChunkSize),
@@ -50,28 +69,32 @@ fn arb_message_type() -> impl Strategy<Value = RtmpMessageType> {
     ]
 }
 
-/// 生成时间戳的 Strategy（毫秒单位）
+/// Generate a timestamp in milliseconds, with extra density around the extended threshold.
+///
+/// 生成毫秒时间戳，在扩展阈值附近增加密度。
 fn arb_timestamp() -> impl Strategy<Value = RtmpTimestamp> {
     prop_oneof![
-        // 通常时间戳 (0 - 0xFFFFFE)
         (0u32..=0xFFFFFE).prop_map(RtmpTimestamp::from_millis),
-        // 扩展时间戳边界附近
         (0xFFFFFFu32..=0x1FFFFFFu32).prop_map(RtmpTimestamp::from_millis),
     ]
 }
 
-/// 生成时间戳边界值的 Strategy
+/// Generate boundary timestamps around the 24-bit extended timestamp threshold.
+///
+/// 生成 24 位扩展时间戳阈值附近的边界时间戳。
 fn arb_timestamp_boundary() -> impl Strategy<Value = RtmpTimestamp> {
     prop_oneof![
         Just(RtmpTimestamp::ZERO),
-        Just(RtmpTimestamp::from_millis(0xFFFFFE)), // 扩展时间戳之前
-        Just(RtmpTimestamp::from_millis(0xFFFFFF)), // 扩展时间戳边界
-        Just(RtmpTimestamp::from_millis(0x1000000)), // 扩展时间戳
-        Just(RtmpTimestamp::from_millis(0x12345678)), // 较大的扩展时间戳
+        Just(RtmpTimestamp::from_millis(0xFFFFFE)),
+        Just(RtmpTimestamp::from_millis(0xFFFFFF)),
+        Just(RtmpTimestamp::from_millis(0x1000000)),
+        Just(RtmpTimestamp::from_millis(0x12345678)),
     ]
 }
 
-/// 生成载荷的 Strategy
+/// Generate a payload, including empty and common length buckets.
+///
+/// 生成 payload，包含空以及常见长度区间。
 fn arb_payload() -> impl Strategy<Value = Bytes> {
     prop_oneof![
         Just(Bytes::new()),
@@ -81,7 +104,9 @@ fn arb_payload() -> impl Strategy<Value = Bytes> {
     ]
 }
 
-/// 生成 RtmpChunk 的 Strategy
+/// Generate an arbitrary `RtmpChunk`.
+///
+/// 生成任意 `RtmpChunk`。
 fn arb_chunk() -> impl Strategy<Value = RtmpChunk> {
     (
         arb_chunk_stream_id(),
@@ -101,7 +126,9 @@ fn arb_chunk() -> impl Strategy<Value = RtmpChunk> {
         )
 }
 
-/// 侧重边界值的 RtmpChunk 生成 Strategy
+/// Generate a `RtmpChunk` biased toward boundary values.
+///
+/// 生成偏向边界值的 `RtmpChunk`。
 fn arb_chunk_boundary() -> impl Strategy<Value = RtmpChunk> {
     (
         arb_chunk_stream_id_boundary(),
@@ -121,7 +148,16 @@ fn arb_chunk_boundary() -> impl Strategy<Value = RtmpChunk> {
         )
 }
 
-/// 从编码缓冲区完全解码一条消息
+/// Feed a byte buffer into a decoder until one complete chunk is produced.
+///
+/// This helper models segmented TCP delivery and returns the total consumed bytes
+/// together with the decoded chunk, or `None` if the buffer was fully drained without
+/// completing a chunk.
+///
+/// 将字节缓冲持续喂入解码器，直到产生一条完整 chunk。
+///
+/// 该 helper 模拟分段 TCP 交付，返回总消费字节数与解码出的 chunk；
+/// 若缓冲被耗尽仍未完成 chunk，则返回 `None`。
 fn decode_one_message(decoder: &mut RtmpChunkDecoder, buf: &[u8]) -> (usize, Option<RtmpChunk>) {
     let mut total_consumed = 0;
     let mut remaining = buf;
@@ -144,7 +180,9 @@ fn decode_one_message(decoder: &mut RtmpChunkDecoder, buf: &[u8]) -> (usize, Opt
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1000))]
 
-    /// Roundtrip: decode(encode(chunk)) == chunk
+    /// Round-trip: encoding and decoding a single chunk preserves all fields.
+    ///
+    /// 往返：编码并解码单个 chunk 应保留所有字段。
     #[test]
     fn chunk_roundtrip(chunk in arb_chunk()) {
         let mut encoder = RtmpChunkEncoder::default();
@@ -161,7 +199,9 @@ proptest! {
         prop_assert_eq!(size, buf.len(), "decoder should consume all bytes");
     }
 
-    /// 边界值的 Roundtrip
+    /// Round-trip with boundary values for chunk stream id and timestamp.
+    ///
+    /// 使用 chunk stream id 与时间戳的边界值进行往返测试。
     #[test]
     fn chunk_boundary_roundtrip(chunk in arb_chunk_boundary()) {
         let mut encoder = RtmpChunkEncoder::default();
@@ -178,7 +218,9 @@ proptest! {
         prop_assert_eq!(size, buf.len(), "decoder should consume all bytes");
     }
 
-    /// 验证块流 ID 的编码大小正确
+    /// Verify that the chunk stream id is encoded with the correct basic header size.
+    ///
+    /// 校验 chunk stream id 按正确 basic header 大小编码。
     #[test]
     fn chunk_stream_id_encoding_size(id in 2u32..=65599u32) {
         let chunk_stream_id = RtmpChunkStreamId::new(id).unwrap();
@@ -194,8 +236,6 @@ proptest! {
         let mut buf = Vec::new();
         encoder.encode(&mut buf, &chunk);
 
-        // 验证 Basic Header 的大小
-        // Format 0 的 Message Header 固定为 11 字节
         let expected_basic_header_size = if id < 64 {
             1
         } else if id < 320 {
@@ -204,13 +244,15 @@ proptest! {
             3
         };
 
-        let expected_total_size = expected_basic_header_size + 11; // Basic Header + Message Header (F0)
+        let expected_total_size = expected_basic_header_size + 11;
         prop_assert_eq!(buf.len(), expected_total_size,
             "chunk stream id {} should use {} byte basic header",
             id, expected_basic_header_size);
     }
 
-    /// 验证扩展时间戳的编码
+    /// Verify that timestamps at or above 0xFFFFFF emit an extended timestamp field.
+    ///
+    /// 校验大于等于 0xFFFFFF 的时间戳会输出扩展时间戳字段。
     #[test]
     fn extended_timestamp_encoding(timestamp_ms in 0u32..=0x2000000u32) {
         let timestamp = RtmpTimestamp::from_millis(timestamp_ms);
@@ -226,12 +268,11 @@ proptest! {
         let mut buf = Vec::new();
         encoder.encode(&mut buf, &chunk);
 
-        // 根据是否需要扩展时间戳来决定期望大小
         let uses_extended = timestamp_ms >= 0xFFFFFF;
         let expected_size = if uses_extended {
-            1 + 11 + 4 // Basic Header + Message Header (F0) + Extended Timestamp
+            1 + 11 + 4
         } else {
-            1 + 11 // Basic Header + Message Header (F0)
+            1 + 11
         };
 
         prop_assert_eq!(buf.len(), expected_size,
@@ -239,14 +280,21 @@ proptest! {
             timestamp_ms, if uses_extended { "" } else { "not " });
     }
 
-    /// 连续块的 Roundtrip
+    /// Verify that two consecutive chunks on the same chunk stream round-trip.
+    ///
+    /// The second chunk should use the compact message header format because the
+    /// decoder already knows the message stream id, type, and length from the first chunk.
+    ///
+    /// 校验同一条 chunk stream 上的两个连续 chunk 往返。
+    ///
+    /// 第二个 chunk 应使用紧凑 message header 格式，因为解码器已从第一个 chunk 获知 message stream id、
+    /// 类型与长度。
     #[test]
     fn consecutive_chunks_roundtrip(
         chunk1 in arb_chunk(),
         chunk2_timestamp_delta in 0u32..1000u32,
         chunk2_payload in arb_payload(),
     ) {
-        // 在同一流中创建连续的块
         let chunk2 = RtmpChunk {
             chunk_stream_id: chunk1.chunk_stream_id,
             message_stream_id: chunk1.message_stream_id,
@@ -284,24 +332,36 @@ proptest! {
 mod additional_tests {
     use super::*;
 
+    /// Verify the minimum valid chunk stream id.
+    ///
+    /// 校验最小有效 chunk stream id。
     #[test]
     fn chunk_stream_id_min() {
         let id = RtmpChunkStreamId::new(2).unwrap();
         assert_eq!(id.get(), 2);
     }
 
+    /// Verify the maximum valid chunk stream id.
+    ///
+    /// 校验最大有效 chunk stream id。
     #[test]
     fn chunk_stream_id_max() {
         let id = RtmpChunkStreamId::new(65599).unwrap();
         assert_eq!(id.get(), 65599);
     }
 
+    /// Verify that out-of-range chunk stream ids are rejected.
+    ///
+    /// 校验超出范围的 chunk stream id 被拒绝。
     #[test]
     fn chunk_stream_id_out_of_range() {
         assert!(RtmpChunkStreamId::new(1).is_none());
         assert!(RtmpChunkStreamId::new(65600).is_none());
     }
 
+    /// Verify an empty payload round-trip.
+    ///
+    /// 校验空 payload 的往返。
     #[test]
     fn empty_payload_roundtrip() {
         let chunk = RtmpChunk {

@@ -1,3 +1,7 @@
+//! Unit tests for the capture fixture manifest parser and `rtmpflow` decoder.
+//!
+//! 抓包 fixture manifest 解析器与 `rtmpflow` 解码器的单元测试。
+
 #[allow(dead_code)]
 #[path = "support/capture_fixture.rs"]
 mod capture_fixture;
@@ -11,6 +15,9 @@ use capture_fixture::{
 
 const MANIFEST: &str = include_str!("testdata/rtmp-capture/manifest.tsv");
 
+/// Verify the committed manifest parses, validates, and follows expected invariants.
+///
+/// 校验已提交的 manifest 能解析、验证，并满足预期不变量。
 #[test]
 fn committed_manifest_header_is_valid() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/rtmp-capture");
@@ -72,6 +79,9 @@ fn committed_manifest_header_is_valid() {
     }
 }
 
+/// If `RTMP_CAPTURE_FIXTURE_DIR` is set, validate the generated manifest too.
+///
+/// 若设置了 `RTMP_CAPTURE_FIXTURE_DIR`，也校验生成的 manifest。
 #[test]
 fn generated_manifest_from_env_is_valid() {
     let Ok(root) = std::env::var("RTMP_CAPTURE_FIXTURE_DIR") else {
@@ -88,6 +98,9 @@ fn generated_manifest_from_env_is_valid() {
     );
 }
 
+/// Verify that a valid `rtmpflow` with two records decodes correctly.
+///
+/// 校验包含两条记录的有效 `rtmpflow` 能正确解码。
 #[test]
 fn decode_rtmpflow_accepts_valid_records() {
     let bytes = build_rtmpflow(&[b"first".as_slice(), b"second".as_slice()]);
@@ -96,6 +109,9 @@ fn decode_rtmpflow_accepts_valid_records() {
     assert_eq!(records, vec![b"first".as_slice(), b"second".as_slice()]);
 }
 
+/// Verify that an incorrect magic header is rejected.
+///
+/// 校验错误的魔数头会被拒绝。
 #[test]
 fn decode_rtmpflow_rejects_bad_magic() {
     let mut bytes = build_rtmpflow(&[b"payload".as_slice()]);
@@ -107,6 +123,9 @@ fn decode_rtmpflow_rejects_bad_magic() {
     ));
 }
 
+/// Verify that a truncated payload is rejected.
+///
+/// 校验截断的 payload 会被拒绝。
 #[test]
 fn decode_rtmpflow_rejects_truncated_payload() {
     let mut bytes = build_rtmpflow(&[b"payload".as_slice()]);
@@ -118,6 +137,9 @@ fn decode_rtmpflow_rejects_truncated_payload() {
     ));
 }
 
+/// Verify that a zero-length record is rejected.
+///
+/// 校验零长度记录会被拒绝。
 #[test]
 fn decode_rtmpflow_rejects_zero_length_record() {
     let bytes = build_rtmpflow(&[b"".as_slice()]);
@@ -128,6 +150,9 @@ fn decode_rtmpflow_rejects_zero_length_record() {
     ));
 }
 
+/// Verify that trailing bytes after the last record are rejected.
+///
+/// 校验最后一条记录后的多余字节会被拒绝。
 #[test]
 fn decode_rtmpflow_rejects_trailing_bytes() {
     let mut bytes = build_rtmpflow(&[b"payload".as_slice()]);
@@ -139,6 +164,9 @@ fn decode_rtmpflow_rejects_trailing_bytes() {
     ));
 }
 
+/// Verify that a mismatched manifest header is rejected.
+///
+/// 校验不匹配的 manifest 表头会被拒绝。
 #[test]
 fn manifest_rejects_bad_header() {
     let err = parse_manifest("bad\theader\n").expect_err("bad header should fail");
@@ -149,6 +177,9 @@ fn manifest_rejects_bad_header() {
     ));
 }
 
+/// Verify that a row with the wrong number of fields is rejected.
+///
+/// 校验字段数量不正确的行会被拒绝。
 #[test]
 fn manifest_rejects_bad_field_count() {
     let input = format!("{MANIFEST_HEADER}\ncase\ttoo-short\n");
@@ -164,6 +195,9 @@ fn manifest_rejects_bad_field_count() {
     ));
 }
 
+/// Verify that an unknown role value is rejected.
+///
+/// 校验未知的角色值会被拒绝。
 #[test]
 fn manifest_rejects_invalid_role() {
     let input = format!(
@@ -177,6 +211,9 @@ fn manifest_rejects_invalid_role() {
     ));
 }
 
+/// Verify that fixture paths escaping the root directory are rejected.
+///
+/// 校验试图逃逸根目录的 fixture 路径会被拒绝。
 #[test]
 fn manifest_rejects_unsafe_fixture_path() {
     let input = format!(
@@ -188,6 +225,9 @@ fn manifest_rejects_unsafe_fixture_path() {
     assert!(matches!(err, CaptureFixtureError::UnsafeFixturePath { .. }));
 }
 
+/// Build a minimal `rtmpflow` file from record payloads for testing.
+///
+/// 从记录 payload 构建最小 `rtmpflow` 文件，用于测试。
 fn build_rtmpflow(records: &[&[u8]]) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"CRF1");
