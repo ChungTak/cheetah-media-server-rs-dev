@@ -45,6 +45,9 @@ fn apply_low_latency_tcp_options(stream: &TcpStream) {
     }
 }
 
+/// Tokio-based `Runtime` implementation.
+///
+/// 基于 Tokio 的 `Runtime` 实现。
 #[derive(Clone, Debug)]
 pub struct TokioRuntime {
     start: Instant,
@@ -52,6 +55,9 @@ pub struct TokioRuntime {
 }
 
 impl TokioRuntime {
+    /// Create a runtime anchored at the current process start time.
+    ///
+    /// 创建以当前进程启动时间为锚点的运行时。
     pub fn new() -> Self {
         Self {
             start: Instant::now(),
@@ -59,6 +65,9 @@ impl TokioRuntime {
         }
     }
 
+    /// Convert a `MonoTime` deadline to a Tokio `Instant`.
+    ///
+    /// 将 `MonoTime` 截止时间转换为 Tokio `Instant`。
     fn deadline_to_instant(&self, deadline: MonoTime) -> TokioInstant {
         self.start_tokio + Duration::from_micros(deadline.as_micros())
     }
@@ -70,6 +79,9 @@ impl Default for TokioRuntime {
     }
 }
 
+/// Tokio task join handle wrapper.
+///
+/// Tokio 任务 join 句柄包装。
 #[derive(Debug)]
 pub struct TokioJoinHandle {
     handle: tokio::task::JoinHandle<()>,
@@ -96,6 +108,9 @@ impl JoinHandle for TokioJoinHandle {
     }
 }
 
+/// Tokio UDP socket wrapper.
+///
+/// Tokio UDP 套接字包装。
 #[derive(Debug)]
 pub struct TokioUdpSocket {
     socket: UdpSocket,
@@ -133,6 +148,9 @@ impl AsyncUdpSocket for TokioUdpSocket {
     }
 }
 
+/// Tokio TCP stream wrapper with low-latency socket options.
+///
+/// 带低延迟套接字选项的 Tokio TCP 流包装。
 #[derive(Debug)]
 pub struct TokioTcpStream {
     stream: TcpStream,
@@ -177,6 +195,9 @@ impl AsyncTcpStream for TokioTcpStream {
 }
 
 #[derive(Debug)]
+/// Tokio TCP listener wrapper.
+///
+/// Tokio TCP 监听器包装。
 pub struct TokioTcpListener {
     listener: TcpListener,
 }
@@ -194,6 +215,9 @@ impl AsyncTcpListener for TokioTcpListener {
     }
 }
 
+/// Tokio sleep-based timer.
+///
+/// 基于 Tokio sleep 的定时器。
 pub struct TokioTimer {
     deadline: MonoTime,
     sleep: Pin<Box<Sleep>>,
@@ -210,6 +234,9 @@ impl AsyncTimer for TokioTimer {
     }
 }
 
+/// `Runtime` implementation that bridges Tokio primitives to the runtime API.
+///
+/// 将 Tokio 原语桥接到运行时 API 的 `Runtime` 实现。
 impl Runtime for TokioRuntime {
     type UdpSocket = TokioUdpSocket;
     type TcpStream = TokioTcpStream;
@@ -287,6 +314,9 @@ impl Runtime for TokioRuntime {
     }
 }
 
+/// `RuntimeApi` implementation exposing Tokio primitives as trait objects.
+///
+/// 将 Tokio 原语作为 trait 对象暴露的 `RuntimeApi` 实现。
 impl RuntimeApi for TokioRuntime {
     fn now(&self) -> MonoTime {
         <Self as Runtime>::now(self)
