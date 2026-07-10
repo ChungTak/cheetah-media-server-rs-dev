@@ -157,7 +157,24 @@ impl SipMessage {
     /// non-UTF-8 body bytes verbatim so that any caller transmitting the result over the
     /// network sees byte counts that match the `Content-Length` header.
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::new();
+        let start_line_len = match &self.start_line {
+            StartLine::Request {
+                method,
+                uri,
+                version,
+            } => method.len() + 1 + uri.len() + 1 + version.len() + 2,
+            StartLine::Response {
+                version,
+                status,
+                reason,
+            } => version.len() + 1 + status.to_string().len() + 1 + reason.len() + 2,
+        };
+        let headers_len: usize = self
+            .headers
+            .iter()
+            .map(|(name, val)| name.len() + 2 + val.len() + 2)
+            .sum();
+        let mut out = Vec::with_capacity(start_line_len + headers_len + 2 + self.body.len());
         match &self.start_line {
             StartLine::Request {
                 method,
