@@ -1,4 +1,6 @@
 //! HTTP/WS TS server driver.
+//!
+//! HTTP/WS TS 服务器驱动。
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -9,10 +11,14 @@ use cheetah_ts_core::{StreamKeyParts, TsTransport};
 use tokio::sync::mpsc;
 
 /// Unique connection identifier.
+///
+/// 唯一连接标识符。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TsConnectionId(pub u64);
 
 /// Configuration for the TS driver.
+///
+/// TS 驱动配置。
 #[derive(Debug, Clone)]
 pub struct TsDriverConfig {
     pub listen: SocketAddr,
@@ -22,6 +28,8 @@ pub struct TsDriverConfig {
 }
 
 /// TLS configuration.
+///
+/// TLS 配置。
 #[derive(Debug, Clone)]
 pub struct TsTlsConfig {
     pub listen: SocketAddr,
@@ -31,6 +39,8 @@ pub struct TsTlsConfig {
 }
 
 /// Commands sent from module to driver.
+///
+/// 模块发送给驱动的命令。
 #[derive(Debug)]
 pub enum TsDriverCommand {
     SendBytes {
@@ -43,6 +53,8 @@ pub enum TsDriverCommand {
 }
 
 /// Events sent from driver to module.
+///
+/// 驱动发送给模块的事件。
 #[derive(Debug)]
 pub enum TsDriverEvent {
     PlayRequested {
@@ -56,29 +68,47 @@ pub enum TsDriverEvent {
 }
 
 /// Handle to the running server.
+///
+/// 运行中服务器的句柄。
 pub struct TsServerHandle {
     event_rx: mpsc::Receiver<TsDriverEvent>,
 }
 
+/// `TsServerHandle` API.
+///
+/// `TsServerHandle` API。
 impl TsServerHandle {
+    /// Receive the next event from the driver.
+    ///
+    /// 从驱动接收下一个事件。
     pub async fn recv_event(&mut self) -> Option<TsDriverEvent> {
         self.event_rx.recv().await
     }
 }
 
 /// Sender for commands to the driver.
+///
+/// 向驱动发送命令的发送器。
 #[derive(Clone)]
 pub struct TsCommandSender {
     tx: mpsc::Sender<TsDriverCommand>,
 }
 
+/// `TsCommandSender` API.
+///
+/// `TsCommandSender` API。
 impl TsCommandSender {
+    /// Send a command to the driver loop.
+    ///
+    /// 向驱动循环发送命令。
     pub async fn send(&self, cmd: TsDriverCommand) {
         let _ = self.tx.send(cmd).await;
     }
 }
 
 /// Start the TS HTTP/WS server. Returns command sender and event receiver.
+///
+/// 启动 TS HTTP/WS 服务器，返回命令发送器和事件接收器。
 pub fn start_server(
     config: TsDriverConfig,
     cancel: CancellationToken,
@@ -91,6 +121,9 @@ pub fn start_server(
     (TsCommandSender { tx: cmd_tx }, TsServerHandle { event_rx })
 }
 
+/// Main accept loop for the TS HTTP/WS server.
+///
+/// TS HTTP/WS 服务器的主 accept 循环。
 async fn run_server(
     config: TsDriverConfig,
     event_tx: mpsc::Sender<TsDriverEvent>,
@@ -218,11 +251,16 @@ async fn run_server(
 }
 
 /// Internal command sent to a per-connection task.
+///
+/// 发送给每个连接任务的内部命令。
 enum ConnCmd {
     Send(Bytes),
     Close,
 }
 
+/// Handle a plain TCP connection and drive it through the TS core.
+///
+/// 处理普通 TCP 连接并通过 TS core 驱动。
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     conn_id: TsConnectionId,
@@ -245,6 +283,8 @@ async fn handle_connection(
 }
 
 /// Encode and write a WebSocket binary frame (server-side, no mask).
+///
+/// 编码并写入 WebSocket 二进制帧（服务端，无掩码）。
 async fn write_ws_binary_frame(
     writer: &mut (impl tokio::io::AsyncWrite + Unpin),
     payload: &[u8],
@@ -268,6 +308,8 @@ async fn write_ws_binary_frame(
 }
 
 /// Handle a TLS connection (HTTPS/WSS).
+///
+/// 处理 TLS 连接（HTTPS/WSS）。
 async fn handle_tls_connection(
     stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
     conn_id: TsConnectionId,
@@ -290,6 +332,8 @@ async fn handle_tls_connection(
 }
 
 /// Generic connection handler for any AsyncRead + AsyncWrite stream.
+///
+/// 通用连接处理器，适用于任何 AsyncRead + AsyncWrite 流。
 async fn handle_generic_connection<R, W>(
     reader: R,
     mut writer: W,
@@ -452,6 +496,9 @@ async fn handle_generic_connection<R, W>(
         .await;
 }
 
+/// Read bytes until LF, rejecting lines that exceed `max_len`.
+///
+/// 读取字节直到 LF，超过 `max_len` 则拒绝。
 async fn read_limited_line<R>(reader: &mut R, max_len: usize) -> std::io::Result<Option<String>>
 where
     R: tokio::io::AsyncRead + Unpin,
