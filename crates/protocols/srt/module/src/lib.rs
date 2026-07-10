@@ -1,4 +1,6 @@
-//! Engine integration for SRT.
+//! Engine integration for the SRT protocol.
+//!
+//! SRT 协议的引擎集成。
 
 pub mod config;
 mod http;

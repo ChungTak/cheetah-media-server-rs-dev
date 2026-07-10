@@ -6,6 +6,9 @@ use cheetah_srt_driver_tokio::SrtDriverStats;
 use serde::Serialize;
 
 #[derive(Debug, Default)]
+/// Thread-safe atomic counters/gauges for SRT module telemetry.
+///
+/// SRT 模块遥测的线程安全原子计数器/仪表盘。
 pub struct SrtModuleMetrics {
     connections_active: AtomicU64,
     connections_total: AtomicU64,
@@ -29,6 +32,9 @@ pub struct SrtModuleMetrics {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+/// Read-only snapshot of `SrtModuleMetrics` for rendering and serialization.
+///
+/// 用于渲染与序列化的 `SrtModuleMetrics` 只读快照。
 pub struct SrtModuleMetricsSnapshot {
     pub connections_active: u64,
     pub connections_total: u64,
@@ -51,6 +57,9 @@ pub struct SrtModuleMetricsSnapshot {
     pub send_queue_full_total: u64,
 }
 
+/// `SrtModuleMetrics` API: increment, aggregate, and snapshot.
+///
+/// `SrtModuleMetrics` API：自增、聚合与快照。
 impl SrtModuleMetrics {
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
@@ -163,6 +172,9 @@ impl SrtModuleMetrics {
     }
 }
 
+/// Saturating decrement for atomic gauges.
+///
+/// 原子仪表的饱和递减。
 fn decrement_saturating(value: &AtomicU64) {
     let _ = value.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
         current.checked_sub(1)

@@ -31,8 +31,14 @@ use crate::metrics::SrtModuleMetrics;
 
 const MODULE_ID: &str = "srt";
 
+/// Factory that creates `SrtModule` instances and registers the module manifest.
+///
+/// 创建 `SrtModule` 实例并注册模块清单的工厂。
 pub struct SrtModuleFactory;
 
+/// `ModuleFactory` implementation for the SRT module.
+///
+/// SRT 模块的 `ModuleFactory` 实现。
 impl ModuleFactory for SrtModuleFactory {
     fn manifest(&self) -> ModuleManifest {
         ModuleManifest {
@@ -68,6 +74,9 @@ impl ModuleFactory for SrtModuleFactory {
     }
 }
 
+/// SRT module runtime state: lifecycle, config, engine context, and metrics.
+///
+/// SRT 模块运行时状态：生命周期、配置、引擎上下文与指标。
 struct SrtModule {
     state: ModuleState,
     config: SrtModuleConfig,
@@ -75,6 +84,9 @@ struct SrtModule {
     metrics: Arc<SrtModuleMetrics>,
 }
 
+/// `SrtModule` internal construction helpers.
+///
+/// `SrtModule` 内部构造辅助。
 impl SrtModule {
     fn new() -> Self {
         Self {
@@ -86,6 +98,9 @@ impl SrtModule {
     }
 }
 
+/// `Module` implementation for SRT: init, start, stop, config, and HTTP routes.
+///
+/// SRT 的 `Module` 实现：初始化、启动、停止、配置与 HTTP 路由。
 #[async_trait]
 impl Module for SrtModule {
     fn info(&self) -> ModuleInfo {
@@ -195,6 +210,9 @@ impl Module for SrtModule {
     }
 }
 
+/// Convert module config into `SrtDriverConfig` for the Tokio driver.
+///
+/// 将模块配置转换为给 Tokio 驱动的 `SrtDriverConfig`。
 fn driver_config(config: &SrtModuleConfig) -> Result<SrtDriverConfig, SdkError> {
     let listen = config
         .listen
@@ -231,6 +249,9 @@ fn driver_config(config: &SrtModuleConfig) -> Result<SrtDriverConfig, SdkError> 
     })
 }
 
+/// State for an active SRT publish ingress session.
+///
+/// 活跃 SRT 发布入口会话的状态。
 struct SrtIngressSession {
     stream_key: StreamKey,
     lease: PublishLease,
@@ -241,11 +262,17 @@ struct SrtIngressSession {
 }
 
 #[derive(Clone)]
+/// Job-defined mode and stream key override for a peer.
+///
+/// 为对端指定的任务级模式与流密钥覆盖。
 struct ForcedSrtMode {
     mode: SrtStreamMode,
     stream_key: StreamKey,
 }
 
+/// Pre-built set of driver connect commands and per-peer runtime metadata.
+///
+/// 预构建的驱动连接命令集合与每个对端的运行时元数据。
 struct SrtJobPlan {
     connects: Vec<SrtDriverCommand>,
     forced_modes: HashMap<SrtPeerId, ForcedSrtMode>,
@@ -253,6 +280,9 @@ struct SrtJobPlan {
 }
 
 #[derive(Clone)]
+/// Retry state and original command for a configured job peer.
+///
+/// 配置任务对端的重试状态与原始命令。
 struct SrtJobRuntime {
     command: SrtDriverCommand,
     forced_mode: ForcedSrtMode,
@@ -261,6 +291,9 @@ struct SrtJobRuntime {
     retry_attempt: u32,
 }
 
+/// Mutable state of the background event worker that coordinates SRT sessions.
+///
+/// 协调 SRT 会话的后台事件工作者的可变状态。
 struct SrtEventWorkerState {
     forced_modes: HashMap<SrtPeerId, ForcedSrtMode>,
     jobs: HashMap<SrtPeerId, SrtJobRuntime>,
@@ -269,6 +302,9 @@ struct SrtEventWorkerState {
     last_stats: HashMap<SrtPeerId, SrtDriverStats>,
 }
 
+/// Dispatch driver events to ingress/egress logic, metrics, and retry scheduling.
+///
+/// 将驱动事件分发到入口/出口逻辑、指标与重试调度。
 async fn handle_driver_event(
     ctx: &EngineContext,
     config: &SrtModuleConfig,
@@ -396,6 +432,9 @@ async fn handle_driver_event(
     }
 }
 
+/// Schedule a retry for a configured job after a disconnect or error.
+///
+/// 在断开或错误后为配置任务安排重试。
 fn schedule_job_retry(
     ctx: &EngineContext,
     driver: &SrtDriverHandle,
@@ -439,6 +478,9 @@ fn schedule_job_retry(
     }));
 }
 
+/// Exponential backoff capped at `max_ms`.
+///
+/// 上限为 `max_ms` 的指数退避。
 fn retry_delay_ms(base_ms: u64, max_ms: u64, attempt: u32) -> u64 {
     let base_ms = base_ms.max(1);
     let max_ms = max_ms.max(base_ms);
@@ -447,6 +489,9 @@ fn retry_delay_ms(base_ms: u64, max_ms: u64, attempt: u32) -> u64 {
     base_ms.saturating_mul(multiplier).min(max_ms)
 }
 
+/// Classify the stream id into a mode and validated stream key.
+///
+/// 将 stream id 分类为模式并校验流密钥。
 fn classify_stream(
     config: &SrtModuleConfig,
     stream_id: Option<&str>,
@@ -475,6 +520,9 @@ fn classify_stream(
     Ok((mode, stream_key_from_string(&stream_key)))
 }
 
+/// Validate the stream against global or per-user auth tokens.
+///
+/// 使用全局或每个用户的 token 校验流。
 fn authorize_stream(
     config: &SrtModuleConfig,
     mode: SrtStreamMode,
@@ -513,6 +561,9 @@ fn authorize_stream(
     Err(format!("SRT {action} auth rejected"))
 }
 
+/// Build `SrtJobPlan` from ingress, egress, and relay config jobs.
+///
+/// 从入口、出口与中继配置任务构建 `SrtJobPlan`。
 fn build_job_plan(config: &SrtModuleConfig) -> Result<SrtJobPlan, SdkError> {
     let mut next_peer_id = 1_000_000_u64;
     let connects_capacity =
@@ -673,6 +724,9 @@ fn build_job_plan(config: &SrtModuleConfig) -> Result<SrtJobPlan, SdkError> {
     })
 }
 
+/// Parse an SRT caller URL and build `SrtSessionOptions` for a job.
+///
+/// 解析 SRT caller URL 并为任务构建 `SrtSessionOptions`。
 fn caller_connect_parts(
     url: &str,
     default_mode: SrtStreamMode,
@@ -724,6 +778,9 @@ fn caller_connect_parts(
     ))
 }
 
+/// Inject an URL `token` query into an access-control stream id.
+///
+/// 将 URL `token` 查询参数注入访问控制流 id。
 fn merge_url_token_into_stream_id(
     stream_id: Option<String>,
     url_token: Option<&String>,
@@ -758,6 +815,9 @@ fn merge_url_token_into_stream_id(
     })
 }
 
+/// Percent-encode a value so it is safe inside an access-control stream id field.
+///
+/// 对值进行百分号编码，使其在访问控制流 id 字段中安全。
 fn percent_encode_stream_id_field(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
@@ -774,6 +834,9 @@ fn percent_encode_stream_id_field(value: &str) -> String {
     out
 }
 
+/// Parse a `namespace/path` or bare stream key into a `StreamKey`.
+///
+/// 将 `namespace/path` 或裸流密钥解析为 `StreamKey`。
 fn stream_key_from_string(value: &str) -> StreamKey {
     match value.split_once('/') {
         Some((namespace, path)) if !namespace.is_empty() && !path.is_empty() => {
@@ -783,6 +846,9 @@ fn stream_key_from_string(value: &str) -> StreamKey {
     }
 }
 
+/// Demux an MPEG-TS payload and push frames into the publisher sink.
+///
+/// 解复用 MPEG-TS 负载并将帧推入发布者接收端。
 fn handle_ingress_payload(session: &mut SrtIngressSession, payload: &[u8]) {
     for event in session.demuxer.push(payload) {
         match event {
@@ -810,6 +876,9 @@ fn handle_ingress_payload(session: &mut SrtIngressSession, payload: &[u8]) {
     }
 }
 
+/// Insert or update a track in the session track list and return whether it changed.
+///
+/// 在会话轨道列表中插入或更新轨道，并返回是否发生变化。
 fn merge_track_update(tracks: &mut Vec<TrackInfo>, track: TrackInfo) -> bool {
     if let Some(existing) = tracks
         .iter_mut()
@@ -826,6 +895,9 @@ fn merge_track_update(tracks: &mut Vec<TrackInfo>, track: TrackInfo) -> bool {
     true
 }
 
+/// Subscribe to a stream, mux to MPEG-TS, and send payloads to the peer.
+///
+/// 订阅流，复用为 MPEG-TS，并向对端发送负载。
 async fn run_play_session(
     ctx: EngineContext,
     config: SrtModuleConfig,
@@ -904,6 +976,9 @@ async fn run_play_session(
     let _ = subscriber.close().await;
 }
 
+/// Wait for a stream to exist and its tracks to become ready for egress.
+///
+/// 等待流存在且其轨道准备好 egress。
 async fn wait_for_stream(
     ctx: &EngineContext,
     stream_key: &StreamKey,
@@ -947,10 +1022,16 @@ async fn wait_for_stream(
     }
 }
 
+/// Check that all tracks are non-empty and individually ready.
+///
+/// 检查所有轨道非空且各自就绪。
 fn tracks_ready_for_egress(tracks: &[TrackInfo]) -> bool {
     !tracks.is_empty() && tracks.iter().all(TrackInfo::is_ready)
 }
 
+/// Send the MPEG-TS PAT/PMT tables before the first media packets.
+///
+/// 在第一个媒体包之前发送 MPEG-TS PAT/PMT 表。
 async fn send_muxer_tables(driver: &SrtDriverHandle, peer_id: SrtPeerId, muxer: &mut MpegTsMuxer) {
     for event in muxer.write_tables() {
         if let MpegTsMuxEvent::Packet(payload) = event {
