@@ -19,12 +19,18 @@ use tracing::warn;
 const DEFAULT_FLASH_VER: &str = "FMLE/3.0 (compatible; FME/3.0)";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Direction of an RTMP client connection.
+///
+/// RTMP 客户端连接方向。
 pub enum RtmpClientMode {
     Play,
     Publish,
 }
 
 #[derive(Debug, Clone)]
+/// Configuration for the RTMP client driver.
+///
+/// RTMP 客户端驱动配置。
 pub struct RtmpClientDriverConfig {
     pub command_queue_capacity: usize,
     pub event_queue_capacity: usize,
@@ -48,6 +54,9 @@ impl Default for RtmpClientDriverConfig {
 }
 
 #[derive(Debug)]
+/// Events emitted by the RTMP client driver to the caller.
+///
+/// RTMP 客户端驱动向调用者发出的事件。
 pub enum ClientDriverEvent {
     Connected { peer: Option<SocketAddr> },
     Core { event: RtmpEvent },
@@ -55,6 +64,9 @@ pub enum ClientDriverEvent {
 }
 
 #[derive(Debug, Clone)]
+/// Commands sent from the caller into the RTMP client driver.
+///
+/// 从调用者发送到 RTMP 客户端驱动的命令。
 pub enum RtmpClientDriverCommand {
     Core(RtmpCoreCommand),
     CloseConnection,
@@ -62,15 +74,24 @@ pub enum RtmpClientDriverCommand {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Error returned when the client command channel is closed.
+///
+/// 客户端命令通道关闭时返回的错误。
 pub enum ClientSendError {
     ChannelClosed,
 }
 
 #[derive(Clone)]
+/// MPSC sender for commands to the client driver loop.
+///
+/// 向客户端驱动循环发送命令的 MPSC 发送端。
 pub struct RtmpClientCommandSender {
     tx: mpsc::Sender<RtmpClientDriverCommand>,
 }
 
+/// `RtmpClientCommandSender` API: send core and lifecycle commands.
+///
+/// `RtmpClientCommandSender` API：发送 core 与生命周期命令。
 impl RtmpClientCommandSender {
     pub async fn send(&self, command: RtmpClientDriverCommand) -> Result<(), ClientSendError> {
         self.tx
@@ -88,6 +109,9 @@ impl RtmpClientCommandSender {
     }
 }
 
+/// Handle for the RTMP client: receive events and send commands.
+///
+/// RTMP 客户端句柄：接收事件并发送命令。
 pub struct RtmpClientHandle {
     events_rx: mpsc::Receiver<ClientDriverEvent>,
     cmd_tx: RtmpClientCommandSender,
@@ -95,6 +119,9 @@ pub struct RtmpClientHandle {
     join: Box<dyn JoinHandle>,
 }
 
+/// `RtmpClientHandle` API: event reception, command send, and lifecycle.
+///
+/// `RtmpClientHandle` API：事件接收、命令发送与生命周期。
 impl RtmpClientHandle {
     pub async fn recv_event(&mut self) -> Option<ClientDriverEvent> {
         self.events_rx.recv().await
@@ -121,11 +148,17 @@ impl RtmpClientHandle {
 }
 
 #[derive(Debug, Clone, Copy)]
+/// Timer event with generation to filter stale firings.
+///
+/// 带 generation 的定时器事件，用于过滤过期触发。
 struct TimerFired {
     id: TimerId,
     generation: u64,
 }
 
+/// Mutable state used by `flush_outputs` for a client connection.
+///
+/// `flush_outputs` 为客户端连接使用的可变状态。
 struct OutputState<'a> {
     event_tx: &'a mpsc::Sender<ClientDriverEvent>,
     write_tx: &'a mpsc::Sender<Bytes>,
@@ -136,6 +169,9 @@ struct OutputState<'a> {
     automation: &'a mut ClientAutomation,
 }
 
+/// State machine that automates the RTMP handshake/transaction sequence.
+///
+/// 自动执行 RTMP 握手/事务序列的状态机。
 struct ClientAutomation {
     mode: RtmpClientMode,
     url: RtmpUrl,
@@ -147,7 +183,13 @@ struct ClientAutomation {
     ack_window_size: u32,
 }
 
+/// `ClientAutomation` API: generate commands and react to events/bytes.
+///
+/// `ClientAutomation` API：生成命令并响应事件/字节。
 impl ClientAutomation {
+    /// Create an automation state machine for the given mode and URL.
+    ///
+    /// 为指定模式与 URL 创建自动化状态机。
     fn new(mode: RtmpClientMode, url: RtmpUrl, cfg: &RtmpClientDriverConfig) -> Self {
         Self {
             mode,
@@ -161,12 +203,18 @@ impl ClientAutomation {
         }
     }
 
+    /// Return the next command transaction id.
+    ///
+    /// 返回下一个命令事务 ID。
     fn take_transaction_id(&mut self) -> f64 {
         let id = self.next_transaction_id;
         self.next_transaction_id = self.next_transaction_id.saturating_add(1);
         id as f64
     }
 
+    /// Generate the initial connect/publish/play commands for the session.
+    ///
+    /// 为会话生成初始 connect/publish/play 命令。
     fn initial_commands(&mut self) -> Vec<RtmpCoreCommand> {
         let tc_url = format!(
             "{}://{}:{}/{}",
@@ -193,6 +241,9 @@ impl ClientAutomation {
         ]
     }
 
+    /// Generate an acknowledgement command when bytes are read.
+    ///
+    /// 读取字节时生成确认命令。
     fn on_bytes_read(&mut self, n: usize) -> Option<RtmpCoreCommand> {
         self.total_bytes_received = self.total_bytes_received.wrapping_add(n as u32);
         let unacked = self.total_bytes_received.wrapping_sub(self.last_ack_sent);
@@ -206,6 +257,9 @@ impl ClientAutomation {
         }
     }
 
+    /// React to a core event by returning the next command, if any.
+    ///
+    /// 响应 core 事件，若有则返回下一个命令。
     fn on_core_event(&mut self, event: &RtmpEvent) -> Option<RtmpCoreCommand> {
         match event {
             RtmpEvent::PeerAckWindowUpdated { size } => {
@@ -236,6 +290,9 @@ impl ClientAutomation {
     }
 }
 
+/// Start a TCP RTMP client and return a handle.
+///
+/// 启动 TCP RTMP 客户端并返回句柄。
 pub fn start_client(
     runtime_api: Arc<dyn RuntimeApi>,
     url: RtmpUrl,
@@ -290,6 +347,9 @@ pub(crate) struct ClientConnectionParams<'a> {
     pub cmd_rx: &'a mut mpsc::Receiver<RtmpClientDriverCommand>,
 }
 
+/// Main client connection loop: read, drive automation, flush outputs.
+///
+/// 客户端连接主循环：读取、驱动自动化、刷新输出。
 async fn run_client_connection(params: ClientConnectionParams<'_>) -> String {
     let ClientConnectionParams {
         mut stream,
@@ -484,6 +544,9 @@ async fn run_client_connection(params: ClientConnectionParams<'_>) -> String {
     reason
 }
 
+/// Push accumulated bytes into the core and flush any produced outputs.
+///
+/// 将累积字节推入 core 并刷新所有产生的输出。
 async fn process_ready_bytes(
     incoming: &[u8],
     decoder: &mut RtmpMessageDecoder,
@@ -505,6 +568,9 @@ async fn process_ready_bytes(
     Ok(())
 }
 
+/// Convert an inbound message into a core command for the client.
+///
+/// 将入站消息转换为客户端的 core 命令。
 fn map_message_to_client_command(message: RtmpMessage) -> Result<RtmpCoreCommand, String> {
     match message {
         RtmpMessage::Command {
@@ -563,6 +629,9 @@ fn map_message_to_client_command(message: RtmpMessage) -> Result<RtmpCoreCommand
     }
 }
 
+/// Push bytes into the core and process the resulting outputs.
+///
+/// 将字节推入 core 并处理结果输出。
 async fn apply_core_input(
     input: CoreInput,
     core: &mut RtmpCore,
@@ -574,6 +643,9 @@ async fn apply_core_input(
     flush_outputs(outputs, core, output_state).await
 }
 
+/// Push a command into the core and process the resulting outputs.
+///
+/// 将命令推入 core 并处理结果输出。
 async fn apply_core_command(
     command: RtmpCoreCommand,
     core: &mut RtmpCore,
@@ -582,6 +654,9 @@ async fn apply_core_command(
     apply_core_input(CoreInput::Command(command), core, output_state).await
 }
 
+/// Dispatch core outputs to the write queue, events, and timers.
+///
+/// 将 core 输出分发到写入队列、事件和定时器。
 async fn flush_outputs(
     outputs: Vec<CoreOutput>,
     core: &mut RtmpCore,
@@ -637,6 +712,9 @@ async fn flush_outputs(
     Ok(())
 }
 
+/// Resolve the host/port of an `RtmpUrl` into a TCP socket address.
+///
+/// 将 `RtmpUrl` 的主机/端口解析为 TCP 套接字地址。
 fn resolve_url_addr(url: &RtmpUrl) -> io::Result<SocketAddr> {
     let host = url.host.trim_matches(|c| c == '[' || c == ']');
     let addrs = (host, url.port).to_socket_addrs()?;
@@ -660,6 +738,9 @@ fn resolve_url_addr(url: &RtmpUrl) -> io::Result<SocketAddr> {
     })
 }
 
+/// Return the next monotonic timer generation, skipping zero.
+///
+/// 返回下一个单调定时器 generation，跳过零。
 fn next_timer_generation(seed: &mut u64) -> u64 {
     let generation = *seed;
     *seed = seed.wrapping_add(1);
@@ -669,6 +750,9 @@ fn next_timer_generation(seed: &mut u64) -> u64 {
     generation
 }
 
+/// Spawn a runtime timer that sends a `TimerFired` on expiration.
+///
+/// 派生运行时定时器，到期时发送 `TimerFired`。
 fn schedule_timer(
     runtime_api: Arc<dyn RuntimeApi>,
     timer_tx: mpsc::Sender<TimerFired>,
@@ -687,6 +771,9 @@ fn schedule_timer(
     }));
 }
 
+/// Verify that a fired timer still matches the current generation.
+///
+/// 验证触发的定时器仍与当前 generation 匹配。
 fn is_timer_active(timers: &HashMap<TimerId, u64>, fired: TimerFired) -> bool {
     timers
         .get(&fired.id)

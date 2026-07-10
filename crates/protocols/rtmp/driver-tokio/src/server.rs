@@ -21,6 +21,9 @@ pub type RtmpConnectionId = u64;
 const MAX_CONSECUTIVE_WRITE_ERRORS: u32 = 30;
 
 #[derive(Debug, Clone)]
+/// Configuration for the RTMP server driver: queue sizes and read buffer.
+///
+/// RTMP 服务器驱动配置：队列大小与读缓冲区。
 pub struct DriverConfig {
     pub write_queue_capacity: usize,
     pub command_queue_capacity: usize,
@@ -40,6 +43,9 @@ impl Default for DriverConfig {
 }
 
 #[derive(Debug)]
+/// Events emitted by the RTMP server driver to the module.
+///
+/// RTMP 服务器驱动向模块发出的事件。
 pub enum DriverEvent {
     ConnectionOpened {
         connection_id: RtmpConnectionId,
@@ -56,6 +62,9 @@ pub enum DriverEvent {
 }
 
 #[derive(Debug, Clone)]
+/// Commands sent from the module into the RTMP server driver.
+///
+/// 从模块发送到 RTMP 服务器驱动的命令。
 pub enum RtmpDriverCommand {
     Core {
         connection_id: RtmpConnectionId,
@@ -68,15 +77,24 @@ pub enum RtmpDriverCommand {
 }
 
 #[derive(Clone)]
+/// MPSC sender handle for issuing commands to the driver loop.
+///
+/// 用于向驱动循环发送命令的 MPSC 发送端句柄。
 pub struct RtmpCoreCommandSender {
     tx: mpsc::Sender<RtmpDriverCommand>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Error returned when the command channel has closed.
+///
+/// 当命令通道关闭时返回的错误。
 pub enum DriverSendError {
     ChannelClosed,
 }
 
+/// `RtmpCoreCommandSender` API: send commands and close connections.
+///
+/// `RtmpCoreCommandSender` API：发送命令并关闭连接。
 impl RtmpCoreCommandSender {
     pub async fn send(&self, command: RtmpDriverCommand) -> Result<(), DriverSendError> {
         self.tx
@@ -107,11 +125,17 @@ impl RtmpCoreCommandSender {
 }
 
 #[derive(Debug)]
+/// Internal command routed to a per-connection task.
+///
+/// 路由到每个连接任务的内置命令。
 enum ConnectionCommand {
     Core(RtmpCoreCommand),
     Close,
 }
 
+/// Handle for the RTMP server: receive events, send commands, and shutdown.
+///
+/// RTMP 服务器句柄：接收事件、发送命令并关闭。
 pub struct RtmpServerHandle {
     events_rx: mpsc::Receiver<DriverEvent>,
     cmd_tx: RtmpCoreCommandSender,
@@ -119,6 +143,9 @@ pub struct RtmpServerHandle {
     join: Box<dyn JoinHandle>,
 }
 
+/// `RtmpServerHandle` API: event reception, command send, and lifecycle.
+///
+/// `RtmpServerHandle` API：事件接收、命令发送与生命周期。
 impl RtmpServerHandle {
     pub async fn recv_event(&mut self) -> Option<DriverEvent> {
         self.events_rx.recv().await
@@ -144,6 +171,9 @@ impl RtmpServerHandle {
     }
 }
 
+/// Start a TCP RTMP server and return a handle for the driver.
+///
+/// 启动 TCP RTMP 服务器并返回驱动句柄。
 pub fn start_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,
@@ -253,6 +283,9 @@ pub fn start_server(
     })
 }
 
+/// Route a driver-level command to the right connection or shutdown.
+///
+/// 将驱动级命令路由到正确的连接或关闭。
 fn handle_driver_command(
     cmd: RtmpDriverCommand,
     conn_map: &Arc<Mutex<HashMap<RtmpConnectionId, mpsc::Sender<ConnectionCommand>>>>,
@@ -288,6 +321,9 @@ fn handle_driver_command(
     }
 }
 
+/// Forward a command to a connection task, dropping/ closing on full or closed.
+///
+/// 将命令转发到连接任务，在队列满或关闭时丢弃/关闭。
 fn send_connection_command(
     connection_id: RtmpConnectionId,
     command: ConnectionCommand,
@@ -317,6 +353,9 @@ fn send_connection_command(
     }
 }
 
+/// Enqueue a close command, even if the command queue is full.
+///
+/// 即使命令队列已满，也强制入队关闭命令。
 fn force_close_connection(
     connection_id: RtmpConnectionId,
     tx: mpsc::Sender<ConnectionCommand>,
@@ -338,11 +377,17 @@ fn force_close_connection(
 }
 
 #[derive(Debug, Clone, Copy)]
+/// Identifier for a timer firing, paired with a generation to detect stale events.
+///
+/// 定时器触发标识，附带 generation 以检测过期事件。
 struct TimerFired {
     id: TimerId,
     generation: u64,
 }
 
+/// Shared resources passed to a connection task.
+///
+/// 传递给连接任务的共享资源。
 struct ConnectionRuntime {
     event_tx: mpsc::Sender<DriverEvent>,
     conn_map: Arc<Mutex<HashMap<RtmpConnectionId, mpsc::Sender<ConnectionCommand>>>>,
@@ -351,6 +396,9 @@ struct ConnectionRuntime {
     config: DriverConfig,
 }
 
+/// Per-connection task: read bytes, push to core, flush outputs, handle timers.
+///
+/// 每个连接的任务：读取字节、推入 core、刷新输出、处理定时器。
 async fn run_connection(
     connection_id: RtmpConnectionId,
     mut stream: Box<dyn AsyncTcpStream>,
@@ -498,6 +546,9 @@ async fn run_connection(
         .await;
 }
 
+/// Mutable state borrowed by `flush_outputs` for a single connection.
+///
+/// `flush_outputs` 为单个连接借用的可变状态。
 struct OutputState<'a> {
     connection_id: RtmpConnectionId,
     event_tx: &'a mpsc::Sender<DriverEvent>,
@@ -508,6 +559,9 @@ struct OutputState<'a> {
     timer_generation_seed: &'a mut u64,
 }
 
+/// Dispatch core outputs: write bytes, emit events, set/cancel timers.
+///
+/// 分发 core 输出：写入字节、发出事件、设置/取消定时器。
 async fn flush_outputs(
     outputs: Vec<CoreOutput>,
     state: &mut OutputState<'_>,
@@ -549,6 +603,9 @@ async fn flush_outputs(
     Ok(())
 }
 
+/// Return a monotonically increasing timer generation, skipping zero.
+///
+/// 返回单调递增的定时器 generation，跳过零。
 fn next_timer_generation(seed: &mut u64) -> u64 {
     let generation = *seed;
     *seed = seed.wrapping_add(1);
@@ -558,6 +615,9 @@ fn next_timer_generation(seed: &mut u64) -> u64 {
     generation
 }
 
+/// Spawn a runtime timer that sends a `TimerFired` when it expires.
+///
+/// 派生一个运行时定时器，到期时发送 `TimerFired`。
 fn schedule_timer(
     runtime_api: Arc<dyn RuntimeApi>,
     timer_tx: mpsc::Sender<TimerFired>,
@@ -574,6 +634,9 @@ fn schedule_timer(
     }));
 }
 
+/// Check if a fired timer still matches the current generation.
+///
+/// 检查触发的定时器是否仍与当前 generation 匹配。
 fn is_timer_active(timers: &HashMap<TimerId, u64>, fired: TimerFired) -> bool {
     timers
         .get(&fired.id)
