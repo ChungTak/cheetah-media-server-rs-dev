@@ -1,3 +1,15 @@
+//! SDP parsing and generation for RTSP ANNOUNCE and DESCRIBE.
+//!
+//! `parse_announce_sdp` converts an incoming SDP body into `TrackInfo` and a
+//! control-to-track-id map. `build_describe_sdp` builds the SDP body sent in
+//! DESCRIBE responses. `normalize_control` handles the track control suffix.
+//!
+//! RTSP ANNOUNCE/DESCRIBE 的 SDP 解析与生成。
+//!
+//! `parse_announce_sdp` 将入站 SDP 正文转换为 `TrackInfo` 与 control 到 track id
+//! 的映射。`build_describe_sdp` 构造 DESCRIBE 响应中发送的 SDP 正文。
+//! `normalize_control` 处理 Track 控制后缀。
+
 use std::{collections::HashMap, net::IpAddr};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -8,6 +20,9 @@ use cheetah_codec::{
     MediaKind, TrackId, TrackInfo, TrackReadiness,
 };
 
+/// Marker placed on `TrackInfo` for MPEG-PS compatibility probe tracks.
+///
+/// 用于 MPEG-PS 兼容探测 Track 的 `TrackInfo` 标记。
 pub(crate) const RTSP_MP2P_PROBE_TRACK_MARKER: &[u8] = b"rtsp-compat/mp2p-probe/v1";
 
 struct MediaSection {
@@ -24,6 +39,18 @@ struct MediaSection {
     control: Option<String>,
 }
 
+/// Parses an SDP body from an ANNOUNCE request into `TrackInfo` and a control
+/// string to `TrackId` map.
+///
+/// Recognizes H.264, H.265, H.266, AV1, VP8/9, Opus, AAC, G.711, ADPCM, MP3,
+/// and MPEG-PS probe tracks. Extracts `fmtp`/`rtpmap` payload type, clock rate,
+/// channels, and codec extradata such as SPS/PPS and AAC ASC.
+///
+/// 将 ANNOUNCE 请求中的 SDP 正文解析为 `TrackInfo` 与 control 到 `TrackId` 的映射。
+///
+/// 识别 H.264、H.265、H.266、AV1、VP8/9、Opus、AAC、G.711、ADPCM、MP3 与 MPEG-PS
+/// 探测 Track。从 `fmtp`/`rtpmap` 提取 payload type、时钟率、通道数与 SPS/PPS、
+/// AAC ASC 等编解码器 extradata。
 pub fn parse_announce_sdp(
     body: &str,
 ) -> Result<(Vec<TrackInfo>, HashMap<String, TrackId>), String> {
@@ -224,6 +251,9 @@ pub fn parse_announce_sdp(
     Ok((tracks, control_to_track))
 }
 
+/// Checks whether a track is an MPEG-PS compatibility probe track.
+///
+/// 判断某个 Track 是否为 MPEG-PS 兼容探测 Track。
 pub(crate) fn is_mp2p_probe_track(track: &TrackInfo) -> bool {
     track.codec == CodecId::Unknown
         && matches!(
@@ -243,6 +273,13 @@ fn parse_payload_attribute(rest: &str) -> Option<(u8, &str)> {
     Some((payload_type, value.trim_start()))
 }
 
+/// Builds an SDP body for a DESCRIBE response from the engine tracks.
+///
+/// Also returns the control-string-to-track-id map used by SETUP/PLAY.
+///
+/// 根据引擎中的 Track 构造 DESCRIBE 响应的 SDP 正文。
+///
+/// 同时返回 SETUP/PLAY 使用的 control 字符串到 track id 的映射。
 pub fn build_describe_sdp(
     base_uri: &str,
     tracks: &[TrackInfo],
@@ -319,6 +356,13 @@ fn extract_rtsp_host(uri: &str) -> Option<&str> {
     Some(host_port.split(':').next().unwrap_or(host_port))
 }
 
+/// Normalizes an `a=control:` value to a `trackID=` or relative suffix.
+///
+/// Strips query fragments, leading/trailing slashes, and absolute path prefixes.
+///
+/// 将 `a=control:` 值归一化为 `trackID=` 或相对后缀。
+///
+/// 去除查询片段、首尾斜杠与绝对路径前缀。
 pub fn normalize_control(control: &str) -> String {
     let trimmed = control.trim();
     let trimmed = trimmed
