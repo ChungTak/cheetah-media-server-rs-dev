@@ -1,8 +1,8 @@
 //! Tokio-based MP4 VOD file driver.
 //!
-//! Wraps `cheetah-mp4-core::VodSession` with a real file reader. The driver
-//! handles `read_at` requests via `tokio::fs::File` and adapts the session's
-//! schedule-tick loop to a `tokio::time::sleep` cadence.
+//! 基于 Tokio 的 MP4 VOD 文件驱动。
+//! 用真实文件 reader 包装 `cheetah-mp4-core::VodSession`；
+//! 通过 `tokio::fs::File` 处理 `read_at` 请求，并把会话的 schedule-tick 循环适配为 `tokio::time::sleep` 节奏。
 
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -25,6 +25,8 @@ use tracing::warn;
 const EVENT_CHANNEL_CAPACITY: usize = 128;
 
 /// Outbound events emitted by the driver to the protocol/module layer.
+///
+/// 驱动向协议/模块层发出的事件。
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum VodDriverEvent {
@@ -38,6 +40,8 @@ pub enum VodDriverEvent {
 }
 
 /// Driver configuration.
+///
+/// 驱动配置。
 #[derive(Debug, Clone)]
 pub struct VodDriverConfig {
     pub read_chunk_bytes: usize,
@@ -70,13 +74,15 @@ impl Default for VodDriverConfig {
 
 /// Runtime-neutral event stream handed to the module/protocol layer.
 ///
-/// The driver keeps its internal plumbing on tokio channels (driver crates may
-/// use tokio directly), but the public surface exposes only a `futures::Stream`
-/// so consumers never depend on a `tokio::sync::mpsc` type. See `AGENTS.md` §5.
+/// 驱动在内部使用 tokio channel，但公共接口只暴露 `futures::Stream`，
+/// 因此消费者不会依赖 `tokio::sync::mpsc` 类型（参见 `AGENTS.md` §5）。
 pub struct VodEventStream {
     rx: mpsc::Receiver<VodDriverEvent>,
 }
 
+/// `Stream` implementation over the tokio receiver.
+///
+/// 基于 tokio 接收器的 `Stream` 实现。
 impl Stream for VodEventStream {
     type Item = VodDriverEvent;
 
@@ -86,23 +92,36 @@ impl Stream for VodEventStream {
 }
 
 /// Command channel handle exposed to the module/protocol layer.
+///
+/// 暴露给模块/协议层的命令通道句柄。
 #[derive(Clone)]
 pub struct VodDriverHandle {
     cmd_tx: mpsc::UnboundedSender<VodControlCommand>,
     event_rx: Arc<Mutex<Option<mpsc::Receiver<VodDriverEvent>>>>,
 }
 
+/// `VodDriverHandle` API.
+///
+/// `VodDriverHandle` API。
 impl VodDriverHandle {
+    /// Send a control command to the driver task.
+    ///
+    /// 向驱动任务发送控制命令。
     pub fn send_control(&self, cmd: VodControlCommand) -> Result<(), VodDriverError> {
         self.cmd_tx.send(cmd).map_err(|_| VodDriverError::Closed)
     }
 
     /// Take ownership of the event stream. Only the first caller succeeds.
+    ///
+    /// 获取事件流的所有权。仅第一次调用成功。
     pub fn take_events(&self) -> Option<VodEventStream> {
         self.event_rx.lock().take().map(|rx| VodEventStream { rx })
     }
 }
 
+/// Error types for the VOD driver.
+///
+/// VOD 驱动的错误类型。
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum VodDriverError {
     #[error("driver channel closed")]
@@ -115,6 +134,8 @@ pub enum VodDriverError {
 
 /// Open an MP4 file and start a VOD driver task. Returns a handle for the
 /// caller to send commands to and pull events from.
+///
+/// 打开 MP4 文件并启动 VOD 驱动任务，返回供调用者发送命令和拉取事件的句柄。
 pub async fn open_file(
     path: PathBuf,
     config: VodDriverConfig,
@@ -127,9 +148,9 @@ pub async fn open_file(
 /// as the canonical schema; if subsequent files differ, the driver emits a
 /// `Closed` event with a `track schema mismatch` reason.
 ///
-/// Empty list yields `NotFound`. The first file must be openable; subsequent
-/// files that fail to open trigger an early `Closed` event with the failing
-/// path in the reason.
+/// 依次打开一个或多个 MP4 文件并播放，镜像 ZLM `MultiMP4Demuxer` 语义。
+/// 第一个文件的轨道集作为标准 schema；后续文件不一致时发出 `Closed` 事件。
+/// 空列表返回 `NotFound`；第一个文件必须可打开。
 pub async fn open_files(
     paths: Vec<PathBuf>,
     config: VodDriverConfig,
@@ -157,6 +178,9 @@ pub async fn open_files(
     })
 }
 
+/// Run the multi-file playlist loop with optional repeat count.
+///
+/// 运行多文件播放列表循环，支持可选重复次数。
 async fn run_multi_driver(
     paths: Vec<PathBuf>,
     config: VodDriverConfig,
@@ -238,6 +262,9 @@ async fn run_multi_driver(
 /// `Tracks` event after the first emission and any `Closed` event so callers
 /// see one continuous timeline. Returns `false` if the upstream channel
 /// is closed (caller should stop).
+///
+/// 驱动单个文件通过 VOD 状态机，首次轨道事件后抑制重复的 `Tracks` 和 `Closed` 事件，
+/// 使调用者看到连续时间线。上游通道关闭时返回 `false`。
 async fn run_single(
     file: File,
     file_size: u64,
@@ -348,6 +375,8 @@ async fn run_single(
 /// Pick the next sleep deadline based on the session-requested delay.
 /// Falls back to a 1ms tick when no delay is requested so the loop can
 /// keep up with newly available reads without spinning.
+///
+/// 根据会话请求的延迟选择下一次睡眠时间。无延迟时回退到 1ms tick，避免空转。
 fn schedule_next_tick(delay_us: Option<u64>) -> tokio::time::Instant {
     let delay = delay_us.unwrap_or(1_000);
     // Cap the delay so a stale or buggy schedule cannot stall the driver
@@ -357,6 +386,9 @@ fn schedule_next_tick(delay_us: Option<u64>) -> tokio::time::Instant {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Consume session outputs, perform I/O, and emit driver events.
+///
+/// 消费会话输出、执行 I/O 并发出驱动事件。
 async fn drive_outputs_filtered(
     file: &mut File,
     session: &mut VodSession,
@@ -449,6 +481,9 @@ async fn drive_outputs_filtered(
     Ok(next_delay_us)
 }
 
+/// Monotonic time in microseconds for tick scheduling.
+///
+/// 用于 tick 调度的单调微秒时间。
 fn monotonic_now_us() -> u64 {
     use std::time::Instant;
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
