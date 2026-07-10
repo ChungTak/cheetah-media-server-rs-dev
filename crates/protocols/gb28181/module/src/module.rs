@@ -356,6 +356,8 @@ async fn call_rtp_service(
 ) -> Result<serde_json::Value, String> {
     let rtp_service = engine
         .module_manager_api
+        .upgrade()
+        .ok_or_else(|| "module manager is unavailable".to_string())?
         .http_mounts()
         .into_iter()
         .find(|m| m.module_id.to_string() == "rtp")

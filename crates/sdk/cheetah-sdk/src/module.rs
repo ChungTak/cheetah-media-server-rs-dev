@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -134,7 +134,7 @@ pub struct EngineContext {
     pub event_bus: Arc<dyn EventBus>,
     pub config_provider: Arc<dyn ConfigProvider>,
     pub config_apply_api: Arc<dyn ConfigApplyApi>,
-    pub module_manager_api: Arc<dyn ModuleManagerApi>,
+    pub module_manager_api: Weak<dyn ModuleManagerApi>,
     pub room_service_api: Arc<dyn RoomServiceApi>,
     pub metrics_api: Arc<dyn MetricsApi>,
     pub health_api: Arc<dyn HealthApi>,
