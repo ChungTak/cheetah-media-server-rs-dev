@@ -23,22 +23,42 @@ const MARKER_DOUBLE_VECTOR: u8 = 0x0F;
 const MARKER_OBJECT_VECTOR: u8 = 0x10;
 const MARKER_DICTIONARY: u8 = 0x11;
 
+/// A decoded AMF3 value with all supported type markers.
+/// 解码后的 AMF3 值，支持所有类型标记。
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Amf3Value {
+    /// Undefined value.
+    /// 未定义值。
     Undefined,
+    /// Null value.
+    /// null 值。
     Null,
+    /// Boolean value.
+    /// 布尔值。
     Boolean(bool),
+    /// 29-bit signed integer.
+    /// 29 位有符号整数。
     Integer(i32),
+    /// IEEE-754 double-precision number.
+    /// IEEE-754 双精度浮点数。
     Double(f64),
+    /// UTF-8 string.
+    /// UTF-8 字符串。
     String(String),
+    /// XML document string.
+    /// XML 文档字符串。
     XmlDocument(String),
-    Date {
-        unix_time_ms: i64,
-    },
+    /// Date with milliseconds since the Unix epoch.
+    /// 自 Unix 纪元以来的毫秒数日期。
+    Date { unix_time_ms: i64 },
+    /// Array with associative and dense entries.
+    /// 同时包含关联项与密集项的数组。
     Array {
         assoc_entries: Vec<Pair<String, Self>>,
         dense_entries: Vec<Self>,
     },
+    /// Object with optional class name, sealed fields, and dynamic entries.
+    /// 对象，可带类名、密封字段与动态条目。
     Object {
         // `None` 表示匿名对象
         class_name: Option<String>,
@@ -48,26 +68,31 @@ pub enum Amf3Value {
 
         entries: Vec<Pair<String, Self>>,
     },
+    /// XML string.
+    /// XML 字符串。
     Xml(String),
+    /// Byte array.
+    /// 字节数组。
     ByteArray(Vec<u8>),
-    IntVector {
-        is_fixed: bool,
-        entries: Vec<i32>,
-    },
-    UintVector {
-        is_fixed: bool,
-        entries: Vec<u32>,
-    },
-    DoubleVector {
-        is_fixed: bool,
-        entries: Vec<f64>,
-    },
+    /// Vector of 32-bit signed integers.
+    /// 32 位有符号整数向量。
+    IntVector { is_fixed: bool, entries: Vec<i32> },
+    /// Vector of 32-bit unsigned integers.
+    /// 32 位无符号整数向量。
+    UintVector { is_fixed: bool, entries: Vec<u32> },
+    /// Vector of double-precision numbers.
+    /// 双精度浮点数向量。
+    DoubleVector { is_fixed: bool, entries: Vec<f64> },
+    /// Vector of typed objects; `None` means any element type.
+    /// 类型化对象向量；`None` 表示元素类型不限。
     ObjectVector {
         // `None` 表示元素可以是任意类型
         class_name: Option<String>,
         is_fixed: bool,
         entries: Vec<Self>,
     },
+    /// Dictionary with key-value pairs.
+    /// 键值对字典。
     Dictionary {
         is_weak: bool,
         entries: Vec<Pair<Self, Self>>,
@@ -75,6 +100,8 @@ pub enum Amf3Value {
 }
 
 impl Amf3Value {
+    /// Decodes a single AMF3 value from the buffer, returning bytes consumed and the value.
+    /// 从缓冲区解码单个 AMF3 值，返回消费字节数与值。
     pub fn decode(buf: &[u8]) -> Result<(usize, Self), Error> {
         let original_len = buf.len();
         let mut decoder = Decoder {
@@ -88,12 +115,16 @@ impl Amf3Value {
         Ok((original_len - decoder.buf.len(), value))
     }
 
+    /// Encodes this value into the buffer using the AMF3 marker format.
+    /// 使用 AMF3 标记格式将该值编码到缓冲区。
     pub fn encode(&self, buf: &mut Vec<u8>) {
         let mut encoder = Encoder { buf };
         encoder.encode_value(self);
     }
 }
 
+/// Incremental AMF3 decoder with reference tables for strings, traits, and complex values.
+/// 增量 AMF3 解码器，包含字符串、trait 与复杂值的引用表。
 #[derive(Debug)]
 struct Decoder<'a> {
     buf: &'a [u8],
@@ -412,6 +443,8 @@ impl<'a> Decoder<'a> {
     }
 }
 
+/// AMF3 encoder that writes marker bytes and u29/size-prefixed values.
+/// AMF3 编码器，写入标记字节与 u29/大小前缀值。
 struct Encoder<'a> {
     buf: &'a mut Vec<u8>,
 }

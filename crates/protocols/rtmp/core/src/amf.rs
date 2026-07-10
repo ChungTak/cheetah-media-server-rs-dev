@@ -3,12 +3,20 @@ use crate::amf3::Amf3Value;
 use crate::error::Error;
 use crate::prelude::*;
 
+/// AMF version used by an RTMP command or data message.
+/// RTMP 命令或数据消息使用的 AMF 版本。
 #[derive(Debug, Clone, Copy, PartialOrd, Ord, PartialEq, Eq, Hash)]
 pub enum AmfVersion {
+    /// Legacy Action Message Format, used by most RTMP tooling.
+    /// 传统的 Action Message Format，大多数 RTMP 工具使用。
     Amf0,
+    /// Compact AMF format with type markers and reference tables.
+    /// 紧凑的 AMF 格式，带有类型标记与引用表。
     Amf3,
 }
 
+/// A versioned AMF value that delegates to either the AMF0 or AMF3 representation.
+/// 一个版本化的 AMF 值，委托给 AMF0 或 AMF3 表示。
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum AmfValue {
     Amf0(Amf0Value),
@@ -16,6 +24,8 @@ pub enum AmfValue {
 }
 
 impl AmfValue {
+    /// Decodes a single AMF value from the buffer, returning bytes consumed and the value.
+    /// 从缓冲区解码单个 AMF 值，返回消费字节数与值。
     pub fn decode(buf: &[u8], version: AmfVersion) -> Result<(usize, Self), Error> {
         match version {
             AmfVersion::Amf0 => Amf0Value::decode(buf).map(|(n, v)| (n, Self::Amf0(v))),
@@ -23,6 +33,8 @@ impl AmfValue {
         }
     }
 
+    /// Encodes the value into the buffer using its associated AMF version.
+    /// 使用其对应的 AMF 版本将值编码到缓冲区。
     pub fn encode(&self, buf: &mut Vec<u8>) {
         match self {
             Self::Amf0(x) => x.encode(buf),
@@ -30,6 +42,8 @@ impl AmfValue {
         }
     }
 
+    /// Finds an object member by key, returning a borrowed reference to the value.
+    /// 按键查找对象成员，返回对该值的借用引用。
     #[track_caller]
     pub fn expect_object_member(&self, key: &str) -> Result<AmfValueRef<'_>, Error> {
         match self {
@@ -47,11 +61,15 @@ impl AmfValue {
         }
     }
 
+    /// Expects the value to be an AMF string and returns it.
+    /// 期望该值为 AMF 字符串并返回。
     #[track_caller]
     pub fn expect_str(&self) -> Result<&str, Error> {
         self.to_ref().expect_str()
     }
 
+    /// Expects the value to be an AMF number and returns it as `f64`.
+    /// 期望该值为 AMF 数字并返回 f64。
     #[track_caller]
     pub fn expect_number(&self) -> Result<f64, Error> {
         self.to_ref().expect_number()
@@ -64,6 +82,8 @@ impl AmfValue {
         }
     }
 
+    /// Builds an AMF0 object from key-value pairs without a class name.
+    /// 根据键值对构建无类名的 AMF0 对象。
     pub fn amf0_object<'a, I>(entries: I) -> Self
     where
         I: IntoIterator<Item = (&'a str, Amf0Value)>,
@@ -99,6 +119,8 @@ impl From<(AmfVersion, f64)> for AmfValue {
     }
 }
 
+/// Borrowed reference to either an AMF0 or AMF3 value.
+/// 对 AMF0 或 AMF3 值的借用引用。
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum AmfValueRef<'a> {
     Amf0(&'a Amf0Value),
@@ -106,6 +128,8 @@ pub enum AmfValueRef<'a> {
 }
 
 impl<'a> AmfValueRef<'a> {
+    /// Returns the borrowed string if this is an AMF string.
+    /// 如果该值为 AMF 字符串则返回借用字符串。
     pub fn expect_str(&self) -> Result<&'a str, Error> {
         match self {
             Self::Amf0(Amf0Value::String(s)) => Ok(s),
@@ -114,6 +138,8 @@ impl<'a> AmfValueRef<'a> {
         }
     }
 
+    /// Returns the number as `f64` if this is an AMF number.
+    /// 如果该值为 AMF 数字则返回 f64。
     pub fn expect_number(&self) -> Result<f64, Error> {
         match self {
             Self::Amf0(Amf0Value::Number(n)) => Ok(*n),

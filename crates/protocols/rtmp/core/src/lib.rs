@@ -1,3 +1,6 @@
+//! Sans-I/O RTMP protocol core with bilingual EN/CN documentation.
+//! 提供无 I/O 的 RTMP 协议核心，并附带中英双语文档。
+
 #![no_std]
 
 #[macro_use]

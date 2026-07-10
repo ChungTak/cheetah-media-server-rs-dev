@@ -8,6 +8,8 @@ use crate::message::{RtmpMessage, RtmpMessageHeader, RtmpMessageType, SetPeerBan
 use crate::prelude::*;
 use crate::user_control::RtmpUserControlEvent;
 
+/// Decodes complete chunks into typed `RtmpMessage`s and updates chunk size on `SetChunkSize`.
+/// 将完整的 chunk 解码为类型化的 `RtmpMessage`，并在 `SetChunkSize` 时更新 chunk 大小。
 #[derive(Debug, Default)]
 pub struct RtmpMessageDecoder {
     chunk_decoder: RtmpChunkDecoder,
@@ -15,10 +17,14 @@ pub struct RtmpMessageDecoder {
 }
 
 impl RtmpMessageDecoder {
+    /// Appends raw bytes to the internal decode buffer.
+    /// 将原始字节追加到内部解码缓冲区。
     pub fn feed_buf(&mut self, buf: &[u8]) {
         self.buf.feed(buf);
     }
 
+    /// Iteratively decodes chunks until a complete message is assembled or more bytes are needed.
+    /// 循环解码 chunk，直到组装出完整消息或需要更多字节。
     pub fn decode(&mut self) -> Result<Option<RtmpMessage>, Error> {
         loop {
             let chunk = match self.chunk_decoder.decode(self.buf.get()) {
@@ -51,6 +57,8 @@ impl RtmpMessageDecoder {
     }
 }
 
+/// Converts a fully reassembled chunk into the corresponding `RtmpMessage` based on its type.
+/// 根据类型将完整重组的 chunk 转换为对应的 `RtmpMessage`。
 pub fn decode_rtmp_chunk_to_message(chunk: RtmpChunk) -> Result<RtmpMessage, Error> {
     let header = RtmpMessageHeader {
         stream_id: chunk.message_stream_id,
@@ -152,6 +160,8 @@ pub fn decode_rtmp_chunk_to_message(chunk: RtmpChunk) -> Result<RtmpMessage, Err
     Ok(message)
 }
 
+/// Parses an AMF command payload: name, transaction ID, object, and optional arguments.
+/// 解析 AMF 命令负载：名称、事务 ID、对象与可选参数。
 fn decode_command(
     mut amf_version: AmfVersion,
     header: RtmpMessageHeader,
@@ -187,6 +197,8 @@ fn decode_command(
     })
 }
 
+/// Decodes all remaining AMF values from the payload until it is exhausted.
+/// 从负载中解码所有剩余的 AMF 值，直到负载耗尽。
 fn decode_amf_values(amf_version: AmfVersion, mut buf: &[u8]) -> Result<Vec<AmfValue>, Error> {
     let mut values = Vec::new();
 

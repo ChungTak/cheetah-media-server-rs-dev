@@ -18,6 +18,8 @@ use super::super::{
 };
 
 impl RtmpCore {
+    /// Executes an external `RtmpCoreCommand` and produces the corresponding outputs.
+    /// 执行外部 `RtmpCoreCommand` 并生成对应的输出。
     pub(crate) fn on_command(
         &mut self,
         cmd: RtmpCoreCommand,
@@ -252,6 +254,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Emits a client event for a received `_result` or `_error` response.
+    /// 为收到的 `_result` 或 `_error` 响应发出客户端事件。
     pub(crate) fn emit_result_received(
         &mut self,
         result: RtmpResultCommand,
@@ -307,6 +311,8 @@ impl RtmpCore {
         }));
     }
 
+    /// Emits a client event for a received `onStatus` message.
+    /// 为收到的 `onStatus` 消息发出客户端事件。
     pub(crate) fn emit_on_status_received(
         &mut self,
         status: RtmpOnStatusCommand,
@@ -360,6 +366,8 @@ impl RtmpCore {
         }));
     }
 
+    /// Encodes and sends a client `connect` request.
+    /// 编码并发送客户端 `connect` 请求。
     fn send_connect_request(
         &mut self,
         app: String,
@@ -379,6 +387,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Encodes and sends a client `createStream` request.
+    /// 编码并发送客户端 `createStream` 请求。
     fn send_create_stream_request(
         &mut self,
         transaction_id: TransactionId,
@@ -392,6 +402,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Encodes and sends a client `publish` request.
+    /// 编码并发送客户端 `publish` 请求。
     fn send_publish_request(
         &mut self,
         stream_id: u32,
@@ -414,6 +426,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Encodes and sends a client `play` request.
+    /// 编码并发送客户端 `play` 请求。
     fn send_play_request(
         &mut self,
         stream_id: u32,
@@ -438,6 +452,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Sends the default `windowAckSize` control message.
+    /// 发送默认的 `windowAckSize` 控制消息。
     pub(crate) fn send_window_ack_size(
         &mut self,
         out: &mut Vec<CoreOutput>,
@@ -446,6 +462,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Sends the default `setPeerBandwidth` control message.
+    /// 发送默认的 `setPeerBandwidth` 控制消息。
     pub(crate) fn send_set_peer_bandwidth(
         &mut self,
         out: &mut Vec<CoreOutput>,
@@ -454,6 +472,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Sends a `setChunkSize` control message and updates the outbound chunk size.
+    /// 发送 `setChunkSize` 控制消息并更新出站 chunk 大小。
     pub(crate) fn send_set_chunk_size(
         &mut self,
         chunk_size: u32,
@@ -465,6 +485,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Sends a successful `_result` for a `connect` command.
+    /// 为 `connect` 命令发送成功的 `_result`。
     pub(crate) fn send_connect_result(
         &mut self,
         txn: f64,
@@ -497,6 +519,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Sends a `_result` carrying the assigned stream ID for `createStream`.
+    /// 发送携带 `createStream` 已分配流 ID 的 `_result`。
     pub(crate) fn send_create_stream_result(
         &mut self,
         txn: f64,
@@ -514,12 +538,16 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Allocates the next available message stream ID.
+    /// 分配下一个可用的消息流 ID。
     pub(super) fn allocate_stream_id(&mut self) -> u32 {
         let current = self.next_stream_id.max(1);
         self.next_stream_id = self.next_stream_id.checked_add(1).unwrap_or(1);
         current
     }
 
+    /// Sends an `onStatus` command with the given level, code, and description.
+    /// 发送包含指定 level、code 与 description 的 `onStatus` 命令。
     fn send_on_status(
         &mut self,
         stream_id: u32,
@@ -545,6 +573,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Sends `|RtmpSampleAccess` data to enable client audio/video sample access.
+    /// 发送 `|RtmpSampleAccess` 数据以启用客户端音视频采样访问。
     fn send_rtmp_sample_access(
         &mut self,
         stream_id: u32,
@@ -566,6 +596,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Sends the stream-begin, optional play status, and optional sample access for a play accept.
+    /// 发送流开始、可选播放状态与可选 sample access 以接受播放。
     fn send_accept_play(
         &mut self,
         stream_id: u32,
@@ -598,7 +630,8 @@ impl RtmpCore {
         Ok(())
     }
 
-    /// Send a minimal `_result(txn, null)` response for side-band commands.
+    /// Sends a client `seek` command with the requested position.
+    /// 发送客户端 `seek` 命令及请求位置。
     pub(crate) fn send_seek_request(
         &mut self,
         stream_id: u32,
@@ -614,6 +647,8 @@ impl RtmpCore {
         self.send_message(8, 0, 20, stream_id, payload, out)
     }
 
+    /// Sends a client `pause` or `resume` command.
+    /// 发送客户端 `pause` 或 `resume` 命令。
     pub(crate) fn send_pause_request(
         &mut self,
         stream_id: u32,
@@ -631,6 +666,8 @@ impl RtmpCore {
         self.send_message(8, 0, 20, stream_id, payload, out)
     }
 
+    /// Sends a minimal `_result(txn, null)` response for side-band commands.
+    /// 为旁路命令发送最小的 `_result(txn, null)` 响应。
     pub(crate) fn send_null_result(&mut self, txn: f64, out: &mut Vec<CoreOutput>) {
         let payload = crate::amf0::encode_all(&[
             WireAmf0Value::String("_result".to_string()),
@@ -640,7 +677,8 @@ impl RtmpCore {
         let _ = self.send_message(3, 0, 20, 0, payload, out);
     }
 
-    /// Send `onBWDone` after connect to satisfy clients that probe bandwidth.
+    /// Sends `onBWDone` after connect to satisfy bandwidth-probing clients.
+    /// 在 connect 后发送 `onBWDone` 以满足带宽探测客户端。
     pub(crate) fn send_on_bw_done(&mut self, out: &mut Vec<CoreOutput>) {
         let payload = crate::amf0::encode_all(&[
             WireAmf0Value::String("onBWDone".to_string()),

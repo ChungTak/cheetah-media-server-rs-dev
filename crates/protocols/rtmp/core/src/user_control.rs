@@ -14,39 +14,45 @@ const EVENT_PING_RESPONSE: u16 = 7;
 const EVENT_BUFFER_EMPTY: u16 = 31;
 const EVENT_BUFFER_READY: u16 = 32;
 
+/// RTMP user control event carried in a `UserControl` protocol message.
+/// RTMP 用户控制事件，由 `UserControl` 协议消息承载。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtmpUserControlEvent {
-    StreamBegin {
-        stream_id: RtmpMessageStreamId,
-    },
-    StreamEof {
-        stream_id: RtmpMessageStreamId,
-    },
-    StreamDry {
-        stream_id: RtmpMessageStreamId,
-    },
+    /// Stream playback begins.
+    /// 流开始播放。
+    StreamBegin { stream_id: RtmpMessageStreamId },
+    /// End of stream.
+    /// 流结束。
+    StreamEof { stream_id: RtmpMessageStreamId },
+    /// Stream is dry (no more data).
+    /// 流已干涸（无更多数据）。
+    StreamDry { stream_id: RtmpMessageStreamId },
+    /// Set the client buffer length for the stream.
+    /// 设置客户端流缓冲区长度。
     SetBufferLength {
         stream_id: RtmpMessageStreamId,
         length: u32,
     },
-    StreamIsRecorded {
-        stream_id: RtmpMessageStreamId,
-    },
-    PingRequest {
-        timestamp: RtmpTimestamp,
-    },
-    PingResponse {
-        timestamp: RtmpTimestamp,
-    },
-    BufferEmpty {
-        stream_id: RtmpMessageStreamId,
-    },
-    BufferReady {
-        stream_id: RtmpMessageStreamId,
-    },
+    /// The stream is recorded.
+    /// 该流正在录制。
+    StreamIsRecorded { stream_id: RtmpMessageStreamId },
+    /// Server ping request, client must respond with a `PingResponse`.
+    /// 服务端 ping 请求，客户端必须以 `PingResponse` 响应。
+    PingRequest { timestamp: RtmpTimestamp },
+    /// Response to a `PingRequest`.
+    /// 对 `PingRequest` 的响应。
+    PingResponse { timestamp: RtmpTimestamp },
+    /// Client buffer is empty.
+    /// 客户端缓冲区为空。
+    BufferEmpty { stream_id: RtmpMessageStreamId },
+    /// Client buffer has data ready.
+    /// 客户端缓冲区已有数据就绪。
+    BufferReady { stream_id: RtmpMessageStreamId },
 }
 
 impl RtmpUserControlEvent {
+    /// Returns the wire name of the user control event.
+    /// 返回用户控制事件的线名称。
     pub fn name(&self) -> &'static str {
         match self {
             Self::StreamBegin { .. } => "StreamBegin",
@@ -61,6 +67,8 @@ impl RtmpUserControlEvent {
         }
     }
 
+    /// Encodes the event into the payload buffer for a `UserControl` message.
+    /// 将事件编码到 `UserControl` 消息负载缓冲区。
     pub fn encode(&self, buf: &mut Vec<u8>) {
         match self {
             Self::StreamBegin { stream_id } => {
@@ -103,6 +111,8 @@ impl RtmpUserControlEvent {
         }
     }
 
+    /// Decodes a user control event from a `UserControl` payload buffer.
+    /// 从 `UserControl` 负载缓冲区中解码用户控制事件。
     pub fn decode(mut buf: &[u8]) -> Result<Self, Error> {
         let event_type = buf.read_u16()?;
         let event = match event_type {

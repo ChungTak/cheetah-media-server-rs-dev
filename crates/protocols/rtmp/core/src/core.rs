@@ -16,95 +16,141 @@ mod command;
 mod handshake;
 mod media;
 
+/// Identifier for timers set or cancelled through the core output.
+/// 通过核心输出设置或取消的定时器标识符。
 pub type TimerId = u64;
 
+/// Input event driving the Sans-I/O RTMP core state machine.
+/// 驱动无 I/O RTMP 核心状态机的输入事件。
 #[derive(Debug, Clone)]
 pub enum CoreInput {
+    /// Raw bytes received from the peer.
+    /// 从对端收到的原始字节。
     Bytes(Bytes),
+    /// A previously set timer has fired.
+    /// 先前设置的定时器已触发。
     Timeout { id: TimerId },
+    /// An external command to the core, such as accepting a publish request.
+    /// 外部给核心的命令，例如接受发布请求。
     Command(RtmpCoreCommand),
 }
 
+/// Output action produced by the core for the driver to carry out.
+/// 核心产生的输出动作，由 driver 执行。
 #[derive(Debug, Clone)]
 pub enum CoreOutput {
+    /// Bytes that should be sent to the peer.
+    /// 应发送给对端的字节。
     Write(Bytes),
+    /// A higher-level event for the module to consume.
+    /// 供模块消费的高层事件。
     Event(RtmpEvent),
+    /// Request a timer to fire at the given absolute time.
+    /// 请求在指定绝对时间触发定时器。
     SetTimer { id: TimerId, at_micros: u64 },
+    /// Cancel a previously requested timer.
+    /// 取消先前请求的定时器。
     CancelTimer { id: TimerId },
 }
 
+/// Media type carried by a data message or `MediaData` event.
+/// 数据消息或 `MediaData` 事件携带的媒体类型。
 #[derive(Debug, Clone)]
 pub enum RtmpMediaType {
+    /// Audio media data.
+    /// 音频媒体数据。
     Audio,
+    /// Video media data.
+    /// 视频媒体数据。
     Video,
+    /// Generic data or metadata.
+    /// 通用数据或元数据。
     Data,
 }
 
+/// Client-side session state used to track publish/play progress.
+/// 客户端会话状态，用于追踪发布/播放进度。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpClientState {
+    /// Handshake and `connect` have completed.
+    /// 握手与 `connect` 已完成。
     Connected,
+    /// A media stream has been created via `createStream`.
+    /// 已通过 `createStream` 创建媒体流。
     MediaStreamCreated,
+    /// The client is publishing media to the server.
+    /// 客户端正在向服务端发布媒体。
     Publishing,
+    /// The client is playing media from the server.
+    /// 客户端正在从服务端播放媒体。
     Playing,
 }
 
+/// High-level event emitted by the core for the module to handle.
+/// 核心发出供模块处理的高层事件。
 #[derive(Debug, Clone)]
 pub enum RtmpEvent {
-    Connected {
-        app: String,
-        tc_url: String,
-    },
+    /// Handshake and `connect` completed; app and tcUrl are known.
+    /// 握手与 `connect` 完成；已知 app 与 tcUrl。
+    Connected { app: String, tc_url: String },
+    /// A peer requested to publish a stream.
+    /// 对端请求发布流。
     PublishRequested {
         stream_id: u32,
         app: String,
         tc_url: String,
         stream_name: String,
     },
+    /// A peer requested to play a stream.
+    /// 对端请求播放流。
     PlayRequested {
         stream_id: u32,
         app: String,
         tc_url: String,
         stream_name: String,
     },
-    StreamCreated {
-        stream_id: u32,
-    },
-    CommandIgnored {
-        name: String,
-        detail: String,
-    },
-    MessageIgnored {
-        name: String,
-        detail: String,
-    },
-    UserControlIgnored {
-        name: String,
-        detail: String,
-    },
-    AckReceived {
-        sequence_number: u32,
-    },
-    LocalAckWindowUpdated {
-        size: u32,
-    },
-    PeerAckWindowUpdated {
-        size: u32,
-    },
-    ClientStateChanged {
-        state: RtmpClientState,
-    },
-    ClientDisconnectRequested {
-        reason: String,
-    },
+    /// A media stream was created and assigned a stream ID.
+    /// 媒体流已创建并分配了流 ID。
+    StreamCreated { stream_id: u32 },
+    /// A command was received but not handled by this crate.
+    /// 收到命令但本 crate 未处理。
+    CommandIgnored { name: String, detail: String },
+    /// A message was received but not handled by this crate.
+    /// 收到消息但本 crate 未处理。
+    MessageIgnored { name: String, detail: String },
+    /// A user control event was received but not handled.
+    /// 收到用户控制事件但本 crate 未处理。
+    UserControlIgnored { name: String, detail: String },
+    /// An acknowledgement message was received from the peer.
+    /// 收到对端的确认消息。
+    AckReceived { sequence_number: u32 },
+    /// The local acknowledgement window was updated.
+    /// 本地确认窗口已更新。
+    LocalAckWindowUpdated { size: u32 },
+    /// The peer acknowledgement window was updated.
+    /// 对端确认窗口已更新。
+    PeerAckWindowUpdated { size: u32 },
+    /// The client state changed (client mode only).
+    /// 客户端状态已改变（仅客户端模式）。
+    ClientStateChanged { state: RtmpClientState },
+    /// The peer requested to disconnect.
+    /// 对端请求断开连接。
+    ClientDisconnectRequested { reason: String },
+    /// Metadata (@setDataFrame / onMetaData) was received.
+    /// 收到元数据（@setDataFrame / onMetaData）。
     Metadata {
         stream_id: u32,
         values: Vec<AmfValue>,
     },
+    /// A data/notify message was received.
+    /// 收到数据/通知消息。
     Notify {
         stream_id: u32,
         name: String,
         values: Vec<AmfValue>,
     },
+    /// Media data was received and should be forwarded to the codec layer.
+    /// 收到媒体数据，应转发到编解码层。
     MediaData {
         stream_id: u32,
         timestamp_ms: u32,
@@ -112,77 +158,87 @@ pub enum RtmpEvent {
         payload: Bytes,
     },
     /// Player requested seek to a position (milliseconds).
-    SeekRequested {
-        stream_id: u32,
-        millis: f64,
-    },
+    /// 播放器请求定位到指定位置（毫秒）。
+    SeekRequested { stream_id: u32, millis: f64 },
     /// Player requested pause or unpause.
+    /// 播放器请求暂停或恢复。
     PauseRequested {
         stream_id: u32,
         pause: bool,
         millis: f64,
     },
     /// Player toggled receiveVideo.
-    ReceiveVideo {
-        stream_id: u32,
-        enabled: bool,
-    },
+    /// 播放器切换了视频接收。
+    ReceiveVideo { stream_id: u32, enabled: bool },
     /// Player toggled receiveAudio.
-    ReceiveAudio {
-        stream_id: u32,
-        enabled: bool,
-    },
-    StreamClosed {
-        stream_id: u32,
-    },
+    /// 播放器切换了音频接收。
+    ReceiveAudio { stream_id: u32, enabled: bool },
+    /// A stream was closed.
+    /// 一个流已关闭。
+    StreamClosed { stream_id: u32 },
+    /// The peer closed the connection.
+    /// 对端关闭了连接。
     PeerClosed,
 }
 
+/// External command that can be injected into the core to drive outbound behavior.
+/// 可注入核心以驱动出站行为的外部命令。
 #[derive(Debug, Clone)]
 pub enum RtmpCoreCommand {
-    SetWindowAckSize {
-        size: u32,
-    },
-    SetPeerBandwidth {
-        size: u32,
-    },
-    SetChunkSize {
-        size: u32,
-    },
-    SendAck {
-        sequence_number: u32,
-    },
+    /// Update the local acknowledgement window size.
+    /// 更新本地确认窗口大小。
+    SetWindowAckSize { size: u32 },
+    /// Set the peer bandwidth limit.
+    /// 设置对端带宽限制。
+    SetPeerBandwidth { size: u32 },
+    /// Change the outgoing chunk size.
+    /// 改变发送 chunk 大小。
+    SetChunkSize { size: u32 },
+    /// Send an acknowledgement for the given sequence number.
+    /// 发送对指定序列号的确认。
+    SendAck { sequence_number: u32 },
+    /// Send a ping response with the requested timestamp.
+    /// 发送带有请求时间戳的 ping 响应。
     SendPingResponse {
         timestamp: crate::timestamp::RtmpTimestamp,
     },
+    /// Client: initiate a `connect` command.
+    /// 客户端：发起 `connect` 命令。
     ClientConnect {
         app: String,
         flash_ver: String,
         tc_url: String,
     },
-    ClientCreateStream {
-        transaction_id: f64,
-    },
+    /// Client: create a new media stream.
+    /// 客户端：创建新的媒体流。
+    ClientCreateStream { transaction_id: f64 },
+    /// Client: publish a stream.
+    /// 客户端：发布流。
     ClientPublish {
         stream_id: u32,
         transaction_id: f64,
         stream_name: String,
     },
+    /// Client: play a stream.
+    /// 客户端：播放流。
     ClientPlay {
         stream_id: u32,
         transaction_id: f64,
         stream_name: String,
         start: f64,
     },
-    ClientSeek {
-        stream_id: u32,
-        millis: f64,
-    },
+    /// Client: request a seek.
+    /// 客户端：请求定位。
+    ClientSeek { stream_id: u32, millis: f64 },
+    /// Client: request pause or resume.
+    /// 客户端：请求暂停或恢复。
     ClientPause {
         stream_id: u32,
         pause: bool,
         millis: f64,
     },
+    /// Client: a wire command was received and should be parsed.
+    /// 客户端：收到线路命令并应解析。
     ClientHandleWireCommand {
         message_stream_id: u32,
         name: String,
@@ -190,81 +246,109 @@ pub enum RtmpCoreCommand {
         object: crate::amf::AmfValue,
         args: Vec<crate::amf::AmfValue>,
     },
-    ClientObserveAck {
-        sequence_number: u32,
-    },
-    ClientObserveWinAckSize {
-        size: u32,
-    },
+    /// Client: an acknowledgement was received.
+    /// 客户端：收到确认。
+    ClientObserveAck { sequence_number: u32 },
+    /// Client: window acknowledgement size was received.
+    /// 客户端：收到窗口确认大小。
+    ClientObserveWinAckSize { size: u32 },
+    /// Client: set peer bandwidth message was received.
+    /// 客户端：收到设置对端带宽消息。
     ClientHandleSetPeerBandwidth {
         size: u32,
         response_window_size: u32,
     },
+    /// Client: media data was observed from the wire.
+    /// 客户端：从线路上观察到媒体数据。
     ClientObserveMediaData {
         stream_id: u32,
         timestamp_ms: u32,
         media_type: RtmpMediaType,
         payload: Bytes,
     },
+    /// Client: a user control event was received.
+    /// 客户端：收到用户控制事件。
     ClientHandleUserControl {
         event: crate::user_control::RtmpUserControlEvent,
     },
+    /// Client: an unhandled message was received.
+    /// 客户端：收到未处理的消息。
     ClientHandleUnhandledMessage {
         message: crate::message::RtmpMessage,
     },
-    AcceptPublish {
-        stream_id: u32,
-    },
-    RejectPublish {
-        stream_id: u32,
-        description: String,
-    },
-    AcceptPlay {
-        stream_id: u32,
-    },
+    /// Server: accept a publish request.
+    /// 服务端：接受发布请求。
+    AcceptPublish { stream_id: u32 },
+    /// Server: reject a publish request.
+    /// 服务端：拒绝发布请求。
+    RejectPublish { stream_id: u32, description: String },
+    /// Server: accept a play request.
+    /// 服务端：接受播放请求。
+    AcceptPlay { stream_id: u32 },
+    /// Server: accept a play request with optional status/sample access.
+    /// 服务端：接受播放请求，可选发送状态/sample access。
     AcceptPlayConfigured {
         stream_id: u32,
         emit_play_status: bool,
         emit_sample_access: bool,
     },
-    RejectPlay {
-        stream_id: u32,
-        description: String,
-    },
+    /// Server: reject a play request.
+    /// 服务端：拒绝播放请求。
+    RejectPlay { stream_id: u32, description: String },
+    /// Send metadata to the peer.
+    /// 向对端发送元数据。
     SendMetadata {
         stream_id: u32,
         timestamp_ms: u32,
         payload: Bytes,
     },
+    /// Send audio data to the peer.
+    /// 向对端发送音频数据。
     SendAudio {
         stream_id: u32,
         timestamp_ms: u32,
         payload: Bytes,
     },
+    /// Send video data to the peer.
+    /// 向对端发送视频数据。
     SendVideo {
         stream_id: u32,
         timestamp_ms: u32,
         payload: Bytes,
     },
+    /// Send a data/notify message to the peer.
+    /// 向对端发送数据/通知消息。
     SendNotify {
         stream_id: u32,
         timestamp_ms: u32,
         payload: Bytes,
     },
-    CloseStream {
-        stream_id: u32,
-    },
+    /// Close the given stream.
+    /// 关闭指定流。
+    CloseStream { stream_id: u32 },
+    /// Close the entire connection.
+    /// 关闭整个连接。
     CloseConnection,
 }
 
+/// Error type returned by `RtmpCore::handle_input`.
+/// `RtmpCore::handle_input` 返回的错误类型。
 #[derive(Debug, thiserror::Error)]
 pub enum RtmpCoreError {
+    /// A chunk or message decoding error occurred.
+    /// 发生 chunk 或消息解码错误。
     #[error("chunk: {0}")]
     Chunk(String),
+    /// An AMF0 decode/encode failure occurred.
+    /// 发生 AMF0 编解码失败。
     #[error("amf0 decode failed: {0}")]
     Amf0(String),
+    /// The handshake version byte was not recognized.
+    /// 握手版本字节不被识别。
     #[error("invalid rtmp handshake version: {0}")]
     InvalidHandshakeVersion(u8),
+    /// A generic handshake failure occurred.
+    /// 发生通用握手失败。
     #[error("handshake: {0}")]
     Handshake(String),
 }
@@ -316,6 +400,8 @@ impl core::fmt::Debug for HandshakeRole {
     }
 }
 
+/// The RTMP protocol core state machine, providing Sans-I/O processing of inputs and outputs.
+/// RTMP 协议核心状态机，提供输入与输出的无 I/O 处理。
 #[derive(Debug)]
 pub struct RtmpCore {
     state: HandshakeState,
@@ -348,6 +434,8 @@ impl Default for RtmpCore {
 }
 
 impl RtmpCore {
+    /// Creates a new server-side `RtmpCore` starting in the handshake state.
+    /// 创建新的服务端 `RtmpCore`，从握手状态开始。
     pub fn new() -> Self {
         let mut encoder = RtmpMessageEncoder::default();
         encoder.set_chunk_size(RtmpChunkSize::saturating_new(60_000));
@@ -376,6 +464,8 @@ impl RtmpCore {
         }
     }
 
+    /// Creates a new client-side `RtmpCore` that starts in the ready state.
+    /// 创建新的客户端 `RtmpCore`，从就绪状态开始。
     pub fn new_client() -> Self {
         let mut encoder = RtmpMessageEncoder::default();
         encoder.set_chunk_size(RtmpChunkSize::saturating_new(60_000));
@@ -404,6 +494,8 @@ impl RtmpCore {
         }
     }
 
+    /// Drives the state machine with one input and returns all produced outputs.
+    /// 用一次输入驱动状态机并返回所有产生的输出。
     pub fn handle_input(&mut self, input: CoreInput) -> Result<Vec<CoreOutput>, RtmpCoreError> {
         let mut out = Vec::new();
         match input {
@@ -414,6 +506,8 @@ impl RtmpCore {
         Ok(out)
     }
 
+    /// Routes incoming bytes to the handshake or ready-state processing logic.
+    /// 将收到的字节路由到握手或就绪状态处理逻辑。
     fn on_bytes(&mut self, bytes: Bytes, out: &mut Vec<CoreOutput>) -> Result<(), RtmpCoreError> {
         if self.state == HandshakeState::Closed {
             return Ok(());
@@ -431,6 +525,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Processes bytes after the handshake, sending acks and decoding chunks.
+    /// 在握手之后处理字节，发送确认并解码 chunk。
     fn process_ready_bytes(
         &mut self,
         bytes: Bytes,
@@ -467,6 +563,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Dispatches a complete chunk to control, media, command, or aggregate handlers.
+    /// 将完整的 chunk 分派到控制、媒体、命令或聚合处理程序。
     fn on_message(
         &mut self,
         msg: crate::chunk::RtmpChunk,
@@ -553,7 +651,8 @@ impl RtmpCore {
         Ok(())
     }
 
-    /// Split an Aggregate message (type 22) into sub-messages and process each.
+    /// Splits an Aggregate message (type 22) into sub-messages and processes each one.
+    /// 将 Aggregate 消息（类型 22）拆分为子消息并逐个处理。
     fn on_aggregate_message(
         &mut self,
         msg: crate::chunk::RtmpChunk,
@@ -606,6 +705,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Decodes protocol control messages and updates chunk/ack/bandwidth state.
+    /// 解码协议控制消息并更新 chunk/确认/带宽状态。
     fn handle_control_message(
         &mut self,
         chunk: crate::chunk::RtmpChunk,

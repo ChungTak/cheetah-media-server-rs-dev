@@ -9,6 +9,8 @@ use super::{
 };
 
 impl RtmpCore {
+    /// Routes media payload to either the active publish or the pending publish buffer.
+    /// 将媒体负载路由到活跃发布或待发布缓冲区。
     pub(super) fn handle_media_input(
         &mut self,
         stream_id: u32,
@@ -43,6 +45,8 @@ impl RtmpCore {
         }));
     }
 
+    /// Buffers media received before the publish is accepted, dropping non-sequence headers when over limit.
+    /// 在发布被接受前缓冲收到的媒体，超限时丢弃非序列头。
     pub(super) fn push_pending_publish_media(
         &mut self,
         stream_id: u32,
@@ -86,6 +90,8 @@ impl RtmpCore {
         self.pending_media_bytes = self.pending_media_bytes.saturating_add(payload_len);
     }
 
+    /// Emits all buffered pending publish media as events and clears the pending state.
+    /// 发出所有缓冲的待发布媒体事件并清空待发布状态。
     pub(super) fn flush_pending_publish_media(
         &mut self,
         stream_id: u32,
@@ -106,6 +112,8 @@ impl RtmpCore {
         self.pending_publish = None;
     }
 
+    /// Clears the pending publish state and buffered media.
+    /// 清除待发布状态与缓冲的媒体。
     pub(super) fn clear_pending_publish(&mut self) {
         self.pending_publish = None;
         self.pending_media.clear();
@@ -116,6 +124,8 @@ impl RtmpCore {
 const EX_VIDEO_FLAG: u8 = 0x80;
 const EX_VIDEO_PACKET_TYPE_SEQUENCE_START: u8 = 0;
 
+/// Detects whether a media payload is an H.264/H.265/AV1/H.266 or AAC sequence header.
+/// 检测媒体负载是否为 H.264/H.265/AV1/H.266 或 AAC 的序列头。
 fn is_sequence_header(media_type: &RtmpMediaType, payload: &[u8]) -> bool {
     let first = match payload.first() {
         Some(&b) => b,

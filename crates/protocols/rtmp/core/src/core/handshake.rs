@@ -6,6 +6,8 @@ use bytes::Bytes;
 use super::{CoreOutput, HandshakeRole, HandshakeState, RtmpCore, RtmpCoreError};
 
 impl RtmpCore {
+    /// Feeds handshake bytes to the server handshake, emits handshake outputs, and transitions to ready.
+    /// 向服务端握手喂入字节，发出握手输出，并在完成后切换到就绪状态。
     pub(super) fn try_handshake(
         &mut self,
         bytes: Bytes,

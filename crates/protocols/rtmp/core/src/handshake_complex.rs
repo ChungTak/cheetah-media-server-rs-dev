@@ -1,8 +1,11 @@
 //! Complex RTMP handshake (FP9 HMAC-SHA256 digest scheme).
 //!
+//! 复杂 RTMP 握手（FP9 HMAC-SHA256 摘要方案）。
+//!
 //! This module is only compiled when the `complex-handshake` feature is enabled.
 //! It provides detection and verification of the HMAC-SHA256 digest handshake
 //! used by Flash Player 9+ clients.
+//! 仅在 `complex-handshake` 特性开启时编译，用于检测并校验 Flash Player 9+ 客户端使用的 HMAC-SHA256 摘要握手。
 
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
@@ -10,12 +13,15 @@ use sha2::Sha256;
 type HmacSha256 = Hmac<Sha256>;
 
 /// 30-byte key used by Flash Player to sign C1.
+/// 用于 Flash Player 对 C1 签名的 30 字节密钥。
 const GENUINE_FP_KEY: &[u8] = b"Genuine Adobe Flash Player 001";
 
 /// 36-byte key used by Flash Media Server to sign S1.
+/// 用于 Flash Media Server 对 S1 签名的 36 字节密钥。
 const GENUINE_FMS_KEY: &[u8] = b"Genuine Adobe Flash Media Server 001";
 
 /// Full 68-byte key for S2 generation (FMS key + 32 bytes).
+/// 用于生成 S2 的完整 68 字节密钥（FMS 密钥 + 32 字节）。
 const GENUINE_FMS_KEY_FULL: &[u8] = &[
     0x47, 0x65, 0x6e, 0x75, 0x69, 0x6e, 0x65, 0x20, 0x41, 0x64, 0x6f, 0x62, 0x65, 0x20, 0x46, 0x6c,
     0x61, 0x73, 0x68, 0x20, 0x4d, 0x65, 0x64, 0x69, 0x61, 0x20, 0x53, 0x65, 0x72, 0x76, 0x65, 0x72,
@@ -25,6 +31,7 @@ const GENUINE_FMS_KEY_FULL: &[u8] = &[
 ];
 
 /// Full 62-byte key for C1 verification (FP key + 32 bytes).
+/// 用于验证 C1 的完整 62 字节密钥（FP 密钥 + 32 字节）。
 #[allow(dead_code)]
 const GENUINE_FP_KEY_FULL: &[u8] = &[
     0x47, 0x65, 0x6e, 0x75, 0x69, 0x6e, 0x65, 0x20, 0x41, 0x64, 0x6f, 0x62, 0x65, 0x20, 0x46, 0x6c,
@@ -35,16 +42,22 @@ const GENUINE_FP_KEY_FULL: &[u8] = &[
 ];
 
 /// Detected handshake scheme.
+/// 检测到的握手方案。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandshakeScheme {
     /// Digest at offset computed from bytes [8..12].
+    /// 摘要偏移量从 [8..12] 字节计算得到。
     Scheme0,
     /// Digest at offset computed from bytes [772..776].
+    /// 摘要偏移量从 [772..776] 字节计算得到。
     Scheme1,
 }
 
 /// Try to detect and validate the complex handshake digest in a C1 packet.
+/// 尝试检测并验证 C1 包中的复杂握手摘要。
+///
 /// Returns the scheme if validation succeeds, None if this is a simple handshake.
+/// 验证成功返回对应方案，否则返回 None（表示简单握手）。
 pub fn detect_client_scheme(c1: &[u8]) -> Option<HandshakeScheme> {
     if c1.len() < 1536 {
         return None;
@@ -61,6 +74,7 @@ pub fn detect_client_scheme(c1: &[u8]) -> Option<HandshakeScheme> {
 }
 
 /// Validate the HMAC-SHA256 digest in C1 for the given scheme.
+/// 验证指定方案下 C1 的 HMAC-SHA256 摘要。
 fn validate_c1_digest(c1: &[u8], scheme: HandshakeScheme) -> bool {
     let offset = digest_offset(c1, scheme);
     if offset + 32 > 1536 {
@@ -72,6 +86,7 @@ fn validate_c1_digest(c1: &[u8], scheme: HandshakeScheme) -> bool {
 }
 
 /// Build S1 packet with HMAC-SHA256 digest for complex handshake.
+/// 为复杂握手生成带 HMAC-SHA256 摘要的 S1 包。
 pub fn build_complex_s1(c1: &[u8], scheme: HandshakeScheme) -> [u8; 1536] {
     let mut s1 = [0u8; 1536];
 
@@ -102,6 +117,7 @@ pub fn build_complex_s1(c1: &[u8], scheme: HandshakeScheme) -> [u8; 1536] {
 }
 
 /// Build S2 packet for complex handshake (keyed hash of C1 random data).
+/// 为复杂握手生成 S2 包（基于 C1 随机数据的带密钥哈希）。
 pub fn build_complex_s2(c1: &[u8], scheme: HandshakeScheme) -> [u8; 1536] {
     let mut s2 = [0u8; 1536];
 
@@ -137,6 +153,7 @@ pub fn build_complex_s2(c1: &[u8], scheme: HandshakeScheme) -> [u8; 1536] {
 }
 
 /// Compute the digest offset for a given scheme.
+/// 计算指定方案的摘要偏移量。
 fn digest_offset(packet: &[u8], scheme: HandshakeScheme) -> usize {
     let base = match scheme {
         HandshakeScheme::Scheme0 => 8,
@@ -153,6 +170,7 @@ fn digest_offset(packet: &[u8], scheme: HandshakeScheme) -> usize {
 }
 
 /// Compute HMAC-SHA256 digest over the packet excluding the 32-byte digest slot.
+/// 计算数据包的 HMAC-SHA256 摘要，跳过 32 字节的摘要槽位。
 fn compute_digest(packet: &[u8], digest_offset: usize, key: &[u8]) -> [u8; 32] {
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key size");
     mac.update(&packet[..digest_offset]);

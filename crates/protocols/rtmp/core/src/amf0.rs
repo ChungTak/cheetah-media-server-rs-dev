@@ -26,32 +26,52 @@ const MARKER_XML_DOCUMENT: u8 = 0x0F;
 const MARKER_TYPED_OBJECT: u8 = 0x10;
 const MARKER_AVMPLUS_OBJECT: u8 = 0x11;
 
+/// A decoded AMF0 value with all supported type markers.
+/// 解码后的 AMF0 值，支持所有类型标记。
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Amf0Value {
+    /// IEEE-754 double-precision number.
+    /// IEEE-754 双精度浮点数。
     Number(f64),
+    /// Boolean value encoded as 0 or 1.
+    /// 以 0 或 1 编码的布尔值。
     Boolean(bool),
+    /// UTF-8 string (or long string for lengths > 0xFFFF).
+    /// UTF-8 字符串（长度大于 0xFFFF 时使用长字符串）。
     String(String),
+    /// Object with optional class name and key-value entries.
+    /// 对象，可带类名与键值对条目。
     Object {
         // `None` 表示匿名对象
         class_name: Option<String>,
         entries: Vec<Pair<String, Self>>,
     },
+    /// Explicit null value.
+    /// 显式的 null 值。
     Null,
+    /// Undefined value.
+    /// 未定义值。
     Undefined,
-    EcmaArray {
-        entries: Vec<Pair<String, Self>>,
-    },
-    Array {
-        entries: Vec<Self>,
-    },
-    Date {
-        unix_time_ms: i64,
-    },
+    /// ECMA-style associative array with key-value entries.
+    /// 带键值对的 ECMA 风格关联数组。
+    EcmaArray { entries: Vec<Pair<String, Self>> },
+    /// Strict array with indexed entries.
+    /// 带索引条目的严格数组。
+    Array { entries: Vec<Self> },
+    /// Date with milliseconds since Unix epoch.
+    /// 自 Unix 纪元以来的毫秒数日期。
+    Date { unix_time_ms: i64 },
+    /// XML document as a string.
+    /// XML 文档字符串。
     XmlDocument(String),
+    /// AVM+ object wrapping an AMF3 value.
+    /// 包装 AMF3 值的 AVM+ 对象。
     AvmPlus(Amf3Value),
 }
 
 impl Amf0Value {
+    /// Decodes a single AMF0 value from the buffer, returning consumed bytes and the value.
+    /// 从缓冲区解码单个 AMF0 值，返回消费字节数与值。
     pub fn decode(buf: &[u8]) -> Result<(usize, Self), Error> {
         let original_buf_len = buf.len();
         let mut decoder = Decoder {
@@ -63,6 +83,8 @@ impl Amf0Value {
         Ok((original_buf_len - decoder.buf.len(), value))
     }
 
+    /// Encodes this value into the buffer using the AMF0 marker format.
+    /// 使用 AMF0 标记格式将该值编码到缓冲区。
     pub fn encode(&self, buf: &mut Vec<u8>) {
         let mut encoder = Encoder {
             buf,
@@ -71,6 +93,8 @@ impl Amf0Value {
         encoder.encode_value(self);
     }
 
+    /// Returns the value as a string if it is an AMF0 string.
+    /// 如果该值是 AMF0 字符串则返回字符串。
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Self::String(v) => Some(v),
@@ -78,6 +102,8 @@ impl Amf0Value {
         }
     }
 
+    /// Returns the value as `f64` if it is an AMF0 number.
+    /// 如果该值是 AMF0 数字则返回 f64。
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Self::Number(v) => Some(*v),
@@ -85,6 +111,8 @@ impl Amf0Value {
         }
     }
 
+    /// Returns the object/ECMA-array entries if this value is an object or ECMA array.
+    /// 如果该值是对象或 ECMA 数组则返回其条目。
     pub fn as_object_entries(&self) -> Option<&[Pair<String, Self>]> {
         match self {
             Self::Object { entries, .. } | Self::EcmaArray { entries } => Some(entries),
@@ -92,6 +120,8 @@ impl Amf0Value {
         }
     }
 
+    /// Builds an anonymous AMF0 object from key-value pairs.
+    /// 根据键值对构建匿名 AMF0 对象。
     pub fn object<K, I>(entries: I) -> Self
     where
         K: Into<String>,
@@ -109,6 +139,8 @@ impl Amf0Value {
         }
     }
 
+    /// Returns an empty anonymous AMF0 object.
+    /// 返回空的匿名 AMF0 对象。
     pub fn empty_object() -> Self {
         Self::Object {
             class_name: None,
@@ -116,6 +148,8 @@ impl Amf0Value {
         }
     }
 
+    /// Builds an AMF0 ECMA array from key-value pairs.
+    /// 根据键值对构建 AMF0 ECMA 数组。
     pub fn ecma_array<K, I>(entries: I) -> Self
     where
         K: Into<String>,
@@ -133,18 +167,30 @@ impl Amf0Value {
     }
 }
 
+/// Error kinds produced when decoding or encoding AMF0 values.
+/// AMF0 编解码时产生的错误类型。
 #[derive(Debug, thiserror::Error)]
 pub enum Amf0Error {
+    /// The input ended before the value was fully decoded.
+    /// 输入在值完全解码前结束。
     #[error("unexpected eof")]
     UnexpectedEof,
+    /// An unsupported AMF0 marker byte was encountered.
+    /// 遇到不支持的 AMF0 标记字节。
     #[error("unsupported amf0 marker {0:#x}")]
     UnsupportedMarker(u8),
+    /// An unsupported construct or value was encountered.
+    /// 遇到不支持的构造或值。
     #[error("unsupported: {0}")]
     Unsupported(String),
+    /// A string was not valid UTF-8.
+    /// 字符串不是有效的 UTF-8。
     #[error("invalid utf8 string")]
     InvalidUtf8,
 }
 
+/// Decodes a payload containing consecutive AMF0 values until exhaustion.
+/// 解码包含连续 AMF0 值的负载，直到耗尽。
 pub fn decode_all(mut payload: &[u8]) -> Result<Vec<Amf0Value>, Amf0Error> {
     let mut values = Vec::new();
     while !payload.is_empty() {
@@ -155,6 +201,8 @@ pub fn decode_all(mut payload: &[u8]) -> Result<Vec<Amf0Value>, Amf0Error> {
     Ok(values)
 }
 
+/// Encodes a slice of AMF0 values into a contiguous byte buffer.
+/// 将一组 AMF0 值编码为连续的字节缓冲区。
 pub fn encode_all(values: &[Amf0Value]) -> Bytes {
     let mut out = Vec::new();
     let mut encoder = Encoder {
@@ -168,6 +216,8 @@ pub fn encode_all(values: &[Amf0Value]) -> Bytes {
     Bytes::from(out)
 }
 
+/// Maps an internal `Error` to the public `Amf0Error` classification.
+/// 将内部 `Error` 映射为公开的 `Amf0Error` 分类。
 fn map_decode_error(error: Error) -> Amf0Error {
     match error.kind {
         ErrorKind::InsufficientBuffer => Amf0Error::UnexpectedEof,

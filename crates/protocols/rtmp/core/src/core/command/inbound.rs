@@ -12,6 +12,8 @@ use crate::message::{RtmpMessageHeader, RtmpMessageStreamId};
 use super::super::{CoreOutput, RtmpCore, RtmpCoreError, RtmpEvent};
 
 impl RtmpCore {
+    /// Decodes an AMF0 data message and emits a metadata or notify event.
+    /// 解码 AMF0 数据消息并发出元数据或通知事件。
     pub(crate) fn on_notify_message(
         &mut self,
         message_stream_id: u32,
@@ -21,6 +23,8 @@ impl RtmpCore {
         self.emit_notify_event(message_stream_id, values)
     }
 
+    /// Decodes an AMF3 data message and emits a metadata or notify event.
+    /// 解码 AMF3 数据消息并发出元数据或通知事件。
     pub(crate) fn on_notify_message_amf3(
         &mut self,
         message_stream_id: u32,
@@ -30,6 +34,8 @@ impl RtmpCore {
         self.emit_notify_event(message_stream_id, values)
     }
 
+    /// Classifies an AMF value list as a metadata or generic notify event.
+    /// 将 AMF 值列表分类为元数据或通用通知事件。
     fn emit_notify_event(
         &self,
         message_stream_id: u32,
@@ -65,6 +71,8 @@ impl RtmpCore {
         }))
     }
 
+    /// Decodes an AMF0 command message and dispatches it to the appropriate handler.
+    /// 解码 AMF0 命令消息并分派到对应处理程序。
     pub(crate) fn on_command_message(
         &mut self,
         message_stream_id: u32,
@@ -74,6 +82,8 @@ impl RtmpCore {
         self.on_command_message_with_version(message_stream_id, payload, AmfVersion::Amf0, out)
     }
 
+    /// Decodes an AMF3 command message and dispatches it to the appropriate handler.
+    /// 解码 AMF3 命令消息并分派到对应处理程序。
     pub(crate) fn on_command_message_amf3(
         &mut self,
         message_stream_id: u32,
@@ -83,6 +93,8 @@ impl RtmpCore {
         self.on_command_message_with_version(message_stream_id, payload, AmfVersion::Amf3, out)
     }
 
+    /// Decodes a command with the specified AMF version and routes it to handlers.
+    /// 使用指定 AMF 版本解码命令并路由到处理程序。
     fn on_command_message_with_version(
         &mut self,
         message_stream_id: u32,
@@ -147,6 +159,8 @@ impl RtmpCore {
     }
 }
 
+/// Decodes all AMF values from a payload into a `Vec<AmfValue>`.
+/// 将负载中所有 AMF 值解码为 `Vec<AmfValue>`。
 fn decode_amf_values(
     payload: &[u8],
     amf_version: AmfVersion,
@@ -166,6 +180,8 @@ fn decode_amf_values(
     Ok(values)
 }
 
+/// A decoded AMF command with name, transaction ID, object, and arguments.
+/// 解码后的 AMF 命令，包含名称、事务 ID、对象与参数。
 struct DecodedCommand {
     name: String,
     transaction_id: TransactionId,
@@ -174,6 +190,8 @@ struct DecodedCommand {
     args: Vec<AmfValue>,
 }
 
+/// Decodes a single command message from an AMF payload.
+/// 从 AMF 负载中解码单个命令消息。
 fn decode_command(
     payload: &[u8],
     amf_version: AmfVersion,
@@ -225,6 +243,8 @@ fn decode_command(
     }))
 }
 
+/// Strips an AMF3 leading 0 byte to fall back to AMF0 for flex-command compatibility.
+/// 为兼容 flex 命令，移除 AMF3 负载前导 0 字节以回退到 AMF0。
 fn normalize_amf_payload(payload: &[u8], amf_version: AmfVersion) -> (&[u8], AmfVersion) {
     if amf_version == AmfVersion::Amf3 && payload.first() == Some(&0) {
         // Keep parity with RTMP flex-command handling:
@@ -235,6 +255,8 @@ fn normalize_amf_payload(payload: &[u8], amf_version: AmfVersion) -> (&[u8], Amf
     }
 }
 
+/// Maps a lower-case command name to its canonical mixed-case form.
+/// 将命令名的小写形式映射到规范的大小写混合形式。
 fn canonical_command_name(name_lower: &str) -> Option<&'static str> {
     match name_lower {
         "connect" => Some("connect"),
