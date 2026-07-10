@@ -20,6 +20,7 @@ srt = ["dep:cheetah-srt-module"]
 # GB28181 needs the RTP module at runtime for media delivery (matches the manifest declared
 # `dependencies` in `cheetah-gb28181-module`); enabling `gb28181` therefore implies `rtp`.
 gb28181 = ["dep:cheetah-gb28181-module", "rtp"]
+tokio-console = ["dep:console-subscriber", "tokio/tracing"]
 
 [dependencies]
 anyhow.workspace = true
@@ -40,6 +41,7 @@ cheetah-webrtc-module = { path = "../../crates/protocols/webrtc/module", optiona
 cheetah-srt-module = { path = "../../crates/protocols/srt/module", optional = true }
 cheetah-runtime-tokio = { path = "../../crates/runtime/cheetah-runtime-tokio" }
 cheetah-sdk = { path = "../../crates/sdk/cheetah-sdk" }
+console-subscriber = { workspace = true, optional = true }
 rustls.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

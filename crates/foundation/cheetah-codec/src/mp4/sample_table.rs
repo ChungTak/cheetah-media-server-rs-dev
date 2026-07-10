@@ -8,6 +8,7 @@
 //! timestamps in track timescale units.
 
 use crate::prelude::*;
+use alloc::collections::BTreeSet;
 use bytes::Bytes;
 
 use crate::track::{CodecExtradata, CodecId, MediaKind, TrackId, TrackInfo};
@@ -304,7 +305,7 @@ impl SampleTable {
         let mut ctts_remaining = ctts_iter.next().unwrap_or((0, 0));
 
         // Build sync set
-        let sync_set: Option<std::collections::BTreeSet<u32>> =
+        let sync_set: Option<BTreeSet<u32>> =
             self.stss.as_ref().map(|s| s.iter().copied().collect());
 
         // Walk chunks based on stsc/stco

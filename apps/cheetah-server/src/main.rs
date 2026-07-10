@@ -40,6 +40,10 @@ async fn main() -> anyhow::Result<()> {
         .install_default()
         .expect("install rustls crypto provider");
 
+    #[cfg(feature = "tokio-console")]
+    console_subscriber::init();
+
+    #[cfg(not(feature = "tokio-console"))]
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();

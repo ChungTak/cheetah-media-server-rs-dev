@@ -3,6 +3,7 @@
 //! Supports streaming input (arbitrary chunk sizes), box reassembly,
 //! 32-bit/64-bit box sizes, unknown box skip, and all codec sample entries.
 
+use crate::prelude::*;
 use bytes::{Bytes, BytesMut};
 
 use crate::track::{CodecId, MediaKind};
@@ -1036,13 +1037,13 @@ mod tests {
             assert!(
                 tracks.is_some(),
                 "variant {:?} should produce TrackInfo",
-                std::str::from_utf8(variant)
+                core::str::from_utf8(variant)
             );
             assert_eq!(
                 tracks.unwrap()[0].codec,
                 CodecId::H265,
                 "variant {:?} should be H265",
-                std::str::from_utf8(variant)
+                core::str::from_utf8(variant)
             );
         }
     }
@@ -1123,14 +1124,14 @@ mod tests {
             assert!(
                 tracks.is_some(),
                 "variant {:?} should produce TrackInfo",
-                std::str::from_utf8(variant)
+                core::str::from_utf8(variant)
             );
             // jpeg/mjpa/mjpb should map to MJPEG
             assert_eq!(
                 tracks.unwrap()[0].codec,
                 CodecId::MJPEG,
                 "variant {:?} should be MJPEG",
-                std::str::from_utf8(variant)
+                core::str::from_utf8(variant)
             );
         }
     }

@@ -3,6 +3,7 @@
 //! Accepts arbitrary byte slices (unaligned), discovers tracks from PAT/PMT,
 //! reassembles PES, and outputs `TrackInfo` + `AVFrame`.
 
+use crate::prelude::*;
 use bytes::Bytes;
 
 use crate::frame::{AVFrame, FrameFlags, FrameFormat};
@@ -109,7 +110,7 @@ impl MpegTsDemuxer {
     /// Feed raw bytes (any alignment). Returns events.
     pub fn push(&mut self, data: &[u8]) -> Vec<MpegTsDemuxEvent> {
         let mut events = Vec::new();
-        let mut buf = std::mem::take(&mut self.remainder);
+        let mut buf = core::mem::take(&mut self.remainder);
         buf.extend_from_slice(data);
 
         let mut offset = match find_sync(&buf, 0) {

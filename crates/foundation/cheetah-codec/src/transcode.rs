@@ -3,6 +3,7 @@
 //! Provides G.711 (A-law/μ-law) decoding to PCM and a trait-based pipeline
 //! for plugging in AAC encoders.
 
+use crate::prelude::*;
 use bytes::Bytes;
 
 use crate::{AVFrame, CodecId, FrameFlags, FrameFormat, FrameOrigin, MediaKind, Timebase, TrackId};
@@ -611,7 +612,7 @@ pub fn resample_nearest(input: &[i16], from_rate: u32, to_rate: u32) -> Vec<i16>
         return input.to_vec();
     }
     let ratio = to_rate as f64 / from_rate as f64;
-    let output_len = (input.len() as f64 * ratio).ceil() as usize;
+    let output_len = ceil_f64(input.len() as f64 * ratio) as usize;
     let mut output = Vec::with_capacity(output_len);
     for i in 0..output_len {
         let src_idx = ((i as f64) / ratio) as usize;
