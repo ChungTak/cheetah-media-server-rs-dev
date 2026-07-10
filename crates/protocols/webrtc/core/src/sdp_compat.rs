@@ -10,6 +10,15 @@
 //! [`SdpCompatReport`] describing what was changed so that operators have
 //! visibility into vendor quirks.
 //!
+//! 本模块进行 SDP 兼容性预处理。
+//!
+//! `str0m` 对 RFC 合规性要求严格。一些真实对端（旧浏览器、厂商协议栈、
+//! SMS 风格 fixture）发送的 offer 会被 `str0m` 直接拒绝。我们在 offer 进入
+//! `str0m::change::SdpOffer` 之前，对最常见偏差进行归一化。
+//!
+//! 预处理器刻意保持保守——仅修复我们在真实 fixture 中见过的模式，并发出
+//! [`SdpCompatReport`] 描述改动内容，以便运维人员了解厂商 quirks。
+//!
 //! ## `a=ssrc-group:SIM` without RID
 //!
 //! Some SDP-munging tools strip `a=rid` and `a=simulcast` lines but leave
@@ -18,10 +27,25 @@
 //! ordering (`r0`, `r1`, `r2`). We replicate this behaviour in
 //! [`inject_rid_from_ssrc_group_sim`] so that `str0m` can negotiate
 //! simulcast even when the offer has been munged.
+//!
+//! 一些 SDP 篡改工具会剥离 `a=rid` 和 `a=simulcast` 行，但保留
+//! `a=ssrc-group:SIM <ssrc0> <ssrc1> [<ssrc2>]`。ZLMediaKit 的
+//! `RtpExtContext` 通过按 SSRC 顺序生成稳定 RID 标签（`r0`、`r1`、`r2`）
+//! 来处理这种情况。我们在 [`inject_rid_from_ssrc_group_sim`] 中复现该行为，
+//! 使 `str0m` 即使在被篡改的 offer 上也能协商 simulcast。
 
 use serde::{Deserialize, Serialize};
 
 /// Outcome of running [`preprocess_remote_sdp`].
+///
+/// Each field tracks a specific class of repair so the module can report
+/// vendor compatibility metrics and reproduce the original SDP shape if
+/// needed.
+///
+/// [`preprocess_remote_sdp`] 的运行结果。
+///
+/// 每个字段跟踪特定修复类别，模块可据此上报厂商兼容性指标，并在需要时
+/// 还原原始 SDP 形态。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SdpCompatReport {
     pub trimmed_trailing_whitespace: bool,
@@ -29,12 +53,20 @@ pub struct SdpCompatReport {
     pub appended_missing_terminator: bool,
     /// True when `a=ssrc-group:SIM` was present without `a=rid` lines and
     /// the preprocessor injected synthetic `a=rid:r0/r1/r2` + `a=simulcast`.
+    ///
+    /// 当存在 `a=ssrc-group:SIM` 但无 `a=rid` 行时，预处理器注入合成的
+    /// `a=rid:r0/r1/r2` + `a=simulcast`，此字段为 true。
     pub ssrc_group_sim_rid_generated: bool,
     /// True when `a=extmap-allow-mixed` was observed in the session level.
+    ///
+    /// 在会话级别观察到 `a=extmap-allow-mixed` 时为 true。
     pub extmap_allow_mixed_observed: bool,
 }
 
 impl SdpCompatReport {
+    /// Returns true if any repair was applied.
+    ///
+    /// 若应用了任何修复则返回 true。
     pub fn is_modified(&self) -> bool {
         self.trimmed_trailing_whitespace
             || self.normalized_line_endings
@@ -47,42 +79,84 @@ impl SdpCompatReport {
 ///
 /// Used by [`RtpExtensionMapping`] to provide a stable, str0m-independent
 /// view of the negotiated extension set for module-layer observability.
+///
+/// 与 ZLM `RTP_EXT_MAP` 对齐的 RTP 扩展类型枚举。
+///
+/// 用于 [`RtpExtensionMapping`]，为模块层可观测性提供稳定的、不依赖 `str0m` 的
+/// 协商扩展集合视图。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum RtpExtensionType {
     /// `urn:ietf:params:rtp-hdrext:ssrc-audio-level` (RFC 6464)
+    ///
+    /// `urn:ietf:params:rtp-hdrext:ssrc-audio-level`（RFC 6464）
     AudioLevel,
+    /// `http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time`
+    ///
     /// `http://www.webrtc.org/experiments/rtp-hdrext/abs-send-time`
     AbsSendTime,
     /// `http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01`
+    ///
+    /// `http://www.ietf.org/id/draft-holmer-rmcat-transport-wide-cc-extensions-01`
     TransportWideCc,
+    /// `urn:ietf:params:rtp-hdrext:sdes:mid`
+    ///
     /// `urn:ietf:params:rtp-hdrext:sdes:mid`
     Mid,
     /// `urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id`
+    ///
+    /// `urn:ietf:params:rtp-hdrext:sdes:rtp-stream-id`
     Rid,
+    /// `urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id`
+    ///
     /// `urn:ietf:params:rtp-hdrext:sdes:repaired-rtp-stream-id`
     RepairedRid,
     /// `urn:3gpp:video-orientation` (RFC 7742)
+    ///
+    /// `urn:3gpp:video-orientation`（RFC 7742）
     VideoOrientation,
+    /// `http://www.webrtc.org/experiments/rtp-hdrext/video-timing`
+    ///
     /// `http://www.webrtc.org/experiments/rtp-hdrext/video-timing`
     VideoTiming,
     /// `http://www.webrtc.org/experiments/rtp-hdrext/playout-delay`
+    ///
+    /// `http://www.webrtc.org/experiments/rtp-hdrext/playout-delay`
     PlayoutDelay,
+    /// `urn:ietf:params:rtp-hdrext:toffset`
+    ///
     /// `urn:ietf:params:rtp-hdrext:toffset`
     TransmissionOffset,
     /// `http://www.webrtc.org/experiments/rtp-hdrext/video-content-type`
+    ///
+    /// `http://www.webrtc.org/experiments/rtp-hdrext/video-content-type`
     VideoContentType,
+    /// `http://www.webrtc.org/experiments/rtp-hdrext/color-space`
+    ///
     /// `http://www.webrtc.org/experiments/rtp-hdrext/color-space`
     ColorSpace,
     /// `urn:ietf:params:rtp-hdrext:framemarking` or draft variant
+    ///
+    /// `urn:ietf:params:rtp-hdrext:framemarking` 或其 draft 变体
     FrameMarking,
     /// AV1 dependency descriptor
+    ///
+    /// AV1 依赖描述符
     Av1DependencyDescriptor,
     /// Extension URI not recognized by this enumeration.
+    ///
+    /// 本枚举无法识别的扩展 URI。
     Unknown,
 }
 
 impl RtpExtensionType {
     /// Map an SDP `extmap` URI to the corresponding type.
+    ///
+    /// Uses substring matching for draft/extension names that do not have a
+    /// single canonical URI.
+    ///
+    /// 将 SDP `extmap` URI 映射到对应类型。
+    ///
+    /// 对没有单一规范 URI 的 draft/扩展名使用子串匹配。
     pub fn from_uri(uri: &str) -> Self {
         match uri {
             "urn:ietf:params:rtp-hdrext:ssrc-audio-level" => Self::AudioLevel,
@@ -108,6 +182,12 @@ impl RtpExtensionType {
     }
 
     /// Return the canonical URI for known extension types.
+    ///
+    /// `Unknown` returns an empty string because there is no canonical URI.
+    ///
+    /// 返回已知扩展类型的规范 URI。
+    ///
+    /// `Unknown` 返回空字符串，因为没有规范 URI。
     pub fn uri(&self) -> &'static str {
         match self {
             Self::AudioLevel => "urn:ietf:params:rtp-hdrext:ssrc-audio-level",
@@ -136,15 +216,31 @@ impl RtpExtensionType {
 }
 
 /// A single RTP extension mapping extracted from an SDP `a=extmap` line.
+///
+/// The `id` is the numeric RTP header extension id, `ext_type` is the
+/// normalized type, and `direction` is the optional SDP direction qualifier.
+///
+/// 从 SDP `a=extmap` 行提取的单个 RTP 扩展映射。
+///
+/// `id` 是 RTP 头扩展数字 id，`ext_type` 是归一化类型，`direction` 是可选的
+/// SDP 方向限定符。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RtpExtensionMapping {
     /// Numeric extension id (1–14 for one-byte, 1–255 for two-byte).
+    ///
+    /// 数字扩展 id（one-byte 为 1–14，two-byte 为 1–255）。
     pub id: u8,
     /// Parsed extension type.
+    ///
+    /// 解析后的扩展类型。
     pub ext_type: RtpExtensionType,
     /// Raw URI from the SDP.
+    ///
+    /// SDP 中的原始 URI。
     pub uri: String,
     /// Direction qualifier if present (`sendonly`, `recvonly`, `sendrecv`).
+    ///
+    /// 方向限定符（如果存在），如 `sendonly`、`recvonly`、`sendrecv`。
     pub direction: Option<String>,
 }
 
@@ -153,6 +249,11 @@ pub struct RtpExtensionMapping {
 /// This is a lightweight line-based parser that does not require a full SDP
 /// parse. It returns mappings in document order, including duplicates across
 /// m-lines. The caller can group by media section if needed.
+///
+/// 从 SDP 字符串提取所有 `a=extmap` 映射。
+///
+/// 这是一个轻量级基于行的解析器，无需完整 SDP 解析。它按文档顺序返回映射，
+/// 包括跨 m-line 的重复项。调用方可按需按媒体段分组。
 pub fn extract_rtp_extension_mappings(sdp: &str) -> Vec<RtpExtensionMapping> {
     let mut mappings = Vec::new();
     for line in sdp.lines() {
@@ -197,8 +298,17 @@ pub fn extract_rtp_extension_mappings(sdp: &str) -> Vec<RtpExtensionMapping> {
 /// Ensure each video m-line contains the playout-delay RTP header
 /// extension mapping.
 ///
-/// Returns a possibly rewritten SDP string. Existing playout-delay
-/// mappings are preserved.
+/// This repairs offers that omit the extension but expect the receiver to
+/// accept it. Existing playout-delay mappings are preserved.
+///
+/// 确保每个 video m-line 都包含 playout-delay RTP 头扩展映射。
+///
+/// 用于修复省略了该扩展但期望接收方接受的 offer。已存在的 playout-delay 映射
+/// 会被保留。
+///
+/// Returns a possibly rewritten SDP string.
+///
+/// 返回可能改写后的 SDP 字符串。
 pub fn ensure_playout_delay_extmap(sdp: &str) -> String {
     const URI: &str = "http://www.webrtc.org/experiments/rtp-hdrext/playout-delay";
     let mut lines: Vec<String> = sdp
@@ -263,6 +373,14 @@ pub fn ensure_playout_delay_extmap(sdp: &str) -> String {
 ///
 /// Useful for deployments where these repair codecs are not wired in
 /// the packet pipeline and should not be negotiated.
+///
+/// 从本地 SDP 中移除 RED/ULPFEC payload type。
+///
+/// 用于这些修复编解码器未接入包管线且不应协商的部署。
+///
+/// Returns a possibly rewritten SDP string.
+///
+/// 返回可能改写后的 SDP 字符串。
 pub fn strip_red_ulpfec_payloads(sdp: &str) -> String {
     if sdp.is_empty() {
         return sdp.to_string();
@@ -292,6 +410,9 @@ pub fn strip_red_ulpfec_payloads(sdp: &str) -> String {
     out
 }
 
+/// Append SDP lines to a string with CRLF terminators.
+///
+/// 将 SDP 行附加到字符串，使用 CRLF 终止符。
 fn append_sdp_lines<I, S>(out: &mut String, lines: I)
 where
     I: IntoIterator<Item = S>,
@@ -303,6 +424,13 @@ where
     }
 }
 
+/// Remove RED/ULPFEC lines from a single media section.
+///
+/// Also drops RTX payloads whose `apt` points to a disabled payload.
+///
+/// 从单个媒体段移除 RED/ULPFEC 行。
+///
+/// 同时删除 `apt` 指向被禁用 payload 的 RTX payload。
 fn process_red_ulpfec_media_section(lines: &[String]) -> Vec<String> {
     let disabled_pts = repair_payloads_to_disable_in_section(lines);
     if disabled_pts.is_empty() {
@@ -328,6 +456,16 @@ fn process_red_ulpfec_media_section(lines: &[String]) -> Vec<String> {
     processed
 }
 
+/// Find RED/ULPFEC payload types and their dependent RTX payloads in a section.
+///
+/// Iterates until a fixed point is reached because disabling a RED/ULPFEC
+/// payload may cause a dependent RTX payload to become disabled, which may
+/// in turn affect another RTX payload.
+///
+/// 在单个媒体段中查找 RED/ULPFEC payload type 及其依赖的 RTX payload。
+///
+/// 迭代直到不动点，因为禁用 RED/ULPFEC payload 可能使依赖的 RTX payload
+/// 被禁用，进而影响其他 RTX payload。
 fn repair_payloads_to_disable_in_section(lines: &[String]) -> std::collections::BTreeSet<String> {
     let codecs = payload_codecs_in_section(lines);
     let mut disabled_pts = std::collections::BTreeSet::<String>::new();
@@ -357,6 +495,9 @@ fn repair_payloads_to_disable_in_section(lines: &[String]) -> std::collections::
     disabled_pts
 }
 
+/// Extract `payload-type -> codec-name` mapping from a media section.
+///
+/// 从媒体段提取 `payload-type -> codec-name` 映射。
 fn payload_codecs_in_section(lines: &[String]) -> std::collections::BTreeMap<String, String> {
     let mut codecs = std::collections::BTreeMap::<String, String>::new();
     for line in lines {
@@ -377,6 +518,9 @@ fn payload_codecs_in_section(lines: &[String]) -> std::collections::BTreeMap<Str
     codecs
 }
 
+/// Parse `a=fmtp:<pt> apt=<associated-pt>` into `(pt, apt)`.
+///
+/// 解析 `a=fmtp:<pt> apt=<associated-pt>` 为 `(pt, apt)`。
 fn parse_fmtp_apt(line: &str) -> Option<(String, String)> {
     let rest = line.trim().strip_prefix("a=fmtp:")?;
     let (pt, params) = rest.split_once(char::is_whitespace)?;
@@ -393,6 +537,9 @@ fn parse_fmtp_apt(line: &str) -> Option<(String, String)> {
     None
 }
 
+/// Parse the numeric id from an `a=extmap:` line, ignoring direction.
+///
+/// 从 `a=extmap:` 行解析数字 id，忽略方向。
 fn parse_extmap_id(line: &str) -> Option<u8> {
     let rest = line.strip_prefix("a=extmap:")?;
     let id_part = rest.split_whitespace().next()?;
@@ -400,6 +547,9 @@ fn parse_extmap_id(line: &str) -> Option<u8> {
     id_token.parse::<u8>().ok()
 }
 
+/// Returns true if the line is an rtpmap/fmtp/rtcp-fb for a disabled payload.
+///
+/// 若该行是被禁用 payload 的 rtpmap/fmtp/rtcp-fb，则返回 true。
 fn should_drop_payload_line(line: &str, disabled_pts: &std::collections::BTreeSet<String>) -> bool {
     for prefix in ["a=rtpmap:", "a=fmtp:", "a=rtcp-fb:"] {
         if let Some(rest) = line.strip_prefix(prefix) {
@@ -412,6 +562,13 @@ fn should_drop_payload_line(line: &str, disabled_pts: &std::collections::BTreeSe
     false
 }
 
+/// Rewrite an `m=` line, removing the listed payload types.
+///
+/// Returns `None` if the resulting m-line would have no payload formats.
+///
+/// 重写 `m=` 行，移除列出的 payload type。
+///
+/// 若结果 m-line 没有 payload 格式，则返回 `None`。
 fn rewrite_mline_without_payloads(
     line: &str,
     disabled_pts: &std::collections::BTreeSet<String>,
@@ -444,6 +601,15 @@ fn rewrite_mline_without_payloads(
 /// the SSRC ordering in the group, matching ZLM `RtpExtContext` behaviour.
 ///
 /// Returns `true` if any injection was performed.
+///
+/// 为存在 `a=ssrc-group:SIM` 但无 `a=rid` 行的媒体段注入 `a=rid` 和
+/// `a=simulcast` 行。
+///
+/// ZLMediaKit 与一些 SDP 篡改工具会剥离 RID/simulcast 行但保留 SSRC group。
+/// 没有 RID 行时 `str0m` 无法协商 simulcast。本函数按 group 中的 SSRC 顺序
+/// 生成稳定标签 `r0`、`r1`、`r2`，与 ZLM `RtpExtContext` 行为一致。
+///
+/// 若执行了任何注入则返回 `true`。
 pub fn inject_rid_from_ssrc_group_sim(sdp: &mut String) -> bool {
     // We work on a line-by-line basis. For each m= section, check if it
     // has `a=ssrc-group:SIM` but no `a=rid:` lines. If so, inject
@@ -544,6 +710,22 @@ pub fn inject_rid_from_ssrc_group_sim(sdp: &mut String) -> bool {
 ///
 /// We do **not** rewrite codec lines, ICE attributes, or fingerprint here —
 /// those need to be preserved verbatim for `str0m` to validate the peer.
+///
+/// 对远端 SDP 应用最小兼容性转换。
+///
+/// 仅安全转换：
+/// - 将 `\r`、`\n`、`\r\n` 统一为 `\r\n`。
+/// - 去掉每行尾部空白。
+/// - 确保 SDP 以 `\r\n` 结尾。
+/// - 当存在 `a=ssrc-group:SIM` 但无 RID 行时注入 `a=rid` + `a=simulcast`
+///   （ZLM/SDP 篡改兼容性）。
+///
+/// 我们**不**在此重写 codec 行、ICE 属性或 fingerprint——这些需要原样保留，
+/// 供 `str0m` 验证对端。
+///
+/// Returns the normalized SDP and a report describing the changes.
+///
+/// 返回归一化后的 SDP 与描述变化的报告。
 pub fn preprocess_remote_sdp(input: &str) -> (String, SdpCompatReport) {
     let mut report = SdpCompatReport::default();
 

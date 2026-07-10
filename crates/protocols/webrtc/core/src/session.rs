@@ -10,6 +10,16 @@
 //!   saturating, so a slightly out-of-order `now_micros` value cannot panic
 //!   the state machine.
 //!
+//! `WebRtcCore` 是围绕 `str0m::Rtc` 的多会话无 I/O 包装器。
+//!
+//! 时间纪律：
+//!
+//! - 构造函数接受 `start_instant: Instant` 作为锚点，所有后续边界 `now_micros`
+//!   均相对该锚点。
+//! - 本 crate 不调用 [`Instant::now`]；驱动层负责获取墙上时间并通过输入传入。
+//! - 从 `u64 now_micros` 到 [`Instant`] 的转换是单调且饱和的，因此略微乱序的
+//!   `now_micros` 不会使状态机 panic。
+//!
 //! Phase 01 implements:
 //!
 //! * `accept_offer` / `apply_answer` flow through `str0m::change::SdpApi`.
@@ -24,6 +34,18 @@
 //! exposed on [`WebRtcCoreCommand`] but currently emit a diagnostic and are
 //! otherwise a no-op so downstream layers can wire their flow without
 //! blocking on later phases.
+//!
+//! 阶段 01 实现：
+//!
+//! - 通过 `str0m::change::SdpApi` 的 `accept_offer` / `apply_answer` 流程。
+//! - 远端 ICE candidate 注入。
+//! - 通过 [`net::Receive`] 的网络包轮询。
+//! - 由 `Output::Timeout` 驱动的定时器调度。
+//! - ICE 状态、媒体添加、DataChannel 与 PLI/FIR 反馈的保守事件映射。
+//!
+//! 媒体写路径、RTP 模式透传、BWE 策略与统计导出尚未在本阶段实现。这些操作的
+//! 命令仍暴露在 [`WebRtcCoreCommand`] 上，但当前只发出诊断，否则为 no-op，
+//! 以便下游层可以提前接入，而不被后续阶段阻塞。
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -64,6 +86,9 @@ use crate::types::{
 /// Maximum jump forward we accept from a single `now_micros` input before
 /// clamping the value back to the previous monotonic instant. Prevents
 /// hostile inputs from advancing the state machine by gigabytes of time.
+///
+/// 在将单个 `now_micros` 输入钳位回前一个单调时刻之前所允许的最大前进跳跃。
+/// 防止恶意输入将状态机推进极大量时间。
 const MAX_INPUT_TIME_JUMP: Duration = Duration::from_secs(60 * 60);
 
 /// Multi-session Sans-I/O wrapper around `str0m::Rtc`.
@@ -71,6 +96,11 @@ const MAX_INPUT_TIME_JUMP: Duration = Duration::from_secs(60 * 60);
 /// One `WebRtcCore` typically lives in a single driver shard. Drivers feed
 /// it input via [`WebRtcCore::handle_input`] and drain output via
 /// [`WebRtcCore::pump_outputs`].
+///
+/// 围绕 `str0m::Rtc` 的多会话无 I/O 包装器。
+///
+/// 一个 `WebRtcCore` 通常驻留在一个驱动分片中。驱动层通过
+/// [`WebRtcCore::handle_input`] 喂入输入，通过 [`WebRtcCore::pump_outputs`] 排出输出。
 pub struct WebRtcCore {
     config: WebRtcCoreConfig,
     sessions: HashMap<WebRtcSessionId, WebRtcCoreSession>,
@@ -79,6 +109,15 @@ pub struct WebRtcCore {
     last_seen_instant: Instant,
 }
 
+/// Per-session state stored by the core.
+///
+/// Holds the `str0m` `Rtc` instance and the bookkeeping needed to map
+/// `str0m` events and channel ids into boundary types.
+///
+/// 核心为每个会话存储的状态。
+///
+/// 持有 `str0m` `Rtc` 实例以及将 `str0m` 事件和通道 id 映射到边界类型所需的
+/// 簿记。
 #[allow(dead_code)]
 struct WebRtcCoreSession {
     id: WebRtcSessionId,
@@ -97,6 +136,16 @@ struct WebRtcCoreSession {
 }
 
 impl WebRtcCoreSession {
+    /// Map a `str0m` channel id to the boundary `DataChannelId`.
+    ///
+    /// Allocates a new boundary id on first use and caches the mapping in
+    /// both directions so `ChannelData` and `SendDataChannel` both resolve
+    /// efficiently.
+    ///
+    /// 将 `str0m` 通道 id 映射到边界 `DataChannelId`。
+    ///
+    /// 首次使用时分配新的边界 id，并在两个方向缓存映射，使 `ChannelData` 与
+    /// `SendDataChannel` 都能高效解析。
     fn map_channel_id(&mut self, str0m_id: Str0mChannelId) -> DataChannelId {
         if let Some(existing) = self.channel_ids.get(&str0m_id).copied() {
             return existing;
@@ -108,6 +157,13 @@ impl WebRtcCoreSession {
         assigned
     }
 
+    /// Look up the `str0m` channel id for a boundary `DataChannelId`.
+    ///
+    /// Returns `None` for closed or never-opened channels.
+    ///
+    /// 根据边界 `DataChannelId` 查找 `str0m` 通道 id。
+    ///
+    /// 对已关闭或从未打开的通道返回 `None`。
     fn lookup_str0m_channel_id(&self, channel: DataChannelId) -> Option<Str0mChannelId> {
         self.reverse_channel_ids.get(&channel).copied()
     }
@@ -118,6 +174,10 @@ impl WebRtcCore {
     ///
     /// The anchor must be supplied by the caller. The crate never reads
     /// system time on its own.
+    ///
+    /// 以 `start_instant` 为锚点创建新核心。
+    ///
+    /// 锚点必须由调用方提供。本 crate 不自行读取系统时间。
     pub fn new(config: WebRtcCoreConfig, start_instant: Instant) -> Self {
         Self {
             config,
@@ -129,16 +189,22 @@ impl WebRtcCore {
     }
 
     /// Number of currently managed sessions.
+    ///
+    /// 当前管理的会话数。
     pub fn session_count(&self) -> usize {
         self.sessions.len()
     }
 
     /// Whether a session with the given id exists in the core.
+    ///
+    /// 核心中是否存在指定 id 的会话。
     pub fn has_session(&self, id: WebRtcSessionId) -> bool {
         self.sessions.contains_key(&id)
     }
 
     /// Snapshot the high-level state of a session, if it exists.
+    ///
+    /// 若存在，则快照会话的高层状态。
     pub fn session_state(&self, id: WebRtcSessionId) -> Option<WebRtcSessionState> {
         self.sessions.get(&id).map(|s| s.state)
     }
@@ -147,6 +213,10 @@ impl WebRtcCore {
     ///
     /// Drivers call this once they have learned about local host
     /// candidates from their socket layer.
+    ///
+    /// 向现有会话添加本地 ICE candidate。
+    ///
+    /// 驱动层从 socket 层获取本地 host candidate 后调用此函数。
     pub fn add_local_candidate(
         &mut self,
         session_id: WebRtcSessionId,
@@ -166,6 +236,8 @@ impl WebRtcCore {
     }
 
     /// Iterate over the session ids currently managed by this core.
+    ///
+    /// 遍历当前核心管理的所有会话 id。
     pub fn session_ids(&self) -> impl Iterator<Item = WebRtcSessionId> + '_ {
         self.sessions.keys().copied()
     }
@@ -179,6 +251,14 @@ impl WebRtcCore {
     /// the first match.
     ///
     /// Returns the matched session id when one was found.
+    ///
+    /// 在所有会话中尽力路由一个入站包。
+    ///
+    /// 当单端口 demux 尚未将远端地址绑定到会话时，驱动层使用此函数——典型场景是
+    /// 对端的第一个 STUN 绑定请求。我们询问每个 `Rtc` 实例是否通过 [`Rtc::accepts`]
+    /// 接受该输入，并将包喂给第一个匹配项。
+    ///
+    /// 若找到匹配会话，返回其 id。
     pub fn route_unbound_packet(
         &mut self,
         source: SocketAddr,
@@ -221,6 +301,15 @@ impl WebRtcCore {
     }
 
     /// Feed a single input into the state machine.
+    ///
+    /// This is the only entry point that mutates core state. Commands are
+    /// dispatched to the appropriate handler, network packets are forwarded
+    /// to the target session, and timeouts/ticks advance the `str0m` clock.
+    ///
+    /// 将单个输入喂入状态机。
+    ///
+    /// 这是改变核心状态的唯一入口。命令被分派到对应处理器，网络包转发到目标
+    /// 会话，超时/滴答推进 `str0m` 时钟。
     pub fn handle_input(&mut self, input: WebRtcCoreInput) -> Result<(), WebRtcCoreError> {
         match input {
             WebRtcCoreInput::Command(cmd) => self.dispatch_command(cmd),
@@ -244,6 +333,14 @@ impl WebRtcCore {
     }
 
     /// Drain queued outputs into the caller-provided buffer.
+    ///
+    /// The core never pushes directly to a socket or timer; it accumulates
+    /// outputs in `pending_outputs` and waits for the driver to pull them.
+    ///
+    /// 将待输出队列排入调用方提供的缓冲区。
+    ///
+    /// 核心不会直接推送到 socket 或定时器；它将输出累积在 `pending_outputs` 中，
+    /// 等待驱动层拉取。
     pub fn pump_outputs(&mut self, sink: &mut Vec<WebRtcCoreOutput>) {
         sink.reserve(self.pending_outputs.len());
         while let Some(out) = self.pending_outputs.pop_front() {
@@ -252,10 +349,15 @@ impl WebRtcCore {
     }
 
     /// Borrow queued outputs without draining them. Useful for tests.
+    ///
+    /// 借用待输出队列而不排空。测试用。
     pub fn pending_output_count(&self) -> usize {
         self.pending_outputs.len()
     }
 
+    /// Dispatch a command to the session-specific handler.
+    ///
+    /// 将命令分派到会话相关处理器。
     fn dispatch_command(&mut self, command: WebRtcCoreCommand) -> Result<(), WebRtcCoreError> {
         match command {
             WebRtcCoreCommand::AcceptOffer {
@@ -319,6 +421,16 @@ impl WebRtcCore {
         }
     }
 
+    /// Dispatch a network packet to a single session.
+    ///
+    /// Builds a `str0m::net::Receive` from the raw bytes, feeds it to the
+    /// session's `Rtc`, and drains any outputs produced in reaction. Errors
+    /// are converted to diagnostics and may fail the session.
+    ///
+    /// 将网络包分派到单个会话。
+    ///
+    /// 从原始字节构建 `str0m::net::Receive`，喂入会话的 `Rtc`，并排出任何响应
+    /// 输出。错误会转换为诊断，并可能导致会话失败。
     fn dispatch_network(&mut self, packet: WebRtcNetworkInput) -> Result<(), WebRtcCoreError> {
         let WebRtcNetworkInput {
             session_id,
@@ -367,6 +479,16 @@ impl WebRtcCore {
         Ok(())
     }
 
+    /// Dispatch a timeout to a single session.
+    ///
+    /// Timeouts are the only way `str0m` advances its internal state machine
+    /// (ICE retransmissions, DTLS timers, etc.). We do not update
+    /// `last_activity_at` here because a timeout is not user activity.
+    ///
+    /// 将超时事件分派到单个会话。
+    ///
+    /// 超时是 `str0m` 推进其内部状态机（ICE 重传、DTLS 定时器等）的唯一方式。
+    /// 我们在此不更新 `last_activity_at`，因为超时不是用户活动。
     fn dispatch_timeout(
         &mut self,
         session_id: WebRtcSessionId,
@@ -395,6 +517,18 @@ impl WebRtcCore {
         Ok(())
     }
 
+    /// Accept a remote SDP offer and produce a local answer.
+    ///
+    /// The flow is: sanitize/compat -> parse offer -> create `Rtc` -> add
+    /// local candidates -> `accept_offer` -> emit lifecycle events, extension
+    /// mappings, and negotiated payload types. The session is inserted in the
+    /// `Connecting` state.
+    ///
+    /// 接受远端 SDP offer 并生成本地 answer。
+    ///
+    /// 流程：清理/兼容 -> 解析 offer -> 创建 `Rtc` -> 添加本地 candidate ->
+    /// `accept_offer` -> 发出生命周期事件、扩展映射与协商 payload type。
+    /// 会话以 `Connecting` 状态插入。
     fn accept_offer(
         &mut self,
         session_id: WebRtcSessionId,
@@ -505,6 +639,18 @@ impl WebRtcCore {
         Ok(())
     }
 
+    /// Create a local SDP offer for a new session.
+    ///
+    /// The flow is: create `Rtc` -> add local candidates -> `sdp_api().add_media`
+    /// for each requested direction and DataChannel -> `apply()` -> store the
+    /// pending offer and emit the local SDP. The module later applies the
+    /// remote answer with `ApplyAnswer`.
+    ///
+    /// 为新会话创建本地 SDP offer。
+    ///
+    /// 流程：创建 `Rtc` -> 添加本地 candidate -> 为每个请求方向与 DataChannel
+    /// 调用 `sdp_api().add_media` -> `apply()` -> 保存 pending offer 并发出本地 SDP。
+    /// 模块随后通过 `ApplyAnswer` 应用远端 answer。
     fn create_offer(
         &mut self,
         session_id: WebRtcSessionId,
@@ -598,6 +744,16 @@ impl WebRtcCore {
         Ok(())
     }
 
+    /// Apply a remote SDP answer to a previously created offering session.
+    ///
+    /// The flow is: sanitize -> parse answer -> `sdp_api().accept_answer()`
+    /// with the stored `SdpPendingOffer`. If the SDP was modified by the
+    /// compat preprocessor, a diagnostic is emitted.
+    ///
+    /// 将远端 SDP answer 应用于先前创建的 offerer 会话。
+    ///
+    /// 流程：清理 -> 解析 answer -> 使用保存的 `SdpPendingOffer` 调用
+    /// `sdp_api().accept_answer()`。若 SDP 被兼容预处理器修改，会发出诊断。
     fn apply_answer(
         &mut self,
         session_id: WebRtcSessionId,
@@ -644,6 +800,15 @@ impl WebRtcCore {
         Ok(())
     }
 
+    /// Add a remote ICE candidate to an existing session.
+    ///
+    /// Increments the per-session candidate count and rejects candidates
+    /// beyond [`WebRtcCoreLimits::max_remote_candidates_per_session`].
+    ///
+    /// 向现有会话添加远端 ICE candidate。
+    ///
+    /// 增加每会话 candidate 计数，并拒绝超过
+    /// [`WebRtcCoreLimits::max_remote_candidates_per_session`] 的 candidate。
     fn add_remote_candidate(
         &mut self,
         session_id: WebRtcSessionId,
@@ -671,6 +836,16 @@ impl WebRtcCore {
         Ok(())
     }
 
+    /// Trigger an ICE restart on an existing session.
+    ///
+    /// Refuses to start a second ICE restart while a previous offer is still
+    /// pending. `str0m` would otherwise overwrite the prior pending state and
+    /// the original answer could never be applied.
+    ///
+    /// 在现有会话上触发 ICE 重启。
+    ///
+    /// 若之前 offer 仍在 pending，则拒绝启动第二次 ICE 重启。否则 `str0m` 会覆盖
+    /// 之前的 pending 状态，导致原始 answer 永远无法应用。
     fn ice_restart(
         &mut self,
         session_id: WebRtcSessionId,
@@ -732,6 +907,16 @@ impl WebRtcCore {
         Ok(())
     }
 
+    /// Send a DataChannel message on an opened channel.
+    ///
+    /// Enforces the configured max message size, maps the boundary id to the
+    /// `str0m` channel id, and converts `str0m` write errors into either
+    /// diagnostics or a `WebRtcCoreError::Rtc`.
+    ///
+    /// 在已打开通道上发送 DataChannel 消息。
+    ///
+    /// 强制执行配置的最大消息大小，将边界 id 映射到 `str0m` 通道 id，并将
+    /// `str0m` 写入错误转换为诊断或 `WebRtcCoreError::Rtc`。
     fn send_data_channel(&mut self, out: WebRtcDataChannelOut) -> Result<(), WebRtcCoreError> {
         let WebRtcDataChannelOut {
             session_id,
@@ -827,6 +1012,18 @@ impl WebRtcCore {
         Ok(())
     }
 
+    /// Write a media frame to a send-direction track.
+    ///
+    /// This is the Phase 01 send path: it resolves the `Writer` by `mid`,
+    /// picks the negotiated payload type for the requested codec, converts
+    /// the boundary timestamp into `MediaTime`, and delegates to `str0m`.
+    /// Pre-connection frames are dropped with a diagnostic.
+    ///
+    /// 将媒体帧写入发送方向 track。
+    ///
+    /// 这是阶段 01 的发送路径：通过 `mid` 解析 `Writer`，为请求的编解码器选择
+    /// 协商后的 payload type，将边界时间戳转换为 `MediaTime`，并委托给 `str0m`。
+    /// 连接建立前的帧会被丢弃并发出诊断。
     fn send_frame(&mut self, frame: WebRtcSendFrame) -> Result<(), WebRtcCoreError> {
         let session_id = frame.session_id;
         let session = self
@@ -936,6 +1133,17 @@ impl WebRtcCore {
         Ok(())
     }
 
+    /// Request a keyframe from the local sender for a receive-direction track.
+    ///
+    /// Maps `WebRtcRequestKeyframeKind` to `str0m`'s `KeyframeRequestKind`
+    /// and forwards the request to the `Writer` for the given `mid`. If the
+    /// session is not connected, a diagnostic is emitted and the request is
+    /// dropped.
+    ///
+    /// 为接收方向 track 请求本地发送端生成关键帧。
+    ///
+    /// 将 `WebRtcRequestKeyframeKind` 映射到 `str0m` 的 `KeyframeRequestKind`，
+    /// 并转发给指定 `mid` 的 `Writer`。若会话未连接，会发出诊断并丢弃请求。
     fn request_keyframe(
         &mut self,
         session_id: WebRtcSessionId,
@@ -989,6 +1197,15 @@ impl WebRtcCore {
         Ok(())
     }
 
+    /// Close a session and emit the lifecycle events.
+    ///
+    /// Removes the session from the map, disconnects the `Rtc`, and pushes
+    /// `Lifecycle::Closed` plus `CloseSession` to the output queue.
+    ///
+    /// 关闭会话并发出生命周期事件。
+    ///
+    /// 从 map 中移除会话，断开 `Rtc`，并推送 `Lifecycle::Closed` 与 `CloseSession`
+    /// 到输出队列。
     fn close_session(
         &mut self,
         session_id: WebRtcSessionId,
@@ -1009,6 +1226,16 @@ impl WebRtcCore {
         Ok(())
     }
 
+    /// Mark a session as failed and remove it.
+    ///
+    /// This is used internally when `str0m` rejects an input or when
+    /// `poll_output` returns an error. The driver is expected to clean up
+    /// any associated sockets and notify the module.
+    ///
+    /// 将会话标记为失败并移除。
+    ///
+    /// 当 `str0m` 拒绝输入或 `poll_output` 返回错误时内部使用。驱动层应清理
+    /// 关联 socket 并通知模块。
     fn fail_session(&mut self, session_id: WebRtcSessionId, reason: &str) {
         if let Some(mut session) = self.sessions.remove(&session_id) {
             session.rtc.disconnect();
@@ -1025,6 +1252,18 @@ impl WebRtcCore {
             });
     }
 
+    /// Drain `str0m` outputs for a session until the next timeout or limit.
+    ///
+    /// This is the central output pump. It converts `str0m::Output::Transmit`
+    /// into `WebRtcPacketOut`, `str0m::Output::Event` into
+    /// `WebRtcCoreEvent`, and `str0m::Output::Timeout` into `WebRtcTimer`.
+    /// If the output limit is exceeded, it schedules an immediate re-entry.
+    ///
+    /// 排出会话的 `str0m` 输出，直到下一个超时或达到上限。
+    ///
+    /// 这是中央输出泵。它将 `str0m::Output::Transmit` 转换为 `WebRtcPacketOut`，
+    /// `str0m::Output::Event` 转换为 `WebRtcCoreEvent`，`str0m::Output::Timeout`
+    /// 转换为 `WebRtcTimer`。若超过输出上限，则安排立即重新进入。
     fn drain_session_output(&mut self, session_id: WebRtcSessionId) {
         // Pop outputs until we hit the next `Output::Timeout`, which `str0m`
         // requires the caller to honour as a deadline.
@@ -1106,6 +1345,18 @@ impl WebRtcCore {
             }));
     }
 
+    /// Translate a `str0m::Event` into boundary `WebRtcCoreOutput` events.
+    ///
+    /// This is the conservative event mapping layer. Most `str0m` events are
+    /// translated into domain events; unknown events become `UnhandledEvent`
+    /// diagnostics. ICE connection state changes drive the session state
+    /// machine and emit `Lifecycle::Connected`.
+    ///
+    /// 将 `str0m::Event` 转换为边界 `WebRtcCoreOutput` 事件。
+    ///
+    /// 这是保守的事件映射层。大多数 `str0m` 事件被转换为域事件；未知事件变成
+    /// `UnhandledEvent` 诊断。ICE 连接状态变化驱动会话状态机并发出
+    /// `Lifecycle::Connected`。
     fn translate_event(&mut self, session_id: WebRtcSessionId, event: Str0mEvent) {
         match event {
             Str0mEvent::IceConnectionStateChange(state) => {
@@ -1449,6 +1700,11 @@ impl WebRtcCore {
     /// that supply a slightly out-of-order timestamp will see their input
     /// clamped to the previous instant, so a hostile or buggy time source
     /// cannot rewind `str0m`'s state machine.
+    ///
+    /// 将边界 `now_micros` 转换为绝对 `Instant`。
+    ///
+    /// 映射相对于 `last_seen_instant` 单调：提供略微乱序时间戳的驱动层会看见输入
+    /// 被钳位到上一时刻，因此恶意或错误的时钟源无法回退 `str0m` 状态机。
     fn absolute_instant(&mut self, now_micros: u64) -> Instant {
         let raw = self
             .start_instant
@@ -1474,6 +1730,8 @@ impl WebRtcCore {
 
     /// Convert an absolute [`Instant`] back into a boundary
     /// `deadline_micros`. Used for `SetTimer` outputs.
+    ///
+    /// 将绝对 [`Instant`] 转换回边界 `deadline_micros`。用于 `SetTimer` 输出。
     fn relative_micros(&self, instant: Instant) -> u64 {
         instant
             .checked_duration_since(self.start_instant)
@@ -1482,6 +1740,16 @@ impl WebRtcCore {
     }
 }
 
+/// Build a fresh `str0m::Rtc` from the core configuration.
+///
+/// This centralizes all `RtcConfig` settings: ICE-lite, reorder windows,
+/// BWE, RTP mode, and the codec profile. The returned `Rtc` is not yet
+/// bound to a session id.
+///
+/// 根据核心配置构建新的 `str0m::Rtc`。
+///
+/// 集中所有 `RtcConfig` 设置：ICE-lite、重排窗口、BWE、RTP 模式与编解码器配置。
+/// 返回的 `Rtc` 尚未绑定到会话 id。
 fn build_rtc(config: &WebRtcCoreConfig, start: Instant) -> Rtc {
     let mut builder = RtcConfig::new()
         .set_ice_lite(config.ice_lite)
@@ -1505,6 +1773,9 @@ fn build_rtc(config: &WebRtcCoreConfig, start: Instant) -> Rtc {
     builder.build(start)
 }
 
+/// Parse and add local ICE candidates to a `str0m` session.
+///
+/// 解析本地 ICE candidate 并添加到 `str0m` 会话。
 fn add_local_candidates(rtc: &mut Rtc, local_candidates: &[String]) -> Result<(), WebRtcCoreError> {
     for candidate_sdp in local_candidates {
         let candidate = Candidate::from_sdp_string(candidate_sdp).map_err(|err| {
@@ -1517,6 +1788,15 @@ fn add_local_candidates(rtc: &mut Rtc, local_candidates: &[String]) -> Result<()
     Ok(())
 }
 
+/// Apply a codec profile to the `str0m` codec config.
+///
+/// The profile gates which codecs are enabled for negotiation. We avoid
+/// `clear_codecs()` because it would also remove standard payload types.
+///
+/// 将编解码器配置应用到 `str0m` codec 配置。
+///
+/// 配置决定哪些编解码器可用于协商。我们避免调用 `clear_codecs()`，因为它也会
+/// 移除标准 payload type。
 fn apply_codec_profile(codec_config: &mut CodecConfig, profile: WebRtcCodecProfile) {
     // We never call `clear_codecs` here; that would also drop standard
     // payload types. Instead we toggle individual codec switches relative
@@ -1541,12 +1821,22 @@ fn apply_codec_profile(codec_config: &mut CodecConfig, profile: WebRtcCodecProfi
     }
 }
 
+/// Convert a `str0m::RtcError` into an `InvalidSdp` error.
+///
+/// 将 `str0m::RtcError` 转换为 `InvalidSdp` 错误。
 fn rtc_error_to_invalid_sdp(err: RtcError) -> WebRtcCoreError {
     WebRtcCoreError::InvalidSdp {
         message: err.to_string(),
     }
 }
 
+/// Map a boundary codec kind to the `str0m` codec enum.
+///
+/// Returns `None` for `Unknown` so callers can drop frames with a diagnostic.
+///
+/// 将边界编解码器类型映射到 `str0m` 编解码器枚举。
+///
+/// 对 `Unknown` 返回 `None`，调用方可通过诊断丢弃帧。
 fn map_codec_kind_to_str0m(kind: WebRtcCodecKind) -> Option<str0m::format::Codec> {
     Some(match kind {
         WebRtcCodecKind::H264 => str0m::format::Codec::H264,
@@ -1561,6 +1851,9 @@ fn map_codec_kind_to_str0m(kind: WebRtcCodecKind) -> Option<str0m::format::Codec
     })
 }
 
+/// Map a boundary offer direction to a `str0m` media direction.
+///
+/// 将边界 offer 方向映射到 `str0m` 媒体方向。
 fn map_offer_direction(direction: WebRtcOfferDirection) -> str0m::media::Direction {
     match direction {
         WebRtcOfferDirection::SendOnly => str0m::media::Direction::SendOnly,
@@ -1577,10 +1870,20 @@ fn map_offer_direction(direction: WebRtcOfferDirection) -> str0m::media::Directi
 /// enum discriminants match the rotation pair encoding directly so we
 /// just cast. The `C` (camera) and `F` (flip) bits are not surfaced by
 /// `str0m`'s parsed enum so they default to zero on the boundary.
+///
+/// 将 `str0m::rtp::VideoOrientation` 转换为 RFC 7742 §4 描述的打包 CVO 字节。
+///
+/// 字节布局为 `0 0 C F R1 R0`，其中 `R1 R0` 为旋转对（00 = 0°，01 = 90° CCW，
+/// 10 = 180°，11 = 90° CW）。`str0m` 的枚举判别式直接匹配旋转对编码，因此直接
+/// 转换即可。`C`（camera）和 `F`（flip）位未由 `str0m` 解析枚举暴露，因此边界上
+/// 默认为零。
 fn video_orientation_to_byte(orientation: &str0m::rtp::VideoOrientation) -> u8 {
     *orientation as u8
 }
 
+/// Format a compatibility report into a human-readable diagnostic message.
+///
+/// 将兼容性报告格式化为人类可读的诊断消息。
 fn format_compat_report(report: &SdpCompatReport) -> String {
     let mut parts = Vec::with_capacity(3);
     if report.normalized_line_endings {
