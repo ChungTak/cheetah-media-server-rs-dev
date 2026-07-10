@@ -1,3 +1,16 @@
+//! `cheetah-rtsp-core` is the Sans-I/O protocol state machine for RTSP.
+//!
+//! It owns RTSP message parsing, digest authentication, SDP negotiation,
+//! interleaved RTP/RTCP framing, and RTCP feedback construction. No Tokio,
+//! socket, or wall-clock access is present here; the driver consumes
+//! `CoreInput` and produces `CoreOutput`.
+//!
+//! `cheetah-rtsp-core` 是 RTSP 的 Sans-I/O 协议状态机。
+//!
+//! 它负责 RTSP 消息解析、摘要认证、SDP 协商、交错 RTP/RTCP 帧封装以及
+//! RTCP 反馈报文构造。此处不依赖 Tokio、socket 或墙上时间；驱动层消费
+//! `CoreInput` 并产出 `CoreOutput`。
+
 pub mod core;
 
 pub use core::{

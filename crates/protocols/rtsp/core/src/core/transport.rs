@@ -1,5 +1,8 @@
 use std::num::ParseIntError;
 
+/// Errors that can occur while parsing an RTSP `Transport` header.
+///
+/// RTSP `Transport` 头解析错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspTransportError {
     #[error("empty transport header")]
@@ -20,42 +23,43 @@ pub enum RtspTransportError {
     },
 }
 
-/// RTSP Transport 头语义（RFC 2326 Section 12.39）。
+/// RTSP `Transport` header (RFC 2326 §12.39).
+///
+/// Encapsulates the transport specification for one or more streams: protocol
+/// profile, unicast/multicast flags, interleaved channels, ports, SSRC, and
+/// mode.
+///
+/// RTSP `Transport` 头（RFC 2326 §12.39）。
+///
+/// 封装一个或多个流的传输规范：协议轮廓、单播/多播标志、交错通道、端口、SSRC 和模式。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RtspTransport {
-    /// 传输协议（例如 `RTP/AVP`、`RTP/AVP/TCP`）。
     pub protocol: String,
-    /// 是否单播；`false` 表示 multicast。
     pub unicast: bool,
-    /// interleaved 通道对。
     pub interleaved: Option<(u8, u8)>,
-    /// 客户端 RTP/RTCP 端口对。
     pub client_port: Option<(u16, u16)>,
-    /// 服务端 RTP/RTCP 端口对。
     pub server_port: Option<(u16, u16)>,
-    /// SSRC（十六进制）。
     pub ssrc: Option<u32>,
-    /// mode（例如 PLAY、RECORD）。
     pub mode: Option<String>,
-    /// destination 地址。
     pub destination: Option<String>,
-    /// source 地址。
     pub source: Option<String>,
-    /// multicast TTL。
     pub ttl: Option<u8>,
-    /// multicast layers。
     pub layers: Option<u32>,
-    /// multicast port 对。
     pub port: Option<(u16, u16)>,
-    /// append 标志。
     pub append: bool,
 }
 
 impl RtspTransport {
+    /// Create a default transport specification.
+    ///
+    /// 创建默认的传输规范。
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Create a TCP interleaved transport with the given RTP and RTCP channels.
+    ///
+    /// 以给定的 RTP 和 RTCP 通道创建 TCP 交错传输。
     pub fn rtp_avp_tcp_interleaved(rtp_channel: u8, rtcp_channel: u8) -> Self {
         Self {
             protocol: "RTP/AVP/TCP".to_string(),
@@ -65,6 +69,9 @@ impl RtspTransport {
         }
     }
 
+    /// Create a UDP unicast transport with the given client RTP/RTCP ports.
+    ///
+    /// 以给定的客户端 RTP/RTCP 端口创建 UDP 单播传输。
     pub fn rtp_avp_udp(client_rtp_port: u16, client_rtcp_port: u16) -> Self {
         Self {
             protocol: "RTP/AVP".to_string(),
@@ -74,6 +81,17 @@ impl RtspTransport {
         }
     }
 
+    /// Parse a single `Transport` header value.
+    ///
+    /// Splits on `;` parameters: first token is the protocol, flags such as
+    /// `unicast`/`multicast`/`append` are boolean, and `key=value` pairs are
+    /// parsed into the corresponding fields. Rejects control characters and
+    /// invalid protocols.
+    ///
+    /// 解析单个 `Transport` 头值。
+    ///
+    /// 以 `;` 分割参数：第一个 token 为协议；`unicast`/`multicast`/`append` 等标志为布尔；
+    /// `key=value` 对解析到对应字段。拒绝控制字符和无效协议。
     pub fn parse(header_value: &str) -> Result<Self, RtspTransportError> {
         let header_value = header_value.trim();
         if header_value.is_empty() {
@@ -153,6 +171,9 @@ impl RtspTransport {
         Ok(transport)
     }
 
+    /// Parse a comma-separated list of `Transport` alternatives.
+    ///
+    /// 解析逗号分隔的 `Transport` 候选列表。
     pub fn parse_multiple(header_value: &str) -> Result<Vec<Self>, RtspTransportError> {
         let header_value = header_value.trim();
         if header_value.is_empty() {
@@ -176,6 +197,9 @@ impl RtspTransport {
         Ok(transports)
     }
 
+    /// Serialize this transport back to a `Transport` header value.
+    ///
+    /// 将本传输规范序列化回 `Transport` 头值。
     pub fn to_header(&self) -> String {
         let mut parts = vec![self.protocol.clone()];
         if self.unicast {
@@ -221,12 +245,18 @@ impl RtspTransport {
     }
 }
 
+/// Detect control characters or DEL in a transport header value.
+///
+/// 检测 transport 头值中的控制字符或 DEL。
 fn contains_invalid_header_char(value: &str) -> bool {
     value
         .bytes()
         .any(|byte| (byte < 0x20 && byte != b'\t') || byte == 0x7f)
 }
 
+/// Validate transport protocol token characters.
+///
+/// 校验 transport 协议 token 字符。
 fn is_valid_transport_protocol(protocol: &str) -> bool {
     !protocol.is_empty()
         && protocol.bytes().all(|byte| {
@@ -234,6 +264,9 @@ fn is_valid_transport_protocol(protocol: &str) -> bool {
         })
 }
 
+/// Parse a pair of `u8` values, inferring `second = first + 1` when only one is given.
+///
+/// 解析一对 `u8` 值；只给出一个时推断第二个为 `first + 1`。
 fn parse_u8_pair(parameter: &'static str, value: &str) -> Result<(u8, u8), RtspTransportError> {
     if let Some((a, b)) = value.split_once('-') {
         return Ok((
@@ -251,6 +284,9 @@ fn parse_u8_pair(parameter: &'static str, value: &str) -> Result<(u8, u8), RtspT
     Ok((first, second))
 }
 
+/// Parse a pair of `u16` values, inferring `second = first + 1` when only one is given.
+///
+/// 解析一对 `u16` 值；只给出一个时推断第二个为 `first + 1`。
 fn parse_u16_pair(parameter: &'static str, value: &str) -> Result<(u16, u16), RtspTransportError> {
     if let Some((a, b)) = value.split_once('-') {
         return Ok((
@@ -268,6 +304,9 @@ fn parse_u16_pair(parameter: &'static str, value: &str) -> Result<(u16, u16), Rt
     Ok((first, second))
 }
 
+/// Parse a hexadecimal SSRC value, optionally prefixed with `0x`.
+///
+/// 解析十六进制 SSRC 值，可选带有 `0x` 前缀。
 fn parse_ssrc(value: &str) -> Result<u32, RtspTransportError> {
     let value = value.trim();
     let trimmed = value.strip_prefix("0x").unwrap_or(value);
@@ -289,6 +328,9 @@ fn parse_u32(parameter: &'static str, value: &str) -> Result<u32, RtspTransportE
     parse_int(parameter, value, str::parse::<u32>)
 }
 
+/// Generic integer parser that maps parse errors to `InvalidParameter`.
+///
+/// 通用整数解析器，将解析错误映射为 `InvalidParameter`。
 fn parse_int<T>(
     parameter: &'static str,
     value: &str,

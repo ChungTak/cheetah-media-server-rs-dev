@@ -16,7 +16,9 @@ pub const XR_BLOCK_DLRR: u8 = 5;
 pub const XR_BLOCK_STATISTICS_SUMMARY: u8 = 6;
 pub const XR_BLOCK_VOIP_METRICS: u8 = 7;
 
-/// Parsed RTCP XR packet.
+/// Parsed RTCP XR packet (RFC 3611).
+///
+/// 解析后的 RTCP XR 包（RFC 3611）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpXr {
     pub sender_ssrc: u32,
@@ -24,19 +26,31 @@ pub struct RtcpXr {
 }
 
 /// An individual XR report block.
+///
+/// 单个 XR 报告块。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum XrBlock {
     /// §4.4 Receiver Reference Time Report Block.
+    ///
+    /// §4.4 接收者参考时间报告块。
     ReceiverReferenceTime { ntp_timestamp: u64 },
     /// §4.5 DLRR Report Block.
+    ///
+    /// §4.5 DLRR 报告块。
     Dlrr { sub_blocks: Vec<DlrrSubBlock> },
     /// §4.7 VoIP Metrics Report Block.
+    ///
+    /// §4.7 VoIP Metrics 报告块。
     VoipMetrics(VoipMetricsBlock),
     /// Unknown block type (forward-compatible).
+    ///
+    /// 未知块类型（前向兼容）。
     Unknown { block_type: u8, data: Vec<u8> },
 }
 
 /// DLRR sub-block entry.
+///
+/// DLRR 子块条目。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DlrrSubBlock {
     pub ssrc: u32,
@@ -45,6 +59,8 @@ pub struct DlrrSubBlock {
 }
 
 /// VoIP Metrics Report Block (§4.7).
+///
+/// VoIP Metrics 报告块（§4.7）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct VoipMetricsBlock {
     pub ssrc: u32,
@@ -69,7 +85,14 @@ pub struct VoipMetricsBlock {
     pub jb_abs_max: u16,
 }
 
-/// Parse an RTCP XR packet from payload (after common header).
+/// Parse an RTCP XR packet from payload (after the common header).
+///
+/// Walks the block list, parsing known block types (receiver reference time,
+/// DLRR, VoIP metrics) and preserving unknown blocks as raw bytes.
+///
+/// 从 payload 解析 RTCP XR 包（位于公共头之后）。
+///
+/// 遍历块列表，解析已知块类型（接收者参考时间、DLRR、VoIP metrics）并将未知块保留为原始字节。
 pub fn parse_rtcp_xr(payload: &[u8]) -> Option<RtcpXr> {
     if payload.len() < 4 {
         return None;
@@ -179,6 +202,8 @@ pub fn parse_rtcp_xr(payload: &[u8]) -> Option<RtcpXr> {
 }
 
 /// Build an RTCP XR Receiver Reference Time block.
+///
+/// 构造 RTCP XR 接收者参考时间块。
 pub fn build_rtcp_xr_receiver_reference_time(sender_ssrc: u32, ntp_timestamp: u64) -> Vec<u8> {
     let mut out = Vec::with_capacity(16);
     // Common header: V=2, P=0, reserved=0, PT=207, length=3 (12 bytes payload)

@@ -1,5 +1,8 @@
 const RTP_FIXED_HEADER_SIZE: usize = 12;
 
+/// Errors that can occur while parsing or building RTP packets.
+///
+/// RTP 包解析或构造错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtpError {
     #[error("unsupported rtp version: {actual}")]
@@ -20,28 +23,20 @@ pub enum RtpError {
     ExtensionTooLarge { bytes: usize },
 }
 
-/// RTP 头（RFC 3550）。
+/// RTP packet header (RFC 3550).
+///
+/// RTP 包头（RFC 3550）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtpHeader {
-    /// 版本（2 bit，当前仅支持 2）。
     pub version: u8,
-    /// padding 标志位。
     pub padding: bool,
-    /// extension 标志位。
     pub extension: bool,
-    /// CSRC 数量（4 bit）。
     pub csrc_count: u8,
-    /// marker 标志位。
     pub marker: bool,
-    /// payload type（7 bit）。
     pub payload_type: u8,
-    /// sequence number（16 bit）。
     pub sequence_number: u16,
-    /// timestamp（32 bit）。
     pub timestamp: u32,
-    /// SSRC（32 bit）。
     pub ssrc: u32,
-    /// CSRC 列表。
     pub csrc: Vec<u32>,
 }
 
@@ -63,6 +58,9 @@ impl Default for RtpHeader {
 }
 
 impl RtpHeader {
+    /// Create a standard RTPv2 header with the given PT, sequence, timestamp, and SSRC.
+    ///
+    /// 以给定的 PT、序列号、时间戳和 SSRC 创建标准 RTPv2 头。
     pub fn new(payload_type: u8, sequence_number: u16, timestamp: u32, ssrc: u32) -> Self {
         Self {
             payload_type,
@@ -73,21 +71,26 @@ impl RtpHeader {
         }
     }
 
+    /// Return the header size, including the variable-length CSRC list.
+    ///
+    /// 返回头部大小，包括可变长度 CSRC 列表。
     pub fn size(&self) -> usize {
         RTP_FIXED_HEADER_SIZE + self.csrc.len() * 4
     }
 }
 
-/// RTP 扩展头。
+/// RTP extension header (RFC 3550 §5.3.1).
+///
+/// RTP 扩展头（RFC 3550 §5.3.1）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtpExtension {
-    /// profile-specific 标识。
     pub profile: u16,
-    /// 扩展数据（原始字节）。
     pub data: Vec<u8>,
 }
 
-/// RTP 包。
+/// RTP packet with header, optional extension, payload, and trailing padding.
+///
+/// 包含头部、可选扩展、负载和尾部填充的 RTP 包。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtpPacket {
     pub header: RtpHeader,
@@ -97,6 +100,9 @@ pub struct RtpPacket {
 }
 
 impl RtpPacket {
+    /// Create a packet from a header and payload (no extension or padding).
+    ///
+    /// 由头部和负载创建包（无扩展和填充）。
     pub fn new(header: RtpHeader, payload: Vec<u8>) -> Self {
         Self {
             header,
@@ -106,6 +112,14 @@ impl RtpPacket {
         }
     }
 
+    /// Parse an RTP packet from raw bytes.
+    ///
+    /// Parses the fixed header, CSRC list, optional extension, and payload,
+    /// stripping trailing padding when the padding flag is set.
+    ///
+    /// 从原始字节解析 RTP 包。
+    ///
+    /// 解析固定头、CSRC 列表、可选扩展和负载，并在 padding 标志置位时去除尾部填充。
     pub fn parse(data: &[u8]) -> Result<Self, RtpError> {
         if data.len() < RTP_FIXED_HEADER_SIZE {
             return Err(RtpError::InsufficientData {
@@ -221,6 +235,9 @@ impl RtpPacket {
         })
     }
 
+    /// Build the wire encoding of this RTP packet.
+    ///
+    /// 构造该 RTP 包的线编码。
     pub fn build(&self) -> Result<Vec<u8>, RtpError> {
         if self.header.version != 2 {
             return Err(RtpError::UnsupportedVersion {
@@ -293,6 +310,9 @@ impl RtpPacket {
         Ok(out)
     }
 
+    /// Return the total wire size of the packet (header + extension + payload + padding).
+    ///
+    /// 返回包的线大小总和（头 + 扩展 + 负载 + 填充）。
     pub fn size(&self) -> usize {
         let mut size = self.header.size();
         if let Some(extension) = &self.extension {

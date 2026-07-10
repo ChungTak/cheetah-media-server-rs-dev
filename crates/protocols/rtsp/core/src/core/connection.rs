@@ -1,10 +1,16 @@
 use super::{RtspMessageLimits, RtspMethod};
 
+/// Error returned when an interleaved RTP/RTCP frame exceeds the size limit.
+///
+/// 当交错 RTP/RTCP 帧超过大小限制时返回的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspInterleavedEncodeError {
     #[error("interleaved payload too large: {actual} > {max}")]
     PayloadTooLarge { max: usize, actual: usize },
 }
+/// Errors that can occur while parsing or serializing an RTSP `Session` header.
+///
+/// RTSP `Session` 头解析或序列化错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspSessionError {
     #[error("empty session header")]
@@ -19,18 +25,29 @@ pub enum RtspSessionError {
     InvalidHeaderValue,
 }
 
-/// RTSP Session 头语义。
+/// RTSP `Session` header value.
+///
+/// Carries the session identifier and optional timeout. The session id is
+/// normalized to remove leading/trailing whitespace and rejected if it contains
+/// separators.
+///
+/// RTSP `Session` 头值。
+///
+/// 携带会话标识符和可选超时。会话 ID 经过去首尾空白归一化，并拒绝包含分隔符的值。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RtspSession {
-    /// 会话 ID。
     pub id: Option<String>,
-    /// 会话超时秒数。
     pub timeout: Option<u32>,
 }
 
-/// RTSP 连接限制配置。
+/// RTSP connection-level limits configuration.
 ///
-/// 该结构用于承接连接级限制配置，再转换为 `RtspMessageLimits` 注入 core。
+/// Bridges connection-level configuration to the message parser limits in
+/// `RtspMessageLimits`.
+///
+/// RTSP 连接级限制配置。
+///
+/// 将连接级配置桥接到 `RtspMessageLimits` 中的消息解析限制。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspConnectionLimits {
     pub max_buffer_size: usize,
@@ -41,40 +58,52 @@ pub struct RtspConnectionLimits {
     pub validate_version: bool,
 }
 
-/// RTSP 连接协议状态。
+/// RTSP protocol-level connection state.
 ///
-/// 仅表达 RTSP 协议层状态，不包含模块业务态。
+/// Only tracks the protocol state machine (INIT → READY → PLAYING/RECORDING).
+/// It does not represent module-level business state.
+///
+/// RTSP 协议级连接状态。
+///
+/// 仅跟踪协议状态机（INIT → READY → PLAYING/RECORDING），不代表模块级业务状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RtspConnectionState {
-    /// 初始状态。
     #[default]
     Init,
-    /// 已完成 SETUP，进入就绪态。
     Ready,
-    /// 已完成 PLAY，进入播放态。
     Playing,
-    /// 已完成 RECORD，进入录制态。
     Recording,
-    /// 已断开连接。
     Disconnected,
 }
 
-/// RTSP interleaved 帧头解析结果。
+/// Parsed RTSP interleaved RTP/RTCP frame header.
+///
+/// The wire format is `$` + channel(1B) + payload_length(2B, BE) + payload.
+/// `total_len` equals 4 + payload_len, so callers can decide whether the full
+/// frame has been received.
+///
+/// 解析后的 RTSP 交错 RTP/RTCP 帧头。
+///
+/// 线格式为 `$` + channel(1B) + payload_length(2B, BE) + payload。`total_len` 等于
+/// 4 + payload_len，调用者可据此判断整帧是否已到达。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtspInterleavedFrameHeader {
-    /// interleaved 通道号。
     pub channel: u8,
-    /// interleaved 负载长度（不含 4 字节帧头）。
     pub payload_len: u16,
-    /// interleaved 总帧长度（4 字节帧头 + 负载）。
     pub total_len: usize,
 }
 
 impl RtspSession {
+    /// Create an empty session header value.
+    ///
+    /// 创建空的会话头值。
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Create a session header with the given id.
+    ///
+    /// 以给定 id 创建会话头。
     pub fn with_id(id: &str) -> Self {
         Self {
             id: Some(id.to_string()),
@@ -82,7 +111,9 @@ impl RtspSession {
         }
     }
 
-    /// 解析 `Session` 头值。
+    /// Parse a `Session` header value of the form `id[;timeout=<seconds>]`.
+    ///
+    /// 解析形如 `id[;timeout=<seconds>]` 的 `Session` 头值。
     pub fn parse(header_value: &str) -> Result<Self, RtspSessionError> {
         let header_value = header_value.trim();
         if header_value.is_empty() {
@@ -129,6 +160,9 @@ impl RtspSession {
         Ok(session)
     }
 
+    /// Serialize this session back to a `Session` header value.
+    ///
+    /// 将该会话序列化回 `Session` 头值。
     pub fn to_header(&self) -> Result<Option<String>, RtspSessionError> {
         let Some(id) = self.id.as_deref() else {
             return Ok(None);
@@ -142,6 +176,9 @@ impl RtspSession {
     }
 }
 
+/// Validate and trim a session id, rejecting empty values and separators.
+///
+/// 校验并裁剪会话 ID，拒绝空值和分隔符。
 fn normalize_session_id(value: &str) -> Result<&str, RtspSessionError> {
     let id = value.trim();
     if id.is_empty() {
@@ -153,10 +190,16 @@ fn normalize_session_id(value: &str) -> Result<&str, RtspSessionError> {
     Ok(id)
 }
 
-/// 解析 interleaved 帧头。
+/// Parse the 4-byte interleaved frame header from raw bytes.
 ///
-/// 输入不满足 `$` 起始或帧头不足 4 字节时返回 `None`，不会 panic。
-/// 当帧头完整时返回通道号、负载长度与总帧长度，即使负载尚未全部到齐。
+/// Returns `None` if the buffer is shorter than 4 bytes or does not start with
+/// `$`. When a complete header is present, the channel, payload length, and
+/// total frame length are returned even if the payload has not yet arrived.
+///
+/// 从原始字节中解析 4 字节交错帧头。
+///
+/// 若缓冲区短于 4 字节或未以 `$` 开头则返回 `None`。当存在完整帧头时，即使负载尚未
+/// 到达，也会返回通道号、负载长度和总帧长度。
 pub fn parse_interleaved_frame(data: &[u8]) -> Option<RtspInterleavedFrameHeader> {
     if data.len() < 4 || data[0] != b'$' {
         return None;
@@ -173,9 +216,13 @@ pub fn parse_interleaved_frame(data: &[u8]) -> Option<RtspInterleavedFrameHeader
     })
 }
 
-/// 编码 interleaved 帧。
+/// Encode RTP/RTCP payload into an interleaved `$` frame.
 ///
-/// 线格式为 `$` + channel(1B) + payload_length(2B, BE) + payload。
+/// Wire format: `$` + channel(1B) + payload_length(2B, BE) + payload.
+///
+/// 将 RTP/RTCP 负载编码为交错的 `$` 帧。
+///
+/// 线格式：`$` + channel(1B) + payload_length(2B, BE) + payload。
 pub fn encode_interleaved_frame(
     channel: u8,
     payload: &[u8],
@@ -197,7 +244,9 @@ pub fn encode_interleaved_frame(
     Ok(frame)
 }
 
-/// 返回标准 RTSP 方法集合（用于 `Public` / `Allow` 头）。
+/// Return the standard RTSP method set for `Public` / `Allow` headers.
+///
+/// 返回用于 `Public` / `Allow` 头的标准 RTSP 方法集合。
 pub fn supported_methods() -> Vec<RtspMethod> {
     vec![
         RtspMethod::Options,
@@ -214,7 +263,9 @@ pub fn supported_methods() -> Vec<RtspMethod> {
     ]
 }
 
-/// 生成 `Public` 头值，顺序与 `supported_methods` 一致。
+/// Build the `Public` header value from `supported_methods`.
+///
+/// 从 `supported_methods` 生成 `Public` 头值。
 pub fn public_header_value() -> String {
     supported_methods()
         .iter()
@@ -237,6 +288,9 @@ impl Default for RtspConnectionLimits {
 }
 
 impl RtspConnectionLimits {
+    /// Convert connection limits to message parser limits.
+    ///
+    /// 将连接限制转换为消息解析器限制。
     pub fn to_message_limits(&self) -> RtspMessageLimits {
         self.clone().into()
     }

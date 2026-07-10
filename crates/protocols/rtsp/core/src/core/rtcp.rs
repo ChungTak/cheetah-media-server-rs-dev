@@ -20,6 +20,9 @@ const RTCP_REPORT_BLOCK_SIZE: usize = 24;
 const RTCP_MAX_REPORT_COUNT: usize = 31;
 const RTCP_CUMULATIVE_LOST_MAX: u32 = 0x00FF_FFFF;
 
+/// Errors that can occur while parsing or building RTCP packets.
+///
+/// RTCP 包解析或构造错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtcpError {
     #[error("unsupported rtcp version: {actual}")]
@@ -58,7 +61,14 @@ pub enum RtcpError {
     PayloadNotWordAligned { bytes: usize },
 }
 
-/// RTCP Sender Report 中的报告块。
+/// Report block carried inside Sender/Receiver Reports (RFC 3550 §6.4).
+///
+/// `fraction_lost` and `cumulative_lost` are packed into the same 32-bit word
+/// on the wire.
+///
+/// Sender/Receiver Report 中携带的报告块（RFC 3550 §6.4）。
+///
+/// `fraction_lost` 与 `cumulative_lost` 在线格式中打包在同一个 32 位字中。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpReportBlock {
     pub ssrc: u32,
@@ -70,7 +80,14 @@ pub struct RtcpReportBlock {
     pub delay_since_sr: u32,
 }
 
+/// RTCP Sender Report (PT=200, RFC 3550).
+///
+/// Carries the sender's SSRC, NTP/RTP timestamps, packet/octet counts, and
+/// optional receiver report blocks.
+///
 /// RTCP Sender Report（PT=200，RFC 3550）。
+///
+/// 携带发送者 SSRC、NTP/RTP 时间戳、包/字节计数以及可选接收者报告块。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpSenderReport {
     pub ssrc: u32,
@@ -81,27 +98,51 @@ pub struct RtcpSenderReport {
     pub reports: Vec<RtcpReportBlock>,
 }
 
+/// RTCP Receiver Report (PT=201, RFC 3550).
+///
+/// Carries the receiver's SSRC and a list of report blocks.
+///
 /// RTCP Receiver Report（PT=201，RFC 3550）。
+///
+/// 携带接收者 SSRC 和报告块列表。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpReceiverReport {
     pub ssrc: u32,
     pub reports: Vec<RtcpReportBlock>,
 }
 
+/// RTCP Source Description (PT=202, RFC 3550).
+///
+/// Contains a list of chunks, each identifying an SSRC and a set of SDES items.
+///
 /// RTCP Source Description（PT=202，RFC 3550）。
+///
+/// 包含 chunk 列表，每个 chunk 标识一个 SSRC 和一组 SDES 条目。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpSdes {
     pub chunks: Vec<RtcpSdesChunk>,
 }
 
+/// RTCP BYE (PT=203, RFC 3550).
+///
+/// Signals that one or more sources have left the session.
+///
 /// RTCP BYE（PT=203，RFC 3550）。
+///
+/// 表示一个或多个源已离开会话。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpBye {
     pub ssrcs: Vec<u32>,
     pub reason: Option<String>,
 }
 
-/// RTCP APP（PT=204，RFC 3550）。
+/// RTCP APP packet (PT=204, RFC 3550).
+///
+/// Application-defined packet with a 4-byte name and arbitrary payload.
+///
+/// RTCP APP 包（PT=204，RFC 3550）。
+///
+/// 应用自定义包，包含 4 字节名称和任意负载。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpApp {
     pub subtype: u8,
@@ -110,14 +151,23 @@ pub struct RtcpApp {
     pub data: Vec<u8>,
 }
 
-/// RTCP SDES Chunk。
+/// RTCP SDES chunk: one SSRC and its associated items.
+///
+/// RTCP SDES chunk：一个 SSRC 及其关联条目。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpSdesChunk {
     pub ssrc: u32,
     pub items: Vec<RtcpSdesItem>,
 }
 
-/// RTCP SDES Item。
+/// RTCP SDES item (RFC 3550 §6.5).
+///
+/// Standard items (CNAME, NAME, EMAIL, PHONE, LOC, TOOL, NOTE), PRIV, and
+/// unknown type-tagged items are all supported.
+///
+/// RTCP SDES 条目（RFC 3550 §6.5）。
+///
+/// 支持标准条目（CNAME、NAME、EMAIL、PHONE、LOC、TOOL、NOTE）、PRIV 及未知类型条目。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtcpSdesItem {
     Cname(String),
@@ -132,6 +182,9 @@ pub enum RtcpSdesItem {
 }
 
 impl RtcpSdesItem {
+    /// Return the SDES item type identifier.
+    ///
+    /// 返回 SDES 条目类型标识。
     pub fn item_type(&self) -> u8 {
         match self {
             RtcpSdesItem::Cname(_) => SDES_CNAME,
@@ -147,7 +200,9 @@ impl RtcpSdesItem {
     }
 }
 
-/// RTCP 包。
+/// Parsed RTCP packet (RFC 3550).
+///
+/// 解析后的 RTCP 包（RFC 3550）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtcpPacket {
     SenderReport(RtcpSenderReport),
@@ -163,7 +218,13 @@ pub enum RtcpPacket {
 }
 
 impl RtcpPacket {
-    /// 解析 compound RTCP 包。
+    /// Parse a compound RTCP packet into a sequence of individual packets.
+    ///
+    /// Walks the buffer using the 32-bit length field in each RTCP common header.
+    ///
+    /// 将复合 RTCP 包解析为单个包序列。
+    ///
+    /// 使用每个 RTCP 公共头中的 32 位长度字段遍历缓冲区。
     pub fn parse(data: &[u8]) -> Result<Vec<Self>, RtcpError> {
         let mut packets = Vec::new();
         let mut offset = 0;
@@ -177,7 +238,9 @@ impl RtcpPacket {
         Ok(packets)
     }
 
-    /// 构建 compound RTCP 包。
+    /// Build a compound RTCP packet from a sequence of packets.
+    ///
+    /// 由单个包序列构造复合 RTCP 包。
     pub fn build(packets: &[Self]) -> Result<Vec<u8>, RtcpError> {
         let mut out = Vec::new();
         for packet in packets {
@@ -186,6 +249,14 @@ impl RtcpPacket {
         Ok(out)
     }
 
+    /// Parse a single RTCP packet from the front of the buffer.
+    ///
+    /// Validates the version, extracts payload length, strips padding, and dispatches
+    /// by payload type.
+    ///
+    /// 从缓冲区前端解析单个 RTCP 包。
+    ///
+    /// 校验版本、提取负载长度、去除填充并按 payload type 分派。
     fn parse_one(data: &[u8]) -> Result<(Self, usize), RtcpError> {
         debug_assert!(data.len() >= RTCP_COMMON_HEADER_SIZE);
 
@@ -244,6 +315,9 @@ impl RtcpPacket {
         Ok((packet, packet_size))
     }
 
+    /// Append the wire encoding of a single RTCP packet to `out`.
+    ///
+    /// 将单个 RTCP 包的线编码追加到 `out`。
     fn build_one(&self, out: &mut Vec<u8>) -> Result<(), RtcpError> {
         match self {
             RtcpPacket::SenderReport(sr) => build_sender_report(out, sr),
@@ -264,6 +338,9 @@ impl RtcpPacket {
     }
 }
 
+/// Parse the sender-info and report blocks of an SR packet.
+///
+/// 解析 SR 包的发送者信息和报告块。
 fn parse_sender_report(payload: &[u8], report_count: u8) -> Result<RtcpSenderReport, RtcpError> {
     let report_count = report_count as usize;
     let reports = parse_report_blocks(payload, RTCP_SR_BASE_PAYLOAD_SIZE, report_count)?;
@@ -293,6 +370,9 @@ fn parse_sender_report(payload: &[u8], report_count: u8) -> Result<RtcpSenderRep
     })
 }
 
+/// Parse the receiver SSRC and report blocks of an RR packet.
+///
+/// 解析 RR 包的接收者 SSRC 和报告块。
 fn parse_receiver_report(
     payload: &[u8],
     report_count: u8,
@@ -303,6 +383,9 @@ fn parse_receiver_report(
     Ok(RtcpReceiverReport { ssrc, reports })
 }
 
+/// Parse SDES chunks, each terminated by a zero item type.
+///
+/// 解析 SDES chunk，每个 chunk 以 item type 为 0 的终止符结束。
 fn parse_source_description(payload: &[u8], chunk_count: u8) -> Result<RtcpSdes, RtcpError> {
     let chunk_count = chunk_count as usize;
     let mut chunks = Vec::with_capacity(chunk_count);
@@ -378,6 +461,9 @@ fn parse_source_description(payload: &[u8], chunk_count: u8) -> Result<RtcpSdes,
     Ok(RtcpSdes { chunks })
 }
 
+/// Parse a BYE packet, reading the SSRC list and optional reason text.
+///
+/// 解析 BYE 包，读取 SSRC 列表和可选原因文本。
 fn parse_bye(payload: &[u8], source_count: u8) -> Result<RtcpBye, RtcpError> {
     let source_count = source_count as usize;
     let required_ssrc_bytes = source_count * 4;
@@ -419,6 +505,9 @@ fn parse_bye(payload: &[u8], source_count: u8) -> Result<RtcpBye, RtcpError> {
     Ok(RtcpBye { ssrcs, reason })
 }
 
+/// Parse an APP packet: SSRC, 4-byte name, and arbitrary data.
+///
+/// 解析 APP 包：SSRC、4 字节名称和任意数据。
 fn parse_app(payload: &[u8], subtype: u8) -> Result<RtcpApp, RtcpError> {
     if payload.len() < 8 {
         return Err(RtcpError::InsufficientData {
@@ -440,6 +529,9 @@ fn parse_app(payload: &[u8], subtype: u8) -> Result<RtcpApp, RtcpError> {
     })
 }
 
+/// Parse a single SDES item, including the PRIV prefix/value split.
+///
+/// 解析单个 SDES 条目，包括 PRIV 前缀/值的分割。
 fn parse_sdes_item(item_type: u8, item_data: &[u8]) -> Result<RtcpSdesItem, RtcpError> {
     let item = match item_type {
         SDES_CNAME => RtcpSdesItem::Cname(String::from_utf8_lossy(item_data).into_owned()),
@@ -475,6 +567,9 @@ fn parse_sdes_item(item_type: u8, item_data: &[u8]) -> Result<RtcpSdesItem, Rtcp
     Ok(item)
 }
 
+/// Parse a slice of fixed-size report blocks from the payload.
+///
+/// 从负载中解析固定大小的报告块切片。
 fn parse_report_blocks(
     payload: &[u8],
     report_start_offset: usize,
@@ -500,6 +595,9 @@ fn parse_report_blocks(
     Ok(reports)
 }
 
+/// Parse one 24-byte report block and split the packed fraction/cumulative field.
+///
+/// 解析一个 24 字节报告块，并拆分打包的 fraction/cumulative 字段。
 fn parse_report_block(data: &[u8]) -> RtcpReportBlock {
     let ssrc = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
     let fraction_and_lost = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
@@ -518,6 +616,9 @@ fn parse_report_block(data: &[u8]) -> RtcpReportBlock {
     }
 }
 
+/// Serialize an RTCP Sender Report.
+///
+/// 序列化 RTCP Sender Report。
 fn build_sender_report(out: &mut Vec<u8>, sr: &RtcpSenderReport) -> Result<(), RtcpError> {
     let report_count = sr.reports.len();
     if report_count > RTCP_MAX_REPORT_COUNT {
@@ -543,6 +644,9 @@ fn build_sender_report(out: &mut Vec<u8>, sr: &RtcpSenderReport) -> Result<(), R
     write_report_blocks(out, &sr.reports)
 }
 
+/// Serialize an RTCP Receiver Report.
+///
+/// 序列化 RTCP Receiver Report。
 fn build_receiver_report(out: &mut Vec<u8>, rr: &RtcpReceiverReport) -> Result<(), RtcpError> {
     let report_count = rr.reports.len();
     if report_count > RTCP_MAX_REPORT_COUNT {
@@ -563,6 +667,9 @@ fn build_receiver_report(out: &mut Vec<u8>, rr: &RtcpReceiverReport) -> Result<(
     write_report_blocks(out, &rr.reports)
 }
 
+/// Serialize RTCP Source Description chunks, padding each chunk to 32 bits.
+///
+/// 序列化 RTCP Source Description chunk，并将每个 chunk 填充到 32 位。
 fn build_source_description(out: &mut Vec<u8>, sdes: &RtcpSdes) -> Result<(), RtcpError> {
     let chunk_count = sdes.chunks.len();
     if chunk_count > RTCP_MAX_REPORT_COUNT {
@@ -598,6 +705,9 @@ fn build_source_description(out: &mut Vec<u8>, sdes: &RtcpSdes) -> Result<(), Rt
     Ok(())
 }
 
+/// Serialize a BYE packet, including the optional reason and padding.
+///
+/// 序列化 BYE 包，包括可选原因和填充。
 fn build_bye(out: &mut Vec<u8>, bye: &RtcpBye) -> Result<(), RtcpError> {
     let source_count = bye.ssrcs.len();
     if source_count > RTCP_MAX_REPORT_COUNT {
@@ -630,6 +740,9 @@ fn build_bye(out: &mut Vec<u8>, bye: &RtcpBye) -> Result<(), RtcpError> {
     Ok(())
 }
 
+/// Serialize an APP packet, padding to 32-bit alignment.
+///
+/// 序列化 APP 包，并填充到 32 位对齐。
 fn build_app(out: &mut Vec<u8>, app: &RtcpApp) -> Result<(), RtcpError> {
     if app.subtype as usize > RTCP_MAX_REPORT_COUNT {
         return Err(RtcpError::InvalidAppSubtype {
@@ -650,6 +763,9 @@ fn build_app(out: &mut Vec<u8>, app: &RtcpApp) -> Result<(), RtcpError> {
     Ok(())
 }
 
+/// Encode the payload of a single SDES item.
+///
+/// 编码单个 SDES 条目的负载。
 fn build_sdes_item_data(item: &RtcpSdesItem) -> Result<Vec<u8>, RtcpError> {
     let data = match item {
         RtcpSdesItem::Cname(s)
@@ -679,6 +795,9 @@ fn build_sdes_item_data(item: &RtcpSdesItem) -> Result<Vec<u8>, RtcpError> {
     Ok(data)
 }
 
+/// Serialize all report blocks, checking cumulative lost range.
+///
+/// 序列化所有报告块，并校验 cumulative lost 范围。
 fn write_report_blocks(out: &mut Vec<u8>, reports: &[RtcpReportBlock]) -> Result<(), RtcpError> {
     for report in reports {
         if report.cumulative_lost > RTCP_CUMULATIVE_LOST_MAX {
@@ -691,6 +810,9 @@ fn write_report_blocks(out: &mut Vec<u8>, reports: &[RtcpReportBlock]) -> Result
     Ok(())
 }
 
+/// Serialize one 24-byte report block, packing fraction and cumulative lost.
+///
+/// 序列化一个 24 字节报告块，打包 fraction 和 cumulative lost。
 fn write_report_block(out: &mut Vec<u8>, report: &RtcpReportBlock) {
     out.extend_from_slice(&report.ssrc.to_be_bytes());
     let fraction_and_lost =
@@ -702,6 +824,9 @@ fn write_report_block(out: &mut Vec<u8>, report: &RtcpReportBlock) {
     out.extend_from_slice(&report.delay_since_sr.to_be_bytes());
 }
 
+/// Write the 4-byte RTCP common header (version, count, payload type, length in words).
+///
+/// 写入 4 字节 RTCP 公共头（版本、count、payload type、以字为单位的长度）。
 fn write_packet_header(
     out: &mut Vec<u8>,
     payload_type: u8,

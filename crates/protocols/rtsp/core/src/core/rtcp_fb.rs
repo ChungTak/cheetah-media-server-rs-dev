@@ -12,7 +12,9 @@ pub const RTPFB_FMT_NACK: u8 = 1;
 pub const PSFB_FMT_PLI: u8 = 1;
 pub const PSFB_FMT_FIR: u8 = 4;
 
-/// RFC 4585 §6.2.1 — Generic NACK.
+/// RTCP Generic NACK feedback (RFC 4585 §6.2.1).
+///
+/// RTCP Generic NACK 反馈（RFC 4585 §6.2.1）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpNack {
     pub sender_ssrc: u32,
@@ -21,16 +23,18 @@ pub struct RtcpNack {
 }
 
 /// A single NACK FCI entry: one PID + 16-bit bitmask of following lost packets.
+///
+/// NACK FCI 单个条目：一个 PID + 后续丢包的 16 位掩码。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NackItem {
-    /// Packet ID of the first lost packet.
     pub pid: u16,
-    /// Bitmask of lost packets following PID (bit 0 = PID+1, bit 15 = PID+16).
     pub blp: u16,
 }
 
 impl NackItem {
     /// Iterate all lost sequence numbers represented by this item.
+    ///
+    /// 遍历该条目表示的所有丢失序列号。
     pub fn lost_seqs(&self) -> impl Iterator<Item = u16> + '_ {
         core::iter::once(self.pid).chain((0..16u16).filter_map(|bit| {
             if self.blp & (1 << bit) != 0 {
@@ -42,14 +46,18 @@ impl NackItem {
     }
 }
 
-/// RFC 4585 §6.3.1 — Picture Loss Indication.
+/// RTCP Picture Loss Indication (RFC 4585 §6.3.1).
+///
+/// RTCP 图片丢失指示（RFC 4585 §6.3.1）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtcpPli {
     pub sender_ssrc: u32,
     pub media_ssrc: u32,
 }
 
-/// RFC 5104 §4.3.1 — Full Intra Request.
+/// RTCP Full Intra Request (RFC 5104 §4.3.1).
+///
+/// RTCP 全帧内请求（RFC 5104 §4.3.1）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtcpFir {
     pub sender_ssrc: u32,
@@ -58,13 +66,17 @@ pub struct RtcpFir {
 }
 
 /// A single FIR FCI entry.
+///
+/// FIR FCI 单个条目。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FirEntry {
     pub ssrc: u32,
     pub seq_nr: u8,
 }
 
-/// Parsed RTCP Feedback packet.
+/// Parsed RTCP Feedback packet (NACK, PLI, or FIR).
+///
+/// 解析后的 RTCP Feedback 包（NACK、PLI 或 FIR）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtcpFeedback {
     Nack(RtcpNack),
@@ -72,9 +84,14 @@ pub enum RtcpFeedback {
     Fir(RtcpFir),
 }
 
-/// Parse an RTCP-FB packet from raw payload (after common header).
+/// Parse an RTCP-FB packet from raw payload (after the common header).
 ///
-/// `pt` is the payload type (205 or 206), `fmt` is the FMT/count field.
+/// `pt` is the payload type (205 or 206) and `fmt` is the FMT/count field that
+/// selects between NACK, PLI, and FIR.
+///
+/// 从原始负载解析 RTCP-FB 包（位于公共头之后）。
+///
+/// `pt` 为 payload type（205 或 206），`fmt` 为选择 NACK、PLI、FIR 的 FMT/count 字段。
 pub fn parse_rtcp_fb(pt: u8, fmt: u8, payload: &[u8]) -> Option<RtcpFeedback> {
     if payload.len() < 8 {
         return None;
@@ -128,6 +145,8 @@ pub fn parse_rtcp_fb(pt: u8, fmt: u8, payload: &[u8]) -> Option<RtcpFeedback> {
 }
 
 /// Encode an RTCP NACK packet (PT=205, FMT=1).
+///
+/// 编码 RTCP NACK 包（PT=205，FMT=1）。
 pub fn build_rtcp_nack(nack: &RtcpNack) -> Vec<u8> {
     let fci_len = nack.nack_items.len() * 4;
     let payload_len = 8 + fci_len;
@@ -147,6 +166,8 @@ pub fn build_rtcp_nack(nack: &RtcpNack) -> Vec<u8> {
 }
 
 /// Encode an RTCP PLI packet (PT=206, FMT=1).
+///
+/// 编码 RTCP PLI 包（PT=206，FMT=1）。
 pub fn build_rtcp_pli(pli: &RtcpPli) -> Vec<u8> {
     let mut out = Vec::with_capacity(12);
     // Common header: V=2, P=0, FMT=1, PT=206, length=2 (8 bytes payload)
@@ -159,6 +180,8 @@ pub fn build_rtcp_pli(pli: &RtcpPli) -> Vec<u8> {
 }
 
 /// Encode an RTCP FIR packet (PT=206, FMT=4).
+///
+/// 编码 RTCP FIR 包（PT=206，FMT=4）。
 pub fn build_rtcp_fir(fir: &RtcpFir) -> Vec<u8> {
     let fci_len = fir.fci.len() * 8;
     let payload_len = 8 + fci_len;
@@ -179,6 +202,13 @@ pub fn build_rtcp_fir(fir: &RtcpFir) -> Vec<u8> {
 }
 
 /// Build NACK items from a list of lost sequence numbers.
+///
+/// Sorts, deduplicates, and groups consecutive losses into `NackItem` entries
+/// where the 16-bit `blp` bitmask follows the PID.
+///
+/// 从丢失序列号列表构造 NACK 条目。
+///
+/// 排序、去重，并将连续丢包分组为 PID 后带 16 位 `blp` 掩码的 `NackItem`。
 pub fn nack_items_from_lost_seqs(lost: &[u16]) -> Vec<NackItem> {
     if lost.is_empty() {
         return Vec::new();

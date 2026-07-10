@@ -1,22 +1,37 @@
 //! Compatibility layer for non-standard RTSP implementations.
 //!
-//! All quirk handling is centralized here with explicit naming.
-//! Each function is independently toggleable via configuration.
+//! All quirk handling is centralized here with explicit naming. Each function is
+//! independently toggleable via configuration so vendor-specific behavior is not
+//! scattered through the protocol state machine.
+//!
+//! 非标准 RTSP 实现的兼容层。
+//!
+//! 所有厂商特殊处理都集中在这里，并通过显式命名管理。每个函数可独立通过配置开启，
+//! 避免厂商特定行为分散在协议状态机中。
 
-/// Strip `.sdp` suffix from RTSP URLs (EasyDarwin compatibility).
+/// Strip the `.sdp` suffix from RTSP URLs (EasyDarwin compatibility).
+///
+/// Some clients append `.sdp` to the stream URL; this normalizer removes it so
+/// the stream key lookup is stable.
+///
+/// 从 RTSP URL 中移除 `.sdp` 后缀（EasyDarwin 兼容性）。
+///
+/// 某些客户端会在流 URL 后追加 `.sdp`；该归一化器将其移除，使流键查找稳定。
 pub fn strip_sdp_suffix(url: &str) -> &str {
     url.strip_suffix(".sdp")
         .or_else(|| url.strip_suffix(".SDP"))
         .unwrap_or(url)
 }
 
-/// Resolve a control URL from SDP `a=control:` attribute against a base URL.
+/// Resolve a `control` URL from an SDP `a=control:` attribute against a base URL.
 ///
-/// Handles:
-/// - Absolute URL: `rtsp://server/path/trackID=1` → returned as-is
-/// - Relative path: `trackID=1` → `{base}/trackID=1`
-/// - Slash-prefixed: `/trackID=1` → `{base}/trackID=1`
-/// - Aggregate: `*` → base URL
+/// Handles absolute URLs, relative paths, slash-prefixed paths, and the aggregate
+/// wildcard `*`, so the SETUP/PLAY URLs formed from SDP are unambiguous.
+///
+/// 将 SDP `a=control:` 属性中的 `control` URL 与 base URL 解析为完整 URL。
+///
+/// 处理绝对 URL、相对路径、以斜杠开头的路径以及聚合通配符 `*`，使由 SDP 形成的
+/// SETUP/PLAY URL 无歧义。
 pub fn resolve_control_url(base_url: &str, control: &str) -> String {
     let control = control.trim();
     if control == "*" || control.is_empty() {
@@ -31,6 +46,15 @@ pub fn resolve_control_url(base_url: &str, control: &str) -> String {
 }
 
 /// Default clock rate for known codecs when SDP omits it.
+///
+/// This fallback table is used for SDP `rtpmap` parsing and for clients that do
+/// not explicitly signal the clock rate; unknown codecs default to the 90 kHz
+/// video convention.
+///
+/// 当 SDP 未声明时，已知编解码器的默认时钟频率。
+///
+/// 该回退表用于 SDP `rtpmap` 解析以及未显式声明时钟频率的客户端；未知编解码器默认
+/// 采用 90 kHz 视频约定。
 pub fn default_clock_rate(codec_name: &str) -> u32 {
     let upper = codec_name.to_ascii_uppercase();
     match upper.as_str() {
@@ -44,6 +68,13 @@ pub fn default_clock_rate(codec_name: &str) -> u32 {
 }
 
 /// Normalize `npt=now-` to `npt=0.000-` for live streams.
+///
+/// Many clients request the live edge with `now-`; the server treats this as an
+/// open-ended range starting from zero.
+///
+/// 将直播流的 `npt=now-` 归一化为 `npt=0.000-`。
+///
+/// 许多客户端使用 `now-` 请求直播边缘；服务器将其视为从 0 开始的开放范围。
 pub fn normalize_range_now(range: &str) -> &str {
     let trimmed = range.trim();
     if trimmed.eq_ignore_ascii_case("npt=now-") || trimmed.eq_ignore_ascii_case("npt = now-") {
@@ -53,9 +84,13 @@ pub fn normalize_range_now(range: &str) -> &str {
     }
 }
 
-/// Parse a `Location` header from a REDIRECT response/request.
+/// Parse a `Location` header from a REDIRECT response or request.
 ///
-/// Returns the redirect target URL if valid.
+/// Validates that the redirect target uses an `rtsp://` or `rtsps://` scheme.
+///
+/// 解析 REDIRECT 响应或请求中的 `Location` 头。
+///
+/// 校验重定向目标使用 `rtsp://` 或 `rtsps://` 协议。
 pub fn parse_redirect_location(headers: &[(String, String)]) -> Option<&str> {
     headers
         .iter()
@@ -64,9 +99,14 @@ pub fn parse_redirect_location(headers: &[(String, String)]) -> Option<&str> {
         .filter(|url| url.starts_with("rtsp://") || url.starts_with("rtsps://"))
 }
 
-/// Normalize a parsed Transport header for compatibility:
-/// - If neither unicast nor multicast was explicitly set, default to unicast.
-/// - Normalize protocol string to canonical case (RTP/AVP, RTP/AVP/TCP).
+/// Normalize a parsed `Transport` header for compatibility.
+///
+/// Defaults to unicast when neither unicast nor multicast is explicitly set, and
+/// canonicalizes the protocol string case (`rtp/avp` -> `RTP/AVP`, etc.).
+///
+/// 对解析后的 `Transport` 头进行兼容性归一化。
+///
+/// 当未显式声明单播或多播时默认单播，并将协议字符串大小写规范化（`rtp/avp` -> `RTP/AVP` 等）。
 pub fn normalize_transport(transport: &mut super::transport::RtspTransport) {
     // Default to unicast when not explicitly specified and protocol is RTP/AVP-based
     let proto_upper = transport.protocol.to_ascii_uppercase();
