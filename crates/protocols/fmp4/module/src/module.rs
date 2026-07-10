@@ -319,7 +319,7 @@ async fn run_play_session(
     let has_video = tracks.iter().any(|t| t.media_kind == MediaKind::Video);
 
     // Frame loop — batch samples, flush on keyframe or duration threshold
-    let mut pending_samples: Vec<Fmp4MuxSample> = Vec::new();
+    let mut pending_samples: Vec<Fmp4MuxSample> = Vec::with_capacity(1024);
     let mut fragment_start_us: Option<i64> = None;
     let max_frag_us = config.max_fragment_duration_ms as i64 * 1000;
     let mut waiting_for_keyframe = has_video;
