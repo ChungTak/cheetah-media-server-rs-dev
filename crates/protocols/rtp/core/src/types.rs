@@ -5,8 +5,26 @@ use cheetah_codec::{AVFrame, RtpPayloadMode, TrackInfo};
 
 use crate::error::RtpCoreDiagnostic;
 
+/// Stable identifier for an RTP session.
+///
+/// For auto-created sessions this is `live/{ssrc}`; explicit server/client specs use the
+/// supplied key.
+///
+/// RTP 会话的稳定标识。
+///
+/// 自动创建的会话为 `live/{ssrc}`；显式 server/client 配置使用给定的 key。
 pub type RtpSessionKey = String;
 
+/// Direction of media flow for an RTP session.
+///
+/// This matches the SDP `sendonly`/`recvonly`/`sendrecv` semantics and drives timeout
+/// policy: `RecvOnly` sessions are supervised by idle timeout, while `SendOnly` sessions
+/// are supervised by RR-timeout.
+///
+/// RTP 会话的媒体流向。
+///
+/// 对应 SDP `sendonly`/`recvonly`/`sendrecv` 语义，并决定超时策略：
+/// `RecvOnly` 会话由空闲超时监管，`SendOnly` 会话由 RR 超时监管。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtpTransportMode {
     RecvOnly,
@@ -14,12 +32,20 @@ pub enum RtpTransportMode {
     SendRecv,
 }
 
-/// ZLMediaKit-style connection types. Mirrors `kTcpActive`/`kTcpPassive`/`kUdpActive`/`kUdpPassive`/`kVoiceTalk`
-/// from `vendor-ref/ZLMediaKit/src/Rtp/RtpSender.cpp`.
+/// ZLMediaKit-style connection types. Mirrors `kTcpActive`/`kTcpPassive`/`kUdpActive`/
+/// `kUdpPassive`/`kVoiceTalk` from `vendor-ref/ZLMediaKit/src/Rtp/RtpSender.cpp`.
 ///
 /// - `*_Active` modes initiate the network connection towards the peer (push side).
 /// - `*_Passive` modes wait for the peer to connect / send first.
-/// - `VoiceTalk` reuses an existing inbound RTP session's socket to push audio back to the device.
+/// - `VoiceTalk` reuses an existing inbound RTP session's socket to push audio back to
+///   the device.
+///
+/// ZLMediaKit 风格的连接类型。对应 `vendor-ref/ZLMediaKit/src/Rtp/RtpSender.cpp` 中的
+/// `kTcpActive`/`kTcpPassive`/`kUdpActive`/`kUdpPassive`/`kVoiceTalk`。
+///
+/// - `*_Active` 模式主动向对端发起网络连接（推流侧）。
+/// - `*_Passive` 模式等待对端先连接/发送。
+/// - `VoiceTalk` 复用已有入站 RTP 会话的套接字，向设备回推音频。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtpConnectionType {
     UdpActive,
@@ -30,27 +56,61 @@ pub enum RtpConnectionType {
 }
 
 /// Track filter applied at session creation. Mirrors ZLM `OnlyTrack`.
+///
+/// 会话创建时应用的轨道过滤器。对应 ZLM `OnlyTrack`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RtpTrackFilter {
+    /// All tracks are accepted.
+    ///
+    /// 接受所有轨道。
     #[default]
     All,
+    /// Only audio tracks are accepted.
+    ///
+    /// 只接受音频轨道。
     OnlyAudio,
+    /// Only video tracks are accepted.
+    ///
+    /// 只接受视频轨道。
     OnlyVideo,
 }
 
+/// Specification for an inbound (server) RTP session.
+///
+/// The session listens for packets on the local socket and auto-creates internal tracks
+/// once the payload mode is discovered.
+///
+/// 入站（服务端）RTP 会话的规格。
+///
+/// 该会话在本地套接字监听，发现负载模式后自动创建内部轨道。
 #[derive(Debug, Clone)]
 pub struct RtpServerSpec {
     pub session_key: RtpSessionKey,
+    /// Optional fixed SSRC. When omitted a random SSRC is generated.
+    ///
+    /// 可选的固定 SSRC。省略时生成随机 SSRC。
     pub ssrc: Option<u32>,
     pub payload_mode: RtpPayloadMode,
     pub transport_mode: RtpTransportMode,
     /// Optional connection-type hint. Defaults to `UdpPassive` when unset.
+    ///
+    /// 可选的连接类型提示。未设置时默认为 `UdpPassive`。
     #[allow(dead_code)]
     pub connection_type: Option<RtpConnectionType>,
     /// Track filter to apply on ingress.
+    ///
+    /// 入站时应用的轨道过滤器。
     pub track_filter: RtpTrackFilter,
 }
 
+/// Specification for an outbound (client) RTP session.
+///
+/// The session originates packets to a fixed destination and advances an internal
+/// sequence-number counter for each emitted RTP packet.
+///
+/// 出站（客户端）RTP 会话的规格。
+///
+/// 该会话向固定目的地址发送包，每发一个 RTP 包都会递增内部序列号。
 #[derive(Debug, Clone)]
 pub struct RtpClientSpec {
     pub session_key: RtpSessionKey,
@@ -58,104 +118,203 @@ pub struct RtpClientSpec {
     pub ssrc: u32,
     pub payload_mode: RtpPayloadMode,
     pub transport_mode: RtpTransportMode,
+    /// Optional TCP connection ID for RTP-over-TCP egress.
+    ///
+    /// 可选的 RTP-over-TCP 出向 TCP 连接 ID。
     pub tcp_conn_id: Option<u64>,
     /// Optional connection-type hint. Defaults to `UdpActive` when unset.
+    ///
+    /// 可选的连接类型提示。未设置时默认为 `UdpActive`。
     #[allow(dead_code)]
     pub connection_type: Option<RtpConnectionType>,
     /// Track filter to apply on egress.
+    ///
+    /// 出站时应用的轨道过滤器。
     pub track_filter: RtpTrackFilter,
 }
 
+/// Frame to be packetized and sent by an outbound RTP session.
+///
+/// 待由出站 RTP 会话打包并发送的帧。
 #[derive(Debug, Clone)]
 pub struct RtpSendFrame {
     pub session_key: RtpSessionKey,
     pub frame: AVFrame,
 }
 
+/// A single UDP datagram received from the network.
+///
+/// 从网络收到的单个 UDP 数据报。
 #[derive(Debug, Clone)]
 pub struct RtpDatagram {
     pub source: SocketAddr,
     pub data: Bytes,
 }
 
+/// A chunk of TCP bytes received on a single connection.
+///
+/// 在单个连接上收到的一小段 TCP 字节。
 #[derive(Debug, Clone)]
 pub struct RtpTcpChunk {
     pub conn_id: u64,
     pub data: Bytes,
 }
 
+/// Outbound UDP datagram.
+///
+/// 出站 UDP 数据报。
 #[derive(Debug, Clone)]
 pub struct RtpUdpSend {
     pub destination: SocketAddr,
     pub data: Bytes,
 }
 
+/// Outbound TCP-framed RTP data.
+///
+/// 出站 TCP 分帧 RTP 数据。
 #[derive(Debug, Clone)]
 pub struct RtpTcpSend {
     pub conn_id: u64,
     pub data: Bytes,
 }
 
+/// Outbound RTCP packet, optionally targeted at a TCP connection.
+///
+/// RTCP 反馈或报告可以封装在 UDP 中发送，也可以绑定到某个 TCP 连接。
 #[derive(Debug, Clone)]
 pub struct RtcpSend {
     pub destination: SocketAddr,
+    /// Optional TCP connection ID for RTP-over-TCP RTCP transport.
+    ///
+    /// 可选的 RTP-over-TCP RTCP 传输连接 ID。
     pub conn_id: Option<u64>,
     pub data: Bytes,
 }
 
+/// Events emitted by `RtpCore` to the driver or module.
+///
+/// `RtpCore` 向 driver 或 module 发出的事件。
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum RtpCoreEvent {
+    /// A new session was accepted or created.
+    ///
+    /// 接受或创建了新会话。
     SessionCreated {
         session_key: RtpSessionKey,
         ssrc: u32,
         payload_mode: RtpPayloadMode,
         transport_mode: RtpTransportMode,
     },
+    /// A session was closed (idle timeout, RR timeout, or explicit stop).
+    ///
+    /// 会话被关闭（空闲超时、RR 超时或显式停止）。
     SessionClosed {
         session_key: RtpSessionKey,
         reason: String,
     },
+    /// One or more tracks were discovered by the demuxer.
+    ///
+    /// demuxer 发现了一条或多条轨道。
     TrackFound {
         session_key: RtpSessionKey,
         tracks: Vec<TrackInfo>,
     },
+    /// A normalized media frame was produced by the demuxer.
+    ///
+    /// demuxer 产生了一帧归一化媒体数据。
     Frame {
         session_key: RtpSessionKey,
         frame: AVFrame,
     },
 }
 
+/// Inputs that drive the `RtpCore` state machine.
+///
+/// Time is supplied externally; the core does not call `Instant::now()`.
+///
+/// 驱动 `RtpCore` 状态机的输入。
+///
+/// 时间由外部注入；core 不会调用 `Instant::now()`。
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum RtpCoreInput {
+    /// UDP RTP packet.
+    ///
+    /// UDP RTP 包。
     UdpPacket(RtpDatagram),
+    /// TCP-framed RTP bytes.
+    ///
+    /// TCP 分帧 RTP 字节。
     TcpBytes(RtpTcpChunk),
     /// Incoming RTCP datagram (non-RTP UDP arriving on the RTCP port). Used to update
-    /// peer feedback statistics and reset the RR-timeout sender shutdown.
+    /// peer-feedback statistics and reset the RR-timeout sender shutdown.
+    ///
+    /// 入站 RTCP 数据报（RTCP 端口上收到的非 RTP UDP）。用于更新对端反馈统计并重置
+    /// 发送者的 RR 超时关闭。
     RtcpPacket(RtpDatagram),
-    Tick {
-        now_ms: u64,
-    },
+    /// Periodic timer tick with the current wall-clock time in milliseconds.
+    ///
+    /// 周期性定时器 tick，当前墙上时间（毫秒）。
+    Tick { now_ms: u64 },
+    /// Control command from the module/driver.
+    ///
+    /// 来自 module/driver 的控制命令。
     Command(RtpCoreCommand),
 }
 
+/// Commands accepted by `RtpCore`.
+///
+/// `RtpCore` 接受的命令。
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum RtpCoreCommand {
+    /// Create a new inbound RTP session.
+    ///
+    /// 创建新的入站 RTP 会话。
     CreateServer(RtpServerSpec),
+    /// Create a new outbound RTP session.
+    ///
+    /// 创建新的出站 RTP 会话。
     CreateClient(RtpClientSpec),
+    /// Packetize and send a frame.
+    ///
+    /// 将一帧打包并发送。
     SendFrame(RtpSendFrame),
+    /// Stop and close a session by key.
+    ///
+    /// 按 key 停止并关闭会话。
     StopSession(RtpSessionKey),
 }
 
+/// Outputs produced by `RtpCore` for the driver to act on.
+///
+/// `RtpCore` 产生、由 driver 执行的输出。
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum RtpCoreOutput {
+    /// Send a UDP datagram.
+    ///
+    /// 发送 UDP 数据报。
     SendUdp(RtpUdpSend),
+    /// Send a TCP-framed chunk.
+    ///
+    /// 发送 TCP 分帧块。
     SendTcp(RtpTcpSend),
+    /// Send an RTCP packet.
+    ///
+    /// 发送 RTCP 包。
     SendRtcp(RtcpSend),
+    /// Emit a lifecycle or media event.
+    ///
+    /// 发出生命周期或媒体事件。
     Event(RtpCoreEvent),
+    /// Report a non-fatal diagnostic for logging/metrics.
+    ///
+    /// 报告非致命诊断，用于日志/指标。
     Diagnostic(RtpCoreDiagnostic),
+    /// Close a session and clean up resources.
+    ///
+    /// 关闭会话并清理资源。
     CloseSession(RtpSessionKey),
 }
