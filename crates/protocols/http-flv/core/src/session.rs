@@ -204,7 +204,7 @@ impl HttpFlvCore {
             .demuxer
             .push(bytes)
             .map_err(|err| HttpFlvCoreError::FlvDemux(err.to_string()))?;
-        let mut outputs = Vec::new();
+        let mut outputs = Vec::with_capacity(events.len());
         for event in events {
             match event {
                 FlvDemuxEvent::Tag(tag) => {
