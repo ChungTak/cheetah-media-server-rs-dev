@@ -97,7 +97,7 @@ impl RtpCore {
     }
 
     pub fn handle_input(&mut self, input: RtpCoreInput) -> Vec<RtpCoreOutput> {
-        let mut outputs = Vec::new();
+        let mut outputs = Vec::with_capacity(4);
         match input {
             RtpCoreInput::UdpPacket(datagram) => {
                 self.process_udp_packet(datagram, &mut outputs);
@@ -328,18 +328,18 @@ impl RtpCore {
                                                         ));
                                                     }
                                                 }
-                                                PsDemuxEvent::Frame(frame) => {
+                                                PsDemuxEvent::Frame(frame)
                                                     if track_filter_allows_track(
                                                         track_filter,
                                                         frame.media_kind,
-                                                    ) {
-                                                        outputs.push(RtpCoreOutput::Event(
-                                                            RtpCoreEvent::Frame {
-                                                                session_key: session_key.clone(),
-                                                                frame: *frame,
-                                                            },
-                                                        ));
-                                                    }
+                                                    ) =>
+                                                {
+                                                    outputs.push(RtpCoreOutput::Event(
+                                                        RtpCoreEvent::Frame {
+                                                            session_key: session_key.clone(),
+                                                            frame: *frame,
+                                                        },
+                                                    ));
                                                 }
                                                 _ => {}
                                             }
@@ -671,23 +671,24 @@ impl RtpCore {
         match &mut session.demuxer {
             SessionDemuxer::Ts(demuxer) => {
                 let demux_events = demuxer.push(&rtp.payload);
+                outputs.reserve(demux_events.len());
                 for ev in demux_events {
                     match ev {
-                        MpegTsDemuxEvent::TrackFound(track) => {
-                            if track_filter_allows_track(track_filter, track.media_kind) {
-                                outputs.push(RtpCoreOutput::Event(RtpCoreEvent::TrackFound {
-                                    session_key: session_key.clone(),
-                                    tracks: vec![track],
-                                }));
-                            }
+                        MpegTsDemuxEvent::TrackFound(track)
+                            if track_filter_allows_track(track_filter, track.media_kind) =>
+                        {
+                            outputs.push(RtpCoreOutput::Event(RtpCoreEvent::TrackFound {
+                                session_key: session_key.clone(),
+                                tracks: vec![track],
+                            }));
                         }
-                        MpegTsDemuxEvent::Frame(frame) => {
-                            if track_filter_allows_track(track_filter, frame.media_kind) {
-                                outputs.push(RtpCoreOutput::Event(RtpCoreEvent::Frame {
-                                    session_key: session_key.clone(),
-                                    frame,
-                                }));
-                            }
+                        MpegTsDemuxEvent::Frame(frame)
+                            if track_filter_allows_track(track_filter, frame.media_kind) =>
+                        {
+                            outputs.push(RtpCoreOutput::Event(RtpCoreEvent::Frame {
+                                session_key: session_key.clone(),
+                                frame,
+                            }));
                         }
                         _ => {}
                     }
@@ -695,6 +696,7 @@ impl RtpCore {
             }
             SessionDemuxer::Ps(demuxer) => {
                 let demux_events = demuxer.push(&rtp.payload);
+                outputs.reserve(demux_events.len());
                 for ev in demux_events {
                     match ev {
                         PsDemuxEvent::TrackInfo(tracks) => {
@@ -709,13 +711,13 @@ impl RtpCore {
                                 }));
                             }
                         }
-                        PsDemuxEvent::Frame(frame) => {
-                            if track_filter_allows_track(track_filter, frame.media_kind) {
-                                outputs.push(RtpCoreOutput::Event(RtpCoreEvent::Frame {
-                                    session_key: session_key.clone(),
-                                    frame: *frame,
-                                }));
-                            }
+                        PsDemuxEvent::Frame(frame)
+                            if track_filter_allows_track(track_filter, frame.media_kind) =>
+                        {
+                            outputs.push(RtpCoreOutput::Event(RtpCoreEvent::Frame {
+                                session_key: session_key.clone(),
+                                frame: *frame,
+                            }));
                         }
                         _ => {}
                     }
@@ -729,7 +731,7 @@ impl RtpCore {
 
     fn process_tick(&mut self, now_ms: u64, outputs: &mut Vec<RtpCoreOutput>) {
         self.now_ms = now_ms;
-        let mut to_remove = Vec::new();
+        let mut to_remove = Vec::with_capacity(1);
 
         for (key, session) in &mut self.sessions {
             // Idle timeout only applies to sessions that can receive traffic. Pure senders are
