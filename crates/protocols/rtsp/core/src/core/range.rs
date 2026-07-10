@@ -1,5 +1,7 @@
 use std::fmt;
 
+/// Error returned by `RTSP Range` operations.
+/// `RTSP Range` 操作返回的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspRangeError {
     #[error("empty range header")]
@@ -25,6 +27,8 @@ pub enum RtspRange {
 }
 
 impl RtspRange {
+    /// Parses the input into a structured value, returning an error if malformed.
+    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(header_value: &str) -> Result<Self, RtspRangeError> {
         let value = header_value.trim();
         if value.is_empty() {
@@ -77,6 +81,8 @@ impl fmt::Display for RtspRange {
     }
 }
 
+/// `NptTime` enumeration.
+/// `NptTime` 枚举。
 #[derive(Debug, Clone, PartialEq)]
 pub enum NptTime {
     Now,
@@ -131,6 +137,8 @@ fn parse_npt_hhmmss(value: &str) -> Result<NptTime, RtspRangeError> {
     Ok(NptTime::Seconds(hours * 3600.0 + minutes * 60.0 + seconds))
 }
 
+/// `NptRange` data structure.
+/// `NptRange` 数据结构。
 #[derive(Debug, Clone, PartialEq)]
 pub struct NptRange {
     pub start: NptTime,
@@ -138,10 +146,14 @@ pub struct NptRange {
 }
 
 impl NptRange {
+    /// Creates a new `NptRange` instance.
+    /// 创建新的 `NptRange` 实例。
     pub fn new(start: NptTime, end: Option<NptTime>) -> Self {
         Self { start, end }
     }
 
+    /// Creates `start` from input.
+    /// 从输入创建 `start`。
     pub fn from_start(start: f64) -> Self {
         Self {
             start: NptTime::Seconds(start),
@@ -149,6 +161,8 @@ impl NptRange {
         }
     }
 
+    /// `all` function of `NptRange`.
+    /// `NptRange` 的 `all` 函数。
     pub fn all() -> Self {
         Self {
             start: NptTime::Seconds(0.0),
@@ -156,6 +170,8 @@ impl NptRange {
         }
     }
 
+    /// Creates `now` from input.
+    /// 从输入创建 `now`。
     pub fn from_now() -> Self {
         Self {
             start: NptTime::Now,
@@ -209,6 +225,8 @@ impl fmt::Display for NptRange {
     }
 }
 
+/// Type of `Smpte`.
+/// `Smpte` 的类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SmpteType {
     Smpte,
@@ -216,6 +234,8 @@ pub enum SmpteType {
     Smpte25,
 }
 
+/// `SmpteTime` data structure.
+/// `SmpteTime` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmpteTime {
     pub hours: u8,
@@ -289,6 +309,8 @@ impl fmt::Display for SmpteTime {
     }
 }
 
+/// `SmpteRange` data structure.
+/// `SmpteRange` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmpteRange {
     pub smpte_type: SmpteType,
@@ -329,6 +351,8 @@ impl fmt::Display for SmpteRange {
     }
 }
 
+/// `ClockRange` data structure.
+/// `ClockRange` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClockRange {
     pub start: String,

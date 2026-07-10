@@ -128,6 +128,8 @@ pub struct StreamMuxer {
 }
 
 impl StreamMuxer {
+    /// Creates a new `StreamMuxer` instance.
+    /// 创建新的 `StreamMuxer` 实例。
     pub fn new(config: StreamMuxerConfig) -> Self {
         let ll_state = if config.ll_hls_enabled && config.container == HlsContainer::Fmp4 {
             Some(LowLatencyState::new(
@@ -676,10 +678,14 @@ impl StreamMuxer {
         }
     }
 
+    /// Returns `true` if `ready` is true.
+    /// 当 `ready` 为真时返回 `true`。
     pub fn is_ready(&self) -> bool {
         self.ready
     }
 
+    /// `playlist` function of `StreamMuxer`.
+    /// `StreamMuxer` 的 `playlist` 函数。
     pub fn playlist(&self, session_id: Option<u64>) -> String {
         // Use cached playlist when no special parameters
         if session_id.is_none() {
@@ -690,6 +696,8 @@ impl StreamMuxer {
         self.playlist_with_options(session_id, false)
     }
 
+    /// `playlist_with_options_and_token` function of `StreamMuxer`.
+    /// `StreamMuxer` 的 `playlist_with_options_and_token` 函数。
     pub fn playlist_with_options_and_token(
         &self,
         session_id: Option<u64>,
@@ -871,6 +879,8 @@ impl StreamMuxer {
         out
     }
 
+    /// `playlist_rewind_with_token` function of `StreamMuxer`.
+    /// `StreamMuxer` 的 `playlist_rewind_with_token` 函数。
     pub fn playlist_rewind_with_token(
         &self,
         session_id: Option<u64>,
@@ -884,6 +894,8 @@ impl StreamMuxer {
         }
     }
 
+    /// Returns the `segment` value.
+    /// 返回 `segment` 的值。
     pub fn get_segment(&self, name: &str) -> Option<Bytes> {
         if let Some(ref demuxed) = self.demuxed {
             // Try exact name first, then with video_ prefix for legacy URLs
@@ -1608,6 +1620,8 @@ pub struct MuxerHealth {
 
 #[allow(dead_code)]
 impl MuxerHealth {
+    /// Creates a new `MuxerHealth` instance.
+    /// 创建新的 `MuxerHealth` 实例。
     pub fn new() -> Self {
         Self {
             crash_count: 0,

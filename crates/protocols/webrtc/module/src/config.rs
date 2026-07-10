@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use crate::codec_policy::AudioOutputStrategy;
 use crate::compat::{parse_ome_transport_mode, OmeTransportMode};
 
+/// Configuration for `Web Rtc ICE Server`.
+/// `Web Rtc ICE Server` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebRtcIceServerConfig {
     #[serde(default)]
@@ -25,6 +27,8 @@ pub struct WebRtcIceServerConfig {
     pub credential: Option<String>,
 }
 
+/// Configuration for `Web Rtc Module`.
+/// `Web Rtc Module` 的配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebRtcModuleConfig {
     #[serde(default = "default_enabled")]
@@ -271,6 +275,8 @@ pub enum SimulcastPolicy {
 }
 
 impl SimulcastPolicy {
+    /// Parses the input into a structured value, returning an error if malformed.
+    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(input: &str) -> Self {
         let trimmed = input.trim();
         if trimmed.eq_ignore_ascii_case("highest") || trimmed.is_empty() {
@@ -296,6 +302,8 @@ impl SimulcastPolicy {
     }
 }
 
+/// `CodecProfileWire` enumeration.
+/// `CodecProfileWire` 枚举。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CodecProfileWire {
@@ -381,14 +389,20 @@ impl Default for WebRtcModuleConfig {
 }
 
 impl WebRtcModuleConfig {
+    /// `default_json` function of `WebRtcModuleConfig`.
+    /// `WebRtcModuleConfig` 的 `default_json` 函数。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).expect("default WebRtcModuleConfig serialises")
     }
 
+    /// Creates `value` from input.
+    /// 从输入创建 `value`。
     pub fn from_value(value: serde_json::Value) -> Result<Self, String> {
         serde_json::from_value(value).map_err(|err| err.to_string())
     }
 
+    /// Validates the input and returns an error if invalid.
+    /// 验证输入，无效时返回错误。
     pub fn validate(&self) -> Result<(), String> {
         if self.listen_udp.is_empty() {
             return Err("listen_udp must not be empty".into());
@@ -513,6 +527,8 @@ impl WebRtcModuleConfig {
         Ok(())
     }
 
+    /// `simulcast_policy` function of `WebRtcModuleConfig`.
+    /// `WebRtcModuleConfig` 的 `simulcast_policy` 函数。
     pub fn simulcast_policy(&self) -> SimulcastPolicy {
         SimulcastPolicy::parse(&self.simulcast_default_policy)
     }
@@ -522,6 +538,8 @@ impl WebRtcModuleConfig {
         self.audio_output_strategy
     }
 
+    /// `ome_default_transport_mode` function of `WebRtcModuleConfig`.
+    /// `WebRtcModuleConfig` 的 `ome_default_transport_mode` 函数。
     pub fn ome_default_transport_mode(&self) -> Result<OmeTransportMode, String> {
         parse_ome_transport_mode(&self.ome_default_transport).map_err(|err| err.to_string())
     }
@@ -548,6 +566,8 @@ impl WebRtcModuleConfig {
         )
     }
 
+    /// Converts to `driver config` representation.
+    /// 转换为 `driver config` 表示。
     pub fn to_driver_config(&self) -> Result<WebRtcDriverConfig, String> {
         self.validate()?;
         let listen_udp = self

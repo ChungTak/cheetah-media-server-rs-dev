@@ -23,10 +23,14 @@ pub(super) struct MulticastSender {
 }
 
 impl MulticastSender {
+    /// `target_rtp` function of `MulticastSender`.
+    /// `MulticastSender` 的 `target_rtp` 函数。
     pub fn target_rtp(&self) -> SocketAddr {
         SocketAddr::new(self.destination.into(), self.rtp_port)
     }
 
+    /// `target_rtcp` function of `MulticastSender`.
+    /// `MulticastSender` 的 `target_rtcp` 函数。
     pub fn target_rtcp(&self) -> SocketAddr {
         SocketAddr::new(self.destination.into(), self.rtcp_port)
     }
@@ -40,6 +44,8 @@ pub(super) enum MulticastAcquireError {
 }
 
 impl MulticastAcquireError {
+    /// `rtsp_response` function of `MulticastAcquireError`.
+    /// `MulticastAcquireError` 的 `rtsp_response` 函数。
     pub fn rtsp_response(self) -> RtspErrorResponse {
         match self {
             Self::CapacityExhausted => (
@@ -81,6 +87,8 @@ pub(super) struct MulticastSenderRegistry {
 }
 
 impl MulticastSenderRegistry {
+    /// Creates a new `MulticastSenderRegistry` instance.
+    /// 创建新的 `MulticastSenderRegistry` 实例。
     pub fn new(config: RtspMulticastConfig) -> Self {
         Self {
             config,
@@ -88,6 +96,8 @@ impl MulticastSenderRegistry {
         }
     }
 
+    /// `acquire` function of `MulticastSenderRegistry`.
+    /// `MulticastSenderRegistry` 的 `acquire` 函数。
     pub fn acquire(
         &self,
         runtime_api: &Arc<dyn RuntimeApi>,
@@ -201,6 +211,8 @@ impl MulticastSenderRegistry {
         }
     }
 
+    /// `release` function of `MulticastSenderRegistry`.
+    /// `MulticastSenderRegistry` 的 `release` 函数。
     pub fn release(
         &self,
         runtime_api: &Arc<dyn RuntimeApi>,
@@ -243,6 +255,8 @@ impl MulticastSenderRegistry {
         }
     }
 
+    /// `should_forward_rtp` function of `MulticastSenderRegistry`.
+    /// `MulticastSenderRegistry` 的 `should_forward_rtp` 函数。
     pub fn should_forward_rtp(
         &self,
         connection_id: RtspConnectionId,

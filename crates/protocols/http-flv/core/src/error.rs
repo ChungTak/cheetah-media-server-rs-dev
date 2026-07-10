@@ -1,3 +1,5 @@
+/// Error returned by `HTTP FLV Core` operations.
+/// `HTTP FLV Core` 操作返回的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum HttpFlvCoreError {
     #[error("method is not supported: {method}")]

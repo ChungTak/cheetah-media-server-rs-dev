@@ -64,6 +64,8 @@ pub enum P2pJobState {
     Failed,
 }
 
+/// Error returned by `2 p Job` operations.
+/// `2 p Job` 操作返回的错误。
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum P2pJobError {
     #[error("invalid transition: cannot apply {what} in state {state:?}")]
@@ -146,6 +148,8 @@ pub struct P2pJob {
 }
 
 impl P2pJob {
+    /// Creates a new `P2pJob` instance.
+    /// 创建新的 `P2pJob` 实例。
     pub fn new(config: P2pJobConfig) -> Self {
         let cap = config.pending_candidate_cap.max(1);
         let pending = PendingCandidateBuffer::new(cap).expect("non-zero cap is guaranteed above");
@@ -157,18 +161,26 @@ impl P2pJob {
         }
     }
 
+    /// `state` function of `P2pJob`.
+    /// `P2pJob` 的 `state` 函数。
     pub fn state(&self) -> P2pJobState {
         self.state
     }
 
+    /// `last_error` function of `P2pJob`.
+    /// `P2pJob` 的 `last_error` 函数。
     pub fn last_error(&self) -> Option<&str> {
         self.last_error.as_deref()
     }
 
+    /// `config` function of `P2pJob`.
+    /// `P2pJob` 的 `config` 函数。
     pub fn config(&self) -> &P2pJobConfig {
         &self.config
     }
 
+    /// `pending_state` function of `P2pJob`.
+    /// `P2pJob` 的 `pending_state` 函数。
     pub fn pending_state(&self) -> BufferState {
         self.pending.state()
     }

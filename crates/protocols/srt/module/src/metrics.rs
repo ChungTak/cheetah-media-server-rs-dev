@@ -5,6 +5,8 @@ use cheetah_srt_core::SrtStreamMode;
 use cheetah_srt_driver_tokio::SrtDriverStats;
 use serde::Serialize;
 
+/// `SrtModuleMetrics` data structure.
+/// `SrtModuleMetrics` 数据结构。
 #[derive(Debug, Default)]
 pub struct SrtModuleMetrics {
     connections_active: AtomicU64,
@@ -28,6 +30,8 @@ pub struct SrtModuleMetrics {
     send_queue_full_total: AtomicU64,
 }
 
+/// `SrtModuleMetricsSnapshot` data structure.
+/// `SrtModuleMetricsSnapshot` 数据结构。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
 pub struct SrtModuleMetricsSnapshot {
     pub connections_active: u64,
@@ -52,10 +56,14 @@ pub struct SrtModuleMetricsSnapshot {
 }
 
 impl SrtModuleMetrics {
+    /// Creates a new `SrtModuleMetrics` instance.
+    /// 创建新的 `SrtModuleMetrics` 实例。
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
 
+    /// Increments `connection`.
+    /// 递增 `connection`。
     pub fn inc_connection(&self, mode: SrtStreamMode) {
         self.connections_active.fetch_add(1, Ordering::Relaxed);
         self.connections_total.fetch_add(1, Ordering::Relaxed);
@@ -70,15 +78,21 @@ impl SrtModuleMetrics {
         }
     }
 
+    /// Decrements `connection`.
+    /// 递减 `connection`。
     pub fn dec_connection(&self) {
         decrement_saturating(&self.connections_active);
         self.disconnect_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increments `key refresh`.
+    /// 递增 `key refresh`。
     pub fn inc_key_refresh(&self) {
         self.key_refresh_total.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increments `driver error`.
+    /// 递增 `driver error`。
     pub fn inc_driver_error(&self, message: &str) {
         self.driver_errors_total.fetch_add(1, Ordering::Relaxed);
         if message == "SRT send queue full" {
@@ -86,6 +100,8 @@ impl SrtModuleMetrics {
         }
     }
 
+    /// Adds `stats delta`.
+    /// 增加 `stats delta`。
     pub fn add_stats_delta(&self, previous: Option<&SrtDriverStats>, current: &SrtDriverStats) {
         let baseline = previous.cloned().unwrap_or_default();
         self.bytes_in_total.fetch_add(
@@ -138,6 +154,8 @@ impl SrtModuleMetrics {
             .store(u64::from(current.receiver_jitter_micros), Ordering::Relaxed);
     }
 
+    /// `snapshot` function of `SrtModuleMetrics`.
+    /// `SrtModuleMetrics` 的 `snapshot` 函数。
     pub fn snapshot(&self) -> SrtModuleMetricsSnapshot {
         SrtModuleMetricsSnapshot {
             connections_active: self.connections_active.load(Ordering::Relaxed),

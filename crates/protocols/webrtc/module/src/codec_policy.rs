@@ -16,6 +16,8 @@ use cheetah_codec::CodecId;
 
 use crate::config::CodecProfileWire;
 
+/// `WebRtcVideoCodecPreference` enumeration.
+/// `WebRtcVideoCodecPreference` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WebRtcVideoCodecPreference {
     H264,
@@ -26,6 +28,8 @@ pub enum WebRtcVideoCodecPreference {
     Any,
 }
 
+/// `WebRtcAudioCodecPreference` enumeration.
+/// `WebRtcAudioCodecPreference` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WebRtcAudioCodecPreference {
     Opus,
@@ -36,6 +40,8 @@ pub enum WebRtcAudioCodecPreference {
 }
 
 impl WebRtcVideoCodecPreference {
+    /// Creates `str lossy` from input.
+    /// 从输入创建 `str lossy`。
     pub fn from_str_lossy(value: &str) -> Self {
         match value.to_ascii_lowercase().as_str() {
             "h264" | "avc" => Self::H264,
@@ -55,6 +61,8 @@ impl WebRtcVideoCodecPreference {
 }
 
 impl WebRtcAudioCodecPreference {
+    /// Creates `str lossy` from input.
+    /// 从输入创建 `str lossy`。
     pub fn from_str_lossy(value: &str) -> Self {
         match value.to_ascii_lowercase().as_str() {
             "opus" => Self::Opus,
@@ -65,6 +73,8 @@ impl WebRtcAudioCodecPreference {
         }
     }
 
+    /// Returns `true` if `allowed` is true.
+    /// 当 `allowed` 为真时返回 `true`。
     pub fn is_allowed(self, profile: CodecProfileWire) -> bool {
         !matches!((profile, self), (CodecProfileWire::Browser, Self::Aac))
     }
@@ -79,7 +89,11 @@ impl WebRtcAudioCodecPreference {
 /// - Channels: 2 (stereo)
 /// - Samples per frame: 960 (20ms at 48kHz)
 pub const OPUS_CLOCK_RATE: u32 = 48_000;
+/// `OPUS_CHANNELS` constant.
+/// `OPUS_CHANNELS` 常量。
 pub const OPUS_CHANNELS: u8 = 2;
+/// Frame for `OPUS SAMPLES PER`.
+/// `OPUS SAMPLES PER` 的帧。
 pub const OPUS_SAMPLES_PER_FRAME: u16 = 960;
 
 /// G711A uses static RTP payload type 8 (RFC 3551).
@@ -110,6 +124,8 @@ pub enum AudioOutputStrategy {
 }
 
 impl AudioOutputStrategy {
+    /// Creates `str lossy` from input.
+    /// 从输入创建 `str lossy`。
     pub fn from_str_lossy(value: &str) -> Self {
         match value.trim().to_ascii_lowercase().as_str() {
             "transcode_to_opus" | "transcode-to-opus" | "opus" => Self::TranscodeToOpus,

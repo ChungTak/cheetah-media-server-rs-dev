@@ -1,5 +1,7 @@
 use cheetah_sdk::StreamKey;
 
+/// Mode selecting `RTMP Play` behavior.
+/// 选择 `RTMP Play` 行为的模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpPlayMode {
     Normal,
@@ -7,12 +9,16 @@ pub enum RtmpPlayMode {
     FastPts,
 }
 
+/// `StreamRoute` data structure.
+/// `StreamRoute` 数据结构。
 #[derive(Debug, Clone)]
 pub struct StreamRoute {
     pub stream_key: StreamKey,
     pub play_mode: RtmpPlayMode,
 }
 
+/// Parses `stream route` from input.
+/// 从输入解析 `stream route`。
 pub fn parse_stream_route(app: &str, stream_name: &str) -> StreamRoute {
     let app = app.trim_matches('/');
     let (app, _) = split_stream_path_query(app);
@@ -24,6 +30,8 @@ pub fn parse_stream_route(app: &str, stream_name: &str) -> StreamRoute {
     }
 }
 
+/// Splits `stream path query` into parts.
+/// 将 `stream path query` 拆分为多个部分。
 pub fn split_stream_path_query(stream_name: &str) -> (&str, &str) {
     if let Some(index) = stream_name.find('?') {
         (&stream_name[..index], &stream_name[index + 1..])
@@ -32,6 +40,8 @@ pub fn split_stream_path_query(stream_name: &str) -> (&str, &str) {
     }
 }
 
+/// Parses `play mode from query` from input.
+/// 从输入解析 `play mode from query`。
 pub fn parse_play_mode_from_query(query: &str) -> RtmpPlayMode {
     for part in query.split('&') {
         let mut kv = part.splitn(2, '=');
@@ -49,6 +59,8 @@ pub fn parse_play_mode_from_query(query: &str) -> RtmpPlayMode {
     RtmpPlayMode::Normal
 }
 
+/// Parses `stream key spec` from input.
+/// 从输入解析 `stream key spec`。
 pub fn parse_stream_key_spec(spec: &str) -> Option<StreamKey> {
     let trimmed = spec.trim().trim_matches('/');
     let (namespace, path) = trimmed.split_once('/')?;

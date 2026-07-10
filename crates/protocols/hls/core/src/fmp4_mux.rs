@@ -37,6 +37,8 @@ pub struct Fmp4Muxer {
 }
 
 impl Fmp4Muxer {
+    /// Creates a new `Fmp4Muxer` instance.
+    /// 创建新的 `Fmp4Muxer` 实例。
     pub fn new(tracks: Vec<Fmp4TrackDesc>) -> Self {
         let track_infos: Vec<_> = tracks.iter().map(desc_to_track_info).collect();
         let inner = cheetah_codec::Fmp4Muxer::new(

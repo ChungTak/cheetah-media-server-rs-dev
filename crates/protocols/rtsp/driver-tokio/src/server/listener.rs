@@ -28,6 +28,8 @@ use super::{DriverConfig, DriverEvent, RtspServerHandle};
 const INITIAL_READ_TIMEOUT: Duration = Duration::from_millis(20);
 const TUNNEL_PROBE_TIMEOUT_AFTER_INITIAL_TIMEOUT: Duration = Duration::from_millis(250);
 
+/// Starts the `server`.
+/// 启动 `server`。
 pub fn start_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,

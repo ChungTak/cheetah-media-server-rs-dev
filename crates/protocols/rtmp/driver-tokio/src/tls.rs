@@ -139,6 +139,8 @@ pub struct TlsServerStream {
 }
 
 impl TlsServerStream {
+    /// Creates a new `TlsServerStream` instance.
+    /// 创建新的 `TlsServerStream` 实例。
     pub fn new(inner: ServerTlsStream<TcpStream>, peer: SocketAddr) -> Self {
         Self { inner, peer }
     }
@@ -173,6 +175,8 @@ pub struct TlsClientStream {
 }
 
 impl TlsClientStream {
+    /// Creates a new `TlsClientStream` instance.
+    /// 创建新的 `TlsClientStream` 实例。
     pub fn new(inner: ClientTlsStream<TcpStream>, peer: SocketAddr) -> Self {
         Self { inner, peer }
     }

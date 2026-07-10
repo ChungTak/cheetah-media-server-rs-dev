@@ -30,6 +30,8 @@ pub struct StreamKeyParts {
 }
 
 impl StreamKeyParts {
+    /// Parses the input into a structured value, returning an error if malformed.
+    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(input: &str) -> Self {
         if let Some((ns, p)) = input.split_once('/') {
             Self {
@@ -120,6 +122,8 @@ enum SessionState {
 }
 
 impl VodSession {
+    /// Creates a new `VodSession` instance.
+    /// 创建新的 `VodSession` 实例。
     pub fn new(config: Mp4ReaderConfig) -> Self {
         Self {
             reader: Mp4Reader::new(config),
@@ -133,22 +137,32 @@ impl VodSession {
         }
     }
 
+    /// `duration_us` function of `VodSession`.
+    /// `VodSession` 的 `duration_us` 函数。
     pub fn duration_us(&self) -> i64 {
         self.reader.duration_us()
     }
 
+    /// `tracks` function of `VodSession`.
+    /// `VodSession` 的 `tracks` 函数。
     pub fn tracks(&self) -> &[TrackInfo] {
         self.reader.tracks()
     }
 
+    /// Returns `true` if `running` is true.
+    /// 当 `running` 为真时返回 `true`。
     pub fn is_running(&self) -> bool {
         matches!(self.state, SessionState::Running)
     }
 
+    /// Returns `true` if `stopped` is true.
+    /// 当 `stopped` 为真时返回 `true`。
     pub fn is_stopped(&self) -> bool {
         matches!(self.state, SessionState::Stopped)
     }
 
+    /// `step` function of `VodSession`.
+    /// `VodSession` 的 `step` 函数。
     pub fn step(&mut self, input: VodCoreInput) -> Vec<VodOutput> {
         match input {
             VodCoreInput::Control(cmd) => self.handle_control(cmd),

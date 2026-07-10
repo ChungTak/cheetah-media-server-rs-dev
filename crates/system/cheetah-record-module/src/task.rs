@@ -49,6 +49,8 @@ pub trait TaskExecutor: Send + Sync {
     async fn stop(&self, task_id: &str) -> Result<(), TaskExecutorError>;
 }
 
+/// Error returned by `Task Executor` operations.
+/// `Task Executor` 操作返回的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum TaskExecutorError {
     #[error("task not found: {0}")]

@@ -28,6 +28,8 @@ use crate::config::{RtpClientJobConfig, RtpModuleConfig};
 
 const MODULE_ID: &str = "rtp";
 
+/// `RtpModuleFactory` data structure.
+/// `RtpModuleFactory` 数据结构。
 pub struct RtpModuleFactory;
 
 impl ModuleFactory for RtpModuleFactory {
@@ -65,6 +67,8 @@ impl ModuleFactory for RtpModuleFactory {
     }
 }
 
+/// `RtpModule` data structure.
+/// `RtpModule` 数据结构。
 pub struct RtpModule {
     state: ModuleState,
     config: RtpModuleConfig,
@@ -79,6 +83,8 @@ pub struct RtpModule {
 }
 
 impl RtpModule {
+    /// Creates a new `RtpModule` instance.
+    /// 创建新的 `RtpModule` 实例。
     pub fn new() -> Self {
         Self {
             state: ModuleState::Created,

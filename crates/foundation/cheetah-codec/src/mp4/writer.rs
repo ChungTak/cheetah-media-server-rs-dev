@@ -52,6 +52,8 @@ pub struct Mp4Writer {
 }
 
 impl Mp4Writer {
+    /// Creates a new `Mp4Writer` instance.
+    /// 创建新的 `Mp4Writer` 实例。
     pub fn new(config: Mp4WriterConfig, tracks: &[TrackInfo]) -> Result<Self, Mp4Error> {
         if tracks.is_empty() {
             return Err(Mp4Error::UnsupportedTrack("no tracks"));

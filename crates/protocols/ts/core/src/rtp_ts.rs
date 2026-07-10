@@ -17,6 +17,8 @@ enum SessionDemuxer {
 }
 
 impl SessionDemuxer {
+    /// Flushes any buffered data to the underlying transport.
+    /// 将缓冲数据刷新到底层传输。
     pub fn flush(&mut self) -> Vec<MpegTsDemuxEvent> {
         match self {
             SessionDemuxer::Pending => Vec::new(),
@@ -148,6 +150,8 @@ pub struct RtpTsIngest {
 }
 
 impl RtpTsIngest {
+    /// Creates a new `RtpTsIngest` instance.
+    /// 创建新的 `RtpTsIngest` 实例。
     pub fn new(config: RtpTsIngestConfig) -> Self {
         Self {
             config,
@@ -457,6 +461,8 @@ pub struct RtpTsPublishSession {
 }
 
 impl RtpTsPublishSession {
+    /// Creates a new `RtpTsPublishSession` instance.
+    /// 创建新的 `RtpTsPublishSession` 实例。
     pub fn new(ssrc: u32) -> Self {
         Self {
             ssrc,

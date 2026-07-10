@@ -1,5 +1,11 @@
+/// Module for `client`.
+/// `client` 相关模块。
 pub mod client;
+/// Module for `server`.
+/// `server` 相关模块。
 pub mod server;
+/// Module for `tls`.
+/// `tls` 相关模块。
 pub mod tls;
 
 pub use cheetah_rtmp_core::{RtmpCoreCommand, RtmpEvent, RtmpMediaType};

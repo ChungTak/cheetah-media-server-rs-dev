@@ -13,11 +13,23 @@
 //! * [`compat`] — quirks for non-standard MP4 inputs (faststart, missing
 //!   `stss`, anomalous `ctts`, oversize boxes, etc.)
 
+/// Module for `box_parser`.
+/// `box_parser` 相关模块。
 pub mod box_parser;
+/// Module for `compat`.
+/// `compat` 相关模块。
 pub mod compat;
+/// Module for `reader`.
+/// `reader` 相关模块。
 pub mod reader;
+/// Module for `sample_entry`.
+/// `sample_entry` 相关模块。
 pub mod sample_entry;
+/// Module for `sample_table`.
+/// `sample_table` 相关模块。
 pub mod sample_table;
+/// Module for `writer`.
+/// `writer` 相关模块。
 pub mod writer;
 
 use crate::prelude::*;
@@ -47,6 +59,8 @@ pub struct Mp4SampleEntry {
 }
 
 impl Mp4SampleEntry {
+    /// Creates `track` from input.
+    /// 从输入创建 `track`。
     pub fn from_track(track: &TrackInfo) -> Option<Self> {
         let (codec, extradata) = match (&track.codec, &track.extradata) {
             (

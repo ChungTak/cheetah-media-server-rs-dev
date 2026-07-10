@@ -17,6 +17,8 @@ use crate::api::{
     StopRecordRequest,
 };
 
+/// Error returned by `Zlm Compat` operations.
+/// `Zlm Compat` 操作返回的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum ZlmCompatError {
     #[error("invalid request: {0}")]
@@ -98,10 +100,14 @@ pub struct ZlmRecordCompat {
 }
 
 impl ZlmRecordCompat {
+    /// Creates a new `ZlmRecordCompat` instance.
+    /// 创建新的 `ZlmRecordCompat` 实例。
     pub fn new(inner: Arc<RecordApi>) -> Self {
         Self { inner }
     }
 
+    /// Starts the `record`.
+    /// 启动 `record`。
     pub async fn start_record(&self, req: ZlmStartRecord) -> Result<Value, ZlmCompatError> {
         let format = parse_zlm_type(&req.r#type)?;
         if let Some(path) = &req.customized_path {
@@ -124,6 +130,8 @@ impl ZlmRecordCompat {
         Ok(serde_json::json!({ "code": 0, "result": true }))
     }
 
+    /// Stops the `record`.
+    /// 停止 `record`。
     pub async fn stop_record(&self, req: ZlmStopRecord) -> Result<Value, ZlmCompatError> {
         let format = parse_zlm_type(&req.r#type)?;
         let task_id = zlm_task_id(&format, &req.app, &req.stream);
@@ -131,6 +139,8 @@ impl ZlmRecordCompat {
         Ok(serde_json::json!({ "code": 0, "result": true }))
     }
 
+    /// Returns `true` if `recording` is true.
+    /// 当 `recording` 为真时返回 `true`。
     pub fn is_recording(&self, req: ZlmIsRecording) -> Result<Value, ZlmCompatError> {
         let format = parse_zlm_type(&req.r#type)?;
         let task_id = zlm_task_id(&format, &req.app, &req.stream);
@@ -138,6 +148,8 @@ impl ZlmRecordCompat {
         Ok(serde_json::json!({ "code": 0, "status": recording }))
     }
 
+    /// Returns the `MP4 files` value.
+    /// 返回 `MP4 files` 的值。
     pub fn get_mp4_files(&self, req: ZlmGetMp4Files) -> Result<Value, ZlmCompatError> {
         if let Some(path) = &req.customized_path {
             validate_customized_path(path)?;
@@ -162,6 +174,8 @@ impl ZlmRecordCompat {
         }))
     }
 
+    /// `delete_record_directory` function of `ZlmRecordCompat`.
+    /// `ZlmRecordCompat` 的 `delete_record_directory` 函数。
     pub fn delete_record_directory(
         &self,
         req: ZlmDeleteDirectory,

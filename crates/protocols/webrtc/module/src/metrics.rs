@@ -108,6 +108,8 @@ pub struct WebRtcModuleMetrics {
 }
 
 impl WebRtcModuleMetrics {
+    /// Creates a new `WebRtcModuleMetrics` instance.
+    /// 创建新的 `WebRtcModuleMetrics` 实例。
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
@@ -133,27 +135,39 @@ impl WebRtcModuleMetrics {
         self.fir.fetch_add(delta.fir, Ordering::Relaxed);
     }
 
+    /// `record_remb` function of `WebRtcModuleMetrics`.
+    /// `WebRtcModuleMetrics` 的 `record_remb` 函数。
     pub fn record_remb(&self, bps: u64) {
         self.remb_bitrate_bps.store(bps, Ordering::Relaxed);
     }
 
+    /// `record_bwe` function of `WebRtcModuleMetrics`.
+    /// `WebRtcModuleMetrics` 的 `record_bwe` 函数。
     pub fn record_bwe(&self, bps: u64) {
         self.bwe_estimate_bps.store(bps, Ordering::Relaxed);
     }
 
+    /// Increments `twcc feedback`.
+    /// 递增 `twcc feedback`。
     pub fn inc_twcc_feedback(&self) {
         self.twcc_feedback.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increments `simulcast layer switch`.
+    /// 递增 `simulcast layer switch`。
     pub fn inc_simulcast_layer_switch(&self) {
         self.simulcast_layer_switches
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increments `route migration`.
+    /// 递增 `route migration`。
     pub fn inc_route_migration(&self) {
         self.route_migrations.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increments `queue drop`.
+    /// 递增 `queue drop`。
     pub fn inc_queue_drop(&self) {
         self.queue_drops.fetch_add(1, Ordering::Relaxed);
     }

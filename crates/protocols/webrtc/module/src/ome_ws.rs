@@ -17,6 +17,8 @@ use thiserror::Error;
 
 use crate::ome_signaling::{parse_ome_ws_message, OmeWsDecoderConfig, OmeWsMessage};
 
+/// Error returned by `Web Socket Ome Transport` operations.
+/// `Web Socket Ome Transport` 操作返回的错误。
 #[derive(Debug, Error)]
 pub enum WebSocketOmeTransportError {
     #[error("transport closed")]
@@ -27,6 +29,8 @@ pub enum WebSocketOmeTransportError {
     Decode(String),
 }
 
+/// Configuration for `Ome Ws Server`.
+/// `Ome Ws Server` 的配置。
 #[derive(Debug, Clone)]
 pub struct OmeWsServerConfig {
     pub max_connections: usize,
@@ -44,18 +48,24 @@ impl Default for OmeWsServerConfig {
     }
 }
 
+/// `OmeWsInboundConnection` data structure.
+/// `OmeWsInboundConnection` 数据结构。
 #[derive(Debug, Clone)]
 pub struct OmeWsInboundConnection {
     pub remote_addr: std::net::SocketAddr,
     pub path_and_query: String,
 }
 
+/// `OmeWsConnectionHandler` type alias.
+/// `OmeWsConnectionHandler` 类型别名。
 pub type OmeWsConnectionHandler = Arc<
     dyn Fn(OmeWsInboundConnection, WebSocketOmeTransport) -> futures::future::BoxFuture<'static, ()>
         + Send
         + Sync,
 >;
 
+/// Error returned by `Ome Ws Server` operations.
+/// `Ome Ws Server` 操作返回的错误。
 #[derive(Debug, Error)]
 pub enum OmeWsServerError {
     #[error("bind failed: {0}")]
@@ -118,6 +128,8 @@ impl WebSocketOmeTransport {
         }
     }
 
+    /// Receives `message` from the peer.
+    /// 从对端接收 `message`。
     pub async fn recv_message(&self) -> Result<Option<OmeWsMessage>, WebSocketOmeTransportError> {
         match self.connection.recv().await {
             Ok(WsFrame::Text(text)) => {
@@ -133,6 +145,8 @@ impl WebSocketOmeTransport {
         }
     }
 
+    /// Sends `text` to the peer.
+    /// 向对端发送 `text`。
     pub async fn send_text(&self, text: String) -> Result<(), WebSocketOmeTransportError> {
         self.connection
             .send_text(text)
@@ -143,6 +157,8 @@ impl WebSocketOmeTransport {
             })
     }
 
+    /// Closes the resource.
+    /// 关闭资源。
     pub async fn close(&self) {
         self.connection.close().await;
     }

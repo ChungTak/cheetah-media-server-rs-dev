@@ -1,3 +1,12 @@
+//! Binary entry point for the `cheetah` media server.
+//!
+//! Initializes the runtime, loads configuration, registers enabled protocol modules,
+//! builds the engine, starts the control HTTP server, and performs graceful shutdown.
+//!
+//! `cheetah` 媒体服务器的二进制入口。
+//!
+//! 初始化运行时、加载配置、注册已启用的协议模块、构建引擎、启动控制 HTTP 服务器，
+//! 并执行优雅关闭。
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -33,6 +42,16 @@ use cheetah_webrtc_module::WebRtcModuleFactory;
 use serde_json::Value;
 use tracing::{error, info};
 
+/// Entry point for the `cheetah` media server binary.
+///
+/// Initializes the Tokio runtime, loads configuration, registers all enabled
+/// protocol module factories, builds the engine, starts the control HTTP server
+/// and waits for `Ctrl-C` before shutting down.
+///
+/// `cheetah` 媒体服务器二进制入口。
+///
+/// 初始化 Tokio 运行时、加载配置、注册所有启用的协议模块工厂、构建引擎、启动
+/// 控制 HTTP 服务器，并在关闭前等待 `Ctrl-C`。
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Install rustls crypto provider before any TLS operations.
@@ -183,6 +202,15 @@ async fn main() -> anyhow::Result<()> {
     std::process::exit(0);
 }
 
+/// Resolve the control HTTP listen address from configuration or environment.
+///
+/// Reads `control.listen` from the global config; if missing, falls back to
+/// the `CHEETAH_CONTROL_ADDR` environment variable, defaulting to `127.0.0.1:8891`.
+///
+/// 从配置或环境变量解析控制 HTTP 监听地址。
+///
+/// 从全局配置读取 `control.listen`；如果缺失，则回退到环境变量
+/// `CHEETAH_CONTROL_ADDR`，默认 `127.0.0.1:8891`。
 fn resolve_control_addr(global: Value) -> anyhow::Result<SocketAddr> {
     if let Some(addr) = global
         .get("control")

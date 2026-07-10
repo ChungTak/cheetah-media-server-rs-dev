@@ -23,6 +23,8 @@ use crate::config::Gb28181ModuleConfig;
 
 const MODULE_ID: &str = "gb28181";
 
+/// `Gb28181ModuleFactory` data structure.
+/// `Gb28181ModuleFactory` 数据结构。
 pub struct Gb28181ModuleFactory;
 
 impl ModuleFactory for Gb28181ModuleFactory {
@@ -60,6 +62,8 @@ impl ModuleFactory for Gb28181ModuleFactory {
     }
 }
 
+/// `Gb28181Module` data structure.
+/// `Gb28181Module` 数据结构。
 pub struct Gb28181Module {
     state: ModuleState,
     config: Gb28181ModuleConfig,
@@ -74,6 +78,8 @@ pub struct Gb28181Module {
 }
 
 impl Gb28181Module {
+    /// Creates a new `Gb28181Module` instance.
+    /// 创建新的 `Gb28181Module` 实例。
     pub fn new() -> Self {
         Self {
             state: ModuleState::Created,

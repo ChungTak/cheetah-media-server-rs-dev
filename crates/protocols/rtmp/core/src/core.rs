@@ -16,8 +16,12 @@ mod command;
 mod handshake;
 mod media;
 
+/// Identifier for `Timer`.
+/// `Timer` 的标识符。
 pub type TimerId = u64;
 
+/// `CoreInput` enumeration.
+/// `CoreInput` 枚举。
 #[derive(Debug, Clone)]
 pub enum CoreInput {
     Bytes(Bytes),
@@ -25,6 +29,8 @@ pub enum CoreInput {
     Command(RtmpCoreCommand),
 }
 
+/// `CoreOutput` enumeration.
+/// `CoreOutput` 枚举。
 #[derive(Debug, Clone)]
 pub enum CoreOutput {
     Write(Bytes),
@@ -33,6 +39,8 @@ pub enum CoreOutput {
     CancelTimer { id: TimerId },
 }
 
+/// Type of `RTMP Media`.
+/// `RTMP Media` 的类型。
 #[derive(Debug, Clone)]
 pub enum RtmpMediaType {
     Audio,
@@ -40,6 +48,8 @@ pub enum RtmpMediaType {
     Data,
 }
 
+/// State used by `RTMP Client`.
+/// `RTMP Client` 使用的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpClientState {
     Connected,
@@ -48,6 +58,8 @@ pub enum RtmpClientState {
     Playing,
 }
 
+/// Events produced by the `RTMP` subsystem.
+/// `RTMP` 子系统产生的事件。
 #[derive(Debug, Clone)]
 pub enum RtmpEvent {
     Connected {
@@ -138,6 +150,8 @@ pub enum RtmpEvent {
     PeerClosed,
 }
 
+/// Command for `RTMP Core`.
+/// `RTMP Core` 的命令。
 #[derive(Debug, Clone)]
 pub enum RtmpCoreCommand {
     SetWindowAckSize {
@@ -257,6 +271,8 @@ pub enum RtmpCoreCommand {
     CloseConnection,
 }
 
+/// Error returned by `RTMP Core` operations.
+/// `RTMP Core` 操作返回的错误。
 #[derive(Debug, thiserror::Error)]
 pub enum RtmpCoreError {
     #[error("chunk: {0}")]
@@ -316,6 +332,8 @@ impl core::fmt::Debug for HandshakeRole {
     }
 }
 
+/// `RtmpCore` data structure.
+/// `RtmpCore` 数据结构。
 #[derive(Debug)]
 pub struct RtmpCore {
     state: HandshakeState,
@@ -348,6 +366,8 @@ impl Default for RtmpCore {
 }
 
 impl RtmpCore {
+    /// Creates a new `RtmpCore` instance.
+    /// 创建新的 `RtmpCore` 实例。
     pub fn new() -> Self {
         let mut encoder = RtmpMessageEncoder::default();
         encoder.set_chunk_size(RtmpChunkSize::saturating_new(60_000));
@@ -376,6 +396,8 @@ impl RtmpCore {
         }
     }
 
+    /// Creates a new `client` instance.
+    /// 创建新的 `client` 实例。
     pub fn new_client() -> Self {
         let mut encoder = RtmpMessageEncoder::default();
         encoder.set_chunk_size(RtmpChunkSize::saturating_new(60_000));
@@ -404,6 +426,8 @@ impl RtmpCore {
         }
     }
 
+    /// Handles the `input` event.
+    /// 处理 `input` 事件。
     pub fn handle_input(&mut self, input: CoreInput) -> Result<Vec<CoreOutput>, RtmpCoreError> {
         let mut out = Vec::new();
         match input {

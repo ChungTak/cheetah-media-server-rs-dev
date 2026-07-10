@@ -95,6 +95,8 @@ pub struct MpegTsDemuxer {
 }
 
 impl MpegTsDemuxer {
+    /// Creates a new `MpegTsDemuxer` instance.
+    /// 创建新的 `MpegTsDemuxer` 实例。
     pub fn new(config: MpegTsDemuxerConfig) -> Self {
         Self {
             config,

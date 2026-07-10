@@ -65,6 +65,8 @@ pub use sdp::{
 pub use seq_tracker::{SeqEvent, SeqTracker};
 pub use transport::{RtspTransport, RtspTransportError};
 
+/// `CoreInput` enumeration.
+/// `CoreInput` 枚举。
 #[derive(Debug, Clone)]
 pub enum CoreInput {
     Bytes(Bytes),
@@ -72,6 +74,8 @@ pub enum CoreInput {
     PeerClosed,
 }
 
+/// `CoreOutput` enumeration.
+/// `CoreOutput` 枚举。
 #[derive(Debug, Clone)]
 pub enum CoreOutput {
     Write(Bytes),
@@ -79,6 +83,8 @@ pub enum CoreOutput {
     Close,
 }
 
+/// Events produced by the `RTSP` subsystem.
+/// `RTSP` 子系统产生的事件。
 #[derive(Debug, Clone)]
 pub enum RtspEvent {
     Request(RtspRequest),
@@ -86,6 +92,8 @@ pub enum RtspEvent {
     PeerClosed,
 }
 
+/// Command for `RTSP`.
+/// `RTSP` 的命令。
 #[derive(Debug, Clone)]
 pub enum RtspCommand {
     SendResponse {
@@ -102,6 +110,8 @@ pub enum RtspCommand {
     Close,
 }
 
+/// Error returned by `RTSP Core` operations.
+/// `RTSP Core` 操作返回的错误。
 #[derive(Debug, thiserror::Error)]
 pub enum RtspCoreError {
     #[error("invalid utf-8 in rtsp header")]
@@ -132,6 +142,8 @@ pub enum RtspCoreError {
     BodySizeLimitExceeded { max: usize, actual: usize },
 }
 
+/// `RtspCore` data structure.
+/// `RtspCore` 数据结构。
 pub struct RtspCore {
     buffer: BytesMut,
     closed: bool,
@@ -145,10 +157,14 @@ impl Default for RtspCore {
 }
 
 impl RtspCore {
+    /// Creates a new `RtspCore` instance.
+    /// 创建新的 `RtspCore` 实例。
     pub fn new() -> Self {
         Self::with_limits(RtspMessageLimits::default())
     }
 
+    /// Returns a copy with `limits` set.
+    /// 返回将 `limits` 设置后的副本。
     pub fn with_limits(limits: RtspMessageLimits) -> Self {
         Self {
             buffer: BytesMut::new(),
@@ -157,10 +173,14 @@ impl RtspCore {
         }
     }
 
+    /// Returns a copy with `connection limits` set.
+    /// 返回将 `connection limits` 设置后的副本。
     pub fn with_connection_limits(limits: RtspConnectionLimits) -> Self {
         Self::with_limits(limits.into())
     }
 
+    /// Handles the `input` event.
+    /// 处理 `input` 事件。
     pub fn handle_input(&mut self, input: CoreInput) -> Result<Vec<CoreOutput>, RtspCoreError> {
         if self.closed {
             return Ok(Vec::new());

@@ -33,6 +33,8 @@ pub struct SampleIndexEntry {
 }
 
 impl SampleIndexEntry {
+    /// `pts` function of `SampleIndexEntry`.
+    /// `SampleIndexEntry` 的 `pts` 函数。
     pub fn pts(&self) -> i64 {
         self.dts.saturating_add(self.cts_offset as i64)
     }
@@ -70,6 +72,8 @@ impl SampleIndex {
         Some(0)
     }
 
+    /// `duration_us` function of `SampleIndex`.
+    /// `SampleIndex` 的 `duration_us` 函数。
     pub fn duration_us(&self) -> i64 {
         if self.timescale == 0 {
             return 0;
@@ -94,6 +98,8 @@ pub struct TrackBuilder {
     pub samples: Vec<TrackSampleRecord>,
 }
 
+/// `TrackSampleRecord` data structure.
+/// `TrackSampleRecord` 数据结构。
 #[derive(Debug, Clone, Copy)]
 pub struct TrackSampleRecord {
     /// Sample data offset in the writer's payload buffer (relative).
@@ -106,6 +112,8 @@ pub struct TrackSampleRecord {
 }
 
 impl TrackBuilder {
+    /// Creates a new `TrackBuilder` instance.
+    /// 创建新的 `TrackBuilder` 实例。
     pub fn new(track: &TrackInfo) -> Self {
         let mut tb = Self {
             track_id: track.track_id,
@@ -129,6 +137,8 @@ impl TrackBuilder {
         tb
     }
 
+    /// `duration_us` function of `TrackBuilder`.
+    /// `TrackBuilder` 的 `duration_us` 函数。
     pub fn duration_us(&self) -> i64 {
         if self.samples.is_empty() {
             return 0;

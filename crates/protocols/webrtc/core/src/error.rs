@@ -54,6 +54,8 @@ pub struct WebRtcCoreDiagnostic {
     pub message: String,
 }
 
+/// Kind of `Web Rtc Core Diagnostic`.
+/// `Web Rtc Core Diagnostic` 的种类。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WebRtcCoreDiagnosticKind {
     /// SDP was rewritten by the compatibility preprocessor before being

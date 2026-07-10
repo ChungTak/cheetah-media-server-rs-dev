@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+/// Error returned by `HLS Core` operations.
+/// `HLS Core` 操作返回的错误。
 #[derive(Debug, Error)]
 pub enum HlsCoreError {
     #[error("invalid HLS path: {path}")]

@@ -2,9 +2,19 @@ use crate::prelude::*;
 use crate::time::Timebase;
 use bytes::Bytes;
 
+/// Opaque identifier for a media track inside a stream.
+///
+/// Tracks are numbered per stream and carried as a lightweight newtype.
+///
+/// 流内媒体轨道的 opaque 标识符。
+///
+/// 轨道按流编号，以轻量 newtype 形式传递。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TrackId(pub u32);
 
+/// Media kind of a track or frame.
+///
+/// 轨道或帧的媒体类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediaKind {
     Video,
@@ -13,6 +23,13 @@ pub enum MediaKind {
     Subtitle,
 }
 
+/// Supported media codecs normalized by the codec layer.
+///
+/// Unknown codecs can still flow through the engine but require special handling.
+///
+/// 编解码层支持并已归一化的媒体编解码器。
+///
+/// 未知编解码器仍可通过引擎流动，但需要特殊处理。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodecId {
     H264,
@@ -32,6 +49,14 @@ pub enum CodecId {
     Unknown,
 }
 
+/// Readiness state of a track for producing or consuming frames.
+///
+/// Some codecs require parameter sets (SPS/PPS/VPS, ASC, etc.) before a track
+/// is considered ready.
+///
+/// 轨道用于产生或消费帧的准备状态。
+///
+/// 某些编解码器在轨道被视为就绪前需要参数集（SPS/PPS/VPS、ASC 等）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackReadiness {
     NotReady,
@@ -39,6 +64,13 @@ pub enum TrackReadiness {
     Ready,
 }
 
+/// RTP packetization mode used for AAC audio.
+///
+/// `Mpeg4Generic` is the default mode; `Latm` is an alternative used by some carriers.
+///
+/// AAC 音频使用的 RTP 分包模式。
+///
+/// `Mpeg4Generic` 是默认模式；`Latm` 是某些运营商使用的替代模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AacRtpPacketization {
     #[default]
@@ -46,6 +78,13 @@ pub enum AacRtpPacketization {
     Latm,
 }
 
+/// Rational number represented by a numerator and denominator.
+///
+/// Used for frame rates and other fractional media parameters.
+///
+/// 用分子和分母表示的有理数。
+///
+/// 用于帧率和其他分数形式的媒体参数。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rational32 {
     pub num: u32,
@@ -53,11 +92,21 @@ pub struct Rational32 {
 }
 
 impl Rational32 {
+    /// Construct a rational number from a numerator and denominator.
+    ///
+    /// 根据分子和分母构造有理数。
     pub const fn new(num: u32, den: u32) -> Self {
         Self { num, den }
     }
 }
 
+/// Codec-specific parameter set or configuration data stored in a track.
+///
+/// This holds SPS/PPS/VPS, AAC ASC, AV1 sequence headers, and other opaque config blobs.
+///
+/// 轨道中存储的编解码器特定参数集或配置数据。
+///
+/// 包含 SPS/PPS/VPS、AAC ASC、AV1 sequence header 以及其他不透明配置块。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum CodecExtradata {
     #[default]
@@ -101,6 +150,9 @@ pub enum CodecExtradata {
     Raw(Bytes),
 }
 
+/// Whether a codec config payload is required for a track.
+///
+/// 编解码器配置负载对轨道是否必需。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CodecConfigRequirement {
     Required,
@@ -108,6 +160,13 @@ pub enum CodecConfigRequirement {
     None,
 }
 
+/// Normalized codec configuration payload extracted from a track.
+///
+/// Mirrors the `CodecExtradata` variants but is exposed to the engine/egress side.
+///
+/// 从轨道提取的归一化编解码器配置负载。
+///
+/// 与 `CodecExtradata` 变体对应，但向引擎/出口侧暴露。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodecConfigPayload {
     H264 {
@@ -149,12 +208,22 @@ pub enum CodecConfigPayload {
     None,
 }
 
+/// Pair of a codec config requirement and its payload.
+///
+/// Tells the caller whether a config is mandatory and what it contains.
+///
+/// 编解码器配置需求与其负载的配对。
+///
+/// 告知调用者配置是否强制以及其内容。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodecConfigView {
     pub requirement: CodecConfigRequirement,
     pub payload: CodecConfigPayload,
 }
 
+/// Error when a track is missing required codec configuration data.
+///
+/// 轨道缺少必需编解码器配置数据时产生的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum CodecConfigError {
     #[error("track {track_id:?} codec {codec:?} missing required codec config: {detail}")]
@@ -165,12 +234,24 @@ pub enum CodecConfigError {
     },
 }
 
+/// Error for invalid track parameters.
+///
+/// 无效轨道参数的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum TrackInfoError {
     #[error("track {track_id:?} has invalid clock_rate 0")]
     InvalidClockRate { track_id: TrackId },
 }
 
+/// Static metadata describing a media track.
+///
+/// `TrackInfo` holds the codec, clock/sample rate, dimensions, parameter sets and
+/// readiness state needed to interpret frames for this track.
+///
+/// 描述媒体轨道的静态元数据。
+///
+/// `TrackInfo` 保存了解释该轨道帧所需的编解码器、时钟/采样率、分辨率、
+/// 参数集和就绪状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackInfo {
     pub track_id: TrackId,
@@ -191,6 +272,13 @@ pub struct TrackInfo {
 }
 
 impl TrackInfo {
+    /// Create a track with default readiness and empty extradata.
+    ///
+    /// The caller is responsible for providing parameter sets and refreshing readiness.
+    ///
+    /// 创建具有默认就绪状态和空 extradata 的轨道。
+    ///
+    /// 调用者负责提供参数集并刷新就绪状态。
     pub fn new(track_id: TrackId, media_kind: MediaKind, codec: CodecId, clock_rate: u32) -> Self {
         Self {
             track_id,
@@ -211,12 +299,20 @@ impl TrackInfo {
         }
     }
 
+    /// Return whether the track has reached the `Ready` state.
+    ///
+    /// 返回轨道是否已达到 `Ready` 状态。
     pub fn is_ready(&self) -> bool {
         self.readiness == TrackReadiness::Ready
     }
 
-    /// Returns canonical media timebase derived from RTP/codec clock rate.
+    /// Return the canonical media timebase derived from the RTP/codec clock rate.
+    ///
     /// A zero clock rate is invalid and must be rejected by callers.
+    ///
+    /// 返回从 RTP/编解码器时钟率派生的标准媒体 timebase。
+    ///
+    /// 零时钟率无效，调用者必须拒绝。
     pub fn media_timebase(&self) -> Result<Timebase, TrackInfoError> {
         if self.clock_rate == 0 {
             return Err(TrackInfoError::InvalidClockRate {
@@ -226,6 +322,15 @@ impl TrackInfo {
         Ok(Timebase::new(1, self.clock_rate))
     }
 
+    /// Re-evaluate track readiness based on the current codec and extradata.
+    ///
+    /// For parameter-set codecs, missing SPS/PPS/VPS or ASC keeps the track in
+    /// `PendingConfig`. Codecs that do not require parameter sets are ready immediately.
+    ///
+    /// 根据当前编解码器和 extradata 重新评估轨道就绪状态。
+    ///
+    /// 对于需要参数集的编解码器，缺少 SPS/PPS/VPS 或 ASC 会保持轨道处于
+    /// `PendingConfig`；不需要参数集的编解码器立即就绪。
     pub fn refresh_readiness(&mut self) {
         self.readiness = match self.codec {
             CodecId::H264 | CodecId::H265 | CodecId::H266 => match &self.extradata {
@@ -288,6 +393,15 @@ impl TrackInfo {
         };
     }
 
+    /// Build a validated codec configuration view for the current track.
+    ///
+    /// For codecs that require parameter sets, this verifies the extradata is present and
+    /// non-empty. For other codecs the config is optional or empty.
+    ///
+    /// 为当前轨道构建经过验证的编解码器配置视图。
+    ///
+    /// 对于需要参数集的编解码器，验证 extradata 是否存在且非空；
+    /// 其他编解码器的配置为可选或空。
     pub fn codec_config_view(&self) -> Result<CodecConfigView, CodecConfigError> {
         let missing = |detail: &'static str| CodecConfigError::MissingRequiredConfig {
             track_id: self.track_id,

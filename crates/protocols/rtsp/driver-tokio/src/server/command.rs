@@ -9,6 +9,8 @@ use tracing::warn;
 
 use super::RtspConnectionId;
 
+/// Command for `RTSP Driver`.
+/// `RTSP Driver` 的命令。
 #[derive(Debug, Clone)]
 pub enum RtspDriverCommand {
     Core {
@@ -21,11 +23,15 @@ pub enum RtspDriverCommand {
     Shutdown,
 }
 
+/// `RtspCoreCommandSender` data structure.
+/// `RtspCoreCommandSender` 数据结构。
 #[derive(Clone)]
 pub struct RtspCoreCommandSender {
     tx: mpsc::Sender<RtspDriverCommand>,
 }
 
+/// Error returned by `Driver Send` operations.
+/// `Driver Send` 操作返回的错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverSendError {
     ChannelClosed,
@@ -36,6 +42,8 @@ impl RtspCoreCommandSender {
         Self { tx }
     }
 
+    /// Sends data to the peer.
+    /// 向对端发送数据。
     pub async fn send(&self, command: RtspDriverCommand) -> Result<(), DriverSendError> {
         self.tx
             .send(command)
@@ -43,6 +51,8 @@ impl RtspCoreCommandSender {
             .map_err(|_| DriverSendError::ChannelClosed)
     }
 
+    /// Sends `core` to the peer.
+    /// 向对端发送 `core`。
     pub async fn send_core(
         &self,
         connection_id: RtspConnectionId,
@@ -55,6 +65,8 @@ impl RtspCoreCommandSender {
         .await
     }
 
+    /// Closes the `connection`.
+    /// 关闭 `connection`。
     pub async fn close_connection(
         &self,
         connection_id: RtspConnectionId,

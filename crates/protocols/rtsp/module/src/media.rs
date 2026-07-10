@@ -33,6 +33,8 @@ pub use rtcp::{
     build_rtcp_sender_report, parse_rtcp_sender_report, RtcpReceiverReportBlock,
 };
 
+/// `BuiltFrameFromRtp` data structure.
+/// `BuiltFrameFromRtp` 数据结构。
 pub struct BuiltFrameFromRtp {
     pub frame: AVFrame,
     pub discovered_audio_asc: Option<Bytes>,
@@ -47,12 +49,16 @@ struct DepacketizedAac {
     discovered_asc: Option<Bytes>,
 }
 
+/// `TransportInterleaved` data structure.
+/// `TransportInterleaved` 数据结构。
 #[derive(Debug, Clone, Copy)]
 pub struct TransportInterleaved {
     pub rtp_channel: u8,
     pub rtcp_channel: u8,
 }
 
+/// `TransportUdpPorts` data structure.
+/// `TransportUdpPorts` 数据结构。
 #[derive(Debug, Clone, Copy)]
 pub struct TransportUdpPorts {
     pub client_rtp_port: u16,
@@ -63,6 +69,8 @@ pub struct TransportUdpPorts {
     pub source: Option<IpAddr>,
 }
 
+/// `TransportUdpMulticast` data structure.
+/// `TransportUdpMulticast` 数据结构。
 #[derive(Debug, Clone, Copy)]
 pub struct TransportUdpMulticast {
     pub rtp_port: Option<u16>,
@@ -71,6 +79,8 @@ pub struct TransportUdpMulticast {
     pub ttl: Option<u8>,
 }
 
+/// `RtspSetupTransport` enumeration.
+/// `RtspSetupTransport` 枚举。
 #[derive(Debug, Clone, Copy)]
 pub enum RtspSetupTransport {
     TcpInterleaved(TransportInterleaved),
@@ -79,6 +89,8 @@ pub enum RtspSetupTransport {
     UdpMulticast(TransportUdpMulticast),
 }
 
+/// Parses `setup transport` from input.
+/// 从输入解析 `setup transport`。
 pub fn parse_setup_transport(value: &str) -> Option<RtspSetupTransport> {
     for candidate in value.split(',').map(str::trim) {
         if candidate.is_empty() {
@@ -174,6 +186,8 @@ fn parse_setup_transport_candidate(candidate: &str) -> Option<RtspSetupTransport
     None
 }
 
+/// Parses `transport interleaved` from input.
+/// 从输入解析 `transport interleaved`。
 #[cfg(test)]
 pub fn parse_transport_interleaved(value: &str) -> Option<TransportInterleaved> {
     let mut rtp_channel = None;
@@ -202,6 +216,8 @@ pub fn parse_transport_interleaved(value: &str) -> Option<TransportInterleaved> 
     })
 }
 
+/// Parses `transport UDP ports` from input.
+/// 从输入解析 `transport UDP ports`。
 #[cfg(test)]
 pub fn parse_transport_udp_ports(value: &str) -> Option<TransportUdpPorts> {
     for part in value.split(';') {
@@ -239,6 +255,8 @@ fn transport_param_value<'a>(part: &'a str, name: &str) -> Option<&'a str> {
     }
 }
 
+/// Parses `stream key from URI` from input.
+/// 从输入解析 `stream key from URI`。
 pub fn parse_stream_key_from_uri(uri: &str) -> Option<StreamKey> {
     let path = extract_uri_path(uri)?;
     let trimmed = path.trim_matches('/');
@@ -258,6 +276,8 @@ pub fn parse_stream_key_from_uri(uri: &str) -> Option<StreamKey> {
     }
 }
 
+/// Parses `track control from URI` from input.
+/// 从输入解析 `track control from URI`。
 pub fn parse_track_control_from_uri(uri: &str) -> Option<String> {
     let path = extract_uri_path(uri)?;
     let path = path.trim_matches('/');

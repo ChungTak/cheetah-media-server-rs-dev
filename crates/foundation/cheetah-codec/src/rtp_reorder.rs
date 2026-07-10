@@ -1,5 +1,7 @@
 use crate::prelude::*;
 
+/// `RtpReorderSettings` data structure.
+/// `RtpReorderSettings` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtpReorderSettings {
     pub max_packets: usize,
@@ -22,6 +24,8 @@ struct PendingPacket<T> {
     packet: T,
 }
 
+/// `RtpReorderBuffer` data structure.
+/// `RtpReorderBuffer` 数据结构。
 #[derive(Debug, Clone)]
 pub struct RtpReorderBuffer<T> {
     settings: RtpReorderSettings,
@@ -30,6 +34,8 @@ pub struct RtpReorderBuffer<T> {
 }
 
 impl<T> RtpReorderBuffer<T> {
+    /// Creates a new instance.
+    /// 创建新实例。
     pub fn new(settings: RtpReorderSettings) -> Self {
         Self {
             settings,
@@ -38,6 +44,8 @@ impl<T> RtpReorderBuffer<T> {
         }
     }
 
+    /// Pushes the value onto the collection.
+    /// 将值压入集合。
     pub fn push(&mut self, sequence_number: u16, arrival_ms: u64, packet: T) -> Vec<T> {
         let Some(expected) = self.expected_seq else {
             self.expected_seq = Some(sequence_number.wrapping_add(1));
@@ -91,11 +99,15 @@ impl<T> RtpReorderBuffer<T> {
         Vec::new()
     }
 
+    /// Resets the state to its initial value.
+    /// 将状态重置为初始值。
     pub fn reset(&mut self) {
         self.expected_seq = None;
         self.pending.clear();
     }
 
+    /// `pending_len` function.
+    /// `pending_len` 函数。
     pub fn pending_len(&self) -> usize {
         self.pending.len()
     }

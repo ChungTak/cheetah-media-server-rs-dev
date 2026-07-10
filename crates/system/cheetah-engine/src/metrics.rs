@@ -18,6 +18,8 @@ pub struct MetricsRegistry {
 }
 
 impl MetricsRegistry {
+    /// Increments the value.
+    /// 递增该值。
     pub fn inc(&self, key: &str, value: u64) {
         let entry = self
             .counters

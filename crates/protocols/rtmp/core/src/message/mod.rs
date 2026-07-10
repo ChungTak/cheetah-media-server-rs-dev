@@ -1,4 +1,8 @@
+/// Module for `decoder`.
+/// `decoder` 相关模块。
 pub mod decoder;
+/// Module for `encoder`.
+/// `encoder` 相关模块。
 pub mod encoder;
 
 pub use decoder::{decode_rtmp_chunk_to_message, RtmpMessageDecoder};
@@ -15,6 +19,8 @@ use crate::user_control::RtmpUserControlEvent;
 
 use bytes::Bytes;
 
+/// Identifier for `RTMP Message Stream`.
+/// `RTMP Message Stream` 的标识符。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RtmpMessageStreamId(u32);
 
@@ -30,15 +36,21 @@ impl RtmpMessageStreamId {
     // 在本 crate 中，一个连接不会处理多个流，因此使用固定值
     pub const MEDIA: Self = Self(2);
 
+    /// Creates a new `RtmpMessageStreamId` instance.
+    /// 创建新的 `RtmpMessageStreamId` 实例。
     pub const fn new(id: u32) -> Self {
         Self(id)
     }
 
+    /// Returns the value.
+    /// 返回值。
     pub const fn get(self) -> u32 {
         self.0
     }
 }
 
+/// Type of `RTMP Message`.
+/// `RTMP Message` 的类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpMessageType {
     // Protocol Control Messages
@@ -63,6 +75,8 @@ pub enum RtmpMessageType {
 }
 
 impl RtmpMessageType {
+    /// Creates `type ID` from input.
+    /// 从输入创建 `type ID`。
     pub fn from_type_id(type_id: u8) -> Result<Self, Error> {
         match type_id {
             1 => Ok(RtmpMessageType::SetChunkSize),
@@ -85,6 +99,8 @@ impl RtmpMessageType {
     }
 }
 
+/// Header for `RTMP Message`.
+/// `RTMP Message` 的头。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtmpMessageHeader {
     pub stream_id: RtmpMessageStreamId,
@@ -98,6 +114,8 @@ impl RtmpMessageHeader {
     };
 }
 
+/// Message used by `RTMP`.
+/// `RTMP` 使用的消息。
 #[derive(Debug, Clone, PartialEq)]
 pub enum RtmpMessage {
     SetChunkSize {
@@ -151,6 +169,8 @@ pub enum RtmpMessage {
 }
 
 impl RtmpMessage {
+    /// `header` function of `RtmpMessage`.
+    /// `RtmpMessage` 的 `header` 函数。
     pub fn header(&self) -> RtmpMessageHeader {
         match self {
             RtmpMessage::SetChunkSize { header, .. }
@@ -166,6 +186,8 @@ impl RtmpMessage {
         }
     }
 
+    /// `frame` function of `RtmpMessage`.
+    /// `RtmpMessage` 的 `frame` 函数。
     pub fn frame(&self) -> MediaFrame {
         match self {
             RtmpMessage::Audio { frame, .. } => MediaFrame::Audio(frame.clone()),
@@ -174,6 +196,8 @@ impl RtmpMessage {
         }
     }
 
+    /// `message_type` function of `RtmpMessage`.
+    /// `RtmpMessage` 的 `message_type` 函数。
     pub fn message_type(&self) -> RtmpMessageType {
         match self {
             RtmpMessage::SetChunkSize { .. } => RtmpMessageType::SetChunkSize,
@@ -195,6 +219,8 @@ impl RtmpMessage {
         }
     }
 
+    /// `stream_begin` function of `RtmpMessage`.
+    /// `RtmpMessage` 的 `stream_begin` 函数。
     pub fn stream_begin(stream_id: RtmpMessageStreamId) -> Self {
         Self::UserControl {
             header: RtmpMessageHeader::PCM,
@@ -202,6 +228,8 @@ impl RtmpMessage {
         }
     }
 
+    /// `win_ack_size` function of `RtmpMessage`.
+    /// `RtmpMessage` 的 `win_ack_size` 函数。
     pub fn win_ack_size(size: u32) -> Self {
         Self::WinAckSize {
             header: RtmpMessageHeader::PCM,
@@ -209,6 +237,8 @@ impl RtmpMessage {
         }
     }
 
+    /// Sets the `peer bandwidth` value.
+    /// 设置 `peer bandwidth` 的值。
     pub fn set_peer_bandwidth(size: u32) -> Self {
         Self::SetPeerBandwidth {
             header: RtmpMessageHeader::PCM,
@@ -219,6 +249,8 @@ impl RtmpMessage {
         }
     }
 
+    /// `ack` function of `RtmpMessage`.
+    /// `RtmpMessage` 的 `ack` 函数。
     pub fn ack(total_bytes_received: u32) -> Self {
         Self::Ack {
             header: RtmpMessageHeader::PCM,
@@ -226,6 +258,8 @@ impl RtmpMessage {
         }
     }
 
+    /// Sets the `chunk size` value.
+    /// 设置 `chunk size` 的值。
     pub fn set_chunk_size(size: RtmpChunkSize) -> Self {
         Self::SetChunkSize {
             header: RtmpMessageHeader::PCM,
@@ -234,6 +268,8 @@ impl RtmpMessage {
     }
 }
 
+/// Type of `Set Peer Bandwidth Limit`.
+/// `Set Peer Bandwidth Limit` 的类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetPeerBandwidthLimitType {
     Hard = 0,

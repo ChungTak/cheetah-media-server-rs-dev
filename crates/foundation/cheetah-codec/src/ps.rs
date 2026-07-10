@@ -35,6 +35,8 @@ fn is_ps_stream_id(stream_id: u8) -> bool {
     )
 }
 
+/// Kind of `Ps Stream`.
+/// `Ps Stream` 的种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PsStreamKind {
     Video,
@@ -42,6 +44,8 @@ pub enum PsStreamKind {
     Private,
 }
 
+/// Packet for `Pes`.
+/// `Pes` 的数据包。
 #[derive(Debug, Clone)]
 pub struct PesPacket {
     pub stream_id: u8,
@@ -52,6 +56,8 @@ pub struct PesPacket {
 }
 
 impl PesPacket {
+    /// Parses the input into a structured value, returning an error if malformed.
+    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(raw: &[u8]) -> Option<(Self, usize)> {
         if raw.len() < 9 {
             return None;
@@ -104,6 +110,8 @@ impl PesPacket {
         ))
     }
 
+    /// Encodes the value into the output buffer.
+    /// 将值编码到输出缓冲区。
     pub fn encode(&self) -> Bytes {
         let mut header_data = Vec::new();
         let mut flags2 = 0u8;
@@ -129,16 +137,22 @@ impl PesPacket {
     }
 }
 
+/// Packet for `Ps`.
+/// `Ps` 的数据包。
 #[derive(Debug, Clone)]
 pub struct PsPacket {
     pub pes: Vec<PesPacket>,
 }
 
 impl PsPacket {
+    /// Parses the input into a structured value, returning an error if malformed.
+    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(raw: &[u8]) -> Self {
         Self::parse_bounded(raw, raw.len(), usize::MAX)
     }
 
+    /// Parses `bounded` from input.
+    /// 从输入解析 `bounded`。
     pub fn parse_bounded(raw: &[u8], max_bytes: usize, max_pes: usize) -> Self {
         if max_bytes == 0 || max_pes == 0 {
             return Self { pes: Vec::new() };
@@ -161,6 +175,8 @@ impl PsPacket {
         Self { pes }
     }
 
+    /// Encodes the value into the output buffer.
+    /// 将值编码到输出缓冲区。
     pub fn encode(&self) -> Bytes {
         let total = self.pes.iter().map(|p| p.payload.len() + 32).sum::<usize>();
         let mut out = Vec::with_capacity(total);
@@ -211,6 +227,8 @@ fn encode_pts_dts(value: i64, prefix: u8) -> [u8; 5] {
 // UPGRADED PRODUCTION-GRADE PS DEMUXER & MUXER
 // ==========================================
 
+/// Configuration for `Ps Demuxer`.
+/// `Ps Demuxer` 的配置。
 #[derive(Debug, Clone)]
 pub struct PsDemuxerConfig {
     pub max_reassembly_bytes: usize,
@@ -226,6 +244,8 @@ impl Default for PsDemuxerConfig {
     }
 }
 
+/// `PsDemuxDiagnostic` enumeration.
+/// `PsDemuxDiagnostic` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PsDemuxDiagnostic {
     BufferOverflow,
@@ -234,6 +254,8 @@ pub enum PsDemuxDiagnostic {
     PesParseError,
 }
 
+/// Events produced by the `Ps Demux` subsystem.
+/// `Ps Demux` 子系统产生的事件。
 #[derive(Debug, Clone)]
 pub enum PsDemuxEvent {
     TrackInfo(Vec<TrackInfo>),
@@ -241,6 +263,8 @@ pub enum PsDemuxEvent {
     Diagnostic(PsDemuxDiagnostic),
 }
 
+/// `PsDemuxer` data structure.
+/// `PsDemuxer` 数据结构。
 pub struct PsDemuxer {
     config: PsDemuxerConfig,
     remain_buffer: Vec<u8>,
@@ -254,6 +278,8 @@ pub struct PsDemuxer {
 }
 
 impl PsDemuxer {
+    /// Creates a new `PsDemuxer` instance.
+    /// 创建新的 `PsDemuxer` 实例。
     pub fn new(config: PsDemuxerConfig) -> Self {
         Self {
             config,
@@ -268,6 +294,8 @@ impl PsDemuxer {
         }
     }
 
+    /// Pushes the value onto the collection.
+    /// 将值压入集合。
     pub fn push(&mut self, data: &[u8]) -> Vec<PsDemuxEvent> {
         let mut events = Vec::new();
         if self.remain_buffer.len() + data.len() > self.config.max_reassembly_bytes {
@@ -401,6 +429,8 @@ impl PsDemuxer {
         events
     }
 
+    /// Flushes any buffered data to the underlying transport.
+    /// 将缓冲数据刷新到底层传输。
     pub fn flush(&mut self) -> Vec<PsDemuxEvent> {
         let mut events = Vec::new();
         self.emit_video_frame(&mut events);
@@ -645,22 +675,30 @@ impl PsDemuxer {
     }
 }
 
+/// `PsMuxer` data structure.
+/// `PsMuxer` 数据结构。
 #[derive(Default)]
 pub struct PsMuxer {
     tracks: HashMap<u8, TrackInfo>,
 }
 
 impl PsMuxer {
+    /// Creates a new `PsMuxer` instance.
+    /// 创建新的 `PsMuxer` 实例。
     pub fn new() -> Self {
         Self {
             tracks: HashMap::new(),
         }
     }
 
+    /// Adds `track`.
+    /// 增加 `track`。
     pub fn add_track(&mut self, track: TrackInfo) {
         self.tracks.insert(track.track_id.0 as u8, track);
     }
 
+    /// `mux` function of `PsMuxer`.
+    /// `PsMuxer` 的 `mux` 函数。
     pub fn mux(&mut self, frame: &AVFrame) -> Option<Bytes> {
         let track = self.tracks.get(&(frame.track_id.0 as u8))?;
         let mut out = Vec::new();

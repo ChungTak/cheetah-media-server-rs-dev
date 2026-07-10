@@ -97,6 +97,8 @@ pub struct Fmp4Muxer {
 }
 
 impl Fmp4Muxer {
+    /// Creates a new `Fmp4Muxer` instance.
+    /// 创建新的 `Fmp4Muxer` 实例。
     pub fn new(config: Fmp4MuxerConfig, tracks: &[TrackInfo]) -> Self {
         let mux_tracks = tracks.iter().map(MuxTrack::from_track_info).collect();
         Self {
@@ -166,6 +168,8 @@ impl Fmp4Muxer {
         }]
     }
 
+    /// `sequence_number` function of `Fmp4Muxer`.
+    /// `Fmp4Muxer` 的 `sequence_number` 函数。
     pub fn sequence_number(&self) -> u32 {
         self.sequence_number
     }

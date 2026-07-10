@@ -31,6 +31,8 @@ pub struct HlsPlayerState {
 }
 
 impl HlsPlayerState {
+    /// Creates a new `HlsPlayerState` instance.
+    /// 创建新的 `HlsPlayerState` 实例。
     pub fn new() -> Self {
         Self {
             selected_variant_uri: None,

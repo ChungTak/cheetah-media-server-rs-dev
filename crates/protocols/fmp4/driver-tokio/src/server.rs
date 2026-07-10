@@ -65,6 +65,8 @@ pub struct Fmp4DriverHandle {
 }
 
 impl Fmp4DriverHandle {
+    /// Receives `event` from the peer.
+    /// 从对端接收 `event`。
     pub async fn recv_event(&mut self) -> Option<Fmp4DriverEvent> {
         self.event_rx.recv().await
     }
@@ -77,6 +79,8 @@ pub struct Fmp4CommandSender {
 }
 
 impl Fmp4CommandSender {
+    /// Sends data to the peer.
+    /// 向对端发送数据。
     pub async fn send(&self, cmd: Fmp4DriverCommand) {
         let _ = self.cmd_tx.send(cmd).await;
     }

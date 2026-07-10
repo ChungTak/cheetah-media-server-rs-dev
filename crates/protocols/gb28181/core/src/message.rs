@@ -1,6 +1,8 @@
 use crate::error::Gb28181CoreError;
 use std::fmt;
 
+/// `StartLine` enumeration.
+/// `StartLine` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartLine {
     Request {
@@ -15,6 +17,8 @@ pub enum StartLine {
     },
 }
 
+/// Message used by `SIP`.
+/// `SIP` 使用的消息。
 #[derive(Debug, Clone)]
 pub struct SipMessage {
     pub start_line: StartLine,
@@ -124,6 +128,8 @@ impl SipMessage {
         }
     }
 
+    /// Returns the `header` value.
+    /// 返回 `header` 的值。
     pub fn get_header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -141,6 +147,8 @@ impl SipMessage {
             .map(|(_, val)| val.as_str())
     }
 
+    /// Sets the `header` value.
+    /// 设置 `header` 的值。
     pub fn set_header(&mut self, name: &str, value: &str) {
         if let Some(pos) = self
             .headers

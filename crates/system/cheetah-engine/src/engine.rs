@@ -23,6 +23,14 @@ use crate::service_registry::InMemoryServiceRegistry;
 use crate::stream::{DispatcherMode, StreamManager};
 use crate::task::TaskSystem;
 
+/// Builder for constructing a fully wired `Engine` instance.
+///
+/// Collects configuration providers, runtime, module factories, and capacity
+/// settings before assembling the engine services.
+///
+/// 用于构造完整 `Engine` 实例的构建器。
+///
+/// 收集配置提供器、运行时、模块工厂和容量设置，然后组装引擎服务。
 pub struct EngineBuilder {
     config_provider: Arc<dyn ConfigProvider>,
     config_apply_api: Arc<dyn ConfigApplyApi>,
@@ -35,6 +43,9 @@ pub struct EngineBuilder {
 }
 
 impl EngineBuilder {
+    /// Create an engine builder with the required runtime and configuration dependencies.
+    ///
+    /// 使用所需的运行时和配置依赖创建引擎构建器。
     pub fn new(
         config_provider: Arc<dyn ConfigProvider>,
         config_apply_api: Arc<dyn ConfigApplyApi>,
@@ -52,31 +63,55 @@ impl EngineBuilder {
         }
     }
 
+    /// Set the event bus capacity; clamped to at least 1.
+    ///
+    /// 设置事件总线容量，至少为 1。
     pub fn with_event_bus_capacity(mut self, capacity: usize) -> Self {
         self.event_bus_capacity = capacity.max(1);
         self
     }
 
+    /// Set the ring buffer capacity; clamped to at least 128.
+    ///
+    /// 设置环形缓冲区容量，至少为 128。
     pub fn with_ring_capacity(mut self, capacity: usize) -> Self {
         self.ring_capacity = capacity.max(128);
         self
     }
 
+    /// Set the dispatcher mode used by the stream manager.
+    ///
+    /// 设置流管理器使用的分发模式。
     pub fn with_dispatcher_mode(mut self, mode: DispatcherMode) -> Self {
         self.dispatcher_mode = mode;
         self
     }
 
+    /// Register the config schema registry for module schemas.
+    ///
+    /// 注册模块配置模式使用的配置模式注册表。
     pub fn with_config_schema_registry(mut self, registry: Arc<dyn ConfigSchemaRegistry>) -> Self {
         self.config_schema_registry = Some(registry);
         self
     }
 
+    /// Register a module factory to be installed in the engine.
+    ///
+    /// 注册要在引擎中安装的模块工厂。
     pub fn register_module_factory(mut self, factory: Arc<dyn ModuleFactory>) -> Self {
         self.factories.push(factory);
         self
     }
 
+    /// Build the engine, wiring all internal services and registering module factories.
+    ///
+    /// This creates the event bus, task system, stream manager, module manager and other
+    /// local services, then registers each module factory and registers module config schemas.
+    ///
+    /// 构建引擎，连接所有内部服务并注册模块工厂。
+    ///
+    /// 创建事件总线、任务系统、流管理器、模块管理器和其他本地服务，
+    /// 然后注册每个模块工厂并注册模块配置模式。
     pub fn build(self) -> Result<Engine, SdkError> {
         let event_bus = Arc::new(LocalEventBus::new(self.event_bus_capacity));
         let task_system = Arc::new(TaskSystem::default());
@@ -135,6 +170,15 @@ impl EngineBuilder {
     }
 }
 
+/// Top-level orchestrator that owns all engine services and module lifecycle.
+///
+/// The engine wires together runtime, stream management, task scheduling, event bus
+/// and module management, providing a unified API for the server binary.
+///
+/// 拥有所有引擎服务和模块生命周期的顶级编排器。
+///
+/// 引擎将运行时、流管理、任务调度、事件总线和模块管理连接在一起，
+/// 为服务器二进制提供统一的 API。
 pub struct Engine {
     config_provider: Arc<dyn ConfigProvider>,
     config_apply_api: Arc<dyn ConfigApplyApi>,
@@ -156,6 +200,9 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// Build an `EngineContext` that exposes all engine APIs to modules.
+    ///
+    /// 构造一个 `EngineContext`，向模块暴露所有引擎 API。
     fn context(&self) -> EngineContext {
         EngineContext {
             runtime_api: self.runtime_api.clone(),
@@ -180,6 +227,15 @@ impl Engine {
         }
     }
 
+    /// Initialize and start all registered modules.
+    ///
+    /// The sequence is `init_all` followed by `start_all` with a child cancellation token.
+    /// If either step fails, health is set to not live/ready and the error is propagated.
+    ///
+    /// 初始化并启动所有已注册模块。
+    ///
+    /// 顺序为 `init_all`，然后使用子取消 token 调用 `start_all`。
+    /// 如果任一步骤失败，健康状态设为未存活/未就绪，并传播错误。
     pub async fn start(&self) -> Result<(), SdkError> {
         if self.health.is_live() {
             return Err(SdkError::Conflict("engine is already running".to_string()));
@@ -234,6 +290,15 @@ impl Engine {
         Ok(())
     }
 
+    /// Stop all modules and mark the engine as not live.
+    ///
+    /// Cancels the root token to signal all modules, stops all modules, and updates
+    /// health and lifecycle events. Safe to call multiple times.
+    ///
+    /// 停止所有模块并将引擎标记为未存活。
+    ///
+    /// 取消 root token 通知所有模块，停止所有模块，并更新健康与生命周期事件。
+    /// 可多次安全调用。
     pub async fn stop(&self) {
         if !self.health.is_live() {
             return;

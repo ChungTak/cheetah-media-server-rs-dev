@@ -1,6 +1,8 @@
 use cheetah_sdk::{DatabaseApi, SdkError};
 use dashmap::DashMap;
 
+/// `InMemoryDatabase` data structure.
+/// `InMemoryDatabase` 数据结构。
 #[derive(Default)]
 pub struct InMemoryDatabase {
     entries: DashMap<String, Vec<u8>>,

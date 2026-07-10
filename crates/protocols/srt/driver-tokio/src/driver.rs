@@ -12,9 +12,13 @@ use tokio::sync::mpsc;
 
 use crate::config::SrtDriverConfig;
 
+/// Identifier for `SRT Peer`.
+/// `SRT Peer` 的标识符。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SrtPeerId(pub u64);
 
+/// `SrtDriverStats` data structure.
+/// `SrtDriverStats` 数据结构。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SrtDriverStats {
     pub bytes_in: u64,
@@ -38,6 +42,8 @@ pub struct SrtDriverStats {
     pub receiver_jitter_micros: u32,
 }
 
+/// Command for `SRT Driver`.
+/// `SRT Driver` 的命令。
 #[derive(Debug, Clone)]
 pub enum SrtDriverCommand {
     ConnectCaller {
@@ -56,6 +62,8 @@ pub enum SrtDriverCommand {
     },
 }
 
+/// Events produced by the `SRT Driver` subsystem.
+/// `SRT Driver` 子系统产生的事件。
 #[derive(Debug, Clone)]
 pub enum SrtDriverEvent {
     ListenerStarted {
@@ -91,17 +99,23 @@ pub enum SrtDriverEvent {
     },
 }
 
+/// Handle to a `SRT Driver` resource.
+/// `SRT Driver` 资源的句柄。
 #[derive(Clone)]
 pub struct SrtDriverHandle {
     command_tx: mpsc::Sender<SrtDriverCommand>,
 }
 
 impl SrtDriverHandle {
+    /// Sends data to the peer.
+    /// 向对端发送数据。
     pub async fn send(&self, command: SrtDriverCommand) {
         let _ = self.command_tx.send(command).await;
     }
 }
 
+/// Spawns `driver` on the runtime.
+/// 在运行时上派生 `driver`。
 pub fn spawn_driver(
     config: SrtDriverConfig,
     cancel: CancellationToken,

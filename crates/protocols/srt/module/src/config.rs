@@ -1,6 +1,8 @@
 use cheetah_sdk::BackpressurePolicy;
 use serde::{Deserialize, Serialize};
 
+/// Configuration for `SRT Module`.
+/// `SRT Module` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SrtModuleConfig {
@@ -21,12 +23,16 @@ pub struct SrtModuleConfig {
     pub relay_jobs: Vec<SrtRelayJobConfig>,
 }
 
+/// Configuration for `SRT Payload Module`.
+/// `SRT Payload Module` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SrtPayloadModuleConfig {
     pub kind: String,
 }
 
+/// Configuration for `SRT Encryption Module`.
+/// `SRT Encryption Module` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SrtEncryptionModuleConfig {
@@ -35,6 +41,8 @@ pub struct SrtEncryptionModuleConfig {
     pub key_length: u16,
 }
 
+/// Configuration for `SRT Auth`.
+/// `SRT Auth` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct SrtAuthConfig {
@@ -44,12 +52,16 @@ pub struct SrtAuthConfig {
     pub users: Vec<SrtAuthUserConfig>,
 }
 
+/// Configuration for `SRT Auth User`.
+/// `SRT Auth User` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SrtAuthUserConfig {
     pub username: String,
     pub token: String,
 }
 
+/// Configuration for `SRT Ingress`.
+/// `SRT Ingress` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SrtIngressConfig {
@@ -58,6 +70,8 @@ pub struct SrtIngressConfig {
     pub publish_keepalive_ms: u64,
 }
 
+/// Configuration for `SRT Egress`.
+/// `SRT Egress` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SrtEgressConfig {
@@ -71,6 +85,8 @@ pub struct SrtEgressConfig {
     pub disconnect_on_send_queue_overflow: bool,
 }
 
+/// Configuration for `SRT Ingress Job`.
+/// `SRT Ingress Job` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SrtIngressJobConfig {
@@ -82,6 +98,8 @@ pub struct SrtIngressJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+/// Configuration for `SRT Egress Job`.
+/// `SRT Egress Job` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SrtEgressJobConfig {
@@ -95,6 +113,8 @@ pub struct SrtEgressJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+/// Configuration for `SRT Relay Job`.
+/// `SRT Relay Job` 的配置。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SrtRelayJobConfig {
@@ -215,10 +235,14 @@ impl Default for SrtRelayJobConfig {
 }
 
 impl SrtModuleConfig {
+    /// Creates `value` from input.
+    /// 从输入创建 `value`。
     pub fn from_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
     }
 
+    /// `default_json` function of `SrtModuleConfig`.
+    /// `SrtModuleConfig` 的 `default_json` 函数。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap()
     }

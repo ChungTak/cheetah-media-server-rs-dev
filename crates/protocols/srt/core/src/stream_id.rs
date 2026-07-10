@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use crate::config::SrtStreamMode;
 use crate::error::{SrtCoreError, SrtCoreResult};
 
+/// Identifier for `Parsed SRT Stream`.
+/// `Parsed SRT Stream` 的标识符。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedSrtStreamId {
     pub stream_key: String,
@@ -13,6 +15,8 @@ pub struct ParsedSrtStreamId {
     pub extras: BTreeMap<String, String>,
 }
 
+/// Parses `SRT stream ID` from input.
+/// 从输入解析 `SRT stream ID`。
 pub fn parse_srt_stream_id(input: &str) -> SrtCoreResult<ParsedSrtStreamId> {
     let input = input.trim();
     if input.is_empty() {

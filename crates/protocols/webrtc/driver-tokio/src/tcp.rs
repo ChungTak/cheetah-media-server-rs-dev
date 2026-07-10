@@ -37,10 +37,14 @@ pub struct Tcp4571Decoder {
 }
 
 impl Tcp4571Decoder {
+    /// Creates a new `Tcp4571Decoder` instance.
+    /// 创建新的 `Tcp4571Decoder` 实例。
     pub fn new() -> Self {
         Self::with_max_frame(TCP_FRAME_MAX_BYTES)
     }
 
+    /// Returns a copy with `max frame` set.
+    /// 返回将 `max frame` 设置后的副本。
     pub fn with_max_frame(max_frame: usize) -> Self {
         Self {
             buf: BytesMut::with_capacity(4096),

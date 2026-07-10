@@ -10,6 +10,8 @@ use tracing::warn;
 
 use crate::config::HttpFlvPullJobConfig;
 
+/// `PullReadLimits` data structure.
+/// `PullReadLimits` 数据结构。
 #[derive(Debug, Clone, Copy)]
 pub struct PullReadLimits {
     pub max_response_header_bytes: usize,
@@ -29,6 +31,8 @@ impl Default for PullReadLimits {
     }
 }
 
+/// Result type for `HTTP FLV Pull` operations.
+/// `HTTP FLV Pull` 操作的结果类型。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpFlvPullResult {
     pub header: Option<FlvHeader>,
@@ -36,6 +40,8 @@ pub struct HttpFlvPullResult {
     pub previous_tag_size_mismatch_count: u64,
 }
 
+/// Error returned by `HTTP FLV Pull` operations.
+/// `HTTP FLV Pull` 操作返回的错误。
 #[derive(Debug, thiserror::Error)]
 pub enum HttpFlvPullError {
     #[error("invalid pull url: {0}")]
@@ -226,6 +232,8 @@ fn parse_port(port_raw: &str) -> Result<u16, HttpFlvPullError> {
     Ok(port)
 }
 
+/// `run_pull_job_supervisor` function.
+/// `run_pull_job_supervisor` 函数。
 pub async fn run_pull_job_supervisor(
     runtime_api: Arc<dyn RuntimeApi>,
     job: HttpFlvPullJobConfig,
@@ -282,6 +290,8 @@ pub async fn run_pull_job_supervisor(
     }
 }
 
+/// `pull_flv_once` function.
+/// `pull_flv_once` 函数。
 pub async fn pull_flv_once(
     runtime_api: Arc<dyn RuntimeApi>,
     source_url: &str,
@@ -295,6 +305,8 @@ pub async fn pull_flv_once(
     }
 }
 
+/// `pull_http_flv_once` function.
+/// `pull_http_flv_once` 函数。
 pub async fn pull_http_flv_once(
     runtime_api: Arc<dyn RuntimeApi>,
     source_url: &str,
@@ -314,6 +326,8 @@ pub async fn pull_http_flv_once(
     pull_http_flv_once_parsed(runtime_api, parsed, cancel, limits).await
 }
 
+/// `pull_ws_flv_once` function.
+/// `pull_ws_flv_once` 函数。
 pub async fn pull_ws_flv_once(
     runtime_api: Arc<dyn RuntimeApi>,
     source_url: &str,
@@ -645,6 +659,8 @@ fn decode_ws_frame(
     Ok(Some((WsFrame { opcode, payload }, offset + payload_len)))
 }
 
+/// `fuzz_http_response_head` function.
+/// `fuzz_http_response_head` 函数。
 #[doc(hidden)]
 pub fn fuzz_http_response_head(
     raw: &[u8],
@@ -665,6 +681,8 @@ pub fn fuzz_http_response_head(
     Ok(())
 }
 
+/// `fuzz_decode_ws_frames` function.
+/// `fuzz_decode_ws_frames` 函数。
 #[doc(hidden)]
 pub fn fuzz_decode_ws_frames(
     raw: &[u8],

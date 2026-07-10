@@ -26,6 +26,8 @@ const MARKER_XML_DOCUMENT: u8 = 0x0F;
 const MARKER_TYPED_OBJECT: u8 = 0x10;
 const MARKER_AVMPLUS_OBJECT: u8 = 0x11;
 
+/// `Amf0Value` enumeration.
+/// `Amf0Value` 枚举。
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Amf0Value {
     Number(f64),
@@ -52,6 +54,8 @@ pub enum Amf0Value {
 }
 
 impl Amf0Value {
+    /// Decodes the value from the input buffer.
+    /// 从输入缓冲区解码值。
     pub fn decode(buf: &[u8]) -> Result<(usize, Self), Error> {
         let original_buf_len = buf.len();
         let mut decoder = Decoder {
@@ -63,6 +67,8 @@ impl Amf0Value {
         Ok((original_buf_len - decoder.buf.len(), value))
     }
 
+    /// Encodes the value into the output buffer.
+    /// 将值编码到输出缓冲区。
     pub fn encode(&self, buf: &mut Vec<u8>) {
         let mut encoder = Encoder {
             buf,
@@ -71,6 +77,8 @@ impl Amf0Value {
         encoder.encode_value(self);
     }
 
+    /// `as_str` function of `Amf0Value`.
+    /// `Amf0Value` 的 `as_str` 函数。
     pub fn as_str(&self) -> Option<&str> {
         match self {
             Self::String(v) => Some(v),
@@ -78,6 +86,8 @@ impl Amf0Value {
         }
     }
 
+    /// `as_f64` function of `Amf0Value`.
+    /// `Amf0Value` 的 `as_f64` 函数。
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Self::Number(v) => Some(*v),
@@ -85,6 +95,8 @@ impl Amf0Value {
         }
     }
 
+    /// `as_object_entries` function of `Amf0Value`.
+    /// `Amf0Value` 的 `as_object_entries` 函数。
     pub fn as_object_entries(&self) -> Option<&[Pair<String, Self>]> {
         match self {
             Self::Object { entries, .. } | Self::EcmaArray { entries } => Some(entries),
@@ -92,6 +104,8 @@ impl Amf0Value {
         }
     }
 
+    /// `object` function of `Amf0Value`.
+    /// `Amf0Value` 的 `object` 函数。
     pub fn object<K, I>(entries: I) -> Self
     where
         K: Into<String>,
@@ -109,6 +123,8 @@ impl Amf0Value {
         }
     }
 
+    /// `empty_object` function of `Amf0Value`.
+    /// `Amf0Value` 的 `empty_object` 函数。
     pub fn empty_object() -> Self {
         Self::Object {
             class_name: None,
@@ -116,6 +132,8 @@ impl Amf0Value {
         }
     }
 
+    /// `ecma_array` function of `Amf0Value`.
+    /// `Amf0Value` 的 `ecma_array` 函数。
     pub fn ecma_array<K, I>(entries: I) -> Self
     where
         K: Into<String>,
@@ -133,6 +151,8 @@ impl Amf0Value {
     }
 }
 
+/// Error returned by `Amf 0` operations.
+/// `Amf 0` 操作返回的错误。
 #[derive(Debug, thiserror::Error)]
 pub enum Amf0Error {
     #[error("unexpected eof")]
@@ -145,6 +165,8 @@ pub enum Amf0Error {
     InvalidUtf8,
 }
 
+/// Decodes `all` from the input buffer.
+/// 从输入缓冲区解码 `all`。
 pub fn decode_all(mut payload: &[u8]) -> Result<Vec<Amf0Value>, Amf0Error> {
     let mut values = Vec::new();
     while !payload.is_empty() {
@@ -155,6 +177,8 @@ pub fn decode_all(mut payload: &[u8]) -> Result<Vec<Amf0Value>, Amf0Error> {
     Ok(values)
 }
 
+/// Encodes `all` into the output buffer.
+/// 将 `all` 编码到输出缓冲区。
 pub fn encode_all(values: &[Amf0Value]) -> Bytes {
     let mut out = Vec::new();
     let mut encoder = Encoder {

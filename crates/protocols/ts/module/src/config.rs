@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Configuration for `TS Module`.
+/// `TS Module` 的配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TsModuleConfig {
     pub enabled: bool,
@@ -33,6 +35,8 @@ pub struct TsModuleConfig {
     pub pull_jobs: Vec<TsPullJobConfig>,
 }
 
+/// Configuration for `TS TLS`.
+/// `TS TLS` 的配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TsTlsConfig {
     pub enabled: bool,
@@ -43,6 +47,8 @@ pub struct TsTlsConfig {
     pub handshake_timeout_ms: u64,
 }
 
+/// Configuration for `TS Pull Job`.
+/// `TS Pull Job` 的配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TsPullJobConfig {
     pub name: String,
@@ -80,10 +86,14 @@ impl Default for TsModuleConfig {
 }
 
 impl TsModuleConfig {
+    /// `default_json` function of `TsModuleConfig`.
+    /// `TsModuleConfig` 的 `default_json` 函数。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap_or_default()
     }
 
+    /// Creates `value` from input.
+    /// 从输入创建 `value`。
     pub fn from_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
     }

@@ -15,6 +15,8 @@ use tracing::warn;
 use crate::config::Mp4ModuleConfig;
 use crate::session_registry::{SessionError, VodSessionRecord, VodSessionRegistry};
 
+/// Error returned by `Vod API` operations.
+/// `Vod API` 操作返回的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum VodApiError {
     #[error("invalid request: {0}")]
@@ -27,6 +29,8 @@ pub enum VodApiError {
     NotFound(String),
 }
 
+/// Request for `Start Vod`.
+/// `Start Vod` 的请求。
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartVodRequest {
     pub uri: String,
@@ -42,6 +46,8 @@ pub struct StartVodRequest {
     pub session_id: Option<String>,
 }
 
+/// Response for `Start Vod`.
+/// `Start Vod` 的响应。
 #[derive(Debug, Clone, Serialize)]
 pub struct StartVodResponse {
     pub code: u16,
@@ -50,6 +56,8 @@ pub struct StartVodResponse {
     pub session_id: String,
 }
 
+/// Request for `Control Vod`.
+/// `Control Vod` 的请求。
 #[derive(Debug, Clone, Deserialize)]
 pub struct ControlVodRequest {
     #[serde(rename = "sessionId")]
@@ -62,18 +70,24 @@ pub struct ControlVodRequest {
     pub scale: Option<f32>,
 }
 
+/// Response for `Control Vod`.
+/// `Control Vod` 的响应。
 #[derive(Debug, Clone, Serialize)]
 pub struct ControlVodResponse {
     pub code: u16,
     pub msg: String,
 }
 
+/// Request for `Stop Vod`.
+/// `Stop Vod` 的请求。
 #[derive(Debug, Clone, Deserialize)]
 pub struct StopVodRequest {
     #[serde(rename = "sessionId")]
     pub session_id: String,
 }
 
+/// Response for `Stop Vod`.
+/// `Stop Vod` 的响应。
 #[derive(Debug, Clone, Serialize)]
 pub struct StopVodResponse {
     pub code: u16,
@@ -95,6 +109,8 @@ pub struct VodApi {
 }
 
 impl VodApi {
+    /// Creates a new `VodApi` instance.
+    /// 创建新的 `VodApi` 实例。
     pub fn new(registry: Arc<VodSessionRegistry>, config: Arc<Mp4ModuleConfig>) -> Self {
         Self {
             registry,
@@ -104,6 +120,8 @@ impl VodApi {
         }
     }
 
+    /// Returns a copy with `engine bridge` set.
+    /// 返回将 `engine bridge` 设置后的副本。
     pub fn with_engine_bridge(
         registry: Arc<VodSessionRegistry>,
         config: Arc<Mp4ModuleConfig>,
@@ -118,10 +136,14 @@ impl VodApi {
         }
     }
 
+    /// `registry` function of `VodApi`.
+    /// `VodApi` 的 `registry` 函数。
     pub fn registry(&self) -> Arc<VodSessionRegistry> {
         self.registry.clone()
     }
 
+    /// Starts the service or background task.
+    /// 启动服务或后台任务。
     pub async fn start(&self, req: StartVodRequest) -> Result<StartVodResponse, VodApiError> {
         if req.uri.is_empty() {
             return Err(VodApiError::InvalidRequest("uri must not be empty".into()));
@@ -227,6 +249,8 @@ impl VodApi {
         })
     }
 
+    /// `control` function of `VodApi`.
+    /// `VodApi` 的 `control` 函数。
     pub fn control(&self, req: ControlVodRequest) -> Result<ControlVodResponse, VodApiError> {
         let handle = self
             .registry
@@ -255,6 +279,8 @@ impl VodApi {
         })
     }
 
+    /// Stops the service or background task.
+    /// 停止服务或后台任务。
     pub fn stop(&self, req: StopVodRequest) -> Result<StopVodResponse, VodApiError> {
         // Send Stop *before* removing the registry record so the driver
         // task gracefully unwinds. Dropping the registry's Arc would also

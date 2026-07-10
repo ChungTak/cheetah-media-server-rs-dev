@@ -41,6 +41,8 @@ pub struct P2pBridgePlan {
     pub kind: P2pJobKind,
 }
 
+/// Error returned by `2 p Bridge Plan` operations.
+/// `2 p Bridge Plan` 操作返回的错误。
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum P2pBridgePlanError {
     #[error("signaling_protocols={value}; expected 1 for P2P bridge plan")]

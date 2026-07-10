@@ -1,5 +1,7 @@
 use super::*;
 
+/// Packetizes `frame to RTP with timestamp` into smaller chunks.
+/// 将 `frame to RTP with timestamp` 分片成更小的包。
 pub fn packetize_frame_to_rtp_with_timestamp(
     frame: &AVFrame,
     track: &TrackInfo,

@@ -3,6 +3,8 @@
 use cheetah_rtp_core::RtpPayloadMode;
 use serde::{Deserialize, Serialize};
 
+/// Configuration for `RTP Module`.
+/// `RTP Module` 的配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RtpModuleConfig {
     pub enabled: bool,
@@ -66,6 +68,8 @@ pub struct RtpModuleConfig {
     pub pull_jobs: Vec<RtpClientJobConfig>,
 }
 
+/// Configuration for `RTP Client Job`.
+/// `RTP Client Job` 的配置。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RtpClientJobConfig {
     pub name: String,
@@ -115,14 +119,20 @@ impl Default for RtpModuleConfig {
 }
 
 impl RtpModuleConfig {
+    /// `default_json` function of `RtpModuleConfig`.
+    /// `RtpModuleConfig` 的 `default_json` 函数。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap_or_default()
     }
 
+    /// Creates `value` from input.
+    /// 从输入创建 `value`。
     pub fn from_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
     }
 
+    /// Validates the input and returns an error if invalid.
+    /// 验证输入，无效时返回错误。
     pub fn validate(&self) -> Result<(), String> {
         let mut errors = Vec::new();
 

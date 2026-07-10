@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{WebRtcSessionId, WebRtcSessionState};
 
+/// `WebRtcSessionStats` data structure.
+/// `WebRtcSessionStats` 数据结构。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebRtcSessionStats {
     pub packets_in: u64,
@@ -25,12 +27,16 @@ pub struct WebRtcSessionStats {
     pub rtx_miss: u64,
 }
 
+/// `WebRtcBweStats` data structure.
+/// `WebRtcBweStats` 数据结构。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct WebRtcBweStats {
     pub estimated_bitrate_bps: Option<u64>,
     pub target_bitrate_bps: Option<u64>,
 }
 
+/// `WebRtcSessionSnapshot` data structure.
+/// `WebRtcSessionSnapshot` 数据结构。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebRtcSessionSnapshot {
     pub session_id: WebRtcSessionId,

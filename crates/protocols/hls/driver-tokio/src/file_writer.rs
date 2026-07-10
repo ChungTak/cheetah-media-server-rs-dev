@@ -17,6 +17,8 @@ pub struct HlsFileWriter {
 }
 
 impl HlsFileWriter {
+    /// Creates a new `HlsFileWriter` instance.
+    /// 创建新的 `HlsFileWriter` 实例。
     pub fn new(output_dir: PathBuf, max_segments: usize) -> Self {
         Self {
             output_dir,

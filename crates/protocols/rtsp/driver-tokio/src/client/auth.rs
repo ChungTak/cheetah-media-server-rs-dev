@@ -18,12 +18,16 @@ struct DigestNonceCountState {
 static DIGEST_CNONCE_COUNTER: AtomicU64 = AtomicU64::new(1);
 static DIGEST_NONCE_COUNT: OnceLock<Mutex<DigestNonceCountState>> = OnceLock::new();
 
+/// `RtspClientCredentials` data structure.
+/// `RtspClientCredentials` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspClientCredentials {
     pub username: String,
     pub password: String,
 }
 
+/// `authorization_header_from_response` function.
+/// `authorization_header_from_response` 函数。
 pub fn authorization_header_from_response(
     response: &RtspResponseMessage,
     method: RtspMethod,

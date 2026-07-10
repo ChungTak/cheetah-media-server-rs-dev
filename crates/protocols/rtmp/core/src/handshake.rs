@@ -48,6 +48,8 @@ enum ServerHandshakeMode {
     LenientSeededS1,
 }
 
+/// Mode selecting `Client Handshake` behavior.
+/// 选择 `Client Handshake` 行为的模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientHandshakeMode {
     Strict,
@@ -63,6 +65,8 @@ enum Phase {
     Complete,
 }
 
+/// `RtmpServerHandshake` data structure.
+/// `RtmpServerHandshake` 数据结构。
 #[derive(Debug)]
 pub struct RtmpServerHandshake {
     options: RtmpHandshakeOptions,
@@ -74,10 +78,14 @@ pub struct RtmpServerHandshake {
 }
 
 impl RtmpServerHandshake {
+    /// Creates a new `RtmpServerHandshake` instance.
+    /// 创建新的 `RtmpServerHandshake` 实例。
     pub fn new() -> Self {
         Self::new_with_mode(ServerHandshakeMode::Strict)
     }
 
+    /// Creates a new `lenient seeded s 1` instance.
+    /// 创建新的 `lenient seeded s 1` 实例。
     pub fn new_lenient_seeded_s1() -> Self {
         Self::new_with_mode(ServerHandshakeMode::LenientSeededS1)
     }
@@ -93,6 +101,8 @@ impl RtmpServerHandshake {
         }
     }
 
+    /// `feed_recv_buf` function of `RtmpServerHandshake`.
+    /// `RtmpServerHandshake` 的 `feed_recv_buf` 函数。
     pub fn feed_recv_buf(&mut self, buf: &[u8]) -> Result<(), Error> {
         self.recv_buf.extend_from_slice(buf);
         self.handle_recv_buf()?;
@@ -183,23 +193,33 @@ impl RtmpServerHandshake {
         Ok(())
     }
 
+    /// Takes `recv buf`, replacing it with the default.
+    /// 获取 `recv buf`，并用默认值替换。
     pub fn take_recv_buf(&mut self) -> Vec<u8> {
         core::mem::take(&mut self.recv_buf)
     }
 
+    /// Sends `buf` to the peer.
+    /// 向对端发送 `buf`。
     pub fn send_buf(&self) -> &[u8] {
         &self.send_buf
     }
 
+    /// `advance_send_buf` function of `RtmpServerHandshake`.
+    /// `RtmpServerHandshake` 的 `advance_send_buf` 函数。
     pub fn advance_send_buf(&mut self, n: usize) {
         let n = n.min(self.send_buf.len());
         self.send_buf.drain(..n); // NOTE: 效率不高，但不是需要关注性能的地方，因此优先简洁
     }
 
+    /// Returns `true` if `recv complete` is true.
+    /// 当 `recv complete` 为真时返回 `true`。
     pub fn is_recv_complete(&self) -> bool {
         self.phase == Phase::Complete
     }
 
+    /// Returns `true` if `send complete` is true.
+    /// 当 `send complete` 为真时返回 `true`。
     pub fn is_send_complete(&self) -> bool {
         self.phase == Phase::Complete && self.send_buf.is_empty()
     }
@@ -211,6 +231,8 @@ impl Default for RtmpServerHandshake {
     }
 }
 
+/// `RtmpClientHandshake` data structure.
+/// `RtmpClientHandshake` 数据结构。
 #[derive(Debug)]
 pub struct RtmpClientHandshake {
     options: RtmpHandshakeOptions,
@@ -221,10 +243,14 @@ pub struct RtmpClientHandshake {
 }
 
 impl RtmpClientHandshake {
+    /// Creates a new `RtmpClientHandshake` instance.
+    /// 创建新的 `RtmpClientHandshake` 实例。
     pub fn new() -> Self {
         Self::new_with_mode(ClientHandshakeMode::Strict)
     }
 
+    /// Creates a new `lenient` instance.
+    /// 创建新的 `lenient` 实例。
     pub fn new_lenient() -> Self {
         Self::new_with_mode(ClientHandshakeMode::Lenient)
     }
@@ -246,6 +272,8 @@ impl RtmpClientHandshake {
         }
     }
 
+    /// `feed_recv_buf` function of `RtmpClientHandshake`.
+    /// `RtmpClientHandshake` 的 `feed_recv_buf` 函数。
     pub fn feed_recv_buf(&mut self, buf: &[u8]) -> Result<(), Error> {
         self.recv_buf.extend_from_slice(buf);
         self.handle_recv_buf()?;
@@ -302,23 +330,33 @@ impl RtmpClientHandshake {
         Ok(())
     }
 
+    /// Takes `recv buf`, replacing it with the default.
+    /// 获取 `recv buf`，并用默认值替换。
     pub fn take_recv_buf(&mut self) -> Vec<u8> {
         core::mem::take(&mut self.recv_buf)
     }
 
+    /// Sends `buf` to the peer.
+    /// 向对端发送 `buf`。
     pub fn send_buf(&self) -> &[u8] {
         &self.send_buf
     }
 
+    /// `advance_send_buf` function of `RtmpClientHandshake`.
+    /// `RtmpClientHandshake` 的 `advance_send_buf` 函数。
     pub fn advance_send_buf(&mut self, n: usize) {
         let n = n.min(self.send_buf.len());
         self.send_buf.drain(..n); // NOTE: 效率不高，但不是需要关注性能的地方，因此优先简洁
     }
 
+    /// Returns `true` if `recv complete` is true.
+    /// 当 `recv complete` 为真时返回 `true`。
     pub fn is_recv_complete(&self) -> bool {
         self.phase == Phase::Complete
     }
 
+    /// Returns `true` if `send complete` is true.
+    /// 当 `send complete` 为真时返回 `true`。
     pub fn is_send_complete(&self) -> bool {
         self.phase == Phase::Complete && self.send_buf.is_empty()
     }

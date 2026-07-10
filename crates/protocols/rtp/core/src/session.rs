@@ -53,6 +53,8 @@ struct RtpSession {
     max_rtp_len_observed: usize,
 }
 
+/// `RtpCore` data structure.
+/// `RtpCore` 数据结构。
 pub struct RtpCore {
     sessions: HashMap<RtpSessionKey, RtpSession>,
     ssrc_to_session: HashMap<u32, RtpSessionKey>,
@@ -72,6 +74,8 @@ pub struct RtpCore {
 }
 
 impl RtpCore {
+    /// Creates a new `RtpCore` instance.
+    /// 创建新的 `RtpCore` 实例。
     pub fn new(max_sessions: usize, session_idle_timeout_ms: u64) -> Self {
         Self {
             sessions: HashMap::new(),
@@ -96,6 +100,8 @@ impl RtpCore {
         self.max_rtp_len_cap = cap.max(1500);
     }
 
+    /// Handles the `input` event.
+    /// 处理 `input` 事件。
     pub fn handle_input(&mut self, input: RtpCoreInput) -> Vec<RtpCoreOutput> {
         let mut outputs = Vec::with_capacity(4);
         match input {

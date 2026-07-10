@@ -37,6 +37,8 @@ pub enum LlHlsPackagingMode {
 }
 
 impl LlHlsPackagingMode {
+    /// Parses the input into a structured value, returning an error if malformed.
+    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(s: &str) -> Self {
         match s {
             "video-only" => Self::VideoOnly,
@@ -96,6 +98,8 @@ pub struct RenditionReport {
 }
 
 impl LowLatencyState {
+    /// Creates a new `LowLatencyState` instance.
+    /// 创建新的 `LowLatencyState` 实例。
     pub fn new(part_target_ms: u64, max_completed_segments: usize) -> Self {
         Self {
             current_parts: Vec::new(),

@@ -27,6 +27,8 @@ use crate::zlm_compat::{
 
 const MODULE_ID: &str = "record";
 
+/// `RecordModuleFactory` data structure.
+/// `RecordModuleFactory` 数据结构。
 pub struct RecordModuleFactory;
 
 impl ModuleFactory for RecordModuleFactory {
@@ -74,6 +76,8 @@ pub struct RecordModule {
 }
 
 impl RecordModule {
+    /// Creates a new `RecordModule` instance.
+    /// 创建新的 `RecordModule` 实例。
     pub fn new() -> Self {
         Self {
             state: ModuleState::Created,

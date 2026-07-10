@@ -28,6 +28,8 @@ use crate::pull::{run_pull_job_supervisor, PullReadLimits};
 
 const MODULE_ID: &str = "http-flv";
 
+/// `HttpFlvModuleFactory` data structure.
+/// `HttpFlvModuleFactory` 数据结构。
 pub struct HttpFlvModuleFactory;
 
 impl ModuleFactory for HttpFlvModuleFactory {
@@ -64,6 +66,8 @@ impl ModuleFactory for HttpFlvModuleFactory {
     }
 }
 
+/// `HttpFlvModule` data structure.
+/// `HttpFlvModule` 数据结构。
 pub struct HttpFlvModule {
     info: ModuleInfo,
     state: ModuleState,
@@ -74,6 +78,8 @@ pub struct HttpFlvModule {
 }
 
 impl HttpFlvModule {
+    /// Creates a new `HttpFlvModule` instance.
+    /// 创建新的 `HttpFlvModule` 实例。
     pub fn new() -> Self {
         Self {
             info: ModuleInfo {

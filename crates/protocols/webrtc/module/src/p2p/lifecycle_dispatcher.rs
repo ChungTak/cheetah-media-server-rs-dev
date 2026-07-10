@@ -37,6 +37,8 @@ struct Inner {
 const SUBSCRIBE_CAPACITY: usize = 4;
 
 impl LifecycleDispatcher {
+    /// Creates a new `LifecycleDispatcher` instance.
+    /// 创建新的 `LifecycleDispatcher` 实例。
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }

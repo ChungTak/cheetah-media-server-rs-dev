@@ -47,6 +47,8 @@ struct TaskHandle {
 }
 
 impl RecordExecutor {
+    /// Creates a new `RecordExecutor` instance.
+    /// 创建新的 `RecordExecutor` 实例。
     pub fn new(
         engine: EngineContext,
         config: RecordModuleConfig,

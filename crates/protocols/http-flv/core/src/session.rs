@@ -8,12 +8,16 @@ use crate::request::{
 };
 use crate::HttpFlvCoreError;
 
+/// Command for `HTTP FLV Core`.
+/// `HTTP FLV Core` 的命令。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpFlvCoreCommand {
     SendFlvBytes(Bytes),
     Close,
 }
 
+/// `HttpFlvCoreInput` enumeration.
+/// `HttpFlvCoreInput` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpFlvCoreInput {
     RequestHead(HttpRequestHead),
@@ -22,6 +26,8 @@ pub enum HttpFlvCoreInput {
     Command(HttpFlvCoreCommand),
 }
 
+/// `CloseReason` enumeration.
+/// `CloseReason` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CloseReason {
     Normal,
@@ -30,6 +36,8 @@ pub enum CloseReason {
     ProtocolError,
 }
 
+/// Events produced by the `HTTP FLV` subsystem.
+/// `HTTP FLV` 子系统产生的事件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpFlvEvent {
     PlayRequested {
@@ -45,6 +53,8 @@ pub enum HttpFlvEvent {
     PeerClosed,
 }
 
+/// `HttpFlvCoreOutput` enumeration.
+/// `HttpFlvCoreOutput` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HttpFlvCoreOutput {
     SendHttpResponse(HttpResponseHead),
@@ -63,6 +73,8 @@ enum SessionState {
     Closed,
 }
 
+/// `HttpFlvCore` data structure.
+/// `HttpFlvCore` 数据结构。
 #[derive(Debug)]
 pub struct HttpFlvCore {
     state: SessionState,
@@ -76,6 +88,8 @@ impl Default for HttpFlvCore {
 }
 
 impl HttpFlvCore {
+    /// Creates a new `HttpFlvCore` instance.
+    /// 创建新的 `HttpFlvCore` 实例。
     pub fn new() -> Self {
         Self {
             state: SessionState::Idle,
@@ -83,6 +97,8 @@ impl HttpFlvCore {
         }
     }
 
+    /// Handles the `input` event.
+    /// 处理 `input` 事件。
     pub fn handle_input(
         &mut self,
         input: HttpFlvCoreInput,

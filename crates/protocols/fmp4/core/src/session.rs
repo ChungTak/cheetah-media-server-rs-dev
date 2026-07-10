@@ -59,10 +59,14 @@ pub struct Fmp4Core {
 }
 
 impl Fmp4Core {
+    /// Creates a new `Fmp4Core` instance.
+    /// 创建新的 `Fmp4Core` 实例。
     pub fn new() -> Self {
         Self { transport: None }
     }
 
+    /// Processes the input and produces the next state or output.
+    /// 处理输入并产生下一个状态或输出。
     pub fn process(&mut self, input: Fmp4CoreInput) -> Vec<Fmp4CoreOutput> {
         match input {
             Fmp4CoreInput::RequestHead(head) => self.handle_request(head),

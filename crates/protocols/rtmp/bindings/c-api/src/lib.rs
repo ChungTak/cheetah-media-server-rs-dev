@@ -11,6 +11,8 @@ use cheetah_rtmp_core::{
 const EMPTY_ERROR: &[u8] = b"\0";
 const NULL_POINTER_ERROR: &[u8] = b"null pointer\0";
 
+/// Error returned by `RTMP Core API` operations.
+/// `RTMP Core API` 操作返回的错误。
 #[repr(C)]
 #[expect(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,6 +25,8 @@ pub enum RtmpCoreApiError {
     RTMP_CORE_API_ERROR_OVERFLOW,
 }
 
+/// Kind of `RTMP Core Output`.
+/// `RTMP Core Output` 的种类。
 #[repr(C)]
 #[expect(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +54,8 @@ pub enum RtmpCoreOutputKind {
     RTMP_CORE_OUTPUT_KIND_CANCEL_TIMER,
 }
 
+/// Type of `RTMP Core Output Media`.
+/// `RTMP Core Output Media` 的类型。
 #[repr(C)]
 #[expect(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,6 +66,8 @@ pub enum RtmpCoreOutputMediaType {
     RTMP_CORE_OUTPUT_MEDIA_TYPE_DATA,
 }
 
+/// View of `RTMP Core Output`.
+/// `RTMP Core Output` 的视图。
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct RtmpCoreOutputView {
@@ -314,6 +322,8 @@ fn encode_amf_values(values: &[AmfValue]) -> Bytes {
     Bytes::from(payload)
 }
 
+/// Handle to a `RTMP Core` resource.
+/// `RTMP Core` 资源的句柄。
 pub struct RtmpCoreHandle {
     core: RtmpCore,
     output_queue: VecDeque<OwnedOutput>,
@@ -392,16 +402,22 @@ unsafe fn read_utf8<'a>(data: *const u8, len: u32) -> Result<&'a str, RtmpCoreAp
     std::str::from_utf8(bytes).map_err(|_| RtmpCoreApiError::RTMP_CORE_API_ERROR_INVALID_ARGUMENT)
 }
 
+/// `rtmp_library_version` function.
+/// `rtmp_library_version` 函数。
 #[unsafe(no_mangle)]
 pub extern "C" fn rtmp_library_version() -> *const c_char {
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr().cast()
 }
 
+/// `rtmp_core_new` function.
+/// `rtmp_core_new` 函数。
 #[unsafe(no_mangle)]
 pub extern "C" fn rtmp_core_new() -> *mut RtmpCoreHandle {
     Box::into_raw(Box::new(RtmpCoreHandle::new()))
 }
 
+/// `rtmp_core_free` function.
+/// `rtmp_core_free` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_free(handle: *mut RtmpCoreHandle) {
     if handle.is_null() {
@@ -410,6 +426,8 @@ pub unsafe extern "C" fn rtmp_core_free(handle: *mut RtmpCoreHandle) {
     let _ = unsafe { Box::from_raw(handle) };
 }
 
+/// `rtmp_core_get_last_error` function.
+/// `rtmp_core_get_last_error` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_get_last_error(handle: *const RtmpCoreHandle) -> *const c_char {
     if handle.is_null() {
@@ -422,6 +440,8 @@ pub unsafe extern "C" fn rtmp_core_get_last_error(handle: *const RtmpCoreHandle)
         .map_or(EMPTY_ERROR.as_ptr().cast(), |text| text.as_ptr())
 }
 
+/// `rtmp_core_pending_output_count` function.
+/// `rtmp_core_pending_output_count` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_pending_output_count(handle: *const RtmpCoreHandle) -> u32 {
     if handle.is_null() {
@@ -431,6 +451,8 @@ pub unsafe extern "C" fn rtmp_core_pending_output_count(handle: *const RtmpCoreH
     handle_ref.pending_output_count()
 }
 
+/// `rtmp_core_clear_outputs` function.
+/// `rtmp_core_clear_outputs` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_clear_outputs(handle: *mut RtmpCoreHandle) {
     let Some(handle_ref) = (unsafe { handle_mut(handle) }) else {
@@ -440,6 +462,8 @@ pub unsafe extern "C" fn rtmp_core_clear_outputs(handle: *mut RtmpCoreHandle) {
     handle_ref.output_queue.clear();
 }
 
+/// `rtmp_core_clear_output` function.
+/// `rtmp_core_clear_output` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_clear_output(handle: *mut RtmpCoreHandle) {
     let Some(handle_ref) = (unsafe { handle_mut(handle) }) else {
@@ -448,6 +472,8 @@ pub unsafe extern "C" fn rtmp_core_clear_output(handle: *mut RtmpCoreHandle) {
     handle_ref.current_output = None;
 }
 
+/// `rtmp_core_next_output` function.
+/// `rtmp_core_next_output` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_next_output(
     handle: *mut RtmpCoreHandle,
@@ -480,6 +506,8 @@ pub unsafe extern "C" fn rtmp_core_next_output(
     RtmpCoreApiError::RTMP_CORE_API_ERROR_OK
 }
 
+/// `rtmp_core_handle_bytes` function.
+/// `rtmp_core_handle_bytes` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_handle_bytes(
     handle: *mut RtmpCoreHandle,
@@ -496,6 +524,8 @@ pub unsafe extern "C" fn rtmp_core_handle_bytes(
     handle_ref.apply_input(CoreInput::Bytes(Bytes::copy_from_slice(bytes)))
 }
 
+/// `rtmp_core_handle_timeout` function.
+/// `rtmp_core_handle_timeout` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_handle_timeout(
     handle: *mut RtmpCoreHandle,
@@ -514,6 +544,8 @@ fn command_no_payload(
     handle_ref.apply_input(CoreInput::Command(command))
 }
 
+/// `rtmp_core_command_accept_publish` function.
+/// `rtmp_core_command_accept_publish` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_accept_publish(
     handle: *mut RtmpCoreHandle,
@@ -525,6 +557,8 @@ pub unsafe extern "C" fn rtmp_core_command_accept_publish(
     command_no_payload(handle_ref, RtmpCoreCommand::AcceptPublish { stream_id })
 }
 
+/// `rtmp_core_command_reject_publish` function.
+/// `rtmp_core_command_reject_publish` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_reject_publish(
     handle: *mut RtmpCoreHandle,
@@ -548,6 +582,8 @@ pub unsafe extern "C" fn rtmp_core_command_reject_publish(
     )
 }
 
+/// `rtmp_core_command_accept_play` function.
+/// `rtmp_core_command_accept_play` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_accept_play(
     handle: *mut RtmpCoreHandle,
@@ -559,6 +595,8 @@ pub unsafe extern "C" fn rtmp_core_command_accept_play(
     command_no_payload(handle_ref, RtmpCoreCommand::AcceptPlay { stream_id })
 }
 
+/// `rtmp_core_command_accept_play_configured` function.
+/// `rtmp_core_command_accept_play_configured` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_accept_play_configured(
     handle: *mut RtmpCoreHandle,
@@ -579,6 +617,8 @@ pub unsafe extern "C" fn rtmp_core_command_accept_play_configured(
     )
 }
 
+/// `rtmp_core_command_reject_play` function.
+/// `rtmp_core_command_reject_play` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_reject_play(
     handle: *mut RtmpCoreHandle,
@@ -617,6 +657,8 @@ unsafe fn read_payload(
     }
 }
 
+/// `rtmp_core_command_send_metadata` function.
+/// `rtmp_core_command_send_metadata` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_send_metadata(
     handle: *mut RtmpCoreHandle,
@@ -641,6 +683,8 @@ pub unsafe extern "C" fn rtmp_core_command_send_metadata(
     )
 }
 
+/// `rtmp_core_command_send_audio` function.
+/// `rtmp_core_command_send_audio` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_send_audio(
     handle: *mut RtmpCoreHandle,
@@ -665,6 +709,8 @@ pub unsafe extern "C" fn rtmp_core_command_send_audio(
     )
 }
 
+/// `rtmp_core_command_send_video` function.
+/// `rtmp_core_command_send_video` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_send_video(
     handle: *mut RtmpCoreHandle,
@@ -689,6 +735,8 @@ pub unsafe extern "C" fn rtmp_core_command_send_video(
     )
 }
 
+/// `rtmp_core_command_send_notify` function.
+/// `rtmp_core_command_send_notify` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_send_notify(
     handle: *mut RtmpCoreHandle,
@@ -713,6 +761,8 @@ pub unsafe extern "C" fn rtmp_core_command_send_notify(
     )
 }
 
+/// `rtmp_core_command_close_stream` function.
+/// `rtmp_core_command_close_stream` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_close_stream(
     handle: *mut RtmpCoreHandle,
@@ -724,6 +774,8 @@ pub unsafe extern "C" fn rtmp_core_command_close_stream(
     command_no_payload(handle_ref, RtmpCoreCommand::CloseStream { stream_id })
 }
 
+/// `rtmp_core_command_close_connection` function.
+/// `rtmp_core_command_close_connection` 函数。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rtmp_core_command_close_connection(
     handle: *mut RtmpCoreHandle,

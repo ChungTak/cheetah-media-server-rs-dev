@@ -16,6 +16,8 @@ use cheetah_sdk::{HealthApi, MetricsApi};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+/// State used by `Control`.
+/// `Control` 使用的状态。
 #[derive(Clone)]
 pub struct ControlState {
     pub health: Arc<dyn HealthApi>,
@@ -35,6 +37,8 @@ struct PatchRequest {
     effect: Option<String>,
 }
 
+/// `router` function.
+/// `router` 函数。
 pub fn router(state: ControlState) -> Router {
     let state = Arc::new(state);
     Router::new()
@@ -55,6 +59,8 @@ pub fn router(state: ControlState) -> Router {
         .layer(Extension(state))
 }
 
+/// Spawns `server` on the runtime.
+/// 在运行时上派生 `server`。
 pub fn spawn_server(
     addr: SocketAddr,
     state: ControlState,

@@ -93,6 +93,8 @@ pub struct VodDriverHandle {
 }
 
 impl VodDriverHandle {
+    /// Sends `control` to the peer.
+    /// 向对端发送 `control`。
     pub fn send_control(&self, cmd: VodControlCommand) -> Result<(), VodDriverError> {
         self.cmd_tx.send(cmd).map_err(|_| VodDriverError::Closed)
     }
@@ -103,6 +105,8 @@ impl VodDriverHandle {
     }
 }
 
+/// Error returned by `Vod Driver` operations.
+/// `Vod Driver` 操作返回的错误。
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum VodDriverError {
     #[error("driver channel closed")]

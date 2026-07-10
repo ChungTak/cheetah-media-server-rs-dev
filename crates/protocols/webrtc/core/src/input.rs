@@ -138,6 +138,8 @@ pub struct WebRtcOfferSpec {
     pub data_channel: bool,
 }
 
+/// `WebRtcOfferDirection` enumeration.
+/// `WebRtcOfferDirection` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcOfferDirection {
     SendOnly,
@@ -163,6 +165,8 @@ pub struct WebRtcSendFrame {
     pub network_time_micros: u64,
 }
 
+/// Kind of `Web Rtc Request Keyframe`.
+/// `Web Rtc Request Keyframe` 的种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcRequestKeyframeKind {
     /// Picture Loss Indication.
@@ -171,6 +175,8 @@ pub enum WebRtcRequestKeyframeKind {
     Fir,
 }
 
+/// `WebRtcCloseReason` enumeration.
+/// `WebRtcCloseReason` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WebRtcCloseReason {
     Normal,

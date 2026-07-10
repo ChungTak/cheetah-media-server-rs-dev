@@ -20,6 +20,8 @@ fn is_video_frame(frame: &AVFrame) -> bool {
     frame.media_kind == MediaKind::Video && is_video_codec(frame.codec)
 }
 
+/// `source_timeline_mode_for_rtp_ingress` function.
+/// `source_timeline_mode_for_rtp_ingress` 函数。
 pub fn source_timeline_mode_for_rtp_ingress(frame: &AVFrame) -> TimestampNormalizeMode {
     // RTP ingress always provides a single wall-clock timestamp. For audio it
     // is supplied as both DTS and PTS; for video the same presentation value is
@@ -39,6 +41,8 @@ fn i64_to_wrapped_u64(ts: i64) -> u64 {
     ts.max(0) as u64
 }
 
+/// `monotonic_dts_min_step` function.
+/// `monotonic_dts_min_step` 函数。
 pub fn monotonic_dts_min_step(timebase: Timebase) -> i64 {
     let num = u64::from(timebase.num.max(1));
     let den = u64::from(timebase.den.max(1));
@@ -47,6 +51,8 @@ pub fn monotonic_dts_min_step(timebase: Timebase) -> i64 {
     i64::try_from(step.max(1)).unwrap_or(i64::MAX)
 }
 
+/// `fallback_step_for_rtp_ingress` function.
+/// `fallback_step_for_rtp_ingress` 函数。
 pub fn fallback_step_for_rtp_ingress(
     track: &TrackInfo,
     frame: &AVFrame,

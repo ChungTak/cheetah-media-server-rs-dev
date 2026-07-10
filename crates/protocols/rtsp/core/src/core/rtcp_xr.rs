@@ -6,14 +6,26 @@ pub const RTCP_PT_XR: u8 = 207;
 /// RTCP XR block types.
 #[allow(dead_code)]
 pub const XR_BLOCK_LOSS_RLE: u8 = 1;
+/// `XR_BLOCK_DUPLICATE_RLE` constant.
+/// `XR_BLOCK_DUPLICATE_RLE` 常量。
 #[allow(dead_code)]
 pub const XR_BLOCK_DUPLICATE_RLE: u8 = 2;
+/// `XR_BLOCK_PACKET_RECEIPT_TIMES` constant.
+/// `XR_BLOCK_PACKET_RECEIPT_TIMES` 常量。
 #[allow(dead_code)]
 pub const XR_BLOCK_PACKET_RECEIPT_TIMES: u8 = 3;
+/// `XR_BLOCK_RECEIVER_REFERENCE_TIME` constant.
+/// `XR_BLOCK_RECEIVER_REFERENCE_TIME` 常量。
 pub const XR_BLOCK_RECEIVER_REFERENCE_TIME: u8 = 4;
+/// `XR_BLOCK_DLRR` constant.
+/// `XR_BLOCK_DLRR` 常量。
 pub const XR_BLOCK_DLRR: u8 = 5;
+/// `XR_BLOCK_STATISTICS_SUMMARY` constant.
+/// `XR_BLOCK_STATISTICS_SUMMARY` 常量。
 #[allow(dead_code)]
 pub const XR_BLOCK_STATISTICS_SUMMARY: u8 = 6;
+/// `XR_BLOCK_VOIP_METRICS` constant.
+/// `XR_BLOCK_VOIP_METRICS` 常量。
 pub const XR_BLOCK_VOIP_METRICS: u8 = 7;
 
 /// Parsed RTCP XR packet.

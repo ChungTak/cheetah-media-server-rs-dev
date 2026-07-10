@@ -3,6 +3,8 @@ use alloc::vec::Vec;
 
 use crate::error::Error;
 
+/// `BytesReader` trait.
+/// `BytesReader` trait。
 pub trait BytesReader {
     fn read_u8(&mut self) -> Result<u8, Error>;
     fn read_u16(&mut self) -> Result<u16, Error>;
@@ -94,6 +96,8 @@ impl BytesReader for &[u8] {
     }
 }
 
+/// `BytesWriter` trait.
+/// `BytesWriter` trait。
 pub trait BytesWriter {
     fn write_u8(&mut self, v: u8);
     fn write_u16(&mut self, v: u16);
@@ -141,6 +145,8 @@ impl BytesWriter for Vec<u8> {
     }
 }
 
+/// `Buf` data structure.
+/// `Buf` 数据结构。
 #[derive(Debug, Default)]
 pub struct Buf {
     bytes: Vec<u8>,
@@ -148,14 +154,20 @@ pub struct Buf {
 }
 
 impl Buf {
+    /// Returns the value.
+    /// 返回值。
     pub fn get(&self) -> &[u8] {
         &self.bytes[self.offset..]
     }
 
+    /// `inner_mut` function of `Buf`.
+    /// `Buf` 的 `inner_mut` 函数。
     pub fn inner_mut(&mut self) -> &mut Vec<u8> {
         &mut self.bytes
     }
 
+    /// `feed` function of `Buf`.
+    /// `Buf` 的 `feed` 函数。
     pub fn feed(&mut self, buf: &[u8]) {
         self.bytes.extend_from_slice(buf);
 
@@ -175,6 +187,8 @@ impl Buf {
     // 当调用指定了大于 `Buf::get().len()` 的值作为 n 时，
     // 后续处理可能会 panic
     // （`Buf` 是内部结构体，正确使用该方法是调用方的责任，因此此处不做错误检查）
+    /// `advance` function of `Buf`.
+    /// `Buf` 的 `advance` 函数。
     pub fn advance(&mut self, n: usize) {
         debug_assert!(
             n <= self.bytes.len() - self.offset,

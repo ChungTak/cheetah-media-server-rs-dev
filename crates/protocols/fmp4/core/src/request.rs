@@ -6,6 +6,8 @@ use thiserror::Error;
 
 const WEBSOCKET_ACCEPT_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
+/// Error returned by `Fmp 4 Core` operations.
+/// `Fmp 4 Core` 操作返回的错误。
 #[derive(Debug, Error)]
 pub enum Fmp4CoreError {
     #[error("invalid .mp4 path: {path}")]
@@ -22,6 +24,8 @@ pub enum Fmp4CoreError {
     InvalidPath,
 }
 
+/// `HttpMethod` enumeration.
+/// `HttpMethod` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HttpMethod {
     Get,
@@ -30,23 +34,31 @@ pub enum HttpMethod {
     Other,
 }
 
+/// `Fmp4Transport` enumeration.
+/// `Fmp4Transport` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fmp4Transport {
     Http,
     WebSocket,
 }
 
+/// `StreamKeyParts` data structure.
+/// `StreamKeyParts` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamKeyParts {
     pub namespace: String,
     pub stream_path: String,
 }
 
+/// Request for `Parsed Fmp 4`.
+/// `Parsed Fmp 4` 的请求。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedFmp4Request {
     pub stream_key: StreamKeyParts,
 }
 
+/// `HttpRequestHead` data structure.
+/// `HttpRequestHead` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpRequestHead {
     pub method: HttpMethod,
@@ -56,6 +68,8 @@ pub struct HttpRequestHead {
 }
 
 impl HttpRequestHead {
+    /// `header` function of `HttpRequestHead`.
+    /// `HttpRequestHead` 的 `header` 函数。
     pub fn header(&self, key: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -63,6 +77,8 @@ impl HttpRequestHead {
             .map(|(_, value)| value.as_str())
     }
 
+    /// Returns `true` if `websocket upgrade` is true.
+    /// 当 `websocket upgrade` 为真时返回 `true`。
     pub fn is_websocket_upgrade(&self) -> bool {
         let Some(connection) = self.header("Connection") else {
             return false;
@@ -77,6 +93,8 @@ impl HttpRequestHead {
     }
 }
 
+/// `HttpResponseHead` data structure.
+/// `HttpResponseHead` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpResponseHead {
     pub status_code: u16,
@@ -84,6 +102,8 @@ pub struct HttpResponseHead {
     pub headers: Vec<(String, String)>,
 }
 
+/// Message used by `Web Socket`.
+/// `Web Socket` 使用的消息。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WebSocketMessage {
     Binary(bytes::Bytes),
@@ -142,6 +162,8 @@ pub fn parse_fmp4_request_target(target: &str) -> Result<ParsedFmp4Request, Fmp4
     })
 }
 
+/// Validates the `websocket upgrade` and returns errors if invalid.
+/// 验证 `websocket upgrade`，无效时返回错误。
 pub fn validate_websocket_upgrade(head: &HttpRequestHead) -> Result<String, Fmp4CoreError> {
     let Some(version) = head.header("Sec-WebSocket-Version") else {
         return Err(Fmp4CoreError::InvalidWebSocketVersion);
@@ -155,6 +177,8 @@ pub fn validate_websocket_upgrade(head: &HttpRequestHead) -> Result<String, Fmp4
     websocket_accept_key(key)
 }
 
+/// `websocket_accept_key` function.
+/// `websocket_accept_key` 函数。
 pub fn websocket_accept_key(client_key: &str) -> Result<String, Fmp4CoreError> {
     let key = client_key.trim();
     if key.is_empty() {

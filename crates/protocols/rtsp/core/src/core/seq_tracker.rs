@@ -114,14 +114,20 @@ impl SeqTracker {
         u64::from(self.wrap_count) * 65536 + seq
     }
 
+    /// `total_packets` function of `SeqTracker`.
+    /// `SeqTracker` 的 `total_packets` 函数。
     pub fn total_packets(&self) -> u64 {
         self.total_packets
     }
 
+    /// `total_lost` function of `SeqTracker`.
+    /// `SeqTracker` 的 `total_lost` 函数。
     pub fn total_lost(&self) -> u64 {
         self.total_lost
     }
 
+    /// `wrap_count` function of `SeqTracker`.
+    /// `SeqTracker` 的 `wrap_count` 函数。
     pub fn wrap_count(&self) -> u32 {
         self.wrap_count
     }

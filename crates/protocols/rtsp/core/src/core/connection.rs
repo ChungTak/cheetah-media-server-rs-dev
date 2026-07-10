@@ -1,10 +1,14 @@
 use super::{RtspMessageLimits, RtspMethod};
 
+/// Error returned by `RTSP Interleaved Encode` operations.
+/// `RTSP Interleaved Encode` 操作返回的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspInterleavedEncodeError {
     #[error("interleaved payload too large: {actual} > {max}")]
     PayloadTooLarge { max: usize, actual: usize },
 }
+/// Error returned by `RTSP Session` operations.
+/// `RTSP Session` 操作返回的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspSessionError {
     #[error("empty session header")]
@@ -71,10 +75,14 @@ pub struct RtspInterleavedFrameHeader {
 }
 
 impl RtspSession {
+    /// Creates a new `RtspSession` instance.
+    /// 创建新的 `RtspSession` 实例。
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Returns a copy with `ID` set.
+    /// 返回将 `ID` 设置后的副本。
     pub fn with_id(id: &str) -> Self {
         Self {
             id: Some(id.to_string()),
@@ -129,6 +137,8 @@ impl RtspSession {
         Ok(session)
     }
 
+    /// Converts to `header` representation.
+    /// 转换为 `header` 表示。
     pub fn to_header(&self) -> Result<Option<String>, RtspSessionError> {
         let Some(id) = self.id.as_deref() else {
             return Ok(None);
@@ -237,6 +247,8 @@ impl Default for RtspConnectionLimits {
 }
 
 impl RtspConnectionLimits {
+    /// Converts to `message limits` representation.
+    /// 转换为 `message limits` 表示。
     pub fn to_message_limits(&self) -> RtspMessageLimits {
         self.clone().into()
     }

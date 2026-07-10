@@ -9,23 +9,57 @@ pub(crate) mod prelude {
     pub use alloc::vec::Vec;
 }
 
+/// Module for `amf`.
+/// `amf` 相关模块。
 pub mod amf;
+/// Module for `amf0`.
+/// `amf0` 相关模块。
 pub mod amf0;
+/// Module for `amf3`.
+/// `amf3` 相关模块。
 pub mod amf3;
+/// Module for `bytes`.
+/// `bytes` 相关模块。
 pub mod bytes;
+/// Module for `chunk`.
+/// `chunk` 相关模块。
 pub mod chunk;
+/// Module for `command`.
+/// `command` 相关模块。
 pub mod command;
+/// Module for `core`.
+/// `core` 相关模块。
 pub mod core;
+/// Module for `error`.
+/// `error` 相关模块。
 pub mod error;
+/// Module for `flv`.
+/// `flv` 相关模块。
 pub mod flv;
+/// Module for `flv_ingest`.
+/// `flv_ingest` 相关模块。
 pub mod flv_ingest;
+/// Module for `handshake`.
+/// `handshake` 相关模块。
 pub mod handshake;
+/// Module for `handshake_complex`.
+/// `handshake_complex` 相关模块。
 #[cfg(feature = "complex-handshake")]
 pub mod handshake_complex;
+/// Module for `media`.
+/// `media` 相关模块。
 pub mod media;
+/// Module for `message`.
+/// `message` 相关模块。
 pub mod message;
+/// Module for `timestamp`.
+/// `timestamp` 相关模块。
 pub mod timestamp;
+/// Module for `url`.
+/// `url` 相关模块。
 pub mod url;
+/// Module for `user_control`.
+/// `user_control` 相关模块。
 pub mod user_control;
 
 pub use amf::{AmfValue, AmfValueRef, AmfVersion, Pair};

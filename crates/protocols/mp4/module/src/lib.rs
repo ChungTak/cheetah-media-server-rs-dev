@@ -1,9 +1,19 @@
 //! MP4 VOD module — engine integration, REST API, session lifecycle.
 
+/// Module for `api`.
+/// `api` 相关模块。
 pub mod api;
+/// Module for `config`.
+/// `config` 相关模块。
 pub mod config;
+/// Module for `module`.
+/// `module` 相关模块。
 pub mod module;
+/// Module for `session_registry`.
+/// `session_registry` 相关模块。
 pub mod session_registry;
+/// Module for `zlm_compat`.
+/// `zlm_compat` 相关模块。
 pub mod zlm_compat;
 
 pub use api::VodApi;

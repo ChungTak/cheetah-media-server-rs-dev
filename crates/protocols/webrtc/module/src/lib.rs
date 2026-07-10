@@ -14,20 +14,50 @@
 //! Phase 04+ wire engine publishers/subscribers, GOP bootstrap, simulcast
 //! and RTX policy on top of the lifecycle plumbing landed here.
 
+/// Module for `bootstrap`.
+/// `bootstrap` 相关模块。
 pub mod bootstrap;
+/// Module for `bridge`.
+/// `bridge` 相关模块。
 pub mod bridge;
+/// Module for `codec_policy`.
+/// `codec_policy` 相关模块。
 pub mod codec_policy;
+/// Module for `compat`.
+/// `compat` 相关模块。
 pub mod compat;
+/// Module for `config`.
+/// `config` 相关模块。
 pub mod config;
+/// Module for `http`.
+/// `http` 相关模块。
 pub mod http;
+/// Module for `jobs`.
+/// `jobs` 相关模块。
 pub mod jobs;
+/// Module for `metrics`.
+/// `metrics` 相关模块。
 pub mod metrics;
+/// Module for `module`.
+/// `module` 相关模块。
 pub mod module;
+/// Module for `ome_signaling`.
+/// `ome_signaling` 相关模块。
 pub mod ome_signaling;
+/// Module for `ome_ws`.
+/// `ome_ws` 相关模块。
 pub mod ome_ws;
+/// Module for `p2p`.
+/// `p2p` 相关模块。
 pub mod p2p;
+/// Module for `p2p_jobs`.
+/// `p2p_jobs` 相关模块。
 pub mod p2p_jobs;
+/// Module for `play_disconnect`.
+/// `play_disconnect` 相关模块。
 pub mod play_disconnect;
+/// Module for `session`.
+/// `session` 相关模块。
 pub mod session;
 
 /// Re-export of the WHIP/WHEP HTTP client, which now lives in the

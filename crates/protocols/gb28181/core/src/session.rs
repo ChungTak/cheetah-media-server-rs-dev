@@ -4,9 +4,15 @@ use std::net::SocketAddr;
 use crate::error::Gb28181Diagnostic;
 use crate::message::{SipMessage, StartLine};
 
+/// Identifier for `Gb Device`.
+/// `Gb Device` 的标识符。
 pub type GbDeviceId = String;
+/// Identifier for `Gb Session`.
+/// `Gb Session` 的标识符。
 pub type GbSessionId = String;
 
+/// State used by `Dialog`.
+/// `Dialog` 使用的状态。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DialogState {
     Trying,
@@ -14,6 +20,8 @@ pub enum DialogState {
     Terminated,
 }
 
+/// `GbDevice` data structure.
+/// `GbDevice` 数据结构。
 #[derive(Debug, Clone)]
 pub struct GbDevice {
     pub id: GbDeviceId,
@@ -22,6 +30,8 @@ pub struct GbDevice {
     pub last_keepalive_ms: u64,
 }
 
+/// `GbInviteSpec` data structure.
+/// `GbInviteSpec` 数据结构。
 #[derive(Debug, Clone)]
 pub struct GbInviteSpec {
     pub session_key: String,
@@ -36,6 +46,8 @@ pub struct GbInviteSpec {
     pub local_port: u16,
 }
 
+/// `GbTalkSpec` data structure.
+/// `GbTalkSpec` 数据结构。
 #[derive(Debug, Clone)]
 pub struct GbTalkSpec {
     pub session_key: String,
@@ -49,6 +61,8 @@ pub struct GbTalkSpec {
     pub local_port: u16,
 }
 
+/// Command for `GB28181`.
+/// `GB28181` 的命令。
 #[derive(Debug, Clone)]
 pub enum Gb28181Command {
     RegisterChallenge {
@@ -61,6 +75,8 @@ pub enum Gb28181Command {
     StopTalk(GbSessionId),
 }
 
+/// Events produced by the `GB28181` subsystem.
+/// `GB28181` 子系统产生的事件。
 #[derive(Debug, Clone)]
 pub enum Gb28181Event {
     DeviceRegistered {
@@ -82,12 +98,16 @@ pub enum Gb28181Event {
     },
 }
 
+/// `SipSendAction` data structure.
+/// `SipSendAction` 数据结构。
 #[derive(Debug, Clone)]
 pub struct SipSendAction {
     pub destination: SocketAddr,
     pub message: SipMessage,
 }
 
+/// `Gb28181CoreInput` enumeration.
+/// `Gb28181CoreInput` 枚举。
 #[derive(Debug, Clone)]
 pub enum Gb28181CoreInput {
     SipMessage {
@@ -100,6 +120,8 @@ pub enum Gb28181CoreInput {
     Command(Gb28181Command),
 }
 
+/// `Gb28181CoreOutput` enumeration.
+/// `Gb28181CoreOutput` 枚举。
 #[derive(Debug, Clone)]
 pub enum Gb28181CoreOutput {
     SendSip(SipSendAction),
@@ -119,6 +141,8 @@ struct GbInviteSession {
     _last_activity_ms: u64,
 }
 
+/// `Gb28181Core` data structure.
+/// `Gb28181Core` 数据结构。
 pub struct Gb28181Core {
     devices: HashMap<GbDeviceId, GbDevice>,
     sessions: HashMap<GbSessionId, GbInviteSession>,
@@ -134,6 +158,8 @@ impl Default for Gb28181Core {
 }
 
 impl Gb28181Core {
+    /// Creates a new `Gb28181Core` instance.
+    /// 创建新的 `Gb28181Core` 实例。
     pub fn new() -> Self {
         Self {
             devices: HashMap::new(),
@@ -143,6 +169,8 @@ impl Gb28181Core {
         }
     }
 
+    /// Handles the `input` event.
+    /// 处理 `input` 事件。
     pub fn handle_input(&mut self, input: Gb28181CoreInput, outputs: &mut Vec<Gb28181CoreOutput>) {
         match input {
             Gb28181CoreInput::SipMessage { source, message } => {
@@ -714,6 +742,8 @@ impl Gb28181Core {
         }
     }
 
+    /// `list_devices` function of `Gb28181Core`.
+    /// `Gb28181Core` 的 `list_devices` 函数。
     pub fn list_devices(&self) -> Vec<GbDevice> {
         self.devices.values().cloned().collect()
     }

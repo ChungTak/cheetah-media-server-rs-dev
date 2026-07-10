@@ -68,33 +68,89 @@ pub(crate) mod prelude {
     }
 }
 
+/// Module for `adapter`.
+/// `adapter` 相关模块。
 pub mod adapter;
+/// Module for `audio`.
+/// `audio` 相关模块。
 pub mod audio;
+/// Module for `compat`.
+/// `compat` 相关模块。
 pub mod compat;
+/// Module for `egress`.
+/// `egress` 相关模块。
 pub mod egress;
+/// Module for `flv`.
+/// `flv` 相关模块。
 pub mod flv;
+/// Module for `flv_egress`.
+/// `flv_egress` 相关模块。
 pub mod flv_egress;
+/// Module for `fmp4_demux`.
+/// `fmp4_demux` 相关模块。
 pub mod fmp4_demux;
+/// Module for `fmp4_mux`.
+/// `fmp4_mux` 相关模块。
 pub mod fmp4_mux;
+/// Module for `frame`.
+/// `frame` 相关模块。
 pub mod frame;
+/// Module for `frame_view`.
+/// `frame_view` 相关模块。
 pub mod frame_view;
+/// Module for `ingress`.
+/// `ingress` 相关模块。
 pub mod ingress;
+/// Module for `jtt1078`.
+/// `jtt1078` 相关模块。
 pub mod jtt1078;
+/// Module for `mp4`.
+/// `mp4` 相关模块。
 pub mod mp4;
+/// Module for `mute_audio`.
+/// `mute_audio` 相关模块。
 pub mod mute_audio;
+/// Module for `observability`.
+/// `observability` 相关模块。
 pub mod observability;
+/// Module for `ps`.
+/// `ps` 相关模块。
 pub mod ps;
+/// Module for `record`.
+/// `record` 相关模块。
 pub mod record;
+/// Module for `rtp`.
+/// `rtp` 相关模块。
 pub mod rtp;
+/// Module for `rtp_reorder`.
+/// `rtp_reorder` 相关模块。
 pub mod rtp_reorder;
+/// Module for `sdp`.
+/// `sdp` 相关模块。
 pub mod sdp;
+/// Module for `time`.
+/// `time` 相关模块。
 pub mod time;
+/// Module for `track`.
+/// `track` 相关模块。
 pub mod track;
+/// Module for `traits`.
+/// `traits` 相关模块。
 pub mod traits;
+/// Module for `transcode`.
+/// `transcode` 相关模块。
 pub mod transcode;
+/// Module for `ts_common`.
+/// `ts_common` 相关模块。
 pub mod ts_common;
+/// Module for `ts_demux`.
+/// `ts_demux` 相关模块。
 pub mod ts_demux;
+/// Module for `ts_mux`.
+/// `ts_mux` 相关模块。
 pub mod ts_mux;
+/// Module for `video`.
+/// `video` 相关模块。
 pub mod video;
 
 pub use adapter::{

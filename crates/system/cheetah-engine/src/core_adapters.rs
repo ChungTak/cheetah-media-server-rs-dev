@@ -14,12 +14,16 @@ struct AdapterPublisher {
     sink: Mutex<Box<dyn PublisherSink>>,
 }
 
+/// `LocalCoreAdapters` data structure.
+/// `LocalCoreAdapters` 数据结构。
 pub struct LocalCoreAdapters {
     publisher_api: Arc<dyn PublisherApi>,
     publishers: DashMap<StreamKey, Arc<AdapterPublisher>>,
 }
 
 impl LocalCoreAdapters {
+    /// Creates a new `LocalCoreAdapters` instance.
+    /// 创建新的 `LocalCoreAdapters` 实例。
     pub fn new(publisher_api: Arc<dyn PublisherApi>) -> Self {
         Self {
             publisher_api,

@@ -23,6 +23,8 @@ const MARKER_DOUBLE_VECTOR: u8 = 0x0F;
 const MARKER_OBJECT_VECTOR: u8 = 0x10;
 const MARKER_DICTIONARY: u8 = 0x11;
 
+/// `Amf3Value` enumeration.
+/// `Amf3Value` 枚举。
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
 pub enum Amf3Value {
     Undefined,
@@ -75,6 +77,8 @@ pub enum Amf3Value {
 }
 
 impl Amf3Value {
+    /// Decodes the value from the input buffer.
+    /// 从输入缓冲区解码值。
     pub fn decode(buf: &[u8]) -> Result<(usize, Self), Error> {
         let original_len = buf.len();
         let mut decoder = Decoder {
@@ -88,6 +92,8 @@ impl Amf3Value {
         Ok((original_len - decoder.buf.len(), value))
     }
 
+    /// Encodes the value into the output buffer.
+    /// 将值编码到输出缓冲区。
     pub fn encode(&self, buf: &mut Vec<u8>) {
         let mut encoder = Encoder { buf };
         encoder.encode_value(self);

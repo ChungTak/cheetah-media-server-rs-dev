@@ -5,8 +5,12 @@ use cheetah_codec::{AVFrame, RtpPayloadMode, TrackInfo};
 
 use crate::error::RtpCoreDiagnostic;
 
+/// Key for `RTP Session`.
+/// `RTP Session` 的键。
 pub type RtpSessionKey = String;
 
+/// Mode selecting `RTP Transport` behavior.
+/// 选择 `RTP Transport` 行为的模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtpTransportMode {
     RecvOnly,
@@ -38,6 +42,8 @@ pub enum RtpTrackFilter {
     OnlyVideo,
 }
 
+/// `RtpServerSpec` data structure.
+/// `RtpServerSpec` 数据结构。
 #[derive(Debug, Clone)]
 pub struct RtpServerSpec {
     pub session_key: RtpSessionKey,
@@ -51,6 +57,8 @@ pub struct RtpServerSpec {
     pub track_filter: RtpTrackFilter,
 }
 
+/// `RtpClientSpec` data structure.
+/// `RtpClientSpec` 数据结构。
 #[derive(Debug, Clone)]
 pub struct RtpClientSpec {
     pub session_key: RtpSessionKey,
@@ -66,36 +74,48 @@ pub struct RtpClientSpec {
     pub track_filter: RtpTrackFilter,
 }
 
+/// Frame for `RTP Send`.
+/// `RTP Send` 的帧。
 #[derive(Debug, Clone)]
 pub struct RtpSendFrame {
     pub session_key: RtpSessionKey,
     pub frame: AVFrame,
 }
 
+/// `RtpDatagram` data structure.
+/// `RtpDatagram` 数据结构。
 #[derive(Debug, Clone)]
 pub struct RtpDatagram {
     pub source: SocketAddr,
     pub data: Bytes,
 }
 
+/// `RtpTcpChunk` data structure.
+/// `RtpTcpChunk` 数据结构。
 #[derive(Debug, Clone)]
 pub struct RtpTcpChunk {
     pub conn_id: u64,
     pub data: Bytes,
 }
 
+/// `RtpUdpSend` data structure.
+/// `RtpUdpSend` 数据结构。
 #[derive(Debug, Clone)]
 pub struct RtpUdpSend {
     pub destination: SocketAddr,
     pub data: Bytes,
 }
 
+/// `RtpTcpSend` data structure.
+/// `RtpTcpSend` 数据结构。
 #[derive(Debug, Clone)]
 pub struct RtpTcpSend {
     pub conn_id: u64,
     pub data: Bytes,
 }
 
+/// `RtcpSend` data structure.
+/// `RtcpSend` 数据结构。
 #[derive(Debug, Clone)]
 pub struct RtcpSend {
     pub destination: SocketAddr,
@@ -103,6 +123,8 @@ pub struct RtcpSend {
     pub data: Bytes,
 }
 
+/// Events produced by the `RTP Core` subsystem.
+/// `RTP Core` 子系统产生的事件。
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum RtpCoreEvent {
@@ -126,6 +148,8 @@ pub enum RtpCoreEvent {
     },
 }
 
+/// `RtpCoreInput` enumeration.
+/// `RtpCoreInput` 枚举。
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum RtpCoreInput {
@@ -140,6 +164,8 @@ pub enum RtpCoreInput {
     Command(RtpCoreCommand),
 }
 
+/// Command for `RTP Core`.
+/// `RTP Core` 的命令。
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum RtpCoreCommand {
@@ -149,6 +175,8 @@ pub enum RtpCoreCommand {
     StopSession(RtpSessionKey),
 }
 
+/// `RtpCoreOutput` enumeration.
+/// `RtpCoreOutput` 枚举。
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum RtpCoreOutput {

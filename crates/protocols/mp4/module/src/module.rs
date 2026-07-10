@@ -17,6 +17,8 @@ use crate::zlm_compat::{ZlmLoadMp4, ZlmSeekRecord, ZlmSetSpeed, ZlmVodCompat};
 
 const MODULE_ID: &str = "mp4";
 
+/// `Mp4ModuleFactory` data structure.
+/// `Mp4ModuleFactory` 数据结构。
 pub struct Mp4ModuleFactory;
 
 impl ModuleFactory for Mp4ModuleFactory {
@@ -52,6 +54,8 @@ impl ModuleFactory for Mp4ModuleFactory {
     }
 }
 
+/// `Mp4Module` data structure.
+/// `Mp4Module` 数据结构。
 pub struct Mp4Module {
     state: ModuleState,
     config: Mp4ModuleConfig,
@@ -61,6 +65,8 @@ pub struct Mp4Module {
 }
 
 impl Mp4Module {
+    /// Creates a new `Mp4Module` instance.
+    /// 创建新的 `Mp4Module` 实例。
     pub fn new() -> Self {
         Self {
             state: ModuleState::Created,

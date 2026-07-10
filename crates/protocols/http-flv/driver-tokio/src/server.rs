@@ -15,6 +15,8 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::warn;
 
+/// Identifier for `HTTP FLV Connection`.
+/// `HTTP FLV Connection` 的标识符。
 pub type HttpFlvConnectionId = u64;
 
 #[derive(Clone)]
@@ -23,6 +25,8 @@ pub(crate) struct ConnectionControl {
     pub(crate) cancel: CancellationToken,
 }
 
+/// Configuration for `HTTP FLV Driver`.
+/// `HTTP FLV Driver` 的配置。
 #[derive(Debug, Clone)]
 pub struct HttpFlvDriverConfig {
     pub write_queue_capacity: usize,
@@ -48,6 +52,8 @@ impl Default for HttpFlvDriverConfig {
     }
 }
 
+/// Events produced by the `HTTP FLV Driver` subsystem.
+/// `HTTP FLV Driver` 子系统产生的事件。
 #[derive(Debug)]
 pub enum HttpFlvDriverEvent {
     ConnectionOpened {
@@ -64,6 +70,8 @@ pub enum HttpFlvDriverEvent {
     },
 }
 
+/// Command for `HTTP FLV Driver`.
+/// `HTTP FLV Driver` 的命令。
 #[derive(Debug, Clone)]
 pub enum HttpFlvDriverCommand {
     SendFlvBytes {
@@ -76,17 +84,23 @@ pub enum HttpFlvDriverCommand {
     Shutdown,
 }
 
+/// `HttpFlvCoreCommandSender` data structure.
+/// `HttpFlvCoreCommandSender` 数据结构。
 #[derive(Clone)]
 pub struct HttpFlvCoreCommandSender {
     pub(crate) tx: mpsc::Sender<HttpFlvDriverCommand>,
 }
 
+/// Error returned by `Driver Send` operations.
+/// `Driver Send` 操作返回的错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverSendError {
     ChannelClosed,
 }
 
 impl HttpFlvCoreCommandSender {
+    /// Sends data to the peer.
+    /// 向对端发送数据。
     pub async fn send(&self, command: HttpFlvDriverCommand) -> Result<(), DriverSendError> {
         self.tx
             .send(command)
@@ -94,6 +108,8 @@ impl HttpFlvCoreCommandSender {
             .map_err(|_| DriverSendError::ChannelClosed)
     }
 
+    /// Sends `FLV bytes` to the peer.
+    /// 向对端发送 `FLV bytes`。
     pub async fn send_flv_bytes(
         &self,
         connection_id: HttpFlvConnectionId,
@@ -106,6 +122,8 @@ impl HttpFlvCoreCommandSender {
         .await
     }
 
+    /// Closes the `connection`.
+    /// 关闭 `connection`。
     pub async fn close_connection(
         &self,
         connection_id: HttpFlvConnectionId,
@@ -115,6 +133,8 @@ impl HttpFlvCoreCommandSender {
     }
 }
 
+/// Handle to a `HTTP FLV Server` resource.
+/// `HTTP FLV Server` 资源的句柄。
 pub struct HttpFlvServerHandle {
     pub(crate) listen: SocketAddr,
     pub(crate) events_rx: mpsc::Receiver<HttpFlvDriverEvent>,
@@ -124,22 +144,32 @@ pub struct HttpFlvServerHandle {
 }
 
 impl HttpFlvServerHandle {
+    /// Receives `event` from the peer.
+    /// 从对端接收 `event`。
     pub async fn recv_event(&mut self) -> Option<HttpFlvDriverEvent> {
         self.events_rx.recv().await
     }
 
+    /// `local_addr` function of `HttpFlvServerHandle`.
+    /// `HttpFlvServerHandle` 的 `local_addr` 函数。
     pub fn local_addr(&self) -> SocketAddr {
         self.listen
     }
 
+    /// `core_command_sender` function of `HttpFlvServerHandle`.
+    /// `HttpFlvServerHandle` 的 `core_command_sender` 函数。
     pub fn core_command_sender(&self) -> HttpFlvCoreCommandSender {
         self.cmd_tx.clone()
     }
 
+    /// Shuts down the send or receive side of the stream.
+    /// 关闭流的发送或接收端。
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
+    /// `wait` function of `HttpFlvServerHandle`.
+    /// `HttpFlvServerHandle` 的 `wait` 函数。
     pub async fn wait(self) -> Result<(), TaskJoinError> {
         self.join.wait().await
     }
@@ -151,6 +181,8 @@ pub(crate) enum ConnectionCommand {
     Close,
 }
 
+/// Starts the `server`.
+/// 启动 `server`。
 pub fn start_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,

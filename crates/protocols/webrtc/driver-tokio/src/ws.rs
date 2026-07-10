@@ -274,6 +274,8 @@ impl WsServerListener {
     /// Each upgraded connection is handed to `handler` on its own task.
     // The tungstenite handshake callback returns a large `Result` whose
     // shape we don't control.
+    /// `serve` function of `WsServerListener`.
+    /// `WsServerListener` 的 `serve` 函数。
     #[allow(clippy::result_large_err)]
     pub async fn serve(
         self,

@@ -13,6 +13,8 @@ use serde::Deserialize;
 use crate::api::{StartVodRequest, VodApi, VodApiError};
 use crate::session_registry::SessionError;
 
+/// Error returned by `Zlm Vod` operations.
+/// `Zlm Vod` 操作返回的错误。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum ZlmVodError {
     #[error("invalid request: {0}")]
@@ -66,10 +68,14 @@ pub struct ZlmVodCompat {
 }
 
 impl ZlmVodCompat {
+    /// Creates a new `ZlmVodCompat` instance.
+    /// 创建新的 `ZlmVodCompat` 实例。
     pub fn new(inner: Arc<VodApi>) -> Self {
         Self { inner }
     }
 
+    /// `load_mp4` function of `ZlmVodCompat`.
+    /// `ZlmVodCompat` 的 `load_mp4` 函数。
     pub async fn load_mp4(&self, req: ZlmLoadMp4) -> Result<serde_json::Value, ZlmVodError> {
         let session_id = vod_session_id(&req.app, &req.stream);
         let normalized = normalize_rtmp_mp4_uri(&req.file_path);
@@ -102,6 +108,8 @@ impl ZlmVodCompat {
         }))
     }
 
+    /// `seek_record` function of `ZlmVodCompat`.
+    /// `ZlmVodCompat` 的 `seek_record` 函数。
     pub fn seek_record(&self, req: ZlmSeekRecord) -> Result<serde_json::Value, ZlmVodError> {
         let session_id = vod_session_id(&req.app, &req.stream);
         let handle = self
@@ -117,6 +125,8 @@ impl ZlmVodCompat {
         Ok(serde_json::json!({ "code": 0, "result": true }))
     }
 
+    /// Sets the `speed` value.
+    /// 设置 `speed` 的值。
     pub fn set_speed(&self, req: ZlmSetSpeed) -> Result<serde_json::Value, ZlmVodError> {
         if !(0.1..=20.0).contains(&req.speed) {
             return Err(ZlmVodError::InvalidRequest(format!(

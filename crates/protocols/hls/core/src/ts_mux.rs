@@ -21,6 +21,8 @@ pub struct TsMuxer {
 }
 
 impl TsMuxer {
+    /// Creates a new `TsMuxer` instance.
+    /// 创建新的 `TsMuxer` 实例。
     pub fn new(video_codec: CodecId, audio_codec: CodecId, has_audio: bool) -> Self {
         let video_track_id = TrackId(1);
         let audio_track_id = TrackId(2);
@@ -175,10 +177,14 @@ impl TsMuxerMulti {
         }
     }
 
+    /// Takes `segment`, replacing it with the default.
+    /// 获取 `segment`，并用默认值替换。
     pub fn take_segment(&mut self) -> Bytes {
         self.buf.split().freeze()
     }
 
+    /// Writes `pat pmt` to the stream.
+    /// 向流中写入 `pat pmt`。
     pub fn write_pat_pmt(&mut self) {
         for ev in self.inner.write_tables() {
             if let MpegTsMuxEvent::Packet(data) = ev {

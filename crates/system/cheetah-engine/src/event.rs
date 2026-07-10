@@ -2,11 +2,15 @@ use async_trait::async_trait;
 use cheetah_sdk::{EventBus, EventSubscriber, SystemEvent};
 use tokio::sync::broadcast;
 
+/// `LocalEventBus` data structure.
+/// `LocalEventBus` 数据结构。
 pub struct LocalEventBus {
     tx: broadcast::Sender<SystemEvent>,
 }
 
 impl LocalEventBus {
+    /// Creates a new `LocalEventBus` instance.
+    /// 创建新的 `LocalEventBus` 实例。
     pub fn new(capacity: usize) -> Self {
         let (tx, _) = broadcast::channel(capacity.max(1));
         Self { tx }

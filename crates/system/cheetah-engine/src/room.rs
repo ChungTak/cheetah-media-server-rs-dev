@@ -10,6 +10,8 @@ struct RoomEntry {
     streams: RwLock<Vec<StreamKey>>,
 }
 
+/// Service contract for `Room`.
+/// `Room` 的服务契约。
 #[derive(Default)]
 pub struct RoomService {
     next_id: AtomicU64,

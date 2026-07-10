@@ -60,6 +60,8 @@ pub enum Mp4ReadEvent {
     Diagnostic(Mp4ReadDiagnostic),
 }
 
+/// `Mp4ReadDiagnostic` enumeration.
+/// `Mp4ReadDiagnostic` 枚举。
 #[derive(Debug, Clone)]
 pub enum Mp4ReadDiagnostic {
     UnknownBoxSkipped {
@@ -80,6 +82,8 @@ pub enum Mp4ReadDiagnostic {
     },
 }
 
+/// Request for `Mp 4 Read`.
+/// `Mp 4 Read` 的请求。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mp4ReadRequest {
     /// Absolute file offset of the requested byte range.
@@ -88,6 +92,8 @@ pub struct Mp4ReadRequest {
     pub length: u64,
 }
 
+/// Result type for `Mp 4 Read` operations.
+/// `Mp 4 Read` 操作的结果类型。
 #[derive(Debug, Clone)]
 pub struct Mp4ReadResult {
     pub offset: u64,
@@ -127,6 +133,8 @@ enum ReaderState {
 }
 
 impl Mp4Reader {
+    /// Creates a new `Mp4Reader` instance.
+    /// 创建新的 `Mp4Reader` 实例。
     pub fn new(config: Mp4ReaderConfig) -> Self {
         Self {
             config,
@@ -142,6 +150,8 @@ impl Mp4Reader {
         }
     }
 
+    /// Sets the `file size` value.
+    /// 设置 `file size` 的值。
     pub fn set_file_size(&mut self, file_size: u64) {
         self.file_size = file_size;
     }
@@ -161,14 +171,20 @@ impl Mp4Reader {
         }
     }
 
+    /// `tracks` function of `Mp4Reader`.
+    /// `Mp4Reader` 的 `tracks` 函数。
     pub fn tracks(&self) -> &[TrackInfo] {
         &self.tracks
     }
 
+    /// `indices` function of `Mp4Reader`.
+    /// `Mp4Reader` 的 `indices` 函数。
     pub fn indices(&self) -> &[SampleIndex] {
         &self.indices
     }
 
+    /// `duration_us` function of `Mp4Reader`.
+    /// `Mp4Reader` 的 `duration_us` 函数。
     pub fn duration_us(&self) -> i64 {
         self.indices
             .iter()

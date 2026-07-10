@@ -52,10 +52,14 @@ use crate::sdp::LocalCandidateCounts;
 pub struct ShardId(pub usize);
 
 impl ShardId {
+    /// Creates a new `ShardId` instance.
+    /// 创建新的 `ShardId` 实例。
     pub const fn new(value: usize) -> Self {
         Self(value)
     }
 
+    /// `as_usize` function of `ShardId`.
+    /// `ShardId` 的 `as_usize` 函数。
     pub fn as_usize(self) -> usize {
         self.0
     }
@@ -158,6 +162,8 @@ impl Default for RouteDirectory {
 }
 
 impl RouteDirectory {
+    /// Creates a new `RouteDirectory` instance.
+    /// 创建新的 `RouteDirectory` 实例。
     pub fn new(config: RouteDirectoryConfig) -> Self {
         Self {
             inner: Mutex::new(DirectoryInner::default()),

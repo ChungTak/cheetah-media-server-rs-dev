@@ -6,6 +6,8 @@ use crate::module::ModuleState;
 use crate::stream::DispatchResult;
 use crate::task::{TaskState, TaskTerminalOutcome};
 
+/// Kind of `Module Event`.
+/// `Module Event` 的种类。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModuleEventKind {
     Created,
@@ -17,6 +19,8 @@ pub enum ModuleEventKind {
     ConfigApplied,
 }
 
+/// Kind of `Stream Event`.
+/// `Stream Event` 的种类。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StreamEventKind {
     PublisherOpened,
@@ -26,6 +30,8 @@ pub enum StreamEventKind {
     FrameDropped,
 }
 
+/// Kind of `Task Event`.
+/// `Task Event` 的种类。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskEventKind {
     Created,
@@ -33,6 +39,8 @@ pub enum TaskEventKind {
     Finished,
 }
 
+/// Events produced by the `Module` subsystem.
+/// `Module` 子系统产生的事件。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModuleEvent {
     pub module_id: String,
@@ -42,6 +50,8 @@ pub struct ModuleEvent {
     pub error: Option<String>,
 }
 
+/// Events produced by the `Stream` subsystem.
+/// `Stream` 子系统产生的事件。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StreamEvent {
     pub stream_key: String,
@@ -52,6 +62,8 @@ pub struct StreamEvent {
     pub message: Option<String>,
 }
 
+/// Events produced by the `Task` subsystem.
+/// `Task` 子系统产生的事件。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskEvent {
     pub task_id: u64,
@@ -61,6 +73,8 @@ pub struct TaskEvent {
     pub message: Option<String>,
 }
 
+/// Events produced by the `Config` subsystem.
+/// `Config` 子系统产生的事件。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConfigEvent {
     pub scope: String,
@@ -69,6 +83,8 @@ pub struct ConfigEvent {
     pub rolled_back: bool,
 }
 
+/// Events produced by the `System Lifecycle` subsystem.
+/// `System Lifecycle` 子系统产生的事件。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SystemLifecycleEvent {
     pub component: String,
@@ -76,6 +92,8 @@ pub struct SystemLifecycleEvent {
     pub message: Option<String>,
 }
 
+/// Events produced by the `Protocol` subsystem.
+/// `Protocol` 子系统产生的事件。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolEvent {
     pub protocol: String,
@@ -83,6 +101,8 @@ pub struct ProtocolEvent {
     pub payload: serde_json::Value,
 }
 
+/// Events produced by the `System` subsystem.
+/// `System` 子系统产生的事件。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SystemEvent {
     Module(ModuleEvent),
@@ -96,11 +116,15 @@ pub enum SystemEvent {
     Protocol(ProtocolEvent),
 }
 
+/// `EventSubscriber` trait.
+/// `EventSubscriber` trait。
 #[async_trait]
 pub trait EventSubscriber: Send {
     async fn recv(&mut self) -> Option<SystemEvent>;
 }
 
+/// `EventBus` trait.
+/// `EventBus` trait。
 pub trait EventBus: Send + Sync {
     fn publish(&self, event: SystemEvent);
 

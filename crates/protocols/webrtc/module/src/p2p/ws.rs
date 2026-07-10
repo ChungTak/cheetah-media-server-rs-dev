@@ -116,6 +116,8 @@ impl std::fmt::Debug for WebSocketTransportFactory {
 }
 
 impl WebSocketTransportFactory {
+    /// Creates a new `WebSocketTransportFactory` instance.
+    /// 创建新的 `WebSocketTransportFactory` 实例。
     pub fn new(config: WebSocketTransportConfig) -> Self {
         Self {
             config,
@@ -281,6 +283,8 @@ pub fn snapshot_counters(counters: &WebSocketCounters) -> WebSocketCounterSnapsh
     }
 }
 
+/// `WebSocketCounterSnapshot` data structure.
+/// `WebSocketCounterSnapshot` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WebSocketCounterSnapshot {
     pub messages_sent: u64,
@@ -296,9 +300,13 @@ pub struct WebSocketDecodeStats {
 }
 
 impl WebSocketDecodeStats {
+    /// `record` function of `WebSocketDecodeStats`.
+    /// `WebSocketDecodeStats` 的 `record` 函数。
     pub fn record(&self, msg: impl Into<String>) {
         self.inner.lock().push(msg.into());
     }
+    /// `snapshot` function of `WebSocketDecodeStats`.
+    /// `WebSocketDecodeStats` 的 `snapshot` 函数。
     pub fn snapshot(&self) -> Vec<String> {
         self.inner.lock().clone()
     }

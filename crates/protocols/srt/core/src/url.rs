@@ -4,6 +4,8 @@ use crate::config::{SrtKeyLength, SrtRole};
 use crate::error::{SrtCoreError, SrtCoreResult};
 use crate::stream_id::percent_decode;
 
+/// `ParsedSrtUrl` data structure.
+/// `ParsedSrtUrl` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedSrtUrl {
     pub host: Option<String>,
@@ -16,6 +18,8 @@ pub struct ParsedSrtUrl {
     pub extras: BTreeMap<String, String>,
 }
 
+/// Parses `SRT URL` from input.
+/// 从输入解析 `SRT URL`。
 pub fn parse_srt_url(input: &str) -> SrtCoreResult<ParsedSrtUrl> {
     let rest = input
         .strip_prefix("srt://")

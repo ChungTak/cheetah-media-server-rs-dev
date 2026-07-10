@@ -34,6 +34,8 @@ pub struct SegmentRing {
 }
 
 impl SegmentRing {
+    /// Creates a new `SegmentRing` instance.
+    /// 创建新的 `SegmentRing` 实例。
     pub fn new(max_segments: usize) -> Self {
         Self::with_retain(max_segments, 0)
     }
@@ -105,6 +107,8 @@ impl SegmentRing {
         self.segments.len()
     }
 
+    /// Returns true when there are no elements.
+    /// 没有元素时返回 true。
     pub fn is_empty(&self) -> bool {
         self.segments.is_empty()
     }

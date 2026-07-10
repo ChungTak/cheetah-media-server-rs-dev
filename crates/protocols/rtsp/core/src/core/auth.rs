@@ -3,12 +3,16 @@ use sha2::{Digest, Sha256};
 
 use super::method::RtspMethod;
 
+/// `RtspAuthorization` enumeration.
+/// `RtspAuthorization` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtspAuthorization {
     Basic { username: String, password: String },
     Digest(RtspDigestAuthorization),
 }
 
+/// `RtspDigestAuthorization` data structure.
+/// `RtspDigestAuthorization` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspDigestAuthorization {
     pub username: String,
@@ -22,6 +26,8 @@ pub struct RtspDigestAuthorization {
     pub cnonce: Option<String>,
 }
 
+/// `RtspDigestChallenge` data structure.
+/// `RtspDigestChallenge` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspDigestChallenge {
     pub realm: String,
@@ -32,12 +38,16 @@ pub struct RtspDigestChallenge {
     pub stale: bool,
 }
 
+/// `RtspDigestAlgorithm` enumeration.
+/// `RtspDigestAlgorithm` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtspDigestAlgorithm {
     Md5,
     Sha256,
 }
 
+/// Error returned by `RTSP Authorization` operations.
+/// `RTSP Authorization` 操作返回的错误。
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum RtspAuthorizationError {
     #[error("unsupported authorization scheme")]
@@ -50,6 +60,8 @@ pub enum RtspAuthorizationError {
     InvalidDigestParameter(String),
 }
 
+/// Parses `authorization header` from input.
+/// 从输入解析 `authorization header`。
 pub fn parse_authorization_header(
     value: &str,
 ) -> Result<RtspAuthorization, RtspAuthorizationError> {
@@ -109,6 +121,8 @@ pub fn parse_authorization_header(
     Err(RtspAuthorizationError::UnsupportedScheme)
 }
 
+/// Verifies the `digest response` and returns an error if not met.
+/// 验证 `digest response`，不满足时返回错误。
 pub fn verify_digest_response(
     auth: &RtspDigestAuthorization,
     challenge: &RtspDigestChallenge,

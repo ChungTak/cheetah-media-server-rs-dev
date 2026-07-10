@@ -1,6 +1,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+/// `RtspMethod` enumeration.
+/// `RtspMethod` 枚举。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RtspMethod {
     Get,
@@ -20,6 +22,8 @@ pub enum RtspMethod {
 }
 
 impl RtspMethod {
+    /// `as_str` function of `RtspMethod`.
+    /// `RtspMethod` 的 `as_str` 函数。
     pub fn as_str(&self) -> &str {
         match self {
             Self::Get => "GET",

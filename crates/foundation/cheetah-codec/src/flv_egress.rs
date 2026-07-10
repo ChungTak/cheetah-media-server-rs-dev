@@ -20,12 +20,16 @@ const ENHANCED_RTMP_AUDIO_SEQUENCE_START: u8 = 0x90;
 const ENHANCED_RTMP_AUDIO_CODED_FRAMES: u8 = 0x91;
 const OPUS_DEFAULT_PRE_SKIP: u16 = 312;
 
+/// Mode selecting `RTMP FLV Play` behavior.
+/// 选择 `RTMP FLV Play` 行为的模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpFlvPlayMode {
     Normal,
     Enhanced,
 }
 
+/// Kind of `RTMP FLV Payload`.
+/// `RTMP FLV Payload` 的种类。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpFlvPayloadKind {
     Audio,
@@ -33,6 +37,8 @@ pub enum RtmpFlvPayloadKind {
     Data,
 }
 
+/// Payload for `RTMP FLV`.
+/// `RTMP FLV` 的负载。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtmpFlvPayload {
     pub kind: RtmpFlvPayloadKind,
@@ -40,6 +46,8 @@ pub struct RtmpFlvPayload {
     pub payload: Bytes,
 }
 
+/// Builds the `track bootstrap payloads`.
+/// 构建 `track bootstrap payloads`。
 pub fn build_track_bootstrap_payloads(
     tracks: &[TrackInfo],
     mode: RtmpFlvPlayMode,
@@ -176,6 +184,8 @@ pub fn build_track_bootstrap_payloads(
     payloads
 }
 
+/// Maps `frame to RTMP FLV payload` to another value.
+/// 将 `frame to RTMP FLV payload` 映射到另一个值。
 pub fn map_frame_to_rtmp_flv_payload(
     frame: &AVFrame,
     mode: RtmpFlvPlayMode,
@@ -249,6 +259,8 @@ pub fn map_frame_to_rtmp_flv_payload(
     }
 }
 
+/// Builds the `video config payload`.
+/// 构建 `video config payload`。
 pub fn build_video_config_payload(
     codec: CodecId,
     config: &[u8],
@@ -270,6 +282,8 @@ pub fn build_video_config_payload(
     Some(payload.freeze())
 }
 
+/// `use_enhanced_video_mode` function.
+/// `use_enhanced_video_mode` 函数。
 pub fn use_enhanced_video_mode(mode: RtmpFlvPlayMode, codec: CodecId) -> bool {
     mode == RtmpFlvPlayMode::Enhanced
         || matches!(
@@ -278,6 +292,8 @@ pub fn use_enhanced_video_mode(mode: RtmpFlvPlayMode, codec: CodecId) -> bool {
         )
 }
 
+/// Builds the `H266 config`.
+/// 构建 `H266 config`。
 pub fn build_h266_config(vps: &[Bytes], sps: &[Bytes], pps: &[Bytes]) -> Bytes {
     let mut array_count = 0u8;
     if !vps.is_empty() {
@@ -301,6 +317,8 @@ pub fn build_h266_config(vps: &[Bytes], sps: &[Bytes], pps: &[Bytes]) -> Bytes {
     out.freeze()
 }
 
+/// Builds the `H265 config`.
+/// 构建 `H265 config`。
 pub fn build_h265_config(vps: &[Bytes], sps: &[Bytes], pps: &[Bytes]) -> Bytes {
     let mut array_count = 0u8;
     if !vps.is_empty() {
@@ -348,12 +366,16 @@ pub fn build_h265_config(vps: &[Bytes], sps: &[Bytes], pps: &[Bytes]) -> Bytes {
     out.freeze()
 }
 
+/// `track_list_has_audio` function.
+/// `track_list_has_audio` 函数。
 pub fn track_list_has_audio(tracks: &[TrackInfo]) -> bool {
     tracks
         .iter()
         .any(|track| track.media_kind == MediaKind::Audio)
 }
 
+/// `rtmp_playback_codec_supported` function.
+/// `rtmp_playback_codec_supported` 函数。
 pub fn rtmp_playback_codec_supported(media_kind: MediaKind, codec: CodecId) -> bool {
     matches!(
         (media_kind, codec),
@@ -377,6 +399,8 @@ pub fn rtmp_playback_codec_supported(media_kind: MediaKind, codec: CodecId) -> b
     )
 }
 
+/// `mute_aac_config_payload` function.
+/// `mute_aac_config_payload` 函数。
 pub fn mute_aac_config_payload() -> Bytes {
     let asc = [0x12, 0x10];
     let mut payload = BytesMut::with_capacity(2 + asc.len());
@@ -385,12 +409,16 @@ pub fn mute_aac_config_payload() -> Bytes {
     payload.freeze()
 }
 
+/// `mute_aac_frame_payload` function.
+/// `mute_aac_frame_payload` 函数。
 pub fn mute_aac_frame_payload() -> Bytes {
     let mut payload = BytesMut::with_capacity(3);
     payload.extend_from_slice(&[0xaf, 0x01, 0x00]);
     payload.freeze()
 }
 
+/// Builds the `metadata`.
+/// 构建 `metadata`。
 pub fn build_metadata(tracks: &[TrackInfo]) -> Bytes {
     let mut entries: Vec<(&str, Amf0Meta)> = Vec::new();
     entries.push(("duration", Amf0Meta::Number(0.0)));

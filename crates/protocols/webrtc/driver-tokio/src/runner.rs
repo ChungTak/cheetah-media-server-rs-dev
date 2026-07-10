@@ -201,6 +201,8 @@ pub struct WebRtcDriverDiagnostic {
     pub message: String,
 }
 
+/// Kind of `Web Rtc Driver Diagnostic`.
+/// `Web Rtc Driver Diagnostic` 的种类。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WebRtcDriverDiagnosticKind {
     UnroutedPacket,
@@ -291,12 +293,16 @@ pub struct WebRtcDriverStats {
 }
 
 impl WebRtcDriverHandle {
+    /// Sends `command` to the peer.
+    /// 向对端发送 `command`。
     pub async fn send_command(&self, cmd: WebRtcDriverCommand) {
         if let Err(err) = self.cmd_tx.send(cmd).await {
             warn!("WebRTC driver command channel closed: {err}");
         }
     }
 
+    /// `try_send_command` function of `WebRtcDriverHandle`.
+    /// `WebRtcDriverHandle` 的 `try_send_command` 函数。
     pub async fn try_send_command(&self, cmd: WebRtcDriverCommand) -> Result<(), WebRtcSendError> {
         match self.cmd_tx.try_send(cmd) {
             Ok(()) => Ok(()),
@@ -305,6 +311,8 @@ impl WebRtcDriverHandle {
         }
     }
 
+    /// Receives `event` from the peer.
+    /// 从对端接收 `event`。
     pub async fn recv_event(&self) -> Option<WebRtcDriverEvent> {
         let evt = self.event_rx.lock().await.recv().await;
         if evt.is_some() {
@@ -314,6 +322,8 @@ impl WebRtcDriverHandle {
         evt
     }
 
+    /// `local_udp_addr` function of `WebRtcDriverHandle`.
+    /// `WebRtcDriverHandle` 的 `local_udp_addr` 函数。
     pub fn local_udp_addr(&self) -> SocketAddr {
         self.local_udp_addr
     }
@@ -324,6 +334,8 @@ impl WebRtcDriverHandle {
         self.local_tcp_addr
     }
 
+    /// `session_count` function of `WebRtcDriverHandle`.
+    /// `WebRtcDriverHandle` 的 `session_count` 函数。
     pub fn session_count(&self) -> usize {
         self.session_count
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -492,6 +504,8 @@ impl WebRtcDriverHandle {
     }
 }
 
+/// Error returned by `Web Rtc Send` operations.
+/// `Web Rtc Send` 操作返回的错误。
 #[derive(Debug, thiserror::Error)]
 pub enum WebRtcSendError {
     #[error("driver command queue is full")]

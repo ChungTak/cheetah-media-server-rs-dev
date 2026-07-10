@@ -1,5 +1,11 @@
+/// Module for `error`.
+/// `error` 相关模块。
 pub mod error;
+/// Module for `request`.
+/// `request` 相关模块。
 pub mod request;
+/// Module for `session`.
+/// `session` 相关模块。
 pub mod session;
 
 pub use error::HttpFlvCoreError;

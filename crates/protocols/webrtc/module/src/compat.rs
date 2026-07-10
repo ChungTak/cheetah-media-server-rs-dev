@@ -120,6 +120,8 @@ pub struct OmeWebRtcRequest {
     pub transport: OmeTransportMode,
 }
 
+/// Error returned by `Ome Web Rtc URL` operations.
+/// `Ome Web Rtc URL` 操作返回的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OmeWebRtcUrlError {
     #[error("missing app segment")]
@@ -147,6 +149,8 @@ pub fn parse_ome_webrtc_path_query(
     parse_ome_webrtc_path_query_with_default_transport(path, query, OmeTransportMode::UdpTcp)
 }
 
+/// Parses `ome WebRTC path query with default transport` from input.
+/// 从输入解析 `ome WebRTC path query with default transport`。
 pub fn parse_ome_webrtc_path_query_with_default_transport(
     path: &str,
     query: Option<&str>,
@@ -209,6 +213,8 @@ fn parse_ome_direction(input: &str) -> Result<OmeDirection, OmeWebRtcUrlError> {
     }
 }
 
+/// Parses `ome transport mode` from input.
+/// 从输入解析 `ome transport mode`。
 pub fn parse_ome_transport_mode(input: &str) -> Result<OmeTransportMode, OmeWebRtcUrlError> {
     let s = input.trim().to_ascii_lowercase();
     match s.as_str() {
@@ -555,6 +561,8 @@ pub struct ZlmRtcUrl {
     pub extra_params: Vec<(String, String)>,
 }
 
+/// `ZlmRtcScheme` enumeration.
+/// `ZlmRtcScheme` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZlmRtcScheme {
     /// Plain RTC (HTTP signalling, UDP/TCP transport).
@@ -569,6 +577,8 @@ pub enum ZlmRtcScheme {
 }
 
 impl ZlmRtcScheme {
+    /// Returns `true` if `secure` is true.
+    /// 当 `secure` 为真时返回 `true`。
     pub fn is_secure(self) -> bool {
         matches!(self, Self::Rtcs | Self::WebRtcs)
     }
@@ -588,6 +598,8 @@ impl ZlmRtcScheme {
     }
 }
 
+/// Error returned by `Zlm Rtc URL` operations.
+/// `Zlm Rtc URL` 操作返回的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ZlmRtcUrlError {
     #[error("invalid scheme — expected rtc/rtcs/webrtc/webrtcs")]

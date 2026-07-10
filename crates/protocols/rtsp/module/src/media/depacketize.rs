@@ -159,6 +159,8 @@ pub(super) fn build_frame_from_rtp(
     Some(built)
 }
 
+/// Builds the `VP9 frame from RTP`.
+/// 构建 `VP9 frame from RTP`。
 pub fn build_vp9_frame_from_rtp(
     track: &TrackInfo,
     packet: &RtpPacket,
@@ -237,6 +239,8 @@ pub fn build_vp9_frame_from_rtp(
     })
 }
 
+/// Builds the `VP8 frame from RTP`.
+/// 构建 `VP8 frame from RTP`。
 pub fn build_vp8_frame_from_rtp(
     track: &TrackInfo,
     packet: &RtpPacket,
@@ -317,6 +321,8 @@ pub fn build_vp8_frame_from_rtp(
     })
 }
 
+/// Builds the `frames from RTP`.
+/// 构建 `frames from RTP`。
 pub fn build_frames_from_rtp(
     track: &TrackInfo,
     packet: &RtpPacket,

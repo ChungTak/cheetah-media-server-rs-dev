@@ -1,5 +1,7 @@
 const RTP_FIXED_HEADER_SIZE: usize = 12;
 
+/// Error returned by `RTP` operations.
+/// `RTP` 操作返回的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtpError {
     #[error("unsupported rtp version: {actual}")]
@@ -63,6 +65,8 @@ impl Default for RtpHeader {
 }
 
 impl RtpHeader {
+    /// Creates a new `RtpHeader` instance.
+    /// 创建新的 `RtpHeader` 实例。
     pub fn new(payload_type: u8, sequence_number: u16, timestamp: u32, ssrc: u32) -> Self {
         Self {
             payload_type,
@@ -73,6 +77,8 @@ impl RtpHeader {
         }
     }
 
+    /// `size` function of `RtpHeader`.
+    /// `RtpHeader` 的 `size` 函数。
     pub fn size(&self) -> usize {
         RTP_FIXED_HEADER_SIZE + self.csrc.len() * 4
     }
@@ -97,6 +103,8 @@ pub struct RtpPacket {
 }
 
 impl RtpPacket {
+    /// Creates a new `RtpPacket` instance.
+    /// 创建新的 `RtpPacket` 实例。
     pub fn new(header: RtpHeader, payload: Vec<u8>) -> Self {
         Self {
             header,
@@ -106,6 +114,8 @@ impl RtpPacket {
         }
     }
 
+    /// Parses the input into a structured value, returning an error if malformed.
+    /// 将输入解析为结构化值，格式错误时返回错误。
     pub fn parse(data: &[u8]) -> Result<Self, RtpError> {
         if data.len() < RTP_FIXED_HEADER_SIZE {
             return Err(RtpError::InsufficientData {
@@ -221,6 +231,8 @@ impl RtpPacket {
         })
     }
 
+    /// Builds the output from the accumulated state.
+    /// 从累积状态构建输出。
     pub fn build(&self) -> Result<Vec<u8>, RtpError> {
         if self.header.version != 2 {
             return Err(RtpError::UnsupportedVersion {
@@ -293,6 +305,8 @@ impl RtpPacket {
         Ok(out)
     }
 
+    /// `size` function of `RtpPacket`.
+    /// `RtpPacket` 的 `size` 函数。
     pub fn size(&self) -> usize {
         let mut size = self.header.size();
         if let Some(extension) = &self.extension {

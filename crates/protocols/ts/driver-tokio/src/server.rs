@@ -61,6 +61,8 @@ pub struct TsServerHandle {
 }
 
 impl TsServerHandle {
+    /// Receives `event` from the peer.
+    /// 从对端接收 `event`。
     pub async fn recv_event(&mut self) -> Option<TsDriverEvent> {
         self.event_rx.recv().await
     }
@@ -73,6 +75,8 @@ pub struct TsCommandSender {
 }
 
 impl TsCommandSender {
+    /// Sends data to the peer.
+    /// 向对端发送数据。
     pub async fn send(&self, cmd: TsDriverCommand) {
         let _ = self.tx.send(cmd).await;
     }

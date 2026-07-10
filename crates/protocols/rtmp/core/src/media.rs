@@ -8,48 +8,68 @@ use cheetah_codec::{
 
 use crate::error::Error;
 
+/// `RtmpTimestamp` data structure.
+/// `RtmpTimestamp` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RtmpTimestamp(u32);
 
 impl RtmpTimestamp {
     pub const ZERO: Self = Self(0);
 
+    /// Creates `millis` from input.
+    /// 从输入创建 `millis`。
     pub const fn from_millis(t: u32) -> Self {
         Self(t)
     }
 
+    /// `as_millis` function of `RtmpTimestamp`.
+    /// `RtmpTimestamp` 的 `as_millis` 函数。
     pub const fn as_millis(self) -> u32 {
         self.0
     }
 
+    /// `as_duration` function of `RtmpTimestamp`.
+    /// `RtmpTimestamp` 的 `as_duration` 函数。
     pub const fn as_duration(self) -> Duration {
         Duration::from_millis(self.0 as u64)
     }
 
+    /// `wrapping_add` function of `RtmpTimestamp`.
+    /// `RtmpTimestamp` 的 `wrapping_add` 函数。
     pub fn wrapping_add(self, other: Self) -> Self {
         Self(self.0.wrapping_add(other.0))
     }
 
+    /// `checked_sub` function of `RtmpTimestamp`.
+    /// `RtmpTimestamp` 的 `checked_sub` 函数。
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         self.0.checked_sub(other.0).map(Self)
     }
 }
 
+/// `RtmpTimestampDelta` data structure.
+/// `RtmpTimestampDelta` 数据结构。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RtmpTimestampDelta(i32);
 
 impl RtmpTimestampDelta {
     pub const ZERO: Self = Self(0);
 
+    /// Creates `millis` from input.
+    /// 从输入创建 `millis`。
     pub const fn from_millis(t: i32) -> Self {
         Self(t)
     }
 
+    /// `as_millis` function of `RtmpTimestampDelta`.
+    /// `RtmpTimestampDelta` 的 `as_millis` 函数。
     pub const fn as_millis(self) -> i32 {
         self.0
     }
 }
 
+/// Frame for `Media`.
+/// `Media` 的帧。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MediaFrame {
     Audio(AudioFrame),
@@ -57,6 +77,8 @@ pub enum MediaFrame {
 }
 
 impl MediaFrame {
+    /// `unwrap_audio` function of `MediaFrame`.
+    /// `MediaFrame` 的 `unwrap_audio` 函数。
     pub fn unwrap_audio(self) -> AudioFrame {
         match self {
             MediaFrame::Audio(f) => f,
@@ -64,6 +86,8 @@ impl MediaFrame {
         }
     }
 
+    /// `unwrap_video` function of `MediaFrame`.
+    /// `MediaFrame` 的 `unwrap_video` 函数。
     pub fn unwrap_video(self) -> VideoFrame {
         match self {
             MediaFrame::Video(f) => f,
@@ -72,6 +96,8 @@ impl MediaFrame {
     }
 }
 
+/// Frame for `Audio`.
+/// `Audio` 的帧。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioFrame {
     pub timestamp: RtmpTimestamp,
@@ -88,6 +114,8 @@ impl AudioFrame {
     pub const AAC_STEREO: bool = true;
 }
 
+/// Frame for `Video`.
+/// `Video` 的帧。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoFrame {
     pub timestamp: RtmpTimestamp,
@@ -99,11 +127,15 @@ pub struct VideoFrame {
 }
 
 impl VideoFrame {
+    /// Returns `true` if `keyframe` is true.
+    /// 当 `keyframe` 为真时返回 `true`。
     pub fn is_keyframe(&self) -> bool {
         self.frame_type == VideoFrameType::KeyFrame
     }
 }
 
+/// Type of `Avc Packet`.
+/// `Avc Packet` 的类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AvcPacketType {
     SequenceHeader = 0,
@@ -111,6 +143,8 @@ pub enum AvcPacketType {
     EndOfSequence = 2,
 }
 
+/// Type of `Video Frame`.
+/// `Video Frame` 的类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum VideoFrameType {
     KeyFrame = 1,
@@ -120,6 +154,8 @@ pub enum VideoFrameType {
     VideoInfoOrCommandFrame = 5,
 }
 
+/// `VideoCodec` enumeration.
+/// `VideoCodec` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum VideoCodec {
     Jpeg,
@@ -133,6 +169,8 @@ pub enum VideoCodec {
 }
 
 impl VideoCodec {
+    /// `raw_id` function of `VideoCodec`.
+    /// `VideoCodec` 的 `raw_id` 函数。
     pub fn raw_id(self) -> u8 {
         match self {
             VideoCodec::Jpeg => 1,
@@ -147,6 +185,8 @@ impl VideoCodec {
     }
 }
 
+/// `AudioFormat` enumeration.
+/// `AudioFormat` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AudioFormat {
     Adpcm,
@@ -165,6 +205,8 @@ pub enum AudioFormat {
 }
 
 impl AudioFormat {
+    /// `raw_id` function of `AudioFormat`.
+    /// `AudioFormat` 的 `raw_id` 函数。
     pub fn raw_id(self) -> u8 {
         match self {
             AudioFormat::Adpcm => 1,
@@ -184,6 +226,8 @@ impl AudioFormat {
     }
 }
 
+/// `AudioSampleRate` enumeration.
+/// `AudioSampleRate` 枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AudioSampleRate {
     Khz5 = 0,
@@ -192,6 +236,8 @@ pub enum AudioSampleRate {
     Khz44 = 3,
 }
 
+/// Header for `Avc Sequence`.
+/// `Avc Sequence` 的头。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AvcSequenceHeader {
     pub avc_profile_indication: u8,
@@ -209,6 +255,8 @@ impl AvcSequenceHeader {
     const MAX_SPS_SIZE: usize = 4096;
     const MAX_PPS_SIZE: usize = 4096;
 
+    /// Creates `bytes` from input.
+    /// 从输入创建 `bytes`。
     pub fn from_bytes(data: &[u8]) -> Result<Self, Error> {
         if data.len() < 7 {
             return Err(Error::invalid_data(
@@ -348,6 +396,8 @@ impl AvcSequenceHeader {
         })
     }
 
+    /// Converts to `bytes` representation.
+    /// 转换为 `bytes` 表示。
     pub fn to_bytes(&self) -> Result<Vec<u8>, Error> {
         if self.sps_list.is_empty() {
             return Err(Error::invalid_data("SPS list must not be empty"));
@@ -419,6 +469,8 @@ impl AvcSequenceHeader {
     }
 }
 
+/// Encodes `audio frame` into the output buffer.
+/// 将 `audio frame` 编码到输出缓冲区。
 pub fn encode_audio_frame(buf: &mut Vec<u8>, frame: &AudioFrame) {
     let header = ((frame.format.raw_id()) << 4)
         | ((frame.sample_rate as u8) << 2)
@@ -434,6 +486,8 @@ pub fn encode_audio_frame(buf: &mut Vec<u8>, frame: &AudioFrame) {
     buf.extend_from_slice(&frame.data);
 }
 
+/// Decodes `audio frame` from the input buffer.
+/// 从输入缓冲区解码 `audio frame`。
 pub fn decode_audio_frame(buf: &[u8], timestamp: RtmpTimestamp) -> Result<AudioFrame, Error> {
     let mut reader = buf;
     let header = read_u8(&mut reader)?;
@@ -484,6 +538,8 @@ pub fn decode_audio_frame(buf: &[u8], timestamp: RtmpTimestamp) -> Result<AudioF
     })
 }
 
+/// Encodes `video frame` into the output buffer.
+/// 将 `video frame` 编码到输出缓冲区。
 pub fn encode_video_frame(buf: &mut Vec<u8>, frame: &VideoFrame) {
     let frame_type_codec = ((frame.frame_type as u8) << 4) | (frame.codec.raw_id());
     buf.push(frame_type_codec);
@@ -496,6 +552,8 @@ pub fn encode_video_frame(buf: &mut Vec<u8>, frame: &VideoFrame) {
     buf.extend_from_slice(&frame.data);
 }
 
+/// Decodes `video frame` from the input buffer.
+/// 从输入缓冲区解码 `video frame`。
 pub fn decode_video_frame(buf: &[u8], timestamp: RtmpTimestamp) -> Result<VideoFrame, Error> {
     let mut reader = buf;
     let frame_type_codec = read_u8(&mut reader)?;
@@ -558,6 +616,8 @@ pub fn decode_video_frame(buf: &[u8], timestamp: RtmpTimestamp) -> Result<VideoF
     })
 }
 
+/// Header for `Video Ingress`.
+/// `Video Ingress` 的头。
 #[derive(Debug, Clone, Copy)]
 pub struct VideoIngressHeader {
     pub frame_type: u8,
@@ -693,6 +753,8 @@ pub fn parse_video_multi_track(payload: &[u8]) -> Option<VideoMultiTrackHeader> 
     })
 }
 
+/// Parses `video ingress header` from input.
+/// 从输入解析 `video ingress header`。
 pub fn parse_video_ingress_header(payload: &[u8]) -> Option<VideoIngressHeader> {
     parse_video_ingress_header_with_mode(payload, DomesticCodecMode::Standard)
 }

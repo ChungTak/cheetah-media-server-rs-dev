@@ -563,6 +563,8 @@ impl ShardSelector {
         }
     }
 
+    /// `shard_count` function of `ShardSelector`.
+    /// `ShardSelector` 的 `shard_count` 函数。
     pub fn shard_count(&self) -> usize {
         self.shard_count
     }
@@ -613,6 +615,8 @@ pub struct ShardLoad {
 }
 
 impl ShardLoadTable {
+    /// Creates a new `ShardLoadTable` instance.
+    /// 创建新的 `ShardLoadTable` 实例。
     pub fn new(shard_count: usize) -> Self {
         let shard_count = shard_count.max(1);
         let mut inner = HashMap::with_capacity(shard_count);
@@ -625,17 +629,23 @@ impl ShardLoadTable {
         }
     }
 
+    /// `shard_count` function of `ShardLoadTable`.
+    /// `ShardLoadTable` 的 `shard_count` 函数。
     #[allow(dead_code)]
     pub fn shard_count(&self) -> usize {
         self.shard_count
     }
 
+    /// `record_session_added` function of `ShardLoadTable`.
+    /// `ShardLoadTable` 的 `record_session_added` 函数。
     pub fn record_session_added(&self, shard: ShardId) {
         let mut guard = self.inner.lock();
         let entry = guard.entry(shard).or_default();
         entry.session_count = entry.session_count.saturating_add(1);
     }
 
+    /// `record_session_removed` function of `ShardLoadTable`.
+    /// `ShardLoadTable` 的 `record_session_removed` 函数。
     pub fn record_session_removed(&self, shard: ShardId) {
         let mut guard = self.inner.lock();
         let entry = guard.entry(shard).or_default();

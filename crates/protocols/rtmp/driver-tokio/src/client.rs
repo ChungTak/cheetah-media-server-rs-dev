@@ -18,12 +18,16 @@ use tracing::warn;
 
 const DEFAULT_FLASH_VER: &str = "FMLE/3.0 (compatible; FME/3.0)";
 
+/// Mode selecting `RTMP Client` behavior.
+/// 选择 `RTMP Client` 行为的模式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpClientMode {
     Play,
     Publish,
 }
 
+/// Configuration for `RTMP Client Driver`.
+/// `RTMP Client Driver` 的配置。
 #[derive(Debug, Clone)]
 pub struct RtmpClientDriverConfig {
     pub command_queue_capacity: usize,
@@ -47,6 +51,8 @@ impl Default for RtmpClientDriverConfig {
     }
 }
 
+/// Events produced by the `Client Driver` subsystem.
+/// `Client Driver` 子系统产生的事件。
 #[derive(Debug)]
 pub enum ClientDriverEvent {
     Connected { peer: Option<SocketAddr> },
@@ -54,6 +60,8 @@ pub enum ClientDriverEvent {
     Closed { reason: String },
 }
 
+/// Command for `RTMP Client Driver`.
+/// `RTMP Client Driver` 的命令。
 #[derive(Debug, Clone)]
 pub enum RtmpClientDriverCommand {
     Core(RtmpCoreCommand),
@@ -61,17 +69,23 @@ pub enum RtmpClientDriverCommand {
     Shutdown,
 }
 
+/// Error returned by `Client Send` operations.
+/// `Client Send` 操作返回的错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientSendError {
     ChannelClosed,
 }
 
+/// `RtmpClientCommandSender` data structure.
+/// `RtmpClientCommandSender` 数据结构。
 #[derive(Clone)]
 pub struct RtmpClientCommandSender {
     tx: mpsc::Sender<RtmpClientDriverCommand>,
 }
 
 impl RtmpClientCommandSender {
+    /// Sends data to the peer.
+    /// 向对端发送数据。
     pub async fn send(&self, command: RtmpClientDriverCommand) -> Result<(), ClientSendError> {
         self.tx
             .send(command)
@@ -79,15 +93,21 @@ impl RtmpClientCommandSender {
             .map_err(|_| ClientSendError::ChannelClosed)
     }
 
+    /// Sends `core` to the peer.
+    /// 向对端发送 `core`。
     pub async fn send_core(&self, command: RtmpCoreCommand) -> Result<(), ClientSendError> {
         self.send(RtmpClientDriverCommand::Core(command)).await
     }
 
+    /// Closes the `connection`.
+    /// 关闭 `connection`。
     pub async fn close_connection(&self) -> Result<(), ClientSendError> {
         self.send(RtmpClientDriverCommand::CloseConnection).await
     }
 }
 
+/// Handle to a `RTMP Client` resource.
+/// `RTMP Client` 资源的句柄。
 pub struct RtmpClientHandle {
     events_rx: mpsc::Receiver<ClientDriverEvent>,
     cmd_tx: RtmpClientCommandSender,
@@ -96,10 +116,14 @@ pub struct RtmpClientHandle {
 }
 
 impl RtmpClientHandle {
+    /// Receives `event` from the peer.
+    /// 从对端接收 `event`。
     pub async fn recv_event(&mut self) -> Option<ClientDriverEvent> {
         self.events_rx.recv().await
     }
 
+    /// Sends `driver command` to the peer.
+    /// 向对端发送 `driver command`。
     pub async fn send_driver_command(
         &self,
         command: RtmpClientDriverCommand,
@@ -107,14 +131,20 @@ impl RtmpClientHandle {
         self.cmd_tx.send(command).await
     }
 
+    /// `core_command_sender` function of `RtmpClientHandle`.
+    /// `RtmpClientHandle` 的 `core_command_sender` 函数。
     pub fn core_command_sender(&self) -> RtmpClientCommandSender {
         self.cmd_tx.clone()
     }
 
+    /// Shuts down the send or receive side of the stream.
+    /// 关闭流的发送或接收端。
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
 
+    /// `wait` function of `RtmpClientHandle`.
+    /// `RtmpClientHandle` 的 `wait` 函数。
     pub async fn wait(self) -> Result<(), TaskJoinError> {
         self.join.wait().await
     }
@@ -236,6 +266,8 @@ impl ClientAutomation {
     }
 }
 
+/// Starts the `client`.
+/// 启动 `client`。
 pub fn start_client(
     runtime_api: Arc<dyn RuntimeApi>,
     url: RtmpUrl,

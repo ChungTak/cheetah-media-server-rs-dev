@@ -36,6 +36,8 @@ pub struct Mp4FileWriter {
 }
 
 impl Mp4FileWriter {
+    /// Creates a new `Mp4FileWriter` instance.
+    /// 创建新的 `Mp4FileWriter` 实例。
     pub fn new(config: Mp4FileWriterConfig) -> Self {
         Self {
             config,

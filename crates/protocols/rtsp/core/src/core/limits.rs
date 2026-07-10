@@ -1,5 +1,7 @@
 use super::RtspCoreError;
 
+/// `RtspMessageLimits` data structure.
+/// `RtspMessageLimits` 数据结构。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspMessageLimits {
     pub max_buffer_size: usize,
