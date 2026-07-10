@@ -28,9 +28,18 @@ use crate::pull::{run_pull_job_supervisor, PullReadLimits};
 
 const MODULE_ID: &str = "http-flv";
 
+/// Factory that builds `HttpFlvModule` instances and advertises the module
+/// manifest to the engine.
+///
+/// 构建 `HttpFlvModule` 实例并向引擎注册模块 manifest 的工厂。
 pub struct HttpFlvModuleFactory;
 
 impl ModuleFactory for HttpFlvModuleFactory {
+    /// Return the module manifest: ID, display name, HTTP route prefix, and
+    /// capabilities (subscribe, publish, background job).
+    ///
+    /// 返回模块 manifest：ID、显示名称、HTTP 路由前缀以及能力
+    ///（订阅、发布、后台任务）。
     fn manifest(&self) -> ModuleManifest {
         ModuleManifest {
             module_id: ModuleId::new(MODULE_ID),
@@ -46,10 +55,18 @@ impl ModuleFactory for HttpFlvModuleFactory {
         }
     }
 
+    /// Create a fresh `HttpFlvModule` instance.
+    ///
+    /// 创建一个全新的 `HttpFlvModule` 实例。
     fn create(&self) -> Box<dyn Module> {
         Box::new(HttpFlvModule::new())
     }
 
+    /// Register the JSON schema for `http_flv` configuration and a validator
+    /// that converts JSON into `HttpFlvModuleConfig` and checks it.
+    ///
+    /// 注册 `http_flv` 配置的 JSON schema，并提供校验器将 JSON 转换为
+    /// `HttpFlvModuleConfig` 并校验。
     fn config_schema(&self) -> Option<ModuleSchemaRegistration> {
         Some(ModuleSchemaRegistration {
             module_id: ModuleId::new(MODULE_ID),
@@ -64,6 +81,16 @@ impl ModuleFactory for HttpFlvModuleFactory {
     }
 }
 
+/// HTTP-FLV module instance.
+///
+/// Owns the parsed configuration, the `EngineContext` handle, the cancellation
+/// token for spawned tasks, and the one-shot join handles for the server event
+/// loop and pull supervisors.
+///
+/// HTTP-FLV 模块实例。
+///
+/// 持有解析后的配置、`EngineContext` 句柄、已生成任务的取消令牌，
+/// 以及服务器事件循环和拉流监管器的一次性完成句柄。
 pub struct HttpFlvModule {
     info: ModuleInfo,
     state: ModuleState,
@@ -74,6 +101,9 @@ pub struct HttpFlvModule {
 }
 
 impl HttpFlvModule {
+    /// Create an HTTP-FLV module in the `Created` state.
+    ///
+    /// 创建一个处于 `Created` 状态的 HTTP-FLV 模块。
     pub fn new() -> Self {
         Self {
             info: ModuleInfo {
@@ -98,14 +128,23 @@ impl Default for HttpFlvModule {
 
 #[async_trait]
 impl Module for HttpFlvModule {
+    /// Return a clone of the module's runtime info.
+    ///
+    /// 返回模块运行时信息的副本。
     fn info(&self) -> ModuleInfo {
         self.info.clone()
     }
 
+    /// Return the current module lifecycle state.
+    ///
+    /// 返回模块当前生命周期状态。
     fn state(&self) -> ModuleState {
         self.state
     }
 
+    /// Parse the initial JSON configuration and capture the engine context.
+    ///
+    /// 解析初始 JSON 配置并保存引擎上下文。
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
         self.config = HttpFlvModuleConfig::from_value(ctx.initial_config)?;
         self.engine = Some(ctx.engine);
@@ -113,6 +152,18 @@ impl Module for HttpFlvModule {
         Ok(())
     }
 
+    /// Start the HTTP-FLV driver and pull supervisors.
+    ///
+    /// If disabled, the module transitions to `Running` without binding any
+    /// sockets. Otherwise the driver is started on the configured `listen`
+    /// address, the service is registered, and the server event loop and all
+    /// enabled pull jobs are spawned as background tasks.
+    ///
+    /// 启动 HTTP-FLV 驱动和拉流监管器。
+    ///
+    /// 如果禁用，模块直接进入 `Running` 状态而不绑定任何 socket；否则在
+    /// 配置的 `listen` 地址上启动驱动，注册服务，并将服务器事件循环和所有
+    /// 已启用的拉流任务作为后台任务生成。
     async fn start(&mut self, cancel: CancellationToken) -> Result<(), SdkError> {
         let Some(engine) = self.engine.clone() else {
             return Err(SdkError::Unavailable(
@@ -179,6 +230,9 @@ impl Module for HttpFlvModule {
         Ok(())
     }
 
+    /// Stop the module by cancelling runtime tasks and waiting for them.
+    ///
+    /// 取消运行时任务并等待其结束，然后注销服务。
     async fn stop(&mut self) -> Result<(), SdkError> {
         if let Some(cancel) = self.runtime_cancel.take() {
             cancel.cancel();
@@ -193,6 +247,16 @@ impl Module for HttpFlvModule {
         Ok(())
     }
 
+    /// Apply a new configuration.
+    ///
+    /// If the configuration is unchanged the effect is `Immediate`; otherwise
+    /// the module stores the new config and signals `ModuleRestartRequired` so
+    /// the engine rebuilds the module.
+    ///
+    /// 应用新配置。
+    ///
+    /// 如果配置未变，则效果为 `Immediate`；否则保存新配置并返回
+    /// `ModuleRestartRequired`，让引擎重建模块。
     async fn apply_config(&mut self, change: ModuleConfigChange) -> Result<ConfigEffect, SdkError> {
         let next = HttpFlvModuleConfig::from_value(change.next)?;
         if next == self.config {
@@ -203,6 +267,13 @@ impl Module for HttpFlvModule {
     }
 }
 
+/// Spawn a background pull supervisor for every enabled pull job.
+///
+/// Each job runs its own retry loop with a dedicated child cancellation token.
+///
+/// 为每个已启用的拉流任务生成后台拉流监管器。
+///
+/// 每个任务都使用独立的子取消令牌运行自己的重试循环。
 fn spawn_pull_job_loops(
     runtime_api: Arc<dyn RuntimeApi>,
     config: HttpFlvModuleConfig,
@@ -223,6 +294,10 @@ fn spawn_pull_job_loops(
     loops
 }
 
+/// Spawn a runtime task and return a one-shot receiver that completes when it
+/// finishes.
+///
+/// 生成一个运行时任务，并返回一个在其完成时触发的一次性接收器。
 fn spawn_runtime_task<F>(runtime_api: Arc<dyn RuntimeApi>, fut: F) -> OneShotReceiver
 where
     F: Future<Output = ()> + Send + 'static,
@@ -236,11 +311,31 @@ where
     done_rx
 }
 
+/// A play session that is currently running for a connection.
+///
+/// Holds the cancellation token and the one-shot join handle for the session
+/// task so the server loop can cleanly shut it down.
+///
+/// 为某个连接正在运行的播放会话。
+///
+/// 保存会话任务的取消令牌和一次性完成句柄，以便服务器循环可以干净地关闭它。
 struct ActivePlaySession {
     cancel: CancellationToken,
     done: OneShotReceiver,
 }
 
+/// Main server loop: dispatch driver events and manage play sessions.
+///
+/// The loop waits for `HttpFlvDriverEvent`s. On `PlayRequested` it spawns a
+/// `run_play_session` task for the connection. On `ConnectionClosed` or
+/// `PeerClosed` it cancels the matching session. When `cancel` fires, the
+/// driver is shut down and the loop drains all active sessions before exiting.
+///
+/// 主服务器循环：分发驱动事件并管理播放会话。
+///
+/// 循环等待 `HttpFlvDriverEvent`。收到 `PlayRequested` 时，为对应连接生成
+/// `run_play_session` 任务；收到 `ConnectionClosed` 或 `PeerClosed` 时取消对应会话。
+/// 当 `cancel` 触发时，关闭驱动并排空所有活动会话后退出。
 async fn run_server_loop(
     engine: EngineContext,
     config: HttpFlvModuleConfig,
@@ -366,6 +461,9 @@ async fn run_server_loop(
     let _ = driver.wait().await;
 }
 
+/// Extract the connection ID carried by any `HttpFlvDriverEvent` variant.
+///
+/// 从任意 `HttpFlvDriverEvent` 变体中提取连接 ID。
 fn event_connection_id(event: &HttpFlvDriverEvent) -> Option<HttpFlvConnectionId> {
     match event {
         HttpFlvDriverEvent::ConnectionOpened { connection_id, .. }
@@ -374,6 +472,19 @@ fn event_connection_id(event: &HttpFlvDriverEvent) -> Option<HttpFlvConnectionId
     }
 }
 
+/// Run a single HTTP-FLV play session.
+///
+/// Waits for the source stream to appear, subscribes to it, sends the FLV
+/// header and bootstrap payloads, then loops forwarding frames to the driver
+/// command sender. On a key frame it checks whether the track list has changed
+/// and re-issues bootstrap payloads if needed. If a frame cannot be mapped, it
+/// refreshes the stream snapshot and tries once more.
+///
+/// 运行单个 HTTP-FLV 播放会话。
+///
+/// 等待源流出现、订阅它、发送 FLV 头部和启动负载，然后循环将帧转发给驱动命令发送器。
+/// 在关键帧时检查轨道列表是否变化，需要时重新发送启动负载。如果帧无法映射，
+/// 则刷新流快照并重试一次。
 async fn run_play_session(
     engine: EngineContext,
     config: HttpFlvModuleConfig,
@@ -515,6 +626,9 @@ async fn run_play_session(
     let _ = command_tx.close_connection(connection_id).await;
 }
 
+/// Send the FLV header and bootstrap payloads for the current track list.
+///
+/// 发送当前轨道列表的 FLV 头部与启动负载。
 async fn send_play_header_and_bootstrap(
     command_tx: &HttpFlvCoreCommandSender,
     connection_id: HttpFlvConnectionId,
@@ -536,6 +650,9 @@ async fn send_play_header_and_bootstrap(
     send_bootstrap_payloads(command_tx, connection_id, tracks, play_mode, config).await
 }
 
+/// Build and send the bootstrap payloads needed for a player to start.
+///
+/// 生成并发送播放器启动所需的启动负载。
 async fn send_bootstrap_payloads(
     command_tx: &HttpFlvCoreCommandSender,
     connection_id: HttpFlvConnectionId,
@@ -568,6 +685,16 @@ async fn send_bootstrap_payloads(
     Ok(())
 }
 
+/// Wait until the stream exists or the timeout/cancellation fires.
+///
+/// Polls `stream_manager_api.get_stream` every 100 ms, checking `cancel` and
+/// the elapsed time against `timeout`. Returns `None` on cancellation or
+/// timeout.
+///
+/// 等待流出现，直到超时或取消触发。
+///
+/// 每 100 毫秒轮询 `stream_manager_api.get_stream`，检查 `cancel` 和已用时间是否超过
+/// `timeout`。取消或超时时返回 `None`。
 async fn wait_for_stream_snapshot(
     engine: &EngineContext,
     stream_key: &StreamKey,
@@ -606,6 +733,13 @@ async fn wait_for_stream_snapshot(
     }
 }
 
+/// Sleep for `duration` but return early if `cancel` is triggered.
+///
+/// Returns `true` when cancelled, `false` when the timer completes.
+///
+/// 睡眠 `duration`，但如果 `cancel` 被触发则提前返回。
+///
+/// 取消时返回 `true`，计时器完成时返回 `false`。
 async fn sleep_or_cancel(
     runtime_api: &dyn RuntimeApi,
     cancel: &CancellationToken,

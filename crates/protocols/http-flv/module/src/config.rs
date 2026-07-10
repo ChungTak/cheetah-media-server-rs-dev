@@ -5,6 +5,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::route::{parse_stream_key_spec, validate_pull_source_url};
 
+/// Runtime configuration for the HTTP-FLV module.
+///
+/// Drives the TCP/HTTP listener, TLS listener, subscriber queue policy,
+/// bootstrap policy, and pull jobs.  Values are validated by
+/// [`HttpFlvModuleConfig::validate`].
+///
+/// HTTP-FLV 模块的运行时配置。
+///
+/// 驱动 TCP/HTTP 监听器、TLS 监听器、订阅者队列策略、启动策略和拉流任务。
+/// 由 [`HttpFlvModuleConfig::validate`] 进行校验。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct HttpFlvModuleConfig {
@@ -23,7 +33,14 @@ pub struct HttpFlvModuleConfig {
     pub pull_jobs: Vec<HttpFlvPullJobConfig>,
 }
 
-/// HTTPS-FLV / WSS-FLV TLS configuration.
+/// TLS / HTTPS-FLV / WSS-FLV listener configuration.
+///
+/// When enabled, `cert_path` and `key_path` must be non-empty and
+/// `listen` must be a valid `SocketAddr`.
+///
+/// TLS / HTTPS-FLV / WSS-FLV 监听器配置。
+///
+/// 启用时，`cert_path` 和 `key_path` 必须非空，`listen` 必须是有效的 `SocketAddr`。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct HttpFlvTlsConfig {
@@ -46,6 +63,15 @@ impl Default for HttpFlvTlsConfig {
     }
 }
 
+/// Pull job description.
+///
+/// The module repeatedly pulls an HTTP or WebSocket FLV source and
+/// injects the resulting stream into the engine under `target_stream_key`.
+///
+/// 拉流任务描述。
+///
+/// 模块会反复从 HTTP 或 WebSocket FLV 源拉流，并将得到的流注入到
+/// 引擎中的 `target_stream_key` 下。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct HttpFlvPullJobConfig {
@@ -57,6 +83,9 @@ pub struct HttpFlvPullJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+/// Operational thresholds used to diagnose startup stalls and queue drops.
+///
+/// 用于诊断启动卡死与队列丢包的运行阈值。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct HttpFlvAlertThresholds {
@@ -107,6 +136,9 @@ impl Default for HttpFlvAlertThresholds {
 }
 
 impl HttpFlvModuleConfig {
+    /// Parse a JSON value into a validated HTTP-FLV module configuration.
+    ///
+    /// 将 JSON 值解析为已校验的 HTTP-FLV 模块配置。
     pub fn from_value(value: serde_json::Value) -> Result<Self, SdkError> {
         let cfg: Self = serde_json::from_value(value)
             .map_err(|err| SdkError::InvalidArgument(format!("invalid http_flv config: {err}")))?;
@@ -114,6 +146,20 @@ impl HttpFlvModuleConfig {
         Ok(cfg)
     }
 
+    /// Validate the configuration fields.
+    ///
+    /// Checks that listen addresses are valid `SocketAddr`s, TLS prerequisites
+    /// are satisfied when TLS is enabled, queue sizes are positive, and that
+    /// `startup_timeout_ms` does not exceed `play_wait_source_timeout_ms`. Each
+    /// enabled pull job must have a non-empty name, a valid HTTP/WS source URL,
+    /// a valid target stream key, and positive backoff values.
+    ///
+    /// 校验配置字段。
+    ///
+    /// 检查监听地址是否为有效的 `SocketAddr`；TLS 启用时是否满足 TLS 前提条件；
+    /// 队列大小是否为正；`startup_timeout_ms` 是否不超过 `play_wait_source_timeout_ms`。
+    /// 每个已启用的拉流任务必须有非空名称、有效的 HTTP/WS 源 URL、有效的目标流 Key
+    /// 以及正的退避值。
     pub fn validate(&self) -> Result<(), SdkError> {
         self.listen
             .parse::<SocketAddr>()
@@ -200,6 +246,9 @@ impl HttpFlvModuleConfig {
         Ok(())
     }
 
+    /// Return the default configuration as a JSON value for the schema registry.
+    ///
+    /// 将默认配置以 JSON 值形式返回，用于 schema 注册。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).expect("serialize default http_flv config")
     }

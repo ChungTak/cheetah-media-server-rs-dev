@@ -1,5 +1,13 @@
 use cheetah_sdk::StreamKey;
 
+/// Parse a `namespace/stream` stream key specification from user input.
+///
+/// Trims leading/trailing slashes, splits on the first '/', then trims and
+/// validates both parts. Returns `None` if either part is empty.
+///
+/// 从用户输入解析 `namespace/stream` 格式的流 Key。
+///
+/// 去掉首尾斜杠，按第一个 `/` 切分，再 trim 并校验两部分。任一部分为空时返回 `None`。
 pub fn parse_stream_key_spec(spec: &str) -> Option<StreamKey> {
     let trimmed = spec.trim().trim_matches('/');
     let (namespace, path) = trimmed.split_once('/')?;
@@ -11,6 +19,14 @@ pub fn parse_stream_key_spec(spec: &str) -> Option<StreamKey> {
     Some(StreamKey::new(namespace, path))
 }
 
+/// Validate that a pull source URL uses `http://` or `ws://` and has a host.
+///
+/// HTTPS and WSS are intentionally rejected by this validator; the pull client
+/// does not yet support TLS sources.
+///
+/// 校验拉流源 URL 是否使用 `http://` 或 `ws://` 并包含主机。
+///
+/// 此校验器故意拒绝 HTTPS 和 WSS；拉流客户端暂不支持 TLS 源。
 pub fn validate_pull_source_url(source_url: &str) -> bool {
     let trimmed = source_url.trim();
     let Some((scheme, rest)) = trimmed.split_once("://") else {

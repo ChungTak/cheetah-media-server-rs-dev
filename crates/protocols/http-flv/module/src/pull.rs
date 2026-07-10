@@ -10,6 +10,9 @@ use tracing::warn;
 
 use crate::config::HttpFlvPullJobConfig;
 
+/// Read limits and buffer sizes for a single HTTP/WS FLV pull.
+///
+/// HTTP/WS FLV 单次拉流的读取限制与缓冲区大小。
 #[derive(Debug, Clone, Copy)]
 pub struct PullReadLimits {
     pub max_response_header_bytes: usize,
@@ -29,6 +32,15 @@ impl Default for PullReadLimits {
     }
 }
 
+/// Result of a single HTTP/WS FLV pull.
+///
+/// Contains the optional `FlvHeader`, the demuxed tags, and a counter of
+/// previous-tag-size mismatches encountered during parsing.
+///
+/// 单次 HTTP/WS FLV 拉流的结果。
+///
+/// 包含可选的 `FlvHeader`、解复用后的 tag，以及解析过程中遇到的
+/// previous-tag-size 不匹配计数。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpFlvPullResult {
     pub header: Option<FlvHeader>,
@@ -36,6 +48,9 @@ pub struct HttpFlvPullResult {
     pub previous_tag_size_mismatch_count: u64,
 }
 
+/// Errors that can occur while pulling an HTTP/WS FLV source.
+///
+/// 拉取 HTTP/WS FLV 源时可能发生的错误。
 #[derive(Debug, thiserror::Error)]
 pub enum HttpFlvPullError {
     #[error("invalid pull url: {0}")]
@@ -71,6 +86,10 @@ pub enum HttpFlvPullError {
 }
 
 impl HttpFlvPullError {
+    /// Return `true` if the error indicates a transient failure that should
+    /// be retried, and `false` for fatal configuration errors.
+    ///
+    /// 返回 `true` 表示该错误是应重试的瞬时失败，`false` 表示是致命的配置错误。
     fn retryable(&self) -> bool {
         !matches!(
             self,
@@ -79,18 +98,27 @@ impl HttpFlvPullError {
     }
 }
 
+/// Supported URL schemes for an FLV pull source.
+///
+/// 拉流源支持的 URL scheme。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PullScheme {
     Http,
     Ws,
 }
 
+/// Frame decoded from a chunked transfer-encoded body.
+///
+/// 从分块传输编码体中解码出的帧。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ChunkedBodyFrame {
     Data(Vec<u8>),
     End,
 }
 
+/// Parsed URL components for an HTTP/WS FLV pull source.
+///
+/// HTTP/WS FLV 拉流源的 URL 组件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ParsedPullUrl {
     scheme: PullScheme,
@@ -101,6 +129,11 @@ struct ParsedPullUrl {
 }
 
 impl ParsedPullUrl {
+    /// Parse an HTTP/WS URL, rejecting unsupported schemes, missing hosts,
+    /// userinfo, and malformed ports. The path is normalized to start with `/`.
+    ///
+    /// 解析 HTTP/WS URL，拒绝不支持的 scheme、缺失的主机、userinfo 和畸形端口。
+    /// 路径会被规范化为以 `/` 开头。
     fn parse(source_url: &str) -> Result<Self, HttpFlvPullError> {
         let trimmed = source_url.trim();
         let Some((scheme_raw, rest)) = trimmed.split_once("://") else {
@@ -165,6 +198,9 @@ impl ParsedPullUrl {
     }
 }
 
+/// Parse the host and port from an authority string, supporting bracketed IPv6.
+///
+/// 解析 authority 字符串中的主机与端口，支持带中括号的 IPv6。
 fn parse_host_port(authority: &str) -> Result<(String, u16), HttpFlvPullError> {
     if let Some(rest) = authority.strip_prefix('[') {
         let Some((host_part, tail)) = rest.split_once(']') else {
@@ -213,6 +249,9 @@ fn parse_host_port(authority: &str) -> Result<(String, u16), HttpFlvPullError> {
     Ok((host, 0))
 }
 
+/// Parse a port string and reject zero.
+///
+/// 解析端口字符串并拒绝 0。
 fn parse_port(port_raw: &str) -> Result<u16, HttpFlvPullError> {
     let port = port_raw
         .trim()
@@ -226,6 +265,17 @@ fn parse_port(port_raw: &str) -> Result<u16, HttpFlvPullError> {
     Ok(port)
 }
 
+/// Long-running supervisor that pulls an FLV source and retries on failure.
+///
+/// On success the backoff resets to the base value. On a retryable failure the
+/// wait doubles, capped by `max_retry_backoff_ms`. Non-retryable errors (bad
+/// URL, unsupported scheme, invalid WebSocket accept) terminate the loop.
+///
+/// 拉取 FLV 源并在失败时重试的长期监管器。
+///
+/// 成功时退避重置为基准值；遇到可重试失败时，等待时间翻倍，最高不超过
+/// `max_retry_backoff_ms`。不可重试的错误（URL 错误、不支持的 scheme、
+/// 无效 WebSocket accept）会终止循环。
 pub async fn run_pull_job_supervisor(
     runtime_api: Arc<dyn RuntimeApi>,
     job: HttpFlvPullJobConfig,
@@ -282,6 +332,9 @@ pub async fn run_pull_job_supervisor(
     }
 }
 
+/// Pull an FLV stream once, choosing the HTTP or WebSocket path by URL scheme.
+///
+/// 根据 URL scheme 选择 HTTP 或 WebSocket 路径，执行一次 FLV 拉流。
 pub async fn pull_flv_once(
     runtime_api: Arc<dyn RuntimeApi>,
     source_url: &str,
@@ -295,6 +348,9 @@ pub async fn pull_flv_once(
     }
 }
 
+/// Pull an HTTP-FLV stream once from the given URL.
+///
+/// 从给定 URL 执行一次 HTTP-FLV 拉流。
 pub async fn pull_http_flv_once(
     runtime_api: Arc<dyn RuntimeApi>,
     source_url: &str,
@@ -314,6 +370,9 @@ pub async fn pull_http_flv_once(
     pull_http_flv_once_parsed(runtime_api, parsed, cancel, limits).await
 }
 
+/// Pull a WebSocket-FLV stream once from the given URL.
+///
+/// 从给定 URL 执行一次 WebSocket-FLV 拉流。
 pub async fn pull_ws_flv_once(
     runtime_api: Arc<dyn RuntimeApi>,
     source_url: &str,
@@ -333,6 +392,14 @@ pub async fn pull_ws_flv_once(
     pull_ws_flv_once_parsed(runtime_api, parsed, cancel, limits).await
 }
 
+/// Internal HTTP/FLV pull after the URL has been parsed.
+///
+/// Sends a `GET` request, reads the response head, validates the status code,
+/// then decodes the body directly or as chunked transfer encoding.
+///
+/// URL 已解析后的内部 HTTP/FLV 拉流。
+///
+/// 发送 `GET` 请求，读取响应头部，校验状态码，然后直接解码体或按分块传输编码解码。
 async fn pull_http_flv_once_parsed(
     runtime_api: Arc<dyn RuntimeApi>,
     parsed: ParsedPullUrl,
@@ -364,6 +431,15 @@ async fn pull_http_flv_once_parsed(
     }
 }
 
+/// Internal WebSocket/FLV pull after the URL has been parsed.
+///
+/// Performs a WebSocket handshake, validates the `Sec-WebSocket-Accept`
+/// response, then reads binary frames and demuxes the FLV payload.
+///
+/// URL 已解析后的内部 WebSocket/FLV 拉流。
+///
+/// 执行 WebSocket 握手，校验 `Sec-WebSocket-Accept` 响应，然后读取二进制帧并解复用
+/// FLV 负载。
 async fn pull_ws_flv_once_parsed(
     runtime_api: Arc<dyn RuntimeApi>,
     parsed: ParsedPullUrl,
@@ -399,6 +475,9 @@ async fn pull_ws_flv_once_parsed(
     read_ws_flv_stream(stream, body_prefix, cancel, limits).await
 }
 
+/// Resolve the parsed URL and open a TCP connection through the runtime API.
+///
+/// 解析 URL 并通过 runtime API 打开 TCP 连接。
 fn connect_stream(
     runtime_api: Arc<dyn RuntimeApi>,
     parsed: &ParsedPullUrl,
@@ -413,6 +492,15 @@ fn connect_stream(
         .map_err(|err| HttpFlvPullError::Connect(err.to_string()))
 }
 
+/// Read the HTTP response status line and headers.
+///
+/// Accumulates bytes into `buffered` until `\r\n\r\n` is found, then parses the
+/// status and headers. Returns any bytes after the header block as `body_prefix`.
+///
+/// 读取 HTTP 响应状态行与头部。
+///
+/// 将字节累积到 `buffered` 中直到找到 `\r\n\r\n`，然后解析状态码与头部。
+/// 返回头部块之后的字节作为 `body_prefix`。
 async fn read_http_response_head(
     stream: &mut Box<dyn cheetah_runtime_api::AsyncTcpStream>,
     cancel: &CancellationToken,
@@ -444,6 +532,9 @@ async fn read_http_response_head(
     Ok((status, headers, tail))
 }
 
+/// Read an HTTP body with a known or closed content length and demux the FLV.
+///
+/// 读取已知或按连接关闭确定长度的 HTTP 体，并解复用 FLV。
 async fn read_flv_stream(
     mut stream: Box<dyn cheetah_runtime_api::AsyncTcpStream>,
     body_prefix: Vec<u8>,
@@ -478,6 +569,9 @@ async fn read_flv_stream(
     Ok(result)
 }
 
+/// Read a chunked HTTP body, decode chunks, and demux the FLV payload.
+///
+/// 读取分块 HTTP 体，解码分块并解复用 FLV 负载。
 async fn read_chunked_flv_stream(
     mut stream: Box<dyn cheetah_runtime_api::AsyncTcpStream>,
     body_prefix: Vec<u8>,
@@ -522,6 +616,9 @@ async fn read_chunked_flv_stream(
     }
 }
 
+/// Read WebSocket binary frames and demux the FLV payload.
+///
+/// 读取 WebSocket 二进制帧并解复用 FLV 负载。
 async fn read_ws_flv_stream(
     mut stream: Box<dyn cheetah_runtime_api::AsyncTcpStream>,
     body_prefix: Vec<u8>,
@@ -572,12 +669,23 @@ async fn read_ws_flv_stream(
     Ok(result)
 }
 
+/// A single decoded WebSocket frame.
+///
+/// 单个已解码的 WebSocket 帧。
 #[derive(Debug)]
 struct WsFrame {
     opcode: u8,
     payload: Vec<u8>,
 }
 
+/// Decode one WebSocket frame from the buffer.
+///
+/// Parses the frame header, rejecting fragmented frames and masked server
+/// frames. Returns `None` if more bytes are needed.
+///
+/// 从缓冲区解码一个 WebSocket 帧。
+///
+/// 解析帧头，拒绝分片帧和服务器端带 mask 的帧。字节不足时返回 `None`。
 fn decode_ws_frame(
     raw: &[u8],
     max_payload_bytes: usize,
@@ -645,6 +753,9 @@ fn decode_ws_frame(
     Ok(Some((WsFrame { opcode, payload }, offset + payload_len)))
 }
 
+/// Fuzz helper: validate that `raw` forms an HTTP response header.
+///
+/// 模糊测试辅助：验证 `raw` 是否构成 HTTP 响应头。
 #[doc(hidden)]
 pub fn fuzz_http_response_head(
     raw: &[u8],
@@ -665,6 +776,13 @@ pub fn fuzz_http_response_head(
     Ok(())
 }
 
+/// Fuzz helper: decode as many WebSocket frames as possible from `raw`.
+///
+/// Returns the number of bytes consumed.
+///
+/// 模糊测试辅助：从 `raw` 中尽可能多地解码 WebSocket 帧。
+///
+/// 返回已消耗的字节数。
 #[doc(hidden)]
 pub fn fuzz_decode_ws_frames(
     raw: &[u8],
@@ -685,6 +803,14 @@ pub fn fuzz_decode_ws_frames(
     Ok(offset)
 }
 
+/// Race an async read against a cancellation token.
+///
+/// Returns the number of bytes read, or `Cancelled` if the token fires before
+/// the read completes.
+///
+/// 让异步读取与取消令牌竞争。
+///
+/// 返回读取的字节数；如果取消令牌在读取完成前触发，则返回 `Cancelled`。
 async fn select_read_or_cancel(
     cancel: &CancellationToken,
     read_future: impl std::future::Future<Output = std::io::Result<usize>>,
@@ -698,6 +824,10 @@ async fn select_read_or_cancel(
     }
 }
 
+/// Apply demuxer events to the result, collecting header, tags, and mismatch
+/// counters.
+///
+/// 将解复用事件应用到结果中，收集 header、tag 以及不匹配计数。
 fn apply_demux_events(result: &mut HttpFlvPullResult, events: Vec<FlvDemuxEvent>) {
     for event in events {
         match event {
@@ -715,6 +845,9 @@ fn apply_demux_events(result: &mut HttpFlvPullResult, events: Vec<FlvDemuxEvent>
     }
 }
 
+/// Check whether `Transfer-Encoding` contains `chunked`.
+///
+/// 检查 `Transfer-Encoding` 是否包含 `chunked`。
 fn response_is_chunked(headers: &[(String, String)]) -> bool {
     let Some(value) = find_header_value(headers, "transfer-encoding") else {
         return false;
@@ -724,6 +857,16 @@ fn response_is_chunked(headers: &[(String, String)]) -> bool {
         .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
 }
 
+/// Try to decode the next chunk from a chunked transfer-encoded body.
+///
+/// Parses a hex chunk size line, validates the trailing `\r\n`, and returns
+/// either the chunk data or the terminating empty chunk. Returns `None` when
+/// more bytes are needed.
+///
+/// 尝试从分块传输编码体中解码下一个分块。
+///
+/// 解析十六进制分块大小行，校验尾部的 `\r\n`，返回分块数据或终止空分块。
+/// 字节不足时返回 `None`。
 fn try_decode_chunked_body_frame(
     buffered: &mut Vec<u8>,
     max_chunk_bytes: usize,
@@ -771,6 +914,9 @@ fn try_decode_chunked_body_frame(
     Ok(Some(ChunkedBodyFrame::Data(payload)))
 }
 
+/// Parse the `name: value` headers from an HTTP head block.
+///
+/// 从 HTTP 头块解析 `name: value` 头部。
 fn parse_http_headers(raw_head: &[u8]) -> Result<Vec<(String, String)>, HttpFlvPullError> {
     let text = std::str::from_utf8(raw_head).map_err(|_| HttpFlvPullError::InvalidStatusLine)?;
     let mut lines = text.split("\r\n");
@@ -787,6 +933,9 @@ fn parse_http_headers(raw_head: &[u8]) -> Result<Vec<(String, String)>, HttpFlvP
     Ok(headers)
 }
 
+/// Find the last header value matching `name` case-insensitively.
+///
+/// 按不区分大小写的方式查找最后一个与 `name` 匹配的头部值。
 fn find_header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
     headers
         .iter()
@@ -794,12 +943,18 @@ fn find_header_value<'a>(headers: &'a [(String, String)], name: &str) -> Option<
         .map(|(_, value)| value.as_str())
 }
 
+/// Locate the end of an HTTP header block (`\r\n\r\n`).
+///
+/// 定位 HTTP 头块结束位置（`\r\n\r\n`）。
 fn find_http_header_end(raw: &[u8]) -> Option<usize> {
     raw.windows(4)
         .position(|window| window == b"\r\n\r\n")
         .map(|idx| idx + 4)
 }
 
+/// Parse the three-digit HTTP status code from the status line.
+///
+/// 从状态行解析三位 HTTP 状态码。
 fn parse_http_status_code(raw_header: &[u8]) -> Result<u16, HttpFlvPullError> {
     let text = std::str::from_utf8(raw_header).map_err(|_| HttpFlvPullError::InvalidStatusLine)?;
     let Some(first_line) = text.split("\r\n").next() else {
@@ -813,10 +968,16 @@ fn parse_http_status_code(raw_header: &[u8]) -> Result<u16, HttpFlvPullError> {
         .map_err(|_| HttpFlvPullError::InvalidStatusLine)
 }
 
+/// Return the current runtime monotonic timestamp in microseconds.
+///
+/// 返回当前运行时单调时间戳（微秒）。
 fn runtime_now_micros(runtime_api: &dyn RuntimeApi) -> u64 {
     runtime_api.now().as_micros()
 }
 
+/// Compute a `MonoTime` deadline `duration` after the current runtime timestamp.
+///
+/// 计算当前运行时时间戳之后 `duration` 的 `MonoTime` 截止时间。
 fn runtime_deadline_after(
     runtime_api: &dyn RuntimeApi,
     duration: Duration,
@@ -826,11 +987,17 @@ fn runtime_deadline_after(
     cheetah_codec::MonoTime::from_micros(runtime_now_micros(runtime_api).saturating_add(delta))
 }
 
+/// Sleep using the runtime API timer.
+///
+/// 使用 runtime API 计时器进行睡眠。
 async fn runtime_sleep(runtime_api: &dyn RuntimeApi, duration: Duration) {
     let mut timer = runtime_api.sleep_until(runtime_deadline_after(runtime_api, duration));
     timer.wait().await;
 }
 
+/// Sleep for `duration`, returning `true` if cancelled before the deadline.
+///
+/// 睡眠 `duration`；如果在截止时间前被取消则返回 `true`。
 async fn wait_or_cancel(
     runtime_api: &dyn RuntimeApi,
     cancel: &CancellationToken,
