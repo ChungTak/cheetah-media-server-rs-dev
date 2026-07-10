@@ -515,9 +515,11 @@ fn authorize_stream(
 
 fn build_job_plan(config: &SrtModuleConfig) -> Result<SrtJobPlan, SdkError> {
     let mut next_peer_id = 1_000_000_u64;
-    let mut connects = Vec::new();
-    let mut forced_modes = HashMap::new();
-    let mut jobs = HashMap::new();
+    let connects_capacity =
+        config.ingress_jobs.len() + config.egress_jobs.len() + config.relay_jobs.len() * 2;
+    let mut connects = Vec::with_capacity(connects_capacity);
+    let mut forced_modes = HashMap::with_capacity(connects_capacity);
+    let mut jobs = HashMap::with_capacity(connects_capacity);
 
     for job in &config.ingress_jobs {
         if !job.enabled {
