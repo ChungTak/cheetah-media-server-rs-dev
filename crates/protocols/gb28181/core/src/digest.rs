@@ -5,6 +5,13 @@
 //! quoted, varying whitespace, and case differences in scheme/key names. The functions are
 //! designed for both the server side (parsing `Authorization:` headers) and the client side
 //! (parsing `WWW-Authenticate:` challenges).
+//!
+//! 宽松的 SIP digest 认证解析与响应生成。
+//!
+//! 与 `vendor-ref/ABLMediaServer-src-2026-05-09/.../DigestAuthentication.*` 行为对齐：
+//! 容忍 `,` 或 `;` 分隔的参数、带引号或不带引号的参数值、可变空白以及 scheme/键名
+//! 的大小写差异。这些函数同时服务于服务端（解析 `Authorization:` 头）和客户端
+//! （解析 `WWW-Authenticate:` 挑战）。
 
 use std::collections::HashMap;
 
@@ -12,6 +19,8 @@ use crate::error::Gb28181CoreError;
 
 /// Parsed Digest challenge or response. All fields are optional because real-world devices
 /// frequently omit RFC-mandated parameters.
+///
+/// 解析后的 Digest 挑战或响应。所有字段均为可选，因为真实设备经常省略 RFC 要求的参数。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DigestParams {
     pub realm: Option<String>,
@@ -25,6 +34,8 @@ pub struct DigestParams {
     pub nc: Option<String>,
     pub cnonce: Option<String>,
     /// Any additional unrecognised parameters, preserved verbatim for diagnostics.
+    ///
+    /// 额外的未识别参数，按原样保留用于诊断。
     pub extra: HashMap<String, String>,
 }
 
@@ -34,6 +45,11 @@ impl DigestParams {
     /// The leading scheme name (`Digest`) is optional; some buggy peers omit it. Parameters may
     /// be separated by `,` or `;`; values may be quoted or bare. All keys are lowercased before
     /// matching.
+    ///
+    /// 解析 `WWW-Authenticate:` 或 `Authorization:` 头的值。
+    ///
+    /// 开头的 scheme 名称（`Digest`）可选；部分对端会省略。参数可用 `,` 或 `;` 分隔；
+    /// 值可带引号也可裸露。所有键在匹配前转换为小写。
     pub fn parse(input: &str) -> Result<Self, Gb28181CoreError> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
@@ -120,6 +136,11 @@ fn unquote(value: &str) -> String {
 /// `qop` defaults to none when not present; when present we use `qop=auth` semantics with the
 /// caller-supplied `nc` and `cnonce`. ABL devices in practice rarely advertise QOP so the
 /// no-QOP path is the most common.
+///
+/// 根据 RFC 2617 计算 SIP `REGISTER` 的 MD5 digest 响应。
+///
+/// 未提供 `qop` 时走无 QOP 分支；提供时按 `qop=auth` 语义使用调用方传入的 `nc` 和
+/// `cnonce`。ABL 设备在实践中很少声明 QOP，因此无 QOP 路径最为常见。
 #[allow(clippy::too_many_arguments)]
 pub fn compute_md5_response(
     username: &str,

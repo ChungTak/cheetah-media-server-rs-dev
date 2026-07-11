@@ -1,5 +1,8 @@
 use crate::error::Gb28181CoreError;
 
+/// Parsed GB28181 SDP payload: media address, ports, SSRC, and direction.
+///
+/// GB28181 SDP 解析结果：媒体地址、端口、SSRC 与方向。
 #[derive(Debug, Clone, Default)]
 pub struct GbSdp {
     pub ip: String,
@@ -10,6 +13,10 @@ pub struct GbSdp {
 }
 
 impl GbSdp {
+    /// Parse a minimal GB28181 SDP, extracting the `c=`, `m=`, and `a=` fields that matter for
+    /// establishing an RTP/PS or RTP/PCMA stream.
+    ///
+    /// 解析最小化 GB28181 SDP，提取建立 RTP/PS 或 RTP/PCMA 流所需的 `c=`、`m=` 与 `a=` 字段。
     pub fn parse(text: &str) -> Result<Self, Gb28181CoreError> {
         let mut sdp = GbSdp::default();
         for line in text.lines() {
@@ -68,6 +75,17 @@ impl GbSdp {
         Ok(sdp)
     }
 
+    /// Build a GB28181 SDP body for an outgoing `INVITE`.
+    ///
+    /// The generated SDP advertises `m=` for PS video (`RTP/AVP 96`) or PCMA audio
+    /// (`RTP/AVP 8`), depending on `is_video`, and includes the `a=y:<ssrc>` SSRC line
+    /// required by the standard for RTP stream correlation.
+    ///
+    /// 为 outgoing `INVITE` 构造 GB28181 SDP 体。
+    ///
+    /// 根据 `is_video` 在 SDP 中声明 PS 视频（`RTP/AVP 96`）或 PCMA 音频
+    /// （`RTP/AVP 8`）的 `m=` 行，并包含标准要求的 `a=y:<ssrc>` SSRC 行用于
+    /// RTP 流关联。
     pub fn to_string(
         session_id: &str,
         ip: &str,

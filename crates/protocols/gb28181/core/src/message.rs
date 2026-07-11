@@ -1,6 +1,11 @@
 use crate::error::Gb28181CoreError;
 use std::fmt;
 
+/// Parsed SIP start-line: either a request method/uri/version triple or a
+/// status-line with version/status/reason.
+///
+/// 解析后的 SIP 起始行：要么是 method/uri/version 三元组请求行，要么是包含
+/// version/status/reason 的状态行。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartLine {
     Request {
@@ -15,6 +20,9 @@ pub enum StartLine {
     },
 }
 
+/// A complete SIP message split into start-line, headers, and body.
+///
+/// 完整的 SIP 消息，拆分为起始行、头域与消息体。
 #[derive(Debug, Clone)]
 pub struct SipMessage {
     pub start_line: StartLine,
@@ -30,6 +38,14 @@ impl SipMessage {
     /// - Accept duplicate header names (kept in insertion order so callers can rebuild verbatim).
     /// - Stop header parsing on the first blank line and capture the remainder as the body,
     ///   truncating to `Content-Length` if specified.
+    ///
+    /// 以 ABL 风格的宽松方式解析 SIP 消息：
+    ///
+    /// - 接受 `\r\n`、`\n` 或 `\r` 作为行终止符（头域之间可混用）。
+    /// - 去除前导空白并跳过开头的空行。
+    /// - 接受重复头域名（按插入顺序保留，便于调用方原样重建）。
+    /// - 在第一个空行处停止头域解析，其余部分作为消息体；若指定 `Content-Length` 则按
+    ///   其长度截断。
     pub fn parse(raw: &str) -> Result<Self, Gb28181CoreError> {
         // Find the boundary between headers and body. We accept `\r\n\r\n`, `\n\n`, or `\r\r`,
         // plus the common mixed cases observed from real devices.
@@ -91,6 +107,9 @@ impl SipMessage {
         })
     }
 
+    /// Parse the first line into a `StartLine`, tolerating both request and response forms.
+    ///
+    /// 将首行解析为 `StartLine`，兼容请求与响应两种形式。
     fn parse_start_line(line: &str) -> Result<StartLine, Gb28181CoreError> {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 3 {
@@ -124,6 +143,9 @@ impl SipMessage {
         }
     }
 
+    /// Look up the first header value by name, case-insensitive.
+    ///
+    /// 按名称查找第一个头域值，不区分大小写。
     pub fn get_header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -132,8 +154,14 @@ impl SipMessage {
     }
 
     /// Returns every value observed for a given header name, in insertion order.
+    ///
     /// ABL devices occasionally repeat headers (notably `Via`); callers that need to inspect
     /// every entry can reach for this instead of `get_header`.
+    ///
+    /// 返回指定头域名的所有值，按插入顺序。
+    ///
+    /// ABL 设备有时会重复头域（尤其是 `Via`）；需要检查所有条目的调用方应使用本方法
+    /// 而非 `get_header`。
     pub fn get_headers_all<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> + 'a {
         self.headers
             .iter()
@@ -141,6 +169,9 @@ impl SipMessage {
             .map(|(_, val)| val.as_str())
     }
 
+    /// Insert or replace a header value, preserving the original casing of a known header.
+    ///
+    /// 插入或替换头域值；若头域名已存在则保留原大小写。
     pub fn set_header(&mut self, name: &str, value: &str) {
         if let Some(pos) = self
             .headers
@@ -156,6 +187,9 @@ impl SipMessage {
     /// Serialize the message into a wire-format byte buffer. Unlike `Display`, this preserves
     /// non-UTF-8 body bytes verbatim so that any caller transmitting the result over the
     /// network sees byte counts that match the `Content-Length` header.
+    ///
+    /// 将消息序列化为线格式字节缓冲区。与 `Display` 不同，这里原样保留非 UTF-8 消息体
+    /// 字节，确保发送方网络上的字节数与 `Content-Length` 头一致。
     pub fn to_bytes(&self) -> Vec<u8> {
         let start_line_len = match &self.start_line {
             StartLine::Request {
