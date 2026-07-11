@@ -1,185 +1,199 @@
-# Phase 01 — Stream ID、版本策略与鉴权参数
+# Phase 01 — Stream ID / 版本类型 / 鉴权参数（可执行）
 
-- **状态**: 待执行
-- **范围**: 锁定 ZLM 对齐的 streamid 语义、`h/r/m` 映射、默认拉流、鉴权参数模型、peer 版本下限策略；纯 core + module 分类/鉴权逻辑，不改媒体管线。
-- **完成标准**: core 单测覆盖用户文档全部 streamid 样例；无 `m` 默认为拉流；`auth_params` 可序列化用于鉴权；版本配置类型与校验落地；module classify 使用新模型且旧配置可回退。
+- **状态**: 待执行  
+- **依赖**: 无  
+- **兼容规范**: [reference-behavior-zlm-compat.md](reference-behavior-zlm-compat.md) §2、§5.3、§8  
+- **架构**: [srt-zlm-architecture.md](srt-zlm-architecture.md) §3–§5、§8  
 
----
+## 完成标准（DoD）
 
-## 实现概览
-
-本阶段固定 **业务语义边界**，避免后续 driver/module 在 streamid 与鉴权上反复修改。
-
-参考：
-
-| 来源 | 路径 |
-|------|------|
-| ZLM 解析 | `vendor-ref/ZLMediaKit/srt/SrtTransportImp.cpp` `parseStreamid` / `onHandShakeFinished` |
-| ZLM 文档 | `vendor-ref/ZLMediaKit/srt/srt.md` |
-| 本地解析 | `crates/protocols/srt/core/src/stream_id.rs` |
-| 本地分类 | `crates/protocols/srt/module/src/module.rs` `classify_stream` / `authorize_stream` |
-| 本地配置 | `crates/protocols/srt/module/src/config.rs` |
-| 架构 | [srt-zlm-architecture.md](srt-zlm-architecture.md) |
+- [ ] `parse` 行为满足参考规范 §2.3 / §2.4 全表  
+- [ ] `ingress.default_mode` 默认 `"request"`  
+- [ ] `auth_params` 含 `m` 及全部非 h/r 键  
+- [ ] 版本 parse/compare 纯函数 + 单测  
+- [ ] module classify 使用新模型；旧配置可回退  
+- [ ] `cargo test -p cheetah-srt-core` / `cheetah-srt-module` 通过  
+- [ ] 无 `vendor-ref` 引用  
 
 ---
 
-## 1.1 扩展 `ParsedSrtStreamId`
+## 任务 1.1 — 扩展 core 解析 API
 
-**文件**: `crates/protocols/srt/core/src/stream_id.rs`
+### 文件
 
-建议字段：
+- 修改：`crates/protocols/srt/core/src/stream_id.rs`  
+- 修改：`crates/protocols/srt/core/src/lib.rs`（re-export）  
+- 修改：`crates/protocols/srt/core/src/error.rs`（如需新错误文案）  
+- 修改：`crates/protocols/srt/core/tests/parser.rs`  
 
-```text
-vhost: String                 # 来自 h 或调用方注入的 default_vhost
-app: String                   # r 第一段
-stream: String                # r 第二段（严格模式）
-resource_raw: String          # r 原始值
-mode: Option<SrtStreamMode>   # publish / request / play；None=未声明
-user: Option<String>          # u
-session: Option<String>       # s
-auth_params: BTreeMap<String, String>  # 除 h/r 外全部 key（含 m）
-extras: BTreeMap              # 可与 auth_params 合并或保留兼容别名
+### 实现步骤
+
+1. 定义 `StreamIdParseOptions`（见 architecture §3.1）。  
+2. 增加：
+
+```rust
+pub fn parse_srt_stream_id_with_options(
+    input: &str,
+    opts: &StreamIdParseOptions,
+) -> SrtCoreResult<ParsedSrtStreamId>
 ```
 
-解析规则：
+3. 保留 `parse_srt_stream_id(input)` 作为便捷包装：使用 **严格 ZLM 默认 options**（`strict_prefix=true, strict_resource=true, allow_bare_key=false, default_vhost="__defaultVhost__"`），**或** 明确文档写明旧签名兼容策略。  
+   - 推荐：旧函数改为调用严格 options，避免双语义；用 `allow_bare_key` 仅在 module 配置打开时走 with_options。  
 
-1. 必须以 `#!::` 开头（**严格 ZLM 模式**）；或当 `allow_bare_key` 时允许 bare / 无前缀 resource。
-2. `r` 必填（严格模式）；按第一个 `/` 拆 `app`/`stream`；不足两段时：
-   - `strict_resource=true` → `Err`
-   - 否则兼容旧逻辑整串进 stream_key。
-3. `h` 可选；解析阶段可保留 `Option`，由 module 填 default_vhost。
-4. `m=publish` → `Some(Publish)`；`m=request|play` → 对应枚举；未知 `m` → `Err`（与现逻辑一致）；**缺失 `m` → `None`**（默认策略留给 module）。
-5. 所有 **非 `h`/`r`** 的 key 进入 `auth_params`（**包括 `m`**），对齐 ZLM。
-6. percent-decoding 保持现状；`+` 仍为字面量。
+4. `ParsedSrtStreamId` 字段改为 architecture §3.1；若需避免破坏过多，可保留 `stream_key` 作为 `format!("{app}/{stream}")` 派生字段。  
 
-兼容：
+5. **解析算法严格按参考规范 §2.3**：  
+   - `m` **先**写入 `auth_params`，再根据 `auth_params.get("m")` 设置 `mode`  
+   - 不要 `fields.remove("m")` 后丢失鉴权侧的 m  
 
-- 保留 `stream_key` 派生：`format!("{app}/{stream}")` 或配置策略。
-- 旧测试样例继续通过；新增 ZLM 样例。
+6. `strict_resource`：`r` 按 `/` 分割，`parts.len() < 2` 或空段 → `Err`。  
+7. `strict_prefix`：无 `#!::` → `Err`；若 `allow_bare_key` 则走旧 bare 逻辑（mode=None，app/stream 用 `stream_key_from_string` 规则填充或仅填 resource）。  
 
----
+### 测试（`parser.rs`）— 必须全部添加
 
-## 1.2 `StreamKey` 与 vhost 映射
+| 测试名建议 | 输入 | 断言 |
+|------------|------|------|
+| `zlm_publish_with_vhost` | `#!::h=zlmediakit.com,r=live/test,m=publish` | vhost/app/stream/mode；auth_params["m"]=="publish" |
+| `zlm_play_default_no_m` | `#!::r=live/test` | mode=None；app=live stream=test |
+| `zlm_request` | `#!::r=live/test,m=request` | mode=Request；auth 含 m |
+| `zlm_token_and_custom` | `#!::r=live/test,m=publish,token=t,foo=bar` | auth 含 m,token,foo；无 h/r |
+| `missing_r_fails` | `#!::m=publish` | Err |
+| `single_segment_r_fails_strict` | `#!::r=live` | Err |
+| `bare_rejected_when_strict` | `live/test` | Err |
+| `bare_ok_when_allowed` | opts.allow_bare_key | Ok 兼容 |
+| `percent_encoded_r` | `#!::r=live%2Ftest,m=play` | app/stream 正确 |
+| `plus_is_literal` | 现有 + 用例保留 | |
 
-**文件**: `module` 分类逻辑（建议新文件 `stream_classify.rs`）
+运行：
 
-配置：
-
-```text
-default_vhost: "__defaultVhost__"
-stream_id.strict_resource: true
-stream_id.allow_bare_key: false
-stream_id.stream_key_vhost_mode: "app_only" | "vhost_prefix"
+```bash
+cargo test -p cheetah-srt-core
 ```
 
-映射：
+---
 
-| 模式 | namespace | path |
-|------|-----------|------|
-| `app_only`（默认） | `app` | `stream` |
-| `vhost_prefix` | `{vhost}/{app}` 或规范化串 | `stream` |
+## 任务 1.2 — 版本纯函数
 
-`vhost` 始终写入会话上下文与 metrics labels，即使不进 `StreamKey`。
+### 文件
+
+- 新建：`crates/protocols/srt/core/src/version.rs`  
+- 修改：`lib.rs` re-export  
+
+### 实现
+
+```rust
+/// "1.3.0" -> 0x00010300
+pub fn parse_srt_version(s: &str) -> SrtCoreResult<u32>;
+pub fn format_srt_version(v: u32) -> String;
+pub fn version_at_least(peer: u32, min: u32) -> bool;
+```
+
+常量：
+
+```rust
+pub const SRT_VERSION_1_3_0: u32 = 0x0001_0300;
+pub const SRT_VERSION_1_5_0: u32 = 0x0001_0500;
+```
+
+单测：边界 `1.2.9 < 1.3.0`、`1.3.0 ==`、`1.5.0 >`、非法字符串。
 
 ---
 
-## 1.3 默认模式对齐 ZLM
+## 任务 1.3 — Module 配置扩展
 
-**文件**: `module/src/config.rs`、`classify_stream`
+### 文件
 
-| 条件 | 结果 |
-|------|------|
-| `m=publish` | Publish |
-| `m=request` / `m=play` | Request / Play（拉流） |
-| `m` 缺失 | `ingress.default_mode`，**新默认 `request`** |
+- `crates/protocols/srt/module/src/config.rs`  
 
-迁移：
+### 改动
 
-- 默认值从 `publish` 改为 `request`。
-- 配置注释与 index 风险节说明；旧部署可设 `default_mode=publish`。
-- 单测覆盖：无 `m` + 默认 request；无 `m` + 配置 publish。
+1. `SrtIngressConfig::default().default_mode = "request".into()`  
+2. 增加字段（serde default）：
+
+```rust
+// SrtModuleConfig
+default_vhost: String,              // "__defaultVhost__"
+min_peer_srt_version: String,       // "1.3.0"
+local_srt_version: String,          // "1.5.0"
+require_peer_version_extension: bool, // false
+stream_id: SrtStreamIdModuleConfig,
+```
+
+3. `SrtStreamIdModuleConfig` 默认：`strict_prefix=true, strict_resource=true, allow_bare_key=false, stream_key_vhost_mode="app_only"`  
+4. `from_value` / schema 自动通过 serde；确认 `default_json()` 含新字段。  
 
 ---
 
-## 1.4 鉴权参数模型
+## 任务 1.4 — classify + auth
 
-**文件**: 建议 `module/src/auth.rs`
+### 文件
 
-```text
-SrtAuthContext {
-  mode,
-  vhost, app, stream,
-  stream_key,
-  user,
-  auth_params,   // 含 m, token, 自定义 key
-  peer_addr,
+- 优先 **抽出** 到：  
+  - `module/src/stream_classify.rs`  
+  - `module/src/auth.rs`  
+- 从 `module.rs` 移动 `classify_stream` / `authorize_stream` / `stream_key_from_string`  
+
+### `classify_stream` 目标签名
+
+```rust
+pub fn classify_stream(
+    config: &SrtModuleConfig,
+    stream_id: Option<&str>,
+) -> Result<SrtClassifiedStream, String>
+
+pub struct SrtClassifiedStream {
+    pub mode: SrtStreamMode,
+    pub stream_key: StreamKey,
+    pub auth: SrtAuthContext,
 }
 ```
 
-行为：
+算法：
 
-1. `auth.enabled=false` → 放行（与现一致）。
-2. 全局 token：`publish_token` / `request_token` 与 `auth_params["token"]` 比较。
-3. 用户表：`u` + `token`。
-4. 预留：`webhook_enabled` 时把 `auth_params` + 资源三元组交给 control/webhook（若基建未就绪，以 trait/ hook + 单元测试固定参数形状，HTTP 实现可 TODO）。
+1. 构造 `StreamIdParseOptions` from config  
+2. parse  
+3. mode = parsed.mode.unwrap_or(default_mode_enum)  
+4. StreamKey from vhost mode（architecture §3.2）  
+5. 填 `SrtAuthContext`  
+6. `authorize_stream(&config.auth, &auth_ctx)?`  
+7. Ok  
 
-**禁止** 在鉴权路径丢弃除 h/r 外的自定义 key。
+### `authorize_stream`
+
+- 使用 `auth.auth_params.get("token")`  
+- 保留全局 token + users 逻辑  
+- 额外：可提供 `auth_params_as_query(&auth) -> String` 把 params 编成 `k=v&k2=v2`（供 webhook 后续）  
+
+### 更新 `handle_driver_event(Connected)`
+
+使用 `SrtClassifiedStream`；失败 Close reason 用稳定字符串：`invalid_stream_id: ...` / `auth_rejected`。
 
 ---
 
-## 1.5 版本策略类型
+## 任务 1.5 — 更新 property / fuzz
 
-**文件**: `core/src/config.rs`（或新 `version.rs`）、module/driver 配置透传
+- `testing/property-tests`：字段顺序交换（`m` 与 `r` 对调）结果稳定  
+- fuzz `fuzz_stream_id`：确保新解析不 panic（Err 可接受）  
 
-```text
-min_peer_srt_version: "1.3.0"     # 解析为 0x010300
-local_srt_version: "1.5.0"        # 可选覆盖库默认宣告
-require_peer_version_extension: false
+```bash
+cargo test -p cheetah-srt-property-tests
 ```
 
-本阶段至少完成：
+---
 
-- 版本字符串 ↔ `u32`（`major<<16 | minor<<8 | patch`）纯函数。
-- 比较与 `is_supported(peer, min)`。
-- 配置校验：`min >= 1.3.0` 的推荐告警（或硬校验 min 不得高于 local）。
+## 任务 1.6 — 破坏性变更说明
 
-Driver 侧真正在握手后拒绝可在 **Phase 02** 闭环；本阶段提供类型与单测，并在 module 配置 schema 暴露字段。
+在 `config.rs` 的 `default_mode` 字段旁注释：
+
+```rust
+/// Default when streamid omits `m`. ZLM-compatible default is `request` (play).
+/// Set to `publish` to restore pre-compat behavior.
+```
 
 ---
 
-## 1.6 测试清单
-
-### 单元（core）
-
-| 用例 | 期望 |
-|------|------|
-| `#!::h=zlmediakit.com,r=live/test,m=publish` | vhost/app/stream/mode 正确；auth 含 `m=publish` |
-| `#!::r=live/test` | mode=None；app=live stream=test |
-| `#!::r=live/test,m=request` | 拉流 |
-| 缺 `r` | Err |
-| `r=live` 严格模式 | Err |
-| bare `live/test` + allow_bare_key | Ok 兼容 |
-| percent-encoding `r` | 正确解码 |
-| 自定义 `token=xx,foo=bar` | 均在 auth_params |
-
-### 单元（module classify/auth）
-
-| 用例 | 期望 |
-|------|------|
-| 无 m + default request | Request + 正确 StreamKey |
-| 无 m + default publish | Publish |
-| token 错误 | 拒绝 |
-| auth_params 含 m 与自定义 key | 结构完整 |
-
-### 回归
-
-- 现有 `core/tests/parser.rs` 全部通过；必要时按新字段调整断言。
-- property tests 增加字段排列顺序无关性。
-- fuzz `fuzz_stream_id` 仍不 panic。
-
----
-
-## 1.7 验收命令
+## 验收命令
 
 ```bash
 cargo fmt
@@ -190,25 +204,9 @@ cargo test -p cheetah-srt-module
 cargo test -p cheetah-srt-property-tests
 ```
 
----
-
-## 关键文件
-
-| 动作 | 路径 |
-|------|------|
-| 改 | `crates/protocols/srt/core/src/stream_id.rs` |
-| 改 | `crates/protocols/srt/core/src/config.rs` / `lib.rs` |
-| 改 | `crates/protocols/srt/core/tests/parser.rs` |
-| 改 | `crates/protocols/srt/module/src/config.rs` |
-| 改/拆 | `crates/protocols/srt/module/src/module.rs` → `stream_classify.rs` / `auth.rs` |
-| 改 | `crates/protocols/srt/testing/property-tests/**` |
-| 参考 | `vendor-ref/ZLMediaKit/srt/SrtTransportImp.cpp` |
-
----
-
 ## 本阶段不做
 
-- 不改 TS demux/mux 与 engine 发布逻辑（Phase 03）。
-- 不实现 FEC（Phase 04）。
-- 不强制完成握手级版本拒绝的 driver 集成（Phase 02 可接）。
-- 不实现完整 webhook HTTP 客户端（可留 hook）。
+- driver 握手拒绝旧版本（Phase 02）  
+- FEC  
+- 完整 webhook HTTP  
+- 弱网 netem  

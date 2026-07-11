@@ -1,361 +1,296 @@
-# SRT 总体架构设计（对标 ZLMediaKit）
+# SRT ZLM 兼容 — 目标架构（实现规格）
 
-## 架构目标
+智能体实现时以本文 + [reference-behavior-zlm-compat.md](reference-behavior-zlm-compat.md) 为准。
 
-SRT 仍按本项目协议三段式组织：
+---
 
-- `cheetah-srt-core`：纯 Sans-I/O 模型与业务无关协议类型；封装 `shiguredo_srt` 所需的配置、Stream ID（含 ZLM 语义）、版本策略、事件/命令、FEC 配置形状。
-- `cheetah-srt-driver-tokio`：Tokio UDP socket、timer、listener/caller connection map、背压、统计与（可选）FEC 驱动集成。
-- `cheetah-srt-module`：streamid → publish/play 决策、发布租约、订阅、TS demux/mux、鉴权参数、jobs、HTTP metrics。
+## 1. 三段式边界（不可破坏）
 
-ZLMediaKit 把 `SrtTransport` 与 `SrtTransportImp` 同时承担协议状态、NACK、队列、业务 streamid 和 TS 桥接。本项目 **不能** 复制这种混合边界：
+| Crate | 路径 | 允许 | 禁止 |
+|-------|------|------|------|
+| `cheetah-srt-core` | `crates/protocols/srt/core` | 纯解析、配置类型、版本编解码、FEC 纯函数、错误类型 | Tokio、socket、`Instant::now`、engine、HTTP |
+| `cheetah-srt-driver-tokio` | `crates/protocols/srt/driver-tokio` | UDP、timer、`shiguredo_srt::SrtConnection`、stats、连接表 | 业务 stream 租约、TS demux |
+| `cheetah-srt-module` | `crates/protocols/srt/module` | classify、auth、publish/play、TS bridge、jobs、metrics | `tokio::net/time/sync` 公共暴露；自研 NACK |
 
-| 职责 | ZLM | Cheetah |
-|------|-----|---------|
-| 协议状态机 | 自研 C++ | `shiguredo_srt` |
-| UDP / timer | Poller / Session | `cheetah-srt-driver-tokio` |
-| streamid / 鉴权 / 媒体桥 | `SrtTransportImp` | `cheetah-srt-module` |
-| TS demux/mux | `DecoderImp` / `TSMediaSource` / MPEG | `cheetah-codec` |
-| 统一媒体模型 | MediaSource 多 schema | `AVFrame + TrackInfo` + engine |
+协议状态机：`shiguredo_srt`。  
+媒体：`cheetah_codec::{MpegTsDemuxer, MpegTsMuxer}` + engine `PublisherSink` / `SubscriberSource`。
 
-本计划是 [plans-28-srt](../plans-28-srt/srt-design.md) 的增强层，不重写 crate 骨架。
-
-## Crate 与依赖方向
+依赖方向：
 
 ```text
-apps / control
-  -> cheetah-srt-module
-  -> cheetah-srt-driver-tokio
-  -> cheetah-srt-core
-  -> shiguredo_srt（Sans-I/O）
-  -> cheetah-codec（仅 module 媒体路径）
+module → driver-tokio → core → shiguredo_srt
+module → cheetah-codec
+module → cheetah-sdk
 ```
 
-约束：
+---
 
-- `core` 不依赖 Tokio、socket、HTTP、engine、数据库或系统时间 API。
-- `driver` 可依赖 Tokio，不持有业务状态，不直接操作 publish lease。
-- `module` 公共接口不暴露 `tokio::net` / `tokio::time` / `tokio::sync`；多路等待使用 `CancellationToken` + futures 组合子。
-- 所有缓存、发送队列、重传窗口、FEC 矩阵必须有上界。
+## 2. 数据流（必须保持）
 
-## 数据流
-
-### SRT 推流（publish）
+### 2.1 Listener 推流
 
 ```text
-OBS / FFmpeg / libsrt (caller, m=publish)
-  -> UDP
-  -> cheetah-srt-driver-tokio (listener)
-  -> shiguredo_srt::SrtConnection
-  -> SrtDriverEvent::Connected { stream_id }
-  -> module: parse streamid → StreamKey + auth
-  -> acquire PublishLease
-  -> Payload → cheetah-codec::MpegTsDemuxer
-  -> TrackInfo + AVFrame
-  -> PublisherSink → engine
-  -> RTSP / RTMP / HLS / WebRTC / ... subscribers
+Caller (OBS/ffmpeg)
+  → UDP → driver (SrtConnection)
+  → Connected { stream_id }
+  → module classify+auth
+  → acquire_publisher(StreamKey)
+  → Payload → MpegTsDemuxer
+  → TrackInfo + AVFrame → PublisherSink
 ```
 
-对齐 ZLM `SrtTransportImp`：`m=publish` 时创建 TS decoder 并向 MediaSource 喂数据。Cheetah 差异：不直写 TS ring，而是 demux 为 canonical frame 以支持跨协议。
-
-### SRT 拉流（request / play / 默认无 m）
+### 2.2 Listener 拉流
 
 ```text
-ffplay / VLC / libsrt (caller, m 缺省或 request/play)
-  -> Connected { stream_id }
-  -> module: parse → StreamKey + auth
-  -> SubscriberSource (bootstrap + frames)
-  -> cheetah-codec::MpegTsMuxer
-  -> SrtDriverCommand::SendPayload
-  -> shiguredo_srt → UDP → player
+Caller (ffplay/VLC)
+  → Connected { stream_id }
+  → classify+auth → StreamKey
+  → subscribe engine
+  → MpegTsMuxer → SendPayload → driver → UDP
 ```
 
-对齐 ZLM：查找 `TS` schema 源并挂 ring reader。Cheetah 差异：从 engine 订阅任意协议入站的统一帧，再 mux 为 TS（跨协议优先）。
+### 2.3 与「TS 直通 ring」的差异
 
-### Caller jobs / Relay
+兼容规范允许拉流直接吐 TS 包。Cheetah **必须** 走 engine 统一帧，以便 RTMP/RTSP/HLS/WebRTC 互转。对客户端仍是 MPEG-TS over SRT，行为兼容。
 
-保持 [plans-28-srt](../plans-28-srt/srt-design.md) 路径：
+---
 
-```text
-ingress job:  remote SRT source → local StreamKey → engine
-egress job:   engine StreamKey → remote SRT listener
-relay job:    source → local key → target（经 engine，非包直通）
-```
+## 3. Stream ID 与 StreamKey 目标模型
 
-### 与 ZLM TS 直通路径的差异
+### 3.1 建议类型（Phase 01 落地）
 
-| 项目 | ZLM | Cheetah（本计划保持） |
-|------|-----|------------------------|
-| 推流媒体 | TS → Decoder → Tracks → MultiMediaSourceMuxer | TS → MpegTsDemuxer → AVFrame → engine |
-| 拉流媒体 | TSMediaSource ring 直接吐 TS | engine frames → MpegTsMuxer → SRT |
-| 跨协议 | 依赖各 schema MediaSource | 统一 engine，天然互转 |
-| SRT→SRT 直通 | 可同 schema 高效转发 | 默认经 engine；若未来做 TS 直通须单独标注 |
+在 `cheetah-srt-core` 扩展（可替换现有 `ParsedSrtStreamId` 字段，保持函数名 `parse_srt_stream_id` 或新增 `parse_zlm_stream_id` 再封装）：
 
-## Stream ID 权威语义（ZLM 对齐）
+```rust
+// 目标形状（名称可微调，语义不可变）
+pub struct ParsedSrtStreamId {
+    pub vhost: String,
+    pub app: String,
+    pub stream: String,
+    /// app/stream 规范化后的资源串
+    pub resource: String,
+    pub mode: Option<SrtStreamMode>, // None = 未声明 m
+    pub user: Option<String>,
+    pub session: Option<String>,
+    /// 除 h、r 外全部 key（必须含 m，若存在）
+    pub auth_params: BTreeMap<String, String>,
+}
 
-格式：
-
-```text
-#!::key1=value1,key2=value2,...
-```
-
-### 特殊 key
-
-| Key | 含义 | 规则 |
-|-----|------|------|
-| `h` | vhost | 缺省使用配置 `default_vhost`（建议 `__defaultVhost__` 或 `default`，与项目约定一致即可） |
-| `r` | 资源路径 | 期望 `app/stream` 两段；映射到本地流定位 |
-| `m` | 模式 | `publish` = 推流；其它值或缺失 = 拉流（`request`/`play` 均拉流） |
-| 其它 + `m` | 鉴权参数 | 进入 `auth_params`，供 webhook / 本地 auth 使用 |
-
-示例：
-
-```text
-#!::h=zlmediakit.com,r=live/test,m=publish
-
-vhost  = zlmediakit.com
-app    = live
-stream = test
-mode   = publish
-```
-
-```text
-#!::r=live/test
-# 无 m → 默认拉流
-```
-
-### 与当前解析器差异
-
-当前 `parse_srt_stream_id`（`crates/protocols/srt/core/src/stream_id.rs`）：
-
-- 已解析 `r/m/u/h/s/extras`
-- 未拆 `app`/`stream` 字段
-- 未强制 `r` 两段
-- module 默认 mode 为 `publish`
-
-目标模型（建议类型形状）：
-
-```text
-ParsedSrtStreamId {
-  vhost: String,              // h 或 default_vhost
-  app: String,                // r 第一段
-  stream: String,             // r 第二段
-  mode: Option<SrtStreamMode>,// None 表示未声明
-  user: Option<String>,       // u
-  session: Option<String>,    // s
-  auth_params: BTreeMap,      // 除 h/r 外全部 key（含 m）
-  raw: String,                // 原始 streamid
+pub struct StreamIdParseOptions {
+    pub default_vhost: String,
+    pub strict_prefix: bool,     // true: 必须 #!::
+    pub strict_resource: bool,   // true: r 必须两段
+    pub allow_bare_key: bool,    // true: 允许无前缀兼容旧客户端
 }
 ```
 
-### StreamKey 映射
+解析算法：**完整复制** [reference-behavior-zlm-compat.md](reference-behavior-zlm-compat.md) §2.3。
 
-Cheetah `StreamKey { namespace, path }` 无独立 vhost 维。
+### 3.2 StreamKey 映射
 
-**推荐默认策略（`stream_key_vhost_mode = "app_only"`）**：
+`cheetah_sdk::StreamKey { namespace, path }` 无独立 vhost 维。
 
-- `namespace = app`
-- `path = stream`
-- `vhost` 进入 session meta、metrics label、`auth_params` 旁路字段，不进入 key
+```rust
+// stream_key_vhost_mode = "app_only" （默认）
+StreamKey::new(app, stream)
 
-**可选策略（`stream_key_vhost_mode = "vhost_prefix"`）**：
-
-- `namespace = "{vhost}/{app}"` 或规范化后的合成段
-- 仅在多 vhost 隔离部署开启
-
-**兼容**：
-
-- `stream_id.allow_bare_key = true` 时允许 `r=live/test` 整串或 bare key 走旧 `stream_key_from_string`
-- 严格 ZLM 模式：`r` 不足两段则拒绝连接
-
-### 客户端用法（写入运维与 Phase 05）
-
-| 客户端 | 用法 |
-|--------|------|
-| OBS | `srt://host:9000?streamid=#!::r=live/test,m=publish` |
-| FFmpeg 推 | `-f mpegts srt://host:9000?streamid=#!::r=live/test,m=publish` |
-| ffplay 拉 | `srt://host:9000?streamid=#!::r=live/test` |
-| VLC 拉 | 偏好设置 SRT streamid = `#!::r=live/test`；URL = `srt://host:9000` |
-
-## 版本策略
-
-- 握手 HS version：5（UDT/SRT 握手包 version 字段）。
-- 本端 SRT 库版本宣告：建议 `0x010500`（1.5.0），与 ZLM / `shiguredo_srt` 默认一致。
-- **策略要求 peer `>= 1.3.0`**（`0x010300`）：
-  - 配置：`min_peer_srt_version = "1.3.0"`
-  - 若 peer HS 扩展版本可解析且低于最小值 → 拒绝并诊断 `peer_version_too_old`
-  - 若 peer 未携带 HS 扩展版本 → 按配置 `require_peer_version_extension` 决定拒绝或兼容放行
-- 本端不得宣称低于 1.3.0。
-
-## NACK / ARQ 架构位置
-
-```text
-丢失检测 / NAK 生成 / 重传调度
-  └── 在 shiguredo_srt 内（对标 ZLM NackContext + PacketSendQueue 的能力，而非复制代码）
-统计与配置
-  └── driver 透传 stats；module 聚合 metrics
-latency / TSBPD / buffer 上界
-  └── ConnectionOptions + driver config
-弱网验收
-  └── driver/module 集成测试 + netem 互操作
+// stream_key_vhost_mode = "vhost_prefix"
+StreamKey::new(format!("{vhost}/{app}"), stream)  // 或规范化分隔
 ```
 
-不在 module 实现 NACK 状态机。若实测 `shiguredo_srt` 在高丢包下行为不足，优先：升级库 → 配置调优 → 再评估补丁。
+`vhost` 始终进入：
 
-## FEC 架构位置（Phase 04）
+- 日志字段  
+- metrics label（若导出）  
+- `SrtAuthContext`  
 
-SRT Packet Filter / FEC 是握手扩展能力（ZLM 未实现）。
-
-推荐分层：
-
-```text
-cheetah-srt-core
-  - FecConfig / FecLayout / FecNegotiateResult 类型
-  - 纯函数：布局校验、恢复算法（若放 core）
-cheetah-srt-driver-tokio
-  - 在连接选项中启用协商
-  - 收发包路径挂 filter（若库支持）或旁路集成
-cheetah-srt-module
-  - 配置透传、metrics：recovered / unrecovered / negotiated
-```
-
-协商失败或对端不支持 → **降级 ARQ-only**，连接仍应成功（除非配置 `fec.required = true`）。
-
-实现路径（Phase 04 决策）：
-
-1. 优先：`shiguredo_srt` 上游能力或可合并补丁。
-2. 次选：本仓库对 `shiguredo_srt` 的 vendor/patch（记录版本钉扎）。
-3. 再次：在 driver 边界做有限 filter 包装（需严格评估与库缓冲一致性）。
-
-## 配置模型
-
-在现有 `SrtModuleConfig` 上扩展（建议字段，名称可微调）：
+### 3.3 模式决议
 
 ```text
-enabled: true
-listen: "0.0.0.0:9000"
-max_connections: 1024
-idle_timeout_ms: 30000
-connect_timeout_ms: 5000
-latency_ms: 120                 # TSBPD delay
-latency_mul: 4                  # 对齐 ZLM latencyMul 文档语义（可选，用于按 RTT 建议）
-pkt_buf_size: 8192              # 对齐 ZLM pktBufSize / 收发缓冲包数上界
-stats_interval_ms: 5000
-payload.kind: "mpegts"          # 仅允许 mpegts
-min_peer_srt_version: "1.3.0"
-require_peer_version_extension: false
-default_vhost: "__defaultVhost__"
-stream_id:
-  strict_resource: true         # r 必须 app/stream
-  allow_bare_key: false
-  stream_key_vhost_mode: "app_only"  # app_only | vhost_prefix
-ingress:
-  default_mode: "request"       # ZLM 对齐；可设 publish 兼容旧部署
-  default_publish_stream_key: ""
-  publish_keepalive_ms: 0
-encryption:
-  enabled: false
-  passphrase: ""
-  key_length: 16
-auth:
-  enabled: false
-  publish_token: ""
-  request_token: ""
-  users: []
-  # 预留 webhook：将 auth_params 转发到 control
-  webhook_enabled: false
-fec:
-  enabled: false
-  required: false
-  cols: 10
-  rows: 5
-  # layout / algorithm 细节见 Phase 04
-egress: { ... 保持 plans-28-srt }
-ingress_jobs / egress_jobs / relay_jobs: { ... }
+if parsed.mode == Some(Publish) → Publish
+else if parsed.mode == Some(Request|Play) → 该 mode
+else → config.ingress.default_mode   // 新默认 "request"
 ```
 
-配置应用语义：
+`Request` 与 `Play` 在业务上均走 **拉流** 路径（与现 module 一致）。
 
-- `listen` / encryption / payload / fec 主开关 / max_connections 变更 → `ModuleRestartRequired`
-- 仅 jobs 列表变更：首版可 `ModuleRestartRequired`，后续再做热更新
-- 重启由基础层 `create -> init -> start`，module 不维护私有重启流程
+---
 
-## HTTP 与控制接口
+## 4. 鉴权目标模型
 
-保持并扩展现有 SRT module 路由前缀 `/srt`：
+```rust
+pub struct SrtAuthContext {
+    pub mode: SrtStreamMode,
+    pub vhost: String,
+    pub app: String,
+    pub stream: String,
+    pub stream_key: StreamKey,
+    pub user: Option<String>,
+    pub auth_params: BTreeMap<String, String>,
+    pub peer_addr: Option<SocketAddr>,
+}
+```
 
-| 方法 | 路径 | 用途 |
-|------|------|------|
-| GET | `/srt/metrics` | Prometheus 文本 |
-| GET | `/srt/metrics.json` | JSON 快照 |
-| （可选后续） | `/srt/sessions` | 会话列表：peer、mode、stream、vhost、stats |
+逻辑（`auth.enabled == true` 时）：
 
-错误语义必须明确：
+1. `token = auth_params.get("token")`  
+2. 全局：`publish_token` / `request_token` 与 token 比较  
+3. 用户表：`user`（字段 `u`）+ token 匹配 `auth.users[]`  
+4. 失败 → `Err` → driver `Close`  
+5. 可选后续：`webhook_enabled` 时把整个 `auth_params` 交给 control（Phase 01 可先定义 hook trait 或 `fn build_webhook_query(&SrtAuthContext) -> String`，HTTP 可 TODO）
 
-- streamid 非法 / 缺 `r` / 严格模式下 `r` 非两段
-- 鉴权失败
-- 发布租约冲突
-- 流不存在（拉流）
-- peer 版本过低
-- 连接数上限
-- 非 TS payload 配置
+---
 
-## 观测与诊断
+## 5. 配置目标模型
 
-Driver / module 应能暴露：
+在 `SrtModuleConfig` 上 **增量** 字段（serde default 兼容旧 JSON）：
 
-| 指标 / 字段 | 说明 |
-|-------------|------|
-| connections / publish / play | 连接计数 |
-| bytes/packets in/out | 吞吐 |
-| sender_total_retransmits | 重传 |
-| receiver_total_lost / duplicates | 丢包 / 重复 |
-| rtt / jitter | 链路质量 |
-| loss_list depth | 当前丢失列表深度 |
-| tlpktdrop（若库暴露） | 过期丢包 |
-| handshake_reject_total{reason} | 含 version / auth / streamid |
-| fec_negotiated | 是否协商成功 |
-| fec_packets_recovered / unrecovered | FEC 效果 |
-| auth_reject_total | 鉴权失败 |
+```rust
+// 新增建议字段
+pub default_vhost: String,                    // "__defaultVhost__"
+pub min_peer_srt_version: String,             // "1.3.0"
+pub local_srt_version: String,                // "1.5.0"
+pub require_peer_version_extension: bool,     // false
+pub latency_mul: u32,                         // 4
+pub pkt_buf_size: usize,                      // 8192
+pub stream_id: SrtStreamIdModuleConfig,
+pub fec: SrtFecModuleConfig,
 
-日志关键字段：`peer_id`、`remote`、`stream_id`、`vhost`、`app`、`stream`、`mode`、`reject_reason`。
+// 修改默认
+// ingress.default_mode: "request"   // 原 "publish"
+```
 
-## 模块拆分目标
+```rust
+pub struct SrtStreamIdModuleConfig {
+    pub strict_prefix: bool,        // default true
+    pub strict_resource: bool,      // default true
+    pub allow_bare_key: bool,       // default false
+    pub stream_key_vhost_mode: String, // "app_only" | "vhost_prefix"
+}
 
-`module.rs` 当前过大（~1400 行）。目标结构：
+pub struct SrtFecModuleConfig {
+    pub enabled: bool,
+    pub required: bool,
+    pub cols: u32,
+    pub rows: u32,
+}
+```
+
+`SrtDriverConfig` 同步接收：`latency_ms`、`pkt_buf_size`/`recv_buffer_packets`、`min_peer_srt_version`、`local_srt_version`、fec 相关。
+
+配置变更导致 listen/encrypt/fec 主开关变化 → `ConfigEffect::ModuleRestartRequired`（现有逻辑：任意 diff 即 restart，可保持）。
+
+---
+
+## 6. Driver 事件/命令（已有，扩展点）
+
+**已有**（`driver.rs`）：
 
 ```text
-module/
-  src/
-    lib.rs
-    config.rs
-    metrics.rs
-    http.rs
-    module.rs              # Module trait 与启动拼装
-    stream_classify.rs     # streamid → mode + StreamKey
-    auth.rs                # auth_params + token/webhook
-    ingress_session.rs     # publish + TS demux
-    egress_session.rs      # play + TS mux
-    jobs.rs                # ingress/egress/relay plan
+Command: ConnectCaller, SendPayload, Close
+Event: ListenerStarted, CallerConnecting, Connected{stream_id},
+       Payload, KeyRefreshNeeded, Stats, Disconnected, Error
 ```
 
-单文件尽量 <500 行，明显超过 800 行必须拆。
+**建议增量**：
 
-## 测试分层
+```text
+Event::Rejected { peer_id, reason: SrtRejectReason }
+// 或 Disconnected.reason 使用稳定前缀: "reject:peer_version_too_old"
 
-| 层 | 内容 |
-|----|------|
-| core 单元 | streamid 全矩阵、版本解析、配置校验、FEC layout 纯函数 |
-| property | streamid 乱序字段、percent-encoding、边界字符 |
-| driver 集成 | listener/caller、加密、stats、弱网 netem、版本拒绝 |
-| module E2E | publish→engine→play；跨协议；鉴权失败；默认 mode |
-| fuzz | streamid、URL、driver 脏包、FEC 配置 |
-| 外部互操作 | OBS / ffmpeg / ffplay / VLC / libsrt / 可选 ZLM 对端 |
+Stats 增量字段（库可得才加）:
+  nak_sent, nak_received, tlpktdrop_count, peer_srt_version
+```
 
-## 一句话总纲
+`ConnectionOptions` 构建处（`connection_options` / `caller_connection_options`）透传：
 
-- 协议状态：`shiguredo_srt`
-- 业务语义：ZLM streamid（`h/r/m` + 默认拉流）
-- 媒体：MPEG-TS only → `AVFrame + TrackInfo`
-- 可靠传输：ARQ 必选可观测；FEC 可选可降级
-- 边界：core / driver / module 不混写
+- `tsbpd_delay` ← `latency_ms`（已有）  
+- `srt_version` ← 配置（若 `shiguredo_srt::ConnectionOptions` 支持；当前库默认 `0x010500`）  
+- stream_id（已有）  
+
+---
+
+## 7. Module 文件拆分目标
+
+当前 `module/src/module.rs` ~1400 行。目标：
+
+```text
+module/src/
+  lib.rs
+  config.rs
+  metrics.rs
+  http.rs
+  module.rs           # Module trait + start 拼装 only
+  stream_classify.rs  # parse options + classify → (mode, StreamKey, AuthContext)
+  auth.rs
+  ingress_session.rs  # demux + publish
+  egress_session.rs   # play session
+  jobs.rs             # job plan + retry
+```
+
+`AGENTS.md`：单文件尽量 <500 行，明显 >800 必须拆。
+
+---
+
+## 8. 版本工具（core 纯函数）
+
+```rust
+pub fn parse_srt_version(s: &str) -> Result<u32, ...>; // "1.3.0" → 0x00010300
+pub fn format_srt_version(v: u32) -> String;
+pub fn version_at_least(peer: u32, min: u32) -> bool;
+```
+
+Driver 在握手完成后（库若暴露 peer HS 扩展）比较；否则 Phase 02 记录「库 API 不可用」并至少完成配置+纯函数+单测。
+
+---
+
+## 9. FEC 架构（Phase 04）
+
+```text
+core: FecConfig validate + XOR recover 纯函数
+driver: 协商 + 收发路径集成（依赖库扩展策略）
+module: 配置 + metrics srt_fec_*
+```
+
+降级：见参考规范 §6。
+
+---
+
+## 10. 观测
+
+Module HTTP（已有）：
+
+- `GET /srt/metrics`  
+- `GET /srt/metrics.json`  
+
+必须能导出：连接数、bytes/packets、retransmit、lost、rtt/jitter、reject 计数、fec 计数（Phase 04）。
+
+日志：`peer_id, remote, stream_id, vhost, app, stream, mode, reason`。
+
+---
+
+## 11. 测试分层
+
+| 层 | 位置 | 内容 |
+|----|------|------|
+| 单元 | `core/tests/parser.rs` | streamid 全表 |
+| 单元 | core version/fec | 纯函数 |
+| property | `testing/property-tests` | 字段序、编码 |
+| driver | `driver-tokio/tests` | 握手、stats、timeout、版本 |
+| module | `module/tests` 或 src 内测 | classify、auth、publish/play |
+| fuzz | `srt/fuzz` | stream_id/url/packet |
+| 外部 | Phase 05 | ffmpeg/ffplay/OBS/VLC |
+
+---
+
+## 12. 实现检查清单（架构合规）
+
+- [ ] core 无 Tokio  
+- [ ] 默认无 m 为拉流  
+- [ ] r 两段 + h vhost  
+- [ ] auth_params 含 m  
+- [ ] TS only  
+- [ ] 单发布者租约  
+- [ ] 媒体经 cheetah-codec  
+- [ ] 缓冲均有上界  
+- [ ] 无 vendor-ref 依赖  

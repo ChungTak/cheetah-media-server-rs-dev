@@ -1,140 +1,48 @@
-# SRT 协议完善设计与渐进式开发计划（对标 ZLMediaKit）
+# SRT 协议完善 — 智能体可执行总计划（ZLM 兼容）
 
-- **状态**: 草案 / 待执行
-- **目标**: 在现有 `cheetah-srt-core`、`cheetah-srt-driver-tokio`、`cheetah-srt-module` 基础上，对标 ZLMediaKit SRT 的真实工程行为，补齐 Stream ID 语义、Listener 推拉流、NACK/ARQ 观测、版本策略、鉴权参数与 FEC，使 OBS / FFmpeg / ffplay / VLC / libsrt 可按 ZLM 文档方式稳定互操作。
-- **方法**: 协议状态机继续复用 Sans-I/O crate `shiguredo_srt`；行为参考 `vendor-ref/ZLMediaKit/srt/` 与 `vendor-ref/ZLMediaKit/src` 中的 TS / MediaSource / 鉴权实践；MPEG-TS demux/mux、时间戳归一化与 codec 识别回到 `cheetah-codec`。
-- **完成标准**: ZLM 风格 streamid 推/拉可用；TS-only 硬约束生效；NACK/重传与弱网可观测可测；peer 版本 `<1.3.0` 可拒绝；FEC 可协商并可降级；单元 / 集成 / 互操作 / fuzz 通过。
-- **基线**: 本计划是对 [plans-28-srt](../plans-28-srt/index.md) 已落地 SRT 主路径的 **ZLM 对齐增强**，不重写 crate 骨架。
-
----
-
-## V1 完善范围
-
-本轮是对现有 SRT 实现的协议与兼容完善，不重写项目总架构。
-
-1. **Stream ID（ZLM Access Control）**: 解析 `#!::key=value,...`；`h`/`r`/`m` 特殊语义；其余 key 与 `m` 作为鉴权参数。
-2. **推流 / 拉流判定**: `m=publish` 为推流，否则为拉流；**不存在 `m` 时默认拉流**（对齐 ZLM，可通过配置回退）。
-3. **vhost / app / stream 映射**: `h` 为 vhost（缺省默认 vhost）；`r=app/stream` 映射本地 `StreamKey`。
-4. **Listener**: 单端口 UDP listener 接受多 caller；握手后按 streamid 分流。
-5. **TS-only**: 推流只接受 MPEG-TS over SRT；拉流只输出 MPEG-TS over SRT。
-6. **NACK / ARQ**: 依赖并观测 `shiguredo_srt` 的 ACK/NAK/retransmit；配置 latency / buffer；弱网矩阵验收。
-7. **版本策略**: 本端宣告 SRT `>=1.3.0`（建议 1.5.0）；拒绝过旧 peer 并输出诊断。
-8. **FEC**: 实现 Packet Filter / FEC（**超越 ZLM**；ZLM `srt.md` 明确未实现），协商失败可降级 ARQ-only。
-9. **Caller jobs**: 保持并完善 ingress / egress / relay 与重试语义。
-10. **互操作**: OBS 推流、FFmpeg 推流、ffplay 拉流、VLC 偏好设置 streamid 拉流。
-11. **运维**: metrics、握手拒绝原因、FEC/NACK 计数、运维文档。
-
-本轮不做：
-
-1. FileCC、Rendezvous、Group Membership（`shiguredo_srt` / 本阶段均非目标）。
-2. 任意二进制 payload 跨协议转换；v1 仍只支持 MPEG-TS。
-3. 在 module 中复制一套 TS demux/mux 或参数集缓存；统一走 `cheetah-codec`。
-4. 绕过 `RuntimeApi` 在 SDK / engine / module 公共接口暴露 `tokio::*` 类型。
-5. 复制 ZLM 的 C++ 自研握手 / NACK 状态机；协议状态仍由 `shiguredo_srt` 承担，除非库能力证明不足且无法升级。
+- **状态**: 草案 / 待执行  
+- **读者**: 编程智能体（可直接按阶段改代码、写测试、跑验收）  
+- **目标**: 在已有 `cheetah-srt-*` 上对齐 [reference-behavior-zlm-compat.md](reference-behavior-zlm-compat.md) 的业务语义，并补齐版本策略、NACK 观测、FEC。  
+- **基线**: [../plans-28-srt/index.md](../plans-28-srt/index.md) 已完成 crate 脚手架、Listener/Caller、TS 推拉主路径；本计划是 **兼容增强**，禁止重写三段式骨架。  
+- **约束**: 严格遵守仓库根目录 `AGENTS.md`（core Sans-I/O、module 不暴露 tokio 公共类型、媒体走 `cheetah-codec`、单发布者租约等）。
 
 ---
 
-## ZLMediaKit 关键参考
+## 0. 智能体工作方式（必读）
 
-> **路径说明**: SRT 协议实现主体在 `vendor-ref/ZLMediaKit/srt/`，**不在** `src/`。`src/` 提供 TS 封装、MediaSource、HTTP/鉴权广播等共享能力。用户需求中的 “参考 `src`” 应理解为 **媒体桥与工程实践**；协议状态机与 streamid 业务以 `srt/` 为准。
+### 0.1 允许阅读的路径
 
-| 领域 | ZLMediaKit 文件 | 重点行为 |
-|------|-----------------|----------|
-| 文档 / 用法 | `srt/srt.md`、`srt/srt_en.md` | streamid 语义、OBS/ffmpeg/ffplay/VLC、NACK/listener/TS-only；FEC 未实现 |
-| Transport | `srt/SrtTransport.*` | 握手、ACK/NAK/ACKACK、keepalive、drop req、crypto、超时、统计 |
-| 业务桥 | `srt/SrtTransportImp.*` | `parseStreamid`、publish/play 分支、TS decoder、TSMediaSource ring |
-| NACK | `srt/NackContext.*` | 丢包表、RTT 周期再 NAK、seq 回绕 drop |
-| 收发队列 | `srt/PacketQueue.*`、`PacketSendQueue.*` | latency、TLPKTDROP、重传缓存上界 |
-| 握手扩展 | `srt/HSExt.*`、`Packet.*` | version/flags、Stream ID 编码、KM、reject reason |
-| Caller | `srt/SrtCaller.*`、`SrtPlayer.*`、`SrtPusher.*` | caller 推/拉对称实现 |
-| Session | `srt/SrtSession.*` | UDP session 与 transport 绑定 |
-| TS 媒体 | `src/TS/*`、`src/Rtp/TSDecoder.*`、`src/Record/MPEG.*` | TS 源与 demux |
-| 鉴权广播 | `src/Common/MediaSource.*` 等 | publish/play webhook 风格鉴权 |
+| 路径 | 用途 |
+|------|------|
+| `dev-docs/plans-28-srt-zlm/**` | 本计划全部知识（含兼容行为规范） |
+| `dev-docs/plans-28-srt/**` | 已落地基线设计与 ops 记录 |
+| `crates/protocols/srt/**` | 唯一实现改动区（主） |
+| `crates/foundation/cheetah-codec/**` | 仅当 TS 行为缺陷必须修时 |
+| `crates/sdk/cheetah-sdk/**` | 仅当需要扩展公共契约时（尽量避免） |
+| `AGENTS.md`、`SystemArchitecture.md` | 分层硬约束 |
+| `Cargo.toml`（workspace） | 依赖版本 |
 
-协议规范：
+### 0.2 禁止
 
-- [SRT RFC draft (Sharabayko)](https://haivision.github.io/srt-rfc/draft-sharabayko-srt.html)
-- `shiguredo_srt`：https://docs.rs/shiguredo_srt/ / https://github.com/shiguredo/srt-rs
+- **禁止** 引用或假设存在任何 `vendor-ref/**` 路径（执行环境可能没有）。兼容语义只以 [reference-behavior-zlm-compat.md](reference-behavior-zlm-compat.md) 为准。  
+- 禁止在 `cheetah-srt-core` 使用 Tokio / socket / 系统时间 / engine。  
+- 禁止 module 公共接口暴露 `tokio::*`。  
+- 禁止绕过 `PublishLease` 多发布者写同流。  
+- 禁止在 SRT module 复制时间戳/NALU 私有逻辑。  
+- 不要例行 `--all-features`。
 
----
+### 0.3 每个 Phase 的固定交付循环
 
-## 与本地实现对比后的主要缺口
+```text
+1. 阅读该 phase 文档全文 + reference-behavior-zlm-compat.md 相关章节
+2. 阅读文中列出的本地源文件（当前实现）
+3. 按任务编号顺序改代码
+4. 补/改测试（文档给出用例表）
+5. 运行验收命令
+6. 更新该 phase 文档顶部「状态」为完成，并在本 index 任务表勾选
+```
 
-| 能力 | ZLM 参考 | 本地状态 | 计划处理 |
-|------|----------|----------|----------|
-| Listener 多连接 | `SrtTransportManager` + Session | ✅ `spawn_driver` UDP listener / connection map | Phase 02/03 加固 |
-| NACK/重传 | `NackContext` + send queue | ⚠️ 库内 ACK/NAK/retransmit；已有 retransmit/loss stats；缺弱网正式矩阵与配置化观测 | Phase 02 |
-| Stream ID `h/r/m` | `SrtTransportImp::parseStreamid` | ⚠️ 解析 `h/r/m/u/s/extras`；`h` 未参与流定位；`r` 未强制 `app/stream` | Phase 01 |
-| 默认模式 | 无 `m` → **拉流** | ❌ 默认 `ingress.default_mode = "publish"` | Phase 01/03 |
-| 鉴权参数 | 其它 key + `m` → webhook | ⚠️ 仅 `token`/`u` + 静态 token 表 | Phase 01/03 |
-| TS-only 推/拉 | decoder_ts / TSMediaSource | ✅ MPEG-TS via `cheetah-codec`；路径经 engine 非 TS 直通 ring | Phase 03 文档化 + 硬校验 |
-| 版本 >=1.3.0 | HS v5，`srt_version=1.5.0` | ⚠️ 库默认 `0x010500`；未显式拒绝过旧 peer | Phase 01/02 |
-| FEC | **未实现** | ❌ 无 Packet Filter/FEC | Phase 04（超越 ZLM） |
-| Caller jobs | Player/Pusher | ✅ ingress/egress/relay | Phase 03 对齐 streamid |
-| OBS/ffmpeg/VLC 矩阵 | `srt.md` 用法 | ⚠️ 已有部分 FFmpeg 验证；缺 ZLM 默认 mode 与 VLC 场景 | Phase 05 |
-| module 体量 | 分层文件 | ⚠️ `module.rs` ~1400 行 | 各 phase 拆分 |
-
----
-
-## 标准与非标准兼容点
-
-### 标准基线
-
-- SRT handshake（HS version 5）、LiveCC、ACK/NAK/ACKACK、TSBPD、TLPKTDROP、AES-128/256 KM。
-- Stream ID Access Control 语法：`#!::k1=v1,k2=v2,...`。
-- 媒体：MPEG-TS over SRT；进入 engine 后统一 `AVFrame + TrackInfo`。
-- 本端与 peer 版本策略：支持 / 要求 `>= 1.3.0`。
-
-### ZLM / 真实落地兼容优先
-
-- `#!::h=...,r=app/stream,m=publish|request|play` 语义对齐 ZLM。
-- 无 `m` 默认拉流（配置可改回 publish 以兼容旧部署）。
-- OBS：`srt://host:9000?streamid=#!::r=live/test,m=publish`。
-- FFmpeg 推 mpegts；ffplay 拉；VLC 在偏好设置中写 streamid，URL 仅 `srt://host:9000`。
-- 入口允许脏 streamid / 缺字段时返回明确拒绝，不 panic。
-- FEC 为增强能力：对端不支持时降级，不阻断主路径。
-
----
-
-## 风险与迁移
-
-1. **默认 mode 变更**（publish → request）会改变「无 `m` 的 caller」行为。必须：
-   - 配置项 `ingress.default_mode` 保留；
-   - 默认值改为 `request` 时在 CHANGELOG / 配置注释中标注；
-   - 允许运维设回 `publish` 兼容 `plans-28-srt` 部署。
-2. **`r` 两段强制** 与当前「任意 stream key」宽松策略冲突；建议默认对齐 ZLM 两段，另开 `stream_id.allow_bare_key` 兼容 bare/`live/test` 已有解析。
-3. **FEC** 依赖 `shiguredo_srt` 扩展或本仓库 filter 层，工作量大，放在 Phase 04，主路径不阻塞。
-4. **Webhook 基建**：若 control 面尚未统一 webhook，Phase 01 先落 `auth_params` 结构与 module 钩子，HTTP 回调可接现有 control 或后续补齐。
-
----
-
-## 计划文件清单
-
-| 文件 | 状态 | 范围 |
-|------|------|------|
-| [srt-zlm-architecture.md](srt-zlm-architecture.md) | 草案 | 总体架构、crate 边界、数据流、streamid、配置、API、观测 |
-| [srt-zlm-gap-analysis.md](srt-zlm-gap-analysis.md) | 草案 | ZLM 行为拆解、本地现状、实现缺口、风险 |
-| [phase-01-streamid-version-auth.md](phase-01-streamid-version-auth.md) | 待执行 | Stream ID、vhost、默认模式、鉴权参数、版本策略 |
-| [phase-02-nack-arq-latency-stats.md](phase-02-nack-arq-latency-stats.md) | 待执行 | NACK/ARQ 观测、latency/buffer、Listener 加固、弱网 |
-| [phase-03-module-publish-play-ts-bridge.md](phase-03-module-publish-play-ts-bridge.md) | 待执行 | publish/play 业务、TS-only、租约/订阅、module 拆分 |
-| [phase-04-fec-packet-filter.md](phase-04-fec-packet-filter.md) | 待执行 | FEC / Packet Filter 协商、编解码、降级、指标 |
-| [phase-05-interop-ops-fuzz.md](phase-05-interop-ops-fuzz.md) | 待执行 | OBS/ffmpeg/ffplay/VLC 矩阵、fuzz、运维收口 |
-
----
-
-## 渐进式执行顺序
-
-1. **Phase 01** — 先固定 streamid / vhost / 默认模式 / 鉴权参数 / 版本策略，防止后续 module 反复改业务语义。
-2. **Phase 02** — 补齐 NACK/ARQ 观测、latency/buffer 配置、Listener 超时与弱网验收。
-3. **Phase 03** — module 层对齐 ZLM 推/拉、TS-only、租约与跨协议桥，并拆分过大源文件。
-4. **Phase 04** — 实现 FEC（超越 ZLM），协商失败可降级。
-5. **Phase 05** — 外部实体互操作、fuzz/corpus、运维指标与文档收口。
-
----
-
-## 总体验收
-
-每个阶段完成后至少运行：
+### 0.4 全局验收命令
 
 ```bash
 cargo fmt
@@ -147,36 +55,120 @@ cargo test -p cheetah-srt-module
 cargo test -p cheetah-srt-property-tests
 ```
 
-影响 `cheetah-codec` 的 MPEG-TS 路径时追加：
+---
 
-```bash
-cargo clippy -p cheetah-codec
-cargo test -p cheetah-codec
-```
+## 1. V1 范围
 
-外部互操作（示例，对齐 ZLM `srt.md`）：
+必须完成：
 
-```bash
-# OBS 推流地址
-# srt://192.168.1.105:9000?streamid=#!::r=live/test,m=publish
+1. Stream ID：`#!::h,r,m,...` 语义（见参考规范）  
+2. 默认无 `m` → **拉流**（配置可回退 publish）  
+3. `r=app/stream` → `StreamKey`；`h` → vhost meta  
+4. 鉴权参数 = 除 `h`/`r` 外全部 key（含 `m`）  
+5. Listener 推 TS / 拉 TS only  
+6. NACK/ARQ 指标 + latency/buffer 配置 + 弱网验收  
+7. peer 版本 `<1.3.0` 可拒绝  
+8. FEC（可降级）  
+9. OBS/ffmpeg/ffplay/VLC 互操作矩阵  
 
-# FFmpeg 推流
-ffmpeg -re -stream_loop -1 -i test.ts -c:v copy -c:a copy -f mpegts \
-  "srt://127.0.0.1:9000?streamid=#!::r=live/test,m=publish"
-
-# ffplay 拉流
-ffplay -i "srt://127.0.0.1:9000?streamid=#!::r=live/test"
-
-# VLC 拉流：偏好设置 -> 串流输出 -> 访问输出 -> SRT 中设置 streamid
-# 例如 #!::r=live/test ；播放地址仅填 srt://127.0.0.1:9000
-```
+明确不做：FileCC、Rendezvous、Group、非 TS payload、自研完整 SRT 替代 `shiguredo_srt`（除非 Phase 04 评估结论要求有限 patch）。
 
 ---
 
-## 阅读顺序建议
+## 2. 本地代码地图（执行前先打开）
 
-1. 本索引 `index.md`
-2. [srt-zlm-gap-analysis.md](srt-zlm-gap-analysis.md) 了解缺口
-3. [srt-zlm-architecture.md](srt-zlm-architecture.md) 锁定目标架构
-4. 按 Phase 01 → 05 执行
-5. 基线细节回看 [plans-28-srt](../plans-28-srt/index.md)
+```text
+crates/protocols/srt/
+  core/
+    src/lib.rs
+    src/stream_id.rs      # Phase 01 主战场
+    src/config.rs         # 模式/加密/会话选项
+    src/session.rs        # core 事件类型
+    src/error.rs
+    tests/parser.rs
+  driver-tokio/
+    src/config.rs
+    src/driver.rs         # Phase 02 主战场
+    tests/driver_smoke.rs
+  module/
+    src/lib.rs
+    src/config.rs         # 默认 mode 等
+    src/module.rs         # ~1400 行，Phase 03 拆分
+    src/metrics.rs
+    src/http.rs
+  testing/property-tests/
+  fuzz/
+```
+
+依赖：workspace `shiguredo_srt = "=2026.1.0-canary.1"`（Sans-I/O；内含 ACK/NAK/TSBPD；**无 FEC**）。
+
+---
+
+## 3. 缺口总表（改什么）
+
+| ID | 缺口 | 当前行为 | 目标行为 | Phase |
+|----|------|----------|----------|-------|
+| G1 | 默认 mode | `default_mode="publish"` | 默认 `"request"`（拉流） | 01 |
+| G2 | `r` 结构 | 整串 key，允许单段 | 严格两段 app/stream | 01 |
+| G3 | `h` | `host` 字段闲置 | vhost + meta/metrics | 01 |
+| G4 | auth_params | 主要 extras token | 除 h/r 外全量含 m | 01 |
+| G5 | bare streamid | 接受无 `#!::` | 严格拒绝；开关兼容 | 01 |
+| G6 | 版本拒绝 | 无 | min 1.3.0 | 01+02 |
+| G7 | NACK 观测/弱网 | 部分 stats | 完整指标+矩阵 | 02 |
+| G8 | latency/buf 配置 | latency_ms 有 | 对齐 pkt_buf 等 | 02 |
+| G9 | 业务失败关闭 | 部分 | 对齐规范状态机 | 03 |
+| G10 | module 体积 | module.rs 过大 | 拆分文件 | 03 |
+| G11 | FEC | 无 | 可协商可降级 | 04 |
+| G12 | 互操作矩阵 | 部分记录 | 正式矩阵 | 05 |
+
+---
+
+## 4. 文档清单
+
+| 文件 | 用途 |
+|------|------|
+| [reference-behavior-zlm-compat.md](reference-behavior-zlm-compat.md) | **兼容行为唯一权威**（自包含） |
+| [srt-zlm-architecture.md](srt-zlm-architecture.md) | 目标架构、类型、配置、数据流 |
+| [srt-zlm-gap-analysis.md](srt-zlm-gap-analysis.md) | 逐文件差距与风险 |
+| [phase-01-streamid-version-auth.md](phase-01-streamid-version-auth.md) | 可执行任务：streamid/auth/version |
+| [phase-02-nack-arq-latency-stats.md](phase-02-nack-arq-latency-stats.md) | 可执行任务：ARQ 观测/弱网 |
+| [phase-03-module-publish-play-ts-bridge.md](phase-03-module-publish-play-ts-bridge.md) | 可执行任务：推拉业务/拆分 |
+| [phase-04-fec-packet-filter.md](phase-04-fec-packet-filter.md) | 可执行任务：FEC |
+| [phase-05-interop-ops-fuzz.md](phase-05-interop-ops-fuzz.md) | 可执行任务：互操作/fuzz/ops |
+
+---
+
+## 5. 执行顺序
+
+```text
+Phase 01 → Phase 02 → Phase 03 → Phase 04 → Phase 05
+```
+
+- 01 不依赖 driver 大改即可单测通过。  
+- 02 可与 01 尾部并行，但版本拒绝依赖 01 的版本类型。  
+- 03 依赖 01 的 parse/classify API。  
+- 04 独立风险最高，可在 03 后；若阻塞可标记延期但 index 必须写明。  
+- 05 收口。
+
+---
+
+## 6. 风险与迁移（实现时必须处理）
+
+1. **默认 mode 变更** 会破坏「无 m 却推流」的旧客户端 → 保留 `ingress.default_mode`，默认改 `request`，注释写明兼容设 `publish`。  
+2. **严格 `r` 两段** 可能拒绝旧 bare key → `stream_id.allow_bare_key` / `strict_resource`。  
+3. **FEC** 依赖库能力，Phase 04 先做调研决策再写代码。  
+
+---
+
+## 7. 外部互操作速查
+
+```bash
+# 推
+ffmpeg -re -stream_loop -1 -i test.ts -c copy -f mpegts \
+  "srt://127.0.0.1:9000?streamid=#!::r=live/test,m=publish"
+
+# 拉
+ffplay -i "srt://127.0.0.1:9000?streamid=#!::r=live/test"
+```
+
+完整矩阵见 Phase 05；语义见 [reference-behavior-zlm-compat.md](reference-behavior-zlm-compat.md) §2.5。
