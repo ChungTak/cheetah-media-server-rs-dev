@@ -17,6 +17,9 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 #[derive(Clone)]
+/// Shared runtime APIs used by the HTTP control plane.
+///
+/// HTTP 控制平面使用的共享运行时 API。
 pub struct ControlState {
     pub health: Arc<dyn HealthApi>,
     pub metrics: Arc<dyn MetricsApi>,
@@ -30,11 +33,17 @@ pub struct ControlState {
 }
 
 #[derive(Debug, Deserialize)]
+/// Config patch request body with optional effect hint.
+///
+/// 配置补丁请求体，带可选效果提示。
 struct PatchRequest {
     patch: Value,
     effect: Option<String>,
 }
 
+/// Build the Axum router for the control plane endpoints.
+///
+/// 为控制平面端点构建 Axum 路由。
 pub fn router(state: ControlState) -> Router {
     let state = Arc::new(state);
     Router::new()
@@ -55,6 +64,9 @@ pub fn router(state: ControlState) -> Router {
         .layer(Extension(state))
 }
 
+/// Bind an HTTP server to the given address and serve the control plane.
+///
+/// 将 HTTP 服务器绑定到指定地址并为控制平面提供服务。
 pub fn spawn_server(
     addr: SocketAddr,
     state: ControlState,
@@ -66,6 +78,9 @@ pub fn spawn_server(
     })
 }
 
+/// Return HTTP 200 if the engine is live, otherwise 503.
+///
+/// 若引擎存活则返回 200，否则返回 503。
 async fn get_healthz(Extension(state): Extension<Arc<ControlState>>) -> impl IntoResponse {
     if state.health.is_live() {
         StatusCode::OK
@@ -74,6 +89,9 @@ async fn get_healthz(Extension(state): Extension<Arc<ControlState>>) -> impl Int
     }
 }
 
+/// Return HTTP 200 if the engine is ready, otherwise 503.
+///
+/// 若引擎就绪则返回 200，否则返回 503。
 async fn get_readyz(Extension(state): Extension<Arc<ControlState>>) -> impl IntoResponse {
     if state.health.is_ready() {
         StatusCode::OK
@@ -82,10 +100,16 @@ async fn get_readyz(Extension(state): Extension<Arc<ControlState>>) -> impl Into
     }
 }
 
+/// Render engine metrics as plain text.
+///
+/// 以纯文本渲染引擎指标。
 async fn get_metrics(Extension(state): Extension<Arc<ControlState>>) -> impl IntoResponse {
     (StatusCode::OK, state.metrics.render())
 }
 
+/// List modules, their states, and their mounted HTTP route prefixes.
+///
+/// 列出模块、状态及其挂载的 HTTP 路由前缀。
 async fn get_modules(Extension(state): Extension<Arc<ControlState>>) -> impl IntoResponse {
     let mounted = state.modules.http_mounts();
     let modules = state
@@ -108,6 +132,9 @@ async fn get_modules(Extension(state): Extension<Arc<ControlState>>) -> impl Int
     Json(json!({"modules": modules}))
 }
 
+/// List active streams and their track metadata.
+///
+/// 列出活跃流及其轨道元数据。
 async fn get_streams(Extension(state): Extension<Arc<ControlState>>) -> impl IntoResponse {
     match state.streams.list_streams().await {
         Ok(streams) => {
@@ -153,6 +180,9 @@ async fn get_streams(Extension(state): Extension<Arc<ControlState>>) -> impl Int
     }
 }
 
+/// List all task snapshots with their tree structure.
+///
+/// 列出所有任务快照及其树结构。
 async fn get_tasks(Extension(state): Extension<Arc<ControlState>>) -> impl IntoResponse {
     let tasks = state
         .tasks
@@ -181,6 +211,9 @@ async fn get_tasks(Extension(state): Extension<Arc<ControlState>>) -> impl IntoR
     Json(json!({"tasks": tasks}))
 }
 
+/// List all registered service descriptors.
+///
+/// 列出所有已注册服务描述符。
 async fn get_services(Extension(state): Extension<Arc<ControlState>>) -> impl IntoResponse {
     let services = state
         .service_registry
@@ -197,6 +230,9 @@ async fn get_services(Extension(state): Extension<Arc<ControlState>>) -> impl In
     Json(json!({ "services": services }))
 }
 
+/// Return the current config version and global effective value.
+///
+/// 返回当前配置版本与全局有效值。
 async fn get_config(Extension(state): Extension<Arc<ControlState>>) -> impl IntoResponse {
     Json(json!({
         "version": state.config.version(),
@@ -204,6 +240,9 @@ async fn get_config(Extension(state): Extension<Arc<ControlState>>) -> impl Into
     }))
 }
 
+/// List all registered config schemas.
+///
+/// 列出所有已注册的配置 schema。
 async fn get_config_schemas(Extension(state): Extension<Arc<ControlState>>) -> impl IntoResponse {
     let schemas = state
         .config_schemas
@@ -219,6 +258,9 @@ async fn get_config_schemas(Extension(state): Extension<Arc<ControlState>>) -> i
     Json(json!({ "schemas": schemas }))
 }
 
+/// Apply a global config patch and forward module changes to `ModuleManagerApi`.
+///
+/// 应用全局配置补丁，并将模块变更转发给 `ModuleManagerApi`。
 async fn patch_global_config(
     Extension(state): Extension<Arc<ControlState>>,
     Json(req): Json<PatchRequest>,
@@ -285,6 +327,9 @@ async fn patch_global_config(
         .into_response()
 }
 
+/// Apply a module config patch and forward the resulting change to `ModuleManagerApi`.
+///
+/// 应用模块配置补丁，并将结果变更转发给 `ModuleManagerApi`。
 async fn patch_module_config(
     Extension(state): Extension<Arc<ControlState>>,
     Path(module_id): Path<String>,
@@ -349,6 +394,9 @@ async fn patch_module_config(
         .into_response()
 }
 
+/// Dispatch a request to a module HTTP handler based on prefix and route matching.
+///
+/// 根据前缀与路由匹配将请求分派给模块 HTTP 处理器。
 async fn handle_module_http(
     Extension(state): Extension<Arc<ControlState>>,
     req: Request<Body>,
@@ -453,6 +501,9 @@ async fn handle_module_http(
     to_axum_response(module_resp)
 }
 
+/// Convert an `HttpResponse` into an Axum `Response`.
+///
+/// 将 `HttpResponse` 转换为 Axum `Response`。
 fn to_axum_response(resp: HttpResponse) -> Response {
     let status = StatusCode::from_u16(resp.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let mut builder = axum::http::Response::builder().status(status);
@@ -464,6 +515,9 @@ fn to_axum_response(resp: HttpResponse) -> Response {
         .unwrap_or_else(|_| (StatusCode::INTERNAL_SERVER_ERROR, "invalid response").into_response())
 }
 
+/// Normalize a path: trim, ensure leading slash, and strip trailing slashes.
+///
+/// 规范化路径：去除空白、确保前导斜杠、去除尾部斜杠。
 fn normalize_path(path: &str) -> String {
     let trimmed = path.trim();
     if trimmed.is_empty() || trimmed == "/" {
@@ -479,6 +533,9 @@ fn normalize_path(path: &str) -> String {
     out
 }
 
+/// Compute the path relative to a prefix, or `None` if the prefix does not match.
+///
+/// 计算相对前缀的路径；若前缀不匹配则返回 `None`。
 fn relative_path(prefix: &str, absolute_path: &str) -> Option<String> {
     let prefix = normalize_path(prefix);
     let absolute = normalize_path(absolute_path);
@@ -500,6 +557,9 @@ fn relative_path(prefix: &str, absolute_path: &str) -> Option<String> {
         })
 }
 
+/// Check if a route matches the relative path and method, returning `(matched, allowed)`.
+///
+/// 检查路由是否匹配相对路径与方法，返回 `(匹配, 允许)`。
 fn route_match(mount: &HttpRouteMount, method: HttpMethod, relative_path: &str) -> (bool, bool) {
     if mount.routes.is_empty() {
         return (true, true);
@@ -521,6 +581,9 @@ fn route_match(mount: &HttpRouteMount, method: HttpMethod, relative_path: &str) 
     (matched_path, false)
 }
 
+/// Match a root route (`//`) against the absolute path and method.
+///
+/// 将根路由 (`//`) 与绝对路径及方法匹配。
 fn root_route_match(
     mount: &HttpRouteMount,
     method: HttpMethod,
@@ -543,14 +606,23 @@ fn root_route_match(
     (matched_path, false, absolute)
 }
 
+/// A root route starts with `//` and is matched against the absolute path.
+///
+/// 根路由以 `//` 开头，并针对绝对路径匹配。
 fn is_root_route(path: &str) -> bool {
     path.starts_with("//")
 }
 
+/// Normalize a root route by stripping its leading slashes.
+///
+/// 通过去除前导斜杠规范化根路由。
 fn normalize_root_route(path: &str) -> String {
     normalize_path(path.trim_start_matches('/'))
 }
 
+/// Map an Axum HTTP method to the SDK `HttpMethod` enum.
+///
+/// 将 Axum HTTP 方法映射到 SDK `HttpMethod` 枚举。
 fn to_sdk_method(method: &Method) -> Option<HttpMethod> {
     match *method {
         Method::GET => Some(HttpMethod::Get),
@@ -563,6 +635,9 @@ fn to_sdk_method(method: &Method) -> Option<HttpMethod> {
     }
 }
 
+/// Parse a string effect hint into `ConfigEffect` (defaulting to `Immediate`).
+///
+/// 将字符串效果提示解析为 `ConfigEffect`（默认为 `Immediate`）。
 fn parse_effect(effect: Option<&str>) -> ConfigEffect {
     match effect {
         Some("new_sessions") => ConfigEffect::NewSessionsOnly,
