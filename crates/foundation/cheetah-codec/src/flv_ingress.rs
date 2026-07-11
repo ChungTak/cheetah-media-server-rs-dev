@@ -241,7 +241,8 @@ impl FlvIngress {
                         })?;
                 let nalu_payload = tag.payload.slice(5..);
                 let annexb = annexb_from_payload(nalu_payload);
-                let dts = self.unwrapped_timestamp_ms(tag.timestamp_ms) as i64;
+                let unwrapped_ts = self.unwrapped_timestamp_ms(tag.timestamp_ms);
+                let dts = unwrapped_ts as i64;
                 let pts = dts.saturating_add(i64::from(cts));
                 let mut frame = AVFrame::new(
                     track.track_id,
@@ -257,7 +258,7 @@ impl FlvIngress {
                 frame.origin = FrameOrigin::Ingest;
                 frame.set_source_timestamp(SourceTimestamp::Rtmp(RtmpTimestamp::new(
                     tag.timestamp_ms,
-                    self.unwrapped_timestamp_ms(tag.timestamp_ms),
+                    unwrapped_ts,
                 )));
                 Ok(Some(FlvIngressOutput::Frame(Box::new(frame))))
             }
@@ -328,7 +329,8 @@ impl FlvIngress {
                         })?;
                 let nalu_payload = tag.payload.slice(5..);
                 let annexb = annexb_from_payload(nalu_payload);
-                let dts = self.unwrapped_timestamp_ms(tag.timestamp_ms) as i64;
+                let unwrapped_ts = self.unwrapped_timestamp_ms(tag.timestamp_ms);
+                let dts = unwrapped_ts as i64;
                 let pts = dts.saturating_add(i64::from(cts));
                 let mut frame = AVFrame::new(
                     track.track_id,
@@ -344,7 +346,7 @@ impl FlvIngress {
                 frame.origin = FrameOrigin::Ingest;
                 frame.set_source_timestamp(SourceTimestamp::Rtmp(RtmpTimestamp::new(
                     tag.timestamp_ms,
-                    self.unwrapped_timestamp_ms(tag.timestamp_ms),
+                    unwrapped_ts,
                 )));
                 Ok(Some(FlvIngressOutput::Frame(Box::new(frame))))
             }
@@ -429,7 +431,8 @@ impl FlvIngress {
                             tag_type: FlvTagType::Audio,
                         })?;
                 let raw = tag.payload.slice(2..);
-                let dts = self.unwrapped_timestamp_ms(tag.timestamp_ms) as i64;
+                let unwrapped_ts = self.unwrapped_timestamp_ms(tag.timestamp_ms);
+                let dts = unwrapped_ts as i64;
                 let mut frame = AVFrame::new(
                     track.track_id,
                     MediaKind::Audio,
@@ -444,7 +447,7 @@ impl FlvIngress {
                 frame.origin = FrameOrigin::Ingest;
                 frame.set_source_timestamp(SourceTimestamp::Rtmp(RtmpTimestamp::new(
                     tag.timestamp_ms,
-                    self.unwrapped_timestamp_ms(tag.timestamp_ms),
+                    unwrapped_ts,
                 )));
                 Ok(Some(FlvIngressOutput::Frame(Box::new(frame))))
             }
