@@ -52,6 +52,7 @@ async fn webrtc_same_protocol_fixture_loopback_roundtrips_h264(
     options.topology = LoopbackTopology::SameProtocol {
         protocol: Protocol::WebRtc,
     };
+    options.preferred_layer = LoopbackLayer::WebRtcMediaFixture;
     options.tracks = vec![h264_track()];
 
     let mut pair = connector.open_in_memory_loopback(options).await?;

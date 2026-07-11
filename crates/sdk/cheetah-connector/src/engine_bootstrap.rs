@@ -215,21 +215,6 @@ pub(crate) fn validate_capability(
         });
     }
 
-    let feature_enabled = supports(protocol, direction)
-        && match protocol {
-            Protocol::Rtsp => cfg!(feature = "rtsp"),
-            Protocol::HttpFlv => cfg!(feature = "http-flv"),
-            Protocol::Rtmp => cfg!(feature = "rtmp"),
-            Protocol::WebRtc => cfg!(feature = "webrtc"),
-        };
-
-    if !feature_enabled {
-        return Err(ConnectorError::FeatureDisabled {
-            protocol,
-            feature: protocol.as_str(),
-        });
-    }
-
     if let Some(opts) = options {
         if opts.subscriber.queue_capacity == 0 {
             return Err(ConnectorError::InvalidArgument(

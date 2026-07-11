@@ -131,6 +131,7 @@ modules:
     let mut pair = connector.open_in_memory_loopback(options).await?;
     println!("loopback layer: {:?}", pair.layer);
 
+    pair.publisher.wait_ready().await?;
     pair.publisher.push_frame(Arc::new(h264_frame()))?;
     pair.publisher.push_frame(Arc::new(aac_frame()))?;
 

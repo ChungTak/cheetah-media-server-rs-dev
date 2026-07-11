@@ -3,10 +3,10 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use cheetah_codec::{
-    AVFrame, AacAudioSpecificConfig, CodecExtradata, CodecId, FrameFlags, FrameFormat, MediaKind,
-    Timebase, TrackId, TrackInfo, TrackReadiness,
+    AVFrame, AacAudioSpecificConfig, CodecExtradata, CodecId, FrameFlags, FrameFormat, FrameOrigin,
+    FrameSideData, MediaKind, Timebase, TrackId, TrackInfo, TrackReadiness,
 };
-use cheetah_connector::{ConnectorBuilder, LoopbackOptions};
+use cheetah_connector::{ConnectorBuilder, LoopbackOptions, WIRE_METADATA_NOT_PRESERVED};
 use cheetah_runtime_tokio::TokioRuntime;
 
 fn h264_track() -> TrackInfo {
@@ -51,12 +51,15 @@ fn h264_frame() -> AVFrame {
         Timebase::new(1, 1_000),
         payload,
     );
-    frame.flags = FrameFlags::KEY;
+    frame.flags = FrameFlags::KEY | FrameFlags::DISCONTINUITY;
+    frame.origin = FrameOrigin::Relay;
+    frame.set_duration(1).expect("valid duration");
+    frame.side_data.push(FrameSideData::SequenceNumber(42));
     frame
 }
 
 fn aac_frame() -> AVFrame {
-    AVFrame::new(
+    let mut frame = AVFrame::new(
         TrackId(1),
         MediaKind::Audio,
         CodecId::AAC,
@@ -65,13 +68,19 @@ fn aac_frame() -> AVFrame {
         0,
         Timebase::new(1, 1_000),
         Bytes::from_static(&[0x12, 0x34, 0x56, 0x78]),
-    )
+    );
+    frame.origin = FrameOrigin::Relay;
+    frame.set_duration(1).expect("valid duration");
+    frame.side_data.push(FrameSideData::SequenceNumber(99));
+    frame
 }
 
 #[cfg(feature = "loopback")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rtmp_http_flv_loopback_preserves_track_and_frame_metadata(
 ) -> Result<(), Box<dyn std::error::Error>> {
+    assert!(WIRE_METADATA_NOT_PRESERVED.contains(&"duration"));
+
     let runtime = Arc::new(TokioRuntime::new()) as Arc<dyn cheetah_runtime_api::RuntimeApi>;
     let config = Arc::new(cheetah_config::ConfigStore::new());
     config.load_yaml_str(
@@ -102,6 +111,7 @@ modules:
 
     let mut pair = connector.open_in_memory_loopback(options).await?;
 
+    pair.publisher.wait_ready().await?;
     pair.publisher.push_frame(Arc::new(h264_frame()))?;
     pair.publisher.push_frame(Arc::new(aac_frame()))?;
 
@@ -118,7 +128,15 @@ modules:
     assert_eq!(video.dts, 0);
     assert_eq!(video.timebase, Timebase::new(1, 1_000));
     assert!(video.flags.contains(FrameFlags::KEY));
+    assert!(video
+        .flags
+        .contains(FrameFlags::START_OF_AU | FrameFlags::END_OF_AU));
+    assert!(!video.flags.contains(FrameFlags::DISCONTINUITY));
     assert_eq!(video.payload, h264_frame().payload);
+    assert_eq!(video.duration, 0);
+    assert_eq!(video.duration_us, 0);
+    assert_eq!(video.origin, FrameOrigin::Ingest);
+    assert!(!video.side_data.contains(&FrameSideData::SequenceNumber(42)));
 
     let audio = tokio::time::timeout(Duration::from_secs(5), pair.subscriber.recv())
         .await
@@ -132,6 +150,14 @@ modules:
     assert_eq!(audio.pts, 0);
     assert_eq!(audio.dts, 0);
     assert_eq!(audio.payload, aac_frame().payload);
+    assert!(audio
+        .flags
+        .contains(FrameFlags::START_OF_AU | FrameFlags::END_OF_AU));
+    assert!(!audio.flags.contains(FrameFlags::DISCONTINUITY));
+    assert_eq!(audio.duration, 0);
+    assert_eq!(audio.duration_us, 0);
+    assert_eq!(audio.origin, FrameOrigin::Ingest);
+    assert!(!audio.side_data.contains(&FrameSideData::SequenceNumber(99)));
 
     let tracks = pair.subscriber.tracks();
     let video_track = tracks

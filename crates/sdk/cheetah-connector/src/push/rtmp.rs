@@ -30,13 +30,13 @@ use futures::future::{BoxFuture, Fuse, FusedFuture, OptionFuture};
 use futures::{select_biased, FutureExt, StreamExt};
 use parking_lot::Mutex;
 
-use crate::error::ConnectorError;
-use crate::handles::PushHandle;
-use crate::options::ConnectorPushOptions;
+use crate::error::{ConnectorError, Operation};
+use crate::handles::{map_sdk_error, PushHandle};
+use crate::options::{ConnectorPushOptions, ProtocolPushExtras, RtmpPushExtras};
 use crate::protocol::Protocol;
 
 const DEFAULT_COMMAND_QUEUE: usize = 256;
-const DEFAULT_BUFFER_SIZE: usize = 256;
+const DEFAULT_EVENT_QUEUE: usize = 1024;
 
 struct SinkState {
     closed: bool,
@@ -44,6 +44,7 @@ struct SinkState {
     emit_play_metadata: bool,
     tracks: Vec<TrackInfo>,
     buffer: VecDeque<RtmpCoreCommand>,
+    buffer_capacity: usize,
 }
 
 /// Synchronous RTMP publisher sink.
@@ -160,29 +161,45 @@ pub async fn open_rtmp_push(
     url: &str,
     options: ConnectorPushOptions,
 ) -> Result<PushHandle, ConnectorError> {
-    let url = RtmpUrl::parse(url).map_err(|err| ConnectorError::InvalidUrl {
+    let parsed_url = RtmpUrl::parse(url).map_err(|err| ConnectorError::InvalidUrl {
         protocol: Protocol::Rtmp,
         url: url.to_string(),
         reason: err.to_string(),
     })?;
-    let rtmp_url = url.to_string();
+    let rtmp_url = parsed_url.to_string();
 
     let runtime_api = engine.runtime_api();
-
     let cancel = options.cancel.clone().unwrap_or_default().child_token();
 
+    let extras = match options.protocol {
+        ProtocolPushExtras::Rtmp(extras) => extras,
+        _ => RtmpPushExtras::default(),
+    };
+
+    let command_queue_capacity = extras
+        .command_queue_capacity
+        .unwrap_or(DEFAULT_COMMAND_QUEUE)
+        .max(64);
+    let write_queue_capacity = extras
+        .write_queue_capacity
+        .unwrap_or(command_queue_capacity)
+        .max(8);
+    let read_buffer_size = extras.read_buffer_size.unwrap_or(64 * 1024).max(1024);
+    let chunk_size = extras.chunk_size.unwrap_or(4096).max(1) as u32;
+    let ack_window_size = extras.ack_window_size.unwrap_or(5_000_000).max(1) as u32;
+
     let config = RtmpClientDriverConfig {
-        command_queue_capacity: DEFAULT_COMMAND_QUEUE,
-        event_queue_capacity: 1024,
-        write_queue_capacity: DEFAULT_COMMAND_QUEUE,
-        read_buffer_size: 64 * 1024,
-        ack_window_size: 5_000_000,
-        chunk_size: 4096,
+        command_queue_capacity,
+        event_queue_capacity: DEFAULT_EVENT_QUEUE,
+        write_queue_capacity,
+        read_buffer_size,
+        ack_window_size,
+        chunk_size,
     };
 
     let client = start_client(
         runtime_api.clone(),
-        url,
+        parsed_url,
         RtmpClientMode::Publish,
         config,
         cancel.clone(),
@@ -193,26 +210,39 @@ pub async fn open_rtmp_push(
         source: Box::new(err),
     })?;
 
-    let (cmd_tx, cmd_rx) = mpsc::channel(DEFAULT_BUFFER_SIZE);
+    let (cmd_tx, cmd_rx) = mpsc::channel(command_queue_capacity);
     let state = Arc::new(Mutex::new(SinkState {
         closed: false,
         ready: false,
         emit_play_metadata: options.publisher.announce_tracks,
         tracks: Vec::new(),
-        buffer: VecDeque::with_capacity(DEFAULT_BUFFER_SIZE),
+        buffer: VecDeque::with_capacity(command_queue_capacity),
+        buffer_capacity: command_queue_capacity,
     }));
 
     let cmd_tx_client = client.core_command_sender();
-    let run = run_client(client, cmd_rx, cmd_tx_client, cancel.clone(), state.clone());
+    let (ready_tx, ready_rx) = tokio::sync::watch::channel(false);
+    let run = run_client(
+        client,
+        cmd_rx,
+        cmd_tx_client,
+        cancel.clone(),
+        state.clone(),
+        ready_tx,
+    );
 
     let join = runtime_api.spawn(Box::pin(run));
 
     let sink = RtmpPublisherSink::new(cmd_tx, cancel, state, join);
-    let _ = options.protocol;
     sink.update_tracks(options.tracks)
-        .map_err(ConnectorError::from)?;
+        .map_err(|e| map_sdk_error(Protocol::Rtmp, Operation::Open, e))?;
 
-    Ok(PushHandle::new(Protocol::Rtmp, rtmp_url, Box::new(sink)))
+    Ok(PushHandle::new(
+        Protocol::Rtmp,
+        rtmp_url,
+        Box::new(sink),
+        Arc::new(ready_rx),
+    ))
 }
 
 async fn run_client(
@@ -221,6 +251,7 @@ async fn run_client(
     cmd_tx: RtmpClientCommandSender,
     cancel: CancellationToken,
     state: Arc<Mutex<SinkState>>,
+    ready_tx: tokio::sync::watch::Sender<bool>,
 ) {
     let mut send_fut: OptionFuture<Fuse<BoxFuture<'static, Result<(), ClientSendError>>>> =
         OptionFuture::from(None);
@@ -235,6 +266,7 @@ async fn run_client(
                 } = event
                 {
                     state.lock().ready = true;
+                    let _ = ready_tx.send(true);
                     try_send_next(&mut send_fut, &cmd_tx, &state);
                 }
             }
@@ -245,7 +277,7 @@ async fn run_client(
                     if guard.closed {
                         continue;
                     }
-                    if guard.buffer.len() < DEFAULT_BUFFER_SIZE {
+                    if guard.buffer.len() < guard.buffer_capacity {
                         guard.buffer.push_back(cmd);
                     }
                 }

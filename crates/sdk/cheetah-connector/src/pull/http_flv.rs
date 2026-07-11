@@ -4,39 +4,51 @@ use cheetah_engine::Engine;
 use cheetah_http_flv_module::pull::streaming::{
     open_http_flv_subscriber, HttpFlvSubscriberOptions,
 };
+use cheetah_runtime_api::CancellationToken;
 
 use crate::error::ConnectorError;
 use crate::handles::PullHandle;
 use crate::options::{ConnectorPullOptions, ProtocolPullExtras};
 use crate::protocol::Protocol;
 
-/// Open an HTTP-FLV pull handle.
+/// Maximum number of frames buffered inside the connector pull handle.
+const DEFAULT_BUFFER_SIZE: usize = 64;
+
+/// Open an HTTP-FLV pull subscriber and wrap it in a `PullHandle`.
 ///
-/// 打开 HTTP-FLV pull 句柄。
+/// 打开 HTTP-FLV 拉流订阅者并包装为 `PullHandle`。
 pub async fn open_http_flv_pull(
     engine: Arc<Engine>,
-    url: &str,
+    endpoint: &str,
     options: ConnectorPullOptions,
 ) -> Result<PullHandle, ConnectorError> {
-    let reconnect = match options.protocol {
-        ProtocolPullExtras::HttpFlv { reconnect } => reconnect,
-        _ => None,
+    let (reconnect, read_limits, buffer_size) = match options.protocol {
+        ProtocolPullExtras::HttpFlv {
+            reconnect,
+            read_limits,
+            buffer_size,
+        } => (reconnect, read_limits, buffer_size),
+        _ => (None, None, None),
     };
 
-    let subscriber_options = HttpFlvSubscriberOptions {
-        read_limits: Default::default(),
+    let buffer_size = buffer_size
+        .or(Some(options.subscriber.queue_capacity))
+        .unwrap_or(DEFAULT_BUFFER_SIZE);
+
+    let http_flv_options = HttpFlvSubscriberOptions {
+        cancel: options.cancel.as_ref().map(CancellationToken::child_token),
+        read_limits: read_limits.unwrap_or_default(),
+        buffer_size,
         reconnect,
-        buffer_size: 64,
-        cancel: options.cancel,
     };
 
-    let subscriber = open_http_flv_subscriber(engine.runtime_api(), url, subscriber_options)
-        .await
-        .map_err(ConnectorError::from)?;
+    let runtime_api = engine.runtime_api();
+    let endpoint = endpoint.to_string();
+    let subscriber = open_http_flv_subscriber(runtime_api, &endpoint, http_flv_options).await?;
 
     Ok(PullHandle::new(
         Protocol::HttpFlv,
-        url.to_string(),
+        endpoint,
         Box::new(subscriber),
     ))
 }

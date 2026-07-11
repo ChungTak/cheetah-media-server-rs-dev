@@ -156,11 +156,10 @@ impl From<SdkError> for ConnectorError {
             SdkError::NotFound(msg) => Self::InvalidArgument(msg),
             SdkError::AlreadyExists(msg) => Self::InvalidArgument(msg),
             SdkError::Conflict(msg) => Self::InvalidArgument(msg),
-            SdkError::Unavailable(msg) => Self::Connect {
-                protocol: Protocol::Rtmp,
-                endpoint: msg.clone(),
-                source: Box::new(std::io::Error::other(msg)),
-            },
+            // `SdkError::Unavailable` is intentionally not mapped to a hard-coded RTMP
+            // `Connect` error. Handle adapters wrap `SdkError` through `map_sdk_error`
+            // so the correct protocol is attached.
+            SdkError::Unavailable(msg) => Self::Internal(msg),
             SdkError::Internal(msg) => Self::Internal(msg),
         }
     }

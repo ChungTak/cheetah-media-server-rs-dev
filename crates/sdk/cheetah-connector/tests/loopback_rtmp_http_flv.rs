@@ -102,6 +102,7 @@ modules:
     let mut pair = connector.open_in_memory_loopback(options).await?;
     assert_eq!(pair.layer, LoopbackLayer::ProtocolFraming);
 
+    pair.publisher.wait_ready().await?;
     pair.publisher
         .push_frame(std::sync::Arc::new(h264_frame()))?;
     pair.publisher
