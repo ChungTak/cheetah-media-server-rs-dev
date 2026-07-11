@@ -1,4 +1,6 @@
 //! HLS TLS support: loads certificates and wraps TCP streams with TLS.
+//!
+//! HLS TLS 支持：加载证书并为 TCP 流包裹 TLS。
 
 use std::collections::HashMap;
 use std::io;
@@ -20,6 +22,8 @@ use crate::server::{
 };
 
 /// TLS configuration for HTTPS HLS server.
+///
+/// HTTPS HLS 服务器的 TLS 配置。
 #[derive(Debug, Clone)]
 pub struct HlsTlsConfig {
     pub cert_path: String,
@@ -27,6 +31,8 @@ pub struct HlsTlsConfig {
 }
 
 /// Start an HTTPS HLS server with TLS.
+///
+/// 启动 HTTPS HLS 服务器。
 pub fn start_tls_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,
@@ -129,11 +135,17 @@ pub fn start_tls_server(
     ))
 }
 
+/// Per-connection state for TLS response routing and cancellation.
+///
+/// TLS 响应路由与取消的每个连接状态。
 struct ConnectionState {
     response_tx: mpsc::Sender<crate::server::HttpResponseData>,
     cancel: CancellationToken,
 }
 
+/// Process a driver command in the TLS accept loop. Returns true on shutdown.
+///
+/// 在 TLS 接收循环中处理驱动命令。收到 shutdown 时返回 true。
 fn handle_command(
     conn_map: &Arc<Mutex<HashMap<HlsConnectionId, ConnectionState>>>,
     cmd: HlsDriverCommand,
@@ -172,7 +184,9 @@ fn handle_command(
     }
 }
 
-/// Wrapper implementing AsyncTcpStream for TLS streams.
+/// Wrapper implementing `AsyncTcpStream` for TLS streams.
+///
+/// 为 TLS 流实现 `AsyncTcpStream` 的包装器。
 struct TlsStreamWrapper {
     inner: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
     peer: SocketAddr,
@@ -194,6 +208,9 @@ impl AsyncTcpStream for TlsStreamWrapper {
     }
 }
 
+/// Load a TLS server config from PEM certificate and key files.
+///
+/// 从 PEM 证书与私钥文件加载 TLS 服务器配置。
 fn load_tls_config(cert_path: &str, key_path: &str) -> io::Result<rustls::ServerConfig> {
     let cert_data =
         std::fs::read(cert_path).map_err(|e| io::Error::other(format!("read cert: {e}")))?;
