@@ -7,7 +7,8 @@ use cheetah_srt_core::{
     SrtEncryptionOptions, SrtKeyLength, SrtPayloadKind, SrtRole, SrtSessionOptions, SrtStreamMode,
 };
 use cheetah_srt_driver_tokio::{
-    spawn_driver, SrtDriverCommand, SrtDriverConfig, SrtDriverEncryption, SrtDriverEvent, SrtPeerId,
+    spawn_driver, SrtDriverCommand, SrtDriverConfig, SrtDriverEncryption, SrtDriverEvent,
+    SrtDriverFecConfig, SrtPeerId,
 };
 
 fn driver_config() -> SrtDriverConfig {
@@ -22,6 +23,7 @@ fn driver_config() -> SrtDriverConfig {
         send_queue_capacity: 1024,
         srt_version: 0x0001_0500,
         encryption: SrtDriverEncryption::default(),
+        fec: SrtDriverFecConfig::default(),
     }
 }
 

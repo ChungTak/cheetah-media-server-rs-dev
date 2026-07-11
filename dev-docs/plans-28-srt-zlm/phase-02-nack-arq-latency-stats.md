@@ -1,6 +1,6 @@
 # Phase 02 — NACK/ARQ 观测、延迟缓冲、版本拒绝、弱网（可执行）
 
-- **状态**: 待执行  
+- **状态**: 完成  
 - **依赖**: Phase 01 版本纯函数与配置字段建议已合并（至少 `min_peer_srt_version` 存在）  
 - **兼容规范**: [reference-behavior-zlm-compat.md](reference-behavior-zlm-compat.md) §4、§5  
 

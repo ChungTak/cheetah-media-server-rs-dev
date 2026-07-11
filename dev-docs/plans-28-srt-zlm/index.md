@@ -1,6 +1,6 @@
 # SRT 协议完善 — 智能体可执行总计划（ZLM 兼容）
 
-- **状态**: 草案 / 待执行  
+- **状态**: 可交付 / 部分交付（Phase 01-03 完成；Phase 04 核心/配置/指标完成，driver 集成受库能力限制；Phase 05 手工互操作待环境复跑）
 - **读者**: 编程智能体（可直接按阶段改代码、写测试、跑验收）  
 - **目标**: 在已有 `cheetah-srt-*` 上对齐 [reference-behavior-zlm-compat.md](reference-behavior-zlm-compat.md) 的业务语义，并补齐版本策略、NACK 观测、FEC。  
 - **基线**: [../plans-28-srt/index.md](../plans-28-srt/index.md) 已完成 crate 脚手架、Listener/Caller、TS 推拉主路径；本计划是 **兼容增强**，禁止重写三段式骨架。  

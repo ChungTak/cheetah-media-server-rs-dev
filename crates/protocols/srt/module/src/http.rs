@@ -207,6 +207,26 @@ impl SrtHttpService {
         if snapshot.handshake_reject_reasons.is_empty() {
             out.push_str("srt_handshake_reject_total 0\n");
         }
+        gauge!(
+            "srt_fec_negotiated",
+            "SRT connections where FEC was successfully negotiated.",
+            snapshot.fec_negotiated
+        );
+        counter!(
+            "srt_fec_packets_recovered_total",
+            "Total SRT packets recovered by FEC.",
+            snapshot.fec_packets_recovered_total
+        );
+        counter!(
+            "srt_fec_packets_unrecovered_total",
+            "Total SRT packets that FEC could not recover.",
+            snapshot.fec_packets_unrecovered_total
+        );
+        counter!(
+            "srt_fec_negotiate_fail_total",
+            "Total SRT FEC negotiation failures.",
+            snapshot.fec_negotiate_fail_total
+        );
 
         HttpResponse {
             status: 200,

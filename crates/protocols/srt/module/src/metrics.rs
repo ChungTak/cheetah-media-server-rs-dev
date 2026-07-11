@@ -32,6 +32,10 @@ pub struct SrtModuleMetrics {
     send_queue_full_total: AtomicU64,
     handshake_reject_total: AtomicU64,
     handshake_reject_reasons: Mutex<BTreeMap<String, u64>>,
+    fec_negotiated: AtomicU64,
+    fec_packets_recovered_total: AtomicU64,
+    fec_packets_unrecovered_total: AtomicU64,
+    fec_negotiate_fail_total: AtomicU64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -60,6 +64,10 @@ pub struct SrtModuleMetricsSnapshot {
     pub send_queue_full_total: u64,
     pub handshake_reject_total: u64,
     pub handshake_reject_reasons: BTreeMap<String, u64>,
+    pub fec_negotiated: u64,
+    pub fec_packets_recovered_total: u64,
+    pub fec_packets_unrecovered_total: u64,
+    pub fec_negotiate_fail_total: u64,
 }
 
 /// `SrtModuleMetrics` API: increment, aggregate, and snapshot.
@@ -106,6 +114,25 @@ impl SrtModuleMetrics {
         if let Ok(mut reasons) = self.handshake_reject_reasons.lock() {
             *reasons.entry(key).or_default() += 1;
         }
+    }
+
+    pub fn inc_fec_negotiated(&self) {
+        self.fec_negotiated.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_fec_recovered(&self, count: u64) {
+        self.fec_packets_recovered_total
+            .fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub fn inc_fec_unrecovered(&self, count: u64) {
+        self.fec_packets_unrecovered_total
+            .fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub fn inc_fec_negotiate_fail(&self) {
+        self.fec_negotiate_fail_total
+            .fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn add_stats_delta(&self, previous: Option<&SrtDriverStats>, current: &SrtDriverStats) {
@@ -188,6 +215,12 @@ impl SrtModuleMetrics {
             send_queue_full_total: self.send_queue_full_total.load(Ordering::Relaxed),
             handshake_reject_total: self.handshake_reject_total.load(Ordering::Relaxed),
             handshake_reject_reasons,
+            fec_negotiated: self.fec_negotiated.load(Ordering::Relaxed),
+            fec_packets_recovered_total: self.fec_packets_recovered_total.load(Ordering::Relaxed),
+            fec_packets_unrecovered_total: self
+                .fec_packets_unrecovered_total
+                .load(Ordering::Relaxed),
+            fec_negotiate_fail_total: self.fec_negotiate_fail_total.load(Ordering::Relaxed),
         }
     }
 }
@@ -306,8 +339,17 @@ mod tests {
 
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.handshake_reject_total, 3);
-        assert_eq!(snapshot.handshake_reject_reasons.get("invalid_stream_id"), Some(&1));
-        assert_eq!(snapshot.handshake_reject_reasons.get("auth_rejected"), Some(&1));
-        assert_eq!(snapshot.handshake_reject_reasons.get("publish_conflict"), Some(&1));
+        assert_eq!(
+            snapshot.handshake_reject_reasons.get("invalid_stream_id"),
+            Some(&1)
+        );
+        assert_eq!(
+            snapshot.handshake_reject_reasons.get("auth_rejected"),
+            Some(&1)
+        );
+        assert_eq!(
+            snapshot.handshake_reject_reasons.get("publish_conflict"),
+            Some(&1)
+        );
     }
 }

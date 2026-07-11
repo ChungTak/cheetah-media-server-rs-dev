@@ -6,6 +6,10 @@ pub mod config;
 ///
 /// SRT core 错误类型与结果别名。
 pub mod error;
+/// SRT forward-error-correction helpers (transport independent).
+///
+/// SRT 前向纠错辅助（与传输无关）。
+pub mod fec;
 /// SRT core command, input, output, and event types.
 ///
 /// SRT core 命令、输入、输出与事件类型。
@@ -27,6 +31,7 @@ pub use config::{
     SrtEncryptionOptions, SrtKeyLength, SrtPayloadKind, SrtRole, SrtSessionOptions, SrtStreamMode,
 };
 pub use error::{SrtCoreError, SrtCoreResult};
+pub use fec::{fec_group_id, xor_recover_one};
 pub use session::{
     SrtCoreCommand, SrtCoreEvent, SrtCoreInput, SrtCoreOutput, SrtSessionId, SrtStatsSnapshot,
 };

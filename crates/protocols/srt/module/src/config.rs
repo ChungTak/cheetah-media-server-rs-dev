@@ -373,6 +373,11 @@ impl SrtFecModuleConfig {
     /// 校验 FEC 矩阵参数。
     pub fn validate(&self) -> Result<(), String> {
         if !self.enabled {
+            if self.required {
+                return Err(
+                    "srt.fec.enabled must be true when srt.fec.required is true".to_string()
+                );
+            }
             return Ok(());
         }
         if self.cols == 0 || self.rows == 0 {
