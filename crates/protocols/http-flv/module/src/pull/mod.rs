@@ -95,7 +95,10 @@ impl HttpFlvPullError {
     pub fn retryable(&self) -> bool {
         !matches!(
             self,
-            Self::InvalidUrl(_) | Self::UnsupportedScheme { .. } | Self::InvalidWebSocketAccept
+            Self::InvalidUrl(_)
+                | Self::UnsupportedScheme { .. }
+                | Self::InvalidWebSocketAccept
+                | Self::Ingress(_)
         )
     }
 }
