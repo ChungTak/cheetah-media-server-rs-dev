@@ -1,4 +1,6 @@
 //! HTTP(S)/WS(S)-TS pull client.
+//!
+//! HTTP(S)/WS(S) TS 拉流客户端。
 
 use std::sync::Arc;
 
@@ -9,6 +11,8 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
 /// Configuration for the pull client.
+///
+/// 拉流客户端配置。
 #[derive(Debug, Clone)]
 pub struct TsPullClientConfig {
     pub url: String,
@@ -17,19 +21,32 @@ pub struct TsPullClientConfig {
 }
 
 /// Events from the pull client.
+///
+/// 拉流客户端事件。
 #[derive(Debug)]
 pub enum TsPullEvent {
     /// Received TS bytes from remote.
+    ///
+    /// 从远端接收到 TS 字节。
     Bytes(Bytes),
     /// Connection closed.
+    ///
+    /// 连接关闭。
     Closed { reason: String },
 }
 
 /// TS pull client (connects to remote HTTP/WS TS source).
+///
+/// TS 拉流客户端（连接远端 HTTP/WS TS 源）。
 pub struct TsPullClient;
 
+/// `TsPullClient` entry point.
+///
+/// `TsPullClient` 入口。
 impl TsPullClient {
     /// Connect and start reading. Returns a stream of events.
+    ///
+    /// 连接并开始读取，返回事件流。
     pub async fn connect(
         config: TsPullClientConfig,
     ) -> Result<tokio::sync::mpsc::Receiver<TsPullEvent>, String> {
@@ -45,6 +62,9 @@ impl TsPullClient {
     }
 }
 
+/// Route the pull by URL scheme and run the appropriate protocol handler.
+///
+/// 根据 URL 协议路由并运行对应的协议处理器。
 async fn run_pull(
     config: &TsPullClientConfig,
     tx: &tokio::sync::mpsc::Sender<TsPullEvent>,
@@ -56,6 +76,9 @@ async fn run_pull(
     }
 }
 
+/// URL scheme variants supported by the pull client.
+///
+/// 拉流客户端支持的 URL 协议变体。
 #[derive(Debug, Clone, Copy)]
 enum PullScheme {
     Http,
@@ -64,16 +87,28 @@ enum PullScheme {
     Wss,
 }
 
+/// `PullScheme` helpers.
+///
+/// `PullScheme` 辅助。
 impl PullScheme {
+    /// Whether the scheme requires TLS.
+    ///
+    /// 该协议是否需要 TLS。
     fn is_secure(self) -> bool {
         matches!(self, PullScheme::Https | PullScheme::Wss)
     }
 }
 
+/// Abstract async read/write stream used for both plain and TLS pulls.
+///
+/// 用于普通和 TLS 拉流的抽象异步读/写流。
 trait AsyncPullStream: AsyncRead + AsyncWrite + Unpin + Send {}
 
 impl<T> AsyncPullStream for T where T: AsyncRead + AsyncWrite + Unpin + Send {}
 
+/// Connect a TCP socket and optionally wrap it with TLS.
+///
+/// 连接 TCP 套接字，并根据需要包装 TLS。
 async fn connect_stream(
     host: &str,
     port: u16,
@@ -99,6 +134,9 @@ async fn connect_stream(
     Ok(Box::new(tls))
 }
 
+/// Build a `TlsConnector` with optional certificate verification skip.
+///
+/// 构建 `TlsConnector`，可选择跳过证书校验。
 fn tls_connector(insecure_tls: bool) -> TlsConnector {
     let config = if insecure_tls {
         rustls::ClientConfig::builder()
@@ -115,6 +153,9 @@ fn tls_connector(insecure_tls: bool) -> TlsConnector {
     TlsConnector::from(Arc::new(config))
 }
 
+/// Dangerous server certificate verifier that accepts any certificate.
+///
+/// 危险的服务器证书校验器，接受任何证书。
 #[derive(Debug)]
 struct NoVerifier;
 
@@ -155,6 +196,9 @@ impl rustls::client::danger::ServerCertVerifier for NoVerifier {
     }
 }
 
+/// Detect the pull scheme from the URL prefix.
+///
+/// 从 URL 前缀检测拉流协议。
 fn detect_scheme(url: &str) -> Result<PullScheme, String> {
     if url.starts_with("http://") {
         Ok(PullScheme::Http)
@@ -169,6 +213,9 @@ fn detect_scheme(url: &str) -> Result<PullScheme, String> {
     }
 }
 
+/// Pull TS over HTTP/HTTPS, streaming the response body as TS bytes.
+///
+/// 通过 HTTP/HTTPS 拉流 TS，将响应体作为 TS 字节流输出。
 async fn run_http_pull(
     config: &TsPullClientConfig,
     scheme: PullScheme,
@@ -249,6 +296,9 @@ async fn run_http_pull(
     }
 }
 
+/// Pull TS over WebSocket, decoding binary frames and replying to pings.
+///
+/// 通过 WebSocket 拉流 TS，解码二进制帧并响应 ping。
 async fn run_ws_pull(
     config: &TsPullClientConfig,
     scheme: PullScheme,
@@ -422,6 +472,9 @@ async fn run_ws_pull(
     }
 }
 
+/// Build a masked WebSocket control frame with the given opcode and payload.
+///
+/// 使用给定 opcode 和 payload 构建带掩码的 WebSocket 控制帧。
 fn masked_ws_frame(opcode: u8, payload: &[u8]) -> Result<Vec<u8>, String> {
     if payload.len() > 125 {
         return Err("control frame payload too large".to_string());
@@ -438,6 +491,9 @@ fn masked_ws_frame(opcode: u8, payload: &[u8]) -> Result<Vec<u8>, String> {
     Ok(frame)
 }
 
+/// Generate a 4-byte client-side WebSocket mask.
+///
+/// 生成 4 字节客户端 WebSocket 掩码。
 fn websocket_mask() -> [u8; 4] {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
@@ -452,6 +508,9 @@ fn websocket_mask() -> [u8; 4] {
     ]
 }
 
+/// Parse the URL into host, port, and path, using default ports for each scheme.
+///
+/// 将 URL 解析为主机、端口和路径，使用各协议的默认端口。
 fn parse_url(url: &str) -> Result<(String, u16, String), String> {
     // Strip scheme
     let rest = url
@@ -484,6 +543,8 @@ fn parse_url(url: &str) -> Result<(String, u16, String), String> {
 }
 
 /// Generate a random 16-byte WebSocket key, base64-encoded.
+///
+/// 生成 base64 编码的 16 字节 WebSocket 随机 key。
 fn generate_ws_key() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     // Simple pseudo-random key using time + counter (no crypto needed for WS key)
@@ -500,6 +561,8 @@ fn generate_ws_key() -> String {
 }
 
 /// Compute expected Sec-WebSocket-Accept from key.
+///
+/// 根据 key 计算预期的 Sec-WebSocket-Accept。
 fn compute_ws_accept(key: &str) -> String {
     use sha1::Digest;
     let mut hasher = sha1::Sha1::new();
