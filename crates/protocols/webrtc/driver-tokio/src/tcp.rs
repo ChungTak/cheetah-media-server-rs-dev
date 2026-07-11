@@ -14,6 +14,18 @@
 //! returns EOF or an error.
 //!
 //! [RFC 4571]: https://datatracker.ietf.org/doc/html/rfc4571
+//!
+//! WebRTC-over-TCP 框架 (RFC 4571)。
+//!
+//! 无法使用 UDP（通常是因为运营商的 NAT/防火墙环境阻止它）的 WebRTC 客户端会回退到 ICE TCP candidates，它通过长度前缀 TCP 流携带 STUN、DTLS 和 SRTP 数据包。
+//! 成帧在 [RFC 4571] 中定义：每个网络数据包前面都有一个 16 位大端长度字段。
+//! 该模块实现了一个小型 Sans-I/O 帧解码器，因此 driver 可以向 `WebRtcCore` 传递与从 UDP 接收到的相同的 `Bytes` 。
+//!
+//! driver 层拥有 I/O。
+//! 这里的解码器仅对字节片进行操作并产生完整的数据包有效负载。
+//! 调用者应驱动 `read_from` （或等效项），直到底层连接返回 EOF 或错误。
+//!
+//! [RFC 4571]：https://datatracker.ietf.org/doc/html/rfc4571
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
@@ -22,6 +34,11 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 /// 16-bit length means RFC 4571 can in principle carry up to 65535
 /// bytes, but real DTLS/SRTP packets stay well below MTU. We use a
 /// comfortable cap that matches our UDP `read_buffer_size` default.
+///
+/// 我们在单个 TCP 连接上接受的最大帧大小。
+///
+/// 16 位长度意味着 RFC 4571 原则上最多可以承载 65535 个字节，但真正的 DTLS/SRTP 数据包远低于 MTU。
+/// 我们使用与我们的 UDP `read_buffer_size` 默认值相匹配的舒适帽子。
 pub const TCP_FRAME_MAX_BYTES: usize = 65_535;
 
 /// Streaming RFC 4571 frame decoder.
@@ -30,6 +47,12 @@ pub const TCP_FRAME_MAX_BYTES: usize = 65_535;
 /// just read off the socket and then [`Tcp4571Decoder::next_frame`] in
 /// a loop until it returns `None`. Partial frames remain buffered until
 /// the next `extend` call.
+///
+/// 流式 RFC 4571 帧解码器。
+///
+/// drivers 使用刚刚从套接字读取的任何字节调用 [`Tcp4571Decoder::extend`]，然后循环调用 [`Tcp4571Decoder::next_frame`]
+/// ，直到返回 `None`。
+/// 部分帧保持缓冲状态，直到下一次 `extend` 调用。
 #[derive(Debug, Default)]
 pub struct Tcp4571Decoder {
     buf: BytesMut,
@@ -37,10 +60,15 @@ pub struct Tcp4571Decoder {
 }
 
 impl Tcp4571Decoder {
+    /// Create a decoder using the default maximum frame size.
+    ///
+    /// 使用默认最大帧大小创建解码器。
     pub fn new() -> Self {
         Self::with_max_frame(TCP_FRAME_MAX_BYTES)
     }
-
+    /// Create a decoder with a custom maximum frame size.
+    ///
+    /// 创建具有自定义最大帧大小的解码器。
     pub fn with_max_frame(max_frame: usize) -> Self {
         Self {
             buf: BytesMut::with_capacity(4096),
@@ -49,6 +77,8 @@ impl Tcp4571Decoder {
     }
 
     /// Append newly read bytes from the underlying TCP socket.
+    ///
+    /// 附加从底层 TCP 套接字新读取的字节。
     pub fn extend(&mut self, chunk: &[u8]) {
         self.buf.extend_from_slice(chunk);
     }
@@ -63,6 +93,15 @@ impl Tcp4571Decoder {
     ///   header advertises more than `max_frame` bytes. The error is
     ///   terminal — the caller must close the connection because the
     ///   stream is no longer self-synchronising.
+    ///
+    /// 弹出下一个完整帧（如果有）。
+    ///
+    /// 返回：
+    ///
+    /// * `Ok(Some(payload))` 当缓冲完整帧时。
+    /// * `Ok(None)` 当需要更多字节时。
+    /// * `Err(Tcp4571Error::FrameTooLarge { len })` 如果下一帧标头通告的字节数超过 `max_frame` 字节。
+    ///   该错误是致命的——调用者必须关闭连接，因为流不再自同步。
     pub fn next_frame(&mut self) -> Result<Option<Bytes>, Tcp4571Error> {
         if self.buf.len() < 2 {
             return Ok(None);
@@ -81,14 +120,21 @@ impl Tcp4571Decoder {
     }
 
     /// Currently buffered byte count (for diagnostics / backpressure).
+    ///
+    /// 当前缓冲的字节计数（用于诊断/背压）。
     pub fn buffered(&self) -> usize {
         self.buf.len()
     }
 }
 
 /// Errors produced by [`Tcp4571Decoder::next_frame`].
+///
+/// [`Tcp4571Decoder::next_frame`] 产生的错误。
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum Tcp4571Error {
+    /// The advertised RFC 4571 frame length exceeds the configured cap.
+    ///
+    /// 通告的 RFC 4571 帧长度超出了配置的上限。
     #[error("RFC 4571 frame length {len} exceeds configured maximum")]
     FrameTooLarge { len: usize },
 }
@@ -98,6 +144,11 @@ pub enum Tcp4571Error {
 /// The output contains the 16-bit big-endian length followed by
 /// `payload`. Packets larger than `u16::MAX` cannot be encoded and
 /// must be dropped by the caller (a diagnostic suffices).
+///
+/// 对单个数据包进行编码，以便通过 RFC 4571 TCP 流进行传输。
+///
+/// 输出包含 16 位大端长度，后跟 `payload`。
+/// 大于 `u16::MAX` 的数据包无法编码，必须由调用者丢弃（诊断就足够了）。
 pub fn encode_frame(payload: &[u8]) -> Result<Bytes, Tcp4571Error> {
     if payload.len() > TCP_FRAME_MAX_BYTES {
         return Err(Tcp4571Error::FrameTooLarge { len: payload.len() });

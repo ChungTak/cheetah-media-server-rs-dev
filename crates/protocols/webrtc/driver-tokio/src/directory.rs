@@ -31,6 +31,31 @@
 //! this address". Doing that inside `RouteTable` would mix concerns
 //! (per-session route data vs. cross-shard routing); keeping the
 //! directory small and focused is closer to the architecture document.
+//!
+//! 多 shard driver 拓扑使用的全局路由目录。
+//!
+//! 第 02 阶段后续（`plans-27-webrtc-zlm2/phase-02-driver-multithread-shard.md`）：多 shard WebRTC driver 将现有的单任务事件循环拆分为 UDP/TCP 前端和 `N` 会话所有者 shards。
+//! 前端从不拥有 `WebRtcCore` 状态 - 它仅将入站数据包和命令路由到拥有会话的 shard 。
+//!
+//! 该目录故意很小并且受锁定保护：它仅存储路由元数据（会话 id ⇒ shard id、远程地址 ⇒ shard id、ICE ufrag ⇒ shard id）。
+//! 它从不保存协议状态。
+//! 所有变更都是 O(1) `HashMap` 更新并在单个 `parking_lot::Mutex` 下序列化。
+//! 在热路径上进行查找的成本足够低：每个 UDP 数据报都需要支付一次互斥锁获取和一次 `HashMap::get` 费用。
+//!
+//! ## 边界
+//!
+//! 该目录对地址绑定的数量有硬性上限 (`address_capacity`)。
+//! 在上限之上，[`RouteDirectory::bind_remote`] 返回 [`RouteDirectoryError::AddressCapacityExceeded`]
+//! ，调用者预计会显示 `Diagnostic`。
+//! 对于迁移落后者路由保留的过时条目数量也有硬性上限（`stale_capacity`）；
+//! 超过该上限，最旧的陈旧条目将被驱逐。
+//!
+//! ## 为什么需要一个单独的模块
+//!
+//! 当恰好有一个 shard 时，现有的 per-shard [`crate::route::RouteTable`] 就足够了。
+//! 对于 `driver_shards >= 2`，前端需要“哪个 shard 拥有这个地址”的全局一致视图。
+//! 在 `RouteTable` 内部执行此操作会混合问题（每个会话路由数据与跨 shard 路由）；
+//! 保持目录小而集中，更接近架构文档。
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -48,14 +73,24 @@ use crate::sdp::LocalCandidateCounts;
 /// `session_id % shard_count`. Wrapping it in a newtype lets us swap the
 /// strategy later (e.g. least-loaded) without churning the rest of the
 /// code base.
+///
+/// 标识会话所有者 shard。
+///
+/// 目前是 `usize` — 前端通过 `session_id % shard_count` 选择 shards。
+/// 将其包装在新类型中可以让我们稍后交换策略（例如加载最少），而无需搅动其余代码库。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ShardId(pub usize);
 
 impl ShardId {
+    /// Create a new shard id from a raw index.
+    ///
+    /// 从原始索引创建一个新的 shard id。
     pub const fn new(value: usize) -> Self {
         Self(value)
     }
-
+    /// Return the underlying shard index.
+    ///
+    /// 返回底层 shard 索引。
     pub fn as_usize(self) -> usize {
         self.0
     }
@@ -69,17 +104,29 @@ impl std::fmt::Display for ShardId {
 
 /// Configuration for [`RouteDirectory`]. Defaults are chosen so existing
 /// single-shard deployments do not change behaviour.
+///
+/// [`RouteDirectory`] 的配置。
+/// 选择默认值是为了确保现有的 single-shard 部署不会改变行为。
 #[derive(Debug, Clone)]
 pub struct RouteDirectoryConfig {
     /// Hard cap on the number of (remote address, shard) bindings.
     /// Reaching this cap causes [`RouteDirectory::bind_remote`] to
     /// return [`RouteDirectoryError::AddressCapacityExceeded`].
+    ///
+    /// （远程地址，shard）绑定数量的硬性上限。
+    /// 达到此上限会导致 [`RouteDirectory::bind_remote`] 返回 [`RouteDirectoryError::AddressCapacityExceeded`]。
     pub address_capacity: usize,
     /// Hard cap on the number of stale (migrated) address bindings.
     /// When exceeded, the oldest stale entry is evicted to make room.
+    ///
+    /// 过时（已迁移）地址绑定数量的硬性上限。
+    /// 当超过时，最旧的陈旧条目将被驱逐以腾出空间。
     pub stale_capacity: usize,
     /// TTL for stale entries. After this duration the entry is
     /// removed by [`RouteDirectory::compact_expired`].
+    ///
+    /// TTL 表示过时的条目。
+    /// 在此持续时间之后，该条目将被 [`RouteDirectory::compact_expired`] 删除。
     pub stale_ttl: Duration,
 }
 
@@ -94,15 +141,23 @@ impl Default for RouteDirectoryConfig {
 }
 
 /// Failures the directory can return on a mutation.
+///
+/// 目录可能会因变更而返回失败。
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum RouteDirectoryError {
     /// The directory is at hard capacity for active address bindings.
     /// New sessions must wait or be rejected upstream.
+    ///
+    /// 该目录具有用于活动地址绑定的硬容量。
+    /// 新会话必须等待或被上游拒绝。
     #[error("route directory at address capacity ({0})")]
     AddressCapacityExceeded(usize),
     /// Attempted to bind a remote address that is already actively
     /// bound to a *different* session. Migration paths should call
     /// [`RouteDirectory::migrate_remote`] instead.
+    ///
+    /// 尝试绑定已主动绑定到*不同*会话的远程地址。
+    /// 迁移路径应改为调用 [`RouteDirectory::migrate_remote`]。
     #[error("address {addr} already bound to session {existing} on shard {shard}")]
     AddressAlreadyBound {
         addr: SocketAddr,
@@ -130,14 +185,23 @@ struct DirectoryInner {
     /// Active, primary remote address binding per session. The
     /// front-end resolves UDP datagrams and TCP frames through this
     /// map.
+    ///
+    /// 每个会话的活动主要远程地址绑定。
+    /// 前端通过这个映射解析 UDP 数据报和 TCP 帧。
     remote_to_entry: HashMap<SocketAddr, AddressEntry>,
     /// ICE ufrag-to-shard. Used when a STUN binding request lands on
     /// the listener but the source IP is not yet bound (initial ICE
     /// arrival, or a NAT-rebound peer).
+    ///
+    /// ICE ufrag-to-shard。
+    /// 当 STUN 绑定请求到达侦听器但源 IP 尚未绑定时使用（初始 ICE 到达，或 NAT 反弹对等点）。
     ufrag_to_shard: HashMap<String, ShardId>,
     /// Stale routes during connection migration. Packets arriving at
     /// these addresses still resolve to the same session and shard
     /// for `stale_ttl`, then expire.
+    ///
+    /// 连接迁移期间的陈旧路由。
+    /// 到达这些地址的数据包仍解析为同一会话和 `stale_ttl` 的 shard，然后过期。
     stale: HashMap<SocketAddr, StaleEntry>,
 }
 
@@ -145,6 +209,9 @@ struct DirectoryInner {
 /// shards. Cheap to clone: uses an [`Arc`]-style internal layout but
 /// stays in the driver crate so we can swap implementations later
 /// without churning callers.
+///
+/// 全局、受锁保护的目录将会话和地址映射到 shards。
+/// 克隆成本低：使用 [`Arc`] 风格的内部布局，但保留在 driver crate 中，因此我们可以稍后交换实现，而不会影响调用者。
 #[derive(Debug)]
 pub struct RouteDirectory {
     inner: Mutex<DirectoryInner>,
@@ -172,6 +239,11 @@ impl RouteDirectory {
     /// debug builds (a session must never migrate across shards) and
     /// is a soft no-op in release builds — the caller's earlier
     /// assignment is preserved.
+    ///
+    /// 注册一个新会话并将其分配给 shard。
+    ///
+    /// 幂等：使用相同的 shard 重新注册相同的会话是无操作的。
+    /// 在调试版本中重新注册*不同的* shard 会出现恐慌（会话绝不能跨 shards 迁移），并且在发布版本中是软无操作 - 调用者之前的分配被保留。
     pub fn register_session(&self, session: WebRtcSessionId, shard: ShardId) {
         let mut guard = self.inner.lock();
         match guard.session_to_shard.get(&session) {
@@ -189,12 +261,16 @@ impl RouteDirectory {
     }
 
     /// Look up the shard that owns the session.
+    ///
+    /// 查找拥有该会话的 shard。
     pub fn lookup_session(&self, session: WebRtcSessionId) -> Option<ShardId> {
         self.inner.lock().session_to_shard.get(&session).copied()
     }
 
     /// Bind an ICE ufrag to a shard so STUN binding requests can be
     /// routed to the right shard before the remote address is known.
+    ///
+    /// 将 ICE ufrag 绑定到 shard，以便在知道远程地址之前将 STUN 绑定请求路由到正确的 shard。
     pub fn register_ufrag(&self, ufrag: String, shard: ShardId) {
         if ufrag.is_empty() {
             return;
@@ -203,6 +279,8 @@ impl RouteDirectory {
     }
 
     /// Resolve a STUN ufrag to a shard.
+    ///
+    /// 将 STUN ufrag 解析为 shard。
     pub fn lookup_ufrag(&self, ufrag: &str) -> Option<ShardId> {
         if ufrag.is_empty() {
             return None;
@@ -212,6 +290,9 @@ impl RouteDirectory {
 
     /// Bind a remote address to a session/shard. Used the first time a
     /// peer's address is observed.
+    ///
+    /// 将远程地址绑定到会话/shard。
+    /// 第一次观察到对等方地址时使用。
     pub fn bind_remote(
         &self,
         addr: SocketAddr,
@@ -247,6 +328,11 @@ impl RouteDirectory {
     /// was unbound). Same-shard migrations are the only kind currently
     /// supported — sessions never migrate across shards because their
     /// `WebRtcCore` state is shard-local.
+    ///
+    /// 将远程地址从 `previous` 迁移到 `new`，记录陈旧集中的先前绑定。
+    ///
+    /// 返回拥有该地址的前一个 shard （如果未绑定，则返回 `None` ）。
+    /// Same-shard 迁移是当前支持的唯一类型 - 会话永远不会跨 shards 迁移，因为它们的 `WebRtcCore` 状态是 shard-local。
     pub fn migrate_remote(
         &self,
         previous: Option<SocketAddr>,
@@ -312,6 +398,9 @@ impl RouteDirectory {
     /// Resolve a remote address to its owning shard. Falls back to the
     /// stale set so packets racing a migration on the old path still
     /// reach their session.
+    ///
+    /// 将远程地址解析为其所属的 shard。
+    /// 回落到陈旧的设置，因此在旧路径上进行迁移的数据包仍然可以到达其会话。
     pub fn lookup_remote(&self, addr: &SocketAddr) -> Option<(WebRtcSessionId, ShardId)> {
         let guard = self.inner.lock();
         if let Some(entry) = guard.remote_to_entry.get(addr) {
@@ -326,6 +415,9 @@ impl RouteDirectory {
     /// Drop all bindings for the given session. Called on session
     /// teardown by the owning shard so the directory does not leak
     /// entries.
+    ///
+    /// 删除给定会话的所有绑定。
+    /// 由拥有者 shard 在会话拆卸时调用，以便目录不会泄漏条目。
     pub fn forget_session(&self, session: WebRtcSessionId) {
         let mut guard = self.inner.lock();
         guard.session_to_shard.remove(&session);
@@ -337,6 +429,8 @@ impl RouteDirectory {
     }
 
     /// Drop a single ufrag binding.
+    ///
+    /// 删除单个 ufrag 绑定。
     pub fn forget_ufrag(&self, ufrag: &str) {
         if ufrag.is_empty() {
             return;
@@ -354,6 +448,13 @@ impl RouteDirectory {
     ///
     /// Returns the number of `(session, address, ufrag, stale)`
     /// entries removed, in that order, for observability.
+    ///
+    /// 删除 `shard` 拥有的**所有**绑定。
+    /// 由操作员在以非优雅原因（恐慌/意外退出）观察 [`crate::WebRtcDriverEvent::ShardStopped`] 后使用 - shard 的 `WebRtcCore` 状态消失
+    /// ，但目录仍然认为 shard 拥有的每个会话和 ufrag 是可访问的。
+    /// 调用 `forget_shard` 会清除这些孤立的映射，以便新会话可以接管这些地址。
+    ///
+    /// 返回按顺序删除的 `(session, address, ufrag, stale)` 条目数，以便于观察。
     pub fn forget_shard(&self, shard: ShardId) -> RouteDirectoryEvictionStats {
         let mut guard = self.inner.lock();
         let mut stats = RouteDirectoryEvictionStats::default();
@@ -429,6 +530,9 @@ impl RouteDirectory {
     /// Compact expired stale entries and return the list of removed
     /// `(addr, session, shard)` tuples. Callers translate this into
     /// observability events.
+    ///
+    /// 压缩过期的陈旧条目并返回已删除的 `(addr, session, shard)` 元组的列表。
+    /// 调用者将其转化为可观察事件。
     pub fn compact_expired(&self, now: Instant) -> Vec<(SocketAddr, WebRtcSessionId, ShardId)> {
         let mut expired = Vec::new();
         let mut guard = self.inner.lock();
@@ -445,6 +549,9 @@ impl RouteDirectory {
 
     /// Snapshot directory sizes for stats / dashboards. Cheap: takes
     /// the lock once and reads three lengths.
+    ///
+    /// 统计数据/仪表板的快照目录大小。
+    /// 便宜：获取一次锁并读取三个长度。
     pub fn stats_snapshot(&self) -> RouteDirectoryStats {
         let guard = self.inner.lock();
         RouteDirectoryStats {
@@ -459,11 +566,26 @@ impl RouteDirectory {
 /// Per-shard eviction counters returned by
 /// [`RouteDirectory::forget_shard`]. Useful for observability when
 /// an operator triggers a recovery flow after a shard panic.
+///
+/// [`RouteDirectory::forget_shard`] 返回的每 shard 逐出计数器。
+/// 当操作员在 shard 恐慌后触发恢复流程时，对于可观察性很有用。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct RouteDirectoryEvictionStats {
+    /// Number of session entries removed by the eviction.
+    ///
+    /// 因驱逐而删除的会话条目数。
     pub sessions: usize,
+    /// Number of remote-address entries removed by the eviction.
+    ///
+    /// 通过驱逐删除的远程地址条目数。
     pub addresses: usize,
+    /// Number of ICE ufrag entries removed by the eviction.
+    ///
+    /// 通过驱逐删除的 ICE ufrag 条目数。
     pub ufrags: usize,
+    /// Number of stale address entries removed by the eviction.
+    ///
+    /// 通过驱逐删除的过时地址条目数。
     pub stale: usize,
     /// Number of TCP writer entries removed when an operator-driven
     /// `evict_shard` (or supervisor auto-evict) cascades into the
@@ -475,16 +597,36 @@ pub struct RouteDirectoryEvictionStats {
     /// outside the driver crate.
     ///
     /// [`WebRtcDriverHandle::evict_shard`]: crate::WebRtcDriverHandle::evict_shard
+    ///
+    /// 当操作员驱动的 `evict_shard` （或主管自动逐出）级联到 driver 的 TCP 写入器注册表时，删除的 TCP 写入器条目数。
+    /// 目录本身不涉及 TCP 编写者，因此 [`RouteDirectory::forget_shard`] 始终在此处报告 `0` ；
+    /// 在该值出现在 driver crate 之外之前，该字段由 [`WebRtcDriverHandle::evict_shard`] 和主管的自动逐出诊断路径填充。
+    ///
+    /// [`WebRtcDriverHandle::evict_shard`]: crate::WebRtcDriverHandle::evict_shard
     pub tcp_writers: usize,
 }
 
 /// Snapshot of the directory's current size, returned by
 /// [`RouteDirectory::stats_snapshot`].
+///
+/// 目录当前大小的快照，由 [`RouteDirectory::stats_snapshot`] 返回。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RouteDirectoryStats {
+    /// Number of sessions currently registered in the directory.
+    ///
+    /// 当前在目录中注册的会话数。
     pub sessions: usize,
+    /// Number of active remote-address bindings.
+    ///
+    /// 活动远程地址绑定的数量。
     pub addresses: usize,
+    /// Number of ICE ufrag-to-session bindings.
+    ///
+    /// ICE ufrag 到会话的绑定数量。
     pub ufrags: usize,
+    /// Number of stale addresses awaiting eviction.
+    ///
+    /// 等待驱逐的过时地址数量。
     pub stale_addresses: usize,
 }
 
@@ -492,13 +634,28 @@ pub struct RouteDirectoryStats {
 /// `WebRtcDriverEvent::ShardStats` so operators can see per-shard load.
 ///
 /// The driver's single-shard mode reports one entry with `shard_id = 0`.
+///
+/// 每个 shard 可观察性快照。
+/// 通过 `WebRtcDriverEvent::ShardStats` 浮出水面，以便操作员可以查看每个 shard 负载。
+///
+/// driver 的单 shard 模式报告一个带有`shard_id = 0` 的条目。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WebRtcShardStats {
+    /// Shard identifier.
+    ///
+    /// shard 标识符。
     pub shard_id: ShardId,
+    /// Number of sessions owned by this shard.
+    ///
+    /// 此 shard 拥有的会话数。
     pub session_count: usize,
     /// Number of addresses currently bound to a session on this shard.
+    ///
+    /// 当前绑定到此 shard 上的会话的地址数。
     pub active_routes: usize,
     /// Number of stale routes still resolvable on this shard.
+    ///
+    /// 此 shard 上仍可解析的过时路由数量。
     pub stale_routes: usize,
 }
 
@@ -506,9 +663,18 @@ pub struct WebRtcShardStats {
 /// [`ShardCandidateTable::snapshot`] so operators can observe the
 /// local candidate gathering result per shard without accumulating
 /// events themselves.
+///
+/// 每个 shard candidate 统计快照。
+/// 由 [`ShardCandidateTable::snapshot`] 返回，因此操作员可以观察每个 shard 的本地 candidate 收集结果，而无需自己累积事件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WebRtcShardCandidateStats {
+    /// Shard identifier.
+    ///
+    /// shard 标识符。
     pub shard_id: ShardId,
+    /// Latest candidate counts for this shard.
+    ///
+    /// 最新的 candidate 计入此 shard。
     pub counts: LocalCandidateCounts,
 }
 
@@ -518,6 +684,11 @@ pub struct WebRtcShardCandidateStats {
 ///
 /// Follows the same pattern as [`crate::shard::ShardLoadTable`] but
 /// stores candidate counts instead of session/route load.
+///
+/// 每个 shard 的事件循环报告的最新 [`LocalCandidateCounts`] 的 Per-shard 表。
+/// 使用最后写入者获胜（计量器）语义：每个 `record_snapshot` 都会覆盖该 shard 的先前值。
+///
+/// 遵循与 [`crate::shard::ShardLoadTable`] 相同的模式，但存储 candidate 计数而不是会话/路由负载。
 #[derive(Debug)]
 pub struct ShardCandidateTable {
     inner: RwLock<Vec<LocalCandidateCounts>>,
@@ -526,6 +697,8 @@ pub struct ShardCandidateTable {
 impl ShardCandidateTable {
     /// Create a new table pre-allocated for `shard_count` shards, each
     /// initialized to [`LocalCandidateCounts::default()`] (all zeros).
+    ///
+    /// 创建一个为 `shard_count` shards 预分配的新表，每个表都初始化为 [`LocalCandidateCounts::default()`]（全零）。
     pub fn new(shard_count: usize) -> Self {
         let shard_count = shard_count.max(1);
         Self {
@@ -536,6 +709,9 @@ impl ShardCandidateTable {
     /// Record the latest candidate counts for a shard. Last-writer-wins
     /// semantics — each call overwrites the previous snapshot for the
     /// given shard slot (gauge, not accumulator).
+    ///
+    /// 记录 shard 的最新 candidate 计数。
+    /// 最后写入者获胜语义 - 每个调用都会覆盖给定 shard 槽（计量器，而不是累加器）的先前快照。
     pub fn record_snapshot(&self, shard: ShardId, counts: LocalCandidateCounts) {
         let mut guard = self.inner.write();
         if let Some(slot) = guard.get_mut(shard.as_usize()) {
@@ -545,6 +721,9 @@ impl ShardCandidateTable {
 
     /// Return a snapshot of all shards' candidate counts in shard-id
     /// order. Each entry pairs the shard id with its latest counts.
+    ///
+    /// 以 shard-id 顺序返回所有 shards' candidate 计数的快照。
+    /// 每个条目将 shard id 与其最新计数配对。
     pub fn snapshot(&self) -> Vec<WebRtcShardCandidateStats> {
         let guard = self.inner.read();
         guard
@@ -560,6 +739,9 @@ impl ShardCandidateTable {
     /// Reset the candidate counts for a single shard back to all zeros.
     /// Called by the supervisor's auto-evict path when a shard panics
     /// and its state is discarded.
+    ///
+    /// 将单个 shard 的 candidate 计数重置回全零。
+    /// 当 shard 发生恐慌并且其状态被丢弃时，由主管的自动逐出路径调用。
     pub fn clear_shard(&self, shard: ShardId) {
         let mut guard = self.inner.write();
         if let Some(slot) = guard.get_mut(shard.as_usize()) {
