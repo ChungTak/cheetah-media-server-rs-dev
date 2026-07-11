@@ -4,6 +4,11 @@
 //! drives MP4 file playback: `loadMP4File`, `seekRecordStamp`,
 //! `setRecordSpeed`. Also exposes the `mp4:` URI normalization used by the
 //! RTMP play-stream handler so any caller can ingest legacy ZLM clients.
+//!
+//! 兼容 ZLMediaKit 的 VOD API 与 URI 规范化辅助。
+//! 支持 `vendor-ref/ZLMediaKit/server/WebApi.cpp` 中驱动 MP4 文件播放的子集：
+//! `loadMP4File`、`seekRecordStamp`、`setRecordSpeed`。
+//! 同时暴露 RTMP 播放流处理使用的 `mp4:` URI 规范化，以便接入旧版 ZLM 客户端。
 
 use std::sync::Arc;
 
@@ -14,6 +19,9 @@ use crate::api::{StartVodRequest, VodApi, VodApiError};
 use crate::session_registry::SessionError;
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
+/// Errors specific to ZLM-compatible VOD operations.
+///
+/// ZLM 兼容 VOD 操作相关的错误。
 pub enum ZlmVodError {
     #[error("invalid request: {0}")]
     InvalidRequest(String),
@@ -24,6 +32,8 @@ pub enum ZlmVodError {
 }
 
 /// `POST /index/api/loadMP4File` body.
+///
+/// `POST /index/api/loadMP4File` 请求体。
 #[derive(Debug, Clone, Deserialize)]
 pub struct ZlmLoadMp4 {
     #[serde(default)]
@@ -40,6 +50,8 @@ pub struct ZlmLoadMp4 {
 }
 
 /// `POST /index/api/seekRecordStamp` body.
+///
+/// `POST /index/api/seekRecordStamp` 请求体。
 #[derive(Debug, Clone, Deserialize)]
 pub struct ZlmSeekRecord {
     #[serde(default)]
@@ -50,6 +62,8 @@ pub struct ZlmSeekRecord {
 }
 
 /// `POST /index/api/setRecordSpeed` body.
+///
+/// `POST /index/api/setRecordSpeed` 请求体。
 #[derive(Debug, Clone, Deserialize)]
 pub struct ZlmSetSpeed {
     #[serde(default)]
@@ -60,11 +74,16 @@ pub struct ZlmSetSpeed {
 }
 
 /// ZLM compat surface for the MP4 VOD module.
+///
+/// MP4 VOD 模块的 ZLM 兼容层。
 #[derive(Clone)]
 pub struct ZlmVodCompat {
     inner: Arc<VodApi>,
 }
 
+/// `ZlmVodCompat` API shims.
+///
+/// `ZlmVodCompat` API 适配。
 impl ZlmVodCompat {
     pub fn new(inner: Arc<VodApi>) -> Self {
         Self { inner }
@@ -137,10 +156,16 @@ impl ZlmVodCompat {
     }
 }
 
+/// Generate a deterministic ZLM-style session ID.
+///
+/// 生成确定的 ZLM 风格会话 ID。
 fn vod_session_id(app: &str, stream: &str) -> String {
     format!("zlm-{app}-{stream}")
 }
 
+/// Map `SessionError` to `ZlmVodError`.
+///
+/// 将 `SessionError` 映射到 `ZlmVodError`。
 impl From<SessionError> for ZlmVodError {
     fn from(value: SessionError) -> Self {
         ZlmVodError::SessionNotFound(value.to_string())
@@ -148,6 +173,8 @@ impl From<SessionError> for ZlmVodError {
 }
 
 /// Normalize ZLM-style RTMP `mp4:` stream IDs into plain file paths.
+///
+/// 将 ZLM 风格 RTMP `mp4:` 流 ID 规范化为普通文件路径。
 ///
 /// VLC, ffplay, and mpv clients sometimes emit `mp4:0` or `mp4:0.mp4` when
 /// playing `rtmp://host/record/0.mp4`. ZLM strips the leading `mp4:` prefix
@@ -162,6 +189,8 @@ pub fn normalize_rtmp_mp4_uri(input: &str) -> String {
 }
 
 /// Expand a VOD URI list:
+///
+/// 展开 VOD URI 列表：
 ///
 /// * Semicolon-separated paths: split and return verbatim.
 /// * Single file ending in `.mp4`: return as-is.
