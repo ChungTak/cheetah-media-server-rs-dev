@@ -105,115 +105,129 @@ pub async fn open_rtsp_pull(
     )
     .map_err(|err| SdkError::Unavailable(format!("start rtsp pull client failed: {err}")))?;
 
-    wait_client_connected(&runtime_api, &mut client, &cancel, request_timeout)
-        .await
-        .map_err(SdkError::InvalidArgument)?;
-
     let mut auth = build_pull_outbound_auth_state(options.credentials);
     let mut cseq = 1_u32;
 
-    let options_response = send_request_with_auth_retry(
-        &runtime_api,
-        &mut client,
-        &mut auth,
-        RtspMethod::Options,
-        source_url,
-        &mut cseq,
-        &[],
-        &[],
-        &cancel,
-        request_timeout,
-    )
-    .await
-    .map_err(SdkError::InvalidArgument)?;
-    if options_response.status_code != 200 {
-        return Err(SdkError::Unavailable(format!(
-            "OPTIONS failed with status {}",
-            options_response.status_code
-        )));
-    }
+    let setup_result = async {
+        wait_client_connected(&runtime_api, &mut client, &cancel, request_timeout)
+            .await
+            .map_err(SdkError::InvalidArgument)?;
 
-    let describe_response = send_request_with_auth_retry(
-        &runtime_api,
-        &mut client,
-        &mut auth,
-        RtspMethod::Describe,
-        source_url,
-        &mut cseq,
-        &[("Accept", "application/sdp")],
-        &[],
-        &cancel,
-        request_timeout,
-    )
-    .await
-    .map_err(SdkError::InvalidArgument)?;
-    if describe_response.status_code != 200 {
-        return Err(SdkError::Unavailable(format!(
-            "DESCRIBE failed with status {}",
-            describe_response.status_code
-        )));
-    }
-
-    let describe_body = std::str::from_utf8(describe_response.body.as_ref()).map_err(|_| {
-        SdkError::InvalidArgument("DESCRIBE response body is not valid utf-8".to_string())
-    })?;
-    let content_base = describe_response
-        .headers
-        .iter()
-        .find(|h| h.name.eq_ignore_ascii_case("Content-Base"))
-        .map(|h| h.value.trim().trim_end_matches('/').to_string());
-    let base_url = content_base.as_deref().unwrap_or(source_url);
-    let (tracks, control_map) = parse_announce_sdp(describe_body)
-        .map_err(|err| SdkError::InvalidArgument(format!("parse DESCRIBE SDP failed: {err}")))?;
-    let track_controls = invert_track_controls(&tracks, &control_map);
-
-    let (lease, sink) = publisher_api
-        .acquire_publisher(target_stream_key.clone(), options.publisher_options)
-        .await?;
-    if let Err(err) = sink.update_tracks(tracks.clone()) {
-        let _ = publisher_api.release_publisher(&lease).await;
-        return Err(SdkError::InvalidArgument(format!(
-            "update pull tracks failed: {err}"
-        )));
-    }
-
-    let config = RtspModuleConfig {
-        alert_thresholds: options.alert_thresholds,
-        ..RtspModuleConfig::default()
-    };
-    let mut publish = build_pull_publish_session(
-        &config,
-        cancel.child_token(),
-        lease,
-        sink,
-        tracks_to_map(&tracks),
-    );
-
-    let setup_completion = match setup_pull_tracks_and_play(
-        &mut client,
-        &tracks,
-        &track_controls,
-        PullSetupContext {
-            runtime_api: &runtime_api,
+        let options_response = send_request_with_auth_retry(
+            &runtime_api,
+            &mut client,
+            &mut auth,
+            RtspMethod::Options,
             source_url,
-            base_url,
-            peer,
-            transport: selected_transport,
-            cancel: &cancel,
+            &mut cseq,
+            &[],
+            &[],
+            &cancel,
             request_timeout,
-            auth: &mut auth,
-            start_cseq: cseq,
-        },
-    )
-    .await
-    {
-        Ok(completion) => completion,
-        Err(err) => {
-            let _ = publisher_api.release_publisher(&publish.lease).await;
-            let _ = publish.sink.close();
+        )
+        .await
+        .map_err(SdkError::InvalidArgument)?;
+        if options_response.status_code != 200 {
             return Err(SdkError::Unavailable(format!(
-                "setup pull tracks failed: {err}"
+                "OPTIONS failed with status {}",
+                options_response.status_code
             )));
+        }
+
+        let describe_response = send_request_with_auth_retry(
+            &runtime_api,
+            &mut client,
+            &mut auth,
+            RtspMethod::Describe,
+            source_url,
+            &mut cseq,
+            &[("Accept", "application/sdp")],
+            &[],
+            &cancel,
+            request_timeout,
+        )
+        .await
+        .map_err(SdkError::InvalidArgument)?;
+        if describe_response.status_code != 200 {
+            return Err(SdkError::Unavailable(format!(
+                "DESCRIBE failed with status {}",
+                describe_response.status_code
+            )));
+        }
+
+        let describe_body = std::str::from_utf8(describe_response.body.as_ref()).map_err(|_| {
+            SdkError::InvalidArgument("DESCRIBE response body is not valid utf-8".to_string())
+        })?;
+        let content_base = describe_response
+            .headers
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("Content-Base"))
+            .map(|h| h.value.trim().trim_end_matches('/').to_string());
+        let base_url = content_base.as_deref().unwrap_or(source_url);
+        let (tracks, control_map) = parse_announce_sdp(describe_body).map_err(|err| {
+            SdkError::InvalidArgument(format!("parse DESCRIBE SDP failed: {err}"))
+        })?;
+        let track_controls = invert_track_controls(&tracks, &control_map);
+
+        let (lease, sink) = publisher_api
+            .acquire_publisher(target_stream_key.clone(), options.publisher_options)
+            .await?;
+        if let Err(err) = sink.update_tracks(tracks.clone()) {
+            let _ = publisher_api.release_publisher(&lease).await;
+            return Err(SdkError::InvalidArgument(format!(
+                "update pull tracks failed: {err}"
+            )));
+        }
+
+        let config = RtspModuleConfig {
+            alert_thresholds: options.alert_thresholds,
+            ..RtspModuleConfig::default()
+        };
+        let publish = build_pull_publish_session(
+            &config,
+            cancel.child_token(),
+            lease,
+            sink,
+            tracks_to_map(&tracks),
+        );
+
+        let setup_completion = match setup_pull_tracks_and_play(
+            &mut client,
+            &tracks,
+            &track_controls,
+            PullSetupContext {
+                runtime_api: &runtime_api,
+                source_url,
+                base_url,
+                peer,
+                transport: selected_transport,
+                cancel: &cancel,
+                request_timeout,
+                auth: &mut auth,
+                start_cseq: cseq,
+            },
+        )
+        .await
+        {
+            Ok(completion) => completion,
+            Err(err) => {
+                let _ = publisher_api.release_publisher(&publish.lease).await;
+                let _ = publish.sink.close();
+                return Err(SdkError::Unavailable(format!(
+                    "setup pull tracks failed: {err}"
+                )));
+            }
+        };
+
+        Ok::<_, SdkError>((setup_completion, tracks, publish))
+    }
+    .await;
+
+    let (setup_completion, tracks, mut publish) = match setup_result {
+        Ok((completion, tracks, publish)) => (completion, tracks, publish),
+        Err(err) => {
+            client.shutdown();
+            return Err(err);
         }
     };
 
