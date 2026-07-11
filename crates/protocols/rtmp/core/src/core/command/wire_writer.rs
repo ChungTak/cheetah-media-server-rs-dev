@@ -9,6 +9,8 @@ use crate::timestamp::RtmpTimestamp;
 use super::super::{CoreOutput, RtmpCore, RtmpCoreError};
 
 impl RtmpCore {
+    /// Encodes a user control event of the given type and value.
+    /// 编码指定类型与值的用户控制事件。
     pub(crate) fn send_user_control(
         &mut self,
         event_type: u16,
@@ -21,6 +23,8 @@ impl RtmpCore {
         self.send_message(2, 0, 4, 0, payload.freeze(), out)
     }
 
+    /// Encodes a raw payload as a `RtmpMessage` with a fixed chunk stream ID.
+    /// 将原始负载编码为指定 chunk 流 ID 的 `RtmpMessage`。
     pub(crate) fn send_message(
         &mut self,
         csid: u32,
@@ -46,6 +50,8 @@ impl RtmpCore {
         Ok(())
     }
 
+    /// Encodes a fully formed `RtmpMessage` onto the chunk stream with the given ID.
+    /// 将完整的 `RtmpMessage` 编码到指定 ID 的 chunk 流。
     pub(crate) fn send_rtmp_message(
         &mut self,
         csid: u32,

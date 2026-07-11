@@ -9,12 +9,18 @@ use cheetah_codec::{
 
 use crate::{Amf0Value as WireAmf0Value, Amf3Value, AmfValue, AmfValueRef};
 
+/// Magic prefix for attaching raw RTMP video payload to a frame's side data.
+/// 将原始 RTMP 视频负载附加到帧 side data 的魔数前缀。
 pub const RTMP_VIDEO_RAW_SIDEDATA_MAGIC: &[u8] = b"rtmp-video-raw:";
+/// Magic prefix for attaching raw RTMP audio payload to a frame's side data.
+/// 将原始 RTMP 音频负载附加到帧 side data 的魔数前缀。
 pub const RTMP_AUDIO_RAW_SIDEDATA_MAGIC: &[u8] = b"rtmp-audio-raw:";
 
 const RTMP_TIMESTAMP_BACKWARD_JITTER_MS: u32 = 3_000;
 const RTMP_TIMESTAMP_WRAP_FORWARD_MAX_MS: u32 = 300_000;
 
+/// Updates `TrackInfo` from an onMetaData/onMetaData-like AMF value list.
+/// 从 onMetaData 形式的 AMF 值列表更新 `TrackInfo`。
 pub fn apply_flv_metadata_to_tracks(
     video_track: &mut Option<TrackInfo>,
     audio_track: &mut Option<TrackInfo>,
@@ -80,6 +86,8 @@ pub fn apply_flv_metadata_to_tracks(
     }
 }
 
+/// Applies a video codec sequence header/config payload to the video track.
+/// 将视频编解码器序列头/配置负载应用到视频轨道。
 pub fn apply_flv_video_config(
     video_track: &mut Option<TrackInfo>,
     codec: CodecId,
@@ -138,6 +146,8 @@ pub fn apply_flv_video_config(
     *video_track = Some(track);
 }
 
+/// Parses H.265/H.266 parameter sets from an HVCC/VVCC configuration payload.
+/// 从 HVCC/VVCC 配置负载中解析 H.265/H.266 参数集。
 pub fn parse_flv_hvcc_parameter_sets(
     payload: &[u8],
     codec: CodecId,
@@ -149,6 +159,8 @@ pub fn parse_flv_hvcc_parameter_sets(
     }
 }
 
+/// Parses H.264 SPS/PPS parameter sets from an AVCC configuration payload.
+/// 从 AVCC 配置负载中解析 H.264 的 SPS/PPS 参数集。
 pub fn parse_flv_avcc_parameter_sets(avcc: &[u8]) -> (Vec<Bytes>, Vec<Bytes>) {
     if avcc.len() < 7 {
         return (Vec::new(), Vec::new());
@@ -195,6 +207,8 @@ pub fn parse_flv_avcc_parameter_sets(avcc: &[u8]) -> (Vec<Bytes>, Vec<Bytes>) {
     (sps, pps)
 }
 
+/// Attaches a raw RTMP video payload to a frame's side data for passthrough.
+/// 将原始 RTMP 视频负载附加到帧的 side data 以透传。
 pub fn attach_raw_rtmp_video_payload(frame: &mut AVFrame, payload: &[u8]) {
     let mut tagged = BytesMut::with_capacity(RTMP_VIDEO_RAW_SIDEDATA_MAGIC.len() + payload.len());
     tagged.extend_from_slice(RTMP_VIDEO_RAW_SIDEDATA_MAGIC);
@@ -202,6 +216,8 @@ pub fn attach_raw_rtmp_video_payload(frame: &mut AVFrame, payload: &[u8]) {
     frame.side_data.push(FrameSideData::Opaque(tagged.freeze()));
 }
 
+/// Attaches a raw RTMP audio payload to a frame's side data for passthrough.
+/// 将原始 RTMP 音频负载附加到帧的 side data 以透传。
 pub fn attach_raw_rtmp_audio_payload(frame: &mut AVFrame, payload: &[u8]) {
     let mut tagged = BytesMut::with_capacity(RTMP_AUDIO_RAW_SIDEDATA_MAGIC.len() + payload.len());
     tagged.extend_from_slice(RTMP_AUDIO_RAW_SIDEDATA_MAGIC);
@@ -209,6 +225,8 @@ pub fn attach_raw_rtmp_audio_payload(frame: &mut AVFrame, payload: &[u8]) {
     frame.side_data.push(FrameSideData::Opaque(tagged.freeze()));
 }
 
+/// Converts length-prefixed NAL units to Annex-B start-code format.
+/// 将长度前缀的 NAL 单元转换为 Annex-B 起始码格式。
 pub fn length_prefixed_to_annexb_with_size(payload: &[u8], nal_length_size: usize) -> Bytes {
     let nal_length_size = normalize_nal_length_size(nal_length_size);
     let mut out = BytesMut::with_capacity(payload.len() + 16);
@@ -230,6 +248,8 @@ pub fn length_prefixed_to_annexb_with_size(payload: &[u8], nal_length_size: usiz
     }
 }
 
+/// Wraps a raw RTMP timestamp in milliseconds into a codec `SourceTimestamp`.
+/// 将原始 RTMP 毫秒时间戳包装为 codec `SourceTimestamp`。
 pub fn source_timestamp_from_rtmp_ms(raw_timestamp_ms: u32) -> SourceTimestamp {
     SourceTimestamp::Rtmp(RtmpTimestamp::new(
         raw_timestamp_ms,
@@ -237,6 +257,8 @@ pub fn source_timestamp_from_rtmp_ms(raw_timestamp_ms: u32) -> SourceTimestamp {
     ))
 }
 
+/// Detects a large RTMP timestamp wrap/reset and resets the normalizer if needed.
+/// 检测较大的 RTMP 时间戳回绕/重置，并在需要时重置归一化器。
 pub fn maybe_reset_rtmp_timestamp_normalizer(
     normalizer: &mut TimestampNormalizer,
     repair_count: &mut u64,
@@ -260,6 +282,8 @@ pub fn maybe_reset_rtmp_timestamp_normalizer(
     }
 }
 
+/// Updates the timestamp repair counter based on non-monotonic DTS repairs.
+/// 基于非单调 DTS 修复更新时间戳修复计数器。
 pub fn update_timestamp_repair_counter(
     normalized: &TimestampNormalizeOutput,
     repair_count: &mut u64,

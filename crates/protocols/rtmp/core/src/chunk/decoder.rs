@@ -11,6 +11,8 @@ use crate::timestamp::RtmpTimestamp;
 
 const MAX_MESSAGE_SIZE: usize = 8 * 1024 * 1024;
 
+/// Decodes RTMP chunks from a byte stream, reassembling multi-chunk messages incrementally.
+/// 从字节流解码 RTMP chunk，并增量式重组跨多个 chunk 的消息。
 #[derive(Debug, Default)]
 pub struct RtmpChunkDecoder {
     chunk_size: RtmpChunkSize,
@@ -18,14 +20,20 @@ pub struct RtmpChunkDecoder {
 }
 
 impl RtmpChunkDecoder {
+    /// Updates the decoder chunk size to match a received `SetChunkSize` message.
+    /// 更新解码器 chunk 大小，以匹配收到的 `SetChunkSize` 消息。
     pub fn set_chunk_size(&mut self, size: RtmpChunkSize) {
         self.chunk_size = size;
     }
 
+    /// Drops the per-chunk-stream state, used when an `Abort` message is received.
+    /// 丢弃某个块流的状态，在收到 `Abort` 消息时使用。
     pub fn reset_chunk_stream(&mut self, chunk_stream_id: RtmpChunkStreamId) {
         self.chunk_streams.remove(&chunk_stream_id);
     }
 
+    /// Attempts to decode a single chunk from `buf`, returning consumed bytes and the decoded chunk if complete.
+    /// 尝试从 `buf` 解码一个 chunk，返回已消费字节数，以及若完整则返回该 chunk。
     pub fn decode(&mut self, mut buf: &[u8]) -> Result<(usize, Option<RtmpChunk>), Error> {
         let original_buf_len = buf.len();
 
@@ -65,6 +73,8 @@ impl RtmpChunkDecoder {
         Ok((bytes_consumed, maybe_chunk))
     }
 
+    /// Consumes one chunk payload and, once the full message is accumulated, returns it.
+    /// 消费一个 chunk 负载，当完整消息被收集后返回。
     fn decode_message_payload(
         &self,
         buf: &mut &[u8],
@@ -91,6 +101,8 @@ impl RtmpChunkDecoder {
         }
     }
 
+    /// Parses the variable chunk message header (F0..F3) and updates stream state.
+    /// 解析可变 chunk 消息头部（F0..F3）并更新流状态。
     fn decode_message_header(
         &self,
         buf: &mut &[u8],
@@ -162,6 +174,8 @@ impl RtmpChunkDecoder {
         Ok(())
     }
 
+    /// Parses the basic header and extracts the fmt flag and chunk stream ID.
+    /// 解析基本头部并提取 fmt 标志与 chunk stream ID。
     fn decode_chunk_basic_header(
         &self,
         buf: &mut &[u8],
@@ -195,6 +209,8 @@ impl RtmpChunkDecoder {
     }
 }
 
+/// Per-chunk-stream state used to reassemble fragmented messages across chunks.
+/// 用于跨 chunk 重组分段消息的每个块流状态。
 #[derive(Debug)]
 struct RtmpChunkStream {
     timestamp: RtmpTimestamp,
@@ -207,6 +223,8 @@ struct RtmpChunkStream {
 }
 
 impl RtmpChunkStream {
+    /// Creates a fresh state with placeholder values that are overwritten by the first F0 header.
+    /// 创建新状态，使用占位值，随后会被第一个 F0 头部覆盖。
     fn new() -> Self {
         // 初始时设置任意值（很快会被接收数据覆盖，所以什么值都可以）
         Self {

@@ -8,28 +8,42 @@ use cheetah_codec::{
 
 use crate::error::Error;
 
+/// RTMP timestamp represented as an unsigned 32-bit millisecond value.
+/// 以 32 位无符号毫秒值表示的 RTMP 时间戳。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RtmpTimestamp(u32);
 
 impl RtmpTimestamp {
+    /// A zero timestamp.
+    /// 零时间戳。
     pub const ZERO: Self = Self(0);
 
+    /// Creates a timestamp from a raw millisecond value.
+    /// 从原始毫秒值创建时间戳。
     pub const fn from_millis(t: u32) -> Self {
         Self(t)
     }
 
+    /// Returns the raw millisecond value.
+    /// 返回原始毫秒值。
     pub const fn as_millis(self) -> u32 {
         self.0
     }
 
+    /// Returns the timestamp as a `Duration`.
+    /// 以 `Duration` 形式返回时间戳。
     pub const fn as_duration(self) -> Duration {
         Duration::from_millis(self.0 as u64)
     }
 
+    /// Wraps the timestamp around the 32-bit millisecond boundary.
+    /// 在 32 位毫秒边界上对时间戳做回绕加法。
     pub fn wrapping_add(self, other: Self) -> Self {
         Self(self.0.wrapping_add(other.0))
     }
 
+    /// Subtracts another timestamp, returning `None` on underflow.
+    /// 减去另一个时间戳，下溢时返回 `None`。
     pub fn checked_sub(self, other: Self) -> Option<Self> {
         self.0.checked_sub(other.0).map(Self)
     }
@@ -39,17 +53,25 @@ impl RtmpTimestamp {
 pub struct RtmpTimestampDelta(i32);
 
 impl RtmpTimestampDelta {
+    /// A zero timestamp delta.
+    /// 零时间戳增量。
     pub const ZERO: Self = Self(0);
 
+    /// Creates a timestamp delta from a raw millisecond value.
+    /// 从原始毫秒值创建时间戳增量。
     pub const fn from_millis(t: i32) -> Self {
         Self(t)
     }
 
+    /// Returns the raw delta value in milliseconds.
+    /// 返回毫秒单位的原始增量值。
     pub const fn as_millis(self) -> i32 {
         self.0
     }
 }
 
+/// A decoded RTMP media frame, either audio or video.
+/// 解码后的 RTMP 媒体帧，音频或视频。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MediaFrame {
     Audio(AudioFrame),
@@ -57,6 +79,8 @@ pub enum MediaFrame {
 }
 
 impl MediaFrame {
+    /// Unwraps the frame as an `AudioFrame`.
+    /// 将帧解包为 `AudioFrame`。
     pub fn unwrap_audio(self) -> AudioFrame {
         match self {
             MediaFrame::Audio(f) => f,
@@ -64,6 +88,8 @@ impl MediaFrame {
         }
     }
 
+    /// Unwraps the frame as a `VideoFrame`.
+    /// 将帧解包为 `VideoFrame`。
     pub fn unwrap_video(self) -> VideoFrame {
         match self {
             MediaFrame::Video(f) => f,
@@ -72,6 +98,8 @@ impl MediaFrame {
     }
 }
 
+/// A decoded audio frame with RTMP audio tag header information.
+/// 解码后的音频帧，包含 RTMP 音频标签头部信息。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AudioFrame {
     pub timestamp: RtmpTimestamp,
@@ -88,6 +116,8 @@ impl AudioFrame {
     pub const AAC_STEREO: bool = true;
 }
 
+/// A decoded video frame with RTMP video tag header information.
+/// 解码后的视频帧，包含 RTMP 视频标签头部信息。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VideoFrame {
     pub timestamp: RtmpTimestamp,
@@ -99,27 +129,51 @@ pub struct VideoFrame {
 }
 
 impl VideoFrame {
+    /// Returns true if this is a key frame.
+    /// 若是关键帧则返回 true。
     pub fn is_keyframe(&self) -> bool {
         self.frame_type == VideoFrameType::KeyFrame
     }
 }
 
+/// AVC packet type used in RTMP video tags.
+/// RTMP 视频标签中使用的 AVC 包类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AvcPacketType {
+    /// H.264/AVC sequence header.
+    /// H.264/AVC 序列头。
     SequenceHeader = 0,
+    /// H.264/AVC NAL unit.
+    /// H.264/AVC NAL 单元。
     NalUnit = 1,
+    /// End of sequence.
+    /// 序列结束。
     EndOfSequence = 2,
 }
 
+/// Video frame type bits in the upper nibble of the RTMP video tag.
+/// RTMP 视频标签高四位中的帧类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum VideoFrameType {
+    /// Key frame.
+    /// 关键帧。
     KeyFrame = 1,
+    /// Inter frame.
+    /// 非关键帧。
     InterFrame = 2,
+    /// Disposable inter frame.
+    /// 可丢弃的非关键帧。
     DisposableInterFrame = 3,
+    /// Generated key frame.
+    /// 生成的关键帧。
     GeneratedKeyFrame = 4,
+    /// Video info or command frame.
+    /// 视频信息或命令帧。
     VideoInfoOrCommandFrame = 5,
 }
 
+/// Legacy video codec identifier in the lower nibble of the RTMP video tag.
+/// RTMP 视频标签低四位中的传统视频编解码器标识。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum VideoCodec {
     Jpeg,
@@ -133,6 +187,8 @@ pub enum VideoCodec {
 }
 
 impl VideoCodec {
+    /// Returns the raw 4-bit codec identifier.
+    /// 返回 4 位编解码器标识。
     pub fn raw_id(self) -> u8 {
         match self {
             VideoCodec::Jpeg => 1,
@@ -147,6 +203,8 @@ impl VideoCodec {
     }
 }
 
+/// Audio format identifier in the upper nibble of the RTMP audio tag.
+/// RTMP 音频标签高四位中的音频格式标识。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AudioFormat {
     Adpcm,
@@ -165,6 +223,8 @@ pub enum AudioFormat {
 }
 
 impl AudioFormat {
+    /// Returns the raw 4-bit audio format identifier.
+    /// 返回 4 位音频格式标识。
     pub fn raw_id(self) -> u8 {
         match self {
             AudioFormat::Adpcm => 1,
@@ -184,6 +244,8 @@ impl AudioFormat {
     }
 }
 
+/// Audio sample rate encoded in the lower 2 bits of the audio format byte.
+/// 音频格式字节低 2 位编码的采样率。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AudioSampleRate {
     Khz5 = 0,
@@ -192,6 +254,8 @@ pub enum AudioSampleRate {
     Khz44 = 3,
 }
 
+/// Parsed H.264/AVC decoder configuration record.
+/// 解析后的 H.264/AVC 解码器配置记录。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AvcSequenceHeader {
     pub avc_profile_indication: u8,
@@ -209,6 +273,8 @@ impl AvcSequenceHeader {
     const MAX_SPS_SIZE: usize = 4096;
     const MAX_PPS_SIZE: usize = 4096;
 
+    /// Parses an AVCDecoderConfigurationRecord from bytes.
+    /// 从字节中解析 AVCDecoderConfigurationRecord。
     pub fn from_bytes(data: &[u8]) -> Result<Self, Error> {
         if data.len() < 7 {
             return Err(Error::invalid_data(
@@ -348,6 +414,8 @@ impl AvcSequenceHeader {
         })
     }
 
+    /// Serializes the configuration record into its byte representation.
+    /// 将配置记录序列化为字节表示。
     pub fn to_bytes(&self) -> Result<Vec<u8>, Error> {
         if self.sps_list.is_empty() {
             return Err(Error::invalid_data("SPS list must not be empty"));
@@ -419,6 +487,8 @@ impl AvcSequenceHeader {
     }
 }
 
+/// Encodes an `AudioFrame` into an RTMP audio tag payload.
+/// 将 `AudioFrame` 编码为 RTMP 音频标签负载。
 pub fn encode_audio_frame(buf: &mut Vec<u8>, frame: &AudioFrame) {
     let header = ((frame.format.raw_id()) << 4)
         | ((frame.sample_rate as u8) << 2)
@@ -434,6 +504,8 @@ pub fn encode_audio_frame(buf: &mut Vec<u8>, frame: &AudioFrame) {
     buf.extend_from_slice(&frame.data);
 }
 
+/// Decodes an RTMP audio tag payload into an `AudioFrame`.
+/// 将 RTMP 音频标签负载解码为 `AudioFrame`。
 pub fn decode_audio_frame(buf: &[u8], timestamp: RtmpTimestamp) -> Result<AudioFrame, Error> {
     let mut reader = buf;
     let header = read_u8(&mut reader)?;
@@ -484,6 +556,8 @@ pub fn decode_audio_frame(buf: &[u8], timestamp: RtmpTimestamp) -> Result<AudioF
     })
 }
 
+/// Encodes a `VideoFrame` into an RTMP video tag payload.
+/// 将 `VideoFrame` 编码为 RTMP 视频标签负载。
 pub fn encode_video_frame(buf: &mut Vec<u8>, frame: &VideoFrame) {
     let frame_type_codec = ((frame.frame_type as u8) << 4) | (frame.codec.raw_id());
     buf.push(frame_type_codec);
@@ -496,6 +570,8 @@ pub fn encode_video_frame(buf: &mut Vec<u8>, frame: &VideoFrame) {
     buf.extend_from_slice(&frame.data);
 }
 
+/// Decodes an RTMP video tag payload into a `VideoFrame`.
+/// 将 RTMP 视频标签负载解码为 `VideoFrame`。
 pub fn decode_video_frame(buf: &[u8], timestamp: RtmpTimestamp) -> Result<VideoFrame, Error> {
     let mut reader = buf;
     let frame_type_codec = read_u8(&mut reader)?;
@@ -558,6 +634,8 @@ pub fn decode_video_frame(buf: &[u8], timestamp: RtmpTimestamp) -> Result<VideoF
     })
 }
 
+/// Parsed video ingress header for a raw RTMP video tag.
+/// 原始 RTMP 视频标签的解析视频入口头部。
 #[derive(Debug, Clone, Copy)]
 pub struct VideoIngressHeader {
     pub frame_type: u8,
@@ -568,14 +646,24 @@ pub struct VideoIngressHeader {
 }
 
 /// Enhanced RTMP multi-track packet type (packet_type = 5).
+/// Enhanced RTMP multi-track packet layout type.
+/// Enhanced RTMP 多轨包布局类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MultiTrackType {
+    /// Single track, all data after the header.
+    /// 单轨道，头部之后全部为数据。
     OneTrack,
+    /// Multiple tracks sharing the header codec.
+    /// 多个轨道共享头部编解码器。
     ManyTracks,
+    /// Multiple tracks, each carrying its own FourCC.
+    /// 多个轨道，每个轨道自带 FourCC。
     ManyTracksManyCodecs,
 }
 
 /// A single track entry within a multi-track packet.
+/// A single track entry within a multi-track packet.
+/// 多轨包中的单个轨道条目。
 #[derive(Debug, Clone)]
 pub struct MultiTrackEntry {
     pub track_id: u8,
@@ -586,6 +674,8 @@ pub struct MultiTrackEntry {
 }
 
 /// Parsed multi-track video header.
+/// Parsed header of an Enhanced RTMP multi-track video packet.
+/// 解析后的 Enhanced RTMP 多轨视频包头。
 #[derive(Debug, Clone)]
 pub struct VideoMultiTrackHeader {
     pub frame_type: u8,
@@ -594,7 +684,9 @@ pub struct VideoMultiTrackHeader {
 }
 
 /// Attempts to parse an Enhanced RTMP multi-track video packet (packet_type = 5).
+/// 尝试解析 Enhanced RTMP 多轨视频包（packet_type = 5）。
 /// Returns `None` if the payload is not a multi-track packet.
+/// 若负载不是多轨包则返回 `None`。
 pub fn parse_video_multi_track(payload: &[u8]) -> Option<VideoMultiTrackHeader> {
     if payload.len() < 6 {
         return None;
@@ -693,6 +785,8 @@ pub fn parse_video_multi_track(payload: &[u8]) -> Option<VideoMultiTrackHeader> 
     })
 }
 
+/// Parses a video ingress header using the standard domestic codec mode.
+/// 使用标准 domestic 编解码器模式解析视频入口头部。
 pub fn parse_video_ingress_header(payload: &[u8]) -> Option<VideoIngressHeader> {
     parse_video_ingress_header_with_mode(payload, DomesticCodecMode::Standard)
 }

@@ -6,6 +6,8 @@ use crate::chunk::{MessageHeaderFormat, RtmpChunk, RtmpChunkSize, RtmpChunkStrea
 use crate::message::{RtmpMessageStreamId, RtmpMessageType};
 use crate::timestamp::RtmpTimestamp;
 
+/// Encodes RTMP chunks, choosing the most compact header format based on per-stream state.
+/// 编码 RTMP chunk，并依据每个流的状态选择最紧凑的头部格式。
 #[derive(Debug, Default)]
 pub struct RtmpChunkEncoder {
     chunk_size: RtmpChunkSize,
@@ -13,10 +15,14 @@ pub struct RtmpChunkEncoder {
 }
 
 impl RtmpChunkEncoder {
+    /// Updates the chunk payload size used when splitting messages.
+    /// 更新用于切分消息时采用的 chunk 负载大小。
     pub fn set_chunk_size(&mut self, size: RtmpChunkSize) {
         self.chunk_size = size;
     }
 
+    /// Encodes one complete chunk into `buf`, including all fragmented pieces.
+    /// 将一个完整 chunk 编码进 `buf`，包括所有被拆分后的片段。
     pub fn encode(&mut self, buf: &mut Vec<u8>, chunk: &RtmpChunk) {
         let mut chunk_stream = self.resolve_chunk_stream(chunk);
         self.encode_message(buf, &mut chunk_stream, &chunk.payload);
@@ -24,6 +30,8 @@ impl RtmpChunkEncoder {
             .insert(chunk.chunk_stream_id, chunk_stream);
     }
 
+    /// Splits a message payload into one or more chunks and writes their headers/payloads.
+    /// 将消息负载拆分成一个或多个 chunk，并写入它们的头部与负载。
     fn encode_message(
         &self,
         buf: &mut Vec<u8>,
@@ -50,6 +58,8 @@ impl RtmpChunkEncoder {
         }
     }
 
+    /// Writes the 1-, 2- or 3-byte basic header that combines fmt and chunk stream ID.
+    /// 写入 1、2 或 3 字节的基本头部，将 fmt 与 chunk stream ID 合并。
     fn encode_chunk_basic_header(
         &self,
         buf: &mut Vec<u8>,
@@ -73,6 +83,8 @@ impl RtmpChunkEncoder {
         }
     }
 
+    /// Writes the variable message header (F0..F3) and extended timestamp when needed.
+    /// 写入可变消息头部（F0..F3），并在需要时写入扩展时间戳。
     fn encode_message_header(
         &self,
         buf: &mut Vec<u8>,
@@ -134,6 +146,8 @@ impl RtmpChunkEncoder {
         }
     }
 
+    /// Compares the current chunk against the previous one on the same stream to select the smallest header.
+    /// 将当前 chunk 与同一流上的上一个 chunk 比较，以选择最小的头部。
     fn resolve_chunk_stream(&self, chunk: &RtmpChunk) -> RtmpChunkStream {
         let mut chunk_stream = RtmpChunkStream {
             chunk_stream_id: chunk.chunk_stream_id,

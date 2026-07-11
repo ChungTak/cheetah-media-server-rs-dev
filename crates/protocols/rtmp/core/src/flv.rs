@@ -1,8 +1,11 @@
 //! FLV egress mapping for RTMP.
+//! RTMP 的 FLV 输出映射。
 //!
 //! The FLV frame↔payload encapsulation lives in `cheetah-codec`
 //! (`cheetah_codec::flv_egress`) and is shared with HTTP-FLV. This module
 //! re-exports it to preserve the RTMP-core public API surface.
+//! FLV 帧与负载的封装位于 `cheetah-codec`（`cheetah_codec::flv_egress`），
+//! 与 HTTP-FLV 共享；本模块重新导出以保留 RTMP-core 公共 API 表面。
 
 pub use cheetah_codec::{
     build_h265_config, build_h266_config, build_metadata, build_track_bootstrap_payloads,

@@ -1,4 +1,8 @@
+/// Message decoding logic: turns complete chunks into typed RTMP messages.
+/// 消息解码逻辑：将完整的 chunk 转换为类型化的 RTMP 消息。
 pub mod decoder;
+/// Message encoding logic: turns typed RTMP messages into chunk payloads.
+/// 消息编码逻辑：将类型化的 RTMP 消息编码为 chunk 负载。
 pub mod encoder;
 
 pub use decoder::{decode_rtmp_chunk_to_message, RtmpMessageDecoder};
@@ -15,54 +19,91 @@ use crate::user_control::RtmpUserControlEvent;
 
 use bytes::Bytes;
 
+/// RTMP message stream identifier (MSID) used to multiplex messages on a single connection.
+/// RTMP 消息流标识符（MSID），用于在单个连接上复用消息。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RtmpMessageStreamId(u32);
 
 impl RtmpMessageStreamId {
-    // 控制流的 ID 按规范固定为 0
+    /// Protocol control stream ID, fixed to 0 by the RTMP spec.
+    /// 控制流的 ID 按规范固定为 0。
     pub const PCM: Self = Self(0);
 
-    // 服务器首次分配的流 ID
-    // 该流的用途不明，但值无所谓，固定为 1
+    /// First server-assigned stream ID; its purpose is not used but kept as 1.
+    /// 服务器首次分配的流 ID，实际未使用，但固定为 1。
     pub const FIRST: Self = Self(1);
 
-    // 服务器为媒体流分配的 ID
-    // 在本 crate 中，一个连接不会处理多个流，因此使用固定值
+    /// Media stream ID used when this crate only handles one stream per connection.
+    /// 媒体流 ID，在本 crate 中一个连接仅处理一个流，因此使用固定值 2。
     pub const MEDIA: Self = Self(2);
 
+    /// Wraps a raw message stream ID.
+    /// 包装原始消息流 ID。
     pub const fn new(id: u32) -> Self {
         Self(id)
     }
 
+    /// Returns the raw message stream ID value.
+    /// 返回原始消息流 ID 值。
     pub const fn get(self) -> u32 {
         self.0
     }
 }
 
+/// RTMP message type discriminator for protocol, media and command messages.
+/// RTMP 消息类型区分符，涵盖协议、媒体与命令消息。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpMessageType {
     // Protocol Control Messages
+    /// Notify the peer to change the chunk size used on the wire.
+    /// 通知对端改变在线路上使用的 chunk 大小。
     SetChunkSize = 1,
+    /// Instructs the peer to discard chunks for a given chunk stream.
+    /// 指示对端丢弃指定 chunk 流上的 chunk。
     Abort = 2,
+    /// Acknowledges the number of bytes received so far.
+    /// 确认到目前为止已接收的字节数。
     Ack = 3,
+    /// User control event such as StreamBegin or Ping.
+    /// 用户控制事件，如 StreamBegin 或 Ping。
     UserControl = 4,
+    /// Sets the peer's window acknowledgement size.
+    /// 设置对端的窗口确认大小。
     WinAckSize = 5,
+    /// Limits the peer's outgoing bandwidth.
+    /// 限制对端的发送带宽。
     SetPeerBandwidth = 6,
 
     // Media Messages
+    /// Audio frame data.
+    /// 音频帧数据。
     Audio = 8,
+    /// Video frame data.
+    /// 视频帧数据。
     Video = 9,
 
     // Data/Command Messages
+    /// Metadata/data message encoded with AMF3.
+    /// 使用 AMF3 编码的元数据/数据消息。
     DataAmf3 = 15,
+    /// Command message encoded with AMF3.
+    /// 使用 AMF3 编码的命令消息。
     CommandAmf3 = 17,
+    /// Metadata/data message encoded with AMF0.
+    /// 使用 AMF0 编码的元数据/数据消息。
     DataAmf0 = 18,
+    /// Command message encoded with AMF0.
+    /// 使用 AMF0 编码的命令消息。
     CommandAmf0 = 20,
     // Aggregate Message
+    /// Aggregate message containing multiple smaller RTMP messages.
+    /// 聚合消息，包含多个小型 RTMP 消息。
     Aggregate = 22,
 }
 
 impl RtmpMessageType {
+    /// Maps a raw message type ID to the typed enum, rejecting unknown values.
+    /// 将原始消息类型 ID 映射为类型化枚举，未知值会被拒绝。
     pub fn from_type_id(type_id: u8) -> Result<Self, Error> {
         match type_id {
             1 => Ok(RtmpMessageType::SetChunkSize),
@@ -85,6 +126,8 @@ impl RtmpMessageType {
     }
 }
 
+/// Message header shared by every RTMP message.
+/// 所有 RTMP 消息共享的消息头部。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtmpMessageHeader {
     pub stream_id: RtmpMessageStreamId,
@@ -92,49 +135,71 @@ pub struct RtmpMessageHeader {
 }
 
 impl RtmpMessageHeader {
+    /// Predefined header for the protocol control message stream.
+    /// 协议控制消息流的预定义头部。
     pub const PCM: Self = Self {
         stream_id: RtmpMessageStreamId::PCM,
         timestamp: RtmpTimestamp::ZERO,
     };
 }
 
+/// A typed RTMP message carrying either a protocol control, media, command or data payload.
+/// 类型化的 RTMP 消息，携带协议控制、媒体、命令或数据负载。
 #[derive(Debug, Clone, PartialEq)]
 pub enum RtmpMessage {
+    /// Request the peer to change the chunk size used on the wire.
+    /// 请求对端改变在线路上使用的 chunk 大小。
     SetChunkSize {
         header: RtmpMessageHeader,
         size: RtmpChunkSize,
     },
+    /// Instructs the peer to discard chunks on the specified chunk stream.
+    /// 指示对端丢弃指定 chunk 流上的 chunk。
     Abort {
         header: RtmpMessageHeader,
         chunk_stream_id: RtmpChunkStreamId,
     },
+    /// Acknowledges the total number of bytes received from the peer.
+    /// 确认已从对端接收的总字节数。
     Ack {
         header: RtmpMessageHeader,
         sequence_number: u32, // 规范中的名称虽然是序列号，但实际上是累计接收字节数
     },
+    /// Sets the peer's window acknowledgement size.
+    /// 设置对端的窗口确认大小。
     WinAckSize {
         header: RtmpMessageHeader,
         size: u32,
     },
+    /// Sets the peer's outgoing bandwidth limit.
+    /// 设置对端的发送带宽限制。
     SetPeerBandwidth {
         header: RtmpMessageHeader,
         size: u32,
         limit_type: SetPeerBandwidthLimitType,
     },
+    /// User control event such as StreamBegin, Ping, or BufferReady.
+    /// 用户控制事件，如 StreamBegin、Ping 或 BufferReady。
     UserControl {
         header: RtmpMessageHeader,
         event: RtmpUserControlEvent,
     },
+    /// Audio frame with parsed metadata and raw payload.
+    /// 音频帧，包含已解析的元数据与原始负载。
     Audio {
         header: RtmpMessageHeader,
         frame: AudioFrame,
         payload: Bytes,
     },
+    /// Video frame with parsed metadata and raw payload.
+    /// 视频帧，包含已解析的元数据与原始负载。
     Video {
         header: RtmpMessageHeader,
         frame: VideoFrame,
         payload: Bytes,
     },
+    /// RTMP command such as connect, publish, play, or _result.
+    /// RTMP 命令，如 connect、publish、play 或 _result。
     Command {
         header: RtmpMessageHeader,
         amf_version: AmfVersion,
@@ -143,6 +208,8 @@ pub enum RtmpMessage {
         object: AmfValue,
         args: Vec<AmfValue>,
     },
+    /// Data/notify message such as @setDataFrame or metadata.
+    /// 数据/通知消息，如 @setDataFrame 或 metadata。
     Data {
         header: RtmpMessageHeader,
         amf_version: AmfVersion,
@@ -151,6 +218,8 @@ pub enum RtmpMessage {
 }
 
 impl RtmpMessage {
+    /// Returns the shared header for this message.
+    /// 返回该消息共享的头部。
     pub fn header(&self) -> RtmpMessageHeader {
         match self {
             RtmpMessage::SetChunkSize { header, .. }
@@ -166,6 +235,8 @@ impl RtmpMessage {
         }
     }
 
+    /// Extracts the media frame from an Audio or Video message; panics otherwise.
+    /// 从 Audio 或 Video 消息中提取媒体帧，否则 panic。
     pub fn frame(&self) -> MediaFrame {
         match self {
             RtmpMessage::Audio { frame, .. } => MediaFrame::Audio(frame.clone()),
@@ -174,6 +245,8 @@ impl RtmpMessage {
         }
     }
 
+    /// Maps the message variant to its wire type ID, including the AMF version for commands/data.
+    /// 将消息变体映射到线路类型 ID，对命令/数据还会区分 AMF 版本。
     pub fn message_type(&self) -> RtmpMessageType {
         match self {
             RtmpMessage::SetChunkSize { .. } => RtmpMessageType::SetChunkSize,
@@ -195,6 +268,8 @@ impl RtmpMessage {
         }
     }
 
+    /// Builds a `StreamBegin` user control message for the given stream ID.
+    /// 为指定流 ID 构建 `StreamBegin` 用户控制消息。
     pub fn stream_begin(stream_id: RtmpMessageStreamId) -> Self {
         Self::UserControl {
             header: RtmpMessageHeader::PCM,
@@ -202,6 +277,8 @@ impl RtmpMessage {
         }
     }
 
+    /// Builds a `WinAckSize` protocol control message.
+    /// 构建 `WinAckSize` 协议控制消息。
     pub fn win_ack_size(size: u32) -> Self {
         Self::WinAckSize {
             header: RtmpMessageHeader::PCM,
@@ -209,6 +286,8 @@ impl RtmpMessage {
         }
     }
 
+    /// Builds a `SetPeerBandwidth` message using the hard limit behavior.
+    /// 使用 Hard 限制行为构建 `SetPeerBandwidth` 消息。
     pub fn set_peer_bandwidth(size: u32) -> Self {
         Self::SetPeerBandwidth {
             header: RtmpMessageHeader::PCM,
@@ -219,6 +298,8 @@ impl RtmpMessage {
         }
     }
 
+    /// Builds an `Ack` message carrying the total bytes received so far.
+    /// 构建携带已接收总字节数的 `Ack` 消息。
     pub fn ack(total_bytes_received: u32) -> Self {
         Self::Ack {
             header: RtmpMessageHeader::PCM,
@@ -226,6 +307,8 @@ impl RtmpMessage {
         }
     }
 
+    /// Builds a `SetChunkSize` message with the requested chunk size.
+    /// 构建带有请求 chunk 大小的 `SetChunkSize` 消息。
     pub fn set_chunk_size(size: RtmpChunkSize) -> Self {
         Self::SetChunkSize {
             header: RtmpMessageHeader::PCM,
@@ -234,10 +317,18 @@ impl RtmpMessage {
     }
 }
 
+/// Bandwidth limit behavior for `SetPeerBandwidth`.
+/// `SetPeerBandwidth` 的带宽限制行为。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SetPeerBandwidthLimitType {
+    /// The peer must immediately switch to the given limit.
+    /// 对端必须立即切换到给定限制。
     Hard = 0,
+    /// The peer should use the minimum of the local and given limits.
+    /// 对端应取本地限制与给定限制的最小值。
     Soft,
+    /// The peer may choose between the previous Hard/Soft behavior.
+    /// 对端可在之前的 Hard/Soft 行为之间切换。
     Dynamic,
 }
 

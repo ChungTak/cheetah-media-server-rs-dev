@@ -3,15 +3,35 @@ use alloc::vec::Vec;
 
 use crate::error::Error;
 
+/// Trait for reading fixed-width big-endian values from a byte slice.
+/// 从字节切片读取固定宽度大端值。
 pub trait BytesReader {
+    /// Reads an unsigned 8-bit value.
+    /// 读取 8 位无符号值。
     fn read_u8(&mut self) -> Result<u8, Error>;
+    /// Reads an unsigned 16-bit big-endian value.
+    /// 读取 16 位无符号大端值。
     fn read_u16(&mut self) -> Result<u16, Error>;
+    /// Reads an unsigned 24-bit big-endian value.
+    /// 读取 24 位无符号大端值。
     fn read_u24(&mut self) -> Result<u32, Error>;
+    /// Reads a signed 24-bit big-endian value, sign-extended to 32 bits.
+    /// 读取 24 位有符号大端值，并符号扩展为 32 位。
     fn read_i24(&mut self) -> Result<i32, Error>;
+    /// Reads an unsigned 32-bit big-endian value.
+    /// 读取 32 位无符号大端值。
     fn read_u32(&mut self) -> Result<u32, Error>;
+    /// Reads a signed 32-bit big-endian value.
+    /// 读取 32 位有符号大端值。
     fn read_i32(&mut self) -> Result<i32, Error>;
+    /// Reads an IEEE-754 double-precision big-endian value.
+    /// 读取 IEEE-754 双精度大端值。
     fn read_f64(&mut self) -> Result<f64, Error>;
+    /// Reads `len` bytes and returns them as a `Vec<u8)`.
+    /// 读取 `len` 字节并返回为 `Vec<u8>`。
     fn read_bytes(&mut self, len: usize) -> Result<Vec<u8>, Error>;
+    /// Reads `len` bytes and decodes them as a UTF-8 string.
+    /// 读取 `len` 字节并解码为 UTF-8 字符串。
     fn read_utf8(&mut self, len: usize) -> Result<String, Error>;
 }
 
@@ -94,14 +114,32 @@ impl BytesReader for &[u8] {
     }
 }
 
+/// Trait for writing fixed-width big-endian values into a byte buffer.
+/// 将固定宽度大端值写入字节缓冲区。
 pub trait BytesWriter {
+    /// Writes an unsigned 8-bit value.
+    /// 写入 8 位无符号值。
     fn write_u8(&mut self, v: u8);
+    /// Writes an unsigned 16-bit big-endian value.
+    /// 写入 16 位无符号大端值。
     fn write_u16(&mut self, v: u16);
+    /// Writes the lower 24 bits of an unsigned 32-bit value as big-endian.
+    /// 写入 32 位无符号值的低 24 位大端值。
     fn write_u24(&mut self, v: u32);
+    /// Writes the lower 24 bits of a signed 32-bit value as big-endian.
+    /// 写入 32 位有符号值的低 24 位大端值。
     fn write_i24(&mut self, v: i32);
+    /// Writes an unsigned 32-bit big-endian value.
+    /// 写入 32 位无符号大端值。
     fn write_u32(&mut self, v: u32);
+    /// Writes a signed 32-bit big-endian value.
+    /// 写入 32 位有符号大端值。
     fn write_i32(&mut self, v: i32);
+    /// Writes an IEEE-754 double-precision big-endian value.
+    /// 写入 IEEE-754 双精度大端值。
     fn write_f64(&mut self, v: f64);
+    /// Writes a raw byte slice.
+    /// 写入原始字节切片。
     fn write_bytes(&mut self, v: &[u8]);
 }
 
@@ -141,6 +179,8 @@ impl BytesWriter for Vec<u8> {
     }
 }
 
+/// A growing byte buffer that tracks consumed bytes to support incremental decoding.
+/// 支持增量解码的增长型字节缓冲区，追踪已消费字节。
 #[derive(Debug, Default)]
 pub struct Buf {
     bytes: Vec<u8>,
@@ -148,14 +188,20 @@ pub struct Buf {
 }
 
 impl Buf {
+    /// Returns the unconsumed bytes starting from the current offset.
+    /// 返回从当前 offset 开始的未消费字节。
     pub fn get(&self) -> &[u8] {
         &self.bytes[self.offset..]
     }
 
+    /// Returns mutable access to the underlying storage.
+    /// 返回对底层存储的可变访问。
     pub fn inner_mut(&mut self) -> &mut Vec<u8> {
         &mut self.bytes
     }
 
+    /// Appends bytes to the buffer and may compact the storage when it exceeds 1 MiB.
+    /// 将字节追加到缓冲区，并在超过 1 MiB 时压缩存储。
     pub fn feed(&mut self, buf: &[u8]) {
         self.bytes.extend_from_slice(buf);
 
@@ -175,6 +221,8 @@ impl Buf {
     // 当调用指定了大于 `Buf::get().len()` 的值作为 n 时，
     // 后续处理可能会 panic
     // （`Buf` 是内部结构体，正确使用该方法是调用方的责任，因此此处不做错误检查）
+    /// Advances the consumed offset by `n` bytes, resetting the buffer when fully consumed.
+    /// 将已消费偏移量前进 `n` 字节，当完全消费后重置缓冲区。
     pub fn advance(&mut self, n: usize) {
         debug_assert!(
             n <= self.bytes.len() - self.offset,

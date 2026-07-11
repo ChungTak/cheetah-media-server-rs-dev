@@ -48,6 +48,8 @@ enum ServerHandshakeMode {
     LenientSeededS1,
 }
 
+/// Client-side handshake validation mode: strict requires S2 to echo C1, lenient accepts any S2.
+/// 客户端握手校验模式：strict 要求 S2 回显 C1，lenient 接受任意 S2。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClientHandshakeMode {
     Strict,
@@ -63,6 +65,8 @@ enum Phase {
     Complete,
 }
 
+/// Server-side RTMP handshake state machine (P0/P1/P2, simple or optional complex).
+/// 服务端 RTMP 握手状态机（P0/P1/P2，简单或可选复杂握手）。
 #[derive(Debug)]
 pub struct RtmpServerHandshake {
     options: RtmpHandshakeOptions,
@@ -74,10 +78,14 @@ pub struct RtmpServerHandshake {
 }
 
 impl RtmpServerHandshake {
+    /// Creates a new server handshake with strict S1/C2 verification.
+    /// 创建一个新的服务端握手，启用严格的 S1/C2 校验。
     pub fn new() -> Self {
         Self::new_with_mode(ServerHandshakeMode::Strict)
     }
 
+    /// Creates a server handshake with lenient S1 generation, derived from the client's C1.
+    /// 创建从客户端 C1 派生 S1 的宽松服务端握手。
     pub fn new_lenient_seeded_s1() -> Self {
         Self::new_with_mode(ServerHandshakeMode::LenientSeededS1)
     }
@@ -93,6 +101,8 @@ impl RtmpServerHandshake {
         }
     }
 
+    /// Feeds incoming bytes into the handshake receive buffer and drives the state machine.
+    /// 将收到的字节送入握手接收缓冲区并驱动状态机。
     pub fn feed_recv_buf(&mut self, buf: &[u8]) -> Result<(), Error> {
         self.recv_buf.extend_from_slice(buf);
         self.handle_recv_buf()?;
@@ -183,23 +193,33 @@ impl RtmpServerHandshake {
         Ok(())
     }
 
+    /// Returns any bytes received after the handshake completes and clears the internal buffer.
+    /// 返回握手完成后仍收到的字节，并清空内部缓冲区。
     pub fn take_recv_buf(&mut self) -> Vec<u8> {
         core::mem::take(&mut self.recv_buf)
     }
 
+    /// Returns the bytes that must be sent to the peer in the current handshake phase.
+    /// 返回当前握手阶段必须发送给对端的字节。
     pub fn send_buf(&self) -> &[u8] {
         &self.send_buf
     }
 
+    /// Removes the first `n` transmitted bytes from the send buffer.
+    /// 调用方发送后，从发送缓冲区中移除前 `n` 字节。
     pub fn advance_send_buf(&mut self, n: usize) {
         let n = n.min(self.send_buf.len());
         self.send_buf.drain(..n); // NOTE: 效率不高，但不是需要关注性能的地方，因此优先简洁
     }
 
+    /// Returns true once the handshake has received all expected packets.
+    /// 当握手已收到所有期望的数据包时返回 true。
     pub fn is_recv_complete(&self) -> bool {
         self.phase == Phase::Complete
     }
 
+    /// Returns true once the handshake is complete and all send bytes are drained.
+    /// 当握手完成且所有待发送字节都已清空时返回 true。
     pub fn is_send_complete(&self) -> bool {
         self.phase == Phase::Complete && self.send_buf.is_empty()
     }
@@ -211,6 +231,8 @@ impl Default for RtmpServerHandshake {
     }
 }
 
+/// Client-side RTMP handshake state machine that sends C0/C1 and waits for S0/S1/S2.
+/// 客户端 RTMP 握手状态机，负责发送 C0/C1 并等待 S0/S1/S2。
 #[derive(Debug)]
 pub struct RtmpClientHandshake {
     options: RtmpHandshakeOptions,
@@ -221,10 +243,14 @@ pub struct RtmpClientHandshake {
 }
 
 impl RtmpClientHandshake {
+    /// Creates a new client handshake with strict S2 verification.
+    /// 创建一个新的客户端握手，启用严格的 S2 校验。
     pub fn new() -> Self {
         Self::new_with_mode(ClientHandshakeMode::Strict)
     }
 
+    /// Creates a client handshake that accepts any S2 without requiring it to echo C1.
+    /// 创建接受任意 S2 的客户端握手，不要求 S2 回显 C1。
     pub fn new_lenient() -> Self {
         Self::new_with_mode(ClientHandshakeMode::Lenient)
     }
@@ -246,6 +272,8 @@ impl RtmpClientHandshake {
         }
     }
 
+    /// Feeds incoming bytes into the handshake receive buffer and drives the state machine.
+    /// 将收到的字节送入握手接收缓冲区并驱动状态机。
     pub fn feed_recv_buf(&mut self, buf: &[u8]) -> Result<(), Error> {
         self.recv_buf.extend_from_slice(buf);
         self.handle_recv_buf()?;
@@ -302,23 +330,33 @@ impl RtmpClientHandshake {
         Ok(())
     }
 
+    /// Returns any bytes received after the handshake completes and clears the internal buffer.
+    /// 返回握手完成后仍收到的字节，并清空内部缓冲区。
     pub fn take_recv_buf(&mut self) -> Vec<u8> {
         core::mem::take(&mut self.recv_buf)
     }
 
+    /// Returns the bytes that must be sent to the peer in the current handshake phase.
+    /// 返回当前握手阶段必须发送给对端的字节。
     pub fn send_buf(&self) -> &[u8] {
         &self.send_buf
     }
 
+    /// Removes the first `n` transmitted bytes from the send buffer.
+    /// 调用方发送后，从发送缓冲区中移除前 `n` 字节。
     pub fn advance_send_buf(&mut self, n: usize) {
         let n = n.min(self.send_buf.len());
         self.send_buf.drain(..n); // NOTE: 效率不高，但不是需要关注性能的地方，因此优先简洁
     }
 
+    /// Returns true once the handshake has received all expected packets.
+    /// 当握手已收到所有期望的数据包时返回 true。
     pub fn is_recv_complete(&self) -> bool {
         self.phase == Phase::Complete
     }
 
+    /// Returns true once the handshake is complete and all send bytes are drained.
+    /// 当握手完成且所有待发送字节都已清空时返回 true。
     pub fn is_send_complete(&self) -> bool {
         self.phase == Phase::Complete && self.send_buf.is_empty()
     }
@@ -330,6 +368,8 @@ impl Default for RtmpClientHandshake {
     }
 }
 
+/// Derives the server S1 packet from the client C1 without runtime randomness.
+/// 从客户端 C1 派生服务端 S1 包，不使用运行时随机数。
 fn build_lenient_seeded_s1(c1: &[u8]) -> [u8; HANDSHAKE_PACKET_SIZE] {
     // Keep first 8 bytes zeroed and derive the remainder from C1 without runtime randomness.
     let mut s1 = [0u8; HANDSHAKE_PACKET_SIZE];

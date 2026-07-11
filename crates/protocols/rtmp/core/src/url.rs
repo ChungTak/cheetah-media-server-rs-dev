@@ -3,7 +3,8 @@ use alloc::string::String;
 
 use crate::error::Error;
 
-/// RTMP 用的 URL
+/// RTMP URL components parsed from a connection string.
+/// 从连接字符串解析出的 RTMP URL 组件。
 ///
 /// # NOTE
 ///
@@ -11,26 +12,32 @@ use crate::error::Error;
 /// 如果需要将流名称与 URL 字符串分开指定，请使用 [`RtmpUrl::parse_with_stream_name()`]。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct RtmpUrl {
-    /// RTMP 服务器的主机名或 IP 地址
+    /// RTMP server hostname or IP address.
+    /// RTMP 服务器的主机名或 IP 地址。
     pub host: String,
 
-    /// RTMP 服务器的端口号
+    /// RTMP server port.
+    /// RTMP 服务器的端口号。
     pub port: u16,
 
-    /// RTMP 应用名
+    /// RTMP application name.
+    /// RTMP 应用名。
     pub app: String,
 
-    /// 流名称
+    /// RTMP stream name.
+    /// 流名称。
     pub stream_name: String,
 
-    /// 是否使用 TLS 连接（rtmps 时为 true）
+    /// Whether TLS is used (true for `rtmps`).
+    /// 是否使用 TLS 连接（rtmps 时为 true）。
     pub tls: bool,
 }
 
 impl RtmpUrl {
-    /// 解析包含流名称的 RTMP URL：`rtmp[s]://host[:port]/app/stream_name`
+    /// Parses a full RTMP URL including the stream name: `rtmp[s]://host[:port]/app/stream_name`.
+    /// 解析包含流名称的 RTMP URL：`rtmp[s]://host[:port]/app/stream_name`。
     ///
-    /// 当路径部分包含多个 `/` 时，以最后一个 `/` 分割应用名和流名称
+    /// 当路径部分包含多个 `/` 时，以最后一个 `/` 分割应用名和流名称。
     ///
     /// 当端口被省略时，使用默认端口：
     /// - rtmp: 1935
@@ -57,7 +64,8 @@ impl RtmpUrl {
         })
     }
 
-    /// 单独指定流名称来解析 RTMP URL：`rtmp[s]://host[:port]/app`
+    /// Parses an RTMP URL with a separate stream name: `rtmp[s]://host[:port]/app`.
+    /// 单独指定流名称来解析 RTMP URL：`rtmp[s]://host[:port]/app`。
     ///
     /// 当端口被省略时，使用默认端口：
     /// - rtmp: 1935
