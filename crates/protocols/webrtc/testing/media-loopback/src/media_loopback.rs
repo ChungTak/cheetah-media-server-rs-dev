@@ -33,8 +33,8 @@ use cheetah_webrtc_core::{
     WebRtcSessionRole, WebRtcTimer,
 };
 
-use crate::bridge::WebRtcPublishBridge;
-use crate::config::SimulcastPolicy;
+use cheetah_webrtc_module::bridge::WebRtcPublishBridge;
+use cheetah_webrtc_module::config::SimulcastPolicy;
 
 /// Hard-coded source/destination addresses for the loopback pair.
 const PLAYER_ADDR: SocketAddr = SocketAddr::V4(std::net::SocketAddrV4::new(

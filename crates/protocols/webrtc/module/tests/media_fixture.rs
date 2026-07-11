@@ -15,7 +15,7 @@ use cheetah_engine::EngineBuilder;
 use cheetah_runtime_api::{CancellationToken, RuntimeApi};
 use cheetah_runtime_tokio::TokioRuntime;
 use cheetah_sdk::StreamKey;
-use cheetah_webrtc_module::testing::media_loopback::MediaLoopbackHarness;
+use cheetah_webrtc_media_loopback::MediaLoopbackHarness;
 
 fn h264_frame() -> AVFrame {
     // Annex-B access unit: start-code + IDR NAL.

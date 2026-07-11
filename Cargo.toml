@@ -48,6 +48,7 @@ members = [
   "crates/protocols/webrtc/core",
   "crates/protocols/webrtc/driver-tokio",
   "crates/protocols/webrtc/module",
+  "crates/protocols/webrtc/testing/media-loopback",
   "crates/protocols/webrtc/testing/property-tests",
   "crates/runtime/cheetah-runtime-api",
   "crates/runtime/cheetah-runtime-tokio",

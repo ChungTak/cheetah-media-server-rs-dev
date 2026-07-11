@@ -1,0 +1,17 @@
+[package]
+name = "cheetah-webrtc-media-loopback"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+description = "In-process WebRTC media loopback harness for fixture tests and connector integration"
+
+[dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+cheetah-codec = { path = "../../../../foundation/cheetah-codec" }
+cheetah-runtime-api = { path = "../../../../runtime/cheetah-runtime-api" }
+cheetah-sdk = { path = "../../../../sdk/cheetah-sdk" }
+cheetah-webrtc-core = { path = "../../core" }
+cheetah-webrtc-module = { path = "../../module" }

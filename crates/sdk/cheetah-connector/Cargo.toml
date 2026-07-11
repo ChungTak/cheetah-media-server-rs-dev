@@ -11,7 +11,7 @@ default = []
 rtsp = ["dep:cheetah-rtsp-module", "dep:cheetah-rtsp-driver-tokio"]
 http-flv = ["dep:cheetah-http-flv-module"]
 rtmp = ["dep:cheetah-rtmp-module", "dep:cheetah-rtmp-driver-tokio", "dep:cheetah-rtmp-core"]
-webrtc = ["dep:cheetah-webrtc-module", "dep:cheetah-webrtc-driver-tokio"]
+webrtc = ["dep:cheetah-webrtc-module", "dep:cheetah-webrtc-media-loopback"]
 # In-memory loopback harness
 loopback = ["rtmp", "http-flv"]
 # One-shot enable all directions + loopback
@@ -40,7 +40,7 @@ cheetah-rtsp-module = { path = "../../protocols/rtsp/module", optional = true }
 cheetah-rtsp-driver-tokio = { path = "../../protocols/rtsp/driver-tokio", optional = true }
 cheetah-http-flv-module = { path = "../../protocols/http-flv/module", optional = true }
 cheetah-webrtc-module = { path = "../../protocols/webrtc/module", optional = true }
-cheetah-webrtc-driver-tokio = { path = "../../protocols/webrtc/driver-tokio", optional = true }
+cheetah-webrtc-media-loopback = { path = "../../protocols/webrtc/testing/media-loopback", optional = true }
 
 [dev-dependencies]
 cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }

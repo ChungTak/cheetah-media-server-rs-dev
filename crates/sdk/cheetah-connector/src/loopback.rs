@@ -16,6 +16,8 @@ use crate::protocol::{supports, Direction, Protocol};
 use async_trait::async_trait;
 #[cfg(feature = "webrtc")]
 use cheetah_sdk::{PublisherSink, SubscriberId, SubscriberSource};
+#[cfg(feature = "webrtc")]
+use cheetah_webrtc_media_loopback::MediaLoopbackHarness;
 
 /// Open an in-memory loopback pair.
 ///
@@ -156,14 +158,10 @@ async fn webrtc_media_loopback(
     let stream_key = cheetah_sdk::StreamKey::new("live", &options.stream_name);
     let url = format!("webrtc://loopback/{}", options.stream_name);
 
-    let harness = cheetah_webrtc_module::testing::media_loopback::MediaLoopbackHarness::new(
-        runtime,
-        stream_manager,
-        stream_key,
-        options.cancel.clone(),
-    )
-    .await
-    .map_err(|e| map_sdk_error(Protocol::WebRtc, crate::error::Operation::Open, e))?;
+    let harness =
+        MediaLoopbackHarness::new(runtime, stream_manager, stream_key, options.cancel.clone())
+            .await
+            .map_err(|e| map_sdk_error(Protocol::WebRtc, crate::error::Operation::Open, e))?;
 
     let shared = std::sync::Arc::new(futures::lock::Mutex::new(harness));
     let push = Box::new(MediaLoopbackHarnessHandle(shared.clone()));
@@ -178,9 +176,7 @@ async fn webrtc_media_loopback(
 
 #[cfg(feature = "webrtc")]
 struct MediaLoopbackHarnessHandle(
-    std::sync::Arc<
-        futures::lock::Mutex<cheetah_webrtc_module::testing::media_loopback::MediaLoopbackHarness>,
-    >,
+    std::sync::Arc<futures::lock::Mutex<cheetah_webrtc_media_loopback::MediaLoopbackHarness>>,
 );
 
 #[cfg(feature = "webrtc")]
