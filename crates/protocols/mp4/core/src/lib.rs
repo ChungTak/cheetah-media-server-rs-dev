@@ -1,35 +1,44 @@
 //! Sans-I/O MP4 VOD session state machine.
 //!
-//! `cheetah-mp4-core` does not perform file I/O, hold sockets, or call
-//! `Instant::now()`. The driver layer is responsible for all of those. This
-//! crate models the VOD session lifecycle:
+//! `cheetah-mp4-core` 是 MP4 VOD（点播）会话的 Sans-I/O 状态机。
+//! 它不负责文件 I/O、套接字或调用 `Instant::now()`，这些由驱动层处理。
+//! 本 crate 对 VOD 会话生命周期建模：
 //!
-//! * `Start` — begin a session, expose track info, request initial reads.
-//! * `Tick` — drive paced playback by emitting frames at the negotiated rate.
-//! * `Seek` — rewind/forward to a target timestamp.
-//! * `Pause` — stop pacing without releasing reader state.
-//! * `Scale` — adjust playback rate.
-//! * `Stop` — terminate the session.
+//! * `Start` — 开始会话、暴露轨道信息、请求初始读取。
+//! * `Tick` — 以协商速率驱动按 paced 播放。
+//! * `Seek` — 跳转到目标时间戳。
+//! * `Pause` — 暂停 pacing，但不释放 reader 状态。
+//! * `Scale` — 调整播放速率。
+//! * `Stop` — 终止会话。
 //!
-//! Inputs are consumed via `step(now_us, input)` and outputs are emitted as
-//! `Vec<VodOutput>`.
+//! 输入通过 `step(now_us, input)` 消费，输出以 `Vec<VodOutput>` 发出。
 
 use cheetah_codec::{
     AVFrame, Mp4ReadEvent, Mp4ReadRequest, Mp4ReadResult, Mp4Reader, Mp4ReaderConfig, TrackInfo,
 };
 
 /// Session identifier (caller-assigned).
+///
+/// 会话标识符（由调用方分配）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VodSessionId(pub u64);
 
 /// Splits an `app/stream` key into namespace + path components for the engine.
+///
+/// 将 `app/stream` 键拆分为命名空间与路径，供引擎使用。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamKeyParts {
     pub namespace: String,
     pub path: String,
 }
 
+/// `StreamKeyParts` parsing helper.
+///
+/// `StreamKeyParts` 解析辅助。
 impl StreamKeyParts {
+    /// Parse an input into `namespace`/`path` parts, defaulting namespace to "file".
+    ///
+    /// 将输入解析为 `namespace`/`path`，默认命名空间为 "file"。
     pub fn parse(input: &str) -> Self {
         if let Some((ns, p)) = input.split_once('/') {
             Self {
@@ -46,6 +55,8 @@ impl StreamKeyParts {
 }
 
 /// Session command from the protocol/control layer.
+///
+/// 协议/控制层发来的会话命令。
 #[derive(Debug, Clone)]
 pub enum VodControlCommand {
     Start { file_size: u64 },
@@ -56,6 +67,8 @@ pub enum VodControlCommand {
 }
 
 /// Input event for the state machine.
+///
+/// 状态机的输入事件。
 #[derive(Debug, Clone)]
 pub enum VodCoreInput {
     Control(VodControlCommand),
@@ -68,6 +81,8 @@ pub enum VodCoreInput {
 }
 
 /// Output emitted by the state machine.
+///
+/// 状态机发出的输出。
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum VodOutput {
@@ -90,6 +105,9 @@ pub enum VodOutput {
 /// layer where they become RTSP/RTMP error responses or HTTP `result.code`
 /// fields, mirroring ABL's "明确错误" requirement for invalid seeks and
 /// pause-state violations.
+///
+/// 非致命会话诊断。驱动将其转发给模块层，成为 RTSP/RTMP 错误响应或 HTTP `result.code` 字段，
+/// 满足 ABL 对无效 seek 和暂停状态违规的“明确错误”要求。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VodDiagnostic {
     /// `Seek` requested a position outside `[0, duration_us]`.
@@ -100,6 +118,8 @@ pub enum VodDiagnostic {
 }
 
 /// Sans-I/O MP4 VOD session.
+///
+/// Sans-I/O MP4 VOD 会话。
 pub struct VodSession {
     reader: Mp4Reader,
     state: SessionState,
@@ -112,6 +132,9 @@ pub struct VodSession {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Internal session lifecycle state.
+///
+/// 内部会话生命周期状态。
 enum SessionState {
     Idle,
     Loading,
@@ -119,7 +142,13 @@ enum SessionState {
     Stopped,
 }
 
+/// `VodSession` API: lifecycle, accessors, and stepping.
+///
+/// `VodSession` API：生命周期、访问与 step 驱动。
 impl VodSession {
+    /// Create a new idle session with the configured MP4 reader.
+    ///
+    /// 用配置好的 MP4 reader 创建新的空闲会话。
     pub fn new(config: Mp4ReaderConfig) -> Self {
         Self {
             reader: Mp4Reader::new(config),
@@ -133,22 +162,37 @@ impl VodSession {
         }
     }
 
+    /// Return the total duration in microseconds.
+    ///
+    /// 返回总时长（微秒）。
     pub fn duration_us(&self) -> i64 {
         self.reader.duration_us()
     }
 
+    /// Return the parsed tracks for the session.
+    ///
+    /// 返回本会话的解析轨道。
     pub fn tracks(&self) -> &[TrackInfo] {
         self.reader.tracks()
     }
 
+    /// Return true if the session is running.
+    ///
+    /// 返回会话是否正在运行。
     pub fn is_running(&self) -> bool {
         matches!(self.state, SessionState::Running)
     }
 
+    /// Return true if the session is stopped.
+    ///
+    /// 返回会话是否已停止。
     pub fn is_stopped(&self) -> bool {
         matches!(self.state, SessionState::Stopped)
     }
 
+    /// Process one input and produce the corresponding outputs.
+    ///
+    /// 处理一个输入并产生对应输出。
     pub fn step(&mut self, input: VodCoreInput) -> Vec<VodOutput> {
         match input {
             VodCoreInput::Control(cmd) => self.handle_control(cmd),
@@ -160,6 +204,9 @@ impl VodSession {
         }
     }
 
+    /// Handle a control command and update session state.
+    ///
+    /// 处理控制命令并更新会话状态。
     fn handle_control(&mut self, cmd: VodControlCommand) -> Vec<VodOutput> {
         match cmd {
             VodControlCommand::Start { file_size } => {
@@ -205,6 +252,9 @@ impl VodSession {
         }
     }
 
+    /// Drive the MP4 reader and emit outputs (reads, tracks, frames, tick, EOF).
+    ///
+    /// 驱动 MP4 reader 并发出输出（读取、轨道、帧、tick、EOF）。
     fn drive(&mut self, now_us: Option<u64>) -> Vec<VodOutput> {
         if matches!(self.state, SessionState::Stopped) {
             return Vec::new();
@@ -253,6 +303,9 @@ impl VodSession {
         }
     }
 
+    /// Compute the pacing delay before emitting this frame.
+    ///
+    /// 计算发出该帧前的 pacing 延迟。
     fn frame_delay_us(&mut self, frame: &AVFrame, now_us: u64) -> u64 {
         let started_real = *self.started_real_us.get_or_insert(now_us);
         if self.started_media_us == 0 && self.pending_seek_us.is_none() {
