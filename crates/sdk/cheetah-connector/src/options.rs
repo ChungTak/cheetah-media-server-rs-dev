@@ -1,5 +1,8 @@
 use crate::protocol::Protocol;
 
+#[cfg(feature = "rtsp")]
+use cheetah_rtsp_module::pull::RtspPullOptions;
+
 /// Options for opening a pull subscriber through the connector.
 ///
 /// 通过 connector 打开拉流订阅者的选项。
@@ -33,6 +36,12 @@ pub enum ProtocolPullExtras {
         /// Optional buffer size for the incoming frame channel.
         buffer_size: Option<usize>,
     },
+
+    /// RTSP pull-specific options.
+    ///
+    /// RTSP 拉流相关选项。
+    #[cfg(feature = "rtsp")]
+    Rtsp(RtspPullOptions),
 }
 
 /// Options for opening a push publisher through the connector.

@@ -36,28 +36,28 @@ pub(super) struct PullJobSupervisorHandle {
 const PULL_INGEST_CONNECTION_ID: RtspConnectionId = u64::MAX - 1;
 const MAX_PENDING_KEEPALIVE_REQUESTS: usize = 64;
 
-struct PullSetupContext<'a> {
-    runtime_api: &'a Arc<dyn RuntimeApi>,
-    source_url: &'a str,
-    base_url: &'a str,
-    peer: SocketAddr,
-    transport: PullSelectedTransport,
-    cancel: &'a CancellationToken,
-    request_timeout: Duration,
-    auth: &'a mut PullOutboundAuthState,
-    start_cseq: u32,
+pub(crate) struct PullSetupContext<'a> {
+    pub(crate) runtime_api: &'a Arc<dyn RuntimeApi>,
+    pub(crate) source_url: &'a str,
+    pub(crate) base_url: &'a str,
+    pub(crate) peer: SocketAddr,
+    pub(crate) transport: PullSelectedTransport,
+    pub(crate) cancel: &'a CancellationToken,
+    pub(crate) request_timeout: Duration,
+    pub(crate) auth: &'a mut PullOutboundAuthState,
+    pub(crate) start_cseq: u32,
 }
 
-struct PullSetupResult {
-    interleaved_rtp_channels: HashMap<u8, TrackId>,
-    session_token: String,
-    session_timeout_secs: Option<u64>,
-    next_cseq: u32,
+pub(crate) struct PullSetupResult {
+    pub(crate) interleaved_rtp_channels: HashMap<u8, TrackId>,
+    pub(crate) session_token: String,
+    pub(crate) session_timeout_secs: Option<u64>,
+    pub(crate) next_cseq: u32,
 }
 
-struct PullSetupCompletion {
-    setup: PullSetupResult,
-    udp_task_handles: Vec<Box<dyn RuntimeJoinHandle>>,
+pub(crate) struct PullSetupCompletion {
+    pub(crate) setup: PullSetupResult,
+    pub(crate) udp_task_handles: Vec<Box<dyn RuntimeJoinHandle>>,
 }
 
 struct PendingPullUdpReceiver {
@@ -67,7 +67,7 @@ struct PendingPullUdpReceiver {
 }
 
 #[derive(Default)]
-struct PullOutboundAuthState {
+pub(crate) struct PullOutboundAuthState {
     credentials: Option<RtspClientCredentials>,
     challenge: Option<RtspResponseMessage>,
 }
@@ -85,7 +85,7 @@ struct PullAttemptError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PullSelectedTransport {
+pub(crate) enum PullSelectedTransport {
     TcpInterleaved,
     Udp,
     HttpTunnel,
@@ -230,7 +230,11 @@ async fn run_pull_control_plane_once(
     wait_client_connected(&engine.runtime_api, &mut client, cancel, request_timeout)
         .await
         .map_err(PullAttemptError::retry)?;
-    let mut outbound_auth = build_pull_outbound_auth_state(job);
+    let credentials = job.username.as_ref().map(|username| RtspClientCredentials {
+        username: username.to_string(),
+        password: job.password.as_deref().unwrap_or_default().to_string(),
+    });
+    let mut outbound_auth = build_pull_outbound_auth_state(credentials);
     let mut cseq = 1_u32;
     let options_response = send_request_with_auth_retry(
         &engine.runtime_api,
@@ -374,7 +378,7 @@ async fn run_pull_control_plane_once(
     session_result.map_err(PullAttemptError::retry).map(|_| ())
 }
 
-fn supported_pull_transports(
+pub(crate) fn supported_pull_transports(
     preferences: &[RtspPullTransport],
 ) -> Result<Vec<PullSelectedTransport>, String> {
     let mut transports = Vec::new();
@@ -423,7 +427,7 @@ fn start_pull_client(
     }
 }
 
-fn rtsp_url_path(url: &str) -> Result<String, String> {
+pub(crate) fn rtsp_url_path(url: &str) -> Result<String, String> {
     let rest = url
         .trim()
         .strip_prefix("rtsp://")
@@ -436,7 +440,7 @@ fn rtsp_url_path(url: &str) -> Result<String, String> {
     Ok(format!("/{path}"))
 }
 
-fn parse_rtsp_source_peer(source_url: &str) -> Result<SocketAddr, String> {
+pub fn parse_rtsp_source_peer(source_url: &str) -> Result<SocketAddr, String> {
     let source = source_url.trim();
     let rest = source
         .strip_prefix("rtsp://")
@@ -518,11 +522,9 @@ fn build_rtsp_request(
     }
 }
 
-fn build_pull_outbound_auth_state(job: &RtspPullJobConfig) -> PullOutboundAuthState {
-    let credentials = job.username.as_ref().map(|username| RtspClientCredentials {
-        username: username.to_string(),
-        password: job.password.as_deref().unwrap_or_default().to_string(),
-    });
+pub(crate) fn build_pull_outbound_auth_state(
+    credentials: Option<RtspClientCredentials>,
+) -> PullOutboundAuthState {
     PullOutboundAuthState {
         credentials,
         challenge: None,
@@ -540,7 +542,7 @@ fn build_request_authorization(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn send_request_with_auth_retry(
+pub(crate) async fn send_request_with_auth_retry(
     runtime_api: &Arc<dyn RuntimeApi>,
     client: &mut RtspClientHandle,
     auth: &mut PullOutboundAuthState,
@@ -602,7 +604,7 @@ async fn send_request_with_auth_retry(
     wait_response_for_cseq(runtime_api, client, retry_cseq, cancel, timeout).await
 }
 
-async fn wait_client_connected(
+pub(crate) async fn wait_client_connected(
     runtime_api: &Arc<dyn RuntimeApi>,
     client: &mut RtspClientHandle,
     cancel: &CancellationToken,
@@ -671,7 +673,7 @@ async fn wait_response_for_cseq(
 }
 
 #[allow(clippy::too_many_arguments)]
-async fn wait_pull_session_end(
+pub(crate) async fn wait_pull_session_end(
     client: &mut RtspClientHandle,
     cancel: &CancellationToken,
     publish: &mut PublishSession,
@@ -935,7 +937,7 @@ async fn wait_pull_session_end(
     }
 }
 
-fn tracks_to_map(
+pub(crate) fn tracks_to_map(
     tracks: &[cheetah_codec::TrackInfo],
 ) -> HashMap<TrackId, cheetah_codec::TrackInfo> {
     tracks
@@ -945,7 +947,7 @@ fn tracks_to_map(
         .collect()
 }
 
-fn invert_track_controls(
+pub(crate) fn invert_track_controls(
     tracks: &[cheetah_codec::TrackInfo],
     control_map: &HashMap<String, TrackId>,
 ) -> HashMap<TrackId, String> {
@@ -960,7 +962,7 @@ fn invert_track_controls(
     out
 }
 
-async fn setup_pull_tracks_and_play(
+pub(crate) async fn setup_pull_tracks_and_play(
     client: &mut RtspClientHandle,
     tracks: &[cheetah_codec::TrackInfo],
     track_controls: &HashMap<TrackId, String>,

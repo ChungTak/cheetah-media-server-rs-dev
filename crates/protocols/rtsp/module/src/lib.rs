@@ -11,6 +11,10 @@ pub(crate) mod media;
 ///
 /// RTSP 模块生命周期、客户端/服务端 HTTP API 与请求分发。
 pub mod module;
+/// RTSP runtime pull connector used by the high-level SDK.
+///
+/// 供高层 SDK 使用的 RTSP 拉流运行时连接器。
+pub mod pull;
 pub(crate) mod sdp;
 pub(crate) mod session;
 

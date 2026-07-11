@@ -193,7 +193,7 @@ fn initial_video_parameter_set_caches(
     caches
 }
 
-pub(super) fn build_pull_publish_session(
+pub(crate) fn build_pull_publish_session(
     config: &RtspModuleConfig,
     cancel: CancellationToken,
     lease: PublishLease,
@@ -381,7 +381,7 @@ pub(super) fn ingest_publish_rtp_payload(
     ingest_publish_rtp_packet(connection_id, track_id, &packet, publish, runtime_api);
 }
 
-pub(super) fn ingest_publish_rtp_packet(
+pub(crate) fn ingest_publish_rtp_packet(
     connection_id: RtspConnectionId,
     track_id: TrackId,
     packet: &RtpPacket,

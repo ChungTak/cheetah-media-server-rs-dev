@@ -427,12 +427,12 @@ async fn run_event_loop(
 
 mod auth;
 mod cleanup;
-mod client_pull;
+pub(crate) mod client_pull;
 mod client_push;
 mod client_relay;
 mod multicast;
 mod play;
-mod publish;
+pub(crate) mod publish;
 mod request_dispatch;
 mod response;
 mod session_guard;

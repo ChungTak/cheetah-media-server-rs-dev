@@ -36,7 +36,7 @@ pub enum Direction {
 ///
 /// These are internal to `supports()` so the capability matrix stays honest
 /// while new adapters are being implemented.
-const RTSP_PULL_WIRED: bool = false;
+const RTSP_PULL_WIRED: bool = true;
 const WEBRTC_PUSH_WIRED: bool = false;
 
 /// Returns whether the first-party capability matrix allows this protocol/direction pair.
