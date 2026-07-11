@@ -1,3 +1,7 @@
+//! In-memory engine implementation: service registry, stream dispatch, module lifecycle, and task system.
+//!
+//! 内存引擎实现：服务注册表、流分发、模块生命周期和任务系统。
+
 mod cluster;
 mod core_adapters;
 mod database;

@@ -15,6 +15,14 @@ use dashmap::DashMap;
 use parking_lot::{Mutex, RwLock};
 use tokio::sync::mpsc;
 
+/// Frame dispatch strategy for the whole stream manager.
+///
+/// `PerStream` keeps a dedicated dispatcher per stream; `SharedPool` shares a
+/// fixed worker pool across streams to reduce task count.
+///
+/// 流管理器使用的帧分发策略。
+///
+/// `PerStream` 为每个流保留独立分发器；`SharedPool` 则让多个流共享固定工作池以减少任务数。
 #[derive(Debug, Clone, Copy, Default)]
 pub enum DispatcherMode {
     #[default]
@@ -24,18 +32,35 @@ pub enum DispatcherMode {
     },
 }
 
+/// Position and version of a keyframe (IDR) stored in the ring buffer.
+///
+/// Used to find valid random-access points for GOP bootstrap.
+///
+/// 环形缓冲区中关键帧（IDR）的位置与版本。
+///
+/// 用于为 GOP 引导找到有效的随机访问点。
 #[derive(Debug, Clone)]
 struct IdrNode {
     ring_pos: usize,
     slot_version: u64,
 }
 
+/// One slot in the lock-free ring buffer.
+///
+/// A slot stores the current `AVFrame` and a monotonic version counter.
+///
+/// 无锁环形缓冲区中的一个槽位。
+///
+/// 每个槽位存储当前 `AVFrame` 和单调递增的版本计数。
 struct RingSlot {
     frame: ArcSwapOption<AVFrame>,
     version: AtomicU64,
 }
 
 impl RingSlot {
+    /// Create an empty slot with version zero.
+    ///
+    /// 创建版本为 0 的空槽位。
     fn new() -> Self {
         Self {
             frame: ArcSwapOption::const_empty(),
@@ -44,6 +69,14 @@ impl RingSlot {
     }
 }
 
+/// Lock-free ring buffer that holds recent frames for a single stream.
+///
+/// Frames are overwritten after the capacity wraps. The buffer maintains an
+/// `idr_list` of keyframe positions so subscribers can bootstrap from a GOP.
+///
+/// 单流的无锁环形缓冲区，保存最近帧。
+///
+/// 容量环绕后旧帧会被覆盖。缓冲区维护关键帧位置列表，使订阅者能从 GOP 起始播放。
 struct RingBuffer {
     slots: Vec<RingSlot>,
     mask: usize,
@@ -53,6 +86,9 @@ struct RingBuffer {
 }
 
 impl RingBuffer {
+    /// Create a ring buffer with capacity rounded up to the next power of two.
+    ///
+    /// 创建容量向上取整为 2 的幂的环形缓冲区。
     fn new(capacity: usize) -> Self {
         let cap = capacity.max(2).next_power_of_two();
         let slots = (0..cap).map(|_| RingSlot::new()).collect();
@@ -65,6 +101,13 @@ impl RingBuffer {
         }
     }
 
+    /// Append a frame, update its slot version, and record keyframes.
+    ///
+    /// Returns the ring position and the new slot version.
+    ///
+    /// 追加帧，更新槽位版本，并记录关键帧。
+    ///
+    /// 返回环形位置与新的槽位版本。
     fn push(&self, frame: Arc<AVFrame>) -> (usize, u64) {
         let pos = self.write_pos.fetch_add(1, Ordering::AcqRel);
         let slot_idx = pos & self.mask;
@@ -80,10 +123,16 @@ impl RingBuffer {
         (pos, version)
     }
 
+    /// Earliest position still valid for reading given the current write end.
+    ///
+    /// 给定当前写入端，仍可读到的最早位置。
     fn earliest_readable_pos(&self, end: usize) -> usize {
         end.saturating_sub(self.slots.len())
     }
 
+    /// Remove IDR entries that have been overwritten or no longer match the slot version.
+    ///
+    /// 删除已被覆盖或槽位版本不再匹配的 IDR 条目。
     fn prune_idr_nodes(&self, list: &mut Vec<IdrNode>, end: usize) {
         let min_pos = self.earliest_readable_pos(end);
         list.retain(|node| {
@@ -96,6 +145,9 @@ impl RingBuffer {
         });
     }
 
+    /// Append a new IDR node and prune stale entries under the write lock.
+    ///
+    /// 在写锁下追加新的 IDR 节点并裁剪过期条目。
     fn record_idr(&self, ring_pos: usize, slot_version: u64) {
         let _guard = self.idr_write_lock.lock();
         let mut list = (*self.idr_list.load_full()).clone();
@@ -116,6 +168,9 @@ impl RingBuffer {
         self.idr_list.store(Arc::new(list));
     }
 
+    /// Read a frame at a given ring position if the slot version is stable.
+    ///
+    /// 若槽位版本稳定，则读取指定环形位置的帧。
     fn read(&self, ring_pos: usize) -> Option<(Arc<AVFrame>, u64)> {
         let slot_idx = ring_pos & self.mask;
         let slot = &self.slots[slot_idx];
@@ -131,6 +186,13 @@ impl RingBuffer {
         Some((frame, version_after))
     }
 
+    /// Collect bootstrap frames for a new subscriber according to the requested policy.
+    ///
+    /// The start position is clamped by age, discontinuity, and random-access policy.
+    ///
+    /// 根据请求策略为新订阅者收集引导帧。
+    ///
+    /// 起始位置会受最大年龄、 discontinuity 和随机访问策略限制。
     fn bootstrap_frames(&self, policy: BootstrapPolicy) -> Vec<Arc<AVFrame>> {
         if matches!(policy.mode, BootstrapMode::None) || policy.max_bootstrap_frames == 0 {
             return Vec::new();
@@ -157,6 +219,13 @@ impl RingBuffer {
         out
     }
 
+    /// Clamp the bootstrap start to an IDR keyframe if the policy requires it.
+    ///
+    /// `LiveTail` picks the latest IDR in range; `FullGop` picks the earliest.
+    ///
+    /// 若策略要求，则将引导起始位置限制到 IDR 关键帧。
+    ///
+    /// `LiveTail` 选择范围内最新的 IDR；`FullGop` 选择最早的。
     fn clamp_start_by_random_access(
         &self,
         start: usize,
@@ -194,6 +263,9 @@ impl RingBuffer {
         }
     }
 
+    /// Clamp the bootstrap start so that frames are not older than `max_bootstrap_age_ms`.
+    ///
+    /// 限制引导起始位置，使帧不早于 `max_bootstrap_age_ms`。
     fn clamp_start_by_max_age(
         &self,
         start: usize,
@@ -230,6 +302,9 @@ impl RingBuffer {
         start
     }
 
+    /// Clamp the bootstrap start to the most recent discontinuity marker.
+    ///
+    /// 将引导起始位置限制到最近的不连续标记。
     fn clamp_start_by_discontinuity(&self, start: usize, end: usize) -> usize {
         for ring_pos in (start..end).rev() {
             let Some((frame, _)) = self.read(ring_pos) else {
@@ -243,6 +318,9 @@ impl RingBuffer {
     }
 }
 
+/// Convert a frame timestamp to milliseconds for age-based bootstrap clamping.
+///
+/// 将帧时间戳转换为毫秒，用于基于年龄的引导限制。
 fn frame_time_ms(frame: &AVFrame) -> Option<i128> {
     let ts = if frame.dts >= 0 {
         frame.dts
@@ -259,6 +337,9 @@ fn frame_time_ms(frame: &AVFrame) -> Option<i128> {
     numer.checked_mul(1_000)?.checked_div(denom)
 }
 
+/// A single subscriber connected to a dispatcher.
+///
+/// 连接到分发器的单个订阅者。
 #[derive(Clone)]
 struct DispatchSubscriber {
     id: SubscriberId,
@@ -268,12 +349,22 @@ struct DispatchSubscriber {
     wait_for_next_keyframe: Arc<AtomicBool>,
 }
 
+/// Shared inner state for `Dispatcher`.
+///
+/// Holds the subscriber list and assigns monotonic subscriber IDs.
+///
+/// `Dispatcher` 的共享内部状态。
+///
+/// 保存订阅者列表并分配单调递增订阅者 ID。
 struct DispatcherInner {
     subscribers: ArcSwap<Vec<DispatchSubscriber>>,
     next_subscriber_id: AtomicU64,
 }
 
 impl DispatcherInner {
+    /// Create a dispatcher with an empty subscriber list.
+    ///
+    /// 创建订阅者列表为空的分发器。
     fn new() -> Self {
         Self {
             subscribers: ArcSwap::from_pointee(Vec::new()),
@@ -281,6 +372,9 @@ impl DispatcherInner {
         }
     }
 
+    /// Add a new subscriber with its own async channel and return the receiver.
+    ///
+    /// 添加新的订阅者，为其分配异步通道并返回接收端。
     fn add_subscriber(
         &self,
         options: &SubscriberOptions,
@@ -302,6 +396,9 @@ impl DispatcherInner {
         (sub, rx)
     }
 
+    /// Remove subscribers matching the given IDs.
+    ///
+    /// 移除匹配的订阅者。
     fn remove_subscribers(&self, ids: &HashSet<SubscriberId>) {
         if ids.is_empty() {
             return;
@@ -311,10 +408,16 @@ impl DispatcherInner {
         self.subscribers.store(Arc::new(next));
     }
 
+    /// Remove all subscribers at once.
+    ///
+    /// 一次性移除所有订阅者。
     fn clear_subscribers(&self) {
         self.subscribers.store(Arc::new(Vec::new()));
     }
 
+    /// Dispatch one frame to all subscribers while applying media filters and backpressure.
+    ///
+    /// 将单帧分发给所有订阅者，同时应用媒体过滤与背压策略。
     fn dispatch_frame(&self, frame: Arc<AVFrame>) -> DispatchResult {
         let subs = self.subscribers.load();
         if subs.is_empty() {
@@ -386,23 +489,35 @@ impl DispatcherInner {
         }
     }
 
+    /// Number of currently attached subscribers.
+    ///
+    /// 当前连接的订阅者数量。
     fn subscriber_count(&self) -> usize {
         self.subscribers.load().len()
     }
 }
 
+/// Per-stream dispatcher wrapping `DispatcherInner`.
+///
+/// 每个流对应的分发器，封装 `DispatcherInner`。
 #[derive(Clone)]
 struct Dispatcher {
     inner: Arc<DispatcherInner>,
 }
 
 impl Dispatcher {
+    /// Create a dispatcher wrapping a fresh `DispatcherInner`.
+    ///
+    /// 创建包装新 `DispatcherInner` 的分发器。
     fn new() -> Self {
         Self {
             inner: Arc::new(DispatcherInner::new()),
         }
     }
 
+    /// Forward subscriber creation to the inner dispatcher.
+    ///
+    /// 将订阅者创建转发到内部分发器。
     fn add_subscriber(
         &self,
         options: &SubscriberOptions,
@@ -410,20 +525,32 @@ impl Dispatcher {
         self.inner.add_subscriber(options)
     }
 
+    /// Remove a single subscriber by ID.
+    ///
+    /// 根据 ID 移除单个订阅者。
     fn remove_subscriber(&self, id: SubscriberId) {
         let mut ids = HashSet::new();
         ids.insert(id);
         self.inner.remove_subscribers(&ids);
     }
 
+    /// Remove all subscribers at once.
+    ///
+    /// 一次性移除所有订阅者。
     fn clear_subscribers(&self) {
         self.inner.clear_subscribers();
     }
 
+    /// Number of currently attached subscribers.
+    ///
+    /// 当前连接的订阅者数量。
     fn subscriber_count(&self) -> usize {
         self.inner.subscriber_count()
     }
 
+    /// Dispatch a frame either locally or via the shared dispatch pool.
+    ///
+    /// 在本地或通过共享分发池分发帧。
     fn dispatch(&self, mode: &StreamDispatchMode, frame: Arc<AVFrame>) -> DispatchResult {
         match mode {
             StreamDispatchMode::PerStream => self.inner.dispatch_frame(frame),
@@ -434,16 +561,25 @@ impl Dispatcher {
     }
 }
 
+/// Job sent to a worker in the shared dispatch pool.
+///
+/// 发送给共享分发池工作线程的任务。
 struct DispatchJob {
     dispatcher: Arc<DispatcherInner>,
     frame: Arc<AVFrame>,
 }
 
+/// Shared pool of workers that dispatch frames for multiple streams.
+///
+/// 多个流共享的分发工作线程池。
 struct SharedDispatchPool {
     workers: Vec<mpsc::Sender<DispatchJob>>,
 }
 
 impl SharedDispatchPool {
+    /// Spawn `worker_count` background tasks that pull and dispatch frames.
+    ///
+    /// 生成 `worker_count` 个后台任务，拉取并分发帧。
     fn new(worker_count: usize, runtime_api: Arc<dyn RuntimeApi>) -> Self {
         let mut workers = Vec::new();
         let count = worker_count.max(1);
@@ -461,10 +597,16 @@ impl SharedDispatchPool {
         Self { workers }
     }
 
+    /// Map a stream id to a worker lane to preserve stream ordering.
+    ///
+    /// 将流 ID 映射到工作线程通道，以保持单流顺序。
     fn lane_of_stream(&self, stream_id: StreamId) -> usize {
         (stream_id.0 as usize) % self.workers.len()
     }
 
+    /// Enqueue a frame dispatch job on a worker lane.
+    ///
+    /// 将帧分发任务入队到指定工作线程通道。
     fn enqueue(
         &self,
         lane: usize,
@@ -482,6 +624,9 @@ impl SharedDispatchPool {
     }
 }
 
+/// Dispatch mode chosen for a single stream.
+///
+/// 为单个流选择的分发模式。
 #[derive(Clone)]
 enum StreamDispatchMode {
     PerStream,
@@ -491,6 +636,9 @@ enum StreamDispatchMode {
     },
 }
 
+/// Per-stream state: ring buffer, dispatcher, tracks, and active lease.
+///
+/// 单流状态：环形缓冲区、分发器、轨道信息和活跃租约。
 struct StreamEntry {
     stream_id: StreamId,
     ring: RingBuffer,
@@ -505,6 +653,9 @@ struct StreamEntry {
 }
 
 impl StreamEntry {
+    /// Create a new `StreamEntry` with an empty ring and dispatcher.
+    ///
+    /// 创建新的 `StreamEntry`，其环形缓冲区与分发器为空。
     fn new(stream_id: StreamId, ring_capacity: usize, dispatch_mode: StreamDispatchMode) -> Self {
         Self {
             stream_id,
@@ -519,6 +670,9 @@ impl StreamEntry {
     }
 }
 
+/// Internal state of `StreamManager`, indexed by `StreamKey`.
+///
+/// `StreamManager` 的内部状态，按 `StreamKey` 索引。
 struct StreamManagerInner {
     mode: DispatcherMode,
     ring_capacity: usize,
@@ -530,6 +684,9 @@ struct StreamManagerInner {
 }
 
 impl StreamManagerInner {
+    /// Publish a `StreamEvent` to the event bus if one is configured.
+    ///
+    /// 若已配置事件总线，则发布 `StreamEvent`。
     fn publish_stream_event(
         &self,
         stream_key: &StreamKey,
@@ -551,6 +708,9 @@ impl StreamManagerInner {
         }
     }
 
+    /// Choose the dispatch mode for a new stream based on the manager's mode.
+    ///
+    /// 根据管理模式为新流选择分发模式。
     fn resolve_dispatch_mode(&self, stream_id: StreamId) -> StreamDispatchMode {
         match &self.shared_pool {
             Some(pool) => StreamDispatchMode::Shared {
@@ -561,6 +721,9 @@ impl StreamManagerInner {
         }
     }
 
+    /// Build a public `StreamSnapshot` from the entry state.
+    ///
+    /// 从条目状态构建公共 `StreamSnapshot`。
     fn snapshot_for(&self, stream_key: &StreamKey, entry: &StreamEntry) -> StreamSnapshot {
         StreamSnapshot {
             stream_id: entry.stream_id,
@@ -571,6 +734,9 @@ impl StreamManagerInner {
         }
     }
 
+    /// Return an existing stream entry or create a new one atomically.
+    ///
+    /// 返回已有流条目，或以原子方式创建新条目。
     fn get_or_create_stream(&self, stream_key: StreamKey) -> Arc<StreamEntry> {
         if let Some(entry) = self.streams.get(&stream_key) {
             return Arc::clone(entry.value());
@@ -592,6 +758,9 @@ impl StreamManagerInner {
         }
     }
 
+    /// Remove a stream from the map if it has no publisher and no subscribers.
+    ///
+    /// 若流没有发布者和订阅者，则将其从映射中移除。
     fn cleanup_if_idle(&self, stream_key: &StreamKey) {
         let should_remove = self
             .streams
@@ -619,6 +788,9 @@ impl StreamManagerInner {
         }
     }
 
+    /// Release a publisher lease and close the stream if the lease ID matches.
+    ///
+    /// 若租约 ID 匹配，则释放发布者租约并关闭流。
     fn release_lease(&self, stream_key: &StreamKey, lease_id: u64) -> Result<(), SdkError> {
         let entry = self
             .streams
@@ -649,11 +821,22 @@ impl StreamManagerInner {
     }
 }
 
+/// Runtime-neutral implementation of the stream manager API.
+///
+/// Owns `StreamEntry` instances keyed by `StreamKey`, and implements `PublisherApi`,
+/// `SubscriberApi`, and `StreamManagerApi`.
+///
+/// 流管理器 API 的运行时无关实现。
+///
+/// 拥有按 `StreamKey` 索引的 `StreamEntry` 实例，并实现 `PublisherApi`、`SubscriberApi` 与 `StreamManagerApi`。
 pub struct StreamManager {
     inner: Arc<StreamManagerInner>,
 }
 
 impl StreamManager {
+    /// Create a stream manager with the given dispatcher mode and ring capacity.
+    ///
+    /// 用指定分发模式和环形容量创建流管理器。
     pub fn new(
         mode: DispatcherMode,
         ring_capacity: usize,
@@ -679,11 +862,17 @@ impl StreamManager {
         }
     }
 
+    /// Attach the event bus used for stream lifecycle events.
+    ///
+    /// 附加用于流生命周期事件的事件总线。
     pub fn set_event_bus(&self, event_bus: Arc<dyn EventBus>) {
         *self.inner.event_bus.write() = Some(event_bus);
     }
 }
 
+/// Handle for an active publisher, enforcing single-lease semantics.
+///
+/// 活跃发布者句柄，强制单租约语义。
 struct PublisherHandle {
     inner: Arc<StreamManagerInner>,
     stream_key: StreamKey,
@@ -693,12 +882,18 @@ struct PublisherHandle {
 }
 
 impl PublisherHandle {
+    /// Check that the publisher lease is still valid and the handle is not closed.
+    ///
+    /// 检查发布者租约是否仍然有效且句柄未关闭。
     fn ensure_active(&self) -> bool {
         !self.closed.load(Ordering::Acquire)
             && self.entry.active_lease.load(Ordering::Acquire) == self.lease_id
     }
 }
 
+/// `PublisherSink` implementation that writes to the stream ring and dispatcher.
+///
+/// `PublisherSink` 实现，写入流环形缓冲区与分发器。
 impl PublisherSink for PublisherHandle {
     fn update_tracks(&self, tracks: Vec<TrackInfo>) -> Result<(), SdkError> {
         if !self.ensure_active() {
@@ -747,12 +942,18 @@ impl PublisherSink for PublisherHandle {
     }
 }
 
+/// Drop the publisher handle, releasing the lease.
+///
+/// 释放发布者句柄时释放租约。
 impl Drop for PublisherHandle {
     fn drop(&mut self) {
         let _ = self.close();
     }
 }
 
+/// Handle for a subscriber, holding its async channel and dispatcher reference.
+///
+/// 订阅者句柄，持有其异步通道与分发器引用。
 struct SubscriberHandle {
     inner: Arc<StreamManagerInner>,
     stream_key: StreamKey,
@@ -764,6 +965,9 @@ struct SubscriberHandle {
 }
 
 impl SubscriberHandle {
+    /// Remove the subscriber and trigger idle cleanup.
+    ///
+    /// 移除订阅者并触发空闲清理。
     fn close_inner(&mut self) {
         if self.closed {
             return;
@@ -782,6 +986,9 @@ impl SubscriberHandle {
     }
 }
 
+/// `SubscriberSource` implementation that receives frames from the dispatcher channel.
+///
+/// `SubscriberSource` 实现，从分发器通道接收帧。
 #[async_trait]
 impl SubscriberSource for SubscriberHandle {
     async fn recv(&mut self) -> Result<Option<Arc<AVFrame>>, SdkError> {
@@ -801,12 +1008,18 @@ impl SubscriberSource for SubscriberHandle {
     }
 }
 
+/// Drop the subscriber handle, closing the subscription.
+///
+/// 释放订阅者句柄时关闭订阅。
 impl Drop for SubscriberHandle {
     fn drop(&mut self) {
         self.close_inner();
     }
 }
 
+/// `PublisherApi` implementation: single-publisher lease acquisition per stream.
+///
+/// `PublisherApi` 实现：每流仅允许一个发布者租约。
 #[async_trait]
 impl PublisherApi for StreamManager {
     async fn acquire_publisher(
@@ -854,6 +1067,9 @@ impl PublisherApi for StreamManager {
     }
 }
 
+/// `SubscriberApi` implementation: subscribe, bootstrap, and manage backpressure.
+///
+/// `SubscriberApi` 实现：订阅、引导和管理背压。
 #[async_trait]
 impl SubscriberApi for StreamManager {
     async fn subscribe(
@@ -908,6 +1124,9 @@ impl SubscriberApi for StreamManager {
     }
 }
 
+/// `StreamManagerApi` implementation: snapshots, keyframe requests, and idle cleanup.
+///
+/// `StreamManagerApi` 实现：快照、关键帧请求与空闲清理。
 #[async_trait]
 impl StreamManagerApi for StreamManager {
     async fn open_publisher(

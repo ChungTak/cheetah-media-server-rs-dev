@@ -12,11 +12,17 @@ use dashmap::DashMap;
 use parking_lot::RwLock;
 use tokio::sync::Mutex;
 
+/// Owned module instance held by the module manager.
+///
+/// 模块管理器持有的模块实例。
 struct ModuleRecord {
     module: Box<dyn cheetah_sdk::Module>,
 }
 
 #[derive(Clone)]
+/// Runtime snapshot captured during `init_all` and used for rebuilds.
+///
+/// 在 `init_all` 期间捕获、用于重建的运行时快照。
 struct RuntimeState {
     context: EngineContext,
     config: Arc<dyn ConfigProvider>,
@@ -24,12 +30,18 @@ struct RuntimeState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Target lifecycle state for a module rebuild.
+///
+/// 模块重建的目标生命周期状态。
 enum RebuildTarget {
     Initialized,
     Running,
 }
 
 #[derive(Default)]
+/// Owns module factories, lifecycles, HTTP mounts, and dependency ordering.
+///
+/// 拥有模块工厂、生命周期、HTTP 挂载和依赖顺序。
 pub struct ModuleManager {
     factories: RwLock<HashMap<ModuleId, Arc<dyn ModuleFactory>>>,
     manifests: RwLock<HashMap<ModuleId, ModuleManifest>>,
@@ -40,6 +52,9 @@ pub struct ModuleManager {
 }
 
 impl ModuleManager {
+    /// Register a module factory and record its manifest.
+    ///
+    /// 注册模块工厂并记录其清单。
     pub fn register_factory(&self, factory: Arc<dyn ModuleFactory>) -> Result<(), SdkError> {
         let manifest = factory.manifest();
         let module_id = manifest.module_id.clone();
@@ -74,6 +89,9 @@ impl ModuleManager {
             .ok_or_else(|| SdkError::NotFound(format!("module {}", module_id)))
     }
 
+    /// Compute module initialization order using Kahn's topological sort.
+    ///
+    /// 使用 Kahn 拓扑排序计算模块初始化顺序。
     fn topo_order(&self) -> Result<Vec<ModuleId>, SdkError> {
         let manifests = self.manifests();
         let mut indegree: HashMap<ModuleId, usize> = HashMap::new();
@@ -130,6 +148,9 @@ impl ModuleManager {
         Ok(order)
     }
 
+    /// Create `ModuleRecord`s for every registered factory if not already present.
+    ///
+    /// 为每个已注册工厂创建 `ModuleRecord`（若不存在）。
     async fn ensure_records(&self) {
         let factories = self.factories.read().clone();
         let mut records = self.records.lock().await;
@@ -141,6 +162,9 @@ impl ModuleManager {
         }
     }
 
+    /// Remove and return a module record, preventing concurrent lifecycle access.
+    ///
+    /// 移除并返回模块记录，避免并发生命周期访问。
     async fn take_record(&self, module_id: &ModuleId) -> Result<ModuleRecord, SdkError> {
         let mut records = self.records.lock().await;
         records
@@ -148,11 +172,17 @@ impl ModuleManager {
             .ok_or_else(|| SdkError::NotFound(format!("module {}", module_id)))
     }
 
+    /// Return a module record to the map after lifecycle work completes.
+    ///
+    /// 生命周期操作完成后将模块记录放回映射。
     async fn put_record(&self, module_id: ModuleId, record: ModuleRecord) {
         let mut records = self.records.lock().await;
         records.insert(module_id, record);
     }
 
+    /// Publish a module state event to the event bus.
+    ///
+    /// 向事件总线发布模块状态事件。
     fn publish_state(&self, context: &EngineContext, module_id: &ModuleId, kind: ModuleEventKind) {
         let state = self.states.get(module_id).map(|entry| *entry.value());
         context.event_bus.publish(SystemEvent::Module(ModuleEvent {
@@ -164,6 +194,9 @@ impl ModuleManager {
         }));
     }
 
+    /// Publish a module failure event with the phase that produced the error.
+    ///
+    /// 发布模块失败事件，并说明产生错误的阶段。
     fn publish_failed(
         &self,
         context: &EngineContext,
@@ -181,6 +214,9 @@ impl ModuleManager {
         }));
     }
 
+    /// Publish a module config-applied event with the resulting effect.
+    ///
+    /// 发布模块配置已应用事件，并附带产生的效果。
     fn publish_config_applied(
         &self,
         context: &EngineContext,
@@ -197,12 +233,18 @@ impl ModuleManager {
         }));
     }
 
+    /// Return the captured runtime state, or fail if `init_all` has not been called.
+    ///
+    /// 返回已捕获的运行时状态；若未调用 `init_all` 则失败。
     fn load_runtime(&self) -> Result<RuntimeState, SdkError> {
         self.runtime.read().clone().ok_or_else(|| {
             SdkError::Unavailable("module runtime context not initialized".to_string())
         })
     }
 
+    /// Refresh the HTTP route mount for a module after `init`.
+    ///
+    /// 在 `init` 后刷新模块的 HTTP 路由挂载。
     fn update_http_mount(
         &self,
         module_id: &ModuleId,
@@ -222,6 +264,9 @@ impl ModuleManager {
         }
     }
 
+    /// Initialize a module record and install its HTTP routes.
+    ///
+    /// 初始化模块记录并安装其 HTTP 路由。
     async fn init_record(
         &self,
         module_id: &ModuleId,
@@ -245,6 +290,9 @@ impl ModuleManager {
         Ok(())
     }
 
+    /// Start a module with a child cancellation token.
+    ///
+    /// 用子取消 token 启动模块。
     async fn start_record(
         &self,
         module_id: &ModuleId,
@@ -258,6 +306,9 @@ impl ModuleManager {
         Ok(())
     }
 
+    /// Stop a module and clean up its HTTP mount.
+    ///
+    /// 停止模块并清理其 HTTP 挂载。
     async fn stop_record(
         &self,
         module_id: &ModuleId,
@@ -282,6 +333,9 @@ impl ModuleManager {
         }
     }
 
+    /// Stop initialized modules in reverse order when `init_all` fails.
+    ///
+    /// `init_all` 失败时按相反顺序停止已初始化模块。
     async fn rollback_initialized(
         &self,
         initialized: &[ModuleId],
@@ -305,6 +359,9 @@ impl ModuleManager {
         }
     }
 
+    /// Stop started modules in reverse order when `start_all` fails.
+    ///
+    /// `start_all` 失败时按相反顺序停止已启动模块。
     async fn rollback_started(
         &self,
         started: &[ModuleId],
@@ -328,6 +385,9 @@ impl ModuleManager {
         }
     }
 
+    /// Stop, recreate, and reinitialize/restart a module to apply config changes.
+    ///
+    /// 停止、重新创建并重新初始化/启动模块以应用配置变更。
     async fn rebuild_module(
         &self,
         module_id: &ModuleId,
@@ -396,6 +456,9 @@ impl ModuleManager {
         Ok(())
     }
 
+    /// Initialize all modules in dependency order.
+    ///
+    /// 按依赖顺序初始化所有模块。
     pub async fn init_all(
         &self,
         context: EngineContext,
@@ -445,6 +508,9 @@ impl ModuleManager {
         Ok(())
     }
 
+    /// Start all initialized modules in dependency order.
+    ///
+    /// 按依赖顺序启动所有已初始化模块。
     pub async fn start_all(
         &self,
         context: &EngineContext,
@@ -498,6 +564,9 @@ impl ModuleManager {
         Ok(())
     }
 
+    /// Stop all modules in reverse dependency order.
+    ///
+    /// 按依赖顺序的逆序停止所有模块。
     pub async fn stop_all(&self, context: &EngineContext) {
         let mut order = match self.topo_order() {
             Ok(v) => v,
@@ -524,6 +593,9 @@ impl ModuleManager {
         }
     }
 
+    /// Rollback already-applied config changes when a later change fails.
+    ///
+    /// 当后续配置变更失败时回滚已应用的变更。
     async fn rollback_applied_changes(&self, applied: &[ModuleConfigChange]) -> Option<String> {
         let mut failures = Vec::new();
         for change in applied.iter().rev() {
@@ -546,6 +618,9 @@ impl ModuleManager {
     }
 }
 
+/// `ModuleManagerApi` implementation: lifecycle, config, and HTTP mounts.
+///
+/// `ModuleManagerApi` 实现：生命周期、配置与 HTTP 挂载。
 #[async_trait]
 impl ModuleManagerApi for ModuleManager {
     fn modules(&self) -> Vec<(ModuleId, ModuleState)> {
@@ -562,6 +637,9 @@ impl ModuleManagerApi for ModuleManager {
         self.http_mounts.read().values().cloned().collect()
     }
 
+    /// Apply a single module config change and rebuild if the module requests restart.
+    ///
+    /// 应用单个模块配置变更；若模块请求重启则重建。
     async fn apply_module_config_change(
         &self,
         change: ModuleConfigChange,
@@ -607,6 +685,9 @@ impl ModuleManagerApi for ModuleManager {
         Ok(ModuleConfigApplyReport { module_id, effect })
     }
 
+    /// Apply ordered module config changes and rollback on first failure.
+    ///
+    /// 按顺序应用模块配置变更，第一次失败时回滚。
     async fn apply_module_config_changes(
         &self,
         changes: Vec<ModuleConfigChange>,
@@ -652,6 +733,9 @@ impl ModuleManagerApi for ModuleManager {
         Ok(out)
     }
 
+    /// Restart a single module in `Running` state.
+    ///
+    /// 重启处于 `Running` 状态的单个模块。
     async fn restart_module(&self, module_id: &ModuleId) -> Result<(), SdkError> {
         let state = self.state_of(module_id)?;
         if state != ModuleState::Running {
@@ -663,6 +747,9 @@ impl ModuleManagerApi for ModuleManager {
         self.rebuild_module(module_id, RebuildTarget::Running).await
     }
 
+    /// Restart multiple modules in dependency order.
+    ///
+    /// 按依赖顺序重启多个模块。
     async fn restart_modules(&self, module_ids: Vec<ModuleId>) -> Result<(), SdkError> {
         if module_ids.is_empty() {
             return Ok(());

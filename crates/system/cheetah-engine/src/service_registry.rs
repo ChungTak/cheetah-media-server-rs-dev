@@ -1,11 +1,17 @@
 use cheetah_sdk::{SdkError, ServiceDescriptor, ServiceRegistry};
 use dashmap::DashMap;
 
+/// In-memory registry of service descriptors.
+///
+/// 内存服务描述符注册表。
 #[derive(Default)]
 pub struct InMemoryServiceRegistry {
     services: DashMap<String, ServiceDescriptor>,
 }
 
+/// `ServiceRegistry` implementation backed by a `DashMap`.
+///
+/// 由 `DashMap` 支持的 `ServiceRegistry` 实现。
 impl ServiceRegistry for InMemoryServiceRegistry {
     fn register(&self, service: ServiceDescriptor) -> Result<(), SdkError> {
         if self.services.contains_key(&service.name) {
