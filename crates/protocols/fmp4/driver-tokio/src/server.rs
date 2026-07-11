@@ -1,4 +1,6 @@
 //! fMP4 TCP server, HTTP request parsing, WebSocket framing, and connection management.
+//!
+//! fMP4 TCP 服务器、HTTP 请求解析、WebSocket 分帧与连接管理。
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -13,10 +15,14 @@ use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
 /// Unique connection identifier.
+///
+/// 唯一连接标识符。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Fmp4ConnectionId(pub u64);
 
 /// Driver configuration.
+///
+/// 驱动配置。
 #[derive(Debug, Clone)]
 pub struct Fmp4DriverConfig {
     pub listen: SocketAddr,
@@ -26,6 +32,8 @@ pub struct Fmp4DriverConfig {
 }
 
 /// TLS configuration.
+///
+/// TLS 配置。
 #[derive(Debug, Clone)]
 pub struct Fmp4TlsConfig {
     pub listen: SocketAddr,
@@ -35,6 +43,8 @@ pub struct Fmp4TlsConfig {
 }
 
 /// Events from driver to module.
+///
+/// 驱动到模块的事件。
 #[derive(Debug, Clone)]
 pub enum Fmp4DriverEvent {
     PlayRequested {
@@ -48,6 +58,8 @@ pub enum Fmp4DriverEvent {
 }
 
 /// Commands from module to driver.
+///
+/// 模块到驱动的命令。
 #[derive(Debug, Clone)]
 pub enum Fmp4DriverCommand {
     SendData {
@@ -60,6 +72,8 @@ pub enum Fmp4DriverCommand {
 }
 
 /// Handle for receiving driver events.
+///
+/// 接收驱动事件的句柄。
 pub struct Fmp4DriverHandle {
     event_rx: mpsc::Receiver<Fmp4DriverEvent>,
 }
@@ -71,12 +85,20 @@ impl Fmp4DriverHandle {
 }
 
 /// Sender for driver commands.
+///
+/// 驱动命令发送器。
 #[derive(Clone)]
 pub struct Fmp4CommandSender {
     cmd_tx: mpsc::Sender<Fmp4DriverCommand>,
 }
 
+/// `Fmp4CommandSender` API.
+///
+/// `Fmp4CommandSender` API。
 impl Fmp4CommandSender {
+    /// Send a driver command, ignoring closed-channel errors.
+    ///
+    /// 发送驱动命令，忽略通道关闭错误。
     pub async fn send(&self, cmd: Fmp4DriverCommand) {
         let _ = self.cmd_tx.send(cmd).await;
     }
@@ -85,6 +107,8 @@ impl Fmp4CommandSender {
 static NEXT_CONN_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Start the fMP4 driver server. Returns a command sender and event handle.
+///
+/// 启动 fMP4 驱动服务器，返回命令发送器与事件句柄。
 pub fn start_server(
     config: Fmp4DriverConfig,
     cancel: CancellationToken,
@@ -224,22 +248,33 @@ pub fn start_server(
 }
 
 /// Internal command sent to a per-connection task.
+///
+/// 发送给每个连接任务内部命令。
 enum ConnCmd {
     Send(Bytes),
     Close,
 }
 
+/// Drop guard that reports a connection as closed when the per-connection task ends.
+///
+/// 连接任务结束时报告连接已关闭的 Drop 守卫。
 struct ConnectionCloseGuard {
     conn_id: Fmp4ConnectionId,
     closed_tx: mpsc::UnboundedSender<Fmp4ConnectionId>,
 }
 
+/// Drop guard implementation: notify the driver that the connection has closed.
+///
+/// Drop 守卫实现：通知驱动连接已关闭。
 impl Drop for ConnectionCloseGuard {
     fn drop(&mut self) {
         let _ = self.closed_tx.send(self.conn_id);
     }
 }
 
+/// Accept a TCP connection and forward it to the generic HTTP/WS handler.
+///
+/// 接受 TCP 连接并转发给通用 HTTP/WS 处理器。
 async fn handle_connection(
     stream: tokio::net::TcpStream,
     conn_id: Fmp4ConnectionId,
@@ -255,6 +290,9 @@ async fn handle_connection(
     .await;
 }
 
+/// Generic HTTP/WS connection handler: parse request, drive `Fmp4Core`, and stream data.
+///
+/// 通用 HTTP/WS 连接处理器：解析请求、驱动 `Fmp4Core` 并流式传输数据。
 async fn handle_generic_connection<R, W>(
     reader: R,
     mut writer: W,
@@ -441,6 +479,9 @@ async fn handle_generic_connection<R, W>(
         .await;
 }
 
+/// Format an HTTP response head as a raw HTTP/1.1 response string.
+///
+/// 将 HTTP 响应头格式化为原始 HTTP/1.1 响应字符串。
 fn format_http_response(resp: &cheetah_fmp4_core::HttpResponseHead) -> String {
     let mut s = format!("HTTP/1.1 {} {}\r\n", resp.status_code, resp.reason);
     for (name, value) in &resp.headers {
@@ -453,6 +494,9 @@ fn format_http_response(resp: &cheetah_fmp4_core::HttpResponseHead) -> String {
     s
 }
 
+/// Accept a TLS connection and forward it to the generic HTTP/WS handler.
+///
+/// 接受 TLS 连接并转发给通用 HTTP/WS 处理器。
 async fn handle_tls_connection(
     stream: tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
     conn_id: Fmp4ConnectionId,
@@ -469,6 +513,8 @@ async fn handle_tls_connection(
 }
 
 /// A parsed WebSocket frame from the client.
+///
+/// 从客户端解析的 WebSocket 帧。
 struct WsFrame {
     fin: bool,
     opcode: u8,
@@ -476,6 +522,8 @@ struct WsFrame {
 }
 
 /// Read a single WebSocket frame from the client (expects masked frames).
+///
+/// 从客户端读取单个 WebSocket 帧（要求带 mask）。
 async fn read_ws_frame<R: tokio::io::AsyncRead + Unpin>(
     reader: &mut R,
     max_message_bytes: usize,
@@ -534,11 +582,15 @@ async fn read_ws_frame<R: tokio::io::AsyncRead + Unpin>(
 }
 
 /// Encode a WebSocket close frame (server-to-client, no mask).
+///
+/// 编码 WebSocket 关闭帧（服务器到客户端，无 mask）。
 fn encode_ws_close_frame() -> Bytes {
     Bytes::from_static(&[0x88, 0x00]) // FIN + close opcode, 0 payload
 }
 
 /// Encode a WebSocket pong frame (server-to-client, no mask).
+///
+/// 编码 WebSocket pong 帧（服务器到客户端，无 mask）。
 fn encode_ws_pong_frame(data: &[u8]) -> Bytes {
     let len = data.len();
     let mut buf = BytesMut::with_capacity(2 + len);
@@ -549,6 +601,8 @@ fn encode_ws_pong_frame(data: &[u8]) -> Bytes {
 }
 
 /// Encode data as HTTP chunked transfer encoding.
+///
+/// 将数据编码为 HTTP 分块传输。
 fn encode_http_chunk(data: &[u8]) -> Bytes {
     // Format: {hex_size}\r\n{data}\r\n
     let hex = format!("{:x}\r\n", data.len());
@@ -560,6 +614,8 @@ fn encode_http_chunk(data: &[u8]) -> Bytes {
 }
 
 /// Encode data as a WebSocket binary frame (server-to-client, no mask).
+///
+/// 将数据编码为 WebSocket 二进制帧（服务器到客户端，无 mask）。
 fn encode_ws_binary_frame(data: &[u8]) -> Bytes {
     let len = data.len();
     let header_len = if len < 126 {
