@@ -170,8 +170,12 @@ pub async fn open_rtsp_pull(
     let (lease, sink) = publisher_api
         .acquire_publisher(target_stream_key.clone(), options.publisher_options)
         .await?;
-    sink.update_tracks(tracks.clone())
-        .map_err(|err| SdkError::InvalidArgument(format!("update pull tracks failed: {err}")))?;
+    if let Err(err) = sink.update_tracks(tracks.clone()) {
+        let _ = publisher_api.release_publisher(&lease).await;
+        return Err(SdkError::InvalidArgument(format!(
+            "update pull tracks failed: {err}"
+        )));
+    }
 
     let config = RtspModuleConfig {
         alert_thresholds: options.alert_thresholds,
@@ -185,7 +189,7 @@ pub async fn open_rtsp_pull(
         tracks_to_map(&tracks),
     );
 
-    let setup_completion = setup_pull_tracks_and_play(
+    let setup_completion = match setup_pull_tracks_and_play(
         &mut client,
         &tracks,
         &track_controls,
@@ -202,7 +206,16 @@ pub async fn open_rtsp_pull(
         },
     )
     .await
-    .map_err(SdkError::Unavailable)?;
+    {
+        Ok(completion) => completion,
+        Err(err) => {
+            let _ = publisher_api.release_publisher(&publish.lease).await;
+            let _ = publish.sink.close();
+            return Err(SdkError::Unavailable(format!(
+                "setup pull tracks failed: {err}"
+            )));
+        }
+    };
 
     let PullSetupCompletion {
         setup,
