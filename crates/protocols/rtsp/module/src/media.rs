@@ -1,3 +1,15 @@
+//! Media processing for the RTSP module: RTP depacketization/packetization,
+//! transport parsing, URI extraction, and RTCP helpers.
+//!
+//! This module re-exports codec-specific helpers from `depacketize`, `packetize`,
+//! and `rtcp`, and exposes the top-level transport parsing and stream key
+//! helpers used by the RTSP request handlers.
+//!
+//! RTSP 模块的媒体处理：RTP 解包/打包、传输解析、URI 提取与 RTCP 辅助。
+//!
+//! 本模块从 `depacketize`、`packetize`、`rtcp` 重导出编解码辅助函数，并暴露
+//! RTSP 请求处理器使用的顶层传输解析与流 key 辅助函数。
+
 use bytes::{Bytes, BytesMut};
 use cheetah_codec::{
     h26x_nalu_is_random_access, vp8_frame_is_keyframe, AVFrame, AacRtpPacketization,
@@ -26,13 +38,25 @@ use depacketize::{
     av1_rtp_payload_is_keyframe, build_frame_from_rtp, vp8_rtp_payload_is_keyframe,
     vp9_rtp_payload_is_keyframe,
 };
+/// Re-exports from `depacketize.rs`: convert RTP payloads into `AVFrame`s.
+///
+/// 从 `depacketize.rs` 重导出：将 RTP 负载转换为 `AVFrame`。
 pub use depacketize::{build_frames_from_rtp, build_vp8_frame_from_rtp, build_vp9_frame_from_rtp};
+/// Re-exports from `packetize.rs`: convert an `AVFrame` into a sequence of RTP packets.
+///
+/// 从 `packetize.rs` 重导出：将 `AVFrame` 转换为一系列 RTP 包。
 pub use packetize::packetize_frame_to_rtp_with_timestamp;
+/// Re-exports from `rtcp.rs`: RTCP sender/receiver reports, SDES, and BYE helpers.
+///
+/// 从 `rtcp.rs` 重导出：RTCP 发送/接收报告、SDES 与 BYE 辅助函数。
 pub use rtcp::{
     build_rtcp_bye, build_rtcp_empty_rr, build_rtcp_receiver_report, build_rtcp_sdes_cname,
     build_rtcp_sender_report, parse_rtcp_sender_report, RtcpReceiverReportBlock,
 };
 
+/// Result of depacketizing an RTP packet into a frame and optional metadata.
+///
+/// RTP 包解包为帧以及可选元数据的结果。
 pub struct BuiltFrameFromRtp {
     pub frame: AVFrame,
     pub discovered_audio_asc: Option<Bytes>,
@@ -47,12 +71,18 @@ struct DepacketizedAac {
     discovered_asc: Option<Bytes>,
 }
 
+/// RTP/RTCP over RTSP interleaved TCP channel pair.
+///
+/// RTP/RTCP over RTSP 交错 TCP 通道对。
 #[derive(Debug, Clone, Copy)]
 pub struct TransportInterleaved {
     pub rtp_channel: u8,
     pub rtcp_channel: u8,
 }
 
+/// UDP unicast transport port and address pair from a SETUP Transport header.
+///
+/// 从 SETUP Transport 头解析的 UDP 单播端口与地址对。
 #[derive(Debug, Clone, Copy)]
 pub struct TransportUdpPorts {
     pub client_rtp_port: u16,
@@ -63,6 +93,9 @@ pub struct TransportUdpPorts {
     pub source: Option<IpAddr>,
 }
 
+/// UDP multicast transport port, address, and TTL from a SETUP Transport header.
+///
+/// 从 SETUP Transport 头解析的 UDP 组播端口、地址与 TTL。
 #[derive(Debug, Clone, Copy)]
 pub struct TransportUdpMulticast {
     pub rtp_port: Option<u16>,
@@ -71,6 +104,9 @@ pub struct TransportUdpMulticast {
     pub ttl: Option<u8>,
 }
 
+/// Parsed RTSP transport preference from a SETUP request.
+///
+/// 从 SETUP 请求解析的 RTSP 传输偏好。
 #[derive(Debug, Clone, Copy)]
 pub enum RtspSetupTransport {
     TcpInterleaved(TransportInterleaved),
@@ -79,6 +115,11 @@ pub enum RtspSetupTransport {
     UdpMulticast(TransportUdpMulticast),
 }
 
+/// Parses a comma-separated Transport header and selects the first supported
+/// RTSP transport (TCP interleaved, UDP unicast, or UDP multicast).
+///
+/// 解析逗号分隔的 Transport 头，并选择第一个支持的 RTSP 传输方式
+/// （TCP 交错、UDP 单播或 UDP 组播）。
 pub fn parse_setup_transport(value: &str) -> Option<RtspSetupTransport> {
     for candidate in value.split(',').map(str::trim) {
         if candidate.is_empty() {
@@ -239,6 +280,15 @@ fn transport_param_value<'a>(part: &'a str, name: &str) -> Option<&'a str> {
     }
 }
 
+/// Extracts the stream key from an RTSP request URI path.
+///
+/// Paths with one segment use `live` as the namespace; two or more segments use
+/// the first segment as namespace and the rest as the path.
+///
+/// 从 RTSP 请求 URI 路径提取流 key。
+///
+/// 单段路径使用 `live` 作为命名空间；两段及以上使用第一段作为命名空间，
+/// 其余作为路径。
 pub fn parse_stream_key_from_uri(uri: &str) -> Option<StreamKey> {
     let path = extract_uri_path(uri)?;
     let trimmed = path.trim_matches('/');
@@ -258,6 +308,9 @@ pub fn parse_stream_key_from_uri(uri: &str) -> Option<StreamKey> {
     }
 }
 
+/// Extracts the track control suffix from an RTSP URI path.
+///
+/// 从 RTSP URI 路径提取 Track 控制后缀。
 pub fn parse_track_control_from_uri(uri: &str) -> Option<String> {
     let path = extract_uri_path(uri)?;
     let path = path.trim_matches('/');

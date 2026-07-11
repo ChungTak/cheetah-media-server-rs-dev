@@ -1,3 +1,11 @@
+//! RTSP module configuration and runtime job definitions.
+//!
+//! This module holds serde-compatible structs, validation, and default helpers.
+//!
+//! `cheetah-rtsp-module` 的 RTSP 模块配置与运行时任务定义。
+//!
+//! 本模块包含兼容 serde 的结构体、校验逻辑与默认值辅助函数。
+
 use std::collections::HashSet;
 use std::net::{Ipv4Addr, SocketAddr};
 
@@ -6,6 +14,18 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+/// Top-level RTSP module configuration.
+///
+/// Defines the TCP/RTSPS listener, transport, auth, alerting, and background
+/// pull/push/relay jobs. Most fields are hot-loaded by the engine; changing
+/// any field causes a module restart because `apply_config` returns
+/// `ConfigEffect::ModuleRestartRequired`.
+///
+/// RTSP 模块顶层配置。
+///
+/// 定义 TCP/RTSPS 监听器、传输、认证、告警以及后台拉流/推流/转发任务。
+/// 大多数字段由引擎热加载；修改任意字段会触发模块重建，因为
+/// `apply_config` 返回 `ConfigEffect::ModuleRestartRequired`。
 pub struct RtspModuleConfig {
     /// 是否启用 RTSP module。
     pub enabled: bool,
@@ -56,6 +76,9 @@ pub struct RtspModuleConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+/// RTSP authentication configuration (Basic and Digest).
+///
+/// RTSP 认证配置（Basic 与 Digest）。
 pub struct RtspAuthConfig {
     pub enabled: bool,
     pub require_publish_auth: bool,
@@ -67,6 +90,9 @@ pub struct RtspAuthConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+/// A single username/password pair for Basic/Digest authentication.
+///
+/// Basic/Digest 认证的一组用户名与密码。
 pub struct RtspAuthUserConfig {
     pub username: String,
     pub password: String,
@@ -74,6 +100,9 @@ pub struct RtspAuthUserConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+/// RTSPS (RTSP over TLS) listener configuration.
+///
+/// RTSPS（RTSP over TLS）监听器配置。
 pub struct RtspTlsConfig {
     pub enabled: bool,
     pub listen: String,
@@ -95,6 +124,10 @@ impl Default for RtspTlsConfig {
 }
 
 impl RtspTlsConfig {
+    /// Validates RTSPS settings: enabled requires cert/key paths and a valid
+    /// listen socket.
+    ///
+    /// 校验 RTSPS 设置：启用时必须提供证书/密钥路径，并包含合法的监听地址。
     pub fn validate(&self) -> Result<(), SdkError> {
         if !self.enabled {
             return Ok(());
@@ -118,6 +151,9 @@ impl RtspTlsConfig {
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
+/// Client-side RTSP keep-alive method for pull/push/relay jobs.
+///
+/// 拉流/推流/转发任务使用的客户端 RTSP 保活方法。
 pub enum RtspHeartbeatMode {
     #[default]
     GetParameter,
@@ -126,6 +162,9 @@ pub enum RtspHeartbeatMode {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+/// Observability thresholds for RTSP session warnings.
+///
+/// RTSP 会话告警的可观测性阈值。
 pub struct RtspAlertThresholds {
     /// 起播等待告警阈值（毫秒）。
     pub startup_timeout_ms: u64,
@@ -137,6 +176,9 @@ pub struct RtspAlertThresholds {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+/// RTP/RTCP over UDP server-side transport configuration.
+///
+/// RTP/RTCP over UDP 服务端传输配置。
 pub struct RtspUdpConfig {
     /// RTP/RTCP 服务端端口池起始端口（含）。
     pub server_port_pool_start: u16,
@@ -158,6 +200,9 @@ pub struct RtspUdpConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+/// RTP multicast playout configuration.
+///
+/// RTP 组播播放配置。
 pub struct RtspMulticastConfig {
     /// 是否启用 RTP multicast PLAY。
     pub enabled: bool,
@@ -181,6 +226,9 @@ pub struct RtspMulticastConfig {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
+/// Transport preference order for RTSP pull/relay jobs.
+///
+/// RTSP 拉流/转发任务的传输优先级。
 pub enum RtspPullTransport {
     TcpInterleaved,
     Udp,
@@ -190,6 +238,9 @@ pub enum RtspPullTransport {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+/// Background job that pulls an RTSP stream into the engine.
+///
+/// 将远端 RTSP 流拉入引擎的后台任务。
 pub struct RtspPullJobConfig {
     /// 任务名（同一 module 内唯一）。
     pub name: String,
@@ -215,6 +266,9 @@ pub struct RtspPullJobConfig {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
+/// Transport preference order for RTSP push jobs.
+///
+/// RTSP 推流任务的传输优先级。
 pub enum RtspPushTransport {
     TcpInterleaved,
     Udp,
@@ -223,6 +277,9 @@ pub enum RtspPushTransport {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+/// Background job that pushes a local stream to a remote RTSP server.
+///
+/// 将本地流推送到远端 RTSP 服务器的后台任务。
 pub struct RtspPushJobConfig {
     /// 任务名（同一 module 内唯一）。
     pub name: String,
@@ -246,6 +303,9 @@ pub struct RtspPushJobConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
+/// Background job that relays an RTSP stream between two RTSP servers.
+///
+/// 在两个 RTSP 服务器之间转发 RTSP 流的后台任务。
 pub struct RtspRelayJobConfig {
     /// 任务名（同一 module 内唯一）。
     pub name: String,
@@ -411,6 +471,9 @@ impl Default for RtspRelayJobConfig {
 }
 
 impl RtspModuleConfig {
+    /// Deserializes the JSON configuration and runs `validate`.
+    ///
+    /// 反序列化 JSON 配置并调用 `validate` 校验。
     pub fn from_value(value: serde_json::Value) -> Result<Self, SdkError> {
         let cfg: Self = serde_json::from_value(value)
             .map_err(|err| SdkError::InvalidArgument(format!("invalid rtsp config: {err}")))?;
@@ -418,6 +481,11 @@ impl RtspModuleConfig {
         Ok(cfg)
     }
 
+    /// Validates the complete RTSP configuration: listeners, port pools,
+    /// multicast ranges, auth constraints, and pull/push/relay jobs.
+    ///
+    /// 完整校验 RTSP 配置：监听器、端口池、组播范围、认证约束以及
+    /// 拉流/推流/转发任务。
     pub fn validate(&self) -> Result<(), SdkError> {
         self.listen
             .parse::<SocketAddr>()
@@ -733,6 +801,9 @@ impl RtspModuleConfig {
         Ok(())
     }
 
+    /// Returns the default configuration as a JSON value for the config schema.
+    ///
+    /// 返回默认配置的 JSON 值，用于配置 schema。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).expect("serialize default rtsp config")
     }

@@ -1,3 +1,16 @@
+//! RTSP module factory, lifecycle, and event loop.
+//!
+//! `RtspModuleFactory` is registered by the engine. `RtspModule` implements the
+//! `Module` trait: init, start, stop, and apply_config. The event loop runs the
+//! RTSP server, dispatches driver events to request handlers, and supervises
+//! background pull/push/relay jobs.
+//!
+//! RTSP 模块工厂、生命周期与事件循环。
+//!
+//! `RtspModuleFactory` 由引擎注册。`RtspModule` 实现 `Module` trait：初始化、
+//! 启动、停止、应用配置。事件循环负责运行 RTSP 服务器、将驱动事件分发给请求
+//! 处理器并监管后台拉流/推流/转发任务。
+
 use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_codec::{RtpPacket, TrackId, TrackInfo};
@@ -49,9 +62,15 @@ struct PauseRequestMeta {
     requested_range: Option<String>,
 }
 
+/// Factory that creates and configures `RtspModule` instances.
+///
+/// `RtspModule` 实例的工厂。
 pub struct RtspModuleFactory;
 
 impl ModuleFactory for RtspModuleFactory {
+    /// Returns the module manifest: id, name, HTTP prefix, and capabilities.
+    ///
+    /// 返回模块清单：id、名称、HTTP 前缀与能力。
     fn manifest(&self) -> ModuleManifest {
         ModuleManifest {
             module_id: ModuleId::new(MODULE_ID),
@@ -67,10 +86,16 @@ impl ModuleFactory for RtspModuleFactory {
         }
     }
 
+    /// Creates a new `RtspModule` instance.
+    ///
+    /// 创建新的 `RtspModule` 实例。
     fn create(&self) -> Box<dyn Module> {
         Box::new(RtspModule::new())
     }
 
+    /// Registers the JSON schema and validator for the `rtsp` config namespace.
+    ///
+    /// 注册 `rtsp` 配置命名空间的 JSON schema 与校验器。
     fn config_schema(&self) -> Option<ModuleSchemaRegistration> {
         Some(ModuleSchemaRegistration {
             module_id: ModuleId::new(MODULE_ID),
@@ -85,6 +110,10 @@ impl ModuleFactory for RtspModuleFactory {
     }
 }
 
+/// RTSP module instance that ties configuration, engine context, and runtime
+/// tasks together.
+///
+/// RTSP 模块实例，将配置、引擎上下文与运行时任务绑定在一起。
 pub struct RtspModule {
     info: ModuleInfo,
     state: ModuleState,
@@ -95,6 +124,9 @@ pub struct RtspModule {
 }
 
 impl RtspModule {
+    /// Constructs a new module in the `Created` state.
+    ///
+    /// 在 `Created` 状态下构造新模块。
     pub fn new() -> Self {
         Self {
             info: ModuleInfo {
@@ -119,14 +151,23 @@ impl Default for RtspModule {
 
 #[async_trait]
 impl Module for RtspModule {
+    /// Returns the static module information.
+    ///
+    /// 返回静态模块信息。
     fn info(&self) -> ModuleInfo {
         self.info.clone()
     }
 
+    /// Returns the current module lifecycle state.
+    ///
+    /// 返回当前模块生命周期状态。
     fn state(&self) -> ModuleState {
         self.state
     }
 
+    /// Initializes the module from `ModuleInitContext` and the parsed config.
+    ///
+    /// 从 `ModuleInitContext` 与解析后的配置初始化模块。
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
         self.config = RtspModuleConfig::from_value(ctx.initial_config)?;
         self.engine = Some(ctx.engine);
@@ -134,6 +175,12 @@ impl Module for RtspModule {
         Ok(())
     }
 
+    /// Starts the RTSP server (and RTSPS server if enabled) and registers the
+    /// service with the engine. Spawns the main event loop and background job
+    /// supervisors.
+    ///
+    /// 启动 RTSP 服务器（如启用则含 RTSPS），向引擎注册服务，并启动主事件循环
+    /// 与后台任务监管器。
     async fn start(&mut self, cancel: CancellationToken) -> Result<(), SdkError> {
         let Some(engine) = self.engine.clone() else {
             return Err(SdkError::Unavailable(
@@ -224,6 +271,10 @@ impl Module for RtspModule {
         Ok(())
     }
 
+    /// Stops the runtime task, awaits the event loop, and unregisters the
+    /// service from the engine.
+    ///
+    /// 停止运行时任务、等待事件循环结束并从引擎注销服务。
     async fn stop(&mut self) -> Result<(), SdkError> {
         if let Some(cancel) = self.runtime_cancel.take() {
             cancel.cancel();
@@ -239,6 +290,9 @@ impl Module for RtspModule {
         Ok(())
     }
 
+    /// Parses the new config and, if it differs, signals `ModuleRestartRequired`.
+    ///
+    /// 解析新配置；若发生变化，则返回 `ModuleRestartRequired` 信号。
     async fn apply_config(&mut self, change: ModuleConfigChange) -> Result<ConfigEffect, SdkError> {
         let next = RtspModuleConfig::from_value(change.next)?;
         if next == self.config {
@@ -249,6 +303,9 @@ impl Module for RtspModule {
     }
 }
 
+/// Loads the TLS certificate and private key for the RTSPS listener.
+///
+/// 为 RTSPS 监听器加载 TLS 证书与私钥。
 fn load_rtsp_tls_config(cert_path: &str, key_path: &str) -> std::io::Result<rustls::ServerConfig> {
     let cert_data = std::fs::read(cert_path)
         .map_err(|e| std::io::Error::other(format!("read cert {cert_path}: {e}")))?;
@@ -281,6 +338,9 @@ fn load_rtsp_tls_config(cert_path: &str, key_path: &str) -> std::io::Result<rust
         })
 }
 
+/// Spawns a future on the runtime and returns a one-shot receiver for completion.
+///
+/// 在运行时上生成一个 Future，并返回用于接收完成通知的 one-shot receiver。
 fn spawn_runtime_task<F>(runtime_api: Arc<dyn RuntimeApi>, fut: F) -> OneShotReceiver
 where
     F: Future<Output = ()> + Send + 'static,
@@ -294,6 +354,10 @@ where
     done_rx
 }
 
+/// Main event loop: accepts driver events, dispatches to request handlers,
+/// and cleans up sessions and jobs on shutdown.
+///
+/// 主事件循环：接收驱动事件并分发给请求处理器，关闭时清理会话与任务。
 async fn run_event_loop(
     engine: EngineContext,
     config: RtspModuleConfig,
