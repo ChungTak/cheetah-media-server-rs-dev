@@ -1,0 +1,8 @@
+case	source	media_sig	role	fixture	expect_header	expect_metadata	expect_video_min	expect_audio_min	notes
+audio_only	fixture	v=none@0x0;a=aac@ch1	standard_play	standard/audio_only.flvstream	true	0	0	1	audio-only standard sample
+h264_aac	fixture	v=h264@768x320;a=aac@ch2	standard_play	standard/h264_aac.flvstream	true	0	1	1	h264 aac standard sample
+h265_aac	fixture	v=h265@1920x1080;a=aac@ch6	standard_play	standard/h265_aac.flvstream	true	0	1	1	h265 aac standard sample
+av1_probe	fixture	v=av1@1920x1080;a=none@ch0	compat_probe	probes/av1_probe.flvstream	true	0	0	0	av1 probe for bounded demux
+h266_probe	fixture	v=h266@1920x1080;a=none@ch0	compat_probe	probes/h266_probe.flvstream	true	0	0	0	h266 probe for bounded demux
+vp9_probe	fixture	v=vp9@320x240;a=none@ch0	compat_probe	probes/vp9_probe.flvstream	true	0	0	0	vp9 probe for bounded demux
+vvc_probe	fixture	v=vvc@1920x1080;a=none@ch0	compat_probe	probes/vvc_probe.flvstream	true	0	0	0	vvc probe for bounded demux
