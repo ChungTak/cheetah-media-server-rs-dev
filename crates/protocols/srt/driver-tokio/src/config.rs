@@ -15,7 +15,26 @@ pub struct SrtDriverConfig {
     pub stats_interval_ms: u64,
     pub recv_buffer_packets: usize,
     pub send_queue_capacity: usize,
+    pub srt_version: u32,
     pub encryption: SrtDriverEncryption,
+    pub fec: SrtDriverFecConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// FEC configuration carried by the SRT Tokio driver.
+///
+/// As of `shiguredo_srt = "=2026.1.0-canary.1"`, the underlying library does not
+/// expose a packet-filter / FEC API, so this struct is reserved for future
+/// driver integration.
+///
+/// SRT Tokio 驱动携带的 FEC 配置。
+/// 在 `shiguredo_srt = "=2026.1.0-canary.1"` 中底层库未暴露 packet-filter / FEC API，
+/// 因此该结构体为未来的驱动集成预留。
+pub struct SrtDriverFecConfig {
+    pub enabled: bool,
+    pub required: bool,
+    pub cols: u32,
+    pub rows: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

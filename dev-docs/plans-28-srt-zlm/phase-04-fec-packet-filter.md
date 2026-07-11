@@ -1,6 +1,6 @@
 # Phase 04 — FEC / Packet Filter（可执行）
 
-- **状态**: 待执行  
+- **状态**: 部分完成（core 纯函数 XOR、配置/指标已落地；driver 集成因 `shiguredo_srt` 缺少 packet-filter / FEC API 阻塞，已记录 `reject:fec_required`）  
 - **依赖**: Phase 01–03 主路径稳定（可并行调研）  
 - **兼容规范**: [reference-behavior-zlm-compat.md](reference-behavior-zlm-compat.md) §5.1–§5.2、§6  
 

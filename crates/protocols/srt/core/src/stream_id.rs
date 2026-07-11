@@ -3,23 +3,65 @@ use std::collections::BTreeMap;
 use crate::config::SrtStreamMode;
 use crate::error::{SrtCoreError, SrtCoreResult};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-/// Parsed SRT access-control stream id ("#!::" syntax) or plain stream key.
+/// Parse options for `parse_srt_stream_id_with_options`.
 ///
-/// 解析后的 SRT 访问控制流 ID（"#!::" 语法）或普通流密钥。
+/// `parse_srt_stream_id_with_options` 的解析选项。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamIdParseOptions {
+    /// Default virtual host when `h` is absent.
+    pub default_vhost: String,
+    /// Require the `#!::` access-control prefix.
+    pub strict_prefix: bool,
+    /// Require the `r` resource to contain two non-empty segments (`app/stream`).
+    pub strict_resource: bool,
+    /// Allow a bare key without `#!::` for legacy clients.
+    pub allow_bare_key: bool,
+}
+
+impl Default for StreamIdParseOptions {
+    fn default() -> Self {
+        Self {
+            default_vhost: "__defaultVhost__".to_string(),
+            strict_prefix: true,
+            strict_resource: true,
+            allow_bare_key: false,
+        }
+    }
+}
+
+/// Parsed SRT access-control stream id.
+///
+/// 解析后的 SRT 访问控制流 ID。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedSrtStreamId {
+    pub vhost: String,
+    pub app: String,
+    pub stream: String,
+    /// Normalized `app/stream` resource.
+    pub resource: String,
+    /// Backward-compatible `app/stream` key.
     pub stream_key: String,
     pub mode: Option<SrtStreamMode>,
     pub user: Option<String>,
-    pub host: Option<String>,
     pub session: Option<String>,
-    pub extras: BTreeMap<String, String>,
+    /// All remaining key/value pairs except `h` and `r`, including `m`.
+    pub auth_params: BTreeMap<String, String>,
 }
 
-/// Parse an SRT stream id string, handling the access-control prefix or plain key.
+/// Parse an SRT stream id using the strict ZLM-compatible defaults.
 ///
-/// 解析 SRT stream id 字符串，处理访问控制前缀或普通密钥。
+/// 使用严格 ZLM 兼容默认选项解析 SRT stream id。
 pub fn parse_srt_stream_id(input: &str) -> SrtCoreResult<ParsedSrtStreamId> {
+    parse_srt_stream_id_with_options(input, &StreamIdParseOptions::default())
+}
+
+/// Parse an SRT stream id with explicit options.
+///
+/// 使用显式选项解析 SRT stream id。
+pub fn parse_srt_stream_id_with_options(
+    input: &str,
+    opts: &StreamIdParseOptions,
+) -> SrtCoreResult<ParsedSrtStreamId> {
     let input = input.trim();
     if input.is_empty() {
         return Err(SrtCoreError::InvalidStreamId(
@@ -27,62 +69,154 @@ pub fn parse_srt_stream_id(input: &str) -> SrtCoreResult<ParsedSrtStreamId> {
         ));
     }
 
-    if let Some(rest) = input.strip_prefix("#!::") {
-        parse_access_control_stream_id(rest)
+    if let Some(body) = input.strip_prefix("#!::") {
+        parse_access_control_body(body, opts)
+    } else if opts.allow_bare_key || !opts.strict_prefix {
+        parse_bare_stream_key(input, opts)
     } else {
-        let stream_key = normalize_stream_key(input)?;
-        Ok(ParsedSrtStreamId {
-            stream_key,
-            mode: None,
-            user: None,
-            host: None,
-            session: None,
-            extras: BTreeMap::new(),
-        })
+        Err(SrtCoreError::InvalidStreamId(
+            "stream id must start with #!::".to_string(),
+        ))
     }
 }
 
-/// Parse a `#!::` access-control stream id into key-value fields.
-///
-/// 将 `#!::` 访问控制流 ID 解析为键值字段。
-fn parse_access_control_stream_id(input: &str) -> SrtCoreResult<ParsedSrtStreamId> {
+fn parse_access_control_body(
+    input: &str,
+    opts: &StreamIdParseOptions,
+) -> SrtCoreResult<ParsedSrtStreamId> {
     let mut fields = BTreeMap::new();
     for pair in input.split(',') {
         if pair.is_empty() {
             continue;
         }
-        let (key, value) = pair.split_once('=').ok_or_else(|| {
-            SrtCoreError::InvalidStreamId(format!("field `{pair}` is missing `=`"))
-        })?;
+        let Some((key, value)) = pair.split_once('=') else {
+            return Err(SrtCoreError::InvalidStreamId(format!(
+                "field `{pair}` is missing `=`"
+            )));
+        };
         let key = percent_decode(key)?;
         let value = percent_decode(value)?;
         fields.insert(key, value);
     }
 
+    let vhost = fields
+        .remove("h")
+        .unwrap_or_else(|| opts.default_vhost.clone());
     let raw_resource = fields
         .remove("r")
         .ok_or_else(|| SrtCoreError::InvalidStreamId("missing `r` resource".to_string()))?;
-    let stream_key = normalize_stream_key(&raw_resource)?;
-    let mode = match fields.remove("m").as_deref() {
+
+    if raw_resource.is_empty() {
+        return Err(SrtCoreError::InvalidStreamId(
+            "resource `r` is empty".to_string(),
+        ));
+    }
+
+    let (app, stream, resource) = if opts.strict_resource {
+        parse_strict_resource(&raw_resource)?
+    } else {
+        let normalized = normalize_stream_key(&raw_resource)?;
+        let (app, stream) = split_app_stream(&normalized);
+        (app, stream, normalized)
+    };
+
+    let stream_key = format!("{app}/{stream}");
+
+    // `m` stays in auth_params for authorization hooks.
+    let mode = parse_mode(fields.get("m").map(String::as_str));
+    let user = fields.get("u").cloned();
+    let session = fields.get("s").cloned();
+    let auth_params = fields;
+
+    Ok(ParsedSrtStreamId {
+        vhost,
+        app,
+        stream,
+        resource,
+        stream_key,
+        mode,
+        user,
+        session,
+        auth_params,
+    })
+}
+
+fn parse_mode(raw: Option<&str>) -> Option<SrtStreamMode> {
+    match raw {
         Some("publish") => Some(SrtStreamMode::Publish),
         Some("request") => Some(SrtStreamMode::Request),
         Some("play") => Some(SrtStreamMode::Play),
-        Some(other) => {
-            return Err(SrtCoreError::InvalidStreamId(format!(
-                "unknown stream mode `{other}`"
-            )));
-        }
+        Some(_) => Some(SrtStreamMode::Request),
         None => None,
-    };
+    }
+}
 
+fn parse_strict_resource(raw: &str) -> SrtCoreResult<(String, String, String)> {
+    let (app, stream) = raw.split_once('/').ok_or_else(|| {
+        SrtCoreError::InvalidStreamId(format!("resource `{raw}` must be app/stream"))
+    })?;
+    validate_resource_segment(app, "app")?;
+    validate_resource_segment(stream, "stream")?;
+    Ok((app.to_string(), stream.to_string(), raw.to_string()))
+}
+
+fn validate_resource_segment(value: &str, name: &str) -> SrtCoreResult<()> {
+    if value.is_empty() {
+        return Err(SrtCoreError::InvalidStreamId(format!(
+            "{name} in `r` is empty"
+        )));
+    }
+    if value.starts_with('/') {
+        return Err(SrtCoreError::InvalidStreamId(format!(
+            "{name} in `r` must not start with `/`"
+        )));
+    }
+    if value.contains("..") {
+        return Err(SrtCoreError::InvalidStreamId(format!(
+            "{name} in `r` must not contain `..`"
+        )));
+    }
+    if value.contains("//") {
+        return Err(SrtCoreError::InvalidStreamId(format!(
+            "{name} in `r` must not contain `//`"
+        )));
+    }
+    if value.chars().any(|ch| ch.is_ascii_control()) {
+        return Err(SrtCoreError::InvalidStreamId(format!(
+            "{name} in `r` contains control characters"
+        )));
+    }
+    Ok(())
+}
+
+fn parse_bare_stream_key(
+    input: &str,
+    opts: &StreamIdParseOptions,
+) -> SrtCoreResult<ParsedSrtStreamId> {
+    let normalized = normalize_stream_key(input)?;
+    let (app, stream) = split_app_stream(&normalized);
+    let resource = normalized;
+    let stream_key = format!("{app}/{stream}");
     Ok(ParsedSrtStreamId {
+        vhost: opts.default_vhost.clone(),
+        app,
+        stream,
+        resource,
         stream_key,
-        mode,
-        user: fields.remove("u"),
-        host: fields.remove("h"),
-        session: fields.remove("s"),
-        extras: fields,
+        mode: None,
+        user: None,
+        session: None,
+        auth_params: BTreeMap::new(),
     })
+}
+
+fn split_app_stream(value: &str) -> (String, String) {
+    match value.split_once('/') {
+        Some((app, stream)) if !app.is_empty() && !stream.is_empty() => {
+            (app.to_string(), stream.to_string())
+        }
+        _ => ("live".to_string(), value.to_string()),
+    }
 }
 
 /// Normalize a stream key by trimming leading slashes and rejecting dangerous paths.

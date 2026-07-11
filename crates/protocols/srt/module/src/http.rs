@@ -148,14 +148,14 @@ impl SrtHttpService {
             snapshot.retransmit_total
         );
         counter!(
-            "srt_lost_packets_total",
+            "srt_receiver_lost_total",
             "Total SRT lost packets observed by the receiver.",
-            snapshot.lost_packets_total
+            snapshot.receiver_lost_total
         );
         counter!(
-            "srt_duplicate_packets_total",
+            "srt_receiver_duplicate_total",
             "Total duplicate SRT packets observed by the receiver.",
-            snapshot.duplicate_packets_total
+            snapshot.receiver_duplicate_total
         );
         gauge!(
             "srt_send_queue_depth",
@@ -196,6 +196,36 @@ impl SrtHttpService {
             "srt_send_queue_full_total",
             "Total SRT payloads rejected because the send queue was full.",
             snapshot.send_queue_full_total
+        );
+        out.push_str("# HELP srt_handshake_reject_total Total SRT handshake rejections.\n");
+        out.push_str("# TYPE srt_handshake_reject_total counter\n");
+        for (reason, value) in &snapshot.handshake_reject_reasons {
+            out.push_str(&format!(
+                "srt_handshake_reject_total{{reason=\"{reason}\"}} {value}\n"
+            ));
+        }
+        if snapshot.handshake_reject_reasons.is_empty() {
+            out.push_str("srt_handshake_reject_total 0\n");
+        }
+        gauge!(
+            "srt_fec_negotiated",
+            "SRT connections where FEC was successfully negotiated.",
+            snapshot.fec_negotiated
+        );
+        counter!(
+            "srt_fec_packets_recovered_total",
+            "Total SRT packets recovered by FEC.",
+            snapshot.fec_packets_recovered_total
+        );
+        counter!(
+            "srt_fec_packets_unrecovered_total",
+            "Total SRT packets that FEC could not recover.",
+            snapshot.fec_packets_unrecovered_total
+        );
+        counter!(
+            "srt_fec_negotiate_fail_total",
+            "Total SRT FEC negotiation failures.",
+            snapshot.fec_negotiate_fail_total
         );
 
         HttpResponse {

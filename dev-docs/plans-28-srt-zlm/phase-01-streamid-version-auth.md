@@ -1,6 +1,6 @@
 # Phase 01 — Stream ID / 版本类型 / 鉴权参数（可执行）
 
-- **状态**: 待执行  
+- **状态**: 完成  
 - **依赖**: 无  
 - **兼容规范**: [reference-behavior-zlm-compat.md](reference-behavior-zlm-compat.md) §2、§5.3、§8  
 - **架构**: [srt-zlm-architecture.md](srt-zlm-architecture.md) §3–§5、§8  

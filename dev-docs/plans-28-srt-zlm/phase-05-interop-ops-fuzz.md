@@ -1,6 +1,6 @@
 # Phase 05 — 互操作、Fuzz、运维收口（可执行）
 
-- **状态**: 待执行  
+- **状态**: 部分完成（自动化测试壳、互操作记录、指标清单已落地；P1/L1 等需手工环境复跑）  
 - **依赖**: Phase 01–03 必选；Phase 04 若延期须在矩阵中标注 FEC 用例跳过  
 - **兼容规范**: [reference-behavior-zlm-compat.md](reference-behavior-zlm-compat.md) §2.5  
 - **基线 ops**: [../plans-28-srt/srt-ops-interop.md](../plans-28-srt/srt-ops-interop.md)  

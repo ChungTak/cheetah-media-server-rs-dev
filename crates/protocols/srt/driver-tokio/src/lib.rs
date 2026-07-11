@@ -5,7 +5,7 @@
 mod config;
 mod driver;
 
-pub use config::{SrtDriverConfig, SrtDriverEncryption};
+pub use config::{SrtDriverConfig, SrtDriverEncryption, SrtDriverFecConfig};
 pub use driver::{
     spawn_driver, SrtDriverCommand, SrtDriverEvent, SrtDriverHandle, SrtDriverStats, SrtPeerId,
 };

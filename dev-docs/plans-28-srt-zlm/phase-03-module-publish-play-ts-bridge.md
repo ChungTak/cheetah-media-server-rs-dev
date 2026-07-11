@@ -1,6 +1,6 @@
 # Phase 03 — 推/拉业务、TS-only、Module 拆分（可执行）
 
-- **状态**: 待执行  
+- **状态**: 完成  
 - **依赖**: Phase 01（classify/auth/streamid）  
 - **兼容规范**: [reference-behavior-zlm-compat.md](reference-behavior-zlm-compat.md) §3、§7  
 

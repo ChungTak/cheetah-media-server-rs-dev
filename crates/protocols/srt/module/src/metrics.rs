@@ -1,5 +1,6 @@
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use cheetah_srt_core::SrtStreamMode;
 use cheetah_srt_driver_tokio::SrtDriverStats;
@@ -19,8 +20,8 @@ pub struct SrtModuleMetrics {
     packets_in_total: AtomicU64,
     packets_out_total: AtomicU64,
     retransmit_total: AtomicU64,
-    lost_packets_total: AtomicU64,
-    duplicate_packets_total: AtomicU64,
+    receiver_lost_total: AtomicU64,
+    receiver_duplicate_total: AtomicU64,
     send_queue_depth: AtomicU64,
     recv_queue_depth: AtomicU64,
     rtt_micros: AtomicU64,
@@ -29,9 +30,15 @@ pub struct SrtModuleMetrics {
     disconnect_total: AtomicU64,
     driver_errors_total: AtomicU64,
     send_queue_full_total: AtomicU64,
+    handshake_reject_total: AtomicU64,
+    handshake_reject_reasons: Mutex<BTreeMap<String, u64>>,
+    fec_negotiated: AtomicU64,
+    fec_packets_recovered_total: AtomicU64,
+    fec_packets_unrecovered_total: AtomicU64,
+    fec_negotiate_fail_total: AtomicU64,
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 /// Read-only snapshot of `SrtModuleMetrics` for rendering and serialization.
 ///
 /// 用于渲染与序列化的 `SrtModuleMetrics` 只读快照。
@@ -45,8 +52,8 @@ pub struct SrtModuleMetricsSnapshot {
     pub packets_in_total: u64,
     pub packets_out_total: u64,
     pub retransmit_total: u64,
-    pub lost_packets_total: u64,
-    pub duplicate_packets_total: u64,
+    pub receiver_lost_total: u64,
+    pub receiver_duplicate_total: u64,
     pub send_queue_depth: u64,
     pub recv_queue_depth: u64,
     pub rtt_micros: u64,
@@ -55,6 +62,12 @@ pub struct SrtModuleMetricsSnapshot {
     pub disconnect_total: u64,
     pub driver_errors_total: u64,
     pub send_queue_full_total: u64,
+    pub handshake_reject_total: u64,
+    pub handshake_reject_reasons: BTreeMap<String, u64>,
+    pub fec_negotiated: u64,
+    pub fec_packets_recovered_total: u64,
+    pub fec_packets_unrecovered_total: u64,
+    pub fec_negotiate_fail_total: u64,
 }
 
 /// `SrtModuleMetrics` API: increment, aggregate, and snapshot.
@@ -95,6 +108,33 @@ impl SrtModuleMetrics {
         }
     }
 
+    pub fn inc_handshake_reject(&self, reason: &str) {
+        self.handshake_reject_total.fetch_add(1, Ordering::Relaxed);
+        let key = handshake_reject_reason_key(reason).to_string();
+        if let Ok(mut reasons) = self.handshake_reject_reasons.lock() {
+            *reasons.entry(key).or_default() += 1;
+        }
+    }
+
+    pub fn inc_fec_negotiated(&self) {
+        self.fec_negotiated.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn inc_fec_recovered(&self, count: u64) {
+        self.fec_packets_recovered_total
+            .fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub fn inc_fec_unrecovered(&self, count: u64) {
+        self.fec_packets_unrecovered_total
+            .fetch_add(count, Ordering::Relaxed);
+    }
+
+    pub fn inc_fec_negotiate_fail(&self) {
+        self.fec_negotiate_fail_total
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn add_stats_delta(&self, previous: Option<&SrtDriverStats>, current: &SrtDriverStats) {
         let baseline = previous.cloned().unwrap_or_default();
         self.bytes_in_total.fetch_add(
@@ -121,13 +161,13 @@ impl SrtModuleMetrics {
             ),
             Ordering::Relaxed,
         );
-        self.lost_packets_total.fetch_add(
+        self.receiver_lost_total.fetch_add(
             current
                 .receiver_total_lost
                 .saturating_sub(baseline.receiver_total_lost),
             Ordering::Relaxed,
         );
-        self.duplicate_packets_total.fetch_add(
+        self.receiver_duplicate_total.fetch_add(
             current
                 .receiver_total_duplicates
                 .saturating_sub(baseline.receiver_total_duplicates),
@@ -148,6 +188,11 @@ impl SrtModuleMetrics {
     }
 
     pub fn snapshot(&self) -> SrtModuleMetricsSnapshot {
+        let handshake_reject_reasons = self
+            .handshake_reject_reasons
+            .lock()
+            .map(|m| m.clone())
+            .unwrap_or_default();
         SrtModuleMetricsSnapshot {
             connections_active: self.connections_active.load(Ordering::Relaxed),
             connections_total: self.connections_total.load(Ordering::Relaxed),
@@ -158,8 +203,8 @@ impl SrtModuleMetrics {
             packets_in_total: self.packets_in_total.load(Ordering::Relaxed),
             packets_out_total: self.packets_out_total.load(Ordering::Relaxed),
             retransmit_total: self.retransmit_total.load(Ordering::Relaxed),
-            lost_packets_total: self.lost_packets_total.load(Ordering::Relaxed),
-            duplicate_packets_total: self.duplicate_packets_total.load(Ordering::Relaxed),
+            receiver_lost_total: self.receiver_lost_total.load(Ordering::Relaxed),
+            receiver_duplicate_total: self.receiver_duplicate_total.load(Ordering::Relaxed),
             send_queue_depth: self.send_queue_depth.load(Ordering::Relaxed),
             recv_queue_depth: self.recv_queue_depth.load(Ordering::Relaxed),
             rtt_micros: self.rtt_micros.load(Ordering::Relaxed),
@@ -168,8 +213,29 @@ impl SrtModuleMetrics {
             disconnect_total: self.disconnect_total.load(Ordering::Relaxed),
             driver_errors_total: self.driver_errors_total.load(Ordering::Relaxed),
             send_queue_full_total: self.send_queue_full_total.load(Ordering::Relaxed),
+            handshake_reject_total: self.handshake_reject_total.load(Ordering::Relaxed),
+            handshake_reject_reasons,
+            fec_negotiated: self.fec_negotiated.load(Ordering::Relaxed),
+            fec_packets_recovered_total: self.fec_packets_recovered_total.load(Ordering::Relaxed),
+            fec_packets_unrecovered_total: self
+                .fec_packets_unrecovered_total
+                .load(Ordering::Relaxed),
+            fec_negotiate_fail_total: self.fec_negotiate_fail_total.load(Ordering::Relaxed),
         }
     }
+}
+
+/// Extract the `reject:` reason key from a close reason string.
+///
+/// 从关闭原因字符串中提取 `reject:` 原因键。
+fn handshake_reject_reason_key(reason: &str) -> &str {
+    let Some(rest) = reason.strip_prefix("reject:") else {
+        return "unknown";
+    };
+    if rest.is_empty() {
+        return "unknown";
+    }
+    rest.split_once(':').map(|(key, _)| key).unwrap_or(rest)
 }
 
 /// Saturating decrement for atomic gauges.
@@ -226,8 +292,8 @@ mod tests {
         assert_eq!(snapshot.packets_in_total, 3);
         assert_eq!(snapshot.packets_out_total, 4);
         assert_eq!(snapshot.retransmit_total, 4);
-        assert_eq!(snapshot.lost_packets_total, 6);
-        assert_eq!(snapshot.duplicate_packets_total, 8);
+        assert_eq!(snapshot.receiver_lost_total, 6);
+        assert_eq!(snapshot.receiver_duplicate_total, 8);
         assert_eq!(snapshot.send_queue_depth, 9);
         assert_eq!(snapshot.recv_queue_depth, 10);
         assert_eq!(snapshot.rtt_micros, 11);
@@ -262,5 +328,28 @@ mod tests {
         let snapshot = metrics.snapshot();
         assert_eq!(snapshot.driver_errors_total, 2);
         assert_eq!(snapshot.send_queue_full_total, 1);
+    }
+
+    #[test]
+    fn handshake_reject_tracks_reasons() {
+        let metrics = SrtModuleMetrics::new();
+        metrics.inc_handshake_reject("reject:invalid_stream_id: missing r");
+        metrics.inc_handshake_reject("reject:auth_rejected");
+        metrics.inc_handshake_reject("reject:publish_conflict: foo");
+
+        let snapshot = metrics.snapshot();
+        assert_eq!(snapshot.handshake_reject_total, 3);
+        assert_eq!(
+            snapshot.handshake_reject_reasons.get("invalid_stream_id"),
+            Some(&1)
+        );
+        assert_eq!(
+            snapshot.handshake_reject_reasons.get("auth_rejected"),
+            Some(&1)
+        );
+        assert_eq!(
+            snapshot.handshake_reject_reasons.get("publish_conflict"),
+            Some(&1)
+        );
     }
 }

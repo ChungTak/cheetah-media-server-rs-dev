@@ -1,4 +1,5 @@
 use cheetah_sdk::BackpressurePolicy;
+use cheetah_srt_core::parse_srt_version;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -13,12 +14,20 @@ pub struct SrtModuleConfig {
     pub idle_timeout_ms: u64,
     pub connect_timeout_ms: u64,
     pub latency_ms: u64,
+    pub latency_mul: u32,
+    pub pkt_buf_size: usize,
     pub stats_interval_ms: u64,
+    pub default_vhost: String,
+    pub min_peer_srt_version: String,
+    pub local_srt_version: String,
+    pub require_peer_version_extension: bool,
     pub payload: SrtPayloadModuleConfig,
     pub encryption: SrtEncryptionModuleConfig,
     pub auth: SrtAuthConfig,
     pub ingress: SrtIngressConfig,
     pub egress: SrtEgressConfig,
+    pub stream_id: SrtStreamIdModuleConfig,
+    pub fec: SrtFecModuleConfig,
     pub ingress_jobs: Vec<SrtIngressJobConfig>,
     pub egress_jobs: Vec<SrtEgressJobConfig>,
     pub relay_jobs: Vec<SrtRelayJobConfig>,
@@ -71,6 +80,11 @@ pub struct SrtAuthUserConfig {
 ///
 /// 默认入口模式与流密钥行为。
 pub struct SrtIngressConfig {
+    /// Default when streamid omits `m`. ZLM-compatible default is `request` (play).
+    /// Set to `publish` to restore pre-compat behavior.
+    ///
+    /// streamid 缺少 `m` 时的默认模式。ZLM 兼容默认是 `request`（拉流）。
+    /// 设为 `publish` 可恢复旧行为。
     pub default_mode: String,
     pub default_publish_stream_key: String,
     pub publish_keepalive_ms: u64,
@@ -90,6 +104,30 @@ pub struct SrtEgressConfig {
     pub track_ready_timeout_ms: u64,
     pub send_queue_capacity: usize,
     pub disconnect_on_send_queue_overflow: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+/// Stream ID parsing options for ZLM-compatible behavior.
+///
+/// ZLM 兼容的 stream ID 解析选项。
+pub struct SrtStreamIdModuleConfig {
+    pub strict_prefix: bool,
+    pub strict_resource: bool,
+    pub allow_bare_key: bool,
+    pub stream_key_vhost_mode: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+/// Forward Error Correction configuration for SRT.
+///
+/// SRT 前向纠错配置。
+pub struct SrtFecModuleConfig {
+    pub enabled: bool,
+    pub required: bool,
+    pub cols: u32,
+    pub rows: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -146,12 +184,20 @@ impl Default for SrtModuleConfig {
             idle_timeout_ms: 30_000,
             connect_timeout_ms: 5_000,
             latency_ms: 120,
+            latency_mul: 4,
+            pkt_buf_size: 8192,
             stats_interval_ms: 5_000,
+            default_vhost: "__defaultVhost__".to_string(),
+            min_peer_srt_version: "1.3.0".to_string(),
+            local_srt_version: "1.5.0".to_string(),
+            require_peer_version_extension: false,
             payload: SrtPayloadModuleConfig::default(),
             encryption: SrtEncryptionModuleConfig::default(),
             auth: SrtAuthConfig::default(),
             ingress: SrtIngressConfig::default(),
             egress: SrtEgressConfig::default(),
+            stream_id: SrtStreamIdModuleConfig::default(),
+            fec: SrtFecModuleConfig::default(),
             ingress_jobs: Vec::new(),
             egress_jobs: Vec::new(),
             relay_jobs: Vec::new(),
@@ -180,7 +226,7 @@ impl Default for SrtEncryptionModuleConfig {
 impl Default for SrtIngressConfig {
     fn default() -> Self {
         Self {
-            default_mode: "publish".to_string(),
+            default_mode: "request".to_string(),
             default_publish_stream_key: String::new(),
             publish_keepalive_ms: 0,
         }
@@ -198,6 +244,28 @@ impl Default for SrtEgressConfig {
             track_ready_timeout_ms: 3_000,
             send_queue_capacity: 256,
             disconnect_on_send_queue_overflow: true,
+        }
+    }
+}
+
+impl Default for SrtStreamIdModuleConfig {
+    fn default() -> Self {
+        Self {
+            strict_prefix: true,
+            strict_resource: true,
+            allow_bare_key: false,
+            stream_key_vhost_mode: "app_only".to_string(),
+        }
+    }
+}
+
+impl Default for SrtFecModuleConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            required: false,
+            cols: 10,
+            rows: 5,
         }
     }
 }
@@ -257,5 +325,67 @@ impl SrtModuleConfig {
     /// 将默认配置序列化为 JSON。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap()
+    }
+
+    /// Validate runtime constraints beyond serde parsing.
+    ///
+    /// 校验 serde 解析之外的运行时约束。
+    pub fn validate(&self) -> Result<(), String> {
+        if self.payload.kind.eq_ignore_ascii_case("mpegts") {
+            // ok
+        } else {
+            return Err(format!(
+                "unsupported srt.payload.kind `{}`; only `mpegts` is supported",
+                self.payload.kind
+            ));
+        }
+
+        let mode = self.ingress.default_mode.to_ascii_lowercase();
+        if !matches!(mode.as_str(), "publish" | "request" | "play") {
+            return Err(format!(
+                "srt.ingress.default_mode must be `publish`, `request`, or `play`, got `{}`",
+                self.ingress.default_mode
+            ));
+        }
+
+        let vhost_mode = self.stream_id.stream_key_vhost_mode.to_ascii_lowercase();
+        if !matches!(vhost_mode.as_str(), "app_only" | "vhost_prefix") {
+            return Err(format!(
+                "srt.stream_id.stream_key_vhost_mode must be `app_only` or `vhost_prefix`, got `{}`",
+                self.stream_id.stream_key_vhost_mode
+            ));
+        }
+
+        parse_srt_version(&self.min_peer_srt_version)
+            .map_err(|err| format!("invalid srt.min_peer_srt_version: {err}"))?;
+        parse_srt_version(&self.local_srt_version)
+            .map_err(|err| format!("invalid srt.local_srt_version: {err}"))?;
+
+        self.fec.validate()?;
+
+        Ok(())
+    }
+}
+
+impl SrtFecModuleConfig {
+    /// Validate FEC matrix parameters.
+    ///
+    /// 校验 FEC 矩阵参数。
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.enabled {
+            if self.required {
+                return Err(
+                    "srt.fec.enabled must be true when srt.fec.required is true".to_string()
+                );
+            }
+            return Ok(());
+        }
+        if self.cols == 0 || self.rows == 0 {
+            return Err("srt.fec.cols and srt.fec.rows must be > 0 when enabled".to_string());
+        }
+        if self.cols.saturating_mul(self.rows) > 10_000 {
+            return Err("srt.fec matrix is too large".to_string());
+        }
+        Ok(())
     }
 }
