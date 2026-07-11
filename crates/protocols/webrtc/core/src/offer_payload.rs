@@ -8,23 +8,50 @@
 //!
 //! The function is case-insensitive on codec names (e.g. "h264" == "H264")
 //! and returns a structured error when a required codec is not found.
+//!
+//! 本模块从 SDP offer 中纯函数式提取 payload type。
+//!
+//! ABL 曾修复一个 bug（2025-06-12）：H264 payload 被硬编码而非从浏览器 SDP 提取；
+//! 2025-12-01 修复了 Opus payload 提取。本模块提供确定性的、无 I/O 的函数，
+//! 解析 `a=rtpmap:` 行并返回服务器关心的编解码器协商后的 payload type 数字。
+//!
+//! 函数对编解码器名称大小写不敏感（例如 "h264" == "H264"），并在找不到必需
+//! 编解码器时返回结构化错误。
 
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
 /// Codec identifiers that the server needs to extract from an SDP offer.
+///
+/// The set is intentionally small: these are the audio/video codecs that the
+/// downstream engine can currently ingest. Other codecs are ignored during
+/// payload extraction.
+///
+/// 服务器需要从 SDP offer 中提取的编解码器标识符。
+///
+/// 集合刻意保持较小：这些是下游引擎当前可接入的音频/视频编解码器。
+/// 其他编解码器在 payload 提取过程中被忽略。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum OfferCodec {
     /// H.264 video at 90 kHz clock rate.
+    ///
+    /// 90 kHz 时钟的 H.264 视频。
     H264,
     /// H.265 (HEVC) video at 90 kHz clock rate.
+    ///
+    /// 90 kHz 时钟的 H.265（HEVC）视频。
     H265,
     /// Opus audio at 48 kHz clock rate.
+    ///
+    /// 48 kHz 时钟的 Opus 音频。
     Opus,
 }
 
 impl fmt::Display for OfferCodec {
+    /// Format as `<codec>/<clock-rate>` for diagnostic messages.
+    ///
+    /// 格式化为 `<codec>/<clock-rate>` 供诊断消息使用。
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::H264 => write!(f, "H264/90000"),
@@ -39,18 +66,31 @@ impl fmt::Display for OfferCodec {
 /// Fields are `Option` because not every offer contains every codec.
 /// Use [`extract_offer_payloads`] to parse, then check which codecs
 /// are present for your use case.
+///
+/// 从 SDP offer 成功提取的 payload type 数字。
+///
+/// 字段为 `Option`，因为并非每个 offer 都包含所有编解码器。使用
+/// [`extract_offer_payloads`] 解析后，再检查当前用例包含哪些编解码器。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OfferPayloads {
     /// Payload type for H264/90000 (first match).
+    ///
+    /// H264/90000 的 payload type（首个匹配）。
     pub h264: Option<u8>,
     /// Payload type for H265/90000 (first match).
+    ///
+    /// H265/90000 的 payload type（首个匹配）。
     pub h265: Option<u8>,
     /// Payload type for opus/48000 (first match).
+    ///
+    /// opus/48000 的 payload type（首个匹配）。
     pub opus: Option<u8>,
 }
 
 impl OfferPayloads {
     /// Returns the payload type for the given codec, or `None` if not found.
+    ///
+    /// 返回指定编解码器的 payload type，若未找到则返回 `None`。
     pub fn get(&self, codec: OfferCodec) -> Option<u8> {
         match codec {
             OfferCodec::H264 => self.h264,
@@ -61,6 +101,8 @@ impl OfferPayloads {
 
     /// Require that specific codecs are present, returning a structured error
     /// listing all missing codecs if any are absent.
+    ///
+    /// 要求特定编解码器必须存在；若缺少则返回列出所有缺失编解码器的结构化错误。
     pub fn require(&self, codecs: &[OfferCodec]) -> Result<(), PayloadNotFound> {
         let missing: Vec<OfferCodec> = codecs
             .iter()
@@ -76,13 +118,26 @@ impl OfferPayloads {
 }
 
 /// Error returned when one or more required codecs are not found in the offer.
+///
+/// The `missing` vector preserves the order of the requested codecs so the
+/// caller can build a single error message covering all absent codecs.
+///
+/// offer 中未找到必需编解码器时返回的错误。
+///
+/// `missing` 向量保留请求编解码器的顺序，调用方可据此构建覆盖所有缺失编解码器
+/// 的单一错误消息。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PayloadNotFound {
     /// The codecs that were required but not present in the SDP offer.
+    ///
+    /// 要求但 SDP offer 中不存在的编解码器。
     pub missing: Vec<OfferCodec>,
 }
 
 impl fmt::Display for PayloadNotFound {
+    /// Human-readable list of missing codecs.
+    ///
+    /// 人类可读的缺失编解码器列表。
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "required codec payload not found in offer: ")?;
         for (i, codec) in self.missing.iter().enumerate() {
@@ -108,6 +163,16 @@ impl std::error::Error for PayloadNotFound {}
 ///
 /// This is a pure function with no I/O, no allocation beyond the result,
 /// and no dependency on external state.
+///
+/// 从 SDP offer 字符串中提取 payload type 数字。
+///
+/// 解析 `a=rtpmap:<pt> <codec>/<clock>[/<channels>]` 行并与已知编解码器集合匹配。
+/// 编解码器名称匹配 **大小写不敏感**。
+///
+/// 当多个 `a=rtpmap` 行匹配同一编解码器（例如两个不同 profile 的 H264 项）时，
+/// **首个**匹配获胜。这与 m-line 中浏览器的偏好排序一致。
+///
+/// 这是一个纯函数：无 I/O，除结果外无额外分配，且不依赖外部状态。
 ///
 /// # Examples
 ///
