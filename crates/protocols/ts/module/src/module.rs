@@ -1,4 +1,6 @@
 //! TS module factory and implementation.
+//!
+//! TS 模块工厂与实现。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,8 +28,14 @@ use crate::config::{TsModuleConfig, TsPullJobConfig};
 
 const MODULE_ID: &str = "ts";
 
+/// Factory for creating TS protocol modules.
+///
+/// TS 协议模块工厂。
 pub struct TsModuleFactory;
 
+/// `TsModuleFactory` implementation.
+///
+/// `TsModuleFactory` 实现。
 impl ModuleFactory for TsModuleFactory {
     fn manifest(&self) -> ModuleManifest {
         ModuleManifest {
@@ -62,6 +70,9 @@ impl ModuleFactory for TsModuleFactory {
     }
 }
 
+/// TS module runtime state.
+///
+/// TS 模块运行时状态。
 struct TsModule {
     state: ModuleState,
     config: TsModuleConfig,
@@ -78,6 +89,9 @@ impl TsModule {
     }
 }
 
+/// Translate module TLS config into the driver TLS config.
+///
+/// 将模块 TLS 配置转换为驱动 TLS 配置。
 fn driver_tls_config(config: &TsModuleConfig) -> Result<Option<DriverTsTlsConfig>, SdkError> {
     let Some(tls) = &config.tls else {
         return Ok(None);
@@ -99,6 +113,9 @@ fn driver_tls_config(config: &TsModuleConfig) -> Result<Option<DriverTsTlsConfig
     }))
 }
 
+/// `Module` lifecycle and runtime loop implementation for TS.
+///
+/// TS 的 `Module` 生命周期与运行时循环实现。
 #[async_trait]
 impl Module for TsModule {
     fn info(&self) -> ModuleInfo {
@@ -219,6 +236,8 @@ impl Module for TsModule {
 }
 
 /// Run a TS play session: subscribe to engine stream, mux to TS, send via driver.
+///
+/// 运行 TS 播放会话：订阅引擎流、复用为 TS 并通过驱动发送。
 async fn run_play_session(
     ctx: EngineContext,
     config: TsModuleConfig,
@@ -332,6 +351,9 @@ async fn run_play_session(
     let _ = subscriber.close().await;
 }
 
+/// Send PAT/PMT tables from the muxer to the connection.
+///
+/// 将复用器中的 PAT/PMT 表发送到连接。
 async fn send_tables(
     muxer: &mut MpegTsMuxer,
     cmd_sender: &TsCommandSender,
@@ -350,6 +372,8 @@ async fn send_tables(
 }
 
 /// Run a pull job with retry logic.
+///
+/// 以重试逻辑运行拉流任务。
 async fn run_pull_job_supervisor(
     ctx: &EngineContext,
     job: &TsPullJobConfig,
@@ -385,6 +409,8 @@ async fn run_pull_job_supervisor(
 }
 
 /// Single pull attempt: connect, demux, publish.
+///
+/// 单次拉流尝试：连接、解复用、发布。
 async fn run_single_pull(
     ctx: &EngineContext,
     job: &TsPullJobConfig,
@@ -410,6 +436,9 @@ async fn run_single_pull(
     result
 }
 
+/// Inner pull loop: read TS bytes, demux, and push frames into the engine.
+///
+/// 内部拉流循环：读取 TS 字节、解复用并将帧推入引擎。
 async fn run_pull_inner(
     _ctx: &EngineContext,
     job: &TsPullJobConfig,
@@ -482,6 +511,9 @@ async fn run_pull_inner(
     }
 }
 
+/// Wait for a stream to appear in the engine, with timeout and cancel support.
+///
+/// 等待引擎中的流出现，支持超时与取消。
 async fn wait_for_stream(
     ctx: &EngineContext,
     stream_key: &StreamKey,
@@ -508,6 +540,9 @@ async fn wait_for_stream(
     }
 }
 
+/// Sleep until `duration` or cancellation, whichever comes first.
+///
+/// 睡眠直到 `duration` 或取消，以先到者为准。
 async fn sleep_or_cancel(
     runtime_api: &dyn RuntimeApi,
     cancel: &CancellationToken,
