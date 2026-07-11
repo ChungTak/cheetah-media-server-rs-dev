@@ -101,6 +101,20 @@ impl FlvIngress {
         &self.tracks
     }
 
+    /// Reset all state, including tracks and timestamp unwrapping.
+    ///
+    /// 重置所有状态，包括轨道与时间戳解绕。
+    pub fn reset(&mut self) {
+        self.tracks.clear();
+        self.last_raw_timestamp = 0;
+        self.epoch_offset = 0;
+        self.next_track_id = 2;
+        self.has_video = false;
+        self.has_audio = false;
+        self.video_track_id = None;
+        self.audio_track_id = None;
+    }
+
     /// Process one FLV demux event and emit any output.
     ///
     /// 处理一个 FLV 解复用事件并发出输出。

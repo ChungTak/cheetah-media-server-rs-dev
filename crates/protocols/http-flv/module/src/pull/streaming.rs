@@ -259,6 +259,8 @@ async fn streaming_pull_once(
     ingress: &Arc<Mutex<FlvIngress>>,
     tx: &mut mpsc::Sender<Result<Arc<AVFrame>, SdkError>>,
 ) -> Result<(), HttpFlvPullError> {
+    ingress.lock().unwrap().reset();
+
     let mut stream = connect_stream(runtime_api.clone(), parsed)?;
     let request = format!(
         "GET {} HTTP/1.1\r\nHost: {}\r\nConnection: close\r\nAccept: video/x-flv\r\n\r\n",
