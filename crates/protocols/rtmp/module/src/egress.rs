@@ -24,6 +24,13 @@ use crate::ingest::{RTMP_AUDIO_RAW_SIDEDATA_MAGIC, RTMP_VIDEO_RAW_SIDEDATA_MAGIC
 use crate::route::RtmpPlayMode;
 use crate::session::PublishSession;
 
+/// Extracts the original RTMP video payload from a frame's opaque side data.
+///
+/// Used in direct-proxy mode to bypass re-encoding when forwarding RTMP-to-RTMP.
+///
+/// 从帧的 opaque side data 中提取原始 RTMP 视频负载。
+///
+/// 用于直接代理模式，在 RTMP 到 RTMP 转发时跳过重新编码。
 fn extract_raw_rtmp_video_payload(frame: &AVFrame) -> Option<Bytes> {
     frame.side_data.iter().find_map(|entry| {
         let cheetah_codec::FrameSideData::Opaque(raw) = entry else {
@@ -37,6 +44,13 @@ fn extract_raw_rtmp_video_payload(frame: &AVFrame) -> Option<Bytes> {
     })
 }
 
+/// Extracts the original RTMP audio payload from a frame's opaque side data.
+///
+/// Used in direct-proxy mode to bypass re-encoding when forwarding RTMP-to-RTMP.
+///
+/// 从帧的 opaque side data 中提取原始 RTMP 音频负载。
+///
+/// 用于直接代理模式，在 RTMP 到 RTMP 转发时跳过重新编码。
 fn extract_raw_rtmp_audio_payload(frame: &AVFrame) -> Option<Bytes> {
     frame.side_data.iter().find_map(|entry| {
         let cheetah_codec::FrameSideData::Opaque(raw) = entry else {
@@ -50,10 +64,21 @@ fn extract_raw_rtmp_audio_payload(frame: &AVFrame) -> Option<Bytes> {
     })
 }
 
+/// Converts an internal frame's DTS to the RTMP 32-bit millisecond timestamp.
+///
+/// 将内部帧的 DTS 转换为 RTMP 32 位毫秒时间戳。
 pub(crate) fn frame_dts_to_rtmp_timestamp_ms(frame: &AVFrame) -> u32 {
     core_frame_dts_to_rtmp_timestamp_ms(frame)
 }
 
+/// Maps the module-level `RtmpPlayMode` to the core's `RtmpFlvPlayMode`.
+///
+/// `FastPts` is mapped to `Normal` because the core handles fast-PTS by choosing
+/// the timestamp source separately.
+///
+/// 将模块层 `RtmpPlayMode` 映射为核心层 `RtmpFlvPlayMode`。
+///
+/// `FastPts` 映射为 `Normal`，因为核心层会单独选择时间戳来源。
 fn map_play_mode(mode: RtmpPlayMode) -> RtmpFlvPlayMode {
     match mode {
         RtmpPlayMode::Enhanced => RtmpFlvPlayMode::Enhanced,
@@ -61,6 +86,13 @@ fn map_play_mode(mode: RtmpPlayMode) -> RtmpFlvPlayMode {
     }
 }
 
+/// Converts a core FLV payload into a driver-level `RtmpCoreCommand`.
+///
+/// Dispatches by payload kind to `SendAudio`, `SendVideo`, or `SendMetadata`.
+///
+/// 将核心 FLV 负载转换为驱动层 `RtmpCoreCommand`。
+///
+/// 按负载类型分发为 `SendAudio`、`SendVideo` 或 `SendMetadata`。
 fn payload_to_core_command(
     stream_id: u32,
     payload: cheetah_rtmp_core::RtmpFlvPayload,
@@ -84,6 +116,14 @@ fn payload_to_core_command(
     }
 }
 
+/// Maps an internal `AVFrame` to an RTMP command for a specific stream.
+///
+/// If the frame carries raw RTMP side data (direct-proxy mode), that payload is
+/// sent directly; otherwise the core FLV payload mapper is used.
+///
+/// 将内部 `AVFrame` 映射为指定流的 RTMP 命令。
+///
+/// 若帧携带 raw RTMP side data（直接代理模式），直接发送该负载；否则调用核心 FLV 映射。
 pub(crate) fn map_frame_to_rtmp_with_tracks(
     stream_id: u32,
     frame: Arc<AVFrame>,
@@ -133,6 +173,14 @@ pub(crate) fn map_non_h264_video(
     Some(payload_to_core_command(stream_id, payload))
 }
 
+/// Sends bootstrap sequence headers and metadata for a play stream.
+///
+/// Bootstrap commands include video/audio sequence headers and, optionally,
+/// `onMetaData` and a silent AAC audio packet.
+///
+/// 向播放流发送引导序列头与元数据。
+///
+/// 引导命令包含视频/音频序列头，以及可选的 `onMetaData` 与静音 AAC 音频包。
 pub(crate) async fn send_track_bootstrap(
     connection_id: RtmpConnectionId,
     stream_id: u32,
@@ -155,6 +203,9 @@ pub(crate) async fn send_track_bootstrap(
     Ok(())
 }
 
+/// Builds the list of RTMP bootstrap commands for the given tracks and play mode.
+///
+/// 为给定轨道与播放模式构建 RTMP 引导命令列表。
 pub(crate) fn build_track_bootstrap_commands(
     stream_id: u32,
     tracks: &[TrackInfo],
@@ -192,32 +243,55 @@ pub(crate) fn build_h266_config(vps: &[Bytes], sps: &[Bytes], pps: &[Bytes]) -> 
     core_build_h266_config(vps, sps, pps)
 }
 
+/// Returns true if the track list contains an audio track.
+///
+/// 判断轨道列表中是否包含音频轨道。
 pub(crate) fn track_list_has_audio(tracks: &[TrackInfo]) -> bool {
     tracks
         .iter()
         .any(|track| track.media_kind == MediaKind::Audio)
 }
 
+/// Returns true if the track list contains a video track.
+///
+/// 判断轨道列表中是否包含视频轨道。
 pub(crate) fn track_list_has_video(tracks: &[TrackInfo]) -> bool {
     tracks
         .iter()
         .any(|track| track.media_kind == MediaKind::Video)
 }
 
+/// Returns true if the track list contains at least one RTMP/FLV-playable codec.
+///
+/// 判断轨道列表中是否至少包含一种 RTMP/FLV 可播放的编解码器。
 pub(crate) fn track_list_has_supported_playback_codec(tracks: &[TrackInfo]) -> bool {
     tracks
         .iter()
         .any(|track| rtmp_playback_codec_supported(track.media_kind, track.codec))
 }
 
+/// Checks whether a media kind/codec pair can be played back over RTMP/FLV.
+///
+/// 检查媒体类型/编解码器组合是否可通过 RTMP/FLV 播放。
 pub(crate) fn rtmp_playback_codec_supported(media_kind: MediaKind, codec: CodecId) -> bool {
     core_rtmp_playback_codec_supported(media_kind, codec)
 }
 
+/// Returns true if the track list contains the given codec.
+///
+/// 判断轨道列表中是否包含指定编解码器。
 pub(crate) fn track_list_has_codec(tracks: &[TrackInfo], codec: CodecId) -> bool {
     tracks.iter().any(|track| track.codec == codec)
 }
 
+/// Returns true if the publish session should be released with a short delay.
+///
+/// H264 publishers are delayed briefly so that pending play requests can discover
+/// the stream before the lease is released.
+///
+/// 判断是否需要延迟释放发布会话。
+///
+/// H264 发布者短暂延迟释放，使待起播请求能在租约释放前发现该流。
 pub(crate) fn should_delay_publish_release_for_h264(session: &PublishSession) -> bool {
     session
         .tracks
@@ -226,15 +300,38 @@ pub(crate) fn should_delay_publish_release_for_h264(session: &PublishSession) ->
         .is_some_and(|track| track.codec == CodecId::H264)
 }
 
+/// Returns `(emit_play_status, emit_sample_access)` for a play accept response.
+///
+/// Both flags are enabled when at least one track exists.
+///
+/// 返回播放接受响应的 `(emit_play_status, emit_sample_access)`。
+///
+/// 当至少存在一条轨道时两者均启用。
 pub(crate) fn play_accept_flags(tracks: &[TrackInfo]) -> (bool, bool) {
     let enabled = track_list_has_video(tracks) || track_list_has_audio(tracks);
     (enabled, enabled)
 }
 
+/// Returns true if a play session should be closed immediately when the source ends.
+///
+/// HEVC streams may carry stale backlog after the source is gone; closing right away
+/// avoids playing stale frames.
+///
+/// 判断播放会话是否应在源流结束时立即关闭。
+///
+/// HEVC 流在源断开后可能残留过期积压，立即关闭可避免播放过期帧。
 pub(crate) fn should_force_close_play_on_source_end(tracks: &[TrackInfo]) -> bool {
     track_list_has_codec(tracks, CodecId::H265)
 }
 
+/// Generates a silent AAC audio packet at the given timestamp.
+///
+/// Rate-limited to one packet per 128 ms so players keep the audio pipeline alive
+/// when the source has no audio track.
+///
+/// 在给定时间戳生成一个静音 AAC 音频包。
+///
+/// 限速为每 128 ms 一个包，用于源没有音频轨道时保持播放器音频管线活跃。
 pub(crate) fn maybe_make_mute_audio(
     stream_id: u32,
     timestamp_ms: u32,
@@ -253,6 +350,9 @@ pub(crate) fn maybe_make_mute_audio(
     })
 }
 
+/// Returns the payload bytes for a silent AAC audio frame.
+///
+/// 返回静音 AAC 音频帧的负载字节。
 fn mute_aac_frame_payload() -> Bytes {
     core_mute_aac_frame_payload()
 }

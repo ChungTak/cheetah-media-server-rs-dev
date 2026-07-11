@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::route::parse_stream_key_spec;
 
+/// RTMP module configuration, including listen endpoints, jobs, and thresholds.
+///
+/// RTMP 模块配置，包含监听端点、任务与告警阈值。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpModuleConfig {
@@ -51,6 +54,9 @@ pub struct RtmpModuleConfig {
     pub direct_proxy: bool,
 }
 
+/// Configuration for an RTMP pull job (remote RTMP -> local stream).
+///
+/// RTMP 拉流任务配置（远程 RTMP -> 本地流）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpPullJobConfig {
@@ -72,6 +78,9 @@ pub struct RtmpPullJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+/// Configuration for an RTMP push job (local stream -> remote RTMP).
+///
+/// RTMP 推流任务配置（本地流 -> 远程 RTMP）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpPushJobConfig {
@@ -93,6 +102,9 @@ pub struct RtmpPushJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+/// Configuration for an RTMP relay job (remote -> local -> remote).
+///
+/// RTMP 转发任务配置（远程 -> 本地 -> 远程）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpRelayJobConfig {
@@ -112,6 +124,9 @@ pub struct RtmpRelayJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+/// Observability alert thresholds for the RTMP module.
+///
+/// RTMP 模块可观测性告警阈值。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpAlertThresholds {
@@ -123,7 +138,9 @@ pub struct RtmpAlertThresholds {
     pub queue_drop_count: u64,
 }
 
-/// RTMPS (TLS) 配置。
+/// RTMPS (TLS) listener configuration.
+///
+/// RTMPS (TLS) 监听配置。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpTlsModuleConfig {
@@ -230,7 +247,9 @@ impl Default for RtmpTlsModuleConfig {
     }
 }
 
-/// RTMP 鉴权配置。
+/// RTMP publish/play authorization configuration.
+///
+/// RTMP 发布/播放鉴权配置。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpAuthConfig {
@@ -244,6 +263,9 @@ pub struct RtmpAuthConfig {
 }
 
 impl RtmpModuleConfig {
+    /// Parses the module configuration from a JSON value and validates it.
+    ///
+    /// 从 JSON 值解析并校验模块配置。
     pub fn from_value(value: serde_json::Value) -> Result<Self, SdkError> {
         let cfg: Self = serde_json::from_value(value)
             .map_err(|err| SdkError::InvalidArgument(format!("invalid rtmp config: {err}")))?;
@@ -251,6 +273,9 @@ impl RtmpModuleConfig {
         Ok(cfg)
     }
 
+    /// Validates the RTMP module configuration, including listen addresses, job specs, and thresholds.
+    ///
+    /// 校验 RTMP 模块配置，包括监听地址、任务规格与告警阈值。
     pub fn validate(&self) -> Result<(), SdkError> {
         self.listen
             .parse::<SocketAddr>()
@@ -391,6 +416,9 @@ impl RtmpModuleConfig {
         Ok(())
     }
 
+    /// Returns the default configuration as a JSON value for schema registration.
+    ///
+    /// 返回默认配置的 JSON 值，用于 schema 注册。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).expect("serialize default rtmp config")
     }
