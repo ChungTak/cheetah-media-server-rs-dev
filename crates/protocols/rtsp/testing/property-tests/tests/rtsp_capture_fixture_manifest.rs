@@ -1,3 +1,14 @@
+//! Regression tests for RTSP capture fixture manifest and binary format validation.
+//!
+//! These tests assert that the committed manifest is well-formed, the custom
+//! `rtspcap` binary format is decoded correctly, and the fault-view generators
+//! cover the required transport modes.
+//!
+//! RTSP 抓包 fixture 清单与二进制格式验证回归测试。
+//!
+//! 这些测试断言已提交清单格式正确、自定义 `rtspcap` 二进制格式正确解码，
+//! 以及故障视图生成器覆盖所需传输模式。
+
 #[allow(dead_code)]
 #[path = "support/rtsp_capture_fixture.rs"]
 mod rtsp_capture_fixture;
@@ -6,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use cheetah_rtsp_core::{CoreInput, CoreOutput, RtspCore, RtspMethod, RtspRequest};
+use cheetah_rtsp_core::{CoreInput, CoreOutput, RtspCore, RtspEvent, RtspMethod, RtspRequest};
 use rtsp_capture_fixture::{
     build_tcp_fault_views, build_transport_fault_views, build_udp_rtp_fault_views, decode_rtspcap,
     load_capture_fixtures, parse_manifest, validate_manifest, CaptureFaultViewError,
@@ -14,8 +25,14 @@ use rtsp_capture_fixture::{
     MAX_FIXTURE_BYTES,
 };
 
+/// Embedded manifest content.
+///
+/// 内嵌清单内容。
 const MANIFEST: &str = include_str!("testdata/rtsp-capture/manifest.tsv");
 
+/// Check whether a fixture role is a standard, supported role.
+///
+/// 检查 fixture 角色是否为受支持的标准角色。
 fn is_standard_role(role: CaptureRole) -> bool {
     matches!(
         role,
@@ -31,6 +48,9 @@ fn is_standard_role(role: CaptureRole) -> bool {
     )
 }
 
+/// The committed manifest header must match the expected schema and fixture counts.
+///
+/// 已提交清单表头必须匹配预期模式与 fixture 数量。
 #[test]
 fn committed_manifest_header_is_valid() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/rtsp-capture");
@@ -80,6 +100,9 @@ fn committed_manifest_header_is_valid() {
     }
 }
 
+/// An environment-generated manifest, if present, must also be valid.
+///
+/// 若存在环境生成的清单，也必须有效。
 #[test]
 fn generated_manifest_from_env_is_valid() {
     let Ok(root) = std::env::var("RTSP_CAPTURE_FIXTURE_DIR") else {
@@ -96,6 +119,9 @@ fn generated_manifest_from_env_is_valid() {
     );
 }
 
+/// `rtspcap` records with valid fields must decode correctly.
+///
+/// 字段有效的 `rtspcap` 记录必须正确解码。
 #[test]
 fn decode_rtspcap_accepts_valid_records() {
     let bytes = build_rtspcap(&[(1, 1, 11, 10, b"A"), (7, 5, 12, 30, b"BC")]);
@@ -108,6 +134,9 @@ fn decode_rtspcap_accepts_valid_records() {
     assert_eq!(records[1].payload, b"BC");
 }
 
+/// Bad `rtspcap` magic is rejected.
+///
+/// 错误的 `rtspcap` 魔数被拒绝。
 #[test]
 fn decode_rtspcap_rejects_bad_magic() {
     let mut bytes = build_rtspcap(&[(1, 1, 1, 0, b"payload")]);
@@ -119,6 +148,9 @@ fn decode_rtspcap_rejects_bad_magic() {
     ));
 }
 
+/// Truncated payload bytes are rejected.
+///
+/// 截断的 payload 字节被拒绝。
 #[test]
 fn decode_rtspcap_rejects_truncated_payload() {
     let mut bytes = build_rtspcap(&[(1, 1, 1, 0, b"payload")]);
@@ -130,6 +162,9 @@ fn decode_rtspcap_rejects_truncated_payload() {
     ));
 }
 
+/// Zero-length records are rejected.
+///
+/// 零长度记录被拒绝。
 #[test]
 fn decode_rtspcap_rejects_zero_length_record() {
     let bytes = build_rtspcap(&[(1, 1, 1, 0, b"")]);
@@ -140,6 +175,9 @@ fn decode_rtspcap_rejects_zero_length_record() {
     ));
 }
 
+/// Unknown record kinds are rejected.
+///
+/// 未知记录类型被拒绝。
 #[test]
 fn decode_rtspcap_rejects_invalid_record_kind() {
     let bytes = build_rtspcap(&[(9, 1, 1, 0, b"payload")]);
@@ -150,6 +188,9 @@ fn decode_rtspcap_rejects_invalid_record_kind() {
     ));
 }
 
+/// Trailing bytes after the declared record count are rejected.
+///
+/// 声明记录数后的尾随字节被拒绝。
 #[test]
 fn decode_rtspcap_rejects_trailing_bytes() {
     let mut bytes = build_rtspcap(&[(1, 1, 1, 0, b"payload")]);
@@ -161,6 +202,9 @@ fn decode_rtspcap_rejects_trailing_bytes() {
     ));
 }
 
+/// Invalid record flags are rejected.
+///
+/// 无效记录标志被拒绝。
 #[test]
 fn decode_rtspcap_rejects_invalid_record_flags() {
     let bytes = build_rtspcap(&[(1, 0, 1, 0, b"payload")]);
@@ -171,6 +215,9 @@ fn decode_rtspcap_rejects_invalid_record_flags() {
     ));
 }
 
+/// A manifest without the expected header is rejected.
+///
+/// 没有预期表头的清单被拒绝。
 #[test]
 fn manifest_rejects_bad_header() {
     let err = parse_manifest("bad\theader\n").expect_err("bad header should fail");
@@ -181,6 +228,9 @@ fn manifest_rejects_bad_header() {
     ));
 }
 
+/// A manifest row with the wrong number of fields is rejected.
+///
+/// 字段数错误的清单行被拒绝。
 #[test]
 fn manifest_rejects_bad_field_count() {
     let input = format!("{MANIFEST_HEADER}\ncase\ttoo-short\n");
@@ -196,6 +246,9 @@ fn manifest_rejects_bad_field_count() {
     ));
 }
 
+/// An unknown role string is rejected.
+///
+/// 未知角色字符串被拒绝。
 #[test]
 fn manifest_rejects_invalid_role() {
     let input = format!(
@@ -209,6 +262,9 @@ fn manifest_rejects_invalid_role() {
     ));
 }
 
+/// An unknown transport string is rejected.
+///
+/// 未知传输字符串被拒绝。
 #[test]
 fn manifest_rejects_invalid_transport() {
     let input = format!(
@@ -226,6 +282,9 @@ fn manifest_rejects_invalid_transport() {
     ));
 }
 
+/// Fixture paths outside the manifest root are rejected.
+///
+/// 清单根目录外的 fixture 路径被拒绝。
 #[test]
 fn manifest_rejects_unsafe_fixture_path() {
     let input = format!(
@@ -237,6 +296,9 @@ fn manifest_rejects_unsafe_fixture_path() {
     assert!(matches!(err, CaptureFixtureError::UnsafeFixturePath { .. }));
 }
 
+/// Extended transport and role enumerations are accepted.
+///
+/// 扩展传输与角色枚举被接受。
 #[test]
 fn manifest_accepts_extended_transport_and_role_enums() {
     let input = format!(
@@ -253,6 +315,9 @@ case-f\tcapture-f.pcap\tstream-f\tv=h264@1x1;a=aac@ch2\tnone\tnone\ttransport_fa
     assert_eq!(rows.len(), 6);
 }
 
+/// A referenced fixture missing from disk is rejected.
+///
+/// 磁盘上缺失的引用 fixture 被拒绝。
 #[test]
 fn manifest_rejects_missing_fixture() {
     let input = format!(
@@ -267,6 +332,9 @@ fn manifest_rejects_missing_fixture() {
     ));
 }
 
+/// A fixture larger than the allowed size is rejected.
+///
+/// 超过允许大小的 fixture 被拒绝。
 #[test]
 fn manifest_rejects_fixture_exceeding_size_limit() {
     let temp_root = create_temp_fixture_root("rtsp_manifest_fixture_too_large");
@@ -291,6 +359,9 @@ fn manifest_rejects_fixture_exceeding_size_limit() {
     let _ = std::fs::remove_dir_all(&temp_root);
 }
 
+/// The fixture matrix covers the required server/publish/play/job roles.
+///
+/// fixture 矩阵覆盖所需的服务/发布/播放/任务角色。
 #[test]
 fn fixture_matrix_covers_server_publish_play_and_rtsp_jobs() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/rtsp-capture");
@@ -363,6 +434,9 @@ fn fixture_matrix_covers_server_publish_play_and_rtsp_jobs() {
     );
 }
 
+/// TCP fault views include all required named variants.
+///
+/// TCP 故障视图包含所有必需的命名变体。
 #[test]
 fn tcp_fault_views_cover_required_modes() {
     let records = sample_records();
@@ -386,6 +460,9 @@ fn tcp_fault_views_cover_required_modes() {
     }
 }
 
+/// UDP fault views include all required named variants.
+///
+/// UDP 故障视图包含所有必需的命名变体。
 #[test]
 fn udp_fault_views_cover_required_modes() {
     let records = sample_records();
@@ -407,6 +484,9 @@ fn udp_fault_views_cover_required_modes() {
     }
 }
 
+/// Fault-view generators reject invalid configuration parameters.
+///
+/// 故障视图生成器拒绝无效配置参数。
 #[test]
 fn fault_view_rejects_invalid_configuration() {
     let records = sample_records();
@@ -431,6 +511,9 @@ fn fault_view_rejects_invalid_configuration() {
     ));
 }
 
+/// Transport fault views cover TCP, interleaved, UDP, HTTP, and multicast paths.
+///
+/// 传输层故障视图覆盖 TCP、交错、UDP、HTTP 与组播路径。
 #[test]
 fn transport_fault_views_cover_tcp_interleaved_udp_http_multicast() {
     let views = build_transport_fault_views(&sample_transport_matrix_records(), 2, 3, 2)
@@ -456,6 +539,9 @@ fn transport_fault_views_cover_tcp_interleaved_udp_http_multicast() {
     }
 }
 
+/// Build an in-memory `rtspcap` byte vector from a list of synthetic records.
+///
+/// 根据一组合成记录在内存中构造 `rtspcap` 字节向量。
 fn build_rtspcap(records: &[(u8, u8, u16, u32, &[u8])]) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(b"RSF1");
@@ -471,6 +557,9 @@ fn build_rtspcap(records: &[(u8, u8, u16, u32, &[u8])]) -> Vec<u8> {
     bytes
 }
 
+/// Generate a sample set of capture records for fault-view unit tests.
+///
+/// 为故障视图单元测试生成一组示例抓包记录。
 fn sample_records() -> Vec<CaptureRecord> {
     vec![
         CaptureRecord {
@@ -511,6 +600,9 @@ fn sample_records() -> Vec<CaptureRecord> {
     ]
 }
 
+/// Generate a sample set that covers TCP, interleaved, UDP, and multicast records.
+///
+/// 生成覆盖 TCP、交错、UDP 与组播记录的示例集合。
 fn sample_transport_matrix_records() -> Vec<CaptureRecord> {
     vec![
         CaptureRecord {
@@ -572,6 +664,9 @@ fn sample_transport_matrix_records() -> Vec<CaptureRecord> {
     ]
 }
 
+/// Create a temporary fixture root for negative-size tests.
+///
+/// 为大小限制负向测试创建临时 fixture 根目录。
 fn create_temp_fixture_root(prefix: &str) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -582,6 +677,9 @@ fn create_temp_fixture_root(prefix: &str) -> PathBuf {
     root
 }
 
+/// Decode all RTSP requests from a slice of capture records.
+///
+/// 从抓包记录切片中解码所有 RTSP 请求。
 fn decode_requests_from_records(records: &[CaptureRecord]) -> Result<Vec<RtspRequest>, String> {
     let mut core = RtspCore::new();
     let mut requests = Vec::new();
@@ -593,7 +691,7 @@ fn decode_requests_from_records(records: &[CaptureRecord]) -> Result<Vec<RtspReq
             .handle_input(CoreInput::Bytes(Bytes::copy_from_slice(&record.payload)))
             .map_err(|err| err.to_string())?;
         for output in outputs {
-            if let CoreOutput::Event(cheetah_rtsp_core::RtspEvent::Request(request)) = output {
+            if let CoreOutput::Event(RtspEvent::Request(request)) = output {
                 requests.push(request);
             }
         }
@@ -601,6 +699,9 @@ fn decode_requests_from_records(records: &[CaptureRecord]) -> Result<Vec<RtspReq
     Ok(requests)
 }
 
+/// Count the number of RTP and RTCP packets in the records.
+///
+/// 统计记录中的 RTP 与 RTCP 包数量。
 fn count_rtp_rtcp_packets(records: &[CaptureRecord]) -> (usize, usize) {
     let mut rtp_count = 0usize;
     let mut rtcp_count = 0usize;
@@ -624,6 +725,9 @@ fn count_rtp_rtcp_packets(records: &[CaptureRecord]) -> (usize, usize) {
     (rtp_count, rtcp_count)
 }
 
+/// Collect the unique track control suffixes from SETUP requests.
+///
+/// 从 SETUP 请求收集唯一的 track control 后缀。
 fn unique_setup_track_controls(requests: &[RtspRequest]) -> std::collections::BTreeSet<String> {
     let mut out = std::collections::BTreeSet::new();
     for request in requests {
@@ -637,6 +741,9 @@ fn unique_setup_track_controls(requests: &[RtspRequest]) -> std::collections::BT
     out
 }
 
+/// Check whether a media signature string indicates an audio-only fixture.
+///
+/// 检查媒体签名字符串是否表示仅音频 fixture。
 fn is_audio_only_media_sig(media_sig: &str) -> bool {
     media_sig.starts_with("v=none@")
 }

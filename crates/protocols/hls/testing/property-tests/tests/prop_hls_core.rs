@@ -1,3 +1,24 @@
+//! Property-based tests for the HLS protocol core.
+//!
+//! These tests cover three surfaces of `cheetah-hls-core`:
+//! - `PlaylistBuilder` and `SegmentRing`: media playlist invariants such as
+//!   `#EXTM3U` header, `TARGETDURATION` >= max `#EXTINF`, segment count, and
+//!   the absence of `#EXT-X-ENDLIST` for live playlists.
+//! - `TsMuxer`: MPEG-TS packet framing invariants (188-byte alignment, sync
+//!   byte 0x47 on every packet) for arbitrary payload sizes and codecs.
+//! - `parse_hls_request`: request parser never panics and accepts canonical
+//!   master playlist URLs.
+//!
+//! HLS 协议核心属性测试。
+//!
+//! 这些测试覆盖 `cheetah-hls-core` 的三个表面：
+//! - `PlaylistBuilder` 与 `SegmentRing`：媒体播放列表不变量，如 `#EXTM3U` 头、
+//!   `TARGETDURATION` 不小于最大 `#EXTINF`、段数统计以及直播播放列表无
+//!   `#EXT-X-ENDLIST`。
+//! - `TsMuxer`：MPEG-TS 包成帧不变量（188 字节对齐、每个包同步字节 0x47），
+//!   覆盖任意负载大小与编解码器。
+//! - `parse_hls_request`：请求解析器永不 panic 并接受规范的主播放列表 URL。
+
 use bytes::Bytes;
 use cheetah_codec::CodecId;
 use cheetah_hls_core::{parse_hls_request, PlaylistBuilder, SegmentRing, TsMuxer};
@@ -5,11 +26,17 @@ use proptest::prelude::*;
 
 // --- Playlist invariants ---
 
+/// Generate a segment duration in seconds from milliseconds in [500, 10000).
+///
+/// 以毫秒 [500, 10000) 生成秒为单位的段时长。
 fn segment_duration() -> impl Strategy<Value = f64> {
     (500u64..10000).prop_map(|ms| ms as f64 / 1000.0)
 }
 
 proptest! {
+    /// A media playlist always starts with `#EXTM3U`.
+    ///
+    /// 媒体播放列表始终以 `#EXTM3U` 开头。
     #[test]
     fn prop_media_playlist_starts_with_extm3u(
         durations in proptest::collection::vec(segment_duration(), 1..10)
@@ -22,6 +49,9 @@ proptest! {
         prop_assert!(m3u8.starts_with("#EXTM3U\n"));
     }
 
+    /// `TARGETDURATION` is always greater than or equal to the maximum `#EXTINF`.
+    ///
+    /// `TARGETDURATION` 始终大于或等于最大的 `#EXTINF`。
     #[test]
     fn prop_target_duration_gte_max_extinf(
         durations in proptest::collection::vec(segment_duration(), 1..10)
@@ -44,6 +74,9 @@ proptest! {
         }
     }
 
+    /// The number of `#EXTINF` entries matches the number of pushed segments.
+    ///
+    /// `#EXTINF` 条目数与压入 ring 的段数一致。
     #[test]
     fn prop_segment_count_matches_ring(
         count in 1usize..8
@@ -57,6 +90,9 @@ proptest! {
         prop_assert_eq!(extinf_count, count);
     }
 
+    /// Live playlists never contain `#EXT-X-ENDLIST`.
+    ///
+    /// 直播播放列表不包含 `#EXT-X-ENDLIST`。
     #[test]
     fn prop_no_endlist_for_live(
         count in 1usize..5
@@ -71,6 +107,9 @@ proptest! {
 
     // --- TS muxer invariants ---
 
+    /// TS muxer output is always 188-byte aligned and starts with sync byte 0x47.
+    ///
+    /// TS 复用器输出始终 188 字节对齐，并以同步字节 0x47 开始。
     #[test]
     fn prop_ts_output_188_aligned(
         payload_len in 1usize..2000,
@@ -84,6 +123,9 @@ proptest! {
         prop_assert_eq!(segment.len() % 188, 0, "output not 188-aligned: {} bytes", segment.len());
     }
 
+    /// Every TS packet in a muxer segment begins with the sync byte 0x47.
+    ///
+    /// 复用器输出中每个 TS 包都以同步字节 0x47 开始。
     #[test]
     fn prop_ts_all_sync_bytes(
         payload_len in 1usize..500,
@@ -101,11 +143,17 @@ proptest! {
 
     // --- Request parser invariants ---
 
+    /// `parse_hls_request` never panics on arbitrary input.
+    ///
+    /// `parse_hls_request` 对任意输入不 panic。
     #[test]
     fn prop_parse_never_panics(input in "\\PC{0,200}") {
         let _ = parse_hls_request(&input);
     }
 
+    /// A valid master playlist URL (`/{ns}/{stream}.m3u8`) parses successfully.
+    ///
+    /// 有效的主播放列表 URL（`/{ns}/{stream}.m3u8`）可以成功解析。
     #[test]
     fn prop_valid_master_playlist_roundtrip(
         ns in "[a-z]{1,10}",

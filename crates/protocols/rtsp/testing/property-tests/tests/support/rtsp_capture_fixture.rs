@@ -1,14 +1,49 @@
+//! Capture fixture loader and fault-view generator for RTSP property tests.
+//!
+//! The `rtspcap` format is a simple binary container of timestamped records. This
+//! module parses the manifest, loads fixtures, decodes the binary records, and
+//! exposes `NamedPayloadView` generators that simulate TCP/UDP/interleaved/
+//! HTTP/multicast transport faults.
+//!
+//! RTSP 属性测试的抓包 fixture 加载器与故障视图生成器。
+//!
+//! `rtspcap` 格式是一种带时间戳记录的二进制简单容器。本模块解析清单、加载
+//! fixture、解码二进制记录，并暴露 `NamedPayloadView` 生成器以模拟 TCP/UDP/交错/
+//! HTTP/组播传输故障。
+
 use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
+/// TSV header that must match the first line of `manifest.tsv`.
+///
+/// `manifest.tsv` 第一行必须匹配的 TSV 表头。
 pub const MANIFEST_HEADER: &str = "case\tsource_pcap\tstream_name\tmedia_sig\tpush_transport\tpull_transport\trole\tfixture\texpect_methods\texpect_rtp_min\texpect_rtcp_min\texpect_tracks_min\tnotes";
+
+/// Maximum fixture file size in bytes.
+///
+/// fixture 文件的最大字节数。
 pub const MAX_FIXTURE_BYTES: u64 = 524_288;
+
+/// Magic four bytes for the `rtspcap` binary format.
+///
+/// `rtspcap` 二进制格式魔数。
 const RTSPCAP_MAGIC: &[u8; 4] = b"RSF1";
+
+/// Number of tab-separated fields in each manifest row.
+///
+/// 清单每行中制表符分隔的字段数。
 const MANIFEST_FIELD_COUNT: usize = 13;
+
+/// Accepted record flag bits for `rtspcap` records.
+///
+/// `rtspcap` 记录可接受的标志位。
 const KNOWN_RECORD_FLAGS: u8 = 0x01 | 0x02 | 0x04;
 
+/// Transport used for the RTSP stream path.
+///
+/// RTSP 流路径使用的传输方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureTransport {
     Tcp,
@@ -20,6 +55,9 @@ pub enum CaptureTransport {
 }
 
 impl CaptureTransport {
+    /// Parse a transport string from the manifest.
+    ///
+    /// 从清单中解析传输字符串。
     fn parse(line: usize, field: &'static str, value: &str) -> Result<Self, CaptureFixtureError> {
         match value {
             "tcp" => Ok(Self::Tcp),
@@ -37,6 +75,9 @@ impl CaptureTransport {
     }
 }
 
+/// Role of the capture fixture in the test matrix.
+///
+/// 抓包 fixture 在测试矩阵中的角色。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureRole {
     StandardPublishTcp,
@@ -53,6 +94,9 @@ pub enum CaptureRole {
 }
 
 impl CaptureRole {
+    /// Parse a role string from the manifest.
+    ///
+    /// 从清单中解析角色字符串。
     fn parse(line: usize, value: &str) -> Result<Self, CaptureFixtureError> {
         match value {
             "standard_publish_tcp" => Ok(Self::StandardPublishTcp),
@@ -74,6 +118,9 @@ impl CaptureRole {
     }
 }
 
+/// Kind of a record in the `rtspcap` binary container.
+///
+/// `rtspcap` 二进制容器中的记录类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureRecordKind {
     RtspTcpC2s,
@@ -87,6 +134,9 @@ pub enum CaptureRecordKind {
 }
 
 impl CaptureRecordKind {
+    /// Parse a one-byte record kind.
+    ///
+    /// 解析一字节记录类型。
     fn parse(raw: u8) -> Result<Self, CaptureFixtureError> {
         match raw {
             1 => Ok(Self::RtspTcpC2s),
@@ -102,6 +152,9 @@ impl CaptureRecordKind {
     }
 }
 
+/// One row of the capture fixture manifest.
+///
+/// 抓包 fixture 清单的一行。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureManifestRow {
     pub line: usize,
@@ -120,6 +173,9 @@ pub struct CaptureManifestRow {
     pub notes: String,
 }
 
+/// One decoded record from the `rtspcap` binary container.
+///
+/// 从 `rtspcap` 二进制容器解码出的一条记录。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureRecord {
     pub kind: CaptureRecordKind,
@@ -129,24 +185,36 @@ pub struct CaptureRecord {
     pub payload: Vec<u8>,
 }
 
+/// A loaded fixture: manifest row plus decoded records.
+///
+/// 加载后的 fixture：清单行与解码记录。
 #[derive(Debug, Clone)]
 pub struct CaptureFixture {
     pub row: CaptureManifestRow,
     pub records: Vec<CaptureRecord>,
 }
 
+/// A named `Vec<Vec<u8>>` view of a payload stream used for fault injection.
+///
+/// 用于故障注入的 payload 流具名视图。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NamedPayloadView {
     pub name: &'static str,
     pub payloads: Vec<Vec<u8>>,
 }
 
+/// Error produced when building fault views.
+///
+/// 构造故障视图时产生的错误。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CaptureFaultViewError {
     InvalidConfig { view: &'static str, detail: String },
     EmptyInput { view: &'static str },
 }
 
+/// Error produced when loading or validating capture fixtures.
+///
+/// 加载或验证抓包 fixture 时产生的错误。
 #[derive(Debug)]
 pub enum CaptureFixtureError {
     MissingManifestHeader,
@@ -277,21 +345,15 @@ impl fmt::Display for CaptureFixtureError {
             Self::ZeroLengthRecord { index } => {
                 write!(f, "rtspcap record {index} has zero length")
             }
-            Self::InvalidRecordKind { raw } => {
-                write!(f, "invalid rtspcap record kind {raw}")
-            }
+            Self::InvalidRecordKind { raw } => write!(f, "invalid rtspcap record kind {raw}"),
             Self::InvalidRecordFlags { raw } => {
                 write!(f, "invalid rtspcap record flags 0x{raw:02x}")
             }
-            Self::RecordCountMismatch { expected, actual } => {
-                write!(
-                    f,
-                    "record count mismatch: expected {expected}, got {actual}"
-                )
-            }
-            Self::TrailingBytes { bytes } => {
-                write!(f, "rtspcap has {bytes} trailing bytes")
-            }
+            Self::RecordCountMismatch { expected, actual } => write!(
+                f,
+                "record count mismatch: expected {expected}, got {actual}"
+            ),
+            Self::TrailingBytes { bytes } => write!(f, "rtspcap has {bytes} trailing bytes"),
         }
     }
 }
@@ -320,6 +382,9 @@ impl fmt::Display for CaptureFaultViewError {
 
 impl std::error::Error for CaptureFaultViewError {}
 
+/// Parse the manifest TSV into rows.
+///
+/// 将清单 TSV 解析为行。
 pub fn parse_manifest(input: &str) -> Result<Vec<CaptureManifestRow>, CaptureFixtureError> {
     let mut lines = input.lines();
     let header = lines
@@ -391,6 +456,9 @@ pub fn parse_manifest(input: &str) -> Result<Vec<CaptureManifestRow>, CaptureFix
     Ok(rows)
 }
 
+/// Parse and validate the manifest, including fixture existence, size, and decode.
+///
+/// 解析并验证清单，包括 fixture 存在性、大小与可解码性。
 pub fn validate_manifest(
     root: &Path,
     input: &str,
@@ -432,6 +500,9 @@ pub fn validate_manifest(
     Ok(rows)
 }
 
+/// Load all fixtures validated by the manifest.
+///
+/// 加载清单验证通过的所有 fixture。
 pub fn load_capture_fixtures(
     root: &Path,
     input: &str,
@@ -450,6 +521,9 @@ pub fn load_capture_fixtures(
     Ok(fixtures)
 }
 
+/// Decode a `rtspcap` byte buffer into a list of records.
+///
+/// 将 `rtspcap` 字节缓冲区解码为记录列表。
 pub fn decode_rtspcap(bytes: &[u8]) -> Result<Vec<CaptureRecord>, CaptureFixtureError> {
     if bytes.len() < 8 {
         return Err(CaptureFixtureError::Truncated {
@@ -502,6 +576,9 @@ pub fn decode_rtspcap(bytes: &[u8]) -> Result<Vec<CaptureRecord>, CaptureFixture
     Ok(records)
 }
 
+/// Build TCP-oriented fault views for a set of capture records.
+///
+/// 为一组抓包记录构造面向 TCP 的故障视图。
 pub fn build_tcp_fault_views(
     records: &[CaptureRecord],
     coalesced_n: usize,
@@ -563,6 +640,9 @@ pub fn build_tcp_fault_views(
     ])
 }
 
+/// Build UDP/RTP-oriented fault views for a set of capture records.
+///
+/// 为一组抓包记录构造面向 UDP/RTP 的故障视图。
 pub fn build_udp_rtp_fault_views(
     records: &[CaptureRecord],
     drop_every_nth: usize,
@@ -616,6 +696,9 @@ pub fn build_udp_rtp_fault_views(
     ])
 }
 
+/// Build transport-layer fault views combining TCP, UDP, interleaved, HTTP, and multicast paths.
+///
+/// 构造结合 TCP、UDP、交错、HTTP 与组播路径的传输层故障视图。
 pub fn build_transport_fault_views(
     records: &[CaptureRecord],
     coalesced_n: usize,
@@ -718,6 +801,9 @@ pub fn build_transport_fault_views(
     Ok(views)
 }
 
+/// Extract TCP record payloads from capture records.
+///
+/// 从抓包记录中提取 TCP 记录 payload。
 pub fn tcp_payload_records(records: &[CaptureRecord]) -> Vec<Vec<u8>> {
     records
         .iter()
@@ -731,6 +817,9 @@ pub fn tcp_payload_records(records: &[CaptureRecord]) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// Extract UDP/RTP/RTCP record payloads from capture records.
+///
+/// 从抓包记录中提取 UDP/RTP/RTCP 记录 payload。
 pub fn udp_payload_records(records: &[CaptureRecord]) -> Vec<Vec<u8>> {
     records
         .iter()
@@ -747,6 +836,9 @@ pub fn udp_payload_records(records: &[CaptureRecord]) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// Extract RTSP-over-TCP interleaved (RTP/RTCP) channel frames with their channel id.
+///
+/// 提取 RTSP-over-TCP 交错（RTP/RTCP）通道帧及其通道 id。
 fn interleaved_payload_records(records: &[CaptureRecord]) -> Vec<(u8, Vec<u8>)> {
     records
         .iter()
@@ -758,6 +850,9 @@ fn interleaved_payload_records(records: &[CaptureRecord]) -> Vec<(u8, Vec<u8>)> 
         .collect()
 }
 
+/// Extract multicast play payloads (UDP play RTP/RTCP) from capture records.
+///
+/// 从抓包记录中提取组播播放 payload（UDP play RTP/RTCP）。
 fn multicast_payload_records(records: &[CaptureRecord]) -> Vec<Vec<u8>> {
     records
         .iter()
@@ -771,6 +866,9 @@ fn multicast_payload_records(records: &[CaptureRecord]) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// Split each payload into one-byte chunks.
+///
+/// 将每个 payload 切分为单字节块。
 fn split_one_byte_chunks(payloads: &[Vec<u8>]) -> Vec<Vec<u8>> {
     payloads
         .iter()
@@ -778,6 +876,9 @@ fn split_one_byte_chunks(payloads: &[Vec<u8>]) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// Merge payloads into chunks of `n` contiguous payloads.
+///
+/// 将 payload 合并为每 `n` 个连续 payload 一组的 chunk。
 fn coalesced_chunks(payloads: &[Vec<u8>], n: usize) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     for chunk in payloads.chunks(n) {
@@ -790,10 +891,16 @@ fn coalesced_chunks(payloads: &[Vec<u8>], n: usize) -> Vec<Vec<u8>> {
     out
 }
 
+/// Return the total byte count of all payloads.
+///
+/// 返回所有 payload 的总字节数。
 fn total_payload_len(payloads: &[Vec<u8>]) -> usize {
     payloads.iter().map(Vec::len).sum()
 }
 
+/// Keep the leading `max_bytes` of the payload stream as one or more chunks.
+///
+/// 仅保留 payload 流的前 `max_bytes` 字节作为一个或多个 chunk。
 fn prefix_by_bytes(payloads: &[Vec<u8>], max_bytes: usize) -> Vec<Vec<u8>> {
     if max_bytes == 0 {
         return payloads
@@ -821,6 +928,9 @@ fn prefix_by_bytes(payloads: &[Vec<u8>], max_bytes: usize) -> Vec<Vec<u8>> {
     out
 }
 
+/// Duplicate the first payload immediately after itself.
+///
+/// 将第一个 payload 紧接自身复制一次。
 fn duplicate_first_payload(payloads: &[Vec<u8>]) -> Vec<Vec<u8>> {
     if payloads.is_empty() {
         return Vec::new();
@@ -830,6 +940,9 @@ fn duplicate_first_payload(payloads: &[Vec<u8>]) -> Vec<Vec<u8>> {
     out
 }
 
+/// Swap the first two payloads if they exist.
+///
+/// 若存在则交换前两个 payload。
 fn swap_adjacent(payloads: &[Vec<u8>]) -> Vec<Vec<u8>> {
     let mut out = payloads.to_vec();
     if out.len() >= 2 {
@@ -838,6 +951,9 @@ fn swap_adjacent(payloads: &[Vec<u8>]) -> Vec<Vec<u8>> {
     out
 }
 
+/// Drop every `n`th payload, ensuring the result is non-empty if possible.
+///
+/// 每 `n` 个 payload 丢弃一个，尽可能保证结果非空。
 fn drop_every_nth_payload(payloads: &[Vec<u8>], n: usize) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     for (idx, payload) in payloads.iter().enumerate() {
@@ -851,6 +967,9 @@ fn drop_every_nth_payload(payloads: &[Vec<u8>], n: usize) -> Vec<Vec<u8>> {
     out
 }
 
+/// Reverse payloads within small windows of size `window`.
+///
+/// 在大小为 `window` 的窗口内反转 payload。
 fn reverse_small_windows(payloads: &[Vec<u8>], window: usize) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     for chunk in payloads.chunks(window) {
@@ -861,6 +980,9 @@ fn reverse_small_windows(payloads: &[Vec<u8>], window: usize) -> Vec<Vec<u8>> {
     out
 }
 
+/// Truncate each payload to roughly half of its original length.
+///
+/// 将每个 payload 截断到原长度的一半。
 fn truncate_payloads_half(payloads: &[Vec<u8>]) -> Vec<Vec<u8>> {
     payloads
         .iter()
@@ -871,6 +993,9 @@ fn truncate_payloads_half(payloads: &[Vec<u8>]) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// Swap the first two RTP payloads in the stream.
+///
+/// 交换流中前两个 RTP payload。
 fn reorder_rtp_sequence(payloads: &[Vec<u8>]) -> Vec<Vec<u8>> {
     let mut out = payloads.to_vec();
     let mut rtp_indexes = Vec::new();
@@ -887,10 +1012,16 @@ fn reorder_rtp_sequence(payloads: &[Vec<u8>]) -> Vec<Vec<u8>> {
     out
 }
 
+/// Check whether a payload looks like a valid RTP packet.
+///
+/// 检查 payload 是否像有效 RTP 包。
 fn is_rtp_packet(payload: &[u8]) -> bool {
     payload.len() >= 12 && (payload[0] >> 6) == 2 && !is_rtcp_packet(payload)
 }
 
+/// Encode a list of interleaved frames (channel, payload) as an RTSP-over-TCP stream.
+///
+/// 将交错帧列表（通道、payload）编码为 RTSP-over-TCP 流。
 fn encode_interleaved_frames(frames: &[(u8, Vec<u8>)]) -> Vec<u8> {
     let mut out = Vec::new();
     for (channel, payload) in frames {
@@ -902,6 +1033,9 @@ fn encode_interleaved_frames(frames: &[(u8, Vec<u8>)]) -> Vec<u8> {
     out
 }
 
+/// Split the 4-byte interleaved header of an encoded stream into single bytes.
+///
+/// 将编码流中的 4 字节交错头拆成单个字节。
 fn split_interleaved_header(stream: &[u8]) -> Vec<Vec<u8>> {
     if stream.len() <= 4 {
         return stream.iter().map(|byte| vec![*byte]).collect();
@@ -914,6 +1048,9 @@ fn split_interleaved_header(stream: &[u8]) -> Vec<Vec<u8>> {
     out
 }
 
+/// Build an interleaved frame with a declared length that exceeds the actual payload.
+///
+/// 构造声明长度大于实际 payload 的交错帧。
 fn build_interleaved_oversize_frame(frame: &(u8, Vec<u8>)) -> Vec<u8> {
     let mut out = Vec::new();
     out.push(b'$');
@@ -924,6 +1061,9 @@ fn build_interleaved_oversize_frame(frame: &(u8, Vec<u8>)) -> Vec<u8> {
     out
 }
 
+/// Encode bytes as standard base64 without line breaks.
+///
+/// 将字节编码为标准 base64（无换行）。
 fn base64_encode(input: &[u8]) -> Vec<u8> {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = Vec::with_capacity(input.len().div_ceil(3) * 4);
@@ -956,6 +1096,9 @@ fn base64_encode(input: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Split a base64 byte stream into chunks of alternating size 1 and 3.
+///
+/// 将 base64 字节流按大小 1 与 3 交替切分。
 fn split_http_base64_1_3(stream: &[u8]) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     let mut index = 0usize;
@@ -969,6 +1112,9 @@ fn split_http_base64_1_3(stream: &[u8]) -> Vec<Vec<u8>> {
     out
 }
 
+/// Corrupt the first byte of a base64 stream to make it invalid.
+///
+/// 破坏 base64 流的第一个字节使其无效。
 fn build_invalid_base64_payload(stream: &[u8]) -> Vec<u8> {
     if stream.is_empty() {
         return vec![b'#'];
@@ -978,10 +1124,16 @@ fn build_invalid_base64_payload(stream: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Check whether a payload is a valid RTCP packet.
+///
+/// 检查 payload 是否为有效 RTCP 包。
 fn is_rtcp_packet(payload: &[u8]) -> bool {
     payload.len() >= 2 && (payload[0] >> 6) == 2 && (200..=204).contains(&payload[1])
 }
 
+/// Verify that a record's flag field is non-zero and known.
+///
+/// 验证记录的 flags 字段非零且已知。
 fn validate_record_flags(raw: u8) -> Result<(), CaptureFixtureError> {
     if raw == 0 || (raw & !KNOWN_RECORD_FLAGS) != 0 {
         return Err(CaptureFixtureError::InvalidRecordFlags { raw });
@@ -989,6 +1141,9 @@ fn validate_record_flags(raw: u8) -> Result<(), CaptureFixtureError> {
     Ok(())
 }
 
+/// Parse the comma-separated `expect_methods` field.
+///
+/// 解析逗号分隔的 `expect_methods` 字段。
 fn parse_expect_methods(line: usize, value: &str) -> Result<Vec<String>, CaptureFixtureError> {
     let methods: Vec<String> = value
         .split(',')
@@ -1005,6 +1160,9 @@ fn parse_expect_methods(line: usize, value: &str) -> Result<Vec<String>, Capture
     Ok(methods)
 }
 
+/// Parse a numeric manifest field as `usize`.
+///
+/// 将数值型清单字段解析为 `usize`。
 fn parse_number(
     line: usize,
     field: &'static str,
@@ -1019,6 +1177,9 @@ fn parse_number(
         })
 }
 
+/// Reject absolute, empty, or `..` fixture paths.
+///
+/// 拒绝绝对、空或包含 `..` 的 fixture 路径。
 fn validate_fixture_path(line: usize, path: &Path) -> Result<(), CaptureFixtureError> {
     if path.is_absolute() || path.as_os_str().is_empty() {
         return Err(CaptureFixtureError::UnsafeFixturePath {
@@ -1039,6 +1200,9 @@ fn validate_fixture_path(line: usize, path: &Path) -> Result<(), CaptureFixtureE
     Ok(())
 }
 
+/// Read a single byte from the `rtspcap` buffer and advance the cursor.
+///
+/// 从 `rtspcap` 缓冲区读取一字节并推进游标。
 fn read_u8(
     bytes: &[u8],
     cursor: &mut usize,
@@ -1054,6 +1218,9 @@ fn read_u8(
     Ok(value)
 }
 
+/// Read a big-endian `u16` from the `rtspcap` buffer and advance the cursor.
+///
+/// 从 `rtspcap` 缓冲区读取大端 `u16` 并推进游标。
 fn read_u16(
     bytes: &[u8],
     cursor: &mut usize,
@@ -1063,6 +1230,9 @@ fn read_u16(
     Ok(u16::from_be_bytes([slice[0], slice[1]]))
 }
 
+/// Read a big-endian `u32` from the `rtspcap` buffer and advance the cursor.
+///
+/// 从 `rtspcap` 缓冲区读取大端 `u32` 并推进游标。
 fn read_u32(
     bytes: &[u8],
     cursor: &mut usize,
@@ -1072,6 +1242,9 @@ fn read_u32(
     Ok(u32::from_be_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
+/// Read a slice of bytes from the `rtspcap` buffer and advance the cursor.
+///
+/// 从 `rtspcap` 缓冲区读取一段字节并推进游标。
 fn read_bytes<'a>(
     bytes: &'a [u8],
     cursor: &mut usize,

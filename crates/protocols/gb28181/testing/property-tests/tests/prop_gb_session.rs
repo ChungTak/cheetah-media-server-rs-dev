@@ -1,22 +1,41 @@
+//! Property-based tests for GB28181 SIP message and SDP handling.
+//!
+//! These tests verify `SipMessage` serialization/parse stability and the
+//! GB28181-specific `GbSdp` round-trip, which picks either a video or audio
+//! media line based on `is_video`.
+//!
+//! GB28181 SIP 消息与 SDP 处理属性测试。
+//!
+//! 这些测试验证 `SipMessage` 序列化/解析的稳定性以及 GB28181 专用 `GbSdp` 的
+//! 往返；`GbSdp` 根据 `is_video` 选择视频或音频媒体行。
+
 use cheetah_gb28181_core::{GbSdp, SipMessage, StartLine};
 use proptest::prelude::*;
 
-/// 生成有效的方法或标头名称字符串。
+/// Generate a valid method or header name token.
+///
+/// 生成有效的方法或头名称 token。
 fn valid_identifier() -> impl Strategy<Value = String> {
     prop::string::string_regex("[A-Za-z0-9\\-]+").expect("regex")
 }
 
-/// 生成有效的值。
+/// Generate a valid header value.
+///
+/// 生成有效头值。
 fn valid_value() -> impl Strategy<Value = String> {
     prop::string::string_regex("[A-Za-z0-9 \\-/:=]+").expect("regex")
 }
 
-/// 生成有效的 URI（不含空格）。
+/// Generate a valid URI without spaces.
+///
+/// 生成不含空格的有效 URI。
 fn valid_uri() -> impl Strategy<Value = String> {
     prop::string::string_regex("[A-Za-z0-9\\-/:=.]+").expect("regex")
 }
 
-/// 生成有效 IP 地址。
+/// Generate a valid unicast IP address.
+///
+/// 生成有效单播 IP 地址。
 fn valid_ip() -> impl Strategy<Value = String> {
     prop_oneof![
         Just("127.0.0.1".to_string()),
@@ -26,12 +45,16 @@ fn valid_ip() -> impl Strategy<Value = String> {
     ]
 }
 
-/// 生成有效 SSRC。
+/// Generate an arbitrary SSRC.
+///
+/// 生成任意 SSRC。
 fn valid_ssrc() -> impl Strategy<Value = u32> {
     any::<u32>()
 }
 
-/// 生成合法的 UTF-8 文本 Body（模拟 SDP/XML）。
+/// Generate a UTF-8 text body (simulating SDP/XML).
+///
+/// 生成 UTF-8 文本 body（模拟 SDP/XML）。
 fn valid_text_body() -> impl Strategy<Value = String> {
     prop::string::string_regex("[A-Za-z0-9 \\-/:=\r\n]{0,256}").expect("regex")
 }
@@ -39,7 +62,9 @@ fn valid_text_body() -> impl Strategy<Value = String> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
 
-    /// 测试 SIP 消息序列化和反序列化的一致性与稳定性
+    /// SIP message serialization and parse are stable and round-trip.
+    ///
+    /// SIP 消息序列化与解析稳定且可往返。
     #[test]
     fn test_sip_message_roundtrip(
         method in valid_identifier(),
@@ -50,14 +75,14 @@ proptest! {
     ) {
         let body = body_str.into_bytes();
 
-        // 构建 StartLine::Request
+        // Build a request StartLine.
         let start_line = StartLine::Request {
             method: method.clone(),
             uri: uri.clone(),
             version: version.clone(),
         };
 
-        // 排除可能破坏 content-length 计算的 headers
+        // Avoid any user-supplied Content-Length header; add the exact one.
         let mut final_headers = Vec::new();
         for (k, v) in headers {
             if !k.eq_ignore_ascii_case("content-length") {
@@ -72,14 +97,15 @@ proptest! {
             body: body.clone(),
         };
 
-        // 序列化
         let msg_str = msg.to_string();
-
-        // 反序列化
         let parsed = SipMessage::parse(&msg_str).expect("SIP parse should succeed");
 
-        // 校验 StartLine
-        if let StartLine::Request { method: parsed_method, uri: parsed_uri, version: parsed_ver } = parsed.start_line {
+        if let StartLine::Request {
+            method: parsed_method,
+            uri: parsed_uri,
+            version: parsed_ver,
+        } = parsed.start_line
+        {
             prop_assert_eq!(parsed_method, method);
             prop_assert_eq!(parsed_uri, uri);
             prop_assert_eq!(parsed_ver, version);
@@ -87,11 +113,12 @@ proptest! {
             prop_assert!(false, "StartLine must be Request");
         }
 
-        // 校验 Body
         prop_assert_eq!(parsed.body, body);
     }
 
-    /// 测试 GbSdp 生成、序列化、反序列化在各种属性变化下的鲁棒性
+    /// `GbSdp` build/parse round-trip is robust over parameter variations.
+    ///
+    /// `GbSdp` 构造/解析往返在参数变化下保持鲁棒。
     #[test]
     fn test_gb_sdp_roundtrip(
         session_id in valid_identifier(),
@@ -99,15 +126,15 @@ proptest! {
         port in 1..65535_u16,
         ssrc in valid_ssrc(),
         is_video in any::<bool>(),
-        mode in prop_oneof![Just("recvonly".to_string()), Just("sendonly".to_string()), Just("sendrecv".to_string())],
+        mode in prop_oneof![
+            Just("recvonly".to_string()),
+            Just("sendonly".to_string()),
+            Just("sendrecv".to_string()),
+        ],
     ) {
-        // 使用 GbSdp::to_string 构造 SDP 文本
         let sdp_text = GbSdp::to_string(&session_id, &ip, port, ssrc, is_video, &mode);
-
-        // 使用 GbSdp::parse 进行解析
         let parsed = GbSdp::parse(&sdp_text).expect("GbSdp parse should succeed");
 
-        // 验证基本属性是否均恢复
         prop_assert_eq!(parsed.ip, ip);
         prop_assert_eq!(parsed.sendrecv_mode, mode);
         prop_assert_eq!(parsed.ssrc, Some(ssrc));

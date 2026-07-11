@@ -1,3 +1,14 @@
+//! Property-based transport tests using committed RTSP capture fixtures.
+//!
+//! These tests replay captured TCP C2S and UDP RTP/RTCP payloads under various
+//! fault views (single buffer, one-byte chunks, coalesced, truncated, dropped,
+//! swapped, reordered) and assert that the `RtspCore` parser remains robust.
+//!
+//! RTSP 抓包 fixture 的属性传输测试。
+//!
+//! 这些测试在不同故障视图下（单缓冲、逐字节、合并、截断、丢弃、交换、重排）
+//! 回放已捕获的 TCP C2S 与 UDP RTP/RTCP payload，并验证 `RtspCore` 解析器的鲁棒性。
+
 #[allow(dead_code)]
 #[path = "support/rtsp_capture_fixture.rs"]
 mod rtsp_capture_fixture;
@@ -7,24 +18,45 @@ use std::sync::OnceLock;
 
 use bytes::Bytes;
 use cheetah_rtsp_core::{
-    CoreInput, CoreOutput, RtcpPacket, RtpPacket, RtspCore, RtspMethod, RtspRequest, RtspTransport,
-    Sdp,
+    CoreInput, CoreOutput, RtcpPacket, RtpPacket, RtspCore, RtspEvent, RtspMethod, RtspRequest,
+    RtspTransport,
 };
 use proptest::prelude::*;
 use rtsp_capture_fixture::{
     build_tcp_fault_views, build_udp_rtp_fault_views, load_capture_fixtures, CaptureFixture,
-    CaptureRecord, CaptureRecordKind, CaptureRole,
+    CaptureRecord, CaptureRecordKind, CaptureRole, NamedPayloadView,
 };
 
+/// Embedded manifest content for the committed fixtures.
+///
+/// 已提交 fixture 的内嵌清单内容。
 const MANIFEST: &str = include_str!("testdata/rtsp-capture/manifest.tsv");
+
+/// Upper bound on the number of TCP records to replay.
+///
+/// TCP 记录回放数量上限。
 const MAX_TCP_RECORDS: usize = 256;
+
+/// Upper bound on the number of UDP datagrams to inspect.
+///
+/// UDP 数据包检查数量上限。
 const MAX_UDP_DATAGRAMS: usize = 256;
+
+/// Upper bound on the number of core events produced during replay.
+///
+/// 回放过程中 core 事件数量上限。
 const MAX_EVENTS: usize = 16_384;
 
+/// Resolve the fixture root directory relative to the crate manifest.
+///
+/// 解析 crate 清单相对的 fixture 根目录。
 fn fixture_root() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata/rtsp-capture")
 }
 
+/// Lazily load all committed capture fixtures.
+///
+/// 延迟加载所有已提交的抓包 fixture。
 fn fixtures() -> &'static [CaptureFixture] {
     static FIXTURES: OnceLock<Vec<CaptureFixture>> = OnceLock::new();
     FIXTURES
@@ -35,6 +67,9 @@ fn fixtures() -> &'static [CaptureFixture] {
         .as_slice()
 }
 
+/// Check whether a fixture role is a standard, supported role.
+///
+/// 检查 fixture 角色是否为受支持的标准角色。
 fn is_standard_role(role: CaptureRole) -> bool {
     matches!(
         role,
@@ -50,6 +85,9 @@ fn is_standard_role(role: CaptureRole) -> bool {
     )
 }
 
+/// Extract TCP client-to-server payloads from the records.
+///
+/// 从记录中提取 TCP 客户端到服务端 payload。
 fn tcp_c2s_payloads(records: &[CaptureRecord]) -> Vec<Vec<u8>> {
     records
         .iter()
@@ -59,6 +97,9 @@ fn tcp_c2s_payloads(records: &[CaptureRecord]) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// Replay byte chunks through a fresh `RtspCore` and collect all parsed requests.
+///
+/// 通过全新的 `RtspCore` 回放字节块并收集解析出的请求。
 fn replay_requests(
     chunks: &[Vec<u8>],
 ) -> Result<Vec<RtspRequest>, cheetah_rtsp_core::RtspCoreError> {
@@ -73,7 +114,7 @@ fn replay_requests(
             break;
         }
         for output in outputs {
-            if let CoreOutput::Event(cheetah_rtsp_core::RtspEvent::Request(req)) = output {
+            if let CoreOutput::Event(RtspEvent::Request(req)) = output {
                 requests.push(req);
             }
         }
@@ -81,6 +122,9 @@ fn replay_requests(
     Ok(requests)
 }
 
+/// Check whether `expected` is a subsequence of `methods` (order-preserving).
+///
+/// 检查 `expected` 是否为 `methods` 的保持顺序子序列。
 fn methods_subsequence(methods: &[RtspMethod], expected: &[RtspMethod]) -> bool {
     if expected.is_empty() {
         return true;
@@ -97,6 +141,9 @@ fn methods_subsequence(methods: &[RtspMethod], expected: &[RtspMethod]) -> bool 
     false
 }
 
+/// Return the value of a request header by name (case-insensitive).
+///
+/// 按名称（大小写不敏感）返回请求头值。
 fn header_value<'a>(request: &'a RtspRequest, name: &str) -> Option<&'a str> {
     request
         .headers
@@ -105,6 +152,10 @@ fn header_value<'a>(request: &'a RtspRequest, name: &str) -> Option<&'a str> {
         .map(|header| header.value.as_str())
 }
 
+/// Assert that the replayed requests contain the expected RTSP method sequences
+/// and well-formed metadata for the given fixture.
+///
+/// 断言回放的请求包含预期的 RTSP 方法序列与给定 fixture 的格式良好元数据。
 fn assert_standard_request_semantics(fixture: &CaptureFixture, requests: &[RtspRequest]) {
     let methods: Vec<RtspMethod> = requests.iter().map(|req| req.method.clone()).collect();
     assert!(
@@ -158,7 +209,7 @@ fn assert_standard_request_semantics(fixture: &CaptureFixture, requests: &[RtspR
                 "ANNOUNCE body should not be empty"
             );
             let body = std::str::from_utf8(&request.body).expect("ANNOUNCE SDP should be utf-8");
-            Sdp::parse(body).expect("ANNOUNCE SDP should parse");
+            cheetah_rtsp_core::Sdp::parse(body).expect("ANNOUNCE SDP should parse");
         }
 
         if request.method == RtspMethod::Setup {
@@ -182,6 +233,9 @@ fn assert_standard_request_semantics(fixture: &CaptureFixture, requests: &[RtspR
     }
 }
 
+/// Re-chunk each payload into pieces of at most `chunk_size` bytes.
+///
+/// 将每个 payload 重新切分为不超过 `chunk_size` 字节的片段。
 fn rechunk(payloads: &[Vec<u8>], chunk_size: usize) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     for payload in payloads {
@@ -196,6 +250,9 @@ fn rechunk(payloads: &[Vec<u8>], chunk_size: usize) -> Vec<Vec<u8>> {
     out
 }
 
+/// Truncate the final payload to roughly half its length.
+///
+/// 将最后一个 payload 截断到约一半长度。
 fn suffix_truncated_record(payloads: &[Vec<u8>]) -> Vec<Vec<u8>> {
     let mut out = payloads.to_vec();
     if let Some(last) = out.last_mut() {
@@ -205,6 +262,9 @@ fn suffix_truncated_record(payloads: &[Vec<u8>]) -> Vec<Vec<u8>> {
     out
 }
 
+/// Extract UDP RTP/RTCP datagram payloads from the records.
+///
+/// 从记录中提取 UDP RTP/RTCP 数据包 payload。
 fn udp_datagrams(records: &[CaptureRecord]) -> Vec<Vec<u8>> {
     records
         .iter()
@@ -222,18 +282,24 @@ fn udp_datagrams(records: &[CaptureRecord]) -> Vec<Vec<u8>> {
         .collect()
 }
 
+/// Check whether a payload is an RTCP packet based on the version and packet type.
+///
+/// 根据版本与包类型判断 payload 是否为 RTCP 包。
 fn is_rtcp_payload(payload: &[u8]) -> bool {
     payload.len() >= 2 && (payload[0] >> 6) == 2 && (200..=204).contains(&payload[1])
 }
 
+/// Check whether a sequence of u16 values is monotonic non-decreasing.
+///
+/// 检查 u16 序列是否单调非递减。
 fn is_monotonic_non_decreasing(sequence: &[u16]) -> bool {
     sequence.windows(2).all(|pair| pair[0] <= pair[1])
 }
 
-fn view_by_name<'a>(
-    views: &'a [rtsp_capture_fixture::NamedPayloadView],
-    name: &str,
-) -> Option<&'a [Vec<u8>]> {
+/// Find a fault view by name and return its payload slice.
+///
+/// 按名称查找故障视图并返回其 payload 切片。
+fn view_by_name<'a>(views: &'a [NamedPayloadView], name: &str) -> Option<&'a [Vec<u8>]> {
     views
         .iter()
         .find(|view| view.name == name)
@@ -243,6 +309,9 @@ fn view_by_name<'a>(
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(64))]
 
+    /// Replay TCP C2S payloads under a random fault view and assert the parser is robust.
+    ///
+    /// 在随机 TCP 故障视图下回放 C2S payload，并验证解析器鲁棒性。
     #[test]
     fn prop_rtsp_capture_tcp_transport(
         fixture_index in 0usize..64,
@@ -285,6 +354,9 @@ proptest! {
         }
     }
 
+    /// Inspect UDP RTP/RTCP datagrams under a random fault view and assert monotonicity.
+    ///
+    /// 在随机 UDP 故障视图下检查 RTP/RTCP 数据包，并验证序列单调性。
     #[test]
     fn prop_rtsp_capture_udp_transport(
         fixture_index in 0usize..64,

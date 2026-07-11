@@ -1,4 +1,13 @@
-// 来源: vendor-ref/rtsp-rs/pbt/tests/pbt_rtcp.rs
+//! Property-based tests for RTCP packet build/parse round-trips.
+//!
+//! These tests cover Sender/Receiver Reports, SDES, BYE, APP, compound packets,
+//! and report block value preservation. A final unit test verifies safe handling
+//! of invalid RTCP data.
+//!
+//! RTCP 包构造/解析往返属性测试。
+//!
+//! 测试覆盖 Sender/Receiver Report、SDES、BYE、APP、复合包与报告块字段保持。
+//! 最后的单元测试验证对非法 RTCP 数据的安全处理。
 
 use cheetah_rtsp_core::{
     RtcpApp, RtcpBye, RtcpPacket, RtcpReceiverReport, RtcpReportBlock, RtcpSdes, RtcpSdesChunk,
@@ -6,6 +15,8 @@ use cheetah_rtsp_core::{
 };
 use proptest::prelude::*;
 
+/// Generate a valid CNAME string.
+///
 /// 生成有效 CNAME 字符串。
 fn valid_cname() -> impl Strategy<Value = String> {
     prop::string::string_regex("[a-zA-Z0-9@._-]{1,50}")
@@ -13,17 +24,21 @@ fn valid_cname() -> impl Strategy<Value = String> {
         .prop_filter("non-empty", |s| !s.is_empty())
 }
 
+/// Generate a valid BYE reason string.
+///
 /// 生成有效 BYE reason 字符串。
 fn valid_reason() -> impl Strategy<Value = String> {
     prop::string::string_regex("[a-zA-Z0-9 ._-]{0,50}").expect("valid reason regex")
 }
 
+/// Generate an RTCP report block.
+///
 /// 生成 RTCP 报告块。
 fn valid_report_block() -> impl Strategy<Value = RtcpReportBlock> {
     (
         any::<u32>(),      // ssrc
         any::<u8>(),       // fraction_lost
-        0..0x00FF_FFFFu32, // cumulative_lost（24 bit）
+        0..0x00FF_FFFFu32, // cumulative_lost (24 bit)
         any::<u32>(),      // highest_seq
         any::<u32>(),      // jitter
         any::<u32>(),      // last_sr
@@ -50,6 +65,8 @@ fn valid_report_block() -> impl Strategy<Value = RtcpReportBlock> {
         )
 }
 
+/// Generate a Sender Report.
+///
 /// 生成 Sender Report。
 fn valid_sender_report() -> impl Strategy<Value = RtcpSenderReport> {
     (
@@ -74,6 +91,8 @@ fn valid_sender_report() -> impl Strategy<Value = RtcpSenderReport> {
         )
 }
 
+/// Generate a Receiver Report.
+///
 /// 生成 Receiver Report。
 fn valid_receiver_report() -> impl Strategy<Value = RtcpReceiverReport> {
     (
@@ -83,6 +102,8 @@ fn valid_receiver_report() -> impl Strategy<Value = RtcpReceiverReport> {
         .prop_map(|(ssrc, reports)| RtcpReceiverReport { ssrc, reports })
 }
 
+/// Generate an SDES item.
+///
 /// 生成 SDES Item。
 fn valid_sdes_item() -> impl Strategy<Value = RtcpSdesItem> {
     prop_oneof![
@@ -93,18 +114,24 @@ fn valid_sdes_item() -> impl Strategy<Value = RtcpSdesItem> {
     ]
 }
 
+/// Generate an SDES chunk.
+///
 /// 生成 SDES Chunk。
 fn valid_sdes_chunk() -> impl Strategy<Value = RtcpSdesChunk> {
     (any::<u32>(), prop::collection::vec(valid_sdes_item(), 1..4))
         .prop_map(|(ssrc, items)| RtcpSdesChunk { ssrc, items })
 }
 
-/// 生成 SDES。
+/// Generate an SDES packet.
+///
+/// 生成 SDES 包。
 fn valid_sdes() -> impl Strategy<Value = RtcpSdes> {
     prop::collection::vec(valid_sdes_chunk(), 1..4).prop_map(|chunks| RtcpSdes { chunks })
 }
 
-/// 生成 BYE。
+/// Generate a BYE packet.
+///
+/// 生成 BYE 包。
 fn valid_bye() -> impl Strategy<Value = RtcpBye> {
     (
         prop::collection::vec(any::<u32>(), 1..5),
@@ -113,10 +140,12 @@ fn valid_bye() -> impl Strategy<Value = RtcpBye> {
         .prop_map(|(ssrcs, reason)| RtcpBye { ssrcs, reason })
 }
 
-/// 生成 APP。
+/// Generate an APP packet.
+///
+/// 生成 APP 包。
 fn valid_app() -> impl Strategy<Value = RtcpApp> {
     (
-        0..32u8, // subtype（5 bit）
+        0..32u8, // subtype (5 bit)
         any::<u32>(),
         prop::collection::vec(any::<u8>(), 4).prop_map(|v| {
             let mut name = [0_u8; 4];
@@ -124,7 +153,7 @@ fn valid_app() -> impl Strategy<Value = RtcpApp> {
             name
         }),
         prop::collection::vec(any::<u8>(), 0..64).prop_map(|mut data| {
-            // 对齐到 4 字节边界，避免 roundtrip 受到 build 侧 padding 影响。
+            // Pad to a 4-byte boundary so the build-side padding does not affect the round-trip.
             while !data.len().is_multiple_of(4) {
                 data.push(0);
             }
@@ -142,7 +171,9 @@ fn valid_app() -> impl Strategy<Value = RtcpApp> {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(100))]
 
-    /// Sender Report build/parse roundtrip。
+    /// Sender Report build/parse round-trip.
+    ///
+    /// Sender Report 构造/解析往返。
     #[test]
     fn test_rtcp_sender_report_roundtrip(sr in valid_sender_report()) {
         let packets = vec![RtcpPacket::SenderReport(sr.clone())];
@@ -162,7 +193,9 @@ proptest! {
         }
     }
 
-    /// Receiver Report build/parse roundtrip。
+    /// Receiver Report build/parse round-trip.
+    ///
+    /// Receiver Report 构造/解析往返。
     #[test]
     fn test_rtcp_receiver_report_roundtrip(rr in valid_receiver_report()) {
         let packets = vec![RtcpPacket::ReceiverReport(rr.clone())];
@@ -178,7 +211,9 @@ proptest! {
         }
     }
 
-    /// Source Description build/parse roundtrip。
+    /// Source Description build/parse round-trip.
+    ///
+    /// Source Description 构造/解析往返。
     #[test]
     fn test_rtcp_sdes_roundtrip(sdes in valid_sdes()) {
         let packets = vec![RtcpPacket::SourceDescription(sdes.clone())];
@@ -197,7 +232,9 @@ proptest! {
         }
     }
 
-    /// BYE build/parse roundtrip。
+    /// BYE build/parse round-trip.
+    ///
+    /// BYE 构造/解析往返。
     #[test]
     fn test_rtcp_bye_roundtrip(bye in valid_bye()) {
         let packets = vec![RtcpPacket::Bye(bye.clone())];
@@ -213,7 +250,9 @@ proptest! {
         }
     }
 
-    /// APP build/parse roundtrip。
+    /// APP build/parse round-trip.
+    ///
+    /// APP 构造/解析往返。
     #[test]
     fn test_rtcp_app_roundtrip(app in valid_app()) {
         let packets = vec![RtcpPacket::App(app.clone())];
@@ -231,7 +270,9 @@ proptest! {
         }
     }
 
-    /// Compound RTCP 包 build/parse roundtrip。
+    /// Compound RTCP packet build/parse round-trip.
+    ///
+    /// 复合 RTCP 包构造/解析往返。
     #[test]
     fn test_rtcp_compound_packet_roundtrip(
         sr in valid_sender_report(),
@@ -259,7 +300,9 @@ proptest! {
         }
     }
 
-    /// 验证 Report Block 字段值在 build/parse 后保持一致。
+    /// Report block values are preserved through build/parse.
+    ///
+    /// 报告块字段值在构造/解析后保持一致。
     #[test]
     fn test_rtcp_report_block_values(report in valid_report_block()) {
         let sr = RtcpSenderReport {
@@ -290,10 +333,12 @@ proptest! {
     }
 }
 
-/// 验证非法 RTCP 输入的解析行为。
+/// Invalid RTCP inputs must return explicit errors or empty results, not panic.
+///
+/// 非法 RTCP 输入必须返回显式错误或空结果，不得 panic。
 #[test]
 fn test_rtcp_parse_invalid_data() {
-    // 输入不足 RTCP 公共头时，按空结果处理。
+    // Empty input parses as an empty result.
     assert!(RtcpPacket::parse(&[])
         .expect("empty input should parse")
         .is_empty());
@@ -301,7 +346,7 @@ fn test_rtcp_parse_invalid_data() {
         .expect("truncated header should parse as empty")
         .is_empty());
 
-    // 版本号不为 2 时必须返回显式错误。
+    // Non-version-2 packets must return an explicit error.
     let mut invalid_version = vec![0_u8; 8];
     invalid_version[0] = 0b0000_0000; // version = 0
     invalid_version[1] = 200; // Sender Report
