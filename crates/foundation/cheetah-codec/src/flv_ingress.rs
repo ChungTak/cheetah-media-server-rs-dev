@@ -350,6 +350,10 @@ impl FlvIngress {
                 )));
                 Ok(Some(FlvIngressOutput::Frame(Box::new(frame))))
             }
+            2 => {
+                // HEVC end of sequence -> no frame
+                Ok(None)
+            }
             _ => Err(FlvIngressError::InvalidPacketType {
                 tag_type: FlvTagType::Video,
                 packet_type,
