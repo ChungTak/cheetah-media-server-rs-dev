@@ -1,4 +1,6 @@
-//! HTTP request parsing and WebSocket upgrade for fMP4 protocol.
+//! HTTP request parsing and WebSocket upgrade for the fMP4 protocol.
+//!
+//! fMP4 协议的 HTTP 请求解析与 WebSocket 升级。
 
 use base64::Engine;
 use sha1::{Digest, Sha1};
@@ -7,6 +9,9 @@ use thiserror::Error;
 const WEBSOCKET_ACCEPT_MAGIC: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 #[derive(Debug, Error)]
+/// Error cases returned by fMP4 core request parsing.
+///
+/// fMP4 core 请求解析返回的错误情况。
 pub enum Fmp4CoreError {
     #[error("invalid .mp4 path: {path}")]
     InvalidMp4Path { path: String },
@@ -23,6 +28,9 @@ pub enum Fmp4CoreError {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Supported HTTP methods for fMP4 requests.
+///
+/// fMP4 请求支持的 HTTP 方法。
 pub enum HttpMethod {
     Get,
     Head,
@@ -31,23 +39,35 @@ pub enum HttpMethod {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Transport used by the fMP4 client.
+///
+/// fMP4 客户端使用的传输方式。
 pub enum Fmp4Transport {
     Http,
     WebSocket,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Parsed `namespace/stream` components from the request path.
+///
+/// 从请求路径解析的 `namespace/stream` 组成部分。
 pub struct StreamKeyParts {
     pub namespace: String,
     pub stream_path: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Parsed fMP4 request with the target stream key.
+///
+/// 解析后的 fMP4 请求，包含目标流密钥。
 pub struct ParsedFmp4Request {
     pub stream_key: StreamKeyParts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Parsed HTTP request head with method, target, and headers.
+///
+/// 解析后的 HTTP 请求头，包含方法、目标与头部。
 pub struct HttpRequestHead {
     pub method: HttpMethod,
     pub method_raw: String,
@@ -55,7 +75,13 @@ pub struct HttpRequestHead {
     pub headers: Vec<(String, String)>,
 }
 
+/// `HttpRequestHead` helpers: header lookup and WebSocket upgrade detection.
+///
+/// `HttpRequestHead` 辅助：头部查找与 WebSocket 升级检测。
 impl HttpRequestHead {
+    /// Look up a header value by name (case-insensitive).
+    ///
+    /// 按名称（不区分大小写）查找头部值。
     pub fn header(&self, key: &str) -> Option<&str> {
         self.headers
             .iter()
@@ -63,6 +89,9 @@ impl HttpRequestHead {
             .map(|(_, value)| value.as_str())
     }
 
+    /// Check if the request headers indicate a WebSocket upgrade.
+    ///
+    /// 检查请求头是否表示 WebSocket 升级。
     pub fn is_websocket_upgrade(&self) -> bool {
         let Some(connection) = self.header("Connection") else {
             return false;
@@ -78,6 +107,9 @@ impl HttpRequestHead {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// HTTP response head used for handshake and error responses.
+///
+/// 用于握手与错误响应的 HTTP 响应头。
 pub struct HttpResponseHead {
     pub status_code: u16,
     pub reason: &'static str,
@@ -85,6 +117,9 @@ pub struct HttpResponseHead {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// WebSocket message variants decoded by the driver.
+///
+/// 驱动层解码的 WebSocket 消息变体。
 pub enum WebSocketMessage {
     Binary(bytes::Bytes),
     Close,
@@ -95,6 +130,8 @@ pub enum WebSocketMessage {
 }
 
 /// Parse a `.mp4` or `.live.mp4` request target into stream key parts.
+///
+/// 将 `.mp4` 或 `.live.mp4` 请求目标解析为流密钥组成部分。
 pub fn parse_fmp4_request_target(target: &str) -> Result<ParsedFmp4Request, Fmp4CoreError> {
     let (path, _query) = split_target_query(target);
 
@@ -142,6 +179,9 @@ pub fn parse_fmp4_request_target(target: &str) -> Result<ParsedFmp4Request, Fmp4
     })
 }
 
+/// Validate a WebSocket upgrade request and return the accept key.
+///
+/// 校验 WebSocket 升级请求并返回 accept key。
 pub fn validate_websocket_upgrade(head: &HttpRequestHead) -> Result<String, Fmp4CoreError> {
     let Some(version) = head.header("Sec-WebSocket-Version") else {
         return Err(Fmp4CoreError::InvalidWebSocketVersion);
@@ -155,6 +195,9 @@ pub fn validate_websocket_upgrade(head: &HttpRequestHead) -> Result<String, Fmp4
     websocket_accept_key(key)
 }
 
+/// Compute the RFC 6455 `Sec-WebSocket-Accept` value.
+///
+/// 计算 RFC 6455 的 `Sec-WebSocket-Accept` 值。
 pub fn websocket_accept_key(client_key: &str) -> Result<String, Fmp4CoreError> {
     let key = client_key.trim();
     if key.is_empty() {
@@ -167,6 +210,9 @@ pub fn websocket_accept_key(client_key: &str) -> Result<String, Fmp4CoreError> {
     Ok(base64::engine::general_purpose::STANDARD.encode(digest))
 }
 
+/// Split the request target at the first `?` to separate path and query.
+///
+/// 在第一个 `?` 处分割请求目标，分离路径与查询。
 fn split_target_query(target: &str) -> (&str, &str) {
     if let Some(index) = target.find('?') {
         (&target[..index], &target[index + 1..])
