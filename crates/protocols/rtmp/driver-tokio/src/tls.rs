@@ -119,7 +119,9 @@ impl RtmpTlsClientConfig {
         })
     }
 
-    /// Create a client TLS config that skips certificate verification (DANGEROUS, testing only).
+    /// Create a client TLS config that disables certificate verification (testing only).
+    ///
+    /// 创建禁用证书校验的客户端 TLS 配置（仅用于测试）。
     pub fn insecure_no_verify() -> Self {
         let config = rustls::ClientConfig::builder()
             .dangerous()
@@ -235,10 +237,15 @@ pub async fn connect_tls(
     Ok(TlsClientStream::new(tls_stream, peer))
 }
 
-/// Dangerous: skip certificate verification. Only for testing.
+/// Dangerous TLS certificate verifier that accepts any certificate. Testing only.
+///
+/// 危险的 TLS 证书校验器，接受任何证书。仅供测试。
 #[derive(Debug)]
 struct NoVerifier;
 
+/// `ServerCertVerifier` implementation that always accepts server certificates.
+///
+/// `ServerCertVerifier` 实现，始终接受服务器证书。
 impl rustls::client::danger::ServerCertVerifier for NoVerifier {
     fn verify_server_cert(
         &self,
