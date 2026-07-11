@@ -61,11 +61,11 @@ fn from_sdk_error_invalid_argument_not_retryable() {
 }
 
 #[test]
-fn from_sdk_error_unavailable_is_retryable_connect() {
+fn from_sdk_error_unavailable_is_internal_not_retryable() {
     let err: ConnectorError = cheetah_sdk::SdkError::Unavailable("down".to_string()).into();
-    assert!(err.retryable());
-    assert!(matches!(err, ConnectorError::Connect { .. }));
-    assert!(err.source().is_some());
+    assert!(!err.retryable());
+    assert!(matches!(err, ConnectorError::Internal(_)));
+    assert!(err.protocol().is_none());
 }
 
 #[cfg(feature = "http-flv")]

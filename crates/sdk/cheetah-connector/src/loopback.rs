@@ -3,19 +3,20 @@ use std::sync::Arc;
 
 use cheetah_codec::MonoTime;
 use cheetah_engine::Engine;
+use cheetah_sdk::{PublisherSink, StreamKey, SubscriberSource};
 
-use crate::error::ConnectorError;
-use crate::handles::LoopbackPair;
+use crate::error::{ConnectorError, Operation};
+use crate::handles::{map_sdk_error, LoopbackPair, PullHandle, PushHandle};
 use crate::options::{
     ConnectorPullOptions, ConnectorPushOptions, LoopbackLayer, LoopbackOptions, LoopbackTopology,
-    ProtocolPullExtras, ProtocolPushExtras,
+    ProtocolPullExtras, ProtocolPushExtras, RtmpPushExtras,
 };
 use crate::protocol::{supports, Direction, Protocol};
 
 #[cfg(feature = "webrtc")]
 use async_trait::async_trait;
 #[cfg(feature = "webrtc")]
-use cheetah_sdk::{PublisherSink, SubscriberId, SubscriberSource};
+use cheetah_sdk::SubscriberId;
 #[cfg(feature = "webrtc")]
 use cheetah_webrtc_media_loopback::MediaLoopbackHarness;
 
@@ -23,21 +24,43 @@ use cheetah_webrtc_media_loopback::MediaLoopbackHarness;
 ///
 /// 打开一个内存 loopback 对。
 ///
-/// The default topology is RTMP push + HTTP-FLV pull, which is the recommended
-/// first L1 path. WebRTC same-protocol fixture loopback is also supported.
+/// The default topology is RTMP push + HTTP-FLV pull with `LoopbackLayer::ProtocolFraming`.
+/// `LoopbackLayer::EngineOnlyBypassWire` can be requested to bypass the wire and
+/// use the engine `StreamManager` directly.
 ///
-/// 默认拓扑为 RTMP push + HTTP-FLV pull，这是推荐的第一个 L1 路径。
-/// 也支持 WebRTC 同协议 fixture loopback。
+/// 默认拓扑为 RTMP push + HTTP-FLV pull，使用 `LoopbackLayer::ProtocolFraming`。
+/// 可以请求 `LoopbackLayer::EngineOnlyBypassWire` 来绕过网线和协议驱动，
+/// 直接使用引擎 `StreamManager`。
 pub async fn open_in_memory_loopback(
     engine: Arc<Engine>,
     options: LoopbackOptions,
 ) -> Result<LoopbackPair, ConnectorError> {
+    if options.queue_capacity == 0 {
+        return Err(ConnectorError::InvalidArgument(
+            "loopback queue_capacity must be > 0".to_string(),
+        ));
+    }
+
     match options.topology {
-        LoopbackTopology::Cross { push, pull } => {
-            cross_protocol_loopback(engine, options, push, pull).await
-        }
-        LoopbackTopology::SameProtocol { protocol } => match protocol {
-            Protocol::WebRtc => webrtc_media_loopback(engine, options).await,
+        LoopbackTopology::Cross { push, pull } => match options.preferred_layer {
+            LoopbackLayer::ProtocolFraming => {
+                cross_protocol_loopback(engine, options, push, pull).await
+            }
+            LoopbackLayer::EngineOnlyBypassWire => {
+                engine_only_loopback(engine, options, push, pull).await
+            }
+            _ => Err(ConnectorError::UnsupportedProtocol {
+                protocol: push,
+                direction: Direction::Push,
+            }),
+        },
+        LoopbackTopology::SameProtocol { protocol } => match options.preferred_layer {
+            LoopbackLayer::WebRtcMediaFixture if protocol == Protocol::WebRtc => {
+                webrtc_media_loopback(engine, options).await
+            }
+            LoopbackLayer::EngineOnlyBypassWire => {
+                engine_only_loopback(engine, options, protocol, protocol).await
+            }
             _ => Err(ConnectorError::UnsupportedProtocol {
                 protocol,
                 direction: Direction::Push,
@@ -105,17 +128,29 @@ async fn cross_protocol_loopback(
     let pull_url = format!("http://{http_flv_addr}/live/{stream_name}.flv");
     let push_url = format!("rtmp://{rtmp_addr}/live/{stream_name}");
 
+    let cancel = options.cancel.clone().unwrap_or_default().child_token();
+
     let pull_options = ConnectorPullOptions {
         subscriber: options.subscriber.clone(),
-        cancel: Some(options.cancel.child_token()),
-        protocol: ProtocolPullExtras::HttpFlv { reconnect: None },
+        cancel: Some(cancel.clone()),
+        protocol: ProtocolPullExtras::HttpFlv {
+            reconnect: None,
+            read_limits: None,
+            buffer_size: Some(options.queue_capacity),
+        },
     };
 
     let push_options = ConnectorPushOptions {
         publisher: options.publisher.clone(),
-        cancel: Some(options.cancel.child_token()),
+        cancel: Some(cancel),
         tracks: options.tracks.clone(),
-        protocol: ProtocolPushExtras::None,
+        protocol: ProtocolPushExtras::Rtmp(RtmpPushExtras {
+            command_queue_capacity: Some(options.queue_capacity),
+            write_queue_capacity: Some(options.queue_capacity),
+            read_buffer_size: None,
+            chunk_size: None,
+            ack_window_size: None,
+        }),
     };
 
     let subscriber =
@@ -128,6 +163,48 @@ async fn cross_protocol_loopback(
         publisher,
         subscriber,
         layer: LoopbackLayer::ProtocolFraming,
+    })
+}
+
+async fn engine_only_loopback(
+    engine: Arc<Engine>,
+    options: LoopbackOptions,
+    push: Protocol,
+    pull: Protocol,
+) -> Result<LoopbackPair, ConnectorError> {
+    let stream_manager = engine.stream_manager_api();
+    let stream_key = StreamKey::new("live", &options.stream_name);
+    let url = format!("engine://live/{}", options.stream_name);
+
+    let publisher = stream_manager
+        .open_publisher(stream_key.clone(), options.publisher.clone())
+        .await
+        .map_err(|e| map_sdk_error(push, Operation::Open, e))?;
+
+    let (ready_tx, ready_rx) = tokio::sync::watch::channel(true);
+    let ready = Arc::new(ready_rx);
+    drop(ready_tx);
+
+    let publisher = PushHandle::new(push, url.clone(), publisher, ready);
+
+    let mut subscriber_options = options.subscriber.clone();
+    if options.queue_capacity > 0 {
+        subscriber_options.queue_capacity = options.queue_capacity;
+    }
+
+    let subscriber = stream_manager
+        .open_subscriber(stream_key, subscriber_options)
+        .await
+        .map_err(|e| map_sdk_error(pull, Operation::Open, e))?;
+
+    let subscriber = PullHandle::new(pull, url, subscriber);
+
+    publisher.update_tracks(options.tracks)?;
+
+    Ok(LoopbackPair {
+        publisher,
+        subscriber,
+        layer: LoopbackLayer::EngineOnlyBypassWire,
     })
 }
 
@@ -151,24 +228,26 @@ async fn webrtc_media_loopback(
     engine: Arc<Engine>,
     options: LoopbackOptions,
 ) -> Result<LoopbackPair, ConnectorError> {
-    use crate::handles::{map_sdk_error, PullHandle, PushHandle};
-
     let runtime = engine.runtime_api();
     let stream_manager = engine.stream_manager_api();
-    let stream_key = cheetah_sdk::StreamKey::new("live", &options.stream_name);
+    let stream_key = StreamKey::new("live", &options.stream_name);
     let url = format!("webrtc://loopback/{}", options.stream_name);
+    let cancel = options.cancel.clone().unwrap_or_default();
 
-    let harness =
-        MediaLoopbackHarness::new(runtime, stream_manager, stream_key, options.cancel.clone())
-            .await
-            .map_err(|e| map_sdk_error(Protocol::WebRtc, crate::error::Operation::Open, e))?;
+    let harness = MediaLoopbackHarness::new(runtime, stream_manager, stream_key, cancel)
+        .await
+        .map_err(|e| map_sdk_error(Protocol::WebRtc, Operation::Open, e))?;
 
     let shared = std::sync::Arc::new(futures::lock::Mutex::new(harness));
     let push = Box::new(MediaLoopbackHarnessHandle(shared.clone()));
     let pull = Box::new(MediaLoopbackHarnessHandle(shared));
 
+    let (ready_tx, ready_rx) = tokio::sync::watch::channel(true);
+    let ready = Arc::new(ready_rx);
+    drop(ready_tx);
+
     Ok(LoopbackPair {
-        publisher: PushHandle::new(Protocol::WebRtc, url.clone(), push),
+        publisher: PushHandle::new(Protocol::WebRtc, url.clone(), push, ready),
         subscriber: PullHandle::new(Protocol::WebRtc, url, pull),
         layer: LoopbackLayer::WebRtcMediaFixture,
     })

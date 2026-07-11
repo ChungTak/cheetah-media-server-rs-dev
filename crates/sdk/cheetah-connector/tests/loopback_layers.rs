@@ -1,4 +1,3 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -8,8 +7,7 @@ use cheetah_codec::{
     Timebase, TrackId, TrackInfo, TrackReadiness,
 };
 use cheetah_connector::{
-    options::ProtocolPullExtras, ConnectorBuilder, ConnectorPullOptions, Direction, Protocol,
-    RuntimeConnector,
+    ConnectorBuilder, Direction, LoopbackLayer, LoopbackOptions, LoopbackTopology, Protocol,
 };
 use cheetah_runtime_tokio::TokioRuntime;
 
@@ -72,16 +70,63 @@ fn aac_frame() -> AVFrame {
     )
 }
 
-fn parse_endpoint_addr(endpoint: &str) -> Result<SocketAddr, Box<dyn std::error::Error>> {
-    let Some((_scheme, rest)) = endpoint.split_once("://") else {
-        return Err(format!("invalid endpoint: {endpoint}").into());
+#[cfg(feature = "loopback")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn engine_only_bypass_wire_roundtrips_frames() -> Result<(), Box<dyn std::error::Error>> {
+    let runtime = Arc::new(TokioRuntime::new()) as Arc<dyn cheetah_runtime_api::RuntimeApi>;
+    let connector = ConnectorBuilder::new(runtime)
+        .without_default_modules()
+        .build()?;
+    connector.start().await?;
+
+    let mut options = LoopbackOptions::default();
+    options.stream_name = "engine_layer".to_string();
+    options.topology = LoopbackTopology::SameProtocol {
+        protocol: Protocol::Rtmp,
     };
-    Ok(rest.parse::<SocketAddr>()?)
+    options.preferred_layer = LoopbackLayer::EngineOnlyBypassWire;
+    options.tracks = vec![h264_track(), aac_track()];
+
+    let mut pair = connector.open_in_memory_loopback(options).await?;
+    assert_eq!(pair.layer, LoopbackLayer::EngineOnlyBypassWire);
+    assert_eq!(pair.publisher.protocol(), Protocol::Rtmp);
+    assert_eq!(pair.subscriber.protocol(), Protocol::Rtmp);
+
+    pair.publisher.wait_ready().await?;
+    pair.publisher
+        .push_frame(std::sync::Arc::new(h264_frame()))?;
+    pair.publisher
+        .push_frame(std::sync::Arc::new(aac_frame()))?;
+
+    let video = tokio::time::timeout(Duration::from_secs(5), pair.subscriber.recv())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(video.codec, CodecId::H264);
+    assert_eq!(video.media_kind, MediaKind::Video);
+    assert!(!video.payload.is_empty());
+
+    let audio = tokio::time::timeout(Duration::from_secs(5), pair.subscriber.recv())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(audio.codec, CodecId::AAC);
+    assert_eq!(audio.media_kind, MediaKind::Audio);
+    assert!(!audio.payload.is_empty());
+
+    pair.publisher.close()?;
+    pair.subscriber.close().await?;
+    connector.stop().await;
+
+    Ok(())
 }
 
-#[cfg(all(feature = "http-flv", feature = "rtmp", feature = "loopback"))]
+#[cfg(feature = "loopback")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn http_flv_open_pull_receives_frames_and_tracks() -> Result<(), Box<dyn std::error::Error>> {
+async fn protocol_framing_loopback_uses_protocol_framing_layer(
+) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Arc::new(TokioRuntime::new()) as Arc<dyn cheetah_runtime_api::RuntimeApi>;
     let config = Arc::new(cheetah_config::ConfigStore::new());
     config.load_yaml_str(
@@ -106,61 +151,29 @@ modules:
         .build()?;
     connector.start().await?;
 
-    let mut options = cheetah_connector::LoopbackOptions::default();
-    options.stream_name = "loopback".to_string();
+    let mut options = LoopbackOptions::default();
+    options.stream_name = "framing_layer".to_string();
+    options.preferred_layer = LoopbackLayer::ProtocolFraming;
     options.tracks = vec![h264_track(), aac_track()];
 
     let mut pair = connector.open_in_memory_loopback(options).await?;
+    assert_eq!(pair.layer, LoopbackLayer::ProtocolFraming);
+    assert_eq!(pair.publisher.protocol(), Protocol::Rtmp);
+    assert_eq!(pair.subscriber.protocol(), Protocol::HttpFlv);
+
     pair.publisher.wait_ready().await?;
-    pair.publisher.push_frame(Arc::new(h264_frame()))?;
-    pair.publisher.push_frame(Arc::new(aac_frame()))?;
+    pair.publisher
+        .push_frame(std::sync::Arc::new(h264_frame()))?;
+    pair.publisher
+        .push_frame(std::sync::Arc::new(aac_frame()))?;
 
-    let services = connector.engine().service_registry_api();
-    let http_flv = services
-        .get("http-flv")
-        .ok_or("http-flv service not registered")?;
-    let http_flv_addr = parse_endpoint_addr(&http_flv.endpoint)?;
-    let pull_url = format!("http://{http_flv_addr}/live/loopback.flv");
-
-    let mut http_flv_subscriber = connector
-        .open_pull(
-            Protocol::HttpFlv,
-            &pull_url,
-            ConnectorPullOptions {
-                subscriber: Default::default(),
-                cancel: None,
-                protocol: ProtocolPullExtras::HttpFlv {
-                    reconnect: None,
-                    read_limits: None,
-                    buffer_size: None,
-                },
-            },
-        )
-        .await?;
-
-    let video = tokio::time::timeout(Duration::from_secs(5), http_flv_subscriber.recv())
+    let video = tokio::time::timeout(Duration::from_secs(5), pair.subscriber.recv())
         .await
         .unwrap()
         .unwrap()
         .unwrap();
     assert_eq!(video.codec, CodecId::H264);
-    assert_eq!(video.media_kind, MediaKind::Video);
-    assert!(!video.payload.is_empty());
 
-    let audio = tokio::time::timeout(Duration::from_secs(5), http_flv_subscriber.recv())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap();
-    assert_eq!(audio.codec, CodecId::AAC);
-    assert_eq!(audio.media_kind, MediaKind::Audio);
-    assert!(!audio.payload.is_empty());
-
-    let tracks = http_flv_subscriber.tracks();
-    assert!(tracks.iter().any(|t| t.codec == CodecId::H264));
-    assert!(tracks.iter().any(|t| t.codec == CodecId::AAC));
-
-    http_flv_subscriber.close().await?;
     pair.publisher.close()?;
     pair.subscriber.close().await?;
     connector.stop().await;
@@ -168,9 +181,9 @@ modules:
     Ok(())
 }
 
-#[cfg(all(feature = "http-flv", feature = "rtmp", feature = "loopback"))]
+#[cfg(feature = "loopback")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn http_flv_invalid_direction_returns_unsupported_protocol(
+async fn unsupported_protocol_framing_for_webrtc_same_protocol(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Arc::new(TokioRuntime::new()) as Arc<dyn cheetah_runtime_api::RuntimeApi>;
     let connector = ConnectorBuilder::new(runtime)
@@ -178,19 +191,22 @@ async fn http_flv_invalid_direction_returns_unsupported_protocol(
         .build()?;
     connector.start().await?;
 
+    let mut options = LoopbackOptions::default();
+    options.stream_name = "webrtc_default".to_string();
+    options.topology = LoopbackTopology::SameProtocol {
+        protocol: Protocol::WebRtc,
+    };
+    // default preferred_layer is ProtocolFraming, which is not supported for WebRTC
+
     let err = connector
-        .open_push(
-            Protocol::HttpFlv,
-            "http://127.0.0.1:8080/live/stream.flv",
-            Default::default(),
-        )
+        .open_in_memory_loopback(options)
         .await
-        .expect_err("http-flv push must be unsupported");
+        .expect_err("webrtc protocol framing must be unsupported");
 
     assert!(matches!(
         err,
         cheetah_connector::ConnectorError::UnsupportedProtocol {
-            protocol: Protocol::HttpFlv,
+            protocol: Protocol::WebRtc,
             direction: Direction::Push,
         }
     ));

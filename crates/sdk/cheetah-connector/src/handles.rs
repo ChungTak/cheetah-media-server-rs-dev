@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use cheetah_codec::{AVFrame, TrackInfo};
 use cheetah_sdk::{DispatchResult, PublisherSink, SdkError, SubscriberId, SubscriberSource};
 
-use crate::error::ConnectorError;
+use crate::error::{CloseReason, ConnectorError};
 use crate::protocol::Protocol;
 
 /// A handle returned by [`RuntimeConnector::open_pull`].
@@ -108,6 +108,7 @@ pub struct PushHandle {
     protocol: Protocol,
     url: String,
     inner: Box<dyn PublisherSink>,
+    ready: Arc<tokio::sync::watch::Receiver<bool>>,
 }
 
 impl fmt::Debug for PushHandle {
@@ -120,11 +121,17 @@ impl fmt::Debug for PushHandle {
 }
 
 impl PushHandle {
-    pub(crate) fn new(protocol: Protocol, url: String, inner: Box<dyn PublisherSink>) -> Self {
+    pub(crate) fn new(
+        protocol: Protocol,
+        url: String,
+        inner: Box<dyn PublisherSink>,
+        ready: Arc<tokio::sync::watch::Receiver<bool>>,
+    ) -> Self {
         Self {
             protocol,
             url,
             inner,
+            ready,
         }
     }
 
@@ -171,8 +178,21 @@ impl PushHandle {
     ///
     /// 等待发布会话就绪。
     pub async fn wait_ready(&self) -> Result<(), ConnectorError> {
-        // TODO: wire protocol-specific readiness signalling.
-        Ok(())
+        let mut ready = (*self.ready).clone();
+        if *ready.borrow() {
+            return Ok(());
+        }
+        ready.changed().await.map_err(|_| ConnectorError::Closed {
+            protocol: self.protocol,
+            reason: CloseReason::Error("publish readiness channel dropped".to_string()),
+        })?;
+        if *ready.borrow() {
+            Ok(())
+        } else {
+            Err(ConnectorError::Internal(
+                "publish readiness channel reported false".to_string(),
+            ))
+        }
     }
 
     /// Close the push handle.
@@ -197,33 +217,28 @@ pub(crate) fn map_sdk_error(
     operation: crate::error::Operation,
     err: SdkError,
 ) -> ConnectorError {
-    let connector_err: ConnectorError = err.into();
-    // Ensure the protocol context is attached for variants that do not carry it.
-    match connector_err {
-        // `SdkError::Unavailable` maps to `Connect` with a default RTMP protocol in
-        // `From<SdkError>`. Override the protocol when the handle knows a different one.
-        ConnectorError::Connect {
-            protocol: Protocol::Rtmp,
-            endpoint,
-            source,
-        } if protocol != Protocol::Rtmp => ConnectorError::Connect {
+    match err {
+        SdkError::InvalidArgument(msg) => ConnectorError::InvalidArgument(msg),
+        SdkError::NotFound(msg) => ConnectorError::InvalidArgument(msg),
+        SdkError::AlreadyExists(msg) => ConnectorError::InvalidArgument(msg),
+        SdkError::Conflict(msg) => ConnectorError::InvalidArgument(msg),
+        SdkError::Unavailable(msg) => ConnectorError::Connect {
             protocol,
-            endpoint,
-            source,
+            endpoint: msg.clone(),
+            source: Box::new(std::io::Error::other(msg)),
         },
-        ConnectorError::Internal(msg) => ConnectorError::Protocol {
+        SdkError::Internal(msg) => ConnectorError::Protocol {
             protocol,
             operation,
             source: Box::new(std::io::Error::other(msg)),
         },
-        ConnectorError::InvalidArgument(_) => connector_err,
-        _ => connector_err,
     }
 }
 
 /// Pair returned by [`crate::open_in_memory_loopback`].
 ///
 /// 由 [`crate::open_in_memory_loopback`] 返回的对。
+#[derive(Debug)]
 pub struct LoopbackPair {
     pub publisher: PushHandle,
     pub subscriber: PullHandle,
@@ -264,5 +279,47 @@ impl PublisherSink for PushHandle {
 
     fn take_keyframe_requests(&self) -> u64 {
         self.inner.take_keyframe_requests()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::error::Operation;
+
+    #[test]
+    fn map_sdk_error_unavailable_includes_protocol() {
+        let err = SdkError::Unavailable("down".to_string());
+        let mapped = map_sdk_error(Protocol::HttpFlv, Operation::Connect, err);
+        assert!(matches!(
+            mapped,
+            ConnectorError::Connect {
+                protocol: Protocol::HttpFlv,
+                ..
+            }
+        ));
+        assert!(mapped.retryable());
+    }
+
+    #[test]
+    fn map_sdk_error_internal_includes_protocol_and_operation() {
+        let err = SdkError::Internal("boom".to_string());
+        let mapped = map_sdk_error(Protocol::Rtmp, Operation::Publish, err);
+        assert!(matches!(
+            mapped,
+            ConnectorError::Protocol {
+                protocol: Protocol::Rtmp,
+                operation: Operation::Publish,
+                ..
+            }
+        ));
+        assert!(!mapped.retryable());
+    }
+
+    #[test]
+    fn map_sdk_error_invalid_argument_passthrough() {
+        let err = SdkError::InvalidArgument("bad".to_string());
+        let mapped = map_sdk_error(Protocol::WebRtc, Operation::Open, err);
+        assert!(matches!(mapped, ConnectorError::InvalidArgument(_)));
     }
 }
