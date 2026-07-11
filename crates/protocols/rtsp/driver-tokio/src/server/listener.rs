@@ -25,9 +25,31 @@ use super::http_tunnel::{
 };
 use super::{DriverConfig, DriverEvent, RtspServerHandle};
 
+/// Short timeout used to peek at the first bytes of a new connection.
+///
+/// If data arrives quickly, it is used to identify HTTP tunnel candidates. If not,
+/// the connection may still be probed later.
+///
+/// 用于窥视新连接首字节的短超时。
+///
+/// 若数据快速到达，可用于识别 HTTP 隧道候选；否则后续仍可能探测。
 const INITIAL_READ_TIMEOUT: Duration = Duration::from_millis(20);
+
+/// Additional timeout for completing the HTTP tunnel header after the initial peek.
+///
+/// 初始窥视后完成 HTTP 隧道头的额外超时。
 const TUNNEL_PROBE_TIMEOUT_AFTER_INITIAL_TIMEOUT: Duration = Duration::from_millis(250);
 
+/// Start a plain TCP RTSP server listener.
+///
+/// Spawns a background task that accepts connections, probes for HTTP tunnel open requests,
+/// and either spawns direct `run_connection` tasks or HTTP tunnel pair tasks. The listener
+/// also handles driver commands and periodically cleans up expired pending HTTP tunnel halves.
+///
+/// 启动普通 TCP RTSP 服务器监听器。
+///
+/// 生成后台任务接受连接，探测 HTTP 隧道打开请求，并生成直接的 `run_connection` 任务或
+/// HTTP 隧道对任务。监听器还处理驱动命令并定期清理过期的待配对 HTTP 隧道半侧。
 pub fn start_server(
     runtime_api: Arc<dyn RuntimeApi>,
     listen: SocketAddr,
@@ -178,10 +200,22 @@ pub fn start_server(
     })
 }
 
+/// Allocate a monotonically increasing connection ID.
+///
+/// 分配单调递增的连接 ID。
 fn connection_id_alloc(conn_ids: &AtomicU64) -> u64 {
     conn_ids.fetch_add(1, Ordering::Relaxed)
 }
 
+/// Read the first bytes of a new connection with a short timeout.
+///
+/// This is used to peek whether the connection starts with an HTTP request (`GET`/`POST`)
+/// or with RTSP bytes. A timeout returns an empty `timed_out` marker rather than an error.
+///
+/// 以短超时读取新连接的首字节。
+///
+/// 用于判断连接以 HTTP 请求（`GET`/`POST`）还是 RTSP 字节开头。超时返回空
+/// `timed_out` 标记而非错误。
 async fn read_initial_bytes(
     stream: &mut dyn AsyncTcpStream,
     cancel: &CancellationToken,
@@ -214,11 +248,26 @@ async fn read_initial_bytes(
     }
 }
 
+/// Result of the initial read probe.
+///
+/// 初始读取探测的结果。
 struct InitialRead {
     bytes: Bytes,
     timed_out: bool,
 }
 
+/// Probe a new connection to determine whether it is an HTTP tunnel open request.
+///
+/// If a valid `GET` or `POST` tunnel open request is parsed, the corresponding half is stored
+/// in the `HttpTunnelRegistry`. When the matching half arrives, the pair is combined and a
+/// `run_http_tunnel_connection` task is spawned. If the probe times out or the bytes are not
+/// a tunnel request, the bytes are passed to `spawn_direct_connection`.
+///
+/// 探测新连接以确定其是否为 HTTP 隧道打开请求。
+///
+/// 若解析到有效的 `GET` 或 `POST` 隧道打开请求，将对应半侧存入 `HttpTunnelRegistry`。
+/// 当匹配半侧到达时，组合成对并生成 `run_http_tunnel_connection` 任务。若探测超时或
+/// 字节非隧道请求，则将这些字节传递给 `spawn_direct_connection`。
 #[allow(clippy::too_many_arguments)]
 async fn handle_tunnel_probe_connection(
     mut stream: Box<dyn AsyncTcpStream>,
@@ -347,6 +396,15 @@ async fn handle_tunnel_probe_connection(
     }
 }
 
+/// Spawn a connection task for an HTTP tunnel pair.
+///
+/// Registers the connection in `conn_map`, emits `ConnectionOpened`, and starts
+/// `run_http_tunnel_connection`. If the event channel is closed, the pair is shut down.
+///
+/// 为 HTTP 隧道对生成连接任务。
+///
+/// 在 `conn_map` 中注册连接，发出 `ConnectionOpened`，并启动 `run_http_tunnel_connection`。
+/// 若事件通道已关闭，关闭该对。
 #[allow(clippy::too_many_arguments)]
 async fn spawn_http_tunnel_connection(
     connection_id: u64,
@@ -405,6 +463,15 @@ async fn spawn_http_tunnel_connection(
     false
 }
 
+/// Spawn a connection task for a direct RTSP/TCP connection.
+///
+/// Registers the connection, emits `ConnectionOpened`, and starts `run_connection`.
+/// If the event channel is closed, the stream is shut down.
+///
+/// 为直接 RTSP/TCP 连接生成连接任务。
+///
+/// 注册连接，发出 `ConnectionOpened`，并启动 `run_connection`。若事件通道已关闭，
+/// 关闭该流。
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn spawn_direct_connection(
     connection_id: u64,

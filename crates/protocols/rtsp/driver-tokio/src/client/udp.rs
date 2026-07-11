@@ -7,12 +7,22 @@ use cheetah_runtime_api::{AsyncUdpSocket, CancellationToken, JoinHandle, Runtime
 
 use super::RtspClientEvent;
 
+/// Inclusive UDP port range for client RTP/RTCP allocation.
+///
+/// 客户端 RTP/RTCP 分配的包含性 UDP 端口范围。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtspClientPortRange {
     pub start: u16,
     pub end: u16,
 }
 
+/// A pair of bound UDP sockets representing the RTP and RTCP sides of one track.
+///
+/// RTP sockets are bound to even ports and the RTCP socket to the next odd port.
+///
+/// 表示一个轨道的 RTP 与 RTCP 两侧的一组已绑定 UDP 套接字。
+///
+/// RTP 套接字绑定在偶数端口，RTCP 套接字绑定在下一个奇数端口。
 #[derive(Clone)]
 pub struct RtspClientUdpEndpoint {
     pub rtp_socket: Arc<dyn AsyncUdpSocket>,
@@ -21,12 +31,24 @@ pub struct RtspClientUdpEndpoint {
     pub local_rtcp: SocketAddr,
 }
 
+/// Remote UDP addresses for RTP and RTCP traffic of one track.
+///
+/// 单个轨道的 RTP 与 RTCP 远端 UDP 地址。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RtspClientUdpRemote {
     pub rtp: SocketAddr,
     pub rtcp: SocketAddr,
 }
 
+/// Allocate a paired RTP/RTCP UDP endpoint.
+///
+/// If `port_range` is `Some`, scans the configured range for an even-odd pair.
+/// Otherwise, binds an ephemeral even-odd pair by probing the OS repeatedly.
+///
+/// 分配一对 RTP/RTCP UDP 端点。
+///
+/// 若 `port_range` 为 `Some`，则在配置范围内扫描偶-奇端口对；否则通过反复探测
+/// 操作系统绑定临时的偶-奇端口对。
 pub fn allocate_udp_endpoint(
     runtime_api: &Arc<dyn RuntimeApi>,
     bind_ip: IpAddr,
@@ -47,6 +69,15 @@ pub fn allocate_udp_endpoint(
     })
 }
 
+/// Send one-byte probes to the remote RTP and RTCP addresses to open NAT pinholes.
+///
+/// This must happen before the remote peer starts sending media, otherwise the first
+/// inbound UDP packets may be dropped by stateful firewalls or NAT gateways.
+///
+/// 向远端 RTP 和 RTCP 地址发送单字节探测包以打通 NAT 洞。
+///
+/// 必须在远端开始发送媒体之前执行，否则首个入站 UDP 包可能被状态防火墙或
+/// NAT 网关丢弃。
 pub async fn configure_udp_remote_and_punch(
     endpoint: &RtspClientUdpEndpoint,
     remote_rtp: SocketAddr,
@@ -58,6 +89,18 @@ pub async fn configure_udp_remote_and_punch(
     Ok(())
 }
 
+/// Spawn two background tasks that receive RTP and RTCP packets for one track.
+///
+/// Each task loops on `recv_from`, optionally filters by the expected remote source,
+/// and forwards the payload as `RtspClientEvent::UdpRtp` or `RtspClientEvent::UdpRtcp`.
+/// Both tasks share the same cancellation token parent but each has an independent
+/// child token so a single `cancel` stops both.
+///
+/// 为单个轨道生成两个后台任务，分别接收 RTP 与 RTCP 包。
+///
+/// 每个任务循环调用 `recv_from`，可选按预期远端源过滤，并将负载转发为
+/// `RtspClientEvent::UdpRtp` 或 `RtspClientEvent::UdpRtcp`。两者共享同一个父取消令牌，
+/// 但各自拥有独立的子令牌，因此一次 `cancel` 即可停止两个任务。
 pub fn spawn_udp_receive_tasks(
     runtime_api: Arc<dyn RuntimeApi>,
     endpoint: RtspClientUdpEndpoint,
@@ -135,6 +178,16 @@ pub fn spawn_udp_receive_tasks(
     vec![rtp_join, rtcp_join]
 }
 
+/// Bind an ephemeral even-odd UDP port pair.
+///
+/// Picks a random even port, tries to bind the next odd port, and retries up to 512
+/// times. This mirrors the RTP convention where RTP uses an even port and RTCP uses
+/// the following odd port.
+///
+/// 绑定临时的偶-奇 UDP 端口对。
+///
+/// 随机选择一个偶数端口，尝试绑定下一个奇数端口，最多重试 512 次。这遵循 RTP
+/// 约定：RTP 使用偶数端口，RTCP 使用紧随其后的奇数端口。
 fn bind_udp_ephemeral_pair(
     runtime_api: &Arc<dyn RuntimeApi>,
     bind_ip: IpAddr,
@@ -166,6 +219,15 @@ fn bind_udp_ephemeral_pair(
     ))
 }
 
+/// Bind an even-odd UDP port pair constrained to a user-supplied range.
+///
+/// Rounds the start up to the next even port and walks the range in steps of two.
+/// If no pair is free, returns `AddrNotAvailable`.
+///
+/// 在用户指定范围内绑定偶-奇 UDP 端口对。
+///
+/// 将起始端口向上取整到下一个偶数，并以步长 2 遍历范围。若没有可用对，返回
+/// `AddrNotAvailable`。
 fn bind_udp_pair_in_range(
     runtime_api: &Arc<dyn RuntimeApi>,
     bind_ip: IpAddr,
