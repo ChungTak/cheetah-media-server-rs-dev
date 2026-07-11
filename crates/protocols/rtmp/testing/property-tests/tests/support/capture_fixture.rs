@@ -1,3 +1,11 @@
+//! Capture fixture support: load pcap-derived RTMP byte records and build adversarial transport views.
+//!
+//! A capture fixture is a binary `rtmpflow` file containing raw RTMP records extracted from a pcap.
+//! The manifest (`manifest.tsv`) maps each case to a fixture, expected connection state, and expected media count.
+//! 抓包 fixtures 支持：从 pcap 导出的 RTMP 字节记录，并构建对抗性（adversarial）传输视图。
+//!
+//! rtmpflow 文件包含从 pcap 提取的原始 RTMP 记录；manifest.tsv 将每个 case 映射到 fixture、期望连接状态以及期望媒体数量。
+
 use std::fmt;
 use std::fs;
 use std::io;
@@ -7,9 +15,20 @@ use bytes::Bytes;
 
 pub const MANIFEST_HEADER: &str = "case\tsource_pcap\tstream_name\tmedia_sig\trole\tfixture\texpect_connected\texpect_publish\texpect_play\texpect_media_min\tnotes";
 pub const MAX_FIXTURE_BYTES: u64 = 262_144;
+
+/// Magic header for the `rtmpflow` binary format.
+///
+/// `rtmpflow` 二进制格式魔数头。
 const RTMPFLOW_MAGIC: &[u8; 4] = b"CRF1";
+
+/// Number of tab-separated fields in each non-header manifest row.
+///
+/// 每行 manifest（不含表头）的字段数量。
 const MANIFEST_FIELD_COUNT: usize = 11;
 
+/// Role of the entity that produced the captured RTMP flow.
+///
+/// 产生被抓取 RTMP 流的实体角色。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureRole {
     ServerPublishC2s,
@@ -35,6 +54,9 @@ impl CaptureRole {
     }
 }
 
+/// One row of the capture manifest, parsed from a tab-separated line.
+///
+/// 从制表符分隔行解析出的 manifest 单行。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CaptureManifestRow {
     pub line: usize,
@@ -51,6 +73,9 @@ pub struct CaptureManifestRow {
     pub notes: String,
 }
 
+/// Loaded fixture with its manifest row and decoded byte records.
+///
+/// 已加载的 fixture，包含其 manifest 行与解码后的字节记录。
 #[derive(Debug, Clone)]
 pub struct CaptureFixture {
     pub row: CaptureManifestRow,
@@ -58,11 +83,17 @@ pub struct CaptureFixture {
 }
 
 impl CaptureFixture {
+    /// Returns true if the capture is a standard server-side publish (client to server).
+    ///
+    /// 仅在捕获为标准服务端发布（客户端到服务端）时返回 true。
     pub fn is_standard_publish(&self) -> bool {
         self.row.role == CaptureRole::ServerPublishC2s
     }
 }
 
+/// Transport-level mutation applied to a fixture before replay.
+///
+/// 回放前应用到 fixture 的传输层变换。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportViewKind {
     PristineRecords,
@@ -91,6 +122,9 @@ impl TransportViewKind {
     }
 }
 
+/// Parameters controlling how a transport view is built from raw records.
+///
+/// 控制如何从原始记录构建传输视图的参数。
 #[derive(Debug, Clone, Copy)]
 pub struct TransportView {
     pub kind: TransportViewKind,
@@ -239,6 +273,9 @@ impl std::error::Error for CaptureFixtureError {
     }
 }
 
+/// Parse the tab-separated manifest into rows, validating headers and field counts.
+///
+/// 将制表符分隔的 manifest 解析为行，校验表头与字段数量。
 pub fn parse_manifest(input: &str) -> Result<Vec<CaptureManifestRow>, CaptureFixtureError> {
     let mut lines = input.lines();
     let header = lines
@@ -310,6 +347,9 @@ pub fn parse_manifest(input: &str) -> Result<Vec<CaptureManifestRow>, CaptureFix
     Ok(rows)
 }
 
+/// Parse the manifest and validate that every fixture path is safe and loadable.
+///
+/// 解析 manifest 并校验每个 fixture 路径安全且可加载。
 pub fn validate_manifest(
     root: &Path,
     input: &str,
@@ -348,6 +388,9 @@ pub fn validate_manifest(
     Ok(rows)
 }
 
+/// Load all fixtures referenced by the manifest into memory as owned byte records.
+///
+/// 将 manifest 引用的所有 fixture 加载到内存中，作为自有字节记录。
 pub fn load_capture_fixtures(
     root: &Path,
     input: &str,
@@ -369,6 +412,12 @@ pub fn load_capture_fixtures(
     Ok(fixtures)
 }
 
+/// Decode an `rtmpflow` blob into a vector of record slices.
+///
+/// The format is: 4-byte magic, 4-be record count, then for each record a 4-be length followed by payload.
+/// 将 `rtmpflow` 二进制解码为记录切片向量。
+///
+/// 格式：4 字节魔数、4 字节大端记录数，随后每个记录为 4 字节大端长度加 payload。
 pub fn decode_rtmpflow(bytes: &[u8]) -> Result<Vec<&[u8]>, CaptureFixtureError> {
     if bytes.len() < 8 {
         return Err(CaptureFixtureError::Truncated {
@@ -418,6 +467,9 @@ pub fn decode_rtmpflow(bytes: &[u8]) -> Result<Vec<&[u8]>, CaptureFixtureError> 
     Ok(records)
 }
 
+/// Build a mutated sequence of byte chunks from a fixture using the requested transport view.
+///
+/// 使用指定的传输视图从 fixture 构建变换后的字节块序列。
 pub fn build_transport_view(records: &[Vec<u8>], view: TransportView) -> Vec<Bytes> {
     match view.kind {
         TransportViewKind::PristineRecords => records_to_bytes(records),
@@ -439,6 +491,9 @@ pub fn build_transport_view(records: &[Vec<u8>], view: TransportView) -> Vec<Byt
     }
 }
 
+/// Convert owned records into `Bytes` copies.
+///
+/// 将自有记录转换为 `Bytes` 副本。
 fn records_to_bytes(records: &[Vec<u8>]) -> Vec<Bytes> {
     records
         .iter()
@@ -446,6 +501,9 @@ fn records_to_bytes(records: &[Vec<u8>]) -> Vec<Bytes> {
         .collect()
 }
 
+/// Concatenate all records into a single byte buffer.
+///
+/// 将所有记录拼接为单个字节缓冲区。
 fn coalesced_wire(records: &[Vec<u8>]) -> Vec<u8> {
     let total = records.iter().map(Vec::len).sum();
     let mut wire = Vec::with_capacity(total);
@@ -455,6 +513,9 @@ fn coalesced_wire(records: &[Vec<u8>]) -> Vec<u8> {
     wire
 }
 
+/// Pairwise coalesce records to simulate partial TCP aggregation.
+///
+/// 将记录按成对方式合并，模拟 TCP 部分聚合。
 fn coalesced_pairs(records: &[Vec<u8>]) -> Vec<Bytes> {
     let mut chunks = Vec::with_capacity(records.len().div_ceil(2));
     for pair in records.chunks(2) {
@@ -463,6 +524,9 @@ fn coalesced_pairs(records: &[Vec<u8>]) -> Vec<Bytes> {
     chunks
 }
 
+/// Truncate the coalesced wire to a prefix, keeping at least one byte and leaving at least one byte.
+///
+/// 将合并后的字节流截断为前缀，至少保留 1 字节并至少留出 1 字节。
 fn prefix_truncated(records: &[Vec<u8>], truncation_point: usize) -> Vec<Bytes> {
     let wire = coalesced_wire(records);
     if wire.is_empty() {
@@ -472,6 +536,9 @@ fn prefix_truncated(records: &[Vec<u8>], truncation_point: usize) -> Vec<Bytes> 
     vec![Bytes::copy_from_slice(&wire[..keep])]
 }
 
+/// Truncate the last record to half its length, preserving earlier chunks.
+///
+/// 将最后一条记录截断为原来长度的一半，保留前面的记录。
 fn suffix_truncated_record(records: &[Vec<u8>]) -> Vec<Bytes> {
     let mut chunks = records_to_bytes(records);
     if let (Some(last_chunk), Some(last_record)) = (chunks.last_mut(), records.last()) {
@@ -481,6 +548,9 @@ fn suffix_truncated_record(records: &[Vec<u8>]) -> Vec<Bytes> {
     chunks
 }
 
+/// Duplicate a post-handshake record to test decoder resilience to repeated data.
+///
+/// 重复一条握手后的记录，以测试解码器对重复数据的鲁棒性。
 fn duplicated_record(records: &[Vec<u8>], index_hint: usize, repeat_count: usize) -> Vec<Bytes> {
     let Some(index) = post_handshake_index(records.len(), index_hint) else {
         return records_to_bytes(records);
@@ -494,6 +564,9 @@ fn duplicated_record(records: &[Vec<u8>], index_hint: usize, repeat_count: usize
     chunks
 }
 
+/// Swap two adjacent records after the handshake to test reordering tolerance.
+///
+/// 交换握手后相邻的两条记录，以测试对重排序的容忍。
 fn reordered_adjacent(records: &[Vec<u8>], index_hint: usize) -> Vec<Bytes> {
     if records.len() <= 3 {
         return records_to_bytes(records);
@@ -504,6 +577,9 @@ fn reordered_adjacent(records: &[Vec<u8>], index_hint: usize) -> Vec<Bytes> {
     chunks
 }
 
+/// Drop every Nth post-handshake record to simulate selective packet loss.
+///
+/// 丢弃每第 N 条握手后的记录，模拟选择性丢包。
 fn dropped_every_nth(records: &[Vec<u8>], drop_step: usize) -> Vec<Bytes> {
     let step = drop_step.max(2);
     let kept: Vec<Vec<u8>> = records
@@ -520,6 +596,9 @@ fn dropped_every_nth(records: &[Vec<u8>], drop_step: usize) -> Vec<Bytes> {
     records_to_bytes(&kept)
 }
 
+/// Map an arbitrary hint to a valid post-handshake index, preserving the first two records.
+///
+/// 将任意索引提示映射为有效的握手后索引，始终保留前两条记录。
 fn post_handshake_index(record_len: usize, index_hint: usize) -> Option<usize> {
     if record_len <= 2 {
         return None;
@@ -527,6 +606,9 @@ fn post_handshake_index(record_len: usize, index_hint: usize) -> Option<usize> {
     Some(2 + (index_hint % (record_len - 2)))
 }
 
+/// Parse a boolean manifest flag encoded as "0" or "1".
+///
+/// 将 manifest 中以 "0" 或 "1" 编码的布尔标志进行解析。
 fn parse_flag(line: usize, field: &'static str, value: &str) -> Result<bool, CaptureFixtureError> {
     match value {
         "0" => Ok(false),
@@ -539,6 +621,9 @@ fn parse_flag(line: usize, field: &'static str, value: &str) -> Result<bool, Cap
     }
 }
 
+/// Ensure a fixture path is relative and contains no parent or root components.
+///
+/// 确保 fixture 路径是相对路径，且不含父目录或根目录组件。
 fn validate_fixture_path(line: usize, path: &Path) -> Result<(), CaptureFixtureError> {
     if path.as_os_str().is_empty() {
         return Err(CaptureFixtureError::UnsafeFixturePath {

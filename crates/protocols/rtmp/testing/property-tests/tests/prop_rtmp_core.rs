@@ -1,3 +1,16 @@
+//! Property-based tests for the `RtmpCore` Sans-I/O state machine.
+//!
+//! These tests exercise the core through the public `CoreInput`/`CoreOutput` API:
+//! handshake, connect, createStream, publish, media buffering, and deleteStream.
+//! They rely on the chunk and AMF encoders to build realistic byte sequences so
+//! the tests stay on the public boundary of the core.
+//!
+//! `RtmpCore` Sans-I/O 状态机的属性测试。
+//!
+//! 这些测试通过公共 `CoreInput`/`CoreOutput` API 测试核心：握手、连接、createStream、发布、
+//! 媒体缓冲以及 deleteStream。它们依赖 chunk 与 AMF 编码器构建真实字节序列，
+//! 从而使测试保持在 core 的公共边界上。
+
 use bytes::Bytes;
 use cheetah_rtmp_core::{
     decode_all, encode_all, Amf0Value, ErrorKind, RtmpChunk, RtmpChunkDecoder, RtmpChunkEncoder,
@@ -9,6 +22,13 @@ use cheetah_rtmp_core::{
 use proptest::collection::vec;
 use proptest::prelude::*;
 
+/// Build a C0+C1 byte packet from a 1536-byte C1 payload.
+///
+/// C0 is the RTMP version byte (3) followed by the 1536-byte C1 random/time data.
+///
+/// 从 1536 字节 C1 payload 构建 C0+C1 字节包。
+///
+/// C0 是 RTMP 版本字节（3），后接 1536 字节 C1 随机/时间数据。
 fn c0c1_packet(c1: &[u8; 1536]) -> Bytes {
     let mut wire = Vec::with_capacity(1537);
     wire.push(3);
@@ -16,6 +36,9 @@ fn c0c1_packet(c1: &[u8; 1536]) -> Bytes {
     Bytes::from(wire)
 }
 
+/// Build a chunk-wrapped AMF0 command byte payload.
+///
+/// 构建 chunk 封装的 AMF0 命令字节 payload。
 fn command_wire(message_stream_id: u32, values: &[Amf0Value]) -> Bytes {
     let payload = encode_all(values);
     encode_chunk_wire(
@@ -28,6 +51,9 @@ fn command_wire(message_stream_id: u32, values: &[Amf0Value]) -> Bytes {
     )
 }
 
+/// Build a chunk-wrapped video byte payload.
+///
+/// 构建 chunk 封装视频字节 payload。
 fn video_wire(message_stream_id: u32, timestamp: u32, payload: Vec<u8>) -> Bytes {
     encode_chunk_wire(
         6,
@@ -39,6 +65,9 @@ fn video_wire(message_stream_id: u32, timestamp: u32, payload: Vec<u8>) -> Bytes
     )
 }
 
+/// Encode a single `RtmpChunk` into bytes, optionally with a configured chunk size.
+///
+/// 将单个 `RtmpChunk` 编码为字节，可选使用配置的 chunk 大小。
 fn encode_chunk_wire(
     csid: u32,
     timestamp_ms: u32,
@@ -61,6 +90,14 @@ fn encode_chunk_wire(
     Bytes::from(wire)
 }
 
+/// Incrementally decode a segment of chunk bytes and append completed chunks.
+///
+/// This helper models TCP segmentation by maintaining a `pending` buffer between
+/// calls and only returning when `InsufficientBuffer` is encountered.
+///
+/// 增量解码一段 chunk 字节并追加完成的 chunk。
+///
+/// 该 helper 通过维护 `pending` 缓冲区模拟 TCP 分段，仅在遇到 `InsufficientBuffer` 时返回。
 fn decode_chunks_segmented(
     decoder: &mut RtmpChunkDecoder,
     pending: &mut Vec<u8>,
@@ -82,6 +119,9 @@ fn decode_chunks_segmented(
     }
 }
 
+/// Check whether the core outputs indicate a successful `connect` for the given app.
+///
+/// 检查 core 输出是否指示对指定 app 的成功 `connect`。
 fn has_connected(outputs: &[CoreOutput], app: &str) -> bool {
     outputs.iter().any(|out| {
         matches!(
@@ -91,6 +131,14 @@ fn has_connected(outputs: &[CoreOutput], app: &str) -> bool {
     })
 }
 
+/// Drive the core through handshake and into the ready state.
+///
+/// This uses zero-filled C1/C2, which is valid because the current handshake
+/// implementation does not verify the random bytes.
+///
+/// 将 core 驱动通过握手并进入就绪状态。
+///
+/// 使用零填充 C1/C2，当前握手实现不校验随机字节。
 fn drive_ready(core: &mut RtmpCore) {
     let c1 = [0u8; 1536];
     core.handle_input(CoreInput::Bytes(c0c1_packet(&c1)))
@@ -99,6 +147,14 @@ fn drive_ready(core: &mut RtmpCore) {
         .expect("c2");
 }
 
+/// Extract the `_result` stream id from `createStream` outputs by decoding written chunks.
+///
+/// This is needed because the core returns `CoreOutput::Write` chunks, and the
+/// stream id is embedded as the fourth AMF value of the `_result` command.
+///
+/// 通过解码 written chunk 从 `createStream` 输出中提取 `_result` stream id。
+///
+/// 这是因为 core 返回 `CoreOutput::Write` chunk，而 stream id 嵌入在 `_result` 命令的第四个 AMF 值中。
 fn create_stream_result_id(decoder: &mut RtmpChunkDecoder, outputs: &[CoreOutput]) -> Option<f64> {
     for out in outputs {
         if let CoreOutput::Write(bytes) = out {
@@ -132,6 +188,9 @@ proptest! {
         .. ProptestConfig::default()
     })]
 
+    /// Verify that a single chunk survives arbitrary TCP segmentation and chunking.
+    ///
+    /// 校验单个 chunk 在任意 TCP 分段与 chunk 分片下都能被完整解码。
     #[test]
     fn chunk_roundtrip_with_segmented_input(
         csid in 2u32..=65_599,
@@ -181,6 +240,9 @@ proptest! {
         prop_assert_eq!(&message.payload, payload_bytes.as_ref());
     }
 
+    /// Verify that C2 and `connect` can be pipelined and still produce a `Connected` event.
+    ///
+    /// 校验 C2 与 `connect` 可以流水线发送并仍产生 `Connected` 事件。
     #[test]
     fn pipelined_c2_and_connect_emits_connected_event(
         app in "[a-z0-9]{1,12}",
@@ -212,6 +274,9 @@ proptest! {
         prop_assert!(has_connected(&out2, &app));
     }
 
+    /// Verify that a `publish` command emits a `PublishRequested` event.
+    ///
+    /// 校验 `publish` 命令产生 `PublishRequested` 事件。
     #[test]
     fn publish_command_emits_publish_requested(
         app in "[a-z0-9]{1,12}",
@@ -266,6 +331,9 @@ proptest! {
         prop_assert!(publish_event_seen);
     }
 
+    /// Verify that media arriving before a publish is accepted is buffered and flushed after.
+    ///
+    /// 校验在发布被接受前到达的媒体会被缓冲，在接受后才被刷出。
     #[test]
     fn pending_media_is_flushed_after_accept_publish(
         stream_id in 1u32..=256,
@@ -330,6 +398,9 @@ proptest! {
         prop_assert!(media_after_accept);
     }
 
+    /// Verify that an invalid handshake version is rejected.
+    ///
+    /// 校验无效的握手版本被拒绝。
     #[test]
     fn invalid_handshake_version_is_rejected(
         invalid_version in any::<u8>().prop_filter("must not equal 3", |v| *v != 3)
@@ -348,6 +419,9 @@ proptest! {
         ));
     }
 
+    /// Verify that `createStream` returns monotonically increasing stream ids.
+    ///
+    /// 校验 `createStream` 返回单调递增的 stream id。
     #[test]
     fn create_stream_ids_are_monotonic_per_connection(
         txns in vec(0u16..=2000, 1..24)
@@ -373,6 +447,9 @@ proptest! {
         }
     }
 
+    /// Verify that `deleteStream` uses the argument stream id, not the message stream id.
+    ///
+    /// 校验 `deleteStream` 使用参数中的 stream id，而非 message stream id。
     #[test]
     fn delete_stream_argument_takes_precedence_over_message_stream_id(
         message_stream_id in 1u32..=64,

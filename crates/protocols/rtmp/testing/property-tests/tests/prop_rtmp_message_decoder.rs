@@ -1,4 +1,13 @@
-//! RTMP Message Decoder 的分支测试
+//! Targeted branch tests for `RtmpMessageDecoder`.
+//!
+//! These tests exercise decoder edge cases that are unlikely to appear naturally
+//! during generic round-trip property testing, such as the AMF3 zero-prefix fallback
+//! for command messages and malformed protocol control payloads.
+//!
+//! `RtmpMessageDecoder` 的分支测试。
+//!
+//! 这些测试专门覆盖通用往返属性测试中 unlikely 出现的解码器边界分支，
+//! 例如 AMF3 命令消息的零前缀回退以及损坏的协议控制负载。
 
 use cheetah_rtmp_core::ErrorKind;
 use cheetah_rtmp_core::{
@@ -8,7 +17,9 @@ use cheetah_rtmp_core::{
 
 use bytes::Bytes;
 
-/// 从指定的 MessageType 和 Payload 组装块
+/// Assemble a single RTMP chunk around the given message type and payload.
+///
+/// 根据给定 message type 和 payload 组装单个 RTMP chunk。
 fn encode_chunk(message_type: RtmpMessageType, payload: Vec<u8>) -> Vec<u8> {
     let chunk = RtmpChunk {
         chunk_stream_id: RtmpChunkStreamId::new(3).unwrap(),
@@ -23,7 +34,15 @@ fn encode_chunk(message_type: RtmpMessageType, payload: Vec<u8>) -> Vec<u8> {
     buf
 }
 
-/// 验证 AMF3 Command 以 0 开头时会被当作 AMF0 处理
+/// Verify that an AMF3 command message starting with a zero byte is treated as AMF0.
+///
+/// Some clients send AMF3 command type (20) but prefix the payload with `0x00`
+/// before the AMF0-encoded values. The decoder must detect this and fall back to AMF0.
+///
+/// 校验以零字节开头的 AMF3 命令消息会被当作 AMF0 处理。
+///
+/// 某些客户端发送 AMF3 命令类型（20），但会在 AMF0 编码值前加 `0x00` 前缀。
+/// 解码器必须检测到此情况并回退到 AMF0。
 #[test]
 fn command_amf3_zero_prefix_treated_as_amf0() {
     let mut payload = Vec::new();
@@ -54,7 +73,9 @@ fn command_amf3_zero_prefix_treated_as_amf0() {
     }
 }
 
-/// 验证 SetPeerBandwidth 的 limit_type 无效值会报错
+/// Verify that an invalid `SetPeerBandwidth` limit type is rejected.
+///
+/// 校验无效的 `SetPeerBandwidth` limit type 会被拒绝。
 #[test]
 fn set_peer_bandwidth_invalid_limit_type() {
     let mut payload = Vec::new();
@@ -70,7 +91,9 @@ fn set_peer_bandwidth_invalid_limit_type() {
     assert_eq!(err.kind, ErrorKind::InvalidData);
 }
 
-/// 验证 UserControl 的未知 event_type 会报错
+/// Verify that an unknown user control event type is rejected.
+///
+/// 校验未知的用户控制事件类型会被拒绝。
 #[test]
 fn user_control_unknown_event_type() {
     let mut payload = Vec::new();
@@ -85,7 +108,9 @@ fn user_control_unknown_event_type() {
     assert_eq!(err.kind, ErrorKind::InvalidData);
 }
 
-/// 验证缓冲区不足时返回 None
+/// Verify that a decoder with insufficient buffered data returns `None`.
+///
+/// 校验缓冲数据不足时解码器返回 `None`。
 #[test]
 fn insufficient_buffer_returns_none() {
     let mut decoder = RtmpMessageDecoder::default();

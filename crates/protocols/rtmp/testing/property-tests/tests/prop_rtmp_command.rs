@@ -1,4 +1,14 @@
-//! RTMP Command 的 Property-Based Testing
+//! Property-based round-trip tests for RTMP command messages.
+//!
+//! Each `RtmpCommand` variant is converted to a generic `RtmpMessage::Command`,
+//! serialized to AMF0 values, and then parsed back. The tests also verify that
+//! malformed commands (wrong transaction id, missing arguments, invalid types)
+//! are rejected by the parser.
+//!
+//! RTMP 命令消息的属性测试往返测试。
+//!
+//! 每个 `RtmpCommand` 变体被转换为通用 `RtmpMessage::Command`，序列化为 AMF0 值后再解析回来。
+//! 测试还校验解析器会拒绝格式错误的命令（错误事务 id、缺失参数、无效类型）。
 
 use cheetah_rtmp_core::{
     Amf0Value, AmfValue, RtmpCommand, RtmpMessage, RtmpMessageStreamId, TransactionId,
@@ -6,25 +16,33 @@ use cheetah_rtmp_core::{
 use proptest::prelude::*;
 
 // =============================================================================
-// Strategy 定义
+// Strategy definitions
 // =============================================================================
 
-/// 生成较短的 ASCII 字符串
+/// Generate a short ASCII string for command fields.
+///
+/// 生成用于命令字段的短 ASCII 字符串。
 fn arb_small_string() -> impl Strategy<Value = String> {
     "[a-zA-Z0-9_./-]{0,20}".prop_map(|s| s.to_string())
 }
 
-/// 生成 TransactionId
+/// Generate a `TransactionId`.
+///
+/// 生成 `TransactionId`。
 fn arb_transaction_id() -> impl Strategy<Value = TransactionId> {
     (0i64..=1000i64).prop_map(|v| TransactionId::from_f64(v as f64))
 }
 
-/// 生成 RtmpMessageStreamId
+/// Generate a `RtmpMessageStreamId`.
+///
+/// 生成 `RtmpMessageStreamId`。
 fn arb_stream_id() -> impl Strategy<Value = RtmpMessageStreamId> {
     any::<u32>().prop_map(RtmpMessageStreamId::new)
 }
 
-/// 简易生成 AMF 值
+/// Generate a small subset of `AmfValue` values for command arguments.
+///
+/// 生成用于命令参数的小范围 `AmfValue` 值。
 fn arb_amf_value() -> impl Strategy<Value = AmfValue> {
     prop_oneof![
         Just(AmfValue::Amf0(Amf0Value::Null)),
@@ -34,13 +52,15 @@ fn arb_amf_value() -> impl Strategy<Value = AmfValue> {
 }
 
 // =============================================================================
-// Roundtrip 测试
+// Round-trip tests
 // =============================================================================
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(300))]
 
-    /// 验证 Connect 的 roundtrip
+    /// Verify that `RtmpCommand::Connect` round-trips through message encoding.
+    ///
+    /// 校验 `RtmpCommand::Connect` 通过消息编码往返。
     #[test]
     fn connect_roundtrip(
         app in arb_small_string(),
@@ -74,7 +94,9 @@ proptest! {
         }
     }
 
-    /// 验证 CreateStream 的 roundtrip
+    /// Verify that `RtmpCommand::CreateStream` round-trips.
+    ///
+    /// 校验 `RtmpCommand::CreateStream` 往返。
     #[test]
     fn create_stream_roundtrip(transaction_id in arb_transaction_id()) {
         let command = RtmpCommand::CreateStream(cheetah_rtmp_core::RtmpCreateStreamCommand {
@@ -99,7 +121,9 @@ proptest! {
         }
     }
 
-    /// 验证 Publish 的 roundtrip
+    /// Verify that `RtmpCommand::Publish` round-trips.
+    ///
+    /// 校验 `RtmpCommand::Publish` 往返。
     #[test]
     fn publish_roundtrip(
         transaction_id in arb_transaction_id(),
@@ -128,7 +152,9 @@ proptest! {
         }
     }
 
-    /// 验证 Play 的 roundtrip
+    /// Verify that `RtmpCommand::Play` round-trips.
+    ///
+    /// 校验 `RtmpCommand::Play` 往返。
     #[test]
     fn play_roundtrip(
         transaction_id in arb_transaction_id(),
@@ -160,7 +186,9 @@ proptest! {
         }
     }
 
-    /// 验证 DeleteStream 的 roundtrip
+    /// Verify that `RtmpCommand::DeleteStream` round-trips.
+    ///
+    /// 校验 `RtmpCommand::DeleteStream` 往返。
     #[test]
     fn delete_stream_roundtrip(
         transaction_id in arb_transaction_id(),
@@ -189,7 +217,9 @@ proptest! {
         }
     }
 
-    /// 验证 GetStreamLength 的 roundtrip
+    /// Verify that `RtmpCommand::GetStreamLength` round-trips.
+    ///
+    /// 校验 `RtmpCommand::GetStreamLength` 往返。
     #[test]
     fn get_stream_length_roundtrip(
         transaction_id in arb_transaction_id(),
@@ -218,7 +248,9 @@ proptest! {
         }
     }
 
-    /// 验证 _result 的 roundtrip
+    /// Verify that `RtmpCommand::Result` round-trips.
+    ///
+    /// 校验 `RtmpCommand::Result` 往返。
     #[test]
     fn result_roundtrip(
         transaction_id in arb_transaction_id(),
@@ -250,6 +282,9 @@ proptest! {
         }
     }
 
+    /// Verify that `connect` with a transaction id other than 1 is rejected.
+    ///
+    /// 校验事务 id 不为 1 的 `connect` 被拒绝。
     #[test]
     fn connect_invalid_transaction_id_rejected(
         transaction_id in (0i64..=10i64).prop_filter("not connect id", |v| *v != 1),
@@ -271,6 +306,9 @@ proptest! {
         prop_assert!(result.is_err());
     }
 
+    /// Verify that `publish` with no stream name argument is rejected.
+    ///
+    /// 校验缺少流名称参数的 `publish` 被拒绝。
     #[test]
     fn publish_missing_args_rejected(transaction_id in arb_transaction_id()) {
         let result = RtmpCommand::from_message(
@@ -282,6 +320,9 @@ proptest! {
         prop_assert!(result.is_err());
     }
 
+    /// Verify that `publish` with a type other than "live" is rejected.
+    ///
+    /// 校验发布类型不是 "live" 的 `publish` 被拒绝。
     #[test]
     fn publish_invalid_type_rejected(
         transaction_id in arb_transaction_id(),
@@ -301,6 +342,9 @@ proptest! {
         prop_assert!(result.is_err());
     }
 
+    /// Verify that `play` with a missing `start` argument is rejected.
+    ///
+    /// 校验缺少 `start` 参数的 `play` 被拒绝。
     #[test]
     fn play_missing_start_rejected(
         transaction_id in arb_transaction_id(),
@@ -315,6 +359,9 @@ proptest! {
         prop_assert!(result.is_err());
     }
 
+    /// Verify that `play` with a non-numeric `start` argument is rejected.
+    ///
+    /// 校验 `start` 参数非数字的 `play` 被拒绝。
     #[test]
     fn play_invalid_start_type_rejected(
         transaction_id in arb_transaction_id(),
@@ -332,6 +379,9 @@ proptest! {
         prop_assert!(result.is_err());
     }
 
+    /// Verify that `deleteStream` with a missing stream id argument is rejected.
+    ///
+    /// 校验缺少流 id 参数的 `deleteStream` 被拒绝。
     #[test]
     fn delete_stream_missing_id_rejected(transaction_id in arb_transaction_id()) {
         let result = RtmpCommand::from_message(
