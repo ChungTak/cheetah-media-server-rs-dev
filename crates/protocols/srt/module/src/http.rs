@@ -5,6 +5,9 @@ use cheetah_sdk::{HttpHeader, HttpMethod, HttpRequest, HttpResponse, ModuleHttpS
 
 use crate::metrics::SrtModuleMetrics;
 
+/// HTTP service that exposes SRT module metrics endpoints.
+///
+/// 暴露 SRT 模块指标端点的 HTTP 服务。
 pub(crate) struct SrtHttpService {
     pub metrics: Arc<SrtModuleMetrics>,
 }
@@ -56,6 +59,9 @@ mod tests {
     }
 }
 
+/// `ModuleHttpService` implementation: route `/metrics` and `/metrics.json`.
+///
+/// `ModuleHttpService` 实现：路由 `/metrics` 与 `/metrics.json`。
 #[async_trait]
 impl ModuleHttpService for SrtHttpService {
     async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
@@ -71,7 +77,13 @@ impl ModuleHttpService for SrtHttpService {
     }
 }
 
+/// `SrtHttpService` rendering helpers.
+///
+/// `SrtHttpService` 渲染辅助。
 impl SrtHttpService {
+    /// Render a Prometheus-compatible text response from the metrics snapshot.
+    ///
+    /// 从指标快照渲染兼容 Prometheus 的文本响应。
     fn handle_metrics(&self) -> HttpResponse {
         let snapshot = self.metrics.snapshot();
         let mut out = String::with_capacity(1024);
@@ -196,6 +208,9 @@ impl SrtHttpService {
         }
     }
 
+    /// Render the metrics snapshot as JSON.
+    ///
+    /// 将指标快照渲染为 JSON。
     fn handle_metrics_json(&self) -> Result<HttpResponse, SdkError> {
         serde_json::to_vec(&self.metrics.snapshot())
             .map(HttpResponse::ok_json)

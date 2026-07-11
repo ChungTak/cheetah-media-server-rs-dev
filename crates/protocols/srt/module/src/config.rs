@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+/// Top-level configuration for the SRT module.
+///
+/// SRT 模块的顶层配置。
 pub struct SrtModuleConfig {
     pub enabled: bool,
     pub listen: String,
@@ -23,12 +26,18 @@ pub struct SrtModuleConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+/// Payload encapsulation configured for the SRT module.
+///
+/// SRT 模块配置的负载封装。
 pub struct SrtPayloadModuleConfig {
     pub kind: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+/// Encryption passphrase/key length for the SRT module.
+///
+/// SRT 模块的加密口令/密钥长度。
 pub struct SrtEncryptionModuleConfig {
     pub enabled: bool,
     pub passphrase: String,
@@ -37,6 +46,9 @@ pub struct SrtEncryptionModuleConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
+/// Token/user based publish/request authorization.
+///
+/// 基于 token/用户的发布/请求授权。
 pub struct SrtAuthConfig {
     pub enabled: bool,
     pub publish_token: String,
@@ -45,6 +57,9 @@ pub struct SrtAuthConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// Per-user username/token pair for SRT authorization.
+///
+/// SRT 授权的每个用户名/token 对。
 pub struct SrtAuthUserConfig {
     pub username: String,
     pub token: String,
@@ -52,6 +67,9 @@ pub struct SrtAuthUserConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+/// Default ingress mode and stream key behavior.
+///
+/// 默认入口模式与流密钥行为。
 pub struct SrtIngressConfig {
     pub default_mode: String,
     pub default_publish_stream_key: String,
@@ -60,6 +78,9 @@ pub struct SrtIngressConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+/// Subscriber, bootstrap, and send queue configuration for egress.
+///
+/// 出口端的订阅者、引导与发送队列配置。
 pub struct SrtEgressConfig {
     pub subscriber_queue_capacity: usize,
     pub subscriber_backpressure: BackpressurePolicy,
@@ -73,6 +94,9 @@ pub struct SrtEgressConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+/// Pull SRT ingress job: source URL to local stream key.
+///
+/// 拉取 SRT 入口任务：源 URL 到本地流密钥。
 pub struct SrtIngressJobConfig {
     pub name: String,
     pub enabled: bool,
@@ -84,6 +108,9 @@ pub struct SrtIngressJobConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+/// Push SRT egress job: local stream key to target URL.
+///
+/// 推送 SRT 出口任务：本地流密钥到目标 URL。
 pub struct SrtEgressJobConfig {
     pub name: String,
     pub enabled: bool,
@@ -97,6 +124,9 @@ pub struct SrtEgressJobConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
+/// SRT relay job: source URL to target URL through a local stream key.
+///
+/// SRT 中继任务：通过本地流密钥从源 URL 到目标 URL。
 pub struct SrtRelayJobConfig {
     pub name: String,
     pub enabled: bool,
@@ -215,10 +245,16 @@ impl Default for SrtRelayJobConfig {
 }
 
 impl SrtModuleConfig {
+    /// Deserialize from a JSON value.
+    ///
+    /// 从 JSON 值反序列化。
     pub fn from_value(value: serde_json::Value) -> Result<Self, serde_json::Error> {
         serde_json::from_value(value)
     }
 
+    /// Serialize the default config to JSON.
+    ///
+    /// 将默认配置序列化为 JSON。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap()
     }
