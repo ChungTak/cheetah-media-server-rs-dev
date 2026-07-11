@@ -10,12 +10,18 @@ use cheetah_codec::{
     MpegTsDemuxEvent, MpegTsDemuxer, MpegTsDemuxerConfig, RtpPacket, TS_PACKET_SIZE,
 };
 
+/// Per-SSRC demuxer selection (TS or PS) before probing is complete.
+///
+/// 探测完成前，每个 SSRC 的解复用器选择（TS 或 PS）。
 enum SessionDemuxer {
     Pending,
     Ts(MpegTsDemuxer),
     Ps(cheetah_codec::PsDemuxer),
 }
 
+/// `SessionDemuxer` flushing and state delegation.
+///
+/// `SessionDemuxer` 的刷新与状态委托。
 impl SessionDemuxer {
     pub fn flush(&mut self) -> Vec<MpegTsDemuxEvent> {
         match self {
@@ -44,17 +50,29 @@ impl SessionDemuxer {
 }
 
 /// Configuration for the RTP-TS ingest.
+///
+/// RTP-TS 摄入配置。
 #[derive(Debug, Clone)]
 pub struct RtpTsIngestConfig {
     /// Maximum concurrent SSRC sessions.
+    ///
+    /// 最大并发 SSRC 会话数。
     pub max_sessions: usize,
     /// Session idle timeout in milliseconds.
+    ///
+    /// 会话空闲超时（毫秒）。
     pub session_idle_timeout_ms: u64,
     /// Allow non-188-aligned RTP payloads (use demux push for resync).
+    ///
+    /// 是否允许非 188 字节对齐的 RTP 负载（使用 demux push 重新同步）。
     pub allow_unaligned_payload: bool,
     /// TS demuxer config for each session.
+    ///
+    /// 每个会话的 TS 解复用器配置。
     pub demux_config: MpegTsDemuxerConfig,
     /// Maximum consecutive sync losses before resetting demuxer.
+    ///
+    /// 连续同步丢失阈值，超过后重置解复用器。
     pub max_sync_loss: usize,
 }
 
@@ -71,53 +89,89 @@ impl Default for RtpTsIngestConfig {
 }
 
 /// Diagnostic events from RTP-TS ingest.
+///
+/// RTP-TS 摄入诊断事件。
 #[derive(Debug, Clone)]
 pub enum RtpTsDiagnostic {
     /// RTP packet is not version 2.
+    ///
+    /// RTP 包版本不是 2。
     InvalidRtpVersion { version: u8 },
     /// RTP header parsing failed (too short, extension overflow, etc).
+    ///
+    /// RTP 头解析失败（过短、扩展溢出等）。
     RtpHeaderError,
     /// Empty RTP payload after header stripping.
+    ///
+    /// 去除 RTP 头后负载为空。
     EmptyPayload { ssrc: u32 },
     /// Payload detected as PS (not supported).
+    ///
+    /// 检测到 PS 负载（暂不支持）。
     UnsupportedPsPayload { ssrc: u32 },
     /// Payload is neither TS nor PS.
+    ///
+    /// 既不是 TS 也不是 PS 的未知负载。
     UnknownPayload { ssrc: u32 },
     /// RTP sequence gap detected.
+    ///
+    /// 检测到 RTP 序列号跳变。
     SequenceGap { ssrc: u32, expected: u16, got: u16 },
     /// Source address changed for existing SSRC.
+    ///
+    /// 已有 SSRC 的源地址发生变化。
     SourceAddressChanged {
         ssrc: u32,
         old: SocketAddr,
         new: SocketAddr,
     },
     /// Session limit reached, new SSRC rejected.
+    ///
+    /// 会话数达到上限，新 SSRC 被拒绝。
     SessionLimitReached { ssrc: u32 },
     /// Session idle timeout.
+    ///
+    /// 会话空闲超时。
     SessionTimeout { ssrc: u32 },
     /// Non-188-aligned payload (using compat path).
+    ///
+    /// 非 188 字节对齐负载（使用兼容路径）。
     UnalignedPayload { ssrc: u32, payload_len: usize },
     /// Consecutive sync losses exceeded threshold.
+    ///
+    /// 连续同步丢失超过阈值。
     SyncLossThreshold { ssrc: u32 },
 }
 
 /// Events emitted by the RTP-TS ingest.
+///
+/// RTP-TS 摄入发出的输出事件。
 #[derive(Debug, Clone)]
 pub enum RtpTsIngestEvent {
     /// A new SSRC session was created.
+    ///
+    /// 新 SSRC 会话已创建。
     SessionCreated { ssrc: u32 },
     /// A session was removed (timeout or error).
+    ///
+    /// 会话被移除（超时或错误）。
     SessionRemoved { ssrc: u32 },
     /// Demux event from a session's TS demuxer.
+    ///
+    /// 来自会话 TS 解复用器的解复用事件。
     Demux {
         ssrc: u32,
         event: Box<MpegTsDemuxEvent>,
     },
     /// Diagnostic (non-fatal).
+    ///
+    /// 诊断事件（非致命）。
     Diagnostic(RtpTsDiagnostic),
 }
 
 /// Detected payload type.
+///
+/// 探测到的负载类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PayloadProbe {
     Ts,
@@ -125,13 +179,19 @@ pub enum PayloadProbe {
     Es,
     Ehome,
     /// Hikvision / vendor private XHB container.
+    ///
+    /// 海康/厂商私有 XHB 容器。
     Xhb,
     /// JT/T 1078 vehicle terminal payload.
+    ///
+    /// JT/T 1078 车载终端负载。
     Jtt1078,
     Unknown,
 }
 
 /// Per-SSRC session state.
+///
+/// 每个 SSRC 的会话状态。
 struct RtpTsSession {
     demuxer: SessionDemuxer,
     last_seq: Option<u16>,
@@ -142,12 +202,20 @@ struct RtpTsSession {
 }
 
 /// Sans-I/O RTP-TS ingest router.
+///
+/// RTP-TS 摄入的 Sans-I/O 路由器。
 pub struct RtpTsIngest {
     config: RtpTsIngestConfig,
     sessions: HashMap<u32, RtpTsSession>,
 }
 
+/// `RtpTsIngest` routing, session, and demuxing API.
+///
+/// `RtpTsIngest` 路由、会话与解复用 API。
 impl RtpTsIngest {
+    /// Create a new ingest router with the given configuration.
+    ///
+    /// 使用给定配置创建新的摄入路由器。
     pub fn new(config: RtpTsIngestConfig) -> Self {
         Self {
             config,
@@ -155,9 +223,11 @@ impl RtpTsIngest {
         }
     }
 
-    /// Feed a raw UDP/TCP RTP packet. Returns events.
-    /// `now_ms` is the current monotonic time in milliseconds (for idle tracking).
-    /// `source` is the remote address (for address change detection).
+    /// Feed a raw UDP/TCP RTP packet and return events.
+    ///
+    /// 输入一个原始 UDP/TCP RTP 包并返回事件。
+    /// `now_ms` 是当前的单调时间（毫秒），用于空闲跟踪。
+    /// `source` 是远端地址，用于源地址变化检测。
     pub fn feed_packet(
         &mut self,
         raw: &[u8],
@@ -316,6 +386,8 @@ impl RtpTsIngest {
     }
 
     /// Check for idle sessions and remove them. Returns removal events.
+    ///
+    /// 检查空闲会话并移除，返回移除事件。
     pub fn check_idle(&mut self, now_ms: u64) -> Vec<RtpTsIngestEvent> {
         let mut events = Vec::new();
         let timeout = self.config.session_idle_timeout_ms;
@@ -345,6 +417,8 @@ impl RtpTsIngest {
     }
 
     /// Flush a specific session's demuxer and remove it.
+    ///
+    /// 刷新并移除指定会话的解复用器。
     pub fn remove_session(&mut self, ssrc: u32) -> Vec<RtpTsIngestEvent> {
         let mut events = Vec::new();
         if let Some(mut session) = self.sessions.remove(&ssrc) {
@@ -360,10 +434,15 @@ impl RtpTsIngest {
     }
 
     /// Number of active sessions.
+    ///
+    /// 当前活动会话数。
     pub fn session_count(&self) -> usize {
         self.sessions.len()
     }
 
+    /// Feed a TS payload to the session demuxer, handling alignment and sync loss.
+    ///
+    /// 将 TS 负载送入会话解复用器，处理对齐与同步丢失。
     fn feed_ts_payload(
         session: &mut RtpTsSession,
         payload: &[u8],
@@ -408,6 +487,9 @@ impl RtpTsIngest {
         events
     }
 
+    /// Feed a PS payload to the session demuxer and normalize its events.
+    ///
+    /// 将 PS 负载送入会话解复用器并归一化其事件。
     fn feed_ps_payload(session: &mut RtpTsSession, payload: &[u8]) -> Vec<MpegTsDemuxEvent> {
         let mut events = Vec::new();
         if let SessionDemuxer::Ps(ref mut demuxer) = session.demuxer {
@@ -433,6 +515,8 @@ impl RtpTsIngest {
 }
 
 /// Probe RTP payload to determine the container/payload mode.
+///
+/// 探测 RTP 负载以确定容器/负载模式。
 pub fn probe_payload(payload: &[u8]) -> PayloadProbe {
     match cheetah_codec::probe_rtp_payload(payload) {
         cheetah_codec::RtpPayloadMode::Ts => PayloadProbe::Ts,
@@ -448,7 +532,9 @@ pub fn probe_payload(payload: &[u8]) -> PayloadProbe {
 }
 
 /// Per-session publish state tracker for module-level integration.
-/// Tracks discovered tracks and frame rate estimation for a single RTP-TS session.
+///
+/// 模块级集成的每个会话发布状态跟踪器。
+/// 跟踪单个 RTP-TS 会话发现的轨道与帧率估算。
 pub struct RtpTsPublishSession {
     pub ssrc: u32,
     tracks: Vec<cheetah_codec::TrackInfo>,
@@ -456,7 +542,13 @@ pub struct RtpTsPublishSession {
     tracks_dirty: bool,
 }
 
+/// `RtpTsPublishSession` track and frame-rate tracking API.
+///
+/// `RtpTsPublishSession` 轨道与帧率跟踪 API。
 impl RtpTsPublishSession {
+    /// Create a new publish session tracker for the given SSRC.
+    ///
+    /// 为指定 SSRC 创建新的发布会话跟踪器。
     pub fn new(ssrc: u32) -> Self {
         Self {
             ssrc,
@@ -466,7 +558,9 @@ impl RtpTsPublishSession {
         }
     }
 
-    /// Process a demux event. Returns true if tracks were updated.
+    /// Process a demux event and update tracks / frame-rate state.
+    ///
+    /// 处理解复用事件并更新轨道/帧率状态，返回轨道是否更新。
     pub fn on_demux_event(&mut self, event: &MpegTsDemuxEvent) -> bool {
         match event {
             MpegTsDemuxEvent::TrackFound(info) => {
@@ -487,6 +581,8 @@ impl RtpTsPublishSession {
     }
 
     /// Take the accumulated tracks if dirty (for update_tracks call).
+    ///
+    /// 如果轨道列表有变化，取出并清空脏标记。
     pub fn take_tracks_if_dirty(&mut self) -> Option<&[cheetah_codec::TrackInfo]> {
         if self.tracks_dirty {
             self.tracks_dirty = false;
@@ -497,11 +593,15 @@ impl RtpTsPublishSession {
     }
 
     /// Current estimated video frame rate.
+    ///
+    /// 当前估算的视频帧率。
     pub fn estimated_fps(&self) -> Option<f64> {
         self.frame_rate_estimator.estimated_fps()
     }
 
     /// Number of discovered tracks.
+    ///
+    /// 已发现轨道数量。
     pub fn track_count(&self) -> usize {
         self.tracks.len()
     }
