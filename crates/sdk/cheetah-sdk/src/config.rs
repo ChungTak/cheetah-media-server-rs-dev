@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -142,7 +143,7 @@ pub trait ConfigSchema:
 /// Read access to global and per-module runtime config.
 ///
 /// 全局和 module 运行时配置的读取接口。
-pub trait ConfigProvider: Send + Sync {
+pub trait ConfigProvider: Send + Sync + Any {
     fn global(&self) -> Value;
     fn module(&self, module_id: &ModuleId) -> Value;
     fn version(&self) -> u64;
@@ -185,7 +186,7 @@ pub trait ConfigSchemaRegistry: Send + Sync {
 /// Apply and rollback runtime config patches.
 ///
 /// 应用和回滚运行时配置补丁。
-pub trait ConfigApplyApi: Send + Sync {
+pub trait ConfigApplyApi: Send + Sync + Any {
     fn apply_global_patch(
         &self,
         patch: Value,

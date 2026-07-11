@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::sync::Arc;
 
 use cheetah_config::ConfigStore;
@@ -118,12 +119,37 @@ impl ConnectorBuilder {
     ///
     /// 构建底层引擎。
     pub fn build_engine(self) -> Result<Engine, ConnectorError> {
-        let config_provider = self
-            .config_provider
-            .unwrap_or_else(|| Arc::new(ConfigStore::new()) as Arc<dyn ConfigProvider>);
-        let config_apply = self
-            .config_apply
-            .unwrap_or_else(|| Arc::new(ConfigStore::new()) as Arc<dyn ConfigApplyApi>);
+        let provider = self.config_provider;
+        let apply = self.config_apply;
+
+        // Try to extract a concrete ConfigStore from either side so that the
+        // fallback side can share the same instance. This makes the promise in
+        // `with_config_apply` ("if not set, the same ConfigStore is used") true
+        // even when only one side is provided.
+        let provider_store = provider.as_ref().and_then(|p| {
+            let any: Arc<dyn Any + Send + Sync> = p.clone();
+            any.downcast::<ConfigStore>().ok()
+        });
+        let apply_store = apply.as_ref().and_then(|a| {
+            let any: Arc<dyn Any + Send + Sync> = a.clone();
+            any.downcast::<ConfigStore>().ok()
+        });
+
+        let shared = match (provider_store, apply_store) {
+            (Some(p), Some(a)) if Arc::ptr_eq(&p, &a) => Some(p),
+            (Some(p), None) => Some(p),
+            (None, Some(a)) => Some(a),
+            (None, None) => Some(Arc::new(ConfigStore::new())),
+            _ => None,
+        };
+
+        let (config_provider, config_apply) = if let Some(store) = shared {
+            let provider = provider.unwrap_or_else(|| store.clone() as Arc<dyn ConfigProvider>);
+            let apply = apply.unwrap_or_else(|| store.clone() as Arc<dyn ConfigApplyApi>);
+            (provider, apply)
+        } else {
+            (provider.unwrap(), apply.unwrap())
+        };
 
         let mut builder = EngineBuilder::new(config_provider, config_apply, self.runtime)
             .with_dispatcher_mode(self.dispatcher_mode);

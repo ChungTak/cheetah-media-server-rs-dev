@@ -228,6 +228,11 @@ impl MediaLoopbackHarness {
         cheetah_sdk::SubscriberId(0)
     }
 
+    /// Snapshot of tracks discovered by the engine subscriber.
+    pub fn tracks(&self) -> Vec<cheetah_codec::TrackInfo> {
+        self.sink_subscriber.tracks()
+    }
+
     // ------------------------------------------------------------------
     // Offer/answer handshake
     // ------------------------------------------------------------------

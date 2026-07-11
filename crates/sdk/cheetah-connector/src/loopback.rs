@@ -224,6 +224,10 @@ impl SubscriberSource for MediaLoopbackHarnessHandle {
     fn id(&self) -> SubscriberId {
         futures::executor::block_on(async { self.0.lock().await.id() })
     }
+
+    fn tracks(&self) -> Vec<cheetah_codec::TrackInfo> {
+        futures::executor::block_on(async { self.0.lock().await.tracks() })
+    }
 }
 
 #[cfg(not(feature = "webrtc"))]
