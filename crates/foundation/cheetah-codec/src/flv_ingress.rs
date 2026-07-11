@@ -67,6 +67,8 @@ pub struct FlvIngress {
     next_track_id: u32,
     has_video: bool,
     has_audio: bool,
+    video_track_id: Option<TrackId>,
+    audio_track_id: Option<TrackId>,
 }
 
 impl FlvIngress {
@@ -439,7 +441,11 @@ impl FlvIngress {
         if self.has_video {
             TrackId(0)
         } else {
-            TrackId(self.next_track_id())
+            self.video_track_id.unwrap_or_else(|| {
+                let id = TrackId(self.next_track_id());
+                self.video_track_id = Some(id);
+                id
+            })
         }
     }
 
@@ -447,7 +453,11 @@ impl FlvIngress {
         if self.has_audio {
             TrackId(1)
         } else {
-            TrackId(self.next_track_id())
+            self.audio_track_id.unwrap_or_else(|| {
+                let id = TrackId(self.next_track_id());
+                self.audio_track_id = Some(id);
+                id
+            })
         }
     }
 
