@@ -1,3 +1,7 @@
+//! GB28181 module factory and implementation.
+//!
+//! GB28181 模块工厂与实现。
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -23,8 +27,14 @@ use crate::config::Gb28181ModuleConfig;
 
 const MODULE_ID: &str = "gb28181";
 
+/// Factory for creating GB28181 modules.
+///
+/// GB28181 模块工厂。
 pub struct Gb28181ModuleFactory;
 
+/// `Gb28181ModuleFactory` implementation.
+///
+/// `Gb28181ModuleFactory` 实现。
 impl ModuleFactory for Gb28181ModuleFactory {
     fn manifest(&self) -> ModuleManifest {
         ModuleManifest {
@@ -60,6 +70,9 @@ impl ModuleFactory for Gb28181ModuleFactory {
     }
 }
 
+/// GB28181 module runtime state.
+///
+/// GB28181 模块运行时状态。
 pub struct Gb28181Module {
     state: ModuleState,
     config: Gb28181ModuleConfig,
@@ -73,7 +86,13 @@ pub struct Gb28181Module {
     active_sessions: Arc<Mutex<HashMap<String, String>>>, // session_key -> device_id
 }
 
+/// `Gb28181Module` constructor.
+///
+/// `Gb28181Module` 构造器。
 impl Gb28181Module {
+    /// Create a new GB28181 module instance.
+    ///
+    /// 创建新的 GB28181 模块实例。
     pub fn new() -> Self {
         Self {
             state: ModuleState::Created,
@@ -87,12 +106,18 @@ impl Gb28181Module {
     }
 }
 
+/// `Default` forward to `Gb28181Module::new`.
+///
+/// `Default` 转发到 `Gb28181Module::new`。
 impl Default for Gb28181Module {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// `Module` lifecycle and HTTP API for GB28181.
+///
+/// GB28181 的 `Module` 生命周期与 HTTP API。
 #[async_trait]
 impl Module for Gb28181Module {
     fn info(&self) -> ModuleInfo {
@@ -326,6 +351,9 @@ impl Module for Gb28181Module {
     }
 }
 
+/// HTTP control API for the GB28181 module.
+///
+/// GB28181 模块的 HTTP 控制 API。
 struct GbHttpService {
     engine: EngineContext,
     /// Shared with `Gb28181Module`. Populated by `start()` and read on every HTTP request;
@@ -339,7 +367,13 @@ struct GbHttpService {
     default_media_port: u16,
 }
 
+/// `GbHttpService` helpers.
+///
+/// `GbHttpService` 辅助。
 impl GbHttpService {
+    /// Retrieve the driver handle, returning `Unavailable` if not started.
+    ///
+    /// 获取驱动句柄；若未启动则返回 `Unavailable`。
     fn driver(&self) -> Result<Arc<Gb28181DriverHandle>, SdkError> {
         self.driver_handle
             .lock()
@@ -348,6 +382,9 @@ impl GbHttpService {
     }
 }
 
+/// Proxy a JSON request to the mounted RTP module HTTP service.
+///
+/// 将 JSON 请求代理到已挂载的 RTP 模块 HTTP 服务。
 async fn call_rtp_service(
     engine: &EngineContext,
     method: HttpMethod,
@@ -390,6 +427,9 @@ async fn call_rtp_service(
     Ok(resp_val)
 }
 
+/// `ModuleHttpService` implementation for GB28181 REST endpoints.
+///
+/// GB28181 REST 端点的 `ModuleHttpService` 实现。
 #[async_trait]
 impl ModuleHttpService for GbHttpService {
     async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
@@ -793,6 +833,9 @@ impl ModuleHttpService for GbHttpService {
     }
 }
 
+/// Wall-clock fallback for `now_ms` (legacy/test helper).
+///
+/// `now_ms` 的墙上时钟回退（遗留/测试辅助）。
 fn now_ms() -> u64 {
     // Wallclock fallback used in tests/legacy paths; the live module reads time
     // from the runtime API, not this helper. Kept for parity with prior code.
@@ -809,6 +852,8 @@ fn _now_ms_keepalive() {
 
 /// Pull the `stream` identifier out of an inbound REST body, accepting all the alias spellings
 /// observed across SMS / ZLM / ABL deployments.
+///
+/// 从 REST 请求体中提取 `stream` 标识符，兼容 SMS/ZLM/ABL 的字段别名。
 fn extract_stream_alias(body: &serde_json::Value) -> Option<String> {
     body.get("stream")
         .and_then(|v| v.as_str())
@@ -824,6 +869,8 @@ fn extract_stream_alias(body: &serde_json::Value) -> Option<String> {
 }
 
 /// Pull the `app` identifier out of an inbound REST body, accepting alias spellings.
+///
+/// 从 REST 请求体中提取 `app` 标识符，兼容字段别名。
 fn extract_app_alias(body: &serde_json::Value) -> String {
     body.get("app")
         .and_then(|v| v.as_str())
