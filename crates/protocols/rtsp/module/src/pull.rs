@@ -254,9 +254,16 @@ pub async fn open_rtsp_pull(
         }
     }));
 
-    let subscriber = stream_manager_api
+    let subscriber = match stream_manager_api
         .open_subscriber(target_stream_key, options.subscriber_options)
-        .await?;
+        .await
+    {
+        Ok(sub) => sub,
+        Err(err) => {
+            wait_cancel_for_source.cancel();
+            return Err(err);
+        }
+    };
 
     Ok(Box::new(RtspPullSubscriberSource {
         inner: subscriber,
