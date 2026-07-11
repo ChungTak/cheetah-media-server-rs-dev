@@ -59,7 +59,7 @@ pub enum FlvIngressError {
 /// canonical `AVFrame` values.
 ///
 /// 维护 FLV 轨道状态并将传入 tag 转换为标准 `AVFrame` 的状态机。
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct FlvIngress {
     tracks: Vec<TrackInfo>,
     last_raw_timestamp: u64,
@@ -69,6 +69,21 @@ pub struct FlvIngress {
     has_audio: bool,
     video_track_id: Option<TrackId>,
     audio_track_id: Option<TrackId>,
+}
+
+impl Default for FlvIngress {
+    fn default() -> Self {
+        Self {
+            tracks: Vec::new(),
+            last_raw_timestamp: 0,
+            epoch_offset: 0,
+            next_track_id: 2,
+            has_video: false,
+            has_audio: false,
+            video_track_id: None,
+            audio_track_id: None,
+        }
+    }
 }
 
 impl FlvIngress {
