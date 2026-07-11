@@ -1,5 +1,18 @@
+//! Sans-I/O HTTP-FLV core state machine.
+//!
+//! Sans-I/O HTTP-FLV core 状态机。
+
+/// HTTP-FLV core error types.
+///
+/// HTTP-FLV core 错误类型。
 pub mod error;
+/// HTTP-FLV request parsing and WebSocket upgrade.
+///
+/// HTTP-FLV 请求解析与 WebSocket 升级。
 pub mod request;
+/// HTTP-FLV session state machine.
+///
+/// HTTP-FLV 会话状态机。
 pub mod session;
 
 pub use error::HttpFlvCoreError;

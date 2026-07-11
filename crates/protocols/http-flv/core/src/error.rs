@@ -1,3 +1,6 @@
+/// Error cases returned by HTTP-FLV core parsing and session handling.
+///
+/// HTTP-FLV core 解析与会话处理返回的错误情况。
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 pub enum HttpFlvCoreError {
     #[error("method is not supported: {method}")]

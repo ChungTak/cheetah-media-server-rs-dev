@@ -9,12 +9,18 @@ use crate::request::{
 use crate::HttpFlvCoreError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Commands from module/driver to the HTTP-FLV core.
+///
+/// 模块/驱动到 HTTP-FLV core 的命令。
 pub enum HttpFlvCoreCommand {
     SendFlvBytes(Bytes),
     Close,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Inputs delivered to the HTTP-FLV core state machine.
+///
+/// 递交给 HTTP-FLV core 状态机的输入。
 pub enum HttpFlvCoreInput {
     RequestHead(HttpRequestHead),
     BodyBytes(Bytes),
@@ -23,6 +29,9 @@ pub enum HttpFlvCoreInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Reason for closing a connection.
+///
+/// 关闭连接的原因。
 pub enum CloseReason {
     Normal,
     BadRequest,
@@ -31,6 +40,9 @@ pub enum CloseReason {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Events emitted by the core for the module layer.
+///
+/// core 向模块层发出的事件。
 pub enum HttpFlvEvent {
     PlayRequested {
         stream_key: StreamKeyParts,
@@ -46,6 +58,9 @@ pub enum HttpFlvEvent {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Output actions from the core state machine.
+///
+/// core 状态机的输出动作。
 pub enum HttpFlvCoreOutput {
     SendHttpResponse(HttpResponseHead),
     SendBytes(Bytes),
@@ -55,6 +70,9 @@ pub enum HttpFlvCoreOutput {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Internal HTTP-FLV session state.
+///
+/// 内部 HTTP-FLV 会话状态。
 enum SessionState {
     Idle,
     HttpStreaming,
@@ -64,18 +82,30 @@ enum SessionState {
 }
 
 #[derive(Debug)]
+/// Sans-I/O HTTP-FLV core state machine.
+///
+/// Sans-I/O HTTP-FLV core 状态机。
 pub struct HttpFlvCore {
     state: SessionState,
     demuxer: FlvDemuxer,
 }
 
+/// `Default` delegates to `new()`.
+///
+/// `Default` 委托给 `new()`。
 impl Default for HttpFlvCore {
     fn default() -> Self {
         Self::new()
     }
 }
 
+/// `HttpFlvCore` API: process inputs and handle request/WS/command paths.
+///
+/// `HttpFlvCore` API：处理输入并处理请求/WS/命令路径。
 impl HttpFlvCore {
+    /// Create a new HTTP-FLV core state machine.
+    ///
+    /// 创建新的 HTTP-FLV core 状态机。
     pub fn new() -> Self {
         Self {
             state: SessionState::Idle,
@@ -83,6 +113,9 @@ impl HttpFlvCore {
         }
     }
 
+    /// Process one input and produce the corresponding outputs.
+    ///
+    /// 处理一个输入并产生对应的输出。
     pub fn handle_input(
         &mut self,
         input: HttpFlvCoreInput,
@@ -95,6 +128,9 @@ impl HttpFlvCore {
         }
     }
 
+    /// Handle an HTTP request head, routing to play, publish, or WebSocket upgrade.
+    ///
+    /// 处理 HTTP 请求头，路由到播放、发布或 WebSocket 升级。
     fn handle_request_head(
         &mut self,
         head: HttpRequestHead,
@@ -196,6 +232,9 @@ impl HttpFlvCore {
         }
     }
 
+    /// Demux FLV body bytes and emit `PullTag` events for the module layer.
+    ///
+    /// 解封装 FLV 体字节，并向模块层发出 `PullTag` 事件。
     fn handle_body_bytes(
         &mut self,
         bytes: &[u8],
@@ -216,6 +255,9 @@ impl HttpFlvCore {
         Ok(outputs)
     }
 
+    /// Handle a WebSocket message after the upgrade is complete.
+    ///
+    /// 升级完成后处理 WebSocket 消息。
     fn handle_websocket_message(
         &mut self,
         message: WebSocketMessage,
@@ -232,6 +274,9 @@ impl HttpFlvCore {
         }
     }
 
+    /// Handle a driver command, sending FLV bytes over the active transport.
+    ///
+    /// 处理驱动命令，通过活动传输发送 FLV 字节。
     fn handle_command(
         &mut self,
         command: HttpFlvCoreCommand,
