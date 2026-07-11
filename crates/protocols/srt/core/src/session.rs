@@ -1,9 +1,15 @@
 use bytes::Bytes;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Opaque identifier for an SRT session.
+///
+/// SRT 会话的不透明标识符。
 pub struct SrtSessionId(pub u64);
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// Snapshot of per-session byte/packet counters.
+///
+/// 每会话字节/包计数器快照。
 pub struct SrtStatsSnapshot {
     pub bytes_in: u64,
     pub bytes_out: u64,
@@ -12,12 +18,18 @@ pub struct SrtStatsSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Commands sent from the module into the SRT core.
+///
+/// 从模块发送到 SRT core 的命令。
 pub enum SrtCoreCommand {
     SendPayload { payload: Bytes },
     Close { reason: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Inputs delivered to the SRT core state machine.
+///
+/// 递交给 SRT core 状态机的输入。
 pub enum SrtCoreInput {
     Packet {
         now_micros: u64,
@@ -38,6 +50,9 @@ pub enum SrtCoreInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Outputs produced by the SRT core state machine.
+///
+/// SRT core 状态机产生的输出。
 pub enum SrtCoreOutput {
     SendPacket {
         bytes: Bytes,
@@ -53,6 +68,9 @@ pub enum SrtCoreOutput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Events surfaced by the SRT core to the module.
+///
+/// SRT core 向模块暴露的事件。
 pub enum SrtCoreEvent {
     Connected,
     PayloadReceived {

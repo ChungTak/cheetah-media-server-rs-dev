@@ -4,6 +4,9 @@ use crate::config::SrtStreamMode;
 use crate::error::{SrtCoreError, SrtCoreResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// Parsed SRT access-control stream id ("#!::" syntax) or plain stream key.
+///
+/// 解析后的 SRT 访问控制流 ID（"#!::" 语法）或普通流密钥。
 pub struct ParsedSrtStreamId {
     pub stream_key: String,
     pub mode: Option<SrtStreamMode>,
@@ -13,6 +16,9 @@ pub struct ParsedSrtStreamId {
     pub extras: BTreeMap<String, String>,
 }
 
+/// Parse an SRT stream id string, handling the access-control prefix or plain key.
+///
+/// 解析 SRT stream id 字符串，处理访问控制前缀或普通密钥。
 pub fn parse_srt_stream_id(input: &str) -> SrtCoreResult<ParsedSrtStreamId> {
     let input = input.trim();
     if input.is_empty() {
@@ -36,6 +42,9 @@ pub fn parse_srt_stream_id(input: &str) -> SrtCoreResult<ParsedSrtStreamId> {
     }
 }
 
+/// Parse a `#!::` access-control stream id into key-value fields.
+///
+/// 将 `#!::` 访问控制流 ID 解析为键值字段。
 fn parse_access_control_stream_id(input: &str) -> SrtCoreResult<ParsedSrtStreamId> {
     let mut fields = BTreeMap::new();
     for pair in input.split(',') {
@@ -76,6 +85,9 @@ fn parse_access_control_stream_id(input: &str) -> SrtCoreResult<ParsedSrtStreamI
     })
 }
 
+/// Normalize a stream key by trimming leading slashes and rejecting dangerous paths.
+///
+/// 规范流密钥：去除前导斜杠并拒绝危险路径。
 fn normalize_stream_key(input: &str) -> SrtCoreResult<String> {
     let stream_key = input.trim().trim_start_matches('/').to_string();
     if stream_key.is_empty() {
@@ -101,6 +113,9 @@ fn normalize_stream_key(input: &str) -> SrtCoreResult<String> {
     Ok(stream_key)
 }
 
+/// Percent-decode a UTF-8 string with validation.
+///
+/// 对 UTF-8 字符串进行百分号解码并校验。
 pub(crate) fn percent_decode(input: &str) -> SrtCoreResult<String> {
     let bytes = input.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -133,6 +148,9 @@ pub(crate) fn percent_decode(input: &str) -> SrtCoreResult<String> {
     })
 }
 
+/// Convert a hex ASCII digit to its numeric value.
+///
+/// 将十六进制 ASCII 数字转换为数值。
 fn hex_value(byte: u8) -> Option<u8> {
     match byte {
         b'0'..=b'9' => Some(byte - b'0'),
