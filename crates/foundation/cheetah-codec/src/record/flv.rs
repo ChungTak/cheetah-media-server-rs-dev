@@ -3,6 +3,12 @@
 //! Wraps `cheetah_codec::flv` to produce a continuous FLV file by streaming
 //! tag bytes. The writer takes track info to emit sequence headers, then
 //! emits an `onMetaData` script tag, and finally tags for each `AVFrame`.
+//!
+//! FLV 录制容器写入器。
+//!
+//! 封装 `cheetah_codec::flv`，通过流式输出标签字节生成连续 FLV 文件。
+//! 写入器接收轨道信息并输出序列头，然后输出 `onMetaData` 脚本标签，
+//! 最后为每个 `AVFrame` 输出标签。
 
 use crate::prelude::*;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -16,12 +22,16 @@ use crate::track::{CodecId, MediaKind, TrackInfo};
 use super::{RecordContainerWriter, RecordDiagnostic, RecordError, RecordFormat, RecordWriteEvent};
 
 /// Writer configuration.
+///
+/// 写入器配置。
 #[derive(Debug, Clone, Default)]
 pub struct FlvFileWriterConfig {
     pub include_onmetadata: bool,
 }
 
 /// Stateful FLV file writer.
+///
+/// 有状态 FLV 文件写入器。
 pub struct FlvFileWriter {
     config: FlvFileWriterConfig,
     header_emitted: bool,
@@ -31,6 +41,9 @@ pub struct FlvFileWriter {
 }
 
 impl FlvFileWriter {
+    /// Create a new FLV file writer with the given configuration.
+    ///
+    /// 使用给定配置创建新的 FLV 文件写入器。
     pub fn new(config: FlvFileWriterConfig) -> Self {
         Self {
             config,
@@ -95,6 +108,9 @@ impl FlvFileWriter {
 }
 
 impl RecordContainerWriter for FlvFileWriter {
+    /// Store the active track list for header/sequence-header generation.
+    ///
+    /// 保存活动轨道列表，用于生成头部与序列头。
     fn update_tracks(&mut self, tracks: &[TrackInfo]) -> Result<(), RecordError> {
         if tracks.is_empty() {
             return Err(RecordError::InvalidTracks("no tracks"));
@@ -103,6 +119,10 @@ impl RecordContainerWriter for FlvFileWriter {
         Ok(())
     }
 
+    /// Encode an `AVFrame` as an FLV tag and emit it along with the file header
+    /// and sequence headers on the first call.
+    ///
+    /// 将 `AVFrame` 编码为 FLV 标签，并在首次调用时一并输出文件头与序列头。
     fn push_frame(&mut self, frame: &AVFrame) -> Result<Vec<RecordWriteEvent>, RecordError> {
         if self.finalized {
             return Err(RecordError::Finalized);
@@ -242,11 +262,15 @@ impl RecordContainerWriter for FlvFileWriter {
         Ok(out)
     }
 
+    /// Mark the writer as finalized. No trailing data is required for FLV.
+    ///
+    /// 标记写入器已完成。FLV 不需要尾部数据。
     fn finalize(&mut self) -> Result<Vec<RecordWriteEvent>, RecordError> {
         self.finalized = true;
         Ok(Vec::new())
     }
 
+    /// 返回 `RecordFormat::Flv`。
     fn format(&self) -> RecordFormat {
         RecordFormat::Flv
     }

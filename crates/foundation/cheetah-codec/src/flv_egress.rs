@@ -3,6 +3,11 @@
 //! This is the shared FLV encapsulation layer consumed by RTMP and HTTP-FLV.
 //! Script-data (`onMetaData`) is serialized with a minimal, self-contained
 //! AMF0 encoder so the FLV container layer carries no protocol dependency.
+//!
+//! FLV 出口映射：AVFrame -> FLV 音频/视频/脚本负载。
+//!
+//! 这是 RTMP 与 HTTP-FLV 共享的 FLV 封装层。脚本数据（`onMetaData`）
+//! 使用最小自包含的 AMF0 编码器序列化，使 FLV 容器层不依赖具体协议。
 
 use crate::prelude::*;
 
@@ -20,12 +25,24 @@ const ENHANCED_RTMP_AUDIO_SEQUENCE_START: u8 = 0x90;
 const ENHANCED_RTMP_AUDIO_CODED_FRAMES: u8 = 0x91;
 const OPUS_DEFAULT_PRE_SKIP: u16 = 312;
 
+/// RTMP/FLV playback mode selector.
+///
+/// `Enhanced` uses the new FLV video message spec (FourCC + packet type) for
+/// H.265/AV1/VP8/VP9, while `Normal` uses classic codec-id framing.
+///
+/// RTMP/FLV 播放模式选择器。
+///
+/// `Enhanced` 使用新的 FLV 视频消息规范（FourCC + 包类型）承载 H.265/AV1/VP8/VP9，
+/// `Normal` 使用经典 codec-id 帧。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpFlvPlayMode {
     Normal,
     Enhanced,
 }
 
+/// Kind of an RTMP/FLV payload produced by the egress mapper.
+///
+/// 出口映射器产生的 RTMP/FLV 负载类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtmpFlvPayloadKind {
     Audio,
@@ -33,6 +50,14 @@ pub enum RtmpFlvPayloadKind {
     Data,
 }
 
+/// A fully framed RTMP/FLV payload ready for the wire.
+///
+/// `kind` selects the tag type, `timestamp_ms` is the millisecond timestamp,
+/// and `payload` is the raw tag body.
+///
+/// 已完全成帧、可直接发送的 RTMP/FLV 负载。
+///
+/// `kind` 选择标签类型，`timestamp_ms` 为毫秒时间戳，`payload` 为原始标签体。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtmpFlvPayload {
     pub kind: RtmpFlvPayloadKind,
@@ -40,6 +65,16 @@ pub struct RtmpFlvPayload {
     pub payload: Bytes,
 }
 
+/// Build the initial sequence of payloads required to start RTMP/FLV playback.
+///
+/// Optionally emits an `onMetaData` script tag, then codec-specific sequence
+/// headers for every track, and finally a mute AAC config when the track list
+/// has no audio and the caller requests it.
+///
+/// 构建启动 RTMP/FLV 播放所需的初始负载序列。
+///
+/// 可选输出 `onMetaData` 脚本标签，随后为每个轨道输出编解码器特定序列头，
+/// 若轨道列表无音频且调用方要求，则追加静音 AAC 配置。
 pub fn build_track_bootstrap_payloads(
     tracks: &[TrackInfo],
     mode: RtmpFlvPlayMode,
@@ -176,6 +211,16 @@ pub fn build_track_bootstrap_payloads(
     payloads
 }
 
+/// Map a canonical `AVFrame` to an RTMP/FLV payload.
+///
+/// Rejects unsupported codec/kind combinations, normalizes the timestamp to
+/// milliseconds, and wraps the payload in the correct FLV video/audio tag
+/// for the requested playback mode.
+///
+/// 将标准 `AVFrame` 映射为 RTMP/FLV 负载。
+///
+/// 拒绝不支持的编解码器/类型组合，将时间戳归一化为毫秒，
+/// 并按请求播放模式将负载封装到正确的 FLV 视频/音频标签中。
 pub fn map_frame_to_rtmp_flv_payload(
     frame: &AVFrame,
     mode: RtmpFlvPlayMode,
@@ -249,6 +294,15 @@ pub fn map_frame_to_rtmp_flv_payload(
     }
 }
 
+/// Build a video sequence-header payload for `codec` and `config`.
+///
+/// Uses enhanced FourCC framing when `use_enhanced_video_mode` returns true,
+/// otherwise falls back to legacy codec-id framing.
+///
+/// 为 `codec` 与 `config` 构建视频序列头负载。
+///
+/// 当 `use_enhanced_video_mode` 返回 true 时使用增强 FourCC 帧，
+/// 否则回退到传统 codec-id 帧。
 pub fn build_video_config_payload(
     codec: CodecId,
     config: &[u8],
@@ -270,6 +324,9 @@ pub fn build_video_config_payload(
     Some(payload.freeze())
 }
 
+/// Determine whether enhanced FLV video framing should be used.
+///
+/// 判断是否应使用增强 FLV 视频帧。
 pub fn use_enhanced_video_mode(mode: RtmpFlvPlayMode, codec: CodecId) -> bool {
     mode == RtmpFlvPlayMode::Enhanced
         || matches!(
@@ -278,6 +335,15 @@ pub fn use_enhanced_video_mode(mode: RtmpFlvPlayMode, codec: CodecId) -> bool {
         )
 }
 
+/// Build a VVC (H.266) decoder configuration from parameter sets.
+///
+/// Emits a compact vvcc-style array with NAL unit type and count headers.
+/// Returns an empty `Bytes` if no parameter sets are present.
+///
+/// 从参数集构建 VVC（H.266）解码器配置。
+///
+/// 输出紧凑的 vvcc 风格数组，包含 NAL 单元类型与计数头。
+/// 若不存在参数集则返回空 `Bytes`。
 pub fn build_h266_config(vps: &[Bytes], sps: &[Bytes], pps: &[Bytes]) -> Bytes {
     let mut array_count = 0u8;
     if !vps.is_empty() {
@@ -301,6 +367,15 @@ pub fn build_h266_config(vps: &[Bytes], sps: &[Bytes], pps: &[Bytes]) -> Bytes {
     out.freeze()
 }
 
+/// Build an HEVC (H.265) decoder configuration record (hvcc) from parameter sets.
+///
+/// Extracts profile/level/constraint information from the first SPS and
+/// packages VPS/SPS/PPS into the NAL array format used by `hvcC`.
+///
+/// 从参数集构建 HEVC（H.265）解码器配置记录（hvcc）。
+///
+/// 从首个 SPS 提取 profile/level/constraint 信息，并将 VPS/SPS/PPS
+/// 打包为 `hvcC` 使用的 NAL 数组格式。
 pub fn build_h265_config(vps: &[Bytes], sps: &[Bytes], pps: &[Bytes]) -> Bytes {
     let mut array_count = 0u8;
     if !vps.is_empty() {
@@ -348,12 +423,18 @@ pub fn build_h265_config(vps: &[Bytes], sps: &[Bytes], pps: &[Bytes]) -> Bytes {
     out.freeze()
 }
 
+/// Return true if any track in the list is an audio track.
+///
+/// 若列表中存在音频轨道则返回 true。
 pub fn track_list_has_audio(tracks: &[TrackInfo]) -> bool {
     tracks
         .iter()
         .any(|track| track.media_kind == MediaKind::Audio)
 }
 
+/// Check whether the codec can be played back through RTMP/FLV paths.
+///
+/// 检查该编解码器是否可以通过 RTMP/FLV 路径播放。
 pub fn rtmp_playback_codec_supported(media_kind: MediaKind, codec: CodecId) -> bool {
     matches!(
         (media_kind, codec),
@@ -377,6 +458,9 @@ pub fn rtmp_playback_codec_supported(media_kind: MediaKind, codec: CodecId) -> b
     )
 }
 
+/// Build the AAC AudioSpecificConfig payload for a mute audio track.
+///
+/// 构建静音音频轨道的 AAC AudioSpecificConfig 负载。
 pub fn mute_aac_config_payload() -> Bytes {
     let asc = [0x12, 0x10];
     let mut payload = BytesMut::with_capacity(2 + asc.len());
@@ -385,12 +469,25 @@ pub fn mute_aac_config_payload() -> Bytes {
     payload.freeze()
 }
 
+/// Build a single mute AAC audio frame payload.
+///
+/// 构建单个静音 AAC 音频帧负载。
 pub fn mute_aac_frame_payload() -> Bytes {
     let mut payload = BytesMut::with_capacity(3);
     payload.extend_from_slice(&[0xaf, 0x01, 0x00]);
     payload.freeze()
 }
 
+/// Build an AMF0 `onMetaData` script payload from the track list.
+///
+/// Fills video width/height/framerate and audio sample-rate/stereo/codec
+/// fields as ECMA array entries, matching the shape expected by generic
+/// FLV/RTMP players.
+///
+/// 根据轨道列表构建 AMF0 `onMetaData` 脚本负载。
+///
+/// 将视频宽度/高度/帧率以及音频采样率/立体声/编解码器字段
+/// 填充为 ECMA 数组条目，与普通 FLV/RTMP 播放器期望的形状一致。
 pub fn build_metadata(tracks: &[TrackInfo]) -> Bytes {
     let mut entries: Vec<(&str, Amf0Meta)> = Vec::new();
     entries.push(("duration", Amf0Meta::Number(0.0)));

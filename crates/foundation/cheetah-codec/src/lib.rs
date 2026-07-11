@@ -10,6 +10,16 @@
 //!
 //! This separation keeps ingress compatibility logic, engine scheduling semantics,
 //! and protocol encapsulation concerns decoupled.
+//!
+//! `cheetah-codec` 是各协议模块共享的媒体基础层。
+//!
+//! 时间线约定：
+//! - `AVFrame.pts/dts/duration` 始终是标准媒体时间线值。
+//! - 协议原生时间戳（如 RTP 时间戳或 RTMP 标签时间戳）应作为源元数据保留，
+//!   默认情况下不能当作标准 DTS 排序依据。
+//! - 协议出口时间戳通过本 crate 的导出辅助函数从标准时间线派生。
+//!
+//! 这种分离将入口兼容逻辑、引擎调度语义与协议封装关注点解耦。
 #![cfg_attr(not(feature = "std"), no_std)]
 
 extern crate alloc;

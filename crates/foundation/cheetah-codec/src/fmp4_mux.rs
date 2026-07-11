@@ -2,6 +2,11 @@
 //!
 //! Generates init segments (ftyp+moov) and media segments (styp+moof+mdat).
 //! Supports H264/H265/H266/VP8/VP9/AV1/MJPEG video and AAC/G711A/G711U/MP3/MP2/Opus audio.
+//!
+//! ISO BMFF 分片 MP4 共享复用器。
+//!
+//! 生成 init 片段（ftyp+moov）与媒体片段（styp+moof+mdat）。
+//! 支持 H264/H265/H266/VP8/VP9/AV1/MJPEG 视频以及 AAC/G711A/G711U/MP3/MP2/Opus 音频。
 
 use crate::prelude::*;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -9,6 +14,8 @@ use bytes::{BufMut, Bytes, BytesMut};
 use crate::track::{CodecExtradata, CodecId, MediaKind, TrackInfo};
 
 /// Configuration for the fMP4 muxer.
+///
+/// fMP4 复用器配置。
 #[derive(Debug, Clone)]
 pub struct Fmp4MuxerConfig {
     pub include_styp: bool,
@@ -27,6 +34,8 @@ impl Default for Fmp4MuxerConfig {
 }
 
 /// Events produced by the muxer.
+///
+/// 复用器产生的事件。
 #[derive(Debug, Clone)]
 pub enum Fmp4MuxEvent {
     InitSegment(Bytes),
@@ -35,6 +44,8 @@ pub enum Fmp4MuxEvent {
 }
 
 /// Diagnostic messages from the muxer.
+///
+/// 复用器发出的诊断消息。
 #[derive(Debug, Clone)]
 pub enum Fmp4Diagnostic {
     UnsupportedCodec { codec: CodecId, track_id: u32 },
@@ -79,6 +90,8 @@ impl MuxTrack {
 }
 
 /// A sample to be muxed.
+///
+/// 待复用样本。
 #[derive(Debug, Clone)]
 pub struct Fmp4MuxSample {
     pub track_id: u32,
@@ -89,6 +102,8 @@ pub struct Fmp4MuxSample {
 }
 
 /// Shared fMP4 muxer.
+///
+/// 共享 fMP4 复用器。
 pub struct Fmp4Muxer {
     config: Fmp4MuxerConfig,
     tracks: Vec<MuxTrack>,
@@ -97,6 +112,9 @@ pub struct Fmp4Muxer {
 }
 
 impl Fmp4Muxer {
+    /// Create a new muxer with the given config and track set.
+    ///
+    /// 使用给定配置与轨道集创建新复用器。
     pub fn new(config: Fmp4MuxerConfig, tracks: &[TrackInfo]) -> Self {
         let mux_tracks = tracks.iter().map(MuxTrack::from_track_info).collect();
         Self {
@@ -108,6 +126,8 @@ impl Fmp4Muxer {
     }
 
     /// Generate init segment events.
+    ///
+    /// 生成 init 片段事件。
     pub fn init_segment(&mut self) -> Vec<Fmp4MuxEvent> {
         if let Some(ref cached) = self.init_segment {
             return vec![Fmp4MuxEvent::InitSegment(cached.clone())];
@@ -121,6 +141,8 @@ impl Fmp4Muxer {
     }
 
     /// Mux samples into a media segment.
+    ///
+    /// 将样本复用为媒体片段。
     pub fn write_segment(&mut self, samples: &[Fmp4MuxSample]) -> Vec<Fmp4MuxEvent> {
         if samples.is_empty() {
             return Vec::new();
@@ -151,6 +173,8 @@ impl Fmp4Muxer {
     }
 
     /// Write a partial segment (no styp) for LL-HLS parts.
+    ///
+    /// 写入 LL-HLS 分片的片段（不含 styp）。
     pub fn write_part(&mut self, samples: &[Fmp4MuxSample]) -> Vec<Fmp4MuxEvent> {
         if samples.is_empty() {
             return Vec::new();
@@ -166,6 +190,9 @@ impl Fmp4Muxer {
         }]
     }
 
+    /// Current sequence number of the muxer.
+    ///
+    /// 复用器当前序列号。
     pub fn sequence_number(&self) -> u32 {
         self.sequence_number
     }
