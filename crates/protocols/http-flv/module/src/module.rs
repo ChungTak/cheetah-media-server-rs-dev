@@ -197,7 +197,7 @@ impl Module for HttpFlvModule {
 
         if let Err(err) = engine.service_registry.register(ServiceDescriptor {
             name: MODULE_ID.to_string(),
-            endpoint: format!("http-flv://{}", self.config.listen),
+            endpoint: format!("http-flv://{}", driver.local_addr()),
             metadata: Default::default(),
         }) {
             let failed_driver = driver;

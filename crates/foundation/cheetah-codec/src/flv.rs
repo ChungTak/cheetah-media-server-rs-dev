@@ -550,6 +550,54 @@ fn build_h264_avcc_extension_fields(sps: &[u8]) -> Option<[u8; 4]> {
     ])
 }
 
+/// Parse the SPS and PPS arrays from an H.264 AVCDecoderConfigurationRecord.
+///
+/// 从 H.264 AVCDecoderConfigurationRecord 中解析 SPS 与 PPS 数组。
+pub fn parse_avcc_parameter_sets(avcc: &[u8]) -> (Vec<Bytes>, Vec<Bytes>) {
+    if avcc.len() < 7 {
+        return (Vec::new(), Vec::new());
+    }
+    let mut pos = 5usize;
+    let sps_count = (avcc[pos] & 0x1f) as usize;
+    pos += 1;
+
+    let mut sps = Vec::new();
+    for _ in 0..sps_count {
+        if avcc.len() < pos + 2 {
+            return (Vec::new(), Vec::new());
+        }
+        let len = u16::from_be_bytes([avcc[pos], avcc[pos + 1]]) as usize;
+        pos += 2;
+        if avcc.len() < pos + len {
+            return (Vec::new(), Vec::new());
+        }
+        sps.push(Bytes::copy_from_slice(&avcc[pos..pos + len]));
+        pos += len;
+    }
+
+    if avcc.len() <= pos {
+        return (sps, Vec::new());
+    }
+    let pps_count = avcc[pos] as usize;
+    pos += 1;
+
+    let mut pps = Vec::new();
+    for _ in 0..pps_count {
+        if avcc.len() < pos + 2 {
+            return (Vec::new(), Vec::new());
+        }
+        let len = u16::from_be_bytes([avcc[pos], avcc[pos + 1]]) as usize;
+        pos += 2;
+        if avcc.len() < pos + len {
+            return (Vec::new(), Vec::new());
+        }
+        pps.push(Bytes::copy_from_slice(&avcc[pos..pos + len]));
+        pos += len;
+    }
+
+    (sps, pps)
+}
+
 fn remove_h264_emulation_prevention(payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(payload.len());
     let mut zero_run = 0usize;
@@ -832,7 +880,7 @@ mod tests {
 
         let seq = build_video_sequence_header(&track).expect("h264 sequence header");
         let avcc = &seq.payload[5..];
-        let (parsed_sps, parsed_pps) = parse_avcc_parameter_sets(avcc);
+        let (parsed_sps, parsed_pps) = super::parse_avcc_parameter_sets(avcc);
         assert_eq!(parsed_sps, track_sps(&track));
         assert_eq!(parsed_pps, track_pps(&track));
     }
@@ -867,50 +915,5 @@ mod tests {
             CodecExtradata::H264 { pps, .. } => pps.clone(),
             _ => Vec::new(),
         }
-    }
-
-    fn parse_avcc_parameter_sets(avcc: &[u8]) -> (Vec<Bytes>, Vec<Bytes>) {
-        if avcc.len() < 7 {
-            return (Vec::new(), Vec::new());
-        }
-        let mut pos = 5usize;
-        let sps_count = (avcc[pos] & 0x1f) as usize;
-        pos += 1;
-
-        let mut sps = Vec::new();
-        for _ in 0..sps_count {
-            if avcc.len() < pos + 2 {
-                return (Vec::new(), Vec::new());
-            }
-            let len = u16::from_be_bytes([avcc[pos], avcc[pos + 1]]) as usize;
-            pos += 2;
-            if avcc.len() < pos + len {
-                return (Vec::new(), Vec::new());
-            }
-            sps.push(Bytes::copy_from_slice(&avcc[pos..pos + len]));
-            pos += len;
-        }
-
-        if avcc.len() <= pos {
-            return (sps, Vec::new());
-        }
-        let pps_count = avcc[pos] as usize;
-        pos += 1;
-
-        let mut pps = Vec::new();
-        for _ in 0..pps_count {
-            if avcc.len() < pos + 2 {
-                return (Vec::new(), Vec::new());
-            }
-            let len = u16::from_be_bytes([avcc[pos], avcc[pos + 1]]) as usize;
-            pos += 2;
-            if avcc.len() < pos + len {
-                return (Vec::new(), Vec::new());
-            }
-            pps.push(Bytes::copy_from_slice(&avcc[pos..pos + len]));
-            pos += len;
-        }
-
-        (sps, pps)
     }
 }

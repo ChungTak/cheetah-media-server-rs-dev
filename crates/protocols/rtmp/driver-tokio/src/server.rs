@@ -141,6 +141,7 @@ pub struct RtmpServerHandle {
     cmd_tx: RtmpCoreCommandSender,
     cancel: CancellationToken,
     join: Box<dyn JoinHandle>,
+    local_addr: SocketAddr,
 }
 
 /// `RtmpServerHandle` API: event reception, command send, and lifecycle.
@@ -162,6 +163,10 @@ impl RtmpServerHandle {
         self.cmd_tx.clone()
     }
 
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
     pub fn shutdown(&self) {
         self.cancel.cancel();
     }
@@ -181,6 +186,7 @@ pub fn start_server(
     cancel: CancellationToken,
 ) -> io::Result<RtmpServerHandle> {
     let listener = runtime_api.bind_tcp(listen)?;
+    let local_addr = listener.local_addr()?;
 
     let (event_tx, event_rx) = mpsc::channel(config.event_queue_capacity.max(64));
     let (cmd_tx, mut cmd_rx) = mpsc::channel(config.command_queue_capacity.max(64));
@@ -280,6 +286,7 @@ pub fn start_server(
         cmd_tx: command_sender,
         cancel,
         join,
+        local_addr,
     })
 }
 
@@ -656,6 +663,7 @@ pub fn start_tls_server(
     cancel: CancellationToken,
 ) -> io::Result<RtmpServerHandle> {
     let tcp_listener = std::net::TcpListener::bind(listen)?;
+    let local_addr = tcp_listener.local_addr()?;
     tcp_listener.set_nonblocking(true)?;
     let tokio_listener = tokio::net::TcpListener::from_std(tcp_listener)?;
 
@@ -764,6 +772,7 @@ pub fn start_tls_server(
         cmd_tx: command_sender,
         cancel,
         join,
+        local_addr,
     })
 }
 

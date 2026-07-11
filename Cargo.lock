@@ -460,6 +460,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "cheetah-connector"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "cheetah-codec",
+ "cheetah-config",
+ "cheetah-engine",
+ "cheetah-http-flv-module",
+ "cheetah-rtmp-core",
+ "cheetah-rtmp-driver-tokio",
+ "cheetah-rtmp-module",
+ "cheetah-rtsp-driver-tokio",
+ "cheetah-rtsp-module",
+ "cheetah-runtime-api",
+ "cheetah-runtime-tokio",
+ "cheetah-sdk",
+ "cheetah-webrtc-media-loopback",
+ "cheetah-webrtc-module",
+ "futures",
+ "parking_lot",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "cheetah-control"
 version = "0.1.0"
 dependencies = [
@@ -1221,6 +1248,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "cheetah-webrtc-media-loopback"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "cheetah-codec",
+ "cheetah-runtime-api",
+ "cheetah-sdk",
+ "cheetah-webrtc-core",
+ "cheetah-webrtc-module",
+]
+
+[[package]]
 name = "cheetah-webrtc-module"
 version = "0.1.0"
 dependencies = [
@@ -1235,6 +1275,7 @@ dependencies = [
  "cheetah-sdk",
  "cheetah-webrtc-core",
  "cheetah-webrtc-driver-tokio",
+ "cheetah-webrtc-media-loopback",
  "futures",
  "parking_lot",
  "serde",

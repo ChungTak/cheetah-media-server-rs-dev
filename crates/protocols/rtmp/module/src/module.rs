@@ -217,7 +217,7 @@ impl Module for RtmpModule {
 
         if let Err(err) = engine.service_registry.register(ServiceDescriptor {
             name: MODULE_ID.to_string(),
-            endpoint: format!("rtmp://{}", self.config.listen),
+            endpoint: format!("rtmp://{}", driver.local_addr()),
             metadata: Default::default(),
         }) {
             driver.shutdown();
@@ -253,7 +253,7 @@ impl Module for RtmpModule {
 
             let _ = engine.service_registry.register(ServiceDescriptor {
                 name: format!("{MODULE_ID}-tls"),
-                endpoint: format!("rtmps://{}", self.config.tls.listen),
+                endpoint: format!("rtmps://{}", tls_handle.local_addr()),
                 metadata: Default::default(),
             });
             Some(tls_handle)

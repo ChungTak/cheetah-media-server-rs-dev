@@ -84,6 +84,7 @@ pub mod compat;
 pub mod egress;
 pub mod flv;
 pub mod flv_egress;
+pub mod flv_ingress;
 pub mod fmp4_demux;
 pub mod fmp4_mux;
 pub mod frame;
@@ -150,6 +151,7 @@ pub use flv_egress::{
     mute_aac_frame_payload, rtmp_playback_codec_supported, track_list_has_audio,
     use_enhanced_video_mode, RtmpFlvPayload, RtmpFlvPayloadKind, RtmpFlvPlayMode,
 };
+pub use flv_ingress::{FlvIngress, FlvIngressError, FlvIngressOutput};
 pub use fmp4_demux::{
     Fmp4DemuxDiagnostic, Fmp4DemuxEvent, Fmp4DemuxTrack, Fmp4Demuxer, Fmp4DemuxerConfig,
 };

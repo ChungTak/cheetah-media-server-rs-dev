@@ -1,0 +1,309 @@
+//! RTMP push-side adapter implementing [`cheetah_sdk::PublisherSink`].
+//!
+//! Bridges the synchronous `PublisherSink` API with the async `RtmpClient` driver
+//! by running a background task that forwards `RtmpCoreCommand`s produced from
+//! `AVFrame` values and `TrackInfo` sequence headers.
+//!
+//! RTMP push 端适配器，实现 [`cheetah_sdk::PublisherSink`]。
+//!
+//! 通过后台任务将 `AVFrame` 与 `TrackInfo` 序列头生成的 `RtmpCoreCommand`
+//! 转发给异步 `RtmpClient` 驱动。
+
+use std::collections::VecDeque;
+use std::sync::Arc;
+
+use cheetah_codec::{
+    build_track_bootstrap_payloads, map_frame_to_rtmp_flv_payload, AVFrame, RtmpFlvPayload,
+    RtmpFlvPayloadKind, RtmpFlvPlayMode, TrackInfo,
+};
+use cheetah_rtmp_core::{
+    RtmpClientState, RtmpCoreCommand, RtmpEvent, RtmpMessageStreamId, RtmpUrl,
+};
+use cheetah_rtmp_driver_tokio::{
+    start_client, ClientDriverEvent, ClientSendError, RtmpClientCommandSender,
+    RtmpClientDriverCommand, RtmpClientDriverConfig, RtmpClientHandle, RtmpClientMode,
+};
+use cheetah_runtime_api::{CancellationToken, JoinHandle};
+use cheetah_sdk::{DispatchResult, PublisherSink, SdkError};
+use futures::channel::mpsc;
+use futures::future::{BoxFuture, Fuse, FusedFuture, OptionFuture};
+use futures::{select_biased, FutureExt, StreamExt};
+use parking_lot::Mutex;
+
+use crate::error::ConnectorError;
+use crate::handles::PushHandle;
+use crate::options::ConnectorPushOptions;
+use crate::protocol::Protocol;
+
+const DEFAULT_COMMAND_QUEUE: usize = 256;
+const DEFAULT_BUFFER_SIZE: usize = 256;
+
+struct SinkState {
+    closed: bool,
+    ready: bool,
+    emit_play_metadata: bool,
+    tracks: Vec<TrackInfo>,
+    buffer: VecDeque<RtmpCoreCommand>,
+}
+
+/// Synchronous RTMP publisher sink.
+///
+/// A background task (started by [`open_rtmp_push`]) performs the async
+/// handshake and forwards commands to the `RtmpClient` driver.
+pub struct RtmpPublisherSink {
+    cmd_tx: Mutex<mpsc::Sender<RtmpCoreCommand>>,
+    cancel: CancellationToken,
+    state: Arc<Mutex<SinkState>>,
+    _join: Mutex<Option<Box<dyn JoinHandle>>>,
+}
+
+impl RtmpPublisherSink {
+    fn new(
+        cmd_tx: mpsc::Sender<RtmpCoreCommand>,
+        cancel: CancellationToken,
+        state: Arc<Mutex<SinkState>>,
+        join: Box<dyn JoinHandle>,
+    ) -> Self {
+        Self {
+            cmd_tx: Mutex::new(cmd_tx),
+            cancel,
+            state,
+            _join: Mutex::new(Some(join)),
+        }
+    }
+
+    fn send_command(&self, command: RtmpCoreCommand) -> Result<(), SdkError> {
+        let mut guard = self.cmd_tx.lock();
+        if guard.is_closed() {
+            return Err(SdkError::Internal(
+                "rtmp push command channel closed".to_string(),
+            ));
+        }
+        guard.try_send(command).map_err(|err| {
+            if err.is_full() {
+                SdkError::Internal("rtmp push command queue full".to_string())
+            } else {
+                SdkError::Internal("rtmp push command channel closed".to_string())
+            }
+        })
+    }
+}
+
+impl PublisherSink for RtmpPublisherSink {
+    fn update_tracks(&self, tracks: Vec<TrackInfo>) -> Result<(), SdkError> {
+        {
+            let mut guard = self.state.lock();
+            if guard.closed {
+                return Err(SdkError::Internal("rtmp push sink closed".to_string()));
+            }
+            guard.tracks = tracks;
+        }
+
+        let bootstrap = {
+            let guard = self.state.lock();
+            build_track_bootstrap_payloads(
+                &guard.tracks,
+                RtmpFlvPlayMode::Normal,
+                false,
+                guard.emit_play_metadata,
+            )
+        };
+
+        for payload in bootstrap {
+            let command = payload_to_core_command(payload, RtmpMessageStreamId::MEDIA.get());
+            self.send_command(command)?;
+        }
+
+        Ok(())
+    }
+
+    fn push_frame(&self, frame: Arc<AVFrame>) -> Result<DispatchResult, SdkError> {
+        let (closed, tracks) = {
+            let guard = self.state.lock();
+            (guard.closed, guard.tracks.clone())
+        };
+        if closed {
+            return Ok(DispatchResult::RejectedClosed);
+        }
+
+        let Some(payload) = map_frame_to_rtmp_flv_payload(&frame, RtmpFlvPlayMode::Normal, &tracks)
+        else {
+            return Ok(DispatchResult::DroppedByPolicy);
+        };
+
+        let command = payload_to_core_command(payload, RtmpMessageStreamId::MEDIA.get());
+        match self.send_command(command) {
+            Ok(()) => Ok(DispatchResult::Accepted),
+            Err(SdkError::Internal(msg)) if msg.contains("queue full") => {
+                Ok(DispatchResult::DroppedByPolicy)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn close(&self) -> Result<(), SdkError> {
+        self.state.lock().closed = true;
+        self.cancel.cancel();
+        Ok(())
+    }
+
+    fn take_keyframe_requests(&self) -> u64 {
+        0
+    }
+}
+
+/// Open an RTMP push handle for `url` and `options`.
+///
+/// 为 `url` 和 `options` 打开一个 RTMP push 句柄。
+pub async fn open_rtmp_push(
+    engine: Arc<cheetah_engine::Engine>,
+    url: &str,
+    options: ConnectorPushOptions,
+) -> Result<PushHandle, ConnectorError> {
+    let url = RtmpUrl::parse(url).map_err(|err| ConnectorError::InvalidUrl {
+        protocol: Protocol::Rtmp,
+        url: url.to_string(),
+        reason: err.to_string(),
+    })?;
+    let rtmp_url = url.to_string();
+
+    let runtime_api = engine.runtime_api();
+
+    let cancel = options.cancel.clone().unwrap_or_default().child_token();
+
+    let config = RtmpClientDriverConfig {
+        command_queue_capacity: DEFAULT_COMMAND_QUEUE,
+        event_queue_capacity: 1024,
+        write_queue_capacity: DEFAULT_COMMAND_QUEUE,
+        read_buffer_size: 64 * 1024,
+        ack_window_size: 5_000_000,
+        chunk_size: 4096,
+    };
+
+    let client = start_client(
+        runtime_api.clone(),
+        url,
+        RtmpClientMode::Publish,
+        config,
+        cancel.clone(),
+    )
+    .map_err(|err| ConnectorError::Connect {
+        protocol: Protocol::Rtmp,
+        endpoint: rtmp_url.clone(),
+        source: Box::new(err),
+    })?;
+
+    let (cmd_tx, cmd_rx) = mpsc::channel(DEFAULT_BUFFER_SIZE);
+    let state = Arc::new(Mutex::new(SinkState {
+        closed: false,
+        ready: false,
+        emit_play_metadata: options.publisher.announce_tracks,
+        tracks: Vec::new(),
+        buffer: VecDeque::with_capacity(DEFAULT_BUFFER_SIZE),
+    }));
+
+    let cmd_tx_client = client.core_command_sender();
+    let run = run_client(client, cmd_rx, cmd_tx_client, cancel.clone(), state.clone());
+
+    let join = runtime_api.spawn(Box::pin(run));
+
+    let sink = RtmpPublisherSink::new(cmd_tx, cancel, state, join);
+    let _ = options.protocol;
+    sink.update_tracks(options.tracks)
+        .map_err(ConnectorError::from)?;
+
+    Ok(PushHandle::new(Protocol::Rtmp, rtmp_url, Box::new(sink)))
+}
+
+async fn run_client(
+    mut client: RtmpClientHandle,
+    mut cmd_rx: mpsc::Receiver<RtmpCoreCommand>,
+    cmd_tx: RtmpClientCommandSender,
+    cancel: CancellationToken,
+    state: Arc<Mutex<SinkState>>,
+) {
+    let mut send_fut: OptionFuture<Fuse<BoxFuture<'static, Result<(), ClientSendError>>>> =
+        OptionFuture::from(None);
+
+    loop {
+        select_biased! {
+            _ = cancel.cancelled().fuse() => break,
+            event = client.recv_event().fuse() => {
+                let Some(event) = event else { break; };
+                if let ClientDriverEvent::Core {
+                    event: RtmpEvent::ClientStateChanged { state: RtmpClientState::Publishing },
+                } = event
+                {
+                    state.lock().ready = true;
+                    try_send_next(&mut send_fut, &cmd_tx, &state);
+                }
+            }
+            cmd = cmd_rx.next().fuse() => {
+                let Some(cmd) = cmd else { break; };
+                {
+                    let mut guard = state.lock();
+                    if guard.closed {
+                        continue;
+                    }
+                    if guard.buffer.len() < DEFAULT_BUFFER_SIZE {
+                        guard.buffer.push_back(cmd);
+                    }
+                }
+                try_send_next(&mut send_fut, &cmd_tx, &state);
+            }
+            send = send_fut => {
+                if let Some(Err(_)) = send {
+                    break;
+                }
+                try_send_next(&mut send_fut, &cmd_tx, &state);
+            }
+        }
+    }
+
+    client.shutdown();
+    let _ = client.wait().await;
+}
+
+fn try_send_next(
+    send_fut: &mut OptionFuture<Fuse<BoxFuture<'static, Result<(), ClientSendError>>>>,
+    cmd_tx: &RtmpClientCommandSender,
+    state: &Arc<Mutex<SinkState>>,
+) {
+    if !send_fut.is_terminated() {
+        return;
+    }
+    let next = {
+        let mut guard = state.lock();
+        if guard.ready {
+            guard.buffer.pop_front()
+        } else {
+            None
+        }
+    };
+    if let Some(next) = next {
+        let cmd_tx = cmd_tx.clone();
+        let fut: BoxFuture<'static, Result<(), ClientSendError>> =
+            Box::pin(async move { cmd_tx.send(RtmpClientDriverCommand::Core(next)).await });
+        *send_fut = OptionFuture::from(Some(fut.fuse()));
+    }
+}
+
+fn payload_to_core_command(payload: RtmpFlvPayload, stream_id: u32) -> RtmpCoreCommand {
+    match payload.kind {
+        RtmpFlvPayloadKind::Audio => RtmpCoreCommand::SendAudio {
+            stream_id,
+            timestamp_ms: payload.timestamp_ms,
+            payload: payload.payload,
+        },
+        RtmpFlvPayloadKind::Video => RtmpCoreCommand::SendVideo {
+            stream_id,
+            timestamp_ms: payload.timestamp_ms,
+            payload: payload.payload,
+        },
+        RtmpFlvPayloadKind::Data => RtmpCoreCommand::SendMetadata {
+            stream_id,
+            timestamp_ms: payload.timestamp_ms,
+            payload: payload.payload,
+        },
+    }
+}

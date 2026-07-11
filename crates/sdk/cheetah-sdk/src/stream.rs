@@ -196,6 +196,14 @@ pub trait SubscriberSource: Send {
     async fn recv(&mut self) -> Result<Option<Arc<AVFrame>>, SdkError>;
     async fn close(&mut self) -> Result<(), SdkError>;
     fn id(&self) -> SubscriberId;
+
+    /// Snapshot of tracks discovered so far. May be empty if the source has not
+    /// yet completed track discovery.
+    ///
+    /// 当前已发现的轨道快照。若源尚未完成轨道发现，可能为空。
+    fn tracks(&self) -> Vec<TrackInfo> {
+        Vec::new()
+    }
 }
 
 /// Manager API for publishers, subscribers, and stream lifecycle.
