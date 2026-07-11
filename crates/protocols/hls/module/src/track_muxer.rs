@@ -3,6 +3,12 @@
 //! Each `TrackMuxer` manages a single audio or video lane: its own init segment,
 //! LL-HLS parts, segments, and ring buffer. This enables independent per-track
 //! chunklists required by demuxed LLHLS (OvenMediaEngine-style).
+//!
+//! 分离式 LLHLS 的每轨 fMP4 打包器。
+//!
+//! 每个 `TrackMuxer` 管理一条独立的音频或视频轨道：自己的 init segment、LL-HLS 分片、
+//! 分段和环形缓冲区。这实现了 demuxed LLHLS（OvenMediaEngine 风格）所需的独立每轨分片列表。
+//!
 
 use bytes::Bytes;
 use cheetah_codec::{CodecId, MediaKind, TrackId};
@@ -10,7 +16,15 @@ use cheetah_hls_core::{
     Fmp4Muxer, Fmp4Sample, Fmp4TrackDesc, HlsPart, LowLatencyState, SegmentRing, TrackLane,
 };
 
-/// Per-track fMP4 muxer state.
+/// Per-track fMP4 muxer for a single audio or video lane.
+///
+/// Maintains an independent init segment, segment ring, and LL-HLS part list so
+/// the demuxed muxer can produce separate per-track chunklists.
+///
+/// 单条音频或视频轨道的 fMP4 复用器。
+///
+/// 维护独立的 init segment、分段环和 LL-HLS 分片列表，使 demuxed 复用器
+/// 能够生成独立的每轨分片列表。
 pub struct TrackMuxer {
     pub lane: TrackLane,
     pub source_track_id: TrackId,
@@ -23,21 +37,24 @@ pub struct TrackMuxer {
     pending_segment_part_data: Vec<Bytes>,
     segment_start_dts_ms: Option<u64>,
     segment_last_dts_ms: u64,
-    /// Last inter-frame interval in ms (for EXTINF estimation at flush).
     last_frame_interval_ms: Option<u64>,
     prev_dts_ms: Option<u64>,
     segment_has_keyframe: bool,
     segment_seq: u64,
     pub ring: SegmentRing,
     pub concluded: bool,
-    /// Part target in ms (frame-aligned).
     part_target_ms: u64,
-    /// Wallclock offset for PROGRAM-DATE-TIME (set by DemuxedStreamMuxer).
     wallclock_offset_ms: Option<i64>,
 }
 
-/// Output event from a track muxer.
 #[derive(Debug, Clone)]
+/// Output event produced by a track muxer.
+///
+/// Signals either a newly finalized LL-HLS part or a completed segment.
+///
+/// 轨道复用器产生的事件。
+///
+/// 表示一个新的 LL-HLS 分片或已完成的分段。
 pub enum TrackMuxerOutput {
     PartReady(HlsPart),
     SegmentReady { name: String, duration_secs: f64 },
@@ -79,7 +96,14 @@ impl TrackMuxer {
         }
     }
 
-    /// Push a sample into this track muxer. Returns any outputs produced.
+    /// Push a sample into this track muxer and finalize parts/segments as needed.
+    ///
+    /// Decides segment and part cuts based on duration, keyframe, and the LL-HLS
+    /// part target, and appends the sample to pending data.
+    ///
+    /// 将采样推入该轨道复用器，并在需要时完成分片/分段。
+    ///
+    /// 根据时长、关键帧和 LL-HLS 分片目标决定分段与分片切割，并将采样追加到待处理数据。
     pub fn push_sample(
         &mut self,
         dts_ms: u64,
@@ -159,7 +183,13 @@ impl TrackMuxer {
         outputs
     }
 
-    /// Flush remaining data (conclude stream).
+    /// Flush remaining samples into a final part and segment.
+    ///
+    /// Marks the muxer as concluded so no more frames are accepted.
+    ///
+    /// 将剩余采样冲洗为最终分片和分段。
+    ///
+    /// 将复用器标记为已结束，不再接受新帧。
     pub fn flush(&mut self) -> Vec<TrackMuxerOutput> {
         let mut outputs = Vec::new();
         if let Some(part) = self.finalize_current_part(None) {
@@ -174,27 +204,42 @@ impl TrackMuxer {
         outputs
     }
 
-    /// Get a part by global sequence number.
+    /// Return a finalized part by its global sequence number.
+    ///
+    /// 根据全局序列号返回已完成的分片。
     pub fn get_part(&self, seq: u64) -> Option<Bytes> {
         self.ll_state.get_part(seq).map(|p| p.data.clone())
     }
 
-    /// Get a segment by name.
+    /// Return a completed segment by its lane-prefixed name.
+    ///
+    /// 根据 lane 前缀名返回已完成的分段。
     pub fn get_segment(&self, name: &str) -> Option<Bytes> {
         self.ring.get(name).map(|s| s.data.clone())
     }
 
-    /// Current segment sequence (MSN).
+    /// Current segment media sequence number.
+    ///
+    /// 当前分段的媒体序列号。
     pub fn current_msn(&self) -> u64 {
         self.segment_seq
     }
 
-    /// Next part sequence.
+    /// Next part sequence number to be produced.
+    ///
+    /// 下一个待生成分片的序列号。
     pub fn next_part_seq(&self) -> u64 {
         self.ll_state.next_part_seq()
     }
 
-    /// Check if a blocking request is satisfied.
+    /// Check whether a blocking request is satisfied.
+    ///
+    /// A request for (MSN, part) is satisfied when the current state has progressed
+    /// past it, or the stream has concluded.
+    ///
+    /// 检查阻塞请求是否已满足。
+    ///
+    /// 当当前状态已超过该 (MSN, part)，或流已结束时，请求视为满足。
     pub fn is_blocking_satisfied(&self, target_msn: u64, target_part: Option<u64>) -> bool {
         if self.concluded {
             return true;
@@ -214,16 +259,28 @@ impl TrackMuxer {
         }
     }
 
-    /// Part target in seconds.
+    /// Part target duration in seconds.
+    ///
+    /// 分片目标时长（秒）。
     pub fn part_target_secs(&self) -> f64 {
         self.part_target_ms as f64 / 1000.0
     }
 
-    /// Set wallclock offset for PROGRAM-DATE-TIME calculation.
+    /// Set the wallclock offset used for `PROGRAM-DATE-TIME` tags.
+    ///
+    /// 设置用于 `PROGRAM-DATE-TIME` 标签的墙上时间偏移。
     pub fn set_wallclock_offset(&mut self, offset_ms: i64) {
         self.wallclock_offset_ms = Some(offset_ms);
     }
 
+    /// Finalize the pending part into an `HlsPart` and queue its data for the segment.
+    ///
+    /// Uses the first sample DTS as the start and computes duration from the next
+    /// sample DTS, or estimates from the samples at end-of-stream.
+    ///
+    /// 将待处理分片完成为 `HlsPart` 并排队其数据用于分段。
+    ///
+    /// 使用第一个采样 DTS 作为起始，并根据下一个采样 DTS 计算时长；在流结束时进行估算。
     fn finalize_current_part(&mut self, end_dts_ms: Option<u64>) -> Option<HlsPart> {
         if self.pending_part_samples.is_empty() {
             return None;
@@ -248,6 +305,14 @@ impl TrackMuxer {
         Some(part)
     }
 
+    /// Finalize the current segment by concatenating all its part data.
+    ///
+    /// Computes the total duration from the next segment start or the last sample
+    /// plus an estimated frame interval, then pushes the segment into the ring.
+    ///
+    /// 通过拼接所有分片数据完成当前分段。
+    ///
+    /// 根据下一个分段起始或最后一个采样加估计帧间隔计算总时长，然后将分段推入环形缓冲区。
     fn finalize_segment(&mut self, next_dts_ms: Option<u64>) -> Option<TrackMuxerOutput> {
         let start = self.segment_start_dts_ms.take()?;
 

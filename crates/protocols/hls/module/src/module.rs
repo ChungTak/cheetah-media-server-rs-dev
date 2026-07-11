@@ -1,3 +1,15 @@
+//! HLS module: engine integration, HTTP control API, and TS/fMP4 muxing.
+//!
+//! The module is the engine-facing boundary for the HLS protocol: it creates the
+//! HTTP driver, subscribes to streams, routes HLS HTTP events to muxer state, and
+//! manages player sessions, blocking requests, and pull jobs.
+//!
+//! HLS 模块：引擎集成、HTTP 控制 API 与 TS/fMP4 复用。
+//!
+//! 该模块是 HLS 协议的引擎侧边界：创建 HTTP 驱动、订阅流、将 HLS HTTP 事件路由到
+//! 复用器状态，并管理播放器会话、阻塞请求和拉流任务。
+//!
+
 use std::collections::HashMap;
 use std::future::Future;
 use std::net::SocketAddr;
@@ -25,7 +37,14 @@ use crate::muxer::{MuxerOutput, StreamMuxer, StreamMuxerConfig};
 
 const MODULE_ID: &str = "hls";
 
-/// A pending blocking playlist request waiting for a specific MSN/Part to be produced.
+/// A blocking playlist request waiting for a specific MSN/Part.
+///
+/// Held in the per-stream pending queue until the requested content is produced
+/// or the request times out.
+///
+/// 等待特定 MSN/Part 的阻塞播放列表请求。
+///
+/// 保存在每流待处理队列中，直到请求内容生成或超时。
 #[derive(Debug)]
 #[allow(dead_code)]
 struct PendingPlaylistRequest {
@@ -33,7 +52,6 @@ struct PendingPlaylistRequest {
     target_msn: u64,
     target_part: Option<u64>,
     session_id: Option<u64>,
-    /// Track lane for demuxed per-track requests (None = legacy/muxed).
     lane: Option<cheetah_hls_core::TrackLane>,
     legacy: bool,
     rewind: bool,
@@ -42,26 +60,34 @@ struct PendingPlaylistRequest {
     created_at_us: u64,
 }
 
-/// A pending part request waiting for a specific part to be produced.
+/// A blocking part request waiting for a specific part sequence.
+///
+/// 等待特定分片序列的阻塞分片请求。
 #[derive(Debug)]
 struct PendingPartRequest {
     connection_id: HlsConnectionId,
     target_part_seq: u64,
-    /// Track lane for demuxed per-track part requests (None = legacy/video).
     lane: Option<cheetah_hls_core::TrackLane>,
     created_at_us: u64,
 }
 
-/// Shared pending requests for a single stream.
+/// Pending blocking playlist and part requests for one stream.
+///
+/// 单个流的待处理阻塞播放列表与分片请求。
 #[derive(Default)]
 struct StreamPendingRequests {
     playlists: Vec<PendingPlaylistRequest>,
     parts: Vec<PendingPartRequest>,
 }
 
-/// Map of stream_key → pending requests.
+/// Map of stream_key → pending blocking requests.
+///
+/// 流标识到待处理阻塞请求的映射。
 type PendingMap = Arc<Mutex<HashMap<String, StreamPendingRequests>>>;
 
+/// Decision for a part request: ready, pending, or not found.
+///
+/// 分片请求决策：就绪、挂起或不存在。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PartRequestDecision {
     Ready,
@@ -69,9 +95,30 @@ enum PartRequestDecision {
     NotFound,
 }
 
+/// Factory that creates the HLS module instance.
+///
+/// Implements `ModuleFactory` so the engine can load and lifecycle-manage the module.
+///
+/// 创建 HLS 模块实例的工厂。
+///
+/// 实现 `ModuleFactory`，使引擎能够加载并生命周期管理该模块。
 pub struct HlsModuleFactory;
 
+/// Return the module manifest for the engine.
+///
+/// Declares module id, display name, config namespace, and subscribe capability.
+///
+/// 返回引擎所需的模块清单。
+///
+/// 声明模块 ID、显示名称、配置命名空间和订阅能力。
 impl ModuleFactory for HlsModuleFactory {
+    /// Return the module manifest for the engine.
+    ///
+    /// Declares module id, display name, config namespace, and subscribe capability.
+    ///
+    /// 返回引擎所需的模块清单。
+    ///
+    /// 声明模块 ID、显示名称、配置命名空间和订阅能力。
     fn manifest(&self) -> ModuleManifest {
         ModuleManifest {
             module_id: ModuleId::new(MODULE_ID),
@@ -83,10 +130,16 @@ impl ModuleFactory for HlsModuleFactory {
         }
     }
 
+    /// Create a new `HlsModule` instance.
+    ///
+    /// 创建新的 `HlsModule` 实例。
     fn create(&self) -> Box<dyn Module> {
         Box::new(HlsModule::new())
     }
 
+    /// Register the JSON schema and validator for `HlsModuleConfig`.
+    ///
+    /// 注册 `HlsModuleConfig` 的 JSON schema 与校验器。
     fn config_schema(&self) -> Option<ModuleSchemaRegistration> {
         Some(ModuleSchemaRegistration {
             module_id: ModuleId::new(MODULE_ID),
@@ -101,6 +154,13 @@ impl ModuleFactory for HlsModuleFactory {
     }
 }
 
+/// HLS module runtime state.
+///
+/// Holds the engine context, config, cancellation token, and runtime task handles.
+///
+/// HLS 模块运行时状态。
+///
+/// 保存引擎上下文、配置、取消令牌与运行时任务句柄。
 struct HlsModule {
     info: ModuleInfo,
     state: ModuleState,
@@ -128,15 +188,31 @@ impl HlsModule {
 }
 
 #[async_trait]
+/// Return the module metadata.
+///
+/// 返回模块元数据。
 impl Module for HlsModule {
+    /// Return the module metadata.
+    ///
+    /// 返回模块元数据。
     fn info(&self) -> ModuleInfo {
         self.info.clone()
     }
 
+    /// Return the current module state.
+    ///
+    /// 返回当前模块状态。
     fn state(&self) -> ModuleState {
         self.state
     }
 
+    /// Initialize the module with the provided config and engine context.
+    ///
+    /// Parses `HlsModuleConfig` from the initial JSON and stores the engine context.
+    ///
+    /// 使用提供的配置与引擎上下文初始化模块。
+    ///
+    /// 从初始 JSON 解析 `HlsModuleConfig` 并保存引擎上下文。
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
         self.config = HlsModuleConfig::from_value(ctx.initial_config)
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
@@ -145,6 +221,14 @@ impl Module for HlsModule {
         Ok(())
     }
 
+    /// Start the HLS module: bind HTTP server, register service, spawn loops.
+    ///
+    /// Launches the Tokio HLS driver, registers the `hls://` service, and spawns the
+    /// main event loop plus one pull job task per enabled pull job.
+    ///
+    /// 启动 HLS 模块：绑定 HTTP 服务、注册服务、启动循环。
+    ///
+    /// 启动 Tokio HLS 驱动，注册 `hls://` 服务，并启动主事件循环及每个启用拉流任务。
     async fn start(&mut self, cancel: CancellationToken) -> Result<(), SdkError> {
         let Some(engine) = self.engine.clone() else {
             return Err(SdkError::Unavailable(
@@ -225,6 +309,13 @@ impl Module for HlsModule {
         Ok(())
     }
 
+    /// Stop the HLS module and clean up resources.
+    ///
+    /// Cancels runtime tasks, waits for shutdown, and unregisters the service.
+    ///
+    /// 停止 HLS 模块并清理资源。
+    ///
+    /// 取消运行时任务、等待关闭并注销服务。
     async fn stop(&mut self) -> Result<(), SdkError> {
         if let Some(cancel) = self.runtime_cancel.take() {
             cancel.cancel();
@@ -239,6 +330,9 @@ impl Module for HlsModule {
         Ok(())
     }
 
+    /// Apply a config change; restarts the module if the config differs.
+    ///
+    /// 应用配置变更；如果配置不同则要求模块重启。
     async fn apply_config(&mut self, change: ModuleConfigChange) -> Result<ConfigEffect, SdkError> {
         let next = HlsModuleConfig::from_value(change.next)
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
@@ -250,6 +344,9 @@ impl Module for HlsModule {
     }
 }
 
+/// Spawn a future on the runtime and return a oneshot completion receiver.
+///
+/// 在运行时上启动一个 future 并返回 oneshot 完成接收器。
 fn spawn_runtime_task<F>(runtime_api: Arc<dyn RuntimeApi>, fut: F) -> OneShotReceiver
 where
     F: Future<Output = ()> + Send + 'static,
@@ -263,6 +360,13 @@ where
     done_rx
 }
 
+/// Build the HLS driver config from the module config.
+///
+/// Origin mode disables per-connection session cookies.
+///
+/// 根据模块配置构建 HLS 驱动配置。
+///
+/// 源站模式禁用以连接为单位的会话 cookie。
 fn hls_driver_config(config: &HlsModuleConfig) -> HlsDriverConfig {
     HlsDriverConfig {
         set_session_cookie: !config.origin_mode,
@@ -271,24 +375,42 @@ fn hls_driver_config(config: &HlsModuleConfig) -> HlsDriverConfig {
 }
 
 /// Session UID generator.
+///
+/// 会话唯一 ID 生成器。
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
+/// Return the next unique session identifier.
+///
+/// 返回下一个唯一会话标识符。
 fn new_session_id() -> u64 {
     NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 /// Per-stream muxer state managed by the server loop.
+///
+/// 服务循环管理的每个流复用器状态。
 type MuxerMap = Arc<Mutex<HashMap<String, Arc<Mutex<StreamMuxer>>>>>;
 
 /// Per-session tracking state.
+///
+/// 每个会话的跟踪状态。
 struct SessionState {
     last_request_us: u64,
     bytes_sent: u64,
 }
 
-/// Tracks player sessions: stream_key → {session_id → state}
+/// Player session map: stream_key → {session_id → state}.
+///
+/// 播放器会话映射：stream_key → {session_id → state}。
 type SessionMap = Arc<Mutex<HashMap<String, HashMap<u64, SessionState>>>>;
 
+/// Update a session's last request timestamp.
+///
+/// Creates the session entry lazily if it does not exist.
+///
+/// 更新会话的最后请求时间戳。
+///
+/// 如果会话不存在则惰性创建。
 fn refresh_session_activity(
     sessions: &SessionMap,
     stream_key: &str,
@@ -309,6 +431,14 @@ fn refresh_session_activity(
     }
 }
 
+/// Main HLS server loop: process driver events and content notifications.
+///
+/// Maintains muxer and session maps, spawns cleanup and subscriber tasks, and
+/// dispatches `HlsCoreEvent` requests to the appropriate handler.
+///
+/// HLS 主服务循环：处理驱动事件和内容通知。
+///
+/// 维护复用器与会话映射，启动清理和订阅任务，并将 `HlsCoreEvent` 请求分派到对应处理函数。
 async fn run_server_loop(
     engine: EngineContext,
     config: HlsModuleConfig,
@@ -440,8 +570,14 @@ async fn run_server_loop(
     }
 }
 
-/// Remove sessions that haven't made a request within the timeout.
-/// When hls_demand is true, disable muxers for streams with no active sessions.
+/// Evict player sessions that have not requested recently.
+///
+/// Emits `on_none_reader` lifecycle events and, in `hls_demand` mode, disables
+/// muxers for streams with no active viewers.
+///
+/// 驱逐最近未请求的播放器会话。
+///
+/// 发出 `on_none_reader` 生命周期事件，并在 `hls_demand` 模式下禁用无活跃观众的流复用器。
 fn cleanup_expired_sessions(
     sessions: &SessionMap,
     muxers: &MuxerMap,
@@ -487,6 +623,14 @@ fn cleanup_expired_sessions(
     }
 }
 
+/// Dispatch a single HTTP driver event to the right handler.
+///
+/// Covers master/media playlists, segments, init segments, parts, demuxed
+/// tracks, blocking requests, and stream-key validation.
+///
+/// 将单个 HTTP 驱动事件分派到对应的处理函数。
+///
+/// 覆盖主/媒体播放列表、分段、init segment、分片、分离轨道、阻塞请求和流密钥验证。
 #[allow(clippy::too_many_arguments)]
 async fn handle_core_event(
     engine: &EngineContext,
@@ -1594,7 +1738,14 @@ async fn handle_core_event(
     }
 }
 
-/// Ensure a muxer + subscriber task exists for the given stream.
+/// Create the muxer and subscriber task for a stream if not present.
+///
+/// Called on the first playlist request for a stream. It inserts a `StreamMuxer`
+/// and spawns a subscriber that pulls frames from the engine.
+///
+/// 如果尚不存在，则为流创建复用器和订阅任务。
+///
+/// 在首次播放列表请求时调用，插入 `StreamMuxer` 并启动从引擎拉取帧的订阅者。
 fn ensure_muxer(
     engine: &EngineContext,
     config: &HlsModuleConfig,
@@ -1669,6 +1820,16 @@ fn ensure_muxer(
     }));
 }
 
+/// Subscribe to a stream and feed frames into the muxer.
+///
+/// Retries subscription for a short window, applies track info, handles EOS by
+/// concluding the muxer, optionally writes files to disk, and retains the
+/// concluded muxer for late viewers.
+///
+/// 订阅流并将帧送入复用器。
+///
+/// 短时间重试订阅、应用轨道信息、在 EOS 时结束复用器、可选写入磁盘，并在结束后
+/// 为延迟观众保留复用器。
 #[allow(clippy::too_many_arguments)]
 async fn run_subscriber(
     engine: EngineContext,
@@ -1889,7 +2050,14 @@ async fn run_subscriber(
     debug!("HLS subscriber ended for {muxer_key}");
 }
 
-/// Release pending blocking requests that are now satisfied.
+/// Release pending blocking requests that are now satisfied or timed out.
+///
+/// Gathers response data under a short lock, then sends the responses outside
+/// the lock to avoid blocking the muxer.
+///
+/// 释放已满足或超时的待处理阻塞请求。
+///
+/// 在短暂加锁下收集响应数据，然后在锁外发送响应以避免阻塞复用器。
 async fn release_pending_requests(
     muxers: &MuxerMap,
     pending: &PendingMap,
@@ -2050,6 +2218,9 @@ async fn release_pending_requests(
     }
 }
 
+/// Release all pending requests across every stream.
+///
+/// 释放所有流的待处理请求。
 async fn release_all_pending_requests(
     muxers: &MuxerMap,
     pending: &PendingMap,
@@ -2076,6 +2247,9 @@ async fn release_all_pending_requests(
     }
 }
 
+/// Drain pending requests for a stream whose muxer has disappeared.
+///
+/// 将复用器已消失的流的待处理请求全部取出。
 fn drain_pending_for_missing_muxer(
     pending: &mut StreamPendingRequests,
 ) -> (Vec<PendingPlaylistRequest>, Vec<PendingPartRequest>) {
@@ -2085,6 +2259,13 @@ fn drain_pending_for_missing_muxer(
     )
 }
 
+/// Compute the next timer deadline for pending request expiration.
+///
+/// Returns a default 60 s deadline when no pending requests are present.
+///
+/// 计算待处理请求过期的下一个定时器截止时间。
+///
+/// 当无待处理请求时返回默认 60 秒截止时间。
 fn pending_timeout_deadline(
     runtime_api: &dyn RuntimeApi,
     pending: &PendingMap,
@@ -2108,6 +2289,9 @@ fn pending_timeout_deadline(
     cheetah_codec::MonoTime::from_micros(now.as_micros() + delta_us)
 }
 
+/// Return the earliest pending request timeout in microseconds.
+///
+/// 返回最早的待处理请求超时时间（微秒）。
 fn next_pending_timeout_us(
     pending: &HashMap<String, StreamPendingRequests>,
     blocking_timeout_us: u64,
@@ -2128,6 +2312,13 @@ fn next_pending_timeout_us(
         .map(|created_at_us| created_at_us.saturating_add(blocking_timeout_us))
 }
 
+/// Classify a part request as ready, pending, or not found.
+///
+/// Only LL-HLS requests for the next expected sequence are held as pending.
+///
+/// 将分片请求分类为就绪、挂起或不存在。
+///
+/// 只有 LL-HLS 对下一个预期序列号的请求会被挂起。
 fn classify_part_request(
     state: Option<(Option<bytes::Bytes>, u64, bool)>,
     requested_seq: u64,
@@ -2145,6 +2336,9 @@ fn classify_part_request(
     }
 }
 
+/// Built response for a pending blocking playlist request.
+///
+/// 待处理阻塞播放列表请求的已构建响应。
 #[allow(dead_code)]
 struct PendingPlaylistResponse {
     connection_id: HlsConnectionId,
@@ -2154,6 +2348,13 @@ struct PendingPlaylistResponse {
     headers: Vec<(&'static str, String)>,
 }
 
+/// Build the HTTP response for a released pending playlist request.
+///
+/// Handles demuxed per-track, rewind, and legacy playlist variants.
+///
+/// 为已释放的待处理播放列表请求构建 HTTP 响应。
+///
+/// 处理 demuxed 每轨、回退和 legacy 播放列表变体。
 fn build_pending_playlist_response(
     mux: &StreamMuxer,
     req: &PendingPlaylistRequest,
@@ -2182,7 +2383,9 @@ fn build_pending_playlist_response(
     }
 }
 
-/// Gzip compress a byte slice. Returns compressed bytes or original on failure.
+/// Gzip-compress data, falling back to original bytes on failure.
+///
+/// 对数据进行 gzip 压缩，失败时回退到原始字节。
 fn gzip_bytes(data: &[u8]) -> bytes::Bytes {
     use flate2::write::GzEncoder;
     use flate2::Compression;
@@ -2196,7 +2399,9 @@ fn gzip_bytes(data: &[u8]) -> bytes::Bytes {
     bytes::Bytes::copy_from_slice(data)
 }
 
-/// Build playlist response body, applying gzip if requested.
+/// Build the playlist response body, applying gzip if requested.
+///
+/// 构建播放列表响应体，若请求则应用 gzip。
 fn playlist_response_body(content: &str, accept_gzip: bool) -> (bytes::Bytes, bool) {
     if accept_gzip && content.len() > 100 {
         (gzip_bytes(content.as_bytes()), true)
@@ -2205,6 +2410,9 @@ fn playlist_response_body(content: &str, accept_gzip: bool) -> (bytes::Bytes, bo
     }
 }
 
+/// Add `Content-Encoding` and `Vary` headers for gzip responses.
+///
+/// 为 gzip 响应添加 `Content-Encoding` 和 `Vary` 头。
 fn push_gzip_response_headers(headers: &mut Vec<(&'static str, String)>) {
     headers.push(("Content-Encoding", "gzip".to_string()));
     if !headers.iter().any(|(name, _)| *name == "Vary") {
@@ -2212,6 +2420,14 @@ fn push_gzip_response_headers(headers: &mut Vec<(&'static str, String)>) {
     }
 }
 
+/// Build the master playlist for a stream.
+///
+/// Produces a demuxed master playlist when the muxer is in demuxed mode,
+/// otherwise a simple master playlist.
+///
+/// 构建流的主播放列表。
+///
+/// 当复用器处于 demuxed 模式时生成 demuxed 主播放列表，否则生成简单主播放列表。
 fn build_master_playlist_content(
     stream_key: &StreamKeyParts,
     muxer: Option<&StreamMuxer>,
@@ -2253,6 +2469,13 @@ fn build_master_playlist_content(
     PlaylistBuilder::build_master(&stream_key.stream_path, session_id)
 }
 
+/// Wait briefly for the demuxed muxer to be ready before building a master playlist.
+///
+/// Avoids returning a master playlist with no available chunklists.
+///
+/// 在构建主播放列表前短暂等待 demuxed 复用器就绪。
+///
+/// 避免返回无可用分片列表的主播放列表。
 async fn wait_for_demuxed_master_muxer(
     engine: &EngineContext,
     config: &HlsModuleConfig,
@@ -2286,6 +2509,8 @@ async fn wait_for_demuxed_master_muxer(
 }
 
 /// Current wall-clock time in microseconds (for timeout calculations).
+///
+/// 用于超时计算的当前墙上时间（微秒）。
 fn current_time_us() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2293,10 +2518,20 @@ fn current_time_us() -> u64 {
         .unwrap_or(0)
 }
 
+/// Build the engine stream key string from namespace and path.
+///
+/// 由命名空间和路径构建引擎流标识字符串。
 fn stream_key_string(parts: &StreamKeyParts) -> String {
     format!("{}/{}", parts.namespace, parts.stream_path)
 }
 
+/// Build the HLS codec string for a track.
+///
+/// Generates avc1/hvc1/vp09/av01/mp4a/Opus/MP3 identifiers from codec and extradata.
+///
+/// 构建轨道的 HLS codec 字符串。
+///
+/// 根据编解码器和 extradata 生成 avc1/hvc1/vp09/av01/mp4a/Opus/MP3 标识。
 fn codec_string(codec: cheetah_codec::CodecId, extradata: &[u8]) -> String {
     use cheetah_codec::CodecId;
     match codec {
@@ -2330,6 +2565,9 @@ fn codec_string(codec: cheetah_codec::CodecId, extradata: &[u8]) -> String {
     }
 }
 
+/// Build default CORS headers for HLS responses.
+///
+/// 构建 HLS 响应的默认 CORS 头。
 fn cors_headers() -> Vec<(&'static str, String)> {
     vec![
         ("Access-Control-Allow-Origin", "*".to_string()),
@@ -2344,14 +2582,22 @@ fn cors_headers() -> Vec<(&'static str, String)> {
     ]
 }
 
+/// Build CORS headers with `Cache-Control: no-cache`.
+///
+/// 构建带 `Cache-Control: no-cache` 的 CORS 头。
 fn cors_headers_no_cache() -> Vec<(&'static str, String)> {
     let mut h = cors_headers();
     h.push(("Cache-Control", "no-cache".to_string()));
     h
 }
 
-/// Build CORS headers with Cache-Control based on config max_age value.
-/// -1 = no Cache-Control header, 0 = no-cache/no-store, >0 = max-age=N.
+/// Build CORS headers with `Cache-Control` based on the configured max age.
+///
+/// -1 = no header, 0 = no-cache/no-store, >0 = max-age=N.
+///
+/// 根据配置的最大缓存时间构建 CORS 头。
+///
+/// -1 = 不设置头部，0 = no-cache/no-store，>0 = max-age=N。
 fn cors_headers_with_max_age(max_age: i32) -> Vec<(&'static str, String)> {
     let mut h = cors_headers();
     if max_age == 0 {
@@ -2363,6 +2609,9 @@ fn cors_headers_with_max_age(max_age: i32) -> Vec<(&'static str, String)> {
     h
 }
 
+/// Build CORS and cache headers for a segment response.
+///
+/// 为分段响应构建 CORS 与缓存头。
 fn segment_response_headers(segment_name: &str, max_age: i32) -> Vec<(&'static str, String)> {
     let mut headers = cors_headers_with_max_age(max_age);
     headers.push(("ETag", format!("\"{segment_name}\"")));
@@ -2370,6 +2619,13 @@ fn segment_response_headers(segment_name: &str, max_age: i32) -> Vec<(&'static s
     headers
 }
 
+/// Parse a container string into `HlsContainer`.
+///
+/// Defaults to TS unless `fmp4`, `fMP4`, or `mp4` is specified.
+///
+/// 将容器字符串解析为 `HlsContainer`。
+///
+/// 除非指定 `fmp4`、`fMP4` 或 `mp4`，否则默认 TS。
 fn parse_container(s: &str) -> HlsContainer {
     match s {
         "fmp4" | "fMP4" | "mp4" => HlsContainer::Fmp4,
@@ -2377,7 +2633,9 @@ fn parse_container(s: &str) -> HlsContainer {
     }
 }
 
-/// Check if request has valid CDN Bearer token authorization.
+/// Check whether the request has a valid CDN Bearer token.
+///
+/// 检查请求是否带有有效的 CDN Bearer 令牌。
 fn is_cdn_authorized(authorization: &Option<String>, cdn_secret: &str) -> bool {
     if cdn_secret.is_empty() {
         return false;
@@ -2394,7 +2652,9 @@ fn is_cdn_authorized(authorization: &Option<String>, cdn_secret: &str) -> bool {
     }
 }
 
-/// Check if User-Agent indicates an iOS device.
+/// Check whether the User-Agent indicates an iOS device.
+///
+/// 检查 User-Agent 是否表明为 iOS 设备。
 #[allow(dead_code)]
 fn is_ios_user_agent(ua: &Option<String>) -> bool {
     match ua {
@@ -2408,7 +2668,9 @@ fn is_ios_user_agent(ua: &Option<String>) -> bool {
     }
 }
 
-/// Generate CORS headers appropriate for CDN requests (no cache restrictions).
+/// Build CORS headers for CDN requests.
+///
+/// 为 CDN 请求构建 CORS 头。
 fn cors_headers_cdn() -> Vec<(&'static str, String)> {
     cors_headers()
 }

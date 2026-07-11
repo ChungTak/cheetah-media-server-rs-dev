@@ -2,6 +2,12 @@
 //!
 //! `DemuxedStreamMuxer` manages independent video and audio `TrackMuxer` instances,
 //! producing separate init segments, parts, segments, and playlists per lane.
+//!
+//! 分离式 LLHLS 流复用器：将帧路由到各轨道复用器。
+//!
+//! `DemuxedStreamMuxer` 管理独立的视频与音频 `TrackMuxer` 实例，为每条 lane 生成
+//! 独立的 init segment、分片、分段和播放列表。
+//!
 
 use bytes::Bytes;
 use cheetah_codec::{
@@ -13,6 +19,8 @@ use crate::muxer::{extract_raw_extradata, fmp4_sample_payload, MuxerOutput};
 use crate::track_muxer::{TrackMuxer, TrackMuxerOutput};
 
 /// Configuration for the demuxed stream muxer.
+///
+/// 分离式流复用器的配置。
 #[derive(Debug, Clone)]
 pub struct DemuxedMuxerConfig {
     pub segment_duration_ms: u64,
@@ -23,15 +31,20 @@ pub struct DemuxedMuxerConfig {
 }
 
 /// Demuxed audio/video LLHLS muxer.
+///
+/// Owns separate video and audio `TrackMuxer` lanes, aligns their start on the
+/// first video keyframe, and shares wallclock/DTS origins across lanes.
+///
+/// 分离式音视频 LLHLS 复用器。
+///
+/// 拥有独立的视频和音频 `TrackMuxer` 轨道，在首个视频关键帧处对齐起点，
+/// 并在各轨道间共享墙上时间/DTS 原点。
 pub struct DemuxedStreamMuxer {
     config: DemuxedMuxerConfig,
     video: Option<TrackMuxer>,
     audio: Option<TrackMuxer>,
-    /// Shared wallclock offset for PROGRAM-DATE-TIME across lanes.
     wallclock_offset_ms: Option<i64>,
-    /// Shared DTS origin (first sample DTS) for timeline normalization.
     dts_origin_ms: Option<u64>,
-    /// Whether we're waiting for the first video keyframe before starting.
     waiting_for_keyframe: bool,
     concluded: bool,
 }
@@ -49,7 +62,15 @@ impl DemuxedStreamMuxer {
         }
     }
 
-    /// Initialize track muxers from track info.
+    /// Initialize video and audio track muxers from track info.
+    ///
+    /// Builds per-lane `Fmp4TrackDesc` from codec extradata, normalizes sample rate
+    /// and channel layout for AAC, and creates the `TrackMuxer` instances.
+    ///
+    /// 根据轨道信息初始化视频和音频轨道复用器。
+    ///
+    /// 从编解码器 extradata 构建每轨 `Fmp4TrackDesc`，归一化 AAC 采样率与声道布局，
+    /// 并创建 `TrackMuxer` 实例。
     pub fn set_tracks(&mut self, tracks: &[TrackInfo]) {
         if let Some(video) = tracks.iter().find(|t| t.media_kind == MediaKind::Video) {
             let video_part_target = compute_video_part_target(self.config.part_target_ms, video);
@@ -110,7 +131,14 @@ impl DemuxedStreamMuxer {
         self.waiting_for_keyframe = self.video.is_some();
     }
 
-    /// Push a frame into the appropriate lane. Returns outputs.
+    /// Push a frame into the appropriate lane and produce segment/part events.
+    ///
+    /// Waits for the first video keyframe, normalizes DTS/PTS, strips ADTS headers
+    /// from AAC frames, and forwards to the video or audio track muxer.
+    ///
+    /// 将帧推入对应轨道并生成分段/分片事件。
+    ///
+    /// 等待首个视频关键帧，归一化 DTS/PTS，从 AAC 帧去除 ADTS 头，并转发到视频或音频轨道复用器。
     pub fn push_frame(&mut self, frame: &AVFrame) -> Vec<MuxerOutput> {
         if self.concluded {
             return Vec::new();
@@ -214,7 +242,9 @@ impl DemuxedStreamMuxer {
             .collect()
     }
 
-    /// Conclude all lanes.
+    /// Flush all lanes and mark the stream as concluded.
+    ///
+    /// 冲洗所有轨道并将流标记为已结束。
     pub fn conclude(&mut self) {
         if let Some(ref mut v) = self.video {
             v.flush();
@@ -225,37 +255,58 @@ impl DemuxedStreamMuxer {
         self.concluded = true;
     }
 
+    /// Whether the stream has been concluded.
+    ///
+    /// 流是否已结束。
     pub fn is_concluded(&self) -> bool {
         self.concluded
     }
 
-    /// Whether demuxed mode is active (has at least one lane initialized).
+    /// Whether at least one lane has been initialized.
+    ///
+    /// 是否至少初始化了一条轨道。
     pub fn is_active(&self) -> bool {
         self.video.is_some() || self.audio.is_some()
     }
 
     /// Whether both video and audio lanes are present.
+    ///
+    /// 是否同时存在视频和音频轨道。
     pub fn has_both_lanes(&self) -> bool {
         self.video.is_some() && self.audio.is_some()
     }
 
+    /// Access the video lane.
+    ///
+    /// 访问视频轨道。
     pub fn video(&self) -> Option<&TrackMuxer> {
         self.video.as_ref()
     }
 
+    /// Access the audio lane.
+    ///
+    /// 访问音频轨道。
     pub fn audio(&self) -> Option<&TrackMuxer> {
         self.audio.as_ref()
     }
 
+    /// Mutable access to the video lane.
+    ///
+    /// 可变访问视频轨道。
     pub fn video_mut(&mut self) -> Option<&mut TrackMuxer> {
         self.video.as_mut()
     }
 
+    /// Mutable access to the audio lane.
+    ///
+    /// 可变访问音频轨道。
     pub fn audio_mut(&mut self) -> Option<&mut TrackMuxer> {
         self.audio.as_mut()
     }
 
-    /// Get track muxer by lane.
+    /// Get the track muxer for a specific lane.
+    ///
+    /// 获取指定轨道的复用器。
     pub fn lane(&self, lane: TrackLane) -> Option<&TrackMuxer> {
         match lane {
             TrackLane::Video => self.video.as_ref(),
@@ -263,22 +314,30 @@ impl DemuxedStreamMuxer {
         }
     }
 
-    /// Get init segment for a lane.
+    /// Get the fMP4 init segment for a lane.
+    ///
+    /// 获取某轨道的 fMP4 init segment。
     pub fn track_init_segment(&self, lane: TrackLane) -> Option<Bytes> {
         self.lane(lane).map(|t| t.init_segment.clone())
     }
 
     /// Get a part by lane and global sequence.
+    ///
+    /// 根据轨道和全局序列号获取分片。
     pub fn track_part(&self, lane: TrackLane, seq: u64) -> Option<Bytes> {
         self.lane(lane).and_then(|t| t.get_part(seq))
     }
 
     /// Get a segment by lane and name.
+    ///
+    /// 根据轨道和名称获取分段。
     pub fn track_segment(&self, lane: TrackLane, name: &str) -> Option<Bytes> {
         self.lane(lane).and_then(|t| t.get_segment(name))
     }
 
-    /// Get rendition state (last_msn, last_part_index) for a lane.
+    /// Get the (last_msn, last_part_index) for a lane.
+    ///
+    /// 获取某轨道的 (last_msn, last_part_index)。
     pub fn rendition_state(&self, lane: TrackLane) -> Option<(u64, u64)> {
         self.lane(lane).map(|t| {
             let msn = t.ll_state.parent_segment_seq();
@@ -288,7 +347,14 @@ impl DemuxedStreamMuxer {
         })
     }
 
-    /// Generate per-track chunklist playlist.
+    /// Generate the per-track chunklist playlist for a lane.
+    ///
+    /// Rewrites generic URI prefixes to lane-specific names and appends an
+    /// `EXT-X-RENDITION-REPORT` for the opposite lane in LL-HLS.
+    ///
+    /// 生成某轨道的每轨分片列表。
+    ///
+    /// 将通用 URI 前缀重写为轨道专属名称，并在 LL-HLS 中为对端轨道追加 `EXT-X-RENDITION-REPORT`。
     pub fn track_playlist(
         &self,
         lane: TrackLane,
@@ -345,7 +411,9 @@ impl DemuxedStreamMuxer {
         }
     }
 
-    /// Whether the video lane is ready (has segments in ring).
+    /// Whether every present lane has produced at least one segment.
+    ///
+    /// 每条存在的轨道是否都已生成至少一个分段。
     pub fn is_ready(&self) -> bool {
         let video_ready = self
             .video
@@ -361,14 +429,22 @@ impl DemuxedStreamMuxer {
         (self.video.is_some() || self.audio.is_some()) && video_ready && audio_ready
     }
 
-    /// Wallclock offset for PROGRAM-DATE-TIME.
+    /// Return the shared wallclock offset for `PROGRAM-DATE-TIME`.
+    ///
+    /// 返回用于 `PROGRAM-DATE-TIME` 的共享墙上时间偏移。
     pub fn wallclock_offset_ms(&self) -> Option<i64> {
         self.wallclock_offset_ms
     }
 }
 
-/// Compute frame-aligned video part target.
-/// Strip ADTS header from AAC frame if present. fMP4 requires raw AAC AU.
+/// Strip ADTS header from an AAC frame if present.
+///
+/// fMP4 and TS muxing require raw AAC access units, so sync-word frames have
+/// their ADTS header removed.
+///
+/// 如果存在，从 AAC 帧中去除 ADTS 头。
+///
+/// fMP4 和 TS 复用需要原始 AAC 访问单元，因此同步字帧的 ADTS 头被移除。
 fn strip_adts_header(data: &Bytes) -> Bytes {
     if data.len() >= 7 && data[0] == 0xFF && (data[1] & 0xF0) == 0xF0 {
         let protection_absent = (data[1] & 0x01) != 0;
@@ -381,8 +457,13 @@ fn strip_adts_header(data: &Bytes) -> Bytes {
 }
 
 /// Trim AAC extradata to the bytes needed by fMP4 decoder config.
-/// RTMP sources may include a full PCE after the first two ASC bytes; preserve
-/// it when parseable because it carries multichannel layouts such as 5.1.
+///
+/// Preserves a PCE when present for multichannel layouts, otherwise rewrites
+/// `channelConfiguration=0` to a valid value.
+///
+/// 将 AAC extradata 裁剪为 fMP4 解码器配置所需字节。
+///
+/// 在存在多声道布局时保留 PCE，否则将 `channelConfiguration=0` 重写为有效值。
 fn trim_aac_asc(extradata: &Bytes, _channels: u8) -> Bytes {
     if extradata.len() < 2 {
         return extradata.clone();
@@ -410,8 +491,13 @@ fn trim_aac_asc(extradata: &Bytes, _channels: u8) -> Bytes {
     }
 }
 
-/// Parse actual sample rate and channels from AAC AudioSpecificConfig.
-/// Falls back to TrackInfo values if ASC parsing fails.
+/// Parse the actual AAC sample rate and channel count from AudioSpecificConfig.
+///
+/// Falls back to the `TrackInfo` values when the ASC is too short or malformed.
+///
+/// 从 AudioSpecificConfig 解析实际 AAC 采样率和声道数。
+///
+/// 当 ASC 过短或损坏时回退到 `TrackInfo` 的值。
 fn parse_aac_params(extradata: &Bytes, track: &TrackInfo) -> (u32, u8) {
     const AAC_SAMPLE_RATES: [u32; 13] = [
         96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
@@ -433,6 +519,13 @@ fn parse_aac_params(extradata: &Bytes, track: &TrackInfo) -> (u32, u8) {
     }
 }
 
+/// Map a channel count to the ADTS `channel_configuration` enum.
+///
+/// ADTS reserves only 3 bits, so some layouts cannot be represented.
+///
+/// 将声道数映射到 ADTS 的 `channel_configuration` 枚举。
+///
+/// ADTS 仅保留 3 位，因此某些声道布局无法表示。
 fn channels_to_aac_channel_configuration(channels: u8) -> Option<u8> {
     match channels {
         1 => Some(1),
@@ -446,6 +539,14 @@ fn channels_to_aac_channel_configuration(channels: u8) -> Option<u8> {
     }
 }
 
+/// Compute a frame-aligned video part target from track FPS.
+///
+/// Rounds the target to a whole number of frames so part boundaries do not fall
+/// inside a frame.
+///
+/// 根据轨道 FPS 计算帧对齐的视频分片目标。
+///
+/// 将目标时长四舍五入为整数帧数，使分片边界不落在帧内。
 fn compute_video_part_target(target_ms: u64, track: &TrackInfo) -> u64 {
     if let Some(fps) = track.fps {
         let fps_f = fps.num as f64 / fps.den as f64;
@@ -458,7 +559,13 @@ fn compute_video_part_target(target_ms: u64, track: &TrackInfo) -> u64 {
     target_ms
 }
 
-/// Compute frame-aligned audio part target.
+/// Compute a frame-aligned audio part target from sample rate.
+///
+/// Uses 1024-sample AAC frames or 960-sample Opus frames as the base unit.
+///
+/// 根据采样率计算帧对齐的音频分片目标。
+///
+/// 以 1024 采样 AAC 帧或 960 采样 Opus 帧为基本单元。
 fn compute_audio_part_target(target_ms: u64, track: &TrackInfo) -> u64 {
     let sr = track.sample_rate.unwrap_or(44100) as f64;
     if sr > 0.0 {
@@ -474,7 +581,9 @@ fn compute_audio_part_target(target_ms: u64, track: &TrackInfo) -> u64 {
     target_ms
 }
 
-/// Rewrite URIs in playlist: init.mp4 -> init_{lane}.mp4, part_N -> {lane}_part_N, seg_N -> {lane}_seg_N
+/// Rewrite generic init/part/segment URIs with lane-specific prefixes.
+///
+/// 用轨道前缀重写通用的 init/part/segment URI。
 fn prefix_part_uris(playlist: &str, lane: TrackLane) -> String {
     let prefix = lane.prefix();
     let mut out = String::with_capacity(playlist.len() + 128);
@@ -496,6 +605,9 @@ fn prefix_part_uris(playlist: &str, lane: TrackLane) -> String {
     out
 }
 
+/// Append the stream-key validation token to all media URIs in a playlist.
+///
+/// 将流密钥验证令牌追加到播放列表中的所有媒体 URI。
 fn append_stream_key_to_playlist_uris(playlist: &str, stream_key: &str) -> String {
     let mut out = String::with_capacity(playlist.len() + stream_key.len() * 8);
     for line in playlist.lines() {
@@ -515,6 +627,9 @@ fn append_stream_key_to_playlist_uris(playlist: &str, stream_key: &str) -> Strin
     out
 }
 
+/// Append a query parameter to a quoted URI inside an HLS tag line.
+///
+/// 在 HLS 标签行中的带引号 URI 追加查询参数。
 fn append_query_to_quoted_uri(line: &str, key: &str, value: &str) -> String {
     let Some(uri_pos) = line.find("URI=\"") else {
         return line.to_string();
@@ -535,6 +650,9 @@ fn append_query_to_quoted_uri(line: &str, key: &str, value: &str) -> String {
     out
 }
 
+/// Append a query parameter to a plain URI, choosing `?` or `&`.
+///
+/// 向普通 URI 追加查询参数，自动选择 `?` 或 `&`。
 fn append_query_to_uri(uri: &str, key: &str, value: &str) -> String {
     let separator = if uri.contains('?') { '&' } else { '?' };
     format!("{uri}{separator}{key}={value}")
