@@ -12,7 +12,7 @@ async fn supports_matrix_reflects_wired_adapters() {
     }
     assert!(supports(Protocol::HttpFlv, Direction::Pull));
     assert!(supports(Protocol::Rtmp, Direction::Push));
-    assert!(!supports(Protocol::WebRtc, Direction::Push));
+    assert!(supports(Protocol::WebRtc, Direction::Push));
 
     assert!(!supports(Protocol::Rtmp, Direction::Pull));
     assert!(!supports(Protocol::WebRtc, Direction::Pull));
@@ -167,7 +167,7 @@ async fn open_push_http_flv_returns_unsupported_protocol() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn open_push_webrtc_returns_unsupported_protocol() {
+async fn open_push_webrtc_rejects_invalid_scheme() {
     let runtime = Arc::new(TokioRuntime::new()) as Arc<dyn cheetah_runtime_api::RuntimeApi>;
     let connector = ConnectorBuilder::new(runtime)
         .without_default_modules()
@@ -182,15 +182,18 @@ async fn open_push_webrtc_returns_unsupported_protocol() {
             Default::default(),
         )
         .await
-        .expect_err("webrtc push must be unsupported");
+        .expect_err("webrtc push must reject invalid url");
 
-    assert!(matches!(
-        err,
-        cheetah_connector::ConnectorError::UnsupportedProtocol {
-            protocol: Protocol::WebRtc,
-            direction: Direction::Push,
-        }
-    ));
+    assert!(
+        matches!(
+            err,
+            cheetah_connector::ConnectorError::InvalidUrl {
+                protocol: Protocol::WebRtc,
+                ..
+            }
+        ),
+        "expected InvalidUrl for webrtc:// scheme, got {err:?}"
+    );
 
     connector.stop().await;
 }

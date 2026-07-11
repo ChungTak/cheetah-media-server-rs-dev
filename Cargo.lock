@@ -477,6 +477,8 @@ dependencies = [
  "cheetah-runtime-api",
  "cheetah-runtime-tokio",
  "cheetah-sdk",
+ "cheetah-webrtc-core",
+ "cheetah-webrtc-driver-tokio",
  "cheetah-webrtc-media-loopback",
  "cheetah-webrtc-module",
  "futures",

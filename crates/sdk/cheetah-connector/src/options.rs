@@ -71,6 +71,12 @@ pub enum ProtocolPushExtras {
     /// RTMP 推流相关选项。
     #[cfg(feature = "rtmp")]
     Rtmp(RtmpPushExtras),
+
+    /// WebRTC push-specific options.
+    ///
+    /// WebRTC 推流相关选项。
+    #[cfg(feature = "webrtc")]
+    WebRtc(WebRtcPushExtras),
 }
 
 /// RTMP push-specific options that are forwarded to the RTMP client driver.
@@ -89,6 +95,23 @@ pub struct RtmpPushExtras {
     pub chunk_size: Option<usize>,
     /// RTMP acknowledgement window size.
     pub ack_window_size: Option<usize>,
+}
+
+/// WebRTC push-specific options forwarded to the WebRTC driver.
+///
+/// WebRTC 推流特有选项，会透传给 WebRTC 驱动。
+#[cfg(feature = "webrtc")]
+#[derive(Debug, Clone, Default)]
+pub struct WebRtcPushExtras {
+    /// Optional driver configuration. When `None`, the connector uses
+    /// sensible localhost defaults with `127.0.0.1:0` and `public_ips`
+    /// set to `127.0.0.1`.
+    pub driver_config: Option<Box<cheetah_webrtc_driver_tokio::WebRtcDriverConfig>>,
+
+    /// Whether the WHIP HTTP client may connect to private/loopback IPs.
+    /// `None` lets the connector infer this from the host (true for
+    /// `localhost`, `127.0.0.1` and `::1`).
+    pub allow_private_ips: Option<bool>,
 }
 
 /// How an in-memory loopback should be routed.

@@ -154,10 +154,9 @@ impl RuntimeConnector for EngineConnector {
                 crate::push::rtmp::open_rtmp_push(self.engine.clone(), url, options).await
             }
             #[cfg(feature = "webrtc")]
-            Protocol::WebRtc => Err(ConnectorError::UnsupportedProtocol {
-                protocol,
-                direction: Direction::Push,
-            }),
+            Protocol::WebRtc => {
+                crate::push::webrtc::open_webrtc_push(self.engine.clone(), url, options).await
+            }
             #[cfg(feature = "rtsp")]
             Protocol::Rtsp => Err(ConnectorError::UnsupportedProtocol {
                 protocol,

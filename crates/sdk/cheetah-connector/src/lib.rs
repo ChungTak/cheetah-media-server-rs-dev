@@ -16,14 +16,13 @@
 //! | RTSP | no (adapter pending) | no |
 //! | HTTP-FLV | yes | no |
 //! | RTMP | no | yes |
-//! | WebRTC | no | no (adapter pending) |
+//! | WebRTC | no | yes |
 //!
 //! Unlisted protocol/direction pairs return [`ConnectorError::UnsupportedProtocol`].
 //!
-//! `rtsp` pull and `webrtc` push adapters are declared but not yet wired in this
-//! build; the `rtsp` and `webrtc` features enable the underlying modules but
-//! `supports()` returns `false` for those pairs until the connector adapters are
-//! completed.
+//! `rtsp` pull adapter is declared but not yet wired in this build; the `rtsp`
+//! feature enables the underlying module but `supports()` returns `false` for
+//! that pair until the connector adapter is completed.
 //!
 //! # Metadata contract
 //!
@@ -37,8 +36,8 @@
 //! - `rtsp` — enable the RTSP module (connector pull adapter pending).
 //! - `http-flv` — enable HTTP-FLV pull.
 //! - `rtmp` — enable RTMP push.
-//! - `webrtc` — enable the WebRTC module and the in-process media loopback fixture
-//!   (connector push adapter pending).
+//! - `webrtc` — enable the WebRTC module, the in-process media loopback fixture
+//!   and the WHIP push adapter.
 //! - `loopback` — enable `RuntimeConnector::open_in_memory_loopback` (implies `rtmp` + `http-flv`).
 //! - `full` — enable all of the above.
 
@@ -50,7 +49,7 @@ mod protocol;
 
 #[cfg(feature = "http-flv")]
 mod pull;
-#[cfg(feature = "rtmp")]
+#[cfg(any(feature = "rtmp", feature = "webrtc"))]
 mod push;
 
 mod connector;
