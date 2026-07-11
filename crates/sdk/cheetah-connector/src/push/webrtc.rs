@@ -563,11 +563,8 @@ fn normalize_whip_url(url: &str) -> Result<(String, bool), ConnectorError> {
     }
 
     let host = extract_host(rest);
-    let allow_private = allow_private
-        || host == "localhost"
-        || host == "127.0.0.1"
-        || host == "::1"
-        || host == "[::1]";
+    let allow_private =
+        allow_private || host == "localhost" || host == "127.0.0.1" || host == "::1";
 
     Ok((format!("{http_scheme}://{rest}"), allow_private))
 }
