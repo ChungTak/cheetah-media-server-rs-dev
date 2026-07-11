@@ -61,12 +61,11 @@ use std::sync::Arc;
 
 use cheetah_webrtc_driver_tokio::LocalCandidateCounts;
 
-/// Cumulative counters owned by the module event worker.
+/// Cumulative atomic counters owned by the module event worker.
+/// Provides cheap monotonic counters for Prometheus-style metrics without locking the session registry on every scrape.
 ///
-/// All counters are `AtomicU64` + `Ordering::Relaxed`. The aggregator
-/// is constructed once per module instance and shared (via `Arc`)
-/// with the event-worker task. `Default::default()` initialises all
-/// counters to zero.
+/// 模块事件工作线程拥有的累加原子计数器。
+/// 提供廉价的单调计数器用于 Prometheus 风格指标，无需每次采集都锁定会话注册表。
 #[derive(Debug, Default)]
 pub struct WebRtcModuleMetrics {
     pub(crate) packets_in: AtomicU64,
@@ -108,18 +107,18 @@ pub struct WebRtcModuleMetrics {
 }
 
 impl WebRtcModuleMetrics {
+    /// Create a new metrics aggregator wrapped in an Arc.
+    ///
+    /// 创建包装在 Arc 中的新指标聚合器。
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
 
     /// Add stat-event deltas to the aggregate counters.
+    /// Deltas are computed from consecutive per-session snapshots so the aggregator stays strictly increasing.
     ///
-    /// `cheetah-webrtc-core` emits stats as cumulative per-session
-    /// snapshots. The module event worker computes the delta from
-    /// the prior snapshot before calling this method, so the
-    /// aggregator stays a strictly increasing counter even when
-    /// individual sessions reset (e.g., on session close + new
-    /// session reusing low ids).
+    /// 将统计事件增量加到聚合计数器。
+    /// 增量由连续每会话快照计算得出，使聚合器保持严格递增。
     pub fn add_stats_delta(&self, delta: &WebRtcSessionStatsDelta) {
         self.packets_in
             .fetch_add(delta.packets_in, Ordering::Relaxed);
@@ -133,50 +132,66 @@ impl WebRtcModuleMetrics {
         self.fir.fetch_add(delta.fir, Ordering::Relaxed);
     }
 
+    /// Record the latest REMB bitrate in bits per second.
+    ///
+    /// 记录最新的 REMB 比特率（比特每秒）。
     pub fn record_remb(&self, bps: u64) {
         self.remb_bitrate_bps.store(bps, Ordering::Relaxed);
     }
 
+    /// Record the latest BWE estimate in bits per second.
+    ///
+    /// 记录最新的 BWE 估计值（比特每秒）。
     pub fn record_bwe(&self, bps: u64) {
         self.bwe_estimate_bps.store(bps, Ordering::Relaxed);
     }
 
+    /// Increment the TWCC feedback delivery counter.
+    ///
+    /// 递增 TWCC 反馈交付计数器。
     pub fn inc_twcc_feedback(&self) {
         self.twcc_feedback.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the counter for simulcast layer switches.
+    ///
+    /// 递增 simulcast 层切换计数器。
     pub fn inc_simulcast_layer_switch(&self) {
         self.simulcast_layer_switches
             .fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the counter for ICE route migrations.
+    ///
+    /// 递增 ICE 路由迁移计数器。
     pub fn inc_route_migration(&self) {
         self.route_migrations.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Increment the counter for queue drops.
+    ///
+    /// 递增队列丢弃计数器。
     pub fn inc_queue_drop(&self) {
         self.queue_drops.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Record a play disconnect that exceeded the minimum duration
-    /// threshold and emitted a business event.
+    /// Increment the counter for play disconnects that emitted a business event.
+    ///
+    /// 递增触发业务事件的播放断开计数器。
     pub fn inc_play_disconnect_event(&self) {
         self.play_disconnect_events.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Record a short play connection (below threshold) that only
-    /// recorded a metric without emitting a business event.
+    /// Increment the counter for short play connections that only recorded a metric.
+    ///
+    /// 递增仅记录指标的短播放连接计数器。
     pub fn inc_play_disconnect_short(&self) {
         self.play_disconnect_short.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// Accumulate a local candidate snapshot into the running totals.
+    /// Accumulate a per-session local candidate snapshot into module-wide monotonic counters.
     ///
-    /// Each `LocalCandidateSnapshot` event from the driver carries a
-    /// [`LocalCandidateCounts`] describing the candidates gathered for
-    /// one session. This method adds those counts to the module-wide
-    /// monotonic counters, matching the packet counter pattern used
-    /// elsewhere in this struct.
+    /// 将每会话本地 candidate 快照累积到模块级单调计数器。
     pub fn record_local_candidate_snapshot(&self, counts: LocalCandidateCounts) {
         self.local_candidate_host
             .fetch_add(counts.host as u64, Ordering::Relaxed);
@@ -196,8 +211,9 @@ impl WebRtcModuleMetrics {
             .fetch_add(counts.ipv6 as u64, Ordering::Relaxed);
     }
 
-    /// Snapshot the cumulative counters. Caller stitches the
-    /// session-count gauges from the registry separately.
+    /// Snapshot the current values of all cumulative counters.
+    ///
+    /// 快照所有累加计数器的当前值。
     pub(crate) fn snapshot_counters(&self) -> WebRtcModuleCounterSnapshot {
         WebRtcModuleCounterSnapshot {
             packets_in: self.packets_in.load(Ordering::Relaxed),
@@ -230,11 +246,9 @@ impl WebRtcModuleMetrics {
     }
 }
 
-/// Delta computed by the event worker from two consecutive
-/// `WebRtcCoreEvent::Stats` snapshots for the same session.
+/// Delta computed from two consecutive per-session stats snapshots.
 ///
-/// Negative or zero values are clamped to zero by the caller, so
-/// every field below is safe to add into the global counters.
+/// 从连续两次每会话统计快照计算出的增量。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WebRtcSessionStatsDelta {
     pub packets_in: u64,
@@ -277,9 +291,9 @@ pub(crate) struct WebRtcModuleCounterSnapshot {
     pub play_disconnect_short: u64,
 }
 
-/// Operator-facing snapshot. Fields mirror the documented metric
-/// names in phase-04 §4.8 (sans the `webrtc_` prefix; the prefix is
-/// added by the Prometheus exporter).
+/// Operator-facing snapshot combining counter totals and live session gauges.
+///
+/// 结合计数器总量与实时会话 gauges 的面向运营者的快照。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WebRtcModuleMetricsSnapshot {
     /// Active session count (gauge, all roles).
@@ -320,8 +334,9 @@ pub struct WebRtcModuleMetricsSnapshot {
 }
 
 impl WebRtcModuleMetricsSnapshot {
-    /// Combine an aggregator counter snapshot with live registry
-    /// gauges into a single operator-facing record.
+    /// Combine a counter snapshot with live session-count gauges into a single metrics snapshot.
+    ///
+    /// 将计数器快照与实时会话数 gauge 合并为单个指标快照。
     pub(crate) fn assemble(
         counters: WebRtcModuleCounterSnapshot,
         sessions_active: usize,

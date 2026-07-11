@@ -35,6 +35,9 @@ use crate::session::{WebRtcModuleSessionState, WebRtcSessionIdAllocator, WebRtcS
 const MODULE_ID: &str = "webrtc";
 const ROUTES_PREFIX: &str = "/api/v1/rtc";
 
+/// Factory for creating the WebRTC module and registering its manifest, schema, and capabilities.
+///
+/// 创建 WebRTC 模块并注册其 manifest、schema 与能力的工厂。
 pub struct WebRtcModuleFactory;
 
 impl ModuleFactory for WebRtcModuleFactory {
@@ -71,6 +74,11 @@ impl ModuleFactory for WebRtcModuleFactory {
     }
 }
 
+/// WebRTC module implementation.
+/// Owns the driver handle, session registry, bridge registry, metrics, HTTP service, and P2P job state.
+///
+/// WebRTC 模块实现。
+/// 持有驱动句柄、会话注册表、桥注册表、指标、HTTP 服务与 P2P job 状态。
 pub struct WebRtcModule {
     state: ModuleState,
     config: Arc<Mutex<WebRtcModuleConfig>>,
@@ -115,6 +123,9 @@ pub struct WebRtcModule {
 }
 
 impl WebRtcModule {
+    /// Create a new WebRTC module in the Created state.
+    ///
+    /// 创建处于 Created 状态的新 WebRTC 模块。
     pub fn new() -> Self {
         Self {
             state: ModuleState::Created,
@@ -136,12 +147,9 @@ impl WebRtcModule {
         }
     }
 
-    /// Operator-facing snapshot of the documented metrics surface
-    /// (phase-04 §4.8). Combines monotonic counters bumped by the
-    /// driver event worker with live gauges from the session
-    /// registry. Cheap to call from a Prometheus exporter / admin
-    /// HTTP route — atomic loads only, plus one read of the
-    /// registry's HashMap length.
+    /// Return an operator-facing metrics snapshot combining atomic counters and live session gauges.
+    ///
+    /// 返回结合原子计数器与实时会话 gauge 的面向运营者的指标快照。
     pub fn metrics_snapshot(&self) -> crate::metrics::WebRtcModuleMetricsSnapshot {
         let counters = self.metrics.snapshot_counters();
         let (sessions_active, publish_sessions, play_sessions) = {
@@ -171,9 +179,11 @@ impl WebRtcModule {
         )
     }
 
-    /// Lifecycle dispatcher fed by the driver event worker. Public
-    /// so external code (e.g. the P2P pull/push entry path) can hand
-    /// this to `run_bridge_with_lifecycle` as a `BridgeLifecycleSource`.
+    /// Return the lifecycle dispatcher fed by the driver event worker.
+    /// P2P pull/push code uses this as a BridgeLifecycleSource.
+    ///
+    /// 返回由驱动事件工作线程提供生命周期事件的分发器。
+    /// P2P pull/push 代码将其用作 BridgeLifecycleSource。
     pub fn lifecycle_dispatcher(&self) -> Arc<crate::p2p::LifecycleDispatcher> {
         self.lifecycle_dispatcher.clone()
     }
@@ -199,6 +209,11 @@ impl Module for WebRtcModule {
         self.state
     }
 
+    /// Initialize the module with the engine context and initial configuration.
+    /// Validates the config and stores it for the subsequent start call.
+    ///
+    /// 使用引擎上下文与初始配置初始化模块。
+    /// 验证配置并存储以供后续 start 调用。
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
         let cfg = WebRtcModuleConfig::from_value(ctx.initial_config.clone())
             .map_err(SdkError::InvalidArgument)?;
@@ -210,6 +225,11 @@ impl Module for WebRtcModule {
         Ok(())
     }
 
+    /// Start the module.
+    /// Spawns the WebRTC driver, optionally starts the OME WebSocket server, the periodic FIR worker, and the driver event worker.
+    ///
+    /// 启动模块。
+    /// 启动 WebRTC 驱动，可选启动 OME WebSocket 服务器、周期性 FIR 工作线程与驱动事件工作线程。
     async fn start(&mut self, cancel: CancellationToken) -> Result<(), SdkError> {
         let cfg = self.config.lock().clone();
         if !cfg.enabled {
@@ -346,6 +366,11 @@ impl Module for WebRtcModule {
         Ok(())
     }
 
+    /// Stop the module.
+    /// Cancels the module token, drains the session registry, observes play disconnects, closes all bridges, and cancels all jobs.
+    ///
+    /// 停止模块。
+    /// 取消模块 token、清空会话注册表、观察播放断开、关闭所有桥并取消所有 job。
     async fn stop(&mut self) -> Result<(), SdkError> {
         if let Some(cancel) = self.cancel.take() {
             cancel.cancel();
@@ -379,6 +404,11 @@ impl Module for WebRtcModule {
         Ok(())
     }
 
+    /// Apply a new configuration.
+    /// Returns Immediate when unchanged and ModuleRestartRequired when the config differs.
+    ///
+    /// 应用新配置。
+    /// 未改变时返回 Immediate，配置不同时返回 ModuleRestartRequired。
     async fn apply_config(&mut self, change: ModuleConfigChange) -> Result<ConfigEffect, SdkError> {
         let new_cfg =
             WebRtcModuleConfig::from_value(change.next).map_err(SdkError::InvalidArgument)?;
@@ -391,6 +421,9 @@ impl Module for WebRtcModule {
         Ok(ConfigEffect::ModuleRestartRequired)
     }
 
+    /// Return the HTTP route descriptors registered by this module.
+    ///
+    /// 返回本模块注册的 HTTP 路由描述符。
     fn http_routes(&self) -> Vec<HttpRouteDescriptor> {
         vec![
             HttpRouteDescriptor {
@@ -538,6 +571,9 @@ impl Module for WebRtcModule {
         ]
     }
 
+    /// Return the HTTP service instance for the registered routes.
+    ///
+    /// 返回注册路由对应的 HTTP 服务实例。
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
         Some(Arc::new(WebRtcHttpService {
             driver: self.driver.clone(),

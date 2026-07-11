@@ -13,6 +13,16 @@
 //!
 //! Phase 04+ wire engine publishers/subscribers, GOP bootstrap, simulcast
 //! and RTX policy on top of the lifecycle plumbing landed here.
+//!
+//! `cheetah-webrtc-module` 向引擎暴露 WebRTC 发布/播放/WHIP/WHEP API。
+//!
+//! 第三阶段（本 crate 首次真正实现）涵盖：SDK 模块工厂与生命周期；
+//! SMS 风格 `/api/v1/rtc/play` 与 `/api/v1/rtc/publish` HTTP 路由；
+//! 返回 `201 Created` 与 `Location` 头的 WHIP/WHEP 路由；
+//! 会话 DELETE / GET 端点；将 HTTP 请求转换为
+//! [`cheetah_webrtc_driver_tokio::WebRtcDriverCommand`] 的驱动桥。
+//! 第四阶段及后续将在此生命周期基础之上接入引擎发布者/订阅者、
+//! GOP 引导、simulcast 与 RTX 策略。
 
 pub mod bootstrap;
 pub mod bridge;

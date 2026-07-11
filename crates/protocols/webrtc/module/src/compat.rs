@@ -2,14 +2,11 @@
 
 use serde_json::Value;
 
-/// Pull `appName`/`app` and `streamName`/`stream`/`recvStream` aliases out
-/// of an SMS-style JSON body.
+/// Pull app and stream aliases from an SMS-style JSON body.
+/// Falls back to parsing a ZLM-style url field when explicit fields are missing.
 ///
-/// ZLM-style requests may also carry a `url` field of the form
-/// `rtc://vhost/app/stream?...`. When the explicit `app` / `stream`
-/// fields are missing, we fall back to parsing the URL via
-/// [`parse_zlm_rtc_url`] and use its `app` / `stream` segments. The
-/// caller can still override by setting the explicit fields.
+/// 从 SMS 风格 JSON 体中提取 app 与 stream 别名。
+/// 当显式字段缺失时回退到解析 ZLM 风格的 url 字段。
 pub fn extract_app_stream_aliases(body: &Value) -> (String, Option<String>) {
     let explicit_app = body
         .get("appName")
@@ -40,28 +37,17 @@ pub fn extract_app_stream_aliases(body: &Value) -> (String, Option<String>) {
     (app, stream)
 }
 
-/// Recognized ABL-style WHEP path patterns.
+/// Return true when the path is one of the recognized ABL-style WHEP aliases.
 ///
-/// ABL clients use paths like `/rtc/v1/whep/` or `/rtc/v1/whep` (with or
-/// without trailing slash) and the shorter `/whep` form. All of these
-/// should map to the WHEP play handler. This function returns `true` when
-/// the given *relative* path (as seen by the module's `handle` method)
-/// matches one of the known WHEP alias patterns.
-///
-/// The canonical path `/whep` is included so callers can use a single
-/// check for all WHEP-eligible paths.
+/// 当路径为识别的 ABL 风格 WHEP 别名之一时返回 true。
 pub fn is_abl_whep_path(path: &str) -> bool {
     let normalized = path.trim_end_matches('/');
     matches!(normalized, "/whep" | "/rtc/v1/whep")
 }
 
-/// Validate that the required `app` and `stream` query parameters are
-/// present for an ABL-style WHEP request. Returns `Ok((app, stream))` on
-/// success or an `Err` with a human-readable error message when either
-/// parameter is missing.
+/// Validate that an ABL-style WHEP query has the required app and stream parameters.
 ///
-/// When `app` is absent, it defaults to `"live"` (matching ABL behaviour).
-/// `stream` is always required.
+/// 验证 ABL 风格 WHEP 查询是否包含必需的 app 与 stream 参数。
 pub fn validate_abl_whep_query(query: Option<&str>) -> Result<(String, String), AblWhepQueryError> {
     let (app, stream) = extract_app_stream_from_query(query);
     let app = app.unwrap_or_else(|| "live".to_string());
@@ -73,17 +59,19 @@ pub fn validate_abl_whep_query(query: Option<&str>) -> Result<(String, String), 
 }
 
 /// Error returned when ABL-style WHEP query parameters are invalid.
+///
+/// ABL 风格 WHEP 查询参数无效时返回的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AblWhepQueryError {
     #[error("missing required query parameter: stream (or streamName)")]
     MissingStream,
 }
 
-/// OME-style WebRTC URL direction.
+/// OME-compatible WebRTC URL direction.
+/// Send and Whip are ingest, Play is the default playback direction.
 ///
-/// OvenMediaEngine uses `/App/Stream?direction=whip` for HTTP WHIP
-/// ingest, `/App/Stream?direction=send` for WebSocket ingest, and an
-/// absent direction for playback WebSocket URLs.
+/// OME 兼容的 WebRTC URL 方向。
+/// Send 与 Whip 为推流，Play 为默认播放方向。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OmeDirection {
     /// Publish over OME's custom WebSocket signalling.
@@ -95,7 +83,9 @@ pub enum OmeDirection {
     Play,
 }
 
-/// OME `transport` query compatibility mode.
+/// OME-compatible transport mode controlling which ICE candidate families are allowed.
+///
+/// OME 兼容的传输模式，控制允许哪些 ICE candidate 族。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OmeTransportMode {
     /// UDP ICE candidates only.
@@ -111,6 +101,8 @@ pub enum OmeTransportMode {
 }
 
 /// Parsed OME-compatible WebRTC request target.
+///
+/// 解析后的 OME 兼容 WebRTC 请求目标。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OmeWebRtcRequest {
     pub app: String,
@@ -120,6 +112,9 @@ pub struct OmeWebRtcRequest {
     pub transport: OmeTransportMode,
 }
 
+/// Error returned when parsing an OME-compatible WebRTC URL.
+///
+/// 解析 OME 兼容 WebRTC URL 时返回的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OmeWebRtcUrlError {
     #[error("missing app segment")]
@@ -134,12 +129,9 @@ pub enum OmeWebRtcUrlError {
     InvalidTransport(String),
 }
 
-/// Parse an OME-compatible WebRTC path and query pair.
+/// Parse an OME-compatible path and query pair with the default UdpTcp transport.
 ///
-/// The path is relative to the WebRTC module mount and uses the OME
-/// shape `/<app>/<stream>[/<playlist>]`. Query parameters are decoded
-/// with the same forgiving decoder used by the SMS/ZLM compatibility
-/// layer.
+/// 使用默认 UdpTcp 传输解析 OME 兼容的路径与查询对。
 pub fn parse_ome_webrtc_path_query(
     path: &str,
     query: Option<&str>,
@@ -147,6 +139,9 @@ pub fn parse_ome_webrtc_path_query(
     parse_ome_webrtc_path_query_with_default_transport(path, query, OmeTransportMode::UdpTcp)
 }
 
+/// Parse an OME-compatible path and query pair, using a caller-supplied default transport when the query omits it.
+///
+/// 解析 OME 兼容的路径与查询对，当查询未指定传输时使用调用方提供的默认传输。
 pub fn parse_ome_webrtc_path_query_with_default_transport(
     path: &str,
     query: Option<&str>,
@@ -209,6 +204,9 @@ fn parse_ome_direction(input: &str) -> Result<OmeDirection, OmeWebRtcUrlError> {
     }
 }
 
+/// Parse an OME transport mode string into OmeTransportMode.
+///
+/// 将 OME 传输模式字符串解析为 OmeTransportMode。
 pub fn parse_ome_transport_mode(input: &str) -> Result<OmeTransportMode, OmeWebRtcUrlError> {
     let s = input.trim().to_ascii_lowercase();
     match s.as_str() {
@@ -221,8 +219,9 @@ pub fn parse_ome_transport_mode(input: &str) -> Result<OmeTransportMode, OmeWebR
     }
 }
 
-/// Extract `app` and `stream` values from a query string (WHIP/WHEP path
-/// alternatives).
+/// Extract app and stream values from a WHIP/WHEP query string.
+///
+/// 从 WHIP/WHEP 查询字符串中提取 app 与 stream 值。
 pub fn extract_app_stream_from_query(query: Option<&str>) -> (Option<String>, Option<String>) {
     let q = match query {
         Some(q) => q,
@@ -516,21 +515,11 @@ mod tests {
     }
 }
 
-/// Parsed ZLMediaKit-style `rtc://` / `webrtc://` URL.
+/// Parsed ZLM-style rtc:// or webrtc:// URL.
+/// Surfaces vhost, app, stream, signaling_protocols, peer_room_id, and unknown extra parameters.
 ///
-/// ZLM clients address streams via URLs of the shape:
-///
-/// ```text
-/// rtc://vhost/app/stream?signaling_protocols=0
-/// webrtc://signaling-host:port/app/stream?signaling_protocols=1&peer_room_id=room
-/// rtcs://vhost/app/stream
-/// ```
-///
-/// The parser is deliberately lenient: missing `vhost` falls back to
-/// `__defaultVhost__` (matching ZLM behaviour), missing `app` falls
-/// back to `live`, and unknown query parameters are surfaced via
-/// [`ZlmRtcUrl::extra_params`] so the caller can decide whether to
-/// reject or pass them through to driver / signalling.
+/// 解析后的 ZLM 风格 rtc:// 或 webrtc:// URL。
+/// 暴露 vhost、app、stream、signaling_protocols、peer_room_id 与未知额外参数。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ZlmRtcUrl {
     /// Scheme — `rtc`, `rtcs`, `webrtc`, or `webrtcs`.
@@ -555,6 +544,9 @@ pub struct ZlmRtcUrl {
     pub extra_params: Vec<(String, String)>,
 }
 
+/// ZLM-style URL scheme, including plain rtc, secure rtcs, and WebSocket P2P variants.
+///
+/// ZLM 风格 URL scheme，包括普通 rtc、安全 rtcs 与 WebSocket P2P 变体。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZlmRtcScheme {
     /// Plain RTC (HTTP signalling, UDP/TCP transport).
@@ -569,14 +561,16 @@ pub enum ZlmRtcScheme {
 }
 
 impl ZlmRtcScheme {
+    /// Return true if the scheme uses TLS.
+    ///
+    /// 当 scheme 使用 TLS 时返回 true。
     pub fn is_secure(self) -> bool {
         matches!(self, Self::Rtcs | Self::WebRtcs)
     }
 
-    /// Map a scheme literal (case-insensitive) to a [`ZlmRtcScheme`].
-    /// Named distinctly from `std::str::FromStr::from_str` to avoid
-    /// the trait-confusion lint and to signal that this is a small
-    /// inherent helper rather than a full URL parse.
+    /// Map a scheme literal to ZlmRtcScheme, case-insensitively.
+    ///
+    /// 大小写不敏感地将 scheme 字面量映射到 ZlmRtcScheme。
     pub fn from_scheme_literal(s: &str) -> Option<Self> {
         Some(match s.to_ascii_lowercase().as_str() {
             "rtc" => Self::Rtc,
@@ -588,6 +582,9 @@ impl ZlmRtcScheme {
     }
 }
 
+/// Error returned when parsing a ZLM-style URL.
+///
+/// 解析 ZLM 风格 URL 时返回的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ZlmRtcUrlError {
     #[error("invalid scheme — expected rtc/rtcs/webrtc/webrtcs")]
@@ -604,7 +601,11 @@ pub enum ZlmRtcUrlError {
     InvalidSignalingProtocols { value: String },
 }
 
-/// Parse a ZLM-style `rtc://`/`webrtc://` URL.
+/// Parse a ZLM-style rtc://, rtcs://, webrtc://, or webrtcs:// URL.
+/// Handles vhost defaults, short paths, three-segment paths, and unknown query parameters.
+///
+/// 解析 ZLM 风格的 rtc://、rtcs://、webrtc:// 或 webrtcs:// URL。
+/// 处理 vhost 默认值、短路径、三段路径与未知查询参数。
 pub fn parse_zlm_rtc_url(input: &str) -> Result<ZlmRtcUrl, ZlmRtcUrlError> {
     // Split scheme.
     let (scheme_str, rest) = match input.split_once("://") {
@@ -886,13 +887,7 @@ mod zlm_url_tests {
 
 /// Extract candidate lines from a trickle-ICE SDP fragment body.
 ///
-/// WHIP / WHEP PATCH bodies carry the
-/// `application/trickle-ice-sdpfrag` content type. Each `a=candidate:`
-/// line is converted to the `candidate:...` form expected by
-/// `str0m::Candidate::from_sdp_string`. Other lines are ignored.
-///
-/// The function never panics; callers reject the request when the
-/// returned vector is empty.
+/// 从 trickle-ICE SDP 片段体中提取 candidate 行。
 pub fn extract_trickle_candidates(body: &str) -> Vec<String> {
     let mut out = Vec::new();
     for line in body.lines() {
@@ -908,16 +903,11 @@ pub fn extract_trickle_candidates(body: &str) -> Vec<String> {
     out
 }
 
-/// Detect an ICE-restart signal in a trickle-ICE SDP fragment.
+/// Detect ICE-restart credentials in a trickle-ICE SDP fragment.
+/// Returns Some only when both ice-ufrag and ice-pwd are present and non-empty.
 ///
-/// When a WHIP / WHEP client wants to rotate ICE credentials it
-/// usually sends a PATCH whose body contains both `a=ice-ufrag:` and
-/// `a=ice-pwd:` lines (RFC 8839 §5.4 / WHIP spec §4.6). We mirror
-/// `parse_trickle_creds_for_restart` from SMS by returning `Some` only
-/// when both fields are present and non-empty so we never trigger an
-/// ICE restart on a half-formed PATCH.
-///
-/// Returns `(ufrag, pwd)` from the body. Both strings are trimmed.
+/// 在 trickle-ICE SDP 片段中检测 ICE 重启凭据。
+/// 仅当 ice-ufrag 与 ice-pwd 均存在且非空时返回 Some。
 pub fn extract_trickle_ice_restart_creds(body: &str) -> Option<(String, String)> {
     let mut ufrag: Option<String> = None;
     let mut pwd: Option<String> = None;
@@ -1022,11 +1012,9 @@ mod trickle_candidate_tests {
     }
 }
 
-/// Base64-decode a string (standard alphabet, padding tolerated).
+/// Base64-decode a string using the standard alphabet.
 ///
-/// Used by the DataChannel send HTTP endpoint to transport binary
-/// payloads. We re-export the workspace base64 engine here so callers
-/// keep a stable `crate::compat` import surface.
+/// 使用标准字母表对字符串进行 Base64 解码。
 pub fn base64_decode(input: &str) -> Result<Vec<u8>, base64::DecodeError> {
     use base64::engine::general_purpose::STANDARD;
     use base64::Engine;
@@ -1050,16 +1038,11 @@ mod base64_tests {
     }
 }
 
-/// Rewrite `a=msid:` lines in an echo answer SDP to use a unique stream
-/// id, preventing Chrome from silently discarding remote tracks whose
-/// `msid` matches the local track's `msid`.
+/// Rewrite a=msid lines in an echo answer SDP to use a unique stream id.
+/// Prevents browsers from discarding remote tracks whose msid matches the local track.
 ///
-/// ZLMediaKit's `WebRtcEchoTest` performs the same rewrite: the answer
-/// SDP's `msid` is replaced with a server-generated value so the browser
-/// treats the echoed media as a distinct remote stream.
-///
-/// `session_label` should be a unique per-session string (e.g.
-/// `"echo-<session_id>"`).
+/// 将回声 answer SDP 中的 a=msid 行重写为唯一 stream id。
+/// 防止浏览器丢弃 msid 与本地 track 相同的远程 track。
 pub fn rewrite_echo_msid(sdp: &str, session_label: &str) -> String {
     let mut result = String::with_capacity(sdp.len());
     for line in sdp.lines() {

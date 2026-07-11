@@ -16,6 +16,9 @@ use cheetah_codec::CodecId;
 
 use crate::config::CodecProfileWire;
 
+/// Requested video codec preference for a WebRTC session.
+///
+/// WebRTC 会话请求的视频编解码器偏好。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WebRtcVideoCodecPreference {
     H264,
@@ -26,6 +29,9 @@ pub enum WebRtcVideoCodecPreference {
     Any,
 }
 
+/// Requested audio codec preference for a WebRTC session.
+///
+/// WebRTC 会话请求的音频编解码器偏好。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum WebRtcAudioCodecPreference {
     Opus,
@@ -36,6 +42,9 @@ pub enum WebRtcAudioCodecPreference {
 }
 
 impl WebRtcVideoCodecPreference {
+    /// Parse a codec preference from a free-form string, falling back to Any for unknown values.
+    ///
+    /// 从自由格式字符串解析编解码器偏好，未知值回退到 Any。
     pub fn from_str_lossy(value: &str) -> Self {
         match value.to_ascii_lowercase().as_str() {
             "h264" | "avc" => Self::H264,
@@ -47,8 +56,11 @@ impl WebRtcVideoCodecPreference {
         }
     }
 
-    /// Returns whether the requested video codec is permissible under the
-    /// configured profile.
+    /// Check whether the requested codec is allowed under the configured profile.
+    /// H265 is blocked for Browser profile and AAC is blocked for Browser audio profile.
+    ///
+    /// 检查请求的编解码器在配置 profile 下是否允许。
+    /// Browser profile 下禁用 H265，Browser 音频 profile 下禁用 AAC。
     pub fn is_allowed(self, profile: CodecProfileWire) -> bool {
         !matches!((profile, self), (CodecProfileWire::Browser, Self::H265))
     }
@@ -88,10 +100,11 @@ pub const G711A_STATIC_PAYLOAD_TYPE: u8 = 8;
 /// G711U uses static RTP payload type 0 (RFC 3551).
 pub const G711U_STATIC_PAYLOAD_TYPE: u8 = 0;
 
-/// Audio output strategy configuration.
+/// Audio output strategy for resolving source-to-client codec mismatches.
+/// TranscodeToOpus always outputs Opus, Passthrough passes the source codec unchanged, and Auto picks based on client support and profile.
 ///
-/// Controls how the module handles audio codec mismatches between the
-/// source stream and the WebRTC client's capabilities.
+/// 解决源到客户端音频编解码器不匹配的策略。
+/// TranscodeToOpus 总是输出 Opus，Passthrough 不变直通，Auto 根据客户端支持与 profile 自动选择。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AudioOutputStrategy {
@@ -120,7 +133,9 @@ impl AudioOutputStrategy {
     }
 }
 
-/// The resolved audio output decision for a given source codec and profile.
+/// Resolved audio output decision for a source codec and configured policy.
+///
+/// 针对源编解码器与配置策略解析出的音频输出决策。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AudioOutputDecision {
     /// Pass through the source codec directly. Includes the static RTP
@@ -143,7 +158,9 @@ pub enum AudioOutputDecision {
     },
 }
 
-/// Error describing why audio output cannot be negotiated.
+/// Error describing why an audio output cannot be negotiated.
+///
+/// 描述音频输出无法协商的错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AudioOutputError {
     #[error(
@@ -158,15 +175,11 @@ pub enum AudioOutputError {
     CodecNotNegotiable { source_codec: CodecId },
 }
 
-/// Determines the audio output decision given the source codec, target
-/// profile, configured strategy, and whether transcoding is available.
+/// Determine the audio output decision given source codec, target profile, strategy, and transcoding availability.
+/// Dispatches to the passthrough, transcode-to-Opus, or auto resolver.
 ///
-/// # Arguments
-/// - `source_codec`: The codec of the incoming audio stream.
-/// - `profile`: The configured codec profile (Browser, Device, Passthrough).
-/// - `strategy`: The configured audio output strategy.
-/// - `transcode_available`: Whether an Opus encoder is available at runtime.
-/// - `client_supports_g711`: Whether the client's SDP offer includes G711.
+/// 根据源编解码器、目标 profile、策略与转码可用性确定音频输出决策。
+/// 分派到直通、转码为 Opus 或自动解析器。
 pub fn resolve_audio_output(
     source_codec: CodecId,
     profile: CodecProfileWire,

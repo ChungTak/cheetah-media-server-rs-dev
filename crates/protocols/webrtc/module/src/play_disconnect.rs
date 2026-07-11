@@ -19,7 +19,9 @@ use serde::{Deserialize, Serialize};
 use cheetah_sdk::{EventBus, ProtocolEvent, StreamKey, SystemEvent};
 use cheetah_webrtc_core::WebRtcSessionRole;
 
-/// Reason the play session was closed.
+/// Reason a play session was closed, aligned with ABL on_play_disconnect semantics.
+///
+/// 播放会话关闭原因，与 ABL on_play_disconnect 语义对齐。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlayDisconnectReason {
@@ -53,8 +55,9 @@ impl std::fmt::Display for PlayDisconnectReason {
     }
 }
 
-/// Network type hint for the play session. Derived from the selected
-/// ICE candidate pair transport when available.
+/// Network type hint for the play session, derived from the selected ICE candidate pair transport.
+///
+/// 播放会话的网络类型提示，从选中的 ICE candidate pair 传输派生。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NetworkType {
@@ -73,12 +76,9 @@ impl std::fmt::Display for NetworkType {
     }
 }
 
-/// Protocol-specific play disconnect event published on the SDK event
-/// bus when a WebRTC play session ends after exceeding the minimum
-/// duration threshold.
+/// Protocol-specific play disconnect event published on the SDK event bus.
 ///
-/// Fields align with ABL's `on_play_disconnect` notification:
-/// app, stream, networkType, key, ip, port, playDuration.
+/// 在 SDK 事件总线上发布的协议级播放断开事件。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebRtcPlayDisconnectEvent {
     pub stream_key: String,
@@ -89,8 +89,9 @@ pub struct WebRtcPlayDisconnectEvent {
     pub close_reason: String,
 }
 
-/// Result of evaluating a play disconnect against the minimum
-/// duration threshold.
+/// Result of evaluating a play disconnect against the minimum duration threshold.
+///
+/// 将播放断开与最小时长阈值比较后的结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlayDisconnectOutcome {
     /// Duration met the threshold — business event should be emitted.
@@ -103,12 +104,11 @@ pub enum PlayDisconnectOutcome {
     },
 }
 
-/// Evaluate whether a play disconnect should emit a business event
-/// or only record a metric.
+/// Evaluate whether a play disconnect should emit a business event or only a metric.
+/// Emits an event when the duration is greater than or equal to the threshold.
 ///
-/// - If `duration >= min_duration_threshold`, returns
-///   `PlayDisconnectOutcome::EmitEvent`.
-/// - Otherwise returns `PlayDisconnectOutcome::ShortConnection`.
+/// 评估播放断开是否应发送业务事件还是仅记录指标。
+/// 当时长达到或超过阈值时发送事件。
 pub fn evaluate_play_disconnect(
     stream_key: &StreamKey,
     session_id: u64,
@@ -139,8 +139,9 @@ pub fn evaluate_play_disconnect(
     }
 }
 
-/// Publish a [`WebRtcPlayDisconnectEvent`] on the SDK event bus as a
-/// `SystemEvent::Protocol` envelope.
+/// Publish a play disconnect event on the SDK event bus as a SystemEvent::Protocol envelope.
+///
+/// 将播放断开事件作为 SystemEvent::Protocol 信封发布到 SDK 事件总线。
 pub fn publish_play_disconnect_event(event_bus: &dyn EventBus, event: &WebRtcPlayDisconnectEvent) {
     let payload = serde_json::to_value(event).unwrap_or(serde_json::Value::Null);
     event_bus.publish(SystemEvent::Protocol(ProtocolEvent {
@@ -150,6 +151,9 @@ pub fn publish_play_disconnect_event(event_bus: &dyn EventBus, event: &WebRtcPla
     }));
 }
 
+/// Map a WebRtcCloseReason to a PlayDisconnectReason.
+///
+/// 将 WebRtcCloseReason 映射到 PlayDisconnectReason。
 pub fn close_reason_to_play_disconnect_reason(
     reason: &cheetah_webrtc_core::WebRtcCloseReason,
 ) -> PlayDisconnectReason {
@@ -167,6 +171,10 @@ pub fn close_reason_to_play_disconnect_reason(
 }
 
 /// Evaluate and record cleanup for a removed play session.
+/// Only Player sessions are evaluated; the metric or event is emitted based on the duration threshold.
+///
+/// 评估并记录已移除播放会话的清理。
+/// 仅评估 Player 会话；根据时长阈值发出指标或事件。
 pub fn observe_play_session_cleanup(
     event_bus: &dyn EventBus,
     metrics: &crate::metrics::WebRtcModuleMetrics,

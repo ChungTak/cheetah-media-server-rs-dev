@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 use crate::codec_policy::AudioOutputStrategy;
 use crate::compat::{parse_ome_transport_mode, OmeTransportMode};
 
+/// Configuration for a single ICE server, including urls, username, and credential.
+///
+/// 单个 ICE 服务器配置，包括 urls、username 与 credential。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WebRtcIceServerConfig {
     #[serde(default)]
@@ -25,6 +28,11 @@ pub struct WebRtcIceServerConfig {
     pub credential: Option<String>,
 }
 
+/// WebRTC module configuration mapping onto the modules.webrtc section.
+/// Carries listener, ICE, OME compatibility, codec, simulcast, timing, and metric knobs.
+///
+/// 映射到 modules.webrtc 配置节的 WebRTC 模块配置。
+/// 包含监听器、ICE、OME 兼容、编解码器、simulcast、时序与指标开关。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebRtcModuleConfig {
     #[serde(default = "default_enabled")]
@@ -242,10 +250,10 @@ pub struct WebRtcModuleConfig {
 }
 
 /// Simulcast layer selection policy.
+/// Highest, Lowest, and Rid select a fixed layer; Adaptive reacts to BWE/REMB; MultiStream publishes each RID as a separate engine stream.
 ///
-/// Mirrors the values described in the plan document. Module passes the
-/// policy to the bridge so that ingress media frames from layers that
-/// are not selected get dropped before reaching the engine.
+/// Simulcast 层选择策略。
+/// Highest、Lowest 与 Rid 选择固定层；Adaptive 响应 BWE/REMB；MultiStream 将每个 RID 作为独立引擎流发布。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum SimulcastPolicy {
     #[default]
@@ -271,6 +279,9 @@ pub enum SimulcastPolicy {
 }
 
 impl SimulcastPolicy {
+    /// Parse a simulcast policy string, falling back to Highest for unknown values.
+    ///
+    /// 解析 simulcast 策略字符串，未知值回退到 Highest。
     pub fn parse(input: &str) -> Self {
         let trimmed = input.trim();
         if trimmed.eq_ignore_ascii_case("highest") || trimmed.is_empty() {
@@ -296,6 +307,9 @@ impl SimulcastPolicy {
     }
 }
 
+/// Codec profile exposed in configuration: Browser, Device, or Passthrough.
+///
+/// 配置中暴露的编解码器 profile：Browser、Device 或 Passthrough。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CodecProfileWire {
@@ -381,14 +395,25 @@ impl Default for WebRtcModuleConfig {
 }
 
 impl WebRtcModuleConfig {
+    /// Return the default configuration as a JSON value.
+    ///
+    /// 返回默认配置的 JSON 值。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).expect("default WebRtcModuleConfig serialises")
     }
 
+    /// Deserialize a WebRtcModuleConfig from a JSON value.
+    ///
+    /// 从 JSON 值反序列化 WebRtcModuleConfig。
     pub fn from_value(value: serde_json::Value) -> Result<Self, String> {
         serde_json::from_value(value).map_err(|err| err.to_string())
     }
 
+    /// Validate the configuration and return a human-readable error for invalid fields.
+    /// Checks listener addresses, port ranges, IP lists, BWE thresholds, playout delays, simulcast policy, transport modes, and base URLs.
+    ///
+    /// 验证配置并为无效字段返回人类可读错误。
+    /// 检查监听器地址、端口范围、IP 列表、BWE 阈值、播放延迟、simulcast 策略、传输模式与基础 URL。
     pub fn validate(&self) -> Result<(), String> {
         if self.listen_udp.is_empty() {
             return Err("listen_udp must not be empty".into());
@@ -513,11 +538,16 @@ impl WebRtcModuleConfig {
         Ok(())
     }
 
+    /// Return the parsed SimulcastPolicy from the configured default string.
+    ///
+    /// 从配置的默认字符串返回解析后的 SimulcastPolicy。
     pub fn simulcast_policy(&self) -> SimulcastPolicy {
         SimulcastPolicy::parse(&self.simulcast_default_policy)
     }
 
-    /// Returns the configured audio output strategy.
+    /// Return the configured audio output strategy.
+    ///
+    /// 返回配置的音频输出策略。
     pub fn audio_strategy(&self) -> AudioOutputStrategy {
         self.audio_output_strategy
     }
@@ -526,8 +556,9 @@ impl WebRtcModuleConfig {
         parse_ome_transport_mode(&self.ome_default_transport).map_err(|err| err.to_string())
     }
 
-    /// Effective playout target delay in milliseconds used by the
-    /// play subscriber's smoothing path.
+    /// Compute the effective playout target delay from jitter buffer and playout-delay bounds.
+    ///
+    /// 从抖动缓冲与播放延迟上下界计算有效播放目标延迟。
     pub fn effective_playout_delay_ms(&self) -> u64 {
         let mut delay = self
             .play_jitter_buffer_ms
@@ -538,9 +569,9 @@ impl WebRtcModuleConfig {
         delay
     }
 
-    /// Convert the configured BWE thresholds into a tuple suitable
-    /// for the bridge's adaptive simulcast logic. `(low_bps, high_bps)`
-    /// where `0` on either side means "no bound".
+    /// Convert the configured BWE thresholds from kilobits to bits per second.
+    ///
+    /// 将配置的 BWE 阈值从千比特转换为比特每秒。
     pub fn bwe_thresholds_bps(&self) -> (u64, u64) {
         (
             self.bwe_low_threshold_kbps.saturating_mul(1_000),
@@ -548,6 +579,11 @@ impl WebRtcModuleConfig {
         )
     }
 
+    /// Convert the module configuration into the runtime WebRtcDriverConfig.
+    /// Validates first, then maps ICE, core limits, and network settings.
+    ///
+    /// 将模块配置转换为运行时 WebRtcDriverConfig。
+    /// 先验证，再映射 ICE、核心限制与网络设置。
     pub fn to_driver_config(&self) -> Result<WebRtcDriverConfig, String> {
         self.validate()?;
         let listen_udp = self

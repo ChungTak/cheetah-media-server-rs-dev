@@ -61,7 +61,9 @@ use crate::p2p::{
     WebSocketP2pTransport, WebSocketTransportConfig, WebSocketTransportFactory,
 };
 
-/// Lifecycle states surfaced to operators.
+/// Lifecycle state of a P2P client job surfaced to operators.
+///
+/// 暴露给运营者的 P2P 客户端 job 生命周期状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum P2pClientJobState {
     /// Job registered but supervisor hasn't yielded any state yet.
@@ -75,7 +77,9 @@ pub enum P2pClientJobState {
     Failed,
 }
 
-/// Snapshot returned by the `/list` endpoint.
+/// Snapshot returned by the /list endpoint for P2P client jobs.
+///
+/// P2P 客户端 job /list 端点返回的快照。
 #[derive(Debug, Clone)]
 pub struct P2pClientJobSnapshot {
     pub session_id: WebRtcSessionId,
@@ -88,6 +92,9 @@ pub struct P2pClientJobSnapshot {
     pub stream_key: String,
 }
 
+/// Error taxonomy for P2P client job operations.
+///
+/// P2P 客户端 job 操作错误分类。
 #[derive(Debug, Error)]
 pub enum P2pClientJobError {
     #[error("invalid url: {0}")]
@@ -98,9 +105,11 @@ pub enum P2pClientJobError {
     DriverUnavailable,
 }
 
-/// Configuration for [`P2pClientJobRegistry::start`]. Exposed so the
-/// HTTP layer can map JSON body fields onto it without leaking
-/// transport types.
+/// Configuration for starting a P2P client job.
+/// Includes URL, kind, private IP allowance, signaling URL override, and timeout/retry knobs.
+///
+/// 启动 P2P 客户端 job 的配置。
+/// 包含 URL、类型、是否允许私有 IP、信令 URL 覆盖与超时/重试参数。
 #[derive(Debug, Clone)]
 pub struct P2pClientJobRequest {
     pub url: String,
@@ -132,10 +141,9 @@ impl Default for P2pClientJobRequest {
     }
 }
 
-/// Registry of in-flight P2P client jobs keyed by `session_id`.
+/// Registry of in-flight P2P client jobs keyed by session id.
 ///
-/// Cheap to clone (single `Arc<Mutex<...>>`). The HTTP service holds
-/// one per module instance.
+/// 按会话 id 索引的进行中 P2P 客户端 job 注册表。
 #[derive(Default)]
 pub struct P2pClientJobRegistry {
     inner: Mutex<HashMap<WebRtcSessionId, P2pClientJobEntry>>,
@@ -148,10 +156,16 @@ struct P2pClientJobEntry {
 }
 
 impl P2pClientJobRegistry {
+    /// Create a new P2P client job registry wrapped in an Arc.
+    ///
+    /// 创建包装在 Arc 中的新 P2P 客户端 job 注册表。
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
     }
 
+    /// Return clones of the current job snapshots.
+    ///
+    /// 返回当前 job 快照的克隆。
     pub fn list(&self) -> Vec<P2pClientJobSnapshot> {
         self.inner
             .lock()
@@ -160,6 +174,9 @@ impl P2pClientJobRegistry {
             .collect()
     }
 
+    /// Stop a job by session id and return true if it existed.
+    ///
+    /// 按会话 id 停止 job，若存在则返回 true。
     pub fn stop(&self, session_id: WebRtcSessionId) -> bool {
         let entry = self.inner.lock().remove(&session_id);
         match entry {
@@ -171,6 +188,9 @@ impl P2pClientJobRegistry {
         }
     }
 
+    /// Cancel all registered jobs, typically during module shutdown.
+    ///
+    /// 取消所有已注册 job，通常在模块关闭时使用。
     pub fn stop_all(&self) {
         let entries: Vec<_> = self.inner.lock().drain().collect();
         for (_, entry) in entries {
@@ -205,14 +225,9 @@ impl P2pClientJobRegistry {
     }
 }
 
-/// All the runtime handles a P2P client job needs. Bundled so the
-/// HTTP layer can pass a single struct instead of plumbing five
-/// independent fields.
+/// Runtime handles bundled for spawning a P2P client job.
 ///
-/// The `answer_dispatcher` field is `pub(crate)` because the
-/// `AnswerDispatcher` type is itself crate-private; HTTP-side code
-/// constructs the runtime and the spawn callsite stays inside this
-/// crate.
+/// 启动 P2P 客户端 job 所需的运行时句柄绑定。
 pub struct P2pClientJobRuntime {
     pub registry: Arc<P2pClientJobRegistry>,
     pub keepers: Arc<P2pRoomKeeperRegistry>,
@@ -226,10 +241,11 @@ pub struct P2pClientJobRuntime {
     pub(crate) answer_dispatcher: Arc<crate::http::AnswerDispatcher>,
 }
 
-/// Spawn a new P2P client job. Returns the assigned session id and a
-/// snapshot describing the registered state. The supervisor task runs
-/// in the background until the parent cancel fires or the keeper is
-/// removed.
+/// Spawn a new P2P client job.
+/// Parses the URL, registers a room keeper, builds the snapshot, and spawns the supervisor task.
+///
+/// 启动新的 P2P 客户端 job。
+/// 解析 URL、注册 room keeper、构建快照并启动监管任务。
 pub fn spawn(
     runtime: P2pClientJobRuntime,
     session_id: WebRtcSessionId,

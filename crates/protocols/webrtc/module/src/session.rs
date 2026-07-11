@@ -70,6 +70,9 @@ use std::time::Instant;
 use cheetah_sdk::{CancellationToken, PublishLease, StreamKey};
 use cheetah_webrtc_core::{WebRtcSessionId, WebRtcSessionRole};
 
+/// Origin of the WebRTC session: SMS, WHIP, WHEP, P2P, Echo, or OME WebSocket.
+///
+/// WebRTC 会话来源：SMS、WHIP、WHEP、P2P、Echo 或 OME WebSocket。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcApiKind {
     SmsPublish,
@@ -81,6 +84,9 @@ pub enum WebRtcApiKind {
     OmeWs,
 }
 
+/// Module-level lifecycle state for a session: Created, Connected, Closing, or Closed.
+///
+/// 模块级会话生命周期状态：Created、Connected、Closing 或 Closed。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebRtcModuleSessionState {
     /// Created locally; SDP exchange ongoing.
@@ -93,22 +99,18 @@ pub enum WebRtcModuleSessionState {
     Closed,
 }
 
-/// Echo configuration applied to a session.
+/// Per-session echo configuration for data channel and media.
+///
+/// 每会话的数据通道与媒体回声配置。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WebRtcEchoConfig {
     pub data_channel: bool,
     pub media: bool,
 }
 
-/// Per-session telemetry accumulated from `WebRtcCoreEvent::Stats` and
-/// `WebRtcCoreEvent::Bwe`.
+/// Per-session telemetry accumulated from stats and BWE events.
 ///
-/// Phase 04 surfaces these values via the `/session/{id}` HTTP endpoint
-/// and as a public type so operators have a single place to look at
-/// per-session quality. Values default to `None` until the
-/// corresponding event arrives. The publish bridge consumes the BWE
-/// estimate when `SimulcastPolicy::Adaptive` is configured, but
-/// telemetry itself is the operator-facing read-only surface.
+/// 从统计与 BWE 事件累积的每会话遥测数据。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WebRtcSessionTelemetry {
     pub rtp_extensions: Vec<cheetah_webrtc_core::RtpExtensionMapping>,
@@ -137,13 +139,10 @@ pub struct WebRtcSessionTelemetry {
 
 impl WebRtcSessionTelemetry {
     /// Merge an incoming stats snapshot into the running telemetry.
+    /// Ingress and egress stats carry partial data, so only non-zero fields are overwritten and RTT/loss are taken when present.
     ///
-    /// `Stats` events from `cheetah-webrtc-core` carry partial data
-    /// — ingress reports populate `packets_in/bytes_in/nack_out/...`
-    /// while egress reports populate `packets_out/bytes_out/nack_in/...`
-    /// — so we only overwrite a field when the incoming value is
-    /// non-zero. RTT and loss are taken whenever they are present
-    /// because both ingress and egress reports update them.
+    /// 将入站统计快照合并到运行中的遥测。
+    /// 入口与出口统计携带部分数据，因此仅覆盖非零字段，并在存在时更新 RTT/丢包。
     pub fn merge_stats(&mut self, snapshot: &cheetah_webrtc_core::WebRtcSessionStats) {
         if snapshot.packets_in != 0 {
             self.packets_in = snapshot.packets_in;
@@ -190,7 +189,11 @@ impl WebRtcSessionTelemetry {
         self.last_update_at = Some(Instant::now());
     }
 
-    /// Merge a BWE snapshot.
+    /// Merge a BWE snapshot into the running telemetry.
+    /// None values do not clobber previous estimates, keeping BWE and REMB tracks independent.
+    ///
+    /// 将 BWE 快照合并到运行中的遥测。
+    /// None 值不会覆盖之前的估计，使 BWE 与 REMB 保持独立。
     pub fn merge_bwe(&mut self, snapshot: &cheetah_webrtc_core::WebRtcBweStats) {
         if snapshot.estimated_bitrate_bps.is_some() {
             self.bwe_estimated_bps = snapshot.estimated_bitrate_bps;
@@ -201,8 +204,9 @@ impl WebRtcSessionTelemetry {
         self.last_update_at = Some(Instant::now());
     }
 
-    /// Replace the negotiated RTP header extension snapshot observed
-    /// during SDP negotiation.
+    /// Replace the negotiated RTP header extension mappings observed during SDP negotiation.
+    ///
+    /// 替换 SDP 协商期间观察到的 RTP 头扩展映射。
     pub fn record_rtp_extensions(
         &mut self,
         mappings: Vec<cheetah_webrtc_core::RtpExtensionMapping>,
@@ -212,21 +216,32 @@ impl WebRtcSessionTelemetry {
     }
 
     /// Record a REMB feedback estimate from the remote receiver.
+    ///
+    /// 记录来自远端接收者的 REMB 反馈估计。
     pub fn record_remb(&mut self, bitrate_bps: u64) {
         self.remb_bitrate_bps = Some(bitrate_bps);
         self.last_update_at = Some(Instant::now());
     }
 
+    /// Increment the RTCP sender report counter.
+    ///
+    /// 递增 RTCP sender report 计数器。
     pub fn inc_rtcp_sr(&mut self) {
         self.rtcp_sr = self.rtcp_sr.saturating_add(1);
         self.last_update_at = Some(Instant::now());
     }
 
+    /// Increment the RTCP receiver report counter.
+    ///
+    /// 递增 RTCP receiver report 计数器。
     pub fn inc_rtcp_rr(&mut self) {
         self.rtcp_rr = self.rtcp_rr.saturating_add(1);
         self.last_update_at = Some(Instant::now());
     }
 
+    /// Add RTCP NACK count to the running telemetry.
+    ///
+    /// 将 RTCP NACK 计数加入运行中的遥测。
     pub fn add_rtcp_nack(&mut self, count: u32) {
         self.rtcp_nack = self.rtcp_nack.saturating_add(count as u64);
         self.last_update_at = Some(Instant::now());
@@ -234,6 +249,10 @@ impl WebRtcSessionTelemetry {
 }
 
 /// Per-session module state captured by the registry.
+/// Includes stream key, role, API origin, lifecycle state, publish lease, echo config, telemetry, and transport info.
+///
+/// 注册表捕获的每会话模块状态。
+/// 包含 stream key、角色、API 来源、生命周期状态、发布租约、回声配置、遥测与传输信息。
 pub struct WebRtcModuleSession {
     pub id: WebRtcSessionId,
     pub stream_key: StreamKey,
@@ -255,6 +274,9 @@ pub struct WebRtcModuleSession {
 }
 
 impl WebRtcModuleSession {
+    /// Create a new session in the Created state with the given id, stream key, role, and API origin.
+    ///
+    /// 使用给定 id、stream key、角色与 API 来源创建处于 Created 状态的新会话。
     pub fn new(
         id: WebRtcSessionId,
         stream_key: StreamKey,
@@ -280,6 +302,9 @@ impl WebRtcModuleSession {
     }
 }
 
+/// Atomic allocator for monotonically increasing WebRTC session ids.
+///
+/// 单调递增 WebRTC 会话 id 的原子分配器。
 pub struct WebRtcSessionIdAllocator {
     next: AtomicU64,
 }
@@ -291,6 +316,9 @@ impl WebRtcSessionIdAllocator {
         }
     }
 
+    /// Allocate the next session id.
+    ///
+    /// 分配下一个会话 id。
     pub fn allocate(&self) -> WebRtcSessionId {
         WebRtcSessionId::new(self.next.fetch_add(1, Ordering::Relaxed))
     }
@@ -302,6 +330,9 @@ impl Default for WebRtcSessionIdAllocator {
     }
 }
 
+/// Registry of module sessions keyed by WebRTC session id.
+///
+/// 按 WebRTC 会话 id 索引的模块会话注册表。
 #[derive(Default)]
 pub struct WebRtcSessionRegistry {
     pub sessions: HashMap<WebRtcSessionId, WebRtcModuleSession>,
@@ -328,8 +359,9 @@ impl WebRtcSessionRegistry {
         }
     }
 
-    /// Update the remote address and candidate type for a session.
-    /// Called when the driver reports a connected candidate pair.
+    /// Update the remote address and selected candidate type for a session when the driver reports a connected candidate pair.
+    ///
+    /// 当驱动报告已连接的 candidate pair 时更新会话的远端地址与选中 candidate 类型。
     pub fn set_transport_info(
         &mut self,
         id: WebRtcSessionId,
