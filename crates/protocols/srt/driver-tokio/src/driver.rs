@@ -1,3 +1,17 @@
+//! Tokio SRT driver implementation.
+//!
+//! The underlying `shiguredo_srt` crate handles ACK/NAK/ARQ and TSBPD internally.
+//! As of `=2026.1.0-canary.1`, it does not expose the peer's SRT version, so
+//! `SrtDriverEvent::Connected.peer_version` is always `None` and peer-version
+//! rejection is only enforced when the driver eventually provides a version.
+//!
+//! Tokio SRT 驱动实现。
+//!
+//! 底层 `shiguredo_srt` 在内部处理 ACK/NAK/ARQ 与 TSBPD。
+//! 在 `=2026.1.0-canary.1` 中它不暴露对端 SRT 版本，因此
+//! `SrtDriverEvent::Connected.peer_version` 始终为 `None`；
+//! 仅当驱动未来提供版本时才会执行版本拒绝。
+
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
@@ -81,6 +95,10 @@ pub enum SrtDriverEvent {
         peer_id: SrtPeerId,
         remote: SocketAddr,
         stream_id: Option<String>,
+        /// Peer SRT version, if known by the driver.
+        ///
+        /// 驱动可获知时对端 SRT 版本。
+        peer_version: Option<u32>,
     },
     Payload {
         peer_id: SrtPeerId,
@@ -465,6 +483,7 @@ fn connection_options(
             .then(|| config.encryption.passphrase.clone()),
         key_length,
         tsbpd_delay: config.latency_ms.min(u16::MAX as u64) as u16,
+        srt_version: config.srt_version,
         stream_id,
         ..Default::default()
     }
@@ -501,6 +520,7 @@ fn caller_connection_options(
         passphrase: encryption_enabled.then_some(passphrase),
         key_length,
         tsbpd_delay: options.latency_ms.min(u16::MAX as u64) as u16,
+        srt_version: config.srt_version,
         stream_id,
         ..Default::default()
     }
@@ -572,6 +592,7 @@ async fn drain_slot_events(
                         peer_id: slot.peer_id,
                         remote: slot.remote,
                         stream_id: slot.stream_id.clone(),
+                        peer_version: None,
                     })
                     .await;
             }

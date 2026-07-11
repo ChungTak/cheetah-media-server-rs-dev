@@ -56,9 +56,9 @@ proptest! {
         prop_assert_eq!(first.extras.get("token"), second.extras.get("token"));
     }
 
-    /// Unknown stream-id fields are preserved in the `extras` map.
+    /// Unknown stream-id fields are preserved in the `auth_params` map.
     ///
-    /// 未知的 stream-id 字段保留在 `extras` 映射中。
+    /// 未知的 stream-id 字段保留在 `auth_params` 映射中。
     #[test]
     fn stream_id_unknown_fields_are_preserved(
         value in "[a-zA-Z0-9_-]{1,16}"
@@ -66,7 +66,7 @@ proptest! {
         let input = format!("#!::r=live/test,m=publish,x-vendor={value}");
         let parsed = parse_srt_stream_id(&input).expect("stream id should parse");
 
-        prop_assert_eq!(parsed.extras.get("x-vendor").map(String::as_str), Some(value.as_str()));
+        prop_assert_eq!(parsed.auth_params.get("x-vendor").map(String::as_str), Some(value.as_str()));
     }
 
     /// Re-serializing a valid stream-id and re-parsing it is stable.
@@ -84,14 +84,14 @@ proptest! {
             "#!::r={},m=publish,u={},token={}",
             parsed.stream_key,
             parsed.user.as_deref().unwrap_or_default(),
-            parsed.extras.get("token").map(String::as_str).unwrap_or_default()
+            parsed.auth_params.get("token").map(String::as_str).unwrap_or_default()
         );
         let reparsed = parse_srt_stream_id(&normalized).expect("normalized stream id should parse");
 
         prop_assert_eq!(parsed.stream_key, reparsed.stream_key);
         prop_assert_eq!(parsed.mode, reparsed.mode);
         prop_assert_eq!(parsed.user, reparsed.user);
-        prop_assert_eq!(parsed.extras.get("token"), reparsed.extras.get("token"));
+        prop_assert_eq!(parsed.auth_params.get("token"), reparsed.auth_params.get("token"));
     }
 
     /// Unknown URL query fields are preserved in the `extras` map.

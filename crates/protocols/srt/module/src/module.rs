@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 
@@ -15,8 +15,9 @@ use cheetah_sdk::{
     StreamKey, SubscriberOptions,
 };
 use cheetah_srt_core::{
-    parse_srt_stream_id, parse_srt_url, ParsedSrtStreamId, SrtEncryptionOptions, SrtKeyLength,
-    SrtPayloadKind, SrtRole, SrtSessionOptions, SrtStreamMode,
+    format_srt_version, parse_srt_stream_id, parse_srt_stream_id_with_options, parse_srt_url,
+    parse_srt_version, version_at_least, SrtEncryptionOptions, SrtKeyLength, SrtPayloadKind,
+    SrtRole, SrtSessionOptions, SrtStreamMode, StreamIdParseOptions,
 };
 use cheetah_srt_driver_tokio::{
     spawn_driver, SrtDriverCommand, SrtDriverConfig, SrtDriverEncryption, SrtDriverEvent,
@@ -67,8 +68,8 @@ impl ModuleFactory for SrtModuleFactory {
             default_value: SrtModuleConfig::default_json(),
             validator: Some(Arc::new(|value| {
                 SrtModuleConfig::from_value(value.clone())
-                    .map(|_| ())
                     .map_err(|err| err.to_string())
+                    .and_then(|c| c.validate())
             })),
         })
     }
@@ -116,8 +117,10 @@ impl Module for SrtModule {
     }
 
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
-        self.config = SrtModuleConfig::from_value(ctx.initial_config)
+        let config = SrtModuleConfig::from_value(ctx.initial_config)
             .map_err(|err| SdkError::InvalidArgument(err.to_string()))?;
+        config.validate().map_err(SdkError::InvalidArgument)?;
+        self.config = config;
         self.ctx = Some(ctx.engine);
         self.state = ModuleState::Initialized;
         Ok(())
@@ -182,6 +185,7 @@ impl Module for SrtModule {
     async fn apply_config(&mut self, change: ModuleConfigChange) -> Result<ConfigEffect, SdkError> {
         let next = SrtModuleConfig::from_value(change.next)
             .map_err(|err| SdkError::InvalidArgument(err.to_string()))?;
+        next.validate().map_err(SdkError::InvalidArgument)?;
         if next == self.config {
             Ok(ConfigEffect::Immediate)
         } else {
@@ -232,6 +236,9 @@ fn driver_config(config: &SrtModuleConfig) -> Result<SrtDriverConfig, SdkError> 
             )));
         }
     };
+    let srt_version = parse_srt_version(&config.local_srt_version).map_err(|err| {
+        SdkError::InvalidArgument(format!("invalid srt.local_srt_version: {err}"))
+    })?;
     Ok(SrtDriverConfig {
         listen,
         max_connections: config.max_connections,
@@ -239,8 +246,9 @@ fn driver_config(config: &SrtModuleConfig) -> Result<SrtDriverConfig, SdkError> 
         connect_timeout_ms: config.connect_timeout_ms,
         latency_ms: config.latency_ms,
         stats_interval_ms: config.stats_interval_ms,
-        recv_buffer_packets: 1024,
+        recv_buffer_packets: config.pkt_buf_size,
         send_queue_capacity: config.egress.send_queue_capacity,
+        srt_version,
         encryption: SrtDriverEncryption {
             enabled: config.encryption.enabled,
             passphrase: config.encryption.passphrase.clone(),
@@ -325,64 +333,88 @@ async fn handle_driver_event(
             peer_id,
             remote,
             stream_id,
+            peer_version,
         } => {
             info!(peer_id = peer_id.0, %remote, ?stream_id, "SRT peer connected");
             let classified = worker_state
                 .forced_modes
                 .remove(&peer_id)
-                .map(|forced| Ok((forced.mode, forced.stream_key)))
-                .unwrap_or_else(|| classify_stream(config, stream_id.as_deref()));
+                .map(|forced| Ok(classified_from_forced(config, forced, remote)))
+                .unwrap_or_else(|| classify_stream(config, stream_id.as_deref(), Some(remote), peer_version));
             if let Some(job) = worker_state.jobs.get_mut(&peer_id) {
                 job.retry_attempt = 0;
             }
             match classified {
-                Ok((SrtStreamMode::Publish, stream_key)) => {
-                    metrics.inc_connection(SrtStreamMode::Publish);
-                    worker_state
-                        .active_modes
-                        .insert(peer_id, SrtStreamMode::Publish);
-                    match ctx
-                        .publisher_api
-                        .acquire_publisher(stream_key.clone(), PublisherOptions::default())
-                        .await
-                    {
-                        Ok((lease, publisher)) => {
-                            worker_state.ingress_sessions.insert(
-                                peer_id,
-                                SrtIngressSession {
-                                    stream_key,
-                                    lease,
-                                    publisher,
-                                    demuxer: MpegTsDemuxer::new(MpegTsDemuxerConfig::default()),
-                                    tracks: Vec::new(),
-                                    tracks_published: false,
-                                },
-                            );
+                Ok(classify) => {
+                    info!(
+                        peer_id = peer_id.0,
+                        %remote,
+                        vhost = %classify.auth.vhost,
+                        app = %classify.auth.app,
+                        stream = %classify.auth.stream,
+                        mode = ?classify.mode,
+                        "SRT stream classified"
+                    );
+                    match classify.mode {
+                        SrtStreamMode::Publish => {
+                            metrics.inc_connection(SrtStreamMode::Publish);
+                            worker_state
+                                .active_modes
+                                .insert(peer_id, SrtStreamMode::Publish);
+                            match ctx
+                                .publisher_api
+                                .acquire_publisher(
+                                    classify.stream_key.clone(),
+                                    PublisherOptions::default(),
+                                )
+                                .await
+                            {
+                                Ok((lease, publisher)) => {
+                                    worker_state.ingress_sessions.insert(
+                                        peer_id,
+                                        SrtIngressSession {
+                                            stream_key: classify.stream_key,
+                                            lease,
+                                            publisher,
+                                            demuxer: MpegTsDemuxer::new(
+                                                MpegTsDemuxerConfig::default(),
+                                            ),
+                                            tracks: Vec::new(),
+                                            tracks_published: false,
+                                        },
+                                    );
+                                }
+                                Err(err) => {
+                                    warn!(peer_id = peer_id.0, %err, "SRT publish lease rejected");
+                                    let reason = format!("reject:publish_conflict: {err}");
+                                    metrics.inc_handshake_reject(&reason);
+                                    driver
+                                        .send(SrtDriverCommand::Close {
+                                            peer_id,
+                                            reason,
+                                        })
+                                        .await;
+                                }
+                            }
                         }
-                        Err(err) => {
-                            warn!(peer_id = peer_id.0, %err, "SRT publish lease rejected");
-                            driver
-                                .send(SrtDriverCommand::Close {
-                                    peer_id,
-                                    reason: format!("publish rejected: {err}"),
-                                })
-                                .await;
+                        mode @ (SrtStreamMode::Request | SrtStreamMode::Play) => {
+                            metrics.inc_connection(mode);
+                            worker_state.active_modes.insert(peer_id, mode);
+                            let ctx = ctx.clone();
+                            let runtime = ctx.runtime_api.clone();
+                            let driver = driver.clone();
+                            let config = config.clone();
+                            let stream_key = classify.stream_key;
+                            runtime.spawn(Box::pin(async move {
+                                run_play_session(ctx, config, driver, peer_id, stream_key, cancel)
+                                    .await;
+                            }));
                         }
                     }
                 }
-                Ok((mode @ (SrtStreamMode::Request | SrtStreamMode::Play), stream_key)) => {
-                    metrics.inc_connection(mode);
-                    worker_state.active_modes.insert(peer_id, mode);
-                    let ctx = ctx.clone();
-                    let runtime = ctx.runtime_api.clone();
-                    let driver = driver.clone();
-                    let config = config.clone();
-                    runtime.spawn(Box::pin(async move {
-                        run_play_session(ctx, config, driver, peer_id, stream_key, cancel).await;
-                    }));
-                }
                 Err(err) => {
-                    warn!(peer_id = peer_id.0, %err, "invalid SRT stream id");
+                    warn!(peer_id = peer_id.0, %err, "SRT stream classification failed");
+                    metrics.inc_handshake_reject(&err);
                     driver
                         .send(SrtDriverCommand::Close {
                             peer_id,
@@ -489,51 +521,170 @@ fn retry_delay_ms(base_ms: u64, max_ms: u64, attempt: u32) -> u64 {
     base_ms.saturating_mul(multiplier).min(max_ms)
 }
 
-/// Classify the stream id into a mode and validated stream key.
+/// Result of classifying an SRT stream id.
 ///
-/// 将 stream id 分类为模式并校验流密钥。
+/// SRT stream id 分类结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SrtClassifiedStream {
+    pub mode: SrtStreamMode,
+    pub stream_key: StreamKey,
+    pub auth: SrtAuthContext,
+}
+
+/// Authorization context built from the parsed stream id.
+///
+/// 从解析后的 stream id 构建的鉴权上下文。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SrtAuthContext {
+    pub mode: SrtStreamMode,
+    pub vhost: String,
+    pub app: String,
+    pub stream: String,
+    pub stream_key: StreamKey,
+    pub user: Option<String>,
+    pub auth_params: BTreeMap<String, String>,
+    pub peer_addr: Option<SocketAddr>,
+}
+
+impl SrtAuthContext {
+    /// Encode auth_params as a `k=v&...` query string for webhook hooks.
+    ///
+    /// 将 auth_params 编码为 `k=v&...` 查询字符串，供 webhook 使用。
+    #[allow(dead_code)]
+    pub fn auth_params_as_query(&self) -> String {
+        let mut parts = Vec::with_capacity(self.auth_params.len());
+        for (key, value) in &self.auth_params {
+            parts.push(format!("{key}={value}"));
+        }
+        parts.join("&")
+    }
+}
+
+fn classified_from_forced(
+    config: &SrtModuleConfig,
+    forced: ForcedSrtMode,
+    peer_addr: SocketAddr,
+) -> SrtClassifiedStream {
+    let vhost = config.default_vhost.clone();
+    let app = forced.stream_key.namespace.clone();
+    let stream = forced.stream_key.path.clone();
+    SrtClassifiedStream {
+        mode: forced.mode,
+        stream_key: forced.stream_key.clone(),
+        auth: SrtAuthContext {
+            mode: forced.mode,
+            vhost,
+            app,
+            stream,
+            stream_key: forced.stream_key,
+            user: None,
+            auth_params: BTreeMap::new(),
+            peer_addr: Some(peer_addr),
+        },
+    }
+}
+
+/// Build the engine `StreamKey` from vhost, app, and stream.
+///
+/// 从 vhost、app、stream 构建引擎 `StreamKey`。
+fn build_stream_key(vhost_mode: &str, vhost: &str, app: &str, stream: &str) -> StreamKey {
+    if vhost_mode.eq_ignore_ascii_case("vhost_prefix") {
+        StreamKey::new(format!("{vhost}/{app}"), stream)
+    } else {
+        StreamKey::new(app, stream)
+    }
+}
+
+fn parse_default_mode(s: &str) -> Result<SrtStreamMode, String> {
+    match s.to_ascii_lowercase().as_str() {
+        "publish" => Ok(SrtStreamMode::Publish),
+        "request" => Ok(SrtStreamMode::Request),
+        "play" => Ok(SrtStreamMode::Play),
+        other => Err(format!("unknown default mode `{other}`")),
+    }
+}
+
+/// Classify the stream id into a mode, stream key, and auth context.
+///
+/// 将 stream id 分类为模式、流密钥与鉴权上下文。
 fn classify_stream(
     config: &SrtModuleConfig,
     stream_id: Option<&str>,
-) -> Result<(SrtStreamMode, StreamKey), String> {
-    let parsed = match stream_id {
-        Some(value) if !value.is_empty() => {
-            Some(parse_srt_stream_id(value).map_err(|e| e.to_string())?)
+    peer_addr: Option<SocketAddr>,
+    peer_version: Option<u32>,
+) -> Result<SrtClassifiedStream, String> {
+    let input = match stream_id {
+        Some(value) if !value.is_empty() => value,
+        _ => {
+            if config.ingress.default_publish_stream_key.is_empty() {
+                return Err("reject:invalid_stream_id: missing stream id".to_string());
+            }
+            config.ingress.default_publish_stream_key.as_str()
         }
-        _ => None,
     };
-    let default_mode = match config.ingress.default_mode.as_str() {
-        "request" => SrtStreamMode::Request,
-        "play" => SrtStreamMode::Play,
-        _ => SrtStreamMode::Publish,
+
+    let opts = StreamIdParseOptions {
+        default_vhost: config.default_vhost.clone(),
+        strict_prefix: config.stream_id.strict_prefix,
+        strict_resource: config.stream_id.strict_resource,
+        allow_bare_key: config.stream_id.allow_bare_key,
     };
-    let mode = parsed.as_ref().and_then(|p| p.mode).unwrap_or(default_mode);
-    let stream_key = parsed
-        .as_ref()
-        .map(|p| p.stream_key.clone())
-        .or_else(|| {
-            (!config.ingress.default_publish_stream_key.is_empty())
-                .then(|| config.ingress.default_publish_stream_key.clone())
-        })
-        .ok_or_else(|| "missing SRT stream key".to_string())?;
-    authorize_stream(config, mode, parsed.as_ref())?;
-    Ok((mode, stream_key_from_string(&stream_key)))
+    let parsed = parse_srt_stream_id_with_options(input, &opts)
+        .map_err(|err| format!("reject:invalid_stream_id: {err}"))?;
+
+    let default_mode = parse_default_mode(&config.ingress.default_mode)?;
+    let mode = parsed.mode.unwrap_or(default_mode);
+    let stream_key = build_stream_key(
+        &config.stream_id.stream_key_vhost_mode,
+        &parsed.vhost,
+        &parsed.app,
+        &parsed.stream,
+    );
+
+    let auth = SrtAuthContext {
+        mode,
+        vhost: parsed.vhost.clone(),
+        app: parsed.app.clone(),
+        stream: parsed.stream.clone(),
+        stream_key: stream_key.clone(),
+        user: parsed.user.clone(),
+        auth_params: parsed.auth_params.clone(),
+        peer_addr,
+    };
+
+    authorize_stream(config, &auth)?;
+
+    let min_version = parse_srt_version(&config.min_peer_srt_version)
+        .map_err(|err| format!("reject:invalid_config: min_peer_srt_version: {err}"))?;
+    if let Some(peer) = peer_version {
+        if !version_at_least(peer, min_version) {
+            return Err(format!(
+                "reject:peer_version_too_old: peer {version} < min {min_version_fmt}",
+                version = format_srt_version(peer),
+                min_version_fmt = format_srt_version(min_version),
+            ));
+        }
+    } else if config.require_peer_version_extension {
+        return Err("reject:peer_version_missing".to_string());
+    }
+
+    Ok(SrtClassifiedStream {
+        mode,
+        stream_key,
+        auth,
+    })
 }
 
 /// Validate the stream against global or per-user auth tokens.
 ///
 /// 使用全局或每个用户的 token 校验流。
-fn authorize_stream(
-    config: &SrtModuleConfig,
-    mode: SrtStreamMode,
-    parsed: Option<&ParsedSrtStreamId>,
-) -> Result<(), String> {
+fn authorize_stream(config: &SrtModuleConfig, auth: &SrtAuthContext) -> Result<(), String> {
     if !config.auth.enabled {
         return Ok(());
     }
 
-    let token = parsed.and_then(|stream_id| stream_id.extras.get("token"));
-    let global_token = match mode {
+    let token = auth.auth_params.get("token");
+    let global_token = match auth.mode {
         SrtStreamMode::Publish => &config.auth.publish_token,
         SrtStreamMode::Request | SrtStreamMode::Play => &config.auth.request_token,
     };
@@ -541,24 +692,18 @@ fn authorize_stream(
         return Ok(());
     }
 
-    if let Some(stream_id) = parsed {
-        if let (Some(user), Some(token)) = (stream_id.user.as_deref(), token) {
-            if config
-                .auth
-                .users
-                .iter()
-                .any(|entry| entry.username == user && entry.token == *token)
-            {
-                return Ok(());
-            }
+    if let (Some(user), Some(token)) = (auth.user.as_deref(), token) {
+        if config
+            .auth
+            .users
+            .iter()
+            .any(|entry| entry.username == user && entry.token == *token)
+        {
+            return Ok(());
         }
     }
 
-    let action = match mode {
-        SrtStreamMode::Publish => "publish",
-        SrtStreamMode::Request | SrtStreamMode::Play => "request",
-    };
-    Err(format!("SRT {action} auth rejected"))
+    Err("reject:auth_rejected".to_string())
 }
 
 /// Build `SrtJobPlan` from ingress, egress, and relay config jobs.
@@ -800,7 +945,7 @@ fn merge_url_token_into_stream_id(
         Some(stream_id) if stream_id.starts_with("#!::") => {
             if parse_srt_stream_id(&stream_id)
                 .ok()
-                .is_some_and(|parsed| parsed.extras.contains_key("token"))
+                .is_some_and(|parsed| parsed.auth_params.contains_key("token"))
             {
                 Some(stream_id)
             } else {
@@ -1248,14 +1393,16 @@ mod tests {
         config.auth.enabled = true;
         config.auth.publish_token = "publish-secret".to_string();
 
-        let (mode, stream_key) = classify_stream(
+        let classify = classify_stream(
             &config,
             Some("#!::r=live/test,m=publish,token=publish-secret"),
+            None,
+            None,
         )
         .expect("matching publish token should pass");
 
-        assert_eq!(mode, SrtStreamMode::Publish);
-        assert_eq!(stream_key.to_string(), "live/test");
+        assert_eq!(classify.mode, SrtStreamMode::Publish);
+        assert_eq!(classify.stream_key.to_string(), "live/test");
     }
 
     #[test]
@@ -1264,13 +1411,13 @@ mod tests {
         config.auth.enabled = true;
         config.auth.publish_token = "publish-secret".to_string();
 
-        let missing = classify_stream(&config, Some("#!::r=live/test,m=publish"))
+        let missing = classify_stream(&config, Some("#!::r=live/test,m=publish"), None, None)
             .expect_err("missing publish token should fail");
-        assert_eq!(missing, "SRT publish auth rejected");
+        assert_eq!(missing, "reject:auth_rejected");
 
-        let wrong = classify_stream(&config, Some("#!::r=live/test,m=publish,token=wrong"))
+        let wrong = classify_stream(&config, Some("#!::r=live/test,m=publish,token=wrong"), None, None)
             .expect_err("wrong publish token should fail");
-        assert_eq!(wrong, "SRT publish auth rejected");
+        assert_eq!(wrong, "reject:auth_rejected");
     }
 
     #[test]
@@ -1282,14 +1429,16 @@ mod tests {
             token: "alice-secret".to_string(),
         });
 
-        let (mode, stream_key) = classify_stream(
+        let classify = classify_stream(
             &config,
             Some("#!::r=live/test,m=request,u=alice,token=alice-secret"),
+            None,
+            None,
         )
         .expect("matching user request token should pass");
 
-        assert_eq!(mode, SrtStreamMode::Request);
-        assert_eq!(stream_key.to_string(), "live/test");
+        assert_eq!(classify.mode, SrtStreamMode::Request);
+        assert_eq!(classify.stream_key.to_string(), "live/test");
     }
 
     #[test]
@@ -1337,7 +1486,8 @@ mod tests {
         )
         .expect_err("invalid access-control stream id should fail");
 
-        assert!(err.to_string().contains("stream key must not contain `..`"));
+        assert!(err.to_string().contains("invalid stream id"));
+        assert!(err.to_string().contains(".."));
     }
 
     #[test]
@@ -1354,7 +1504,7 @@ mod tests {
         let parsed = parse_srt_stream_id(&stream_id).expect("merged stream id should parse");
 
         assert_eq!(
-            parsed.extras.get("token").map(String::as_str),
+            parsed.auth_params.get("token").map(String::as_str),
             Some("a,b=c%")
         );
     }

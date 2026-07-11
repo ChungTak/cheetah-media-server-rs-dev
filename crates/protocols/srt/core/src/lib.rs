@@ -18,6 +18,10 @@ pub mod stream_id;
 ///
 /// SRT URL 解析。
 pub mod url;
+/// SRT version encoding and comparison helpers.
+///
+/// SRT 版本编码与比较辅助。
+pub mod version;
 
 pub use config::{
     SrtEncryptionOptions, SrtKeyLength, SrtPayloadKind, SrtRole, SrtSessionOptions, SrtStreamMode,
@@ -26,5 +30,10 @@ pub use error::{SrtCoreError, SrtCoreResult};
 pub use session::{
     SrtCoreCommand, SrtCoreEvent, SrtCoreInput, SrtCoreOutput, SrtSessionId, SrtStatsSnapshot,
 };
-pub use stream_id::{parse_srt_stream_id, ParsedSrtStreamId};
+pub use stream_id::{
+    parse_srt_stream_id, parse_srt_stream_id_with_options, ParsedSrtStreamId, StreamIdParseOptions,
+};
 pub use url::{parse_srt_url, ParsedSrtUrl};
+pub use version::{
+    format_srt_version, parse_srt_version, version_at_least, SRT_VERSION_1_3_0, SRT_VERSION_1_5_0,
+};

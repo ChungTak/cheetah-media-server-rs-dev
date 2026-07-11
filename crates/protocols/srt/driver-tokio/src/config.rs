@@ -15,6 +15,7 @@ pub struct SrtDriverConfig {
     pub stats_interval_ms: u64,
     pub recv_buffer_packets: usize,
     pub send_queue_capacity: usize,
+    pub srt_version: u32,
     pub encryption: SrtDriverEncryption,
 }
 

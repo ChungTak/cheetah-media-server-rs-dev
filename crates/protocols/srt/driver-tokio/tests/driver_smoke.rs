@@ -20,6 +20,7 @@ fn driver_config() -> SrtDriverConfig {
         stats_interval_ms: 20,
         recv_buffer_packets: 1024,
         send_queue_capacity: 1024,
+        srt_version: 0x0001_0500,
         encryption: SrtDriverEncryption::default(),
     }
 }
