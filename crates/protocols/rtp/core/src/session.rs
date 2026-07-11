@@ -53,6 +53,15 @@ struct RtpSession {
     max_rtp_len_observed: usize,
 }
 
+/// Sans-I/O state machine for one or more RTP/RTCP sessions.
+///
+/// This core dispatches UDP/TCP/RTCP inputs, maintains per-session state, and emits
+/// outputs for the driver to send. It never performs I/O or reads the system clock.
+///
+/// 一个或多个 RTP/RTCP 会话的 Sans-I/O 状态机。
+///
+/// 该 core 分发 UDP/TCP/RTCP 输入、维护每会话状态，并产生输出供 driver 发送。
+/// 它从不执行 I/O 或读取系统时钟。
 pub struct RtpCore {
     sessions: HashMap<RtpSessionKey, RtpSession>,
     ssrc_to_session: HashMap<u32, RtpSessionKey>,
@@ -72,6 +81,13 @@ pub struct RtpCore {
 }
 
 impl RtpCore {
+    /// Create a new `RtpCore` with the given session limits and idle timeout.
+    ///
+    /// `session_idle_timeout_ms` is used for both idle and RR-timeout checks.
+    ///
+    /// 使用指定的会话限制和空闲超时创建新的 `RtpCore`。
+    ///
+    /// `session_idle_timeout_ms` 同时用于空闲超时和 RR 超时检查。
     pub fn new(max_sessions: usize, session_idle_timeout_ms: u64) -> Self {
         Self {
             sessions: HashMap::new(),
@@ -87,15 +103,47 @@ impl RtpCore {
     }
 
     /// Override the default TCP framing mode (defaults to `AutoDetect`).
+    ///
+    /// `AutoDetect` accepts both RFC 4571 2-byte length-prefix and RTSP-style
+    /// interleaved (`$ + channel + length`) frames on the same connection.
+    ///
+    /// 覆盖默认 TCP 分帧模式（默认为 `AutoDetect`）。
+    ///
+    /// `AutoDetect` 允许同一条连接上同时接受 RFC 4571 2 字节长度前缀和 RTSP 风格
+    /// 交错帧（`$ + channel + length`）。
     pub fn set_tcp_framing(&mut self, framing: cheetah_codec::RtpTcpFraming) {
         self.tcp_framing = framing;
     }
 
     /// Override the dynamic max-RTP-length cap (defaults to 65 536 bytes).
+    ///
+    /// The cap is clamped to at least 1500 bytes. Payloads larger than the cap still
+    /// flow through but produce an `OversizedPayload` diagnostic.
+    ///
+    /// 覆盖动态最大 RTP 长度上限（默认 65536 字节）。
+    ///
+    /// 上限至少被限制为 1500 字节。超过上限的负载仍会继续流通，但会触发
+    /// `OversizedPayload` 诊断。
     pub fn set_max_rtp_len_cap(&mut self, cap: usize) {
         self.max_rtp_len_cap = cap.max(1500);
     }
 
+    /// Main Sans-I/O entry point. Drive the state machine with one input and return the
+    /// resulting outputs for the caller to execute.
+    ///
+    /// Routing:
+    /// - `UdpPacket` / `TcpBytes` / `RtcpPacket` are parsed and dispatched to the
+    ///   matching session.
+    /// - `Tick` updates the internal clock and runs idle/RR-timeout plus RTCP report
+    ///   generation.
+    /// - `Command` creates, configures, or stops sessions.
+    ///
+    /// `RtpCore` 的主 Sans-I/O 入口。用单个输入驱动状态机并返回由调用方执行的输出。
+    ///
+    /// 路由规则：
+    /// - `UdpPacket` / `TcpBytes` / `RtcpPacket` 被解析并分派到匹配会话。
+    /// - `Tick` 更新内部时钟，运行空闲/RR 超时与 RTCP 报告生成。
+    /// - `Command` 创建、配置或停止会话。
     pub fn handle_input(&mut self, input: RtpCoreInput) -> Vec<RtpCoreOutput> {
         let mut outputs = Vec::with_capacity(4);
         match input {
@@ -120,9 +168,17 @@ impl RtpCore {
 
     /// Parse an incoming RTCP packet and refresh peer-feedback timers.
     ///
-    /// We only do minimum-required parsing here: identify the report type (SR=200, RR=201) and
-    /// the SSRC of the source the report describes, then refresh `last_rr_received_ms` for the
-    /// matching session. This is enough to keep ZLM-style RR-timeout sender shutdown in sync.
+    /// Only RTCP sender reports (PT=200) and receiver reports (PT=201) are consumed. For RR
+    /// the report block at offset 8 contains the SSRC of the source being reported on; this
+    /// described SSRC is used to locate the local sender session and reset its
+    /// `last_rr_received_ms`. RTCP feedback packets such as NACK or PLI are not parsed in
+    /// this phase and are ignored.
+    ///
+    /// 解析入站 RTCP 包并刷新对端反馈计时器。
+    ///
+    /// 仅消费 RTCP 发送者报告（PT=200）和接收者报告（PT=201）。对于 RR，偏移 8 处的报告块
+    /// 包含被报告的源 SSRC；该被描述 SSRC 用于定位本地发送会话并重置其
+    /// `last_rr_received_ms`。NACK 或 PLI 等 RTCP 反馈包在此阶段不解析并被忽略。
     fn process_rtcp_packet(&mut self, datagram: RtpDatagram, _outputs: &mut Vec<RtpCoreOutput>) {
         let data = datagram.data;
         if data.len() < 8 {
@@ -149,6 +205,15 @@ impl RtpCore {
         }
     }
 
+    /// Parse a UDP RTP datagram and feed it into the matching session.
+    ///
+    /// If the RTP header cannot be parsed, the version field is checked to emit a targeted
+    /// `InvalidRtpVersion` diagnostic before falling back to `RtpHeaderError`.
+    ///
+    /// 解析 UDP RTP 数据报并送入匹配会话。
+    ///
+    /// 如果无法解析 RTP 头，先检查版本字段以发出 `InvalidRtpVersion` 诊断，再回退到
+    /// `RtpHeaderError`。
     fn process_udp_packet(&mut self, datagram: RtpDatagram, outputs: &mut Vec<RtpCoreOutput>) {
         let Some(rtp) = RtpPacket::parse(&datagram.data) else {
             if !datagram.data.is_empty() {
@@ -167,6 +232,18 @@ impl RtpCore {
         self.feed_rtp_packet(rtp, Some(datagram.source), None, outputs);
     }
 
+    /// Process TCP bytes for a single connection, handling Ehome2 and RTP-over-TCP framing.
+    ///
+    /// Ehome2 streams are detected by the 256-byte prefix signature `[0x01, 0x00, 0x01/0x02]`
+    /// and are decoded into handshake SSRC, codec info, and media payloads. Non-Ehome bytes
+    /// are deframed with `parse_tcp_rtp_frame_with`; on a framing failure a bounded recovery
+    /// scan searches up to 4 KiB for a known SSRC or a PS pack-start header.
+    ///
+    /// 处理单条连接的 TCP 字节，支持 Ehome2 与 RTP-over-TCP 分帧。
+    ///
+    /// Ehome2 流通过 256 字节前缀签名 `[0x01, 0x00, 0x01/0x02]` 识别，并解码为 SSRC 握手、
+    /// 编解码器信息与媒体负载。非 Ehome 字节使用 `parse_tcp_rtp_frame_with` 解帧；
+    /// 分帧失败时会在 4 KiB 内做有界恢复扫描，寻找已知 SSRC 或 PS 包起始头。
     fn process_tcp_bytes(&mut self, chunk: RtpTcpChunk, outputs: &mut Vec<RtpCoreOutput>) {
         // Detect Ehome on this connection. We avoid the historical `0x00 0x00` heuristic which
         // false-positives on small RTP-over-TCP frames whose length high byte is zero. Ehome
@@ -500,6 +577,18 @@ impl RtpCore {
         }
     }
 
+    /// Ingest a single RTP packet into the session table, creating a session on demand.
+    ///
+    /// For an unmapped SSRC, a new `RecvOnly` session is auto-created with the payload mode
+    /// probed from the first packet. For every packet, the core updates activity timers,
+    /// tracks the largest payload size (`max_rtp_len_observed`), checks for source-address
+    /// changes, detects sequence-number gaps, and lazily initializes the demuxer (PS/TS/ES).
+    ///
+    /// 将单个 RTP 包送入会话表，必要时按需创建会话。
+    ///
+    /// 对于未映射的 SSRC，会根据第一个包探测到的负载模式自动创建 `RecvOnly` 会话。
+    /// 对每个包，core 更新活动时间、跟踪最大负载大小（`max_rtp_len_observed`）、
+    /// 检查源地址变化、检测序列号跳变，并惰性初始化 demuxer（PS/TS/ES）。
     fn feed_rtp_packet(
         &mut self,
         rtp: RtpPacket,
@@ -729,6 +818,17 @@ impl RtpCore {
         }
     }
 
+    /// Advance time and run per-session housekeeping.
+    ///
+    /// Housekeeping includes idle-timeout for receivers, RR-timeout for senders, and periodic
+    /// RTCP report generation. Receivers emit a Receiver Report (PT=201) while senders emit a
+    /// Sender Report (PT=200). Jitter is not computed in this core phase and is reported as 0.
+    ///
+    /// 推进时间并运行每会话的清理工作。
+    ///
+    /// 清理包括接收者空闲超时、发送者 RR 超时以及周期性 RTCP 报告生成。
+    /// 接收者发送接收者报告（PT=201），发送者发送发送者报告（PT=200）。
+    /// 此 core 阶段不计算抖动，报告中抖动字段为 0。
     fn process_tick(&mut self, now_ms: u64, outputs: &mut Vec<RtpCoreOutput>) {
         self.now_ms = now_ms;
         let mut to_remove = Vec::with_capacity(1);
@@ -838,6 +938,16 @@ impl RtpCore {
         }
     }
 
+    /// Remove a session and emit lifecycle cleanup outputs.
+    ///
+    /// Cleans up the session, SSRC, TCP connection, and Ehome decoder maps. Always emits
+    /// `CloseSession` and `SessionClosed` so the driver can release sockets and the module can
+    /// tear down higher-level state.
+    ///
+    /// 移除会话并发出生命周期清理输出。
+    ///
+    /// 清理会话、SSRC、TCP 连接与 Ehome 解码器映射。总是发出 `CloseSession` 和
+    /// `SessionClosed`，使 driver 释放套接字、module 释放高层状态。
     fn close_session(
         &mut self,
         key: RtpSessionKey,
@@ -858,6 +968,17 @@ impl RtpCore {
         }
     }
 
+    /// Handle a control command from the module/driver.
+    ///
+    /// Commands create server/client sessions, packetize and send a frame, or stop an existing
+    /// session. `SendFrame` selects payload type and clock rate from the session mode and frame
+    /// codec, then packetizes with `packetize_payload` and emits either TCP or UDP outputs.
+    ///
+    /// 处理来自 module/driver 的控制命令。
+    ///
+    /// 命令用于创建服务端/客户端会话、将帧打包并发送，或停止已有会话。
+    /// `SendFrame` 根据会话模式与帧编解码器选择负载类型和时钟频率，然后使用
+    /// `packetize_payload` 分包并输出 TCP 或 UDP 数据。
     fn process_command(&mut self, cmd: RtpCoreCommand, outputs: &mut Vec<RtpCoreOutput>) {
         match cmd {
             RtpCoreCommand::CreateServer(spec) => {
