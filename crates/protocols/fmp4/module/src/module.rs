@@ -1,4 +1,6 @@
 //! fMP4 module factory and implementation.
+//!
+//! fMP4 模块工厂与实现。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,12 +29,21 @@ use crate::config::Fmp4ModuleConfig;
 
 const MODULE_ID: &str = "fmp4";
 
+/// Track active play sessions and their per-connection cancel tokens.
+///
+/// 跟踪活动播放会话及其每个连接的取消 token。
 #[derive(Default)]
 struct ActivePlaySessions {
     tokens: HashMap<Fmp4ConnectionId, CancellationToken>,
 }
 
+/// `ActivePlaySessions` API.
+///
+/// `ActivePlaySessions` API。
 impl ActivePlaySessions {
+    /// Start a new child token for the given connection, cancelling any existing one.
+    ///
+    /// 为指定连接启动新的子 token，并取消已有的。
     fn start(
         &mut self,
         connection_id: Fmp4ConnectionId,
@@ -44,6 +55,9 @@ impl ActivePlaySessions {
         token
     }
 
+    /// Cancel and remove the token for the given connection.
+    ///
+    /// 取消并移除指定连接的 token。
     fn cancel(&mut self, connection_id: Fmp4ConnectionId) {
         if let Some(token) = self.tokens.remove(&connection_id) {
             token.cancel();
@@ -51,6 +65,9 @@ impl ActivePlaySessions {
     }
 }
 
+/// Factory that creates `Fmp4Module` instances and registers the module manifest.
+///
+/// 创建 `Fmp4Module` 实例并注册模块清单的工厂。
 pub struct Fmp4ModuleFactory;
 
 impl ModuleFactory for Fmp4ModuleFactory {
@@ -87,13 +104,22 @@ impl ModuleFactory for Fmp4ModuleFactory {
     }
 }
 
+/// fMP4 module runtime state.
+///
+/// fMP4 模块运行时状态。
 struct Fmp4Module {
     state: ModuleState,
     config: Fmp4ModuleConfig,
     ctx: Option<EngineContext>,
 }
 
+/// `Fmp4Module` helpers.
+///
+/// `Fmp4Module` 辅助。
 impl Fmp4Module {
+    /// Create a new module in the `Created` state.
+    ///
+    /// 创建处于 `Created` 状态的新模块。
     fn new() -> Self {
         Self {
             state: ModuleState::Created,
@@ -103,8 +129,14 @@ impl Fmp4Module {
     }
 }
 
+/// `Module` implementation for the fMP4 protocol.
+///
+/// fMP4 协议的 `Module` 实现。
 #[async_trait]
 impl Module for Fmp4Module {
+    /// Return module metadata.
+    ///
+    /// 返回模块元数据。
     fn info(&self) -> ModuleInfo {
         ModuleInfo {
             module_id: ModuleId::new(MODULE_ID),
@@ -113,10 +145,16 @@ impl Module for Fmp4Module {
         }
     }
 
+    /// Return the current module state.
+    ///
+    /// 返回当前模块状态。
     fn state(&self) -> ModuleState {
         self.state
     }
 
+    /// Initialize the module from the engine-provided config.
+    ///
+    /// 从引擎提供的配置初始化模块。
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
         self.config = Fmp4ModuleConfig::from_value(ctx.initial_config.clone())
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
@@ -125,6 +163,9 @@ impl Module for Fmp4Module {
         Ok(())
     }
 
+    /// Start the fMP4 server and pull jobs, then run the event loop.
+    ///
+    /// 启动 fMP4 服务器与拉取任务，然后运行事件循环。
     async fn start(&mut self, cancel: CancellationToken) -> Result<(), SdkError> {
         if !self.config.enabled {
             self.state = ModuleState::Running;
@@ -205,11 +246,17 @@ impl Module for Fmp4Module {
         Ok(())
     }
 
+    /// Stop the module.
+    ///
+    /// 停止模块。
     async fn stop(&mut self) -> Result<(), SdkError> {
         self.state = ModuleState::Stopped;
         Ok(())
     }
 
+    /// Apply config changes; a non-trivial change requires a module restart.
+    ///
+    /// 应用配置变更；非平凡变更需要模块重启。
     async fn apply_config(&mut self, change: ModuleConfigChange) -> Result<ConfigEffect, SdkError> {
         let new_config = Fmp4ModuleConfig::from_value(change.next)
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
@@ -222,6 +269,9 @@ impl Module for Fmp4Module {
     }
 }
 
+/// Translate module TLS config into driver TLS config.
+///
+/// 将模块 TLS 配置转换为驱动 TLS 配置。
 fn driver_tls_config(config: &Fmp4ModuleConfig) -> Result<Option<DriverFmp4TlsConfig>, SdkError> {
     let Some(tls) = &config.tls else {
         return Ok(None);
@@ -241,6 +291,9 @@ fn driver_tls_config(config: &Fmp4ModuleConfig) -> Result<Option<DriverFmp4TlsCo
     }))
 }
 
+/// Run a single fMP4 play session: subscribe, mux, and send fragments to the driver.
+///
+/// 运行单个 fMP4 播放会话：订阅、封装并将片段发送给驱动。
 async fn run_play_session(
     ctx: EngineContext,
     config: Fmp4ModuleConfig,
@@ -435,6 +488,9 @@ async fn run_play_session(
     let _ = subscriber.close().await;
 }
 
+/// Flush the current set of samples into a media segment and send it.
+///
+/// 将当前样本集刷新为一个媒体片段并发送。
 async fn flush_segment(
     muxer: &mut Fmp4Muxer,
     samples: &mut Vec<Fmp4MuxSample>,
@@ -455,6 +511,8 @@ async fn flush_segment(
 }
 
 /// Detect if tracks have changed (different count, IDs, codecs, or extradata).
+///
+/// 检测轨道是否已变更（数量、ID、编码器或 extradata 不同）。
 fn tracks_changed(old: &[TrackInfo], new: &[TrackInfo]) -> bool {
     if old.len() != new.len() {
         return true;
@@ -470,6 +528,9 @@ fn tracks_changed(old: &[TrackInfo], new: &[TrackInfo]) -> bool {
     false
 }
 
+/// Wait until the source stream is published or the timeout/cancel fires.
+///
+/// 等待源流发布，或超时/取消时返回。
 async fn wait_for_stream(
     ctx: &EngineContext,
     stream_key: &StreamKey,
@@ -496,6 +557,9 @@ async fn wait_for_stream(
     }
 }
 
+/// Sleep for the duration, returning true if cancelled.
+///
+/// 睡眠指定时长，若取消则返回 true。
 async fn sleep_or_cancel(
     runtime_api: &dyn RuntimeApi,
     cancel: &CancellationToken,
@@ -514,6 +578,9 @@ async fn sleep_or_cancel(
     }
 }
 
+/// Parse a string into a `StreamKey`, defaulting namespace to "live".
+///
+/// 将字符串解析为 `StreamKey`，默认命名空间为 "live"。
 fn parse_stream_key(s: &str) -> StreamKey {
     match s.split_once('/') {
         Some((ns, path)) => StreamKey::new(ns, path),
@@ -521,6 +588,9 @@ fn parse_stream_key(s: &str) -> StreamKey {
     }
 }
 
+/// Run a pull job with publisher lease, connect, demux, and retry backoff.
+///
+/// 运行拉取任务：获取发布租约、连接、解封装并带退避重试。
 async fn run_pull_job_supervisor(
     ctx: &EngineContext,
     job: &crate::config::Fmp4PullJobConfig,
@@ -688,6 +758,9 @@ async fn run_pull_job_supervisor(
     }
 }
 
+/// Convert an fMP4 demuxer track into `TrackInfo` with codec-specific extradata.
+///
+/// 将 fMP4 解封装器轨道转换为带编码器特定 extradata 的 `TrackInfo`。
 fn demux_track_to_track_info(t: &cheetah_codec::Fmp4DemuxTrack) -> TrackInfo {
     use cheetah_codec::track::{CodecExtradata, TrackId};
 
@@ -717,6 +790,9 @@ fn demux_track_to_track_info(t: &cheetah_codec::Fmp4DemuxTrack) -> TrackInfo {
     info
 }
 
+/// Convert a canonical `AVFrame` payload into fMP4 sample payload (length-prefixed H.26x).
+///
+/// 将标准 `AVFrame` 负载转换为 fMP4 样本负载（H.26x 长度前缀）。
 fn fmp4_sample_payload(frame: &cheetah_codec::AVFrame) -> bytes::Bytes {
     if frame.format != cheetah_codec::FrameFormat::CanonicalH26x {
         return frame.payload.clone();
@@ -727,6 +803,9 @@ fn fmp4_sample_payload(frame: &cheetah_codec::AVFrame) -> bytes::Bytes {
     h26x_length_prefixed_from_payload(frame.payload.clone())
 }
 
+/// Convert a demuxed fMP4 payload into canonical `AVFrame` payload (Annex-B for H.26x).
+///
+/// 将解封装后的 fMP4 负载转换为标准 `AVFrame` 负载（H.26x 为 Annex-B）。
 fn demux_frame_payload(codec: CodecId, data: bytes::Bytes) -> bytes::Bytes {
     if matches!(codec, CodecId::H264 | CodecId::H265 | CodecId::H266) {
         annexb_from_payload(data)
@@ -735,6 +814,9 @@ fn demux_frame_payload(codec: CodecId, data: bytes::Bytes) -> bytes::Bytes {
     }
 }
 
+/// Map `CodecId` to the canonical `FrameFormat` used by `AVFrame`.
+///
+/// 将 `CodecId` 映射为 `AVFrame` 使用的标准 `FrameFormat`。
 fn codec_to_format(codec: cheetah_codec::CodecId) -> cheetah_codec::FrameFormat {
     use cheetah_codec::FrameFormat;
     match codec {
