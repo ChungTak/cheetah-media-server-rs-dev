@@ -1,5 +1,13 @@
 use std::fmt;
 
+/// Errors that can occur while parsing an RTSP `Range` header.
+///
+/// The `Range` header supports `npt`, `smpte`, and `clock` formats, each with
+/// its own validation rules.
+///
+/// RTSP `Range` 头解析错误。
+///
+/// `Range` 头支持 `npt`、`smpte`、`clock` 三种格式，每种格式都有各自的校验规则。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspRangeError {
     #[error("empty range header")]
@@ -16,7 +24,13 @@ pub enum RtspRangeError {
     InvalidClockRange(String),
 }
 
-/// RTSP Range 头语义（RFC 2326 Section 12.29）。
+/// RTSP `Range` header (RFC 2326 §12.29).
+///
+/// Dispatches to `npt`, `smpte`, or `clock` range parsing based on the prefix.
+///
+/// RTSP `Range` 头（RFC 2326 §12.29）。
+///
+/// 根据前缀分派到 `npt`、`smpte` 或 `clock` 范围解析。
 #[derive(Debug, Clone, PartialEq)]
 pub enum RtspRange {
     Npt(NptRange),
@@ -25,6 +39,9 @@ pub enum RtspRange {
 }
 
 impl RtspRange {
+    /// Parse a `Range` header value and dispatch to the correct format.
+    ///
+    /// 解析 `Range` 头值并分派到正确的格式。
     pub fn parse(header_value: &str) -> Result<Self, RtspRangeError> {
         let value = header_value.trim();
         if value.is_empty() {
@@ -77,6 +94,14 @@ impl fmt::Display for RtspRange {
     }
 }
 
+/// Normal Play Time (NPT) value.
+///
+/// Can be an absolute second offset, the live-edge keyword `now`, or an
+/// `hh:mm:ss` timestamp.
+///
+/// 正常播放时间（NPT）值。
+///
+/// 可以是绝对秒偏移、直播边缘关键字 `now` 或 `hh:mm:ss` 时间戳。
 #[derive(Debug, Clone, PartialEq)]
 pub enum NptTime {
     Now,
@@ -84,6 +109,9 @@ pub enum NptTime {
 }
 
 impl NptTime {
+    /// Parse an NPT time from seconds, `now`, or `hh:mm:ss`.
+    ///
+    /// 从秒数、`now` 或 `hh:mm:ss` 解析 NPT 时间。
     fn parse(value: &str) -> Result<Self, RtspRangeError> {
         let value = value.trim();
         if value.is_empty() {
@@ -110,6 +138,9 @@ impl fmt::Display for NptTime {
     }
 }
 
+/// Parse an `hh:mm:ss[.frac]` timestamp into a seconds value.
+///
+/// 将 `hh:mm:ss[.frac]` 时间戳解析为秒值。
 fn parse_npt_hhmmss(value: &str) -> Result<NptTime, RtspRangeError> {
     let mut parts = value.split(':');
     let Some(hours) = parts.next() else {
@@ -131,6 +162,13 @@ fn parse_npt_hhmmss(value: &str) -> Result<NptTime, RtspRangeError> {
     Ok(NptTime::Seconds(hours * 3600.0 + minutes * 60.0 + seconds))
 }
 
+/// NPT start/end range pair.
+///
+/// `end == None` means the range is open-ended (play to the end or live).
+///
+/// NPT 起止范围对。
+///
+/// `end == None` 表示范围开放（播放到结束或直播）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct NptRange {
     pub start: NptTime,
@@ -138,10 +176,16 @@ pub struct NptRange {
 }
 
 impl NptRange {
+    /// Create an NPT range from explicit start and optional end values.
+    ///
+    /// 以显式起点和可选终点创建 NPT 范围。
     pub fn new(start: NptTime, end: Option<NptTime>) -> Self {
         Self { start, end }
     }
 
+    /// Create an open-ended NPT range starting from `start` seconds.
+    ///
+    /// 创建从 `start` 秒开始的开放式 NPT 范围。
     pub fn from_start(start: f64) -> Self {
         Self {
             start: NptTime::Seconds(start),
@@ -149,6 +193,9 @@ impl NptRange {
         }
     }
 
+    /// Create an open-ended NPT range starting from zero.
+    ///
+    /// 创建从 0 开始的开放式 NPT 范围。
     pub fn all() -> Self {
         Self {
             start: NptTime::Seconds(0.0),
@@ -156,6 +203,9 @@ impl NptRange {
         }
     }
 
+    /// Create an open-ended NPT range anchored at the live edge (`now-`).
+    ///
+    /// 创建以直播边缘为起点的开放式 NPT 范围（`now-`）。
     pub fn from_now() -> Self {
         Self {
             start: NptTime::Now,
@@ -163,6 +213,9 @@ impl NptRange {
         }
     }
 
+    /// Parse an NPT range, handling `-end`, `start-`, and `start-end` forms.
+    ///
+    /// 解析 NPT 范围，处理 `-end`、`start-`、`start-end` 形式。
     fn parse(value: &str) -> Result<Self, RtspRangeError> {
         let value = value.trim();
         if value.is_empty() {
@@ -209,6 +262,9 @@ impl fmt::Display for NptRange {
     }
 }
 
+/// SMPTE time-code frame rate family.
+///
+/// SMPTE 时间码帧率族。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SmpteType {
     Smpte,
@@ -216,6 +272,9 @@ pub enum SmpteType {
     Smpte25,
 }
 
+/// SMPTE time-code value.
+///
+/// SMPTE 时间码值。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmpteTime {
     pub hours: u8,
@@ -226,6 +285,9 @@ pub struct SmpteTime {
 }
 
 impl SmpteTime {
+    /// Parse a `hh:mm:ss:frames[.subframes]` SMPTE value with component bounds checks.
+    ///
+    /// 解析 `hh:mm:ss:frames[.subframes]` SMPTE 值，并校验各分量边界。
     fn parse(value: &str) -> Result<Self, RtspRangeError> {
         let value = value.trim();
         if value.is_empty() {
@@ -289,6 +351,9 @@ impl fmt::Display for SmpteTime {
     }
 }
 
+/// SMPTE start/end range pair.
+///
+/// SMPTE 起止范围对。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmpteRange {
     pub smpte_type: SmpteType,
@@ -297,6 +362,9 @@ pub struct SmpteRange {
 }
 
 impl SmpteRange {
+    /// Parse an SMPTE range for the given frame-rate type.
+    ///
+    /// 为给定的帧率类型解析 SMPTE 范围。
     fn parse_with_type(value: &str, smpte_type: SmpteType) -> Result<Self, RtspRangeError> {
         let mut parts = value.trim().splitn(2, '-');
         let start = parts
@@ -329,6 +397,9 @@ impl fmt::Display for SmpteRange {
     }
 }
 
+/// ISO 8601 clock-based start/end range.
+///
+/// ISO 8601 时钟起止范围。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClockRange {
     pub start: String,
@@ -336,6 +407,9 @@ pub struct ClockRange {
 }
 
 impl ClockRange {
+    /// Parse a `clock` range with arbitrary start/end strings.
+    ///
+    /// 解析 `clock` 范围，起点/终点字符串保持原样。
     fn parse(value: &str) -> Result<Self, RtspRangeError> {
         let mut parts = value.trim().splitn(2, '-');
         let start = parts
@@ -364,6 +438,9 @@ impl fmt::Display for ClockRange {
     }
 }
 
+/// Parse a non-negative finite f64, rejecting NaN, infinity, and negatives.
+///
+/// 解析非负有限 f64，拒绝 NaN、无穷大和负数。
 fn parse_non_negative_f64(
     value: &str,
     make_error: fn(String) -> RtspRangeError,

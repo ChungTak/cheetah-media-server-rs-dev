@@ -65,6 +65,9 @@ pub use sdp::{
 pub use seq_tracker::{SeqEvent, SeqTracker};
 pub use transport::{RtspTransport, RtspTransportError};
 
+/// Input events fed into the Sans-I/O RTSP core.
+///
+/// 输入到 Sans-I/O RTSP 核心的事件。
 #[derive(Debug, Clone)]
 pub enum CoreInput {
     Bytes(Bytes),
@@ -72,6 +75,9 @@ pub enum CoreInput {
     PeerClosed,
 }
 
+/// Output actions produced by the Sans-I/O RTSP core.
+///
+/// Sans-I/O RTSP 核心产生的输出动作。
 #[derive(Debug, Clone)]
 pub enum CoreOutput {
     Write(Bytes),
@@ -79,6 +85,9 @@ pub enum CoreOutput {
     Close,
 }
 
+/// High-level events surfaced by the core to the caller.
+///
+/// 核心向调用方暴露的高级事件。
 #[derive(Debug, Clone)]
 pub enum RtspEvent {
     Request(RtspRequest),
@@ -86,6 +95,9 @@ pub enum RtspEvent {
     PeerClosed,
 }
 
+/// Commands the caller can issue to the core.
+///
+/// 调用方可以向核心发送的命令。
 #[derive(Debug, Clone)]
 pub enum RtspCommand {
     SendResponse {
@@ -102,6 +114,9 @@ pub enum RtspCommand {
     Close,
 }
 
+/// Errors that can be returned by the core RTSP state machine.
+///
+/// RTSP 核心状态机可能返回的错误。
 #[derive(Debug, thiserror::Error)]
 pub enum RtspCoreError {
     #[error("invalid utf-8 in rtsp header")]
@@ -132,6 +147,14 @@ pub enum RtspCoreError {
     BodySizeLimitExceeded { max: usize, actual: usize },
 }
 
+/// Sans-I/O RTSP core state machine.
+///
+/// Buffers incoming bytes, parses RTSP requests and interleaved frames, and
+/// applies commands to produce wire output without performing I/O itself.
+///
+/// Sans-I/O RTSP 核心状态机。
+///
+/// 缓冲到达字节，解析 RTSP 请求和交错帧，并应用命令以生成线输出，本身不执行 I/O。
 pub struct RtspCore {
     buffer: BytesMut,
     closed: bool,
@@ -145,10 +168,16 @@ impl Default for RtspCore {
 }
 
 impl RtspCore {
+    /// Create a core with default message limits.
+    ///
+    /// 以默认消息限制创建核心。
     pub fn new() -> Self {
         Self::with_limits(RtspMessageLimits::default())
     }
 
+    /// Create a core with the supplied message limits.
+    ///
+    /// 以指定消息限制创建核心。
     pub fn with_limits(limits: RtspMessageLimits) -> Self {
         Self {
             buffer: BytesMut::new(),
@@ -157,10 +186,21 @@ impl RtspCore {
         }
     }
 
+    /// Create a core from connection-level limits.
+    ///
+    /// 从连接级限制创建核心。
     pub fn with_connection_limits(limits: RtspConnectionLimits) -> Self {
         Self::with_limits(limits.into())
     }
 
+    /// Process a single input and return all outputs produced by the state machine.
+    ///
+    /// Dispatches over `CoreInput`, appending bytes to the buffer, draining any
+    /// complete RTSP messages or interleaved frames, or applying commands.
+    ///
+    /// 处理单个输入并返回状态机产生的所有输出。
+    ///
+    /// 按 `CoreInput` 分派，将字节追加到缓冲区，排空完整 RTSP 消息或交错帧，或应用命令。
     pub fn handle_input(&mut self, input: CoreInput) -> Result<Vec<CoreOutput>, RtspCoreError> {
         if self.closed {
             return Ok(Vec::new());
@@ -187,6 +227,9 @@ impl RtspCore {
         }
     }
 
+    /// Drain complete RTSP messages and interleaved frames from the buffer.
+    ///
+    /// 从缓冲区中排空完整的 RTSP 消息和交错帧。
     fn drain_messages(&mut self, out: &mut Vec<CoreOutput>) -> Result<(), RtspCoreError> {
         loop {
             if self.buffer.is_empty() {
@@ -218,6 +261,9 @@ impl RtspCore {
         Ok(())
     }
 
+    /// Convert a command into a wire output and update state.
+    ///
+    /// 将命令转换为线输出并更新状态。
     fn apply_command(
         &mut self,
         command: RtspCommand,

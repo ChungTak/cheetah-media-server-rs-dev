@@ -1,5 +1,15 @@
 use std::fmt;
 
+/// Errors that can occur while parsing an `RTP-Info` header.
+///
+/// `RTP-Info` carries the per-stream URL, initial sequence number, and RTP
+/// timestamp for the response to a `PLAY` request. These errors cover
+/// malformed entries and missing required fields.
+///
+/// RTP-Info 头解析时可能产生的错误。
+///
+/// `RTP-Info` 携带 `PLAY` 响应中每个流的 URL、初始序列号和 RTP 时间戳。
+/// 这些错误覆盖格式错误的条目和缺失的必填字段。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum RtspRtpInfoError {
     #[error("empty rtp-info header")]
@@ -15,19 +25,38 @@ pub enum RtspRtpInfoError {
     },
 }
 
-/// RTSP RTP-Info 头语义（RFC 2326 Section 12.33）。
+/// RTSP `RTP-Info` header (RFC 2326 §12.33).
+///
+/// Contains one entry per stream, indicating the URL and the first RTP
+/// sequence number and RTP timestamp that the client should expect.
+///
+/// RTSP `RTP-Info` 头（RFC 2326 §12.33）。
+///
+/// 每个流一个条目，指示客户端应期望的 URL、第一个 RTP 序列号和 RTP 时间戳。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RtspRtpInfo {
     pub streams: Vec<RtspRtpInfoStream>,
 }
 
 impl RtspRtpInfo {
+    /// Create an empty `RTP-Info` container.
+    ///
+    /// 创建空的 `RTP-Info` 容器。
     pub fn new() -> Self {
         Self {
             streams: Vec::new(),
         }
     }
 
+    /// Parse an `RTP-Info` header value into a list of stream entries.
+    ///
+    /// Splits on commas while respecting that the `url` value may itself contain
+    /// commas before the next `url=` token, then parses each entry.
+    ///
+    /// 将 `RTP-Info` 头值解析为流条目列表。
+    ///
+    /// 在逗号处分割，同时注意 `url` 值本身可能包含逗号，直到下一个 `url=` 标记为止，
+    /// 然后解析每个条目。
     pub fn parse(header_value: &str) -> Result<Self, RtspRtpInfoError> {
         let value = header_value.trim();
         if value.is_empty() {
@@ -48,10 +77,16 @@ impl RtspRtpInfo {
         Ok(Self { streams })
     }
 
+    /// Append a stream entry to the RTP-Info list.
+    ///
+    /// 将流条目追加到 RTP-Info 列表。
     pub fn add_stream(&mut self, stream: RtspRtpInfoStream) {
         self.streams.push(stream);
     }
 
+    /// Find the stream entry with the given control URL.
+    ///
+    /// 根据控制 URL 查找流条目。
     pub fn find_by_url(&self, url: &str) -> Option<&RtspRtpInfoStream> {
         self.streams.iter().find(|stream| stream.url == url)
     }
@@ -64,7 +99,14 @@ impl fmt::Display for RtspRtpInfo {
     }
 }
 
-/// RTP-Info 中单个流条目。
+/// A single stream entry inside an `RTP-Info` header.
+///
+/// Holds the media URL and the optional initial RTP sequence number and
+/// timestamp announced in the `PLAY` response.
+///
+/// `RTP-Info` 头中的单个流条目。
+///
+/// 保存媒体 URL 以及 `PLAY` 响应中可选的初始 RTP 序列号和时间戳。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspRtpInfoStream {
     pub url: String,
@@ -73,6 +115,9 @@ pub struct RtspRtpInfoStream {
 }
 
 impl RtspRtpInfoStream {
+    /// Create a stream entry with the given control URL.
+    ///
+    /// 以给定的控制 URL 创建流条目。
     pub fn new(url: impl Into<String>) -> Self {
         Self {
             url: url.into(),
@@ -81,16 +126,25 @@ impl RtspRtpInfoStream {
         }
     }
 
+    /// Set the initial RTP sequence number for this stream.
+    ///
+    /// 设置该流的初始 RTP 序列号。
     pub fn with_seq(mut self, seq: u16) -> Self {
         self.seq = Some(seq);
         self
     }
 
+    /// Set the initial RTP timestamp for this stream.
+    ///
+    /// 设置该流的初始 RTP 时间戳。
     pub fn with_rtptime(mut self, rtptime: u32) -> Self {
         self.rtptime = Some(rtptime);
         self
     }
 
+    /// Parse one `url=...;seq=...;rtptime=...` stream entry.
+    ///
+    /// 解析一个 `url=...;seq=...;rtptime=...` 流条目。
     fn parse(value: &str) -> Result<Self, RtspRtpInfoError> {
         let mut url = None;
         let mut seq = None;
@@ -154,6 +208,16 @@ impl fmt::Display for RtspRtpInfoStream {
     }
 }
 
+/// Split a comma-separated `RTP-Info` value into stream entries.
+///
+/// The `url` value can contain commas, so a naive split on commas would fail.
+/// This tokenizer tracks whether it is inside a `url` value and only commits a
+/// split when a comma separates two `url=` entries.
+///
+/// 将逗号分隔的 `RTP-Info` 值切分为流条目。
+///
+/// `url` 值可能包含逗号，因此在逗号上简单切分会失败。该分词器跟踪是否处于
+/// `url` 值内，并仅在逗号分隔两个 `url=` 条目时才切分。
 fn split_rtp_info_streams(value: &str) -> Vec<&str> {
     let mut streams = Vec::new();
     let mut start = 0;

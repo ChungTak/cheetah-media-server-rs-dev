@@ -3,12 +3,26 @@ use sha2::{Digest, Sha256};
 
 use super::method::RtspMethod;
 
+/// Parsed RTSP `Authorization` header.
+///
+/// Supports Basic (base64 `user:pass`) and Digest (RFC 7616 / RFC 2617) schemes.
+///
+/// 解析后的 RTSP `Authorization` 头。
+///
+/// 支持 Basic（base64 `user:pass`）和 Digest（RFC 7616 / RFC 2617）方案。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RtspAuthorization {
     Basic { username: String, password: String },
     Digest(RtspDigestAuthorization),
 }
 
+/// Digest authorization parameters extracted from an `Authorization` header.
+///
+/// Contains the values required to compute or verify the digest response.
+///
+/// 从 `Authorization` 头提取的 Digest 认证参数。
+///
+/// 包含计算或校验摘要响应所需的值。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspDigestAuthorization {
     pub username: String,
@@ -22,22 +36,37 @@ pub struct RtspDigestAuthorization {
     pub cnonce: Option<String>,
 }
 
+/// Server `WWW-Authenticate` Digest challenge.
+///
+/// Sent by the server to challenge the client for credentials.
+///
+/// 服务端 `WWW-Authenticate` Digest 质询。
+///
+/// 由服务端发送，要求客户端提供凭据。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspDigestChallenge {
     pub realm: String,
     pub nonce: String,
     pub algorithm: RtspDigestAlgorithm,
     /// When true, the nonce is stale but credentials are valid.
-    /// Client should retry with the new nonce without re-prompting.
+    /// The client should retry with the new nonce without re-prompting.
+    ///
+    /// 为 true 时 nonce 已过期但凭据有效。客户端应使用新 nonce 重试，无需重新提示。
     pub stale: bool,
 }
 
+/// Digest hash algorithm used in `Authorization` / `WWW-Authenticate`.
+///
+/// `Authorization` / `WWW-Authenticate` 中使用的 Digest 哈希算法。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RtspDigestAlgorithm {
     Md5,
     Sha256,
 }
 
+/// Errors that can occur while parsing an `Authorization` header.
+///
+/// `Authorization` 头解析错误。
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum RtspAuthorizationError {
     #[error("unsupported authorization scheme")]
@@ -50,6 +79,16 @@ pub enum RtspAuthorizationError {
     InvalidDigestParameter(String),
 }
 
+/// Parse an RTSP `Authorization` header into Basic or Digest credentials.
+///
+/// The scheme is detected case-insensitively. Basic payloads are base64-decoded
+/// and split at the first `:`. Digest parameters are tokenized, respecting
+/// quoted values, and mapped into `RtspDigestAuthorization`.
+///
+/// 解析 RTSP `Authorization` 头为 Basic 或 Digest 凭据。
+///
+/// 大小写不敏感地检测方案。Basic 负载被 base64 解码并在第一个 `:` 处分割。Digest 参数
+/// 被分词，尊重带引号的值，并映射到 `RtspDigestAuthorization`。
 pub fn parse_authorization_header(
     value: &str,
 ) -> Result<RtspAuthorization, RtspAuthorizationError> {
@@ -109,6 +148,16 @@ pub fn parse_authorization_header(
     Err(RtspAuthorizationError::UnsupportedScheme)
 }
 
+/// Verify a digest `response` against a server challenge and password.
+///
+/// Computes the expected `response` from `HA1`, `HA2`, and the nonce, handling
+/// both `qop=auth` and non-`qop` modes. Returns `false` on algorithm/ realm /
+/// nonce mismatch or unsupported `qop`.
+///
+/// 根据服务端质询和密码校验 Digest `response`。
+///
+/// 从 `HA1`、`HA2` 和 nonce 计算期望的 `response`，支持 `qop=auth` 和非 `qop` 模式。
+/// 若算法/域/nonce 不匹配或不支持的 `qop` 则返回 `false`。
 pub fn verify_digest_response(
     auth: &RtspDigestAuthorization,
     challenge: &RtspDigestChallenge,
@@ -148,6 +197,15 @@ pub fn verify_digest_response(
 }
 
 /// Compute a digest response for client-side authentication.
+///
+/// Implements the same `HA1:nonce:...` digest formula as `verify_digest_response`.
+/// For `qop=auth` mode, `nc` and `cnonce` are used when supplied; otherwise
+/// defaults are supplied.
+///
+/// 为客户端认证计算 Digest 响应。
+///
+/// 实现与 `verify_digest_response` 相同的 `HA1:nonce:...` 摘要公式。在 `qop=auth` 模式下
+/// 使用传入的 `nc` 和 `cnonce`；否则使用默认值。
 #[allow(clippy::too_many_arguments)]
 pub fn compute_digest_response(
     username: &str,
@@ -176,6 +234,9 @@ pub fn compute_digest_response(
     }
 }
 
+/// Strip the scheme name from the header value if it matches.
+///
+/// 若头部值的 scheme 匹配，则剥离 scheme 名称。
 fn trim_scheme_prefix<'a>(value: &'a str, scheme: &str) -> Option<&'a str> {
     let (prefix, payload) = value.split_once(char::is_whitespace)?;
     if prefix.eq_ignore_ascii_case(scheme) {
@@ -185,6 +246,14 @@ fn trim_scheme_prefix<'a>(value: &'a str, scheme: &str) -> Option<&'a str> {
     }
 }
 
+/// Tokenize a digest parameter list, respecting quoted values.
+///
+/// Commas outside quotes separate key-value pairs; `parse_digest_pair` then
+/// splits each pair on `=` and unwraps surrounding quotes.
+///
+/// 对 Digest 参数列表进行分词，尊重带引号的值。
+///
+/// 引号外的逗号分隔键值对；`parse_digest_pair` 随后在每个 `=` 处分割并去除引号。
 fn parse_digest_params(value: &str) -> Result<Vec<(String, String)>, RtspAuthorizationError> {
     let mut out = Vec::new();
     let mut current = String::new();
@@ -208,6 +277,9 @@ fn parse_digest_params(value: &str) -> Result<Vec<(String, String)>, RtspAuthori
     Ok(out)
 }
 
+/// Parse one `name=value` pair and add it to the parameter list.
+///
+/// 解析一个 `name=value` 对并加入参数列表。
 fn parse_digest_pair(
     value: &str,
     out: &mut Vec<(String, String)>,
@@ -229,6 +301,9 @@ fn parse_digest_pair(
     Ok(())
 }
 
+/// Look up a required digest parameter case-insensitively.
+///
+/// 大小写不敏感地查找必需的 Digest 参数。
 fn required_digest_param<'a>(
     params: &'a [(String, String)],
     key: &str,
@@ -240,6 +315,14 @@ fn required_digest_param<'a>(
         .ok_or_else(|| RtspAuthorizationError::InvalidDigestParameter(key.to_string()))
 }
 
+/// Map a digest algorithm string to `RtspDigestAlgorithm`.
+///
+/// Recognizes `MD5` and `SHA-256` / `SHA256` (case-insensitive). Unknown values
+/// default to `Md5` for backward compatibility.
+///
+/// 将 Digest 算法字符串映射为 `RtspDigestAlgorithm`。
+///
+/// 识别 `MD5` 和 `SHA-256` / `SHA256`（大小写不敏感）。未知值回退为 `Md5` 以兼容旧实现。
 fn parse_digest_algorithm(value: &str) -> RtspDigestAlgorithm {
     if value.eq_ignore_ascii_case("md5") {
         RtspDigestAlgorithm::Md5
@@ -261,6 +344,9 @@ fn sha256_hex(value: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Hash `value` using the selected digest algorithm and return lowercase hex.
+///
+/// 使用选定的摘要算法对 `value` 进行哈希并返回小写十六进制。
 fn digest_hex(algorithm: RtspDigestAlgorithm, value: &str) -> String {
     match algorithm {
         RtspDigestAlgorithm::Md5 => md5_hex(value),
@@ -269,7 +355,9 @@ fn digest_hex(algorithm: RtspDigestAlgorithm, value: &str) -> String {
 }
 
 impl RtspDigestAlgorithm {
-    /// Returns the algorithm name as used in WWW-Authenticate/Authorization headers.
+    /// Return the algorithm name as used in `WWW-Authenticate` / `Authorization` headers.
+    ///
+    /// 返回 `WWW-Authenticate` / `Authorization` 头中使用的算法名。
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Md5 => "MD5",
@@ -279,7 +367,9 @@ impl RtspDigestAlgorithm {
 }
 
 impl RtspDigestChallenge {
-    /// Format as a `WWW-Authenticate: Digest ...` header value.
+    /// Format this challenge as a `WWW-Authenticate: Digest ...` header value.
+    ///
+    /// 将本质询格式化为 `WWW-Authenticate: Digest ...` 头值。
     pub fn to_header_value(&self) -> String {
         let stale_part = if self.stale { ", stale=true" } else { "" };
         format!(

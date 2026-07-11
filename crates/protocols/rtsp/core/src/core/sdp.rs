@@ -1,5 +1,8 @@
 use std::fmt;
 
+/// Errors that can occur while parsing or building SDP session descriptions.
+///
+/// SDP 会话描述解析或构造错误。
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SdpError {
     #[error("missing required SDP field `{field}`")]
@@ -23,6 +26,8 @@ pub enum SdpError {
     InvalidNumber { field: &'static str, value: String },
 }
 
+/// SDP session description (RFC 8866).
+///
 /// SDP 会话描述（RFC 8866）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Sdp {
@@ -40,7 +45,9 @@ pub struct Sdp {
     pub media: Vec<SdpMedia>,
 }
 
-/// `o=` origin 字段。
+/// SDP `o=` origin field.
+///
+/// SDP `o=` origin 字段。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdpOrigin {
     pub username: String,
@@ -51,7 +58,9 @@ pub struct SdpOrigin {
     pub address: String,
 }
 
-/// `c=` connection 字段。
+/// SDP `c=` connection field.
+///
+/// SDP `c=` connection 字段。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdpConnection {
     pub net_type: String,
@@ -59,21 +68,27 @@ pub struct SdpConnection {
     pub address: String,
 }
 
-/// `b=` bandwidth 字段。
+/// SDP `b=` bandwidth field.
+///
+/// SDP `b=` bandwidth 字段。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdpBandwidth {
     pub bwtype: String,
     pub bandwidth: u64,
 }
 
-/// `t=` timing 字段。
+/// SDP `t=` timing field.
+///
+/// SDP `t=` timing 字段。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SdpTiming {
     pub start: u64,
     pub stop: u64,
 }
 
-/// `m=` media 描述。
+/// SDP `m=` media description.
+///
+/// SDP `m=` 媒体描述。
 #[derive(Debug, Clone, PartialEq)]
 pub struct SdpMedia {
     pub media_type: String,
@@ -87,7 +102,9 @@ pub struct SdpMedia {
     pub attributes: Vec<SdpAttribute>,
 }
 
-/// `a=` attribute 字段。
+/// SDP `a=` attribute field.
+///
+/// SDP `a=` 属性字段。
 #[derive(Debug, Clone, PartialEq)]
 pub enum SdpAttribute {
     Rtpmap {
@@ -119,6 +136,14 @@ pub enum SdpAttribute {
 }
 
 impl Sdp {
+    /// Parse an SDP session description from a text document.
+    ///
+    /// Walks the line-oriented `key=value` format, dispatching by SDP field type and
+    /// keeping track of whether the current line belongs to session or media scope.
+    ///
+    /// 从文本文档解析 SDP 会话描述。
+    ///
+    /// 遍历行格式的 `key=value`，按 SDP 字段类型分派，并跟踪当前行属于会话还是媒体作用域。
     pub fn parse(text: &str) -> Result<Self, SdpError> {
         let mut version = None;
         let mut origin = None;
@@ -230,6 +255,9 @@ impl Sdp {
         })
     }
 
+    /// Return a new `SdpBuilder` to construct an SDP description fluently.
+    ///
+    /// 返回新的 `SdpBuilder`，用于流畅构造 SDP 描述。
     pub fn builder() -> SdpBuilder {
         SdpBuilder::new()
     }
@@ -324,6 +352,9 @@ impl fmt::Display for Sdp {
     }
 }
 
+/// Format an `SdpAttribute` as an `a=` line value.
+///
+/// 将 `SdpAttribute` 格式化为 `a=` 行值。
 fn fmt_attribute(f: &mut fmt::Formatter<'_>, attr: &SdpAttribute) -> fmt::Result {
     match attr {
         SdpAttribute::Rtpmap {
@@ -389,7 +420,9 @@ fn fmt_attribute(f: &mut fmt::Formatter<'_>, attr: &SdpAttribute) -> fmt::Result
     Ok(())
 }
 
-/// SDP 构造器。
+/// Builder for constructing `Sdp` values step by step.
+///
+/// 用于逐步构造 `Sdp` 的构建器。
 #[derive(Debug, Clone)]
 pub struct SdpBuilder {
     version: u8,
@@ -413,6 +446,9 @@ impl Default for SdpBuilder {
 }
 
 impl SdpBuilder {
+    /// Create a new builder with empty/default values.
+    ///
+    /// 以空/默认值创建新的构建器。
     pub fn new() -> Self {
         Self {
             version: 0,
@@ -430,16 +466,25 @@ impl SdpBuilder {
         }
     }
 
+    /// Set the SDP version (`v=`).
+    ///
+    /// 设置 SDP 版本（`v=`）。
     pub fn version(mut self, version: u8) -> Self {
         self.version = version;
         self
     }
 
+    /// Set the origin field (`o=`).
+    ///
+    /// 设置 origin 字段（`o=`）。
     pub fn origin(mut self, origin: SdpOrigin) -> Self {
         self.origin = Some(origin);
         self
     }
 
+    /// Set a simple origin with default user, version, and `IN IP4` network type.
+    ///
+    /// 使用默认用户名、版本和 `IN IP4` 网络类型设置简化 origin。
     pub fn origin_simple(mut self, session_id: &str, address: &str) -> Self {
         self.origin = Some(SdpOrigin {
             username: "-".to_string(),
@@ -452,36 +497,57 @@ impl SdpBuilder {
         self
     }
 
+    /// Set the session name (`s=`).
+    ///
+    /// 设置会话名（`s=`）。
     pub fn session_name(mut self, name: &str) -> Self {
         self.session_name = Some(name.to_string());
         self
     }
 
+    /// Set the optional session information (`i=`).
+    ///
+    /// 设置可选会话信息（`i=`）。
     pub fn session_info(mut self, info: &str) -> Self {
         self.session_info = Some(info.to_string());
         self
     }
 
+    /// Set the optional URI (`u=`).
+    ///
+    /// 设置可选 URI（`u=`）。
     pub fn uri(mut self, uri: &str) -> Self {
         self.uri = Some(uri.to_string());
         self
     }
 
+    /// Set the optional contact email (`e=`).
+    ///
+    /// 设置可选联系邮箱（`e=`）。
     pub fn email(mut self, email: &str) -> Self {
         self.email = Some(email.to_string());
         self
     }
 
+    /// Set the optional contact phone (`p=`).
+    ///
+    /// 设置可选联系电话（`p=`）。
     pub fn phone(mut self, phone: &str) -> Self {
         self.phone = Some(phone.to_string());
         self
     }
 
+    /// Set the connection field (`c=`).
+    ///
+    /// 设置 connection 字段（`c=`）。
     pub fn connection(mut self, connection: SdpConnection) -> Self {
         self.connection = Some(connection);
         self
     }
 
+    /// Set a simple `IN IP4` connection address.
+    ///
+    /// 设置简化的 `IN IP4` 连接地址。
     pub fn connection_simple(mut self, address: &str) -> Self {
         self.connection = Some(SdpConnection {
             net_type: "IN".to_string(),
@@ -491,6 +557,9 @@ impl SdpBuilder {
         self
     }
 
+    /// Add a bandwidth field (`b=`).
+    ///
+    /// 添加 bandwidth 字段（`b=`）。
     pub fn bandwidth(mut self, bwtype: &str, bandwidth: u64) -> Self {
         self.bandwidth.push(SdpBandwidth {
             bwtype: bwtype.to_string(),
@@ -499,29 +568,47 @@ impl SdpBuilder {
         self
     }
 
+    /// Set the timing field (`t=`).
+    ///
+    /// 设置 timing 字段（`t=`）。
     pub fn timing(mut self, start: u64, stop: u64) -> Self {
         self.timing = Some(SdpTiming { start, stop });
         self
     }
 
+    /// Add a generic attribute (`a=`).
+    ///
+    /// 添加通用属性（`a=`）。
     pub fn attribute(mut self, attr: SdpAttribute) -> Self {
         self.attributes.push(attr);
         self
     }
 
+    /// Add a `control` attribute.
+    ///
+    /// 添加 `control` 属性。
     pub fn control(self, url: &str) -> Self {
         self.attribute(SdpAttribute::Control(url.to_string()))
     }
 
+    /// Add a `range` attribute.
+    ///
+    /// 添加 `range` 属性。
     pub fn range(self, range: &str) -> Self {
         self.attribute(SdpAttribute::Range(range.to_string()))
     }
 
+    /// Add a media description to the session.
+    ///
+    /// 向会话添加媒体描述。
     pub fn add_media(mut self, media: SdpMedia) -> Self {
         self.media.push(media);
         self
     }
 
+    /// Build the `Sdp` value, requiring origin, session name, and timing.
+    ///
+    /// 构建 `Sdp` 值，要求 origin、session name 和 timing 已设置。
     pub fn build(self) -> Result<Sdp, SdpError> {
         Ok(Sdp {
             version: self.version,
@@ -546,7 +633,9 @@ impl SdpBuilder {
     }
 }
 
-/// SDP 媒体描述构造器。
+/// Builder for constructing `SdpMedia` values step by step.
+///
+/// 用于逐步构造 `SdpMedia` 的构建器。
 #[derive(Debug, Clone)]
 pub struct SdpMediaBuilder {
     media_type: String,
@@ -561,6 +650,9 @@ pub struct SdpMediaBuilder {
 }
 
 impl SdpMediaBuilder {
+    /// Create a media builder for the given type, port, and protocol.
+    ///
+    /// 为给定类型、端口和协议创建媒体构建器。
     pub fn new(media_type: &str, port: u16, protocol: &str) -> Self {
         Self {
             media_type: media_type.to_string(),
@@ -575,34 +667,55 @@ impl SdpMediaBuilder {
         }
     }
 
+    /// Convenience constructor for an RTP/AVP video media builder.
+    ///
+    /// 创建 RTP/AVP 视频媒体构建器的便捷构造器。
     pub fn video(port: u16) -> Self {
         Self::new("video", port, "RTP/AVP")
     }
 
+    /// Convenience constructor for an RTP/AVP audio media builder.
+    ///
+    /// 创建 RTP/AVP 音频媒体构建器的便捷构造器。
     pub fn audio(port: u16) -> Self {
         Self::new("audio", port, "RTP/AVP")
     }
 
+    /// Set the optional number of ports for the media line.
+    ///
+    /// 设置媒体行可选端口数。
     pub fn num_ports(mut self, num_ports: u16) -> Self {
         self.num_ports = Some(num_ports);
         self
     }
 
+    /// Add a format/payload type to the media line.
+    ///
+    /// 向媒体行添加格式/负载类型。
     pub fn format(mut self, format: &str) -> Self {
         self.formats.push(format.to_string());
         self
     }
 
+    /// Set the optional media title (`i=`).
+    ///
+    /// 设置可选媒体标题（`i=`）。
     pub fn title(mut self, title: &str) -> Self {
         self.title = Some(title.to_string());
         self
     }
 
+    /// Set the connection field (`c=`).
+    ///
+    /// 设置 connection 字段（`c=`）。
     pub fn connection(mut self, connection: SdpConnection) -> Self {
         self.connection = Some(connection);
         self
     }
 
+    /// Add a bandwidth field (`b=`).
+    ///
+    /// 添加 bandwidth 字段（`b=`）。
     pub fn bandwidth(mut self, bwtype: &str, bandwidth: u64) -> Self {
         self.bandwidth.push(SdpBandwidth {
             bwtype: bwtype.to_string(),
@@ -611,11 +724,17 @@ impl SdpMediaBuilder {
         self
     }
 
+    /// Add a generic attribute (`a=`).
+    ///
+    /// 添加通用属性（`a=`）。
     pub fn attribute(mut self, attr: SdpAttribute) -> Self {
         self.attributes.push(attr);
         self
     }
 
+    /// Add an `rtpmap` attribute for the given payload type.
+    ///
+    /// 为给定负载类型添加 `rtpmap` 属性。
     pub fn rtpmap(self, payload_type: u8, encoding: &str, clock_rate: u32) -> Self {
         self.attribute(SdpAttribute::Rtpmap {
             payload_type,
@@ -625,6 +744,9 @@ impl SdpMediaBuilder {
         })
     }
 
+    /// Add an `fmtp` attribute for the given payload type.
+    ///
+    /// 为给定负载类型添加 `fmtp` 属性。
     pub fn fmtp(self, payload_type: u8, parameters: &str) -> Self {
         self.attribute(SdpAttribute::Fmtp {
             payload_type,
@@ -632,14 +754,23 @@ impl SdpMediaBuilder {
         })
     }
 
+    /// Add a `control` attribute.
+    ///
+    /// 添加 `control` 属性。
     pub fn control(self, url: &str) -> Self {
         self.attribute(SdpAttribute::Control(url.to_string()))
     }
 
+    /// Add a `range` attribute.
+    ///
+    /// 添加 `range` 属性。
     pub fn range(self, range: &str) -> Self {
         self.attribute(SdpAttribute::Range(range.to_string()))
     }
 
+    /// Build the `SdpMedia` value.
+    ///
+    /// 构建 `SdpMedia` 值。
     pub fn build(self) -> SdpMedia {
         SdpMedia {
             media_type: self.media_type,
@@ -655,6 +786,9 @@ impl SdpMediaBuilder {
     }
 }
 
+/// Parse the `o=` origin field from its six whitespace-separated tokens.
+///
+/// 从六个空白分隔的 token 解析 `o=` origin 字段。
 fn parse_origin(value: &str) -> Result<SdpOrigin, SdpError> {
     let parts: Vec<&str> = value.split_whitespace().collect();
     if parts.len() != 6 {
@@ -671,6 +805,9 @@ fn parse_origin(value: &str) -> Result<SdpOrigin, SdpError> {
     })
 }
 
+/// Parse the `c=` connection field from its three whitespace-separated tokens.
+///
+/// 从三个空白分隔的 token 解析 `c=` connection 字段。
 fn parse_connection(value: &str) -> Result<SdpConnection, SdpError> {
     let parts: Vec<&str> = value.split_whitespace().collect();
     if parts.len() != 3 {
@@ -684,6 +821,9 @@ fn parse_connection(value: &str) -> Result<SdpConnection, SdpError> {
     })
 }
 
+/// Parse the `b=` bandwidth field as `bwtype:bandwidth`.
+///
+/// 以 `bwtype:bandwidth` 格式解析 `b=` bandwidth 字段。
 fn parse_bandwidth(value: &str) -> Result<SdpBandwidth, SdpError> {
     let Some((bwtype, bandwidth)) = value.split_once(':') else {
         return Err(SdpError::InvalidBandwidth(value.to_string()));
@@ -695,6 +835,9 @@ fn parse_bandwidth(value: &str) -> Result<SdpBandwidth, SdpError> {
     })
 }
 
+/// Parse the `t=` timing field from its two whitespace-separated time values.
+///
+/// 从两个空白分隔的时间值解析 `t=` timing 字段。
 fn parse_timing(value: &str) -> Result<SdpTiming, SdpError> {
     let parts: Vec<&str> = value.split_whitespace().collect();
     if parts.len() != 2 {
@@ -705,6 +848,9 @@ fn parse_timing(value: &str) -> Result<SdpTiming, SdpError> {
     Ok(SdpTiming { start, stop })
 }
 
+/// Parse an `a=` attribute, dispatching by attribute name and optional value.
+///
+/// 解析 `a=` 属性，按属性名和可选值分派。
 fn parse_attribute(value: &str) -> Result<SdpAttribute, SdpError> {
     if let Some((name, attr_value)) = value.split_once(':') {
         return match name {
@@ -740,6 +886,9 @@ fn parse_attribute(value: &str) -> Result<SdpAttribute, SdpError> {
     })
 }
 
+/// Parse an `rtpmap:` attribute as `payload_type encoding/clock_rate[/params]`.
+///
+/// 以 `payload_type encoding/clock_rate[/params]` 格式解析 `rtpmap:` 属性。
 fn parse_rtpmap_attribute(full_value: &str, attr_value: &str) -> Result<SdpAttribute, SdpError> {
     let parts: Vec<&str> = attr_value.splitn(2, ' ').collect();
     if parts.len() != 2 {
@@ -767,6 +916,9 @@ fn parse_rtpmap_attribute(full_value: &str, attr_value: &str) -> Result<SdpAttri
     })
 }
 
+/// Parse an `fmtp:` attribute as `payload_type parameters`.
+///
+/// 以 `payload_type parameters` 格式解析 `fmtp:` 属性。
 fn parse_fmtp_attribute(full_value: &str, attr_value: &str) -> Result<SdpAttribute, SdpError> {
     let parts: Vec<&str> = attr_value.splitn(2, ' ').collect();
     if parts.len() != 2 {
@@ -782,6 +934,9 @@ fn parse_fmtp_attribute(full_value: &str, attr_value: &str) -> Result<SdpAttribu
     })
 }
 
+/// Parse an `m=` media line, including optional `port/num_ports` syntax.
+///
+/// 解析 `m=` 媒体行，包括可选的 `port/num_ports` 语法。
 fn parse_media(value: &str) -> Result<SdpMedia, SdpError> {
     let parts: Vec<&str> = value.split_whitespace().collect();
     if parts.len() < 4 {

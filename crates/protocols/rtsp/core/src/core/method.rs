@@ -1,6 +1,14 @@
 use std::fmt;
 use std::str::FromStr;
 
+/// RTSP request method (RFC 2326 §10).
+///
+/// Standard methods are matched case-sensitively; any unknown method is
+/// preserved as an extension variant so the stack can still forward or log it.
+///
+/// RTSP 请求方法（RFC 2326 §10）。
+///
+/// 标准方法按大小写敏感匹配；未知方法作为扩展变体保留，以便协议栈转发或记录。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum RtspMethod {
     Get,
@@ -20,6 +28,13 @@ pub enum RtspMethod {
 }
 
 impl RtspMethod {
+    /// Return the canonical wire representation of the method.
+    ///
+    /// `Extension` values are returned as-is, preserving the original case.
+    ///
+    /// 返回该方法的标准线表示。
+    ///
+    /// `Extension` 值按原样返回，保留原始大小写。
     pub fn as_str(&self) -> &str {
         match self {
             Self::Get => "GET",
@@ -39,6 +54,14 @@ impl RtspMethod {
         }
     }
 
+    /// Parse a method string from an RTSP request line.
+    ///
+    /// Unknown methods are stored as `Extension` instead of rejected, which keeps
+    /// the parser tolerant of custom methods while still routing known ones.
+    ///
+    /// 从 RTSP 请求行解析方法字符串。
+    ///
+    /// 未知方法存为 `Extension` 而非拒绝，使解析器对自定义方法保持容忍，同时仍能路由已知方法。
     pub(crate) fn parse(value: &str) -> Self {
         match value {
             "GET" => Self::Get,

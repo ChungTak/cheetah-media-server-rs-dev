@@ -6,12 +6,18 @@ use super::{
     RtspCoreError, RtspMessageLimits,
 };
 
+/// A single RTSP header name/value pair.
+///
+/// 单个 RTSP 头部名/值对。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspHeader {
     pub name: String,
     pub value: String,
 }
 
+/// Raw RTSP request message with string method and bytes body.
+///
+/// 原始 RTSP 请求消息，方法为字符串，体为字节。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspRequestMessage {
     pub method: String,
@@ -21,6 +27,9 @@ pub struct RtspRequestMessage {
     pub body: Bytes,
 }
 
+/// Raw RTSP response message with status code and bytes body.
+///
+/// 原始 RTSP 响应消息，包含状态码和字节体。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RtspResponseMessage {
     pub version: String,
@@ -30,6 +39,14 @@ pub struct RtspResponseMessage {
     pub body: Bytes,
 }
 
+/// Parsed RTSP request used by the core state machine.
+///
+/// The method is converted to `RtspMethod` and `cseq`/`session` are extracted
+/// from headers for convenient routing.
+///
+/// 核心状态机使用的已解析 RTSP 请求。
+///
+/// 方法已转换为 `RtspMethod`，`cseq`/`session` 从头部提取以方便路由。
 #[derive(Debug, Clone)]
 pub struct RtspRequest {
     pub method: RtspMethod,
@@ -41,18 +58,27 @@ pub struct RtspRequest {
     pub session: Option<String>,
 }
 
+/// Sans-I/O decoder that accumulates raw bytes and emits RTSP request messages.
+///
+/// 累积原始字节并输出 RTSP 请求消息的 Sans-I/O 解码器。
 #[derive(Debug, Clone)]
 pub struct RtspRequestDecoder {
     buffer: BytesMut,
     limits: RtspMessageLimits,
 }
 
+/// Sans-I/O decoder that accumulates raw bytes and emits RTSP response messages.
+///
+/// 累积原始字节并输出 RTSP 响应消息的 Sans-I/O 解码器。
 #[derive(Debug, Clone)]
 pub struct RtspResponseDecoder {
     buffer: BytesMut,
     limits: RtspMessageLimits,
 }
 
+/// Case-insensitive header lookup helper.
+///
+/// 大小写不敏感的头部查找辅助函数。
 fn header_value<'a>(headers: &'a [RtspHeader], name: &str) -> Option<&'a str> {
     headers
         .iter()
@@ -61,18 +87,27 @@ fn header_value<'a>(headers: &'a [RtspHeader], name: &str) -> Option<&'a str> {
 }
 
 impl RtspRequestMessage {
+    /// Look up a header value by name.
+    ///
+    /// 按名称查找头部值。
     pub fn header_value(&self, name: &str) -> Option<&str> {
         header_value(&self.headers, name)
     }
 }
 
 impl RtspResponseMessage {
+    /// Look up a header value by name.
+    ///
+    /// 按名称查找头部值。
     pub fn header_value(&self, name: &str) -> Option<&str> {
         header_value(&self.headers, name)
     }
 }
 
 impl RtspRequest {
+    /// Look up a header value by name.
+    ///
+    /// 按名称查找头部值。
     pub fn header_value(&self, name: &str) -> Option<&str> {
         header_value(&self.headers, name)
     }
@@ -91,10 +126,16 @@ impl Default for RtspResponseDecoder {
 }
 
 impl RtspRequestDecoder {
+    /// Create a decoder with default message limits.
+    ///
+    /// 以默认消息限制创建解码器。
     pub fn new() -> Self {
         Self::with_limits(RtspMessageLimits::default())
     }
 
+    /// Create a decoder with the supplied message limits.
+    ///
+    /// 以指定消息限制创建解码器。
     pub fn with_limits(limits: RtspMessageLimits) -> Self {
         Self {
             buffer: BytesMut::new(),
@@ -102,6 +143,9 @@ impl RtspRequestDecoder {
         }
     }
 
+    /// Append incoming bytes to the internal buffer, validating size limits.
+    ///
+    /// 将到达的字节追加到内部缓冲区，并校验大小限制。
     pub fn feed(&mut self, data: &[u8]) -> Result<(), RtspCoreError> {
         self.limits
             .validate_buffer_growth(self.buffer.len(), data.len())?;
@@ -109,6 +153,9 @@ impl RtspRequestDecoder {
         Ok(())
     }
 
+    /// Try to parse a complete request from the buffered bytes.
+    ///
+    /// 尝试从已缓冲字节中解析一个完整请求。
     pub fn decode(&mut self) -> Result<Option<RtspRequestMessage>, RtspCoreError> {
         match try_parse_message(&mut self.buffer, &self.limits)? {
             ParsedMessage::Incomplete => Ok(None),
@@ -119,10 +166,16 @@ impl RtspRequestDecoder {
 }
 
 impl RtspResponseDecoder {
+    /// Create a decoder with default message limits.
+    ///
+    /// 以默认消息限制创建解码器。
     pub fn new() -> Self {
         Self::with_limits(RtspMessageLimits::default())
     }
 
+    /// Create a decoder with the supplied message limits.
+    ///
+    /// 以指定消息限制创建解码器。
     pub fn with_limits(limits: RtspMessageLimits) -> Self {
         Self {
             buffer: BytesMut::new(),
@@ -130,6 +183,9 @@ impl RtspResponseDecoder {
         }
     }
 
+    /// Append incoming bytes to the internal buffer, validating size limits.
+    ///
+    /// 将到达的字节追加到内部缓冲区，并校验大小限制。
     pub fn feed(&mut self, data: &[u8]) -> Result<(), RtspCoreError> {
         self.limits
             .validate_buffer_growth(self.buffer.len(), data.len())?;
@@ -137,6 +193,9 @@ impl RtspResponseDecoder {
         Ok(())
     }
 
+    /// Try to parse a complete response from the buffered bytes.
+    ///
+    /// 尝试从已缓冲字节中解析一个完整响应。
     pub fn decode(&mut self) -> Result<Option<RtspResponseMessage>, RtspCoreError> {
         match try_parse_message(&mut self.buffer, &self.limits)? {
             ParsedMessage::Incomplete => Ok(None),
@@ -146,12 +205,18 @@ impl RtspResponseDecoder {
     }
 }
 
+/// Internal parse result used by `try_parse_message`.
+///
+/// `try_parse_message` 使用的内部解析结果。
 pub(crate) enum ParsedMessage {
     Incomplete,
     Request(RtspRequestMessage),
     Response(RtspResponseMessage),
 }
 
+/// Parse a buffered message and return it if it is a request.
+///
+/// 解析缓冲消息，并在其为请求时返回。
 pub(crate) fn try_parse_request(
     buffer: &mut BytesMut,
     limits: &RtspMessageLimits,
@@ -159,6 +224,15 @@ pub(crate) fn try_parse_request(
     try_parse_message(buffer, limits)
 }
 
+/// Try to parse a complete RTSP message from the buffered bytes.
+///
+/// Locates the end of the header block, reads `Content-Length`, validates body
+/// limits, and then dispatches to request/response parsing based on the start line.
+///
+/// 尝试从缓冲字节中解析完整 RTSP 消息。
+///
+/// 定位头部块结束位置，读取 `Content-Length`，校验体大小限制，然后根据起始行
+/// 分派到请求或响应解析。
 pub(crate) fn try_parse_message(
     buffer: &mut BytesMut,
     limits: &RtspMessageLimits,
@@ -192,6 +266,14 @@ pub(crate) fn try_parse_message(
     }
 }
 
+/// Encode a raw request message into wire bytes.
+///
+/// Validates start-line fields and headers, writes `Content-Length` if a body
+/// is present and no explicit header exists.
+///
+/// 将原始请求消息编码为线字节。
+///
+/// 校验起始行字段和头部；若存在体且未显式声明 `Content-Length` 则写入该头部。
 pub fn encode_rtsp_request(request: &RtspRequestMessage) -> Result<Bytes, RtspCoreError> {
     validate_start_line_field(&request.method, "method")?;
     validate_start_line_field(&request.uri, "uri")?;
@@ -218,6 +300,14 @@ pub fn encode_rtsp_request(request: &RtspRequestMessage) -> Result<Bytes, RtspCo
     Ok(buf.freeze())
 }
 
+/// Encode a raw response message into wire bytes.
+///
+/// Validates version, reason phrase, and headers, and always writes a
+/// `Content-Length` header.
+///
+/// 将原始响应消息编码为线字节。
+///
+/// 校验版本、原因短语和头部，并始终写入 `Content-Length` 头部。
 pub fn encode_rtsp_response(response: &RtspResponseMessage) -> Result<Bytes, RtspCoreError> {
     validate_start_line_field(&response.version, "version")?;
     validate_reason_phrase(&response.reason_phrase)?;
@@ -249,6 +339,9 @@ pub fn encode_rtsp_response(response: &RtspResponseMessage) -> Result<Bytes, Rts
     Ok(buf.freeze())
 }
 
+/// Build a response from individual parts, injecting `CSeq` if not already present.
+///
+/// 从各个部分构造响应，若 `CSeq` 不存在则自动注入。
 pub(crate) fn encode_rtsp_response_parts(
     cseq: Option<u32>,
     status_code: u16,
@@ -283,6 +376,14 @@ pub(crate) fn encode_rtsp_response_parts(
     })
 }
 
+/// Convert a raw `RtspRequestMessage` into a parsed `RtspRequest`.
+///
+/// Parses the method, extracts `CSeq` and `Session` headers, and keeps the rest
+/// of the message fields.
+///
+/// 将原始 `RtspRequestMessage` 转换为已解析的 `RtspRequest`。
+///
+/// 解析方法，提取 `CSeq` 和 `Session` 头部，并保留其余消息字段。
 pub(crate) fn into_rtsp_request(request: RtspRequestMessage) -> RtspRequest {
     let method = RtspMethod::parse(&request.method);
     let cseq = request
@@ -306,6 +407,9 @@ enum ParsedMessageBody {
     Response(RtspResponseMessage),
 }
 
+/// Parse a complete message into headers and body, then dispatch by start line.
+///
+/// 将完整消息解析为头部和体，然后根据起始行分派。
 fn parse_rtsp_message(
     message: Bytes,
     limits: &RtspMessageLimits,
@@ -342,6 +446,9 @@ fn parse_rtsp_message(
     }))
 }
 
+/// Parse header lines into `RtspHeader` values, enforcing count and line-size limits.
+///
+/// 将头部行解析为 `RtspHeader` 值，并强制执行数量和行大小限制。
 fn parse_headers<'a>(
     lines: impl Iterator<Item = &'a str>,
     limits: &RtspMessageLimits,

@@ -1,22 +1,40 @@
 //! RTP header rewriting for Direct Proxy mode.
 //!
 //! In Direct Proxy mode, RTP packets are forwarded without decode/re-encode.
-//! Only the RTP header fields (SSRC, seq, optionally PT) are rewritten.
+//! Only the RTP header fields (SSRC, sequence number, and optionally payload
+//! type) are rewritten to match the target stream.
+//!
+//! 直接代理模式下的 RTP 头部重写。
+//!
+//! 在直接代理模式下，RTP 包不解码/重编码直接转发。仅重写 RTP 头部字段
+//!（SSRC、序列号、可选的 payload type）以匹配目标流。
 
 use bytes::{Bytes, BytesMut};
 
 /// State for rewriting RTP headers in Direct Proxy mode.
-#[derive(Debug, Clone)]
+///
+/// Maintains an independent target sequence counter and optional payload type
+/// override. The payload bytes are not inspected or copied more than necessary.
+///
+/// 直接代理模式下重写 RTP 头部的状态。
+///
+/// 维护独立的目标序列计数器与可选的 payload type 覆盖。负载字节不会被检查或
+/// 不必要地拷贝。
 pub struct RtpRewriter {
-    /// SSRC to write into forwarded packets.
     target_ssrc: u32,
-    /// Independent sequence counter for the target stream.
     next_seq: u16,
-    /// Optional payload type override (None = keep original).
     target_pt: Option<u8>,
 }
 
 impl RtpRewriter {
+    /// Create a rewriter with a fixed target SSRC and initial sequence number.
+    ///
+    /// `initial_seq` is the sequence number that will be written into the next
+    /// forwarded packet; it is incremented after each successful rewrite.
+    ///
+    /// 创建以固定目标 SSRC 和初始序列号开头的重写器。
+    ///
+    /// `initial_seq` 是下一次成功转发时写入的序列号；每次重写成功后自增。
     pub fn new(target_ssrc: u32, initial_seq: u16) -> Self {
         Self {
             target_ssrc,
@@ -25,6 +43,14 @@ impl RtpRewriter {
         }
     }
 
+    /// Override the payload type in the forwarded RTP header.
+    ///
+    /// The marker bit is preserved and the lower 7 bits are replaced. If no
+    /// override is set, the original payload type is left unchanged.
+    ///
+    /// 覆盖转发 RTP 头部的 payload type。
+    ///
+    /// 保留 marker 位并替换低 7 位。若未设置覆盖，则保留原始 payload type。
     pub fn with_payload_type(mut self, pt: u8) -> Self {
         self.target_pt = Some(pt);
         self
@@ -32,7 +58,14 @@ impl RtpRewriter {
 
     /// Rewrite an RTP packet's header fields for forwarding.
     ///
-    /// Returns the rewritten packet, or None if the input is too short.
+    /// The header is modified in-place: sequence number (bytes 2-3), SSRC
+    /// (bytes 8-11), and payload type if configured. Returns `None` if the input
+    /// is shorter than the 12-byte fixed RTP header.
+    ///
+    /// 重写 RTP 包头部字段以进行转发。
+    ///
+    /// 原地修改头部：序列号（字节 2-3）、SSRC（字节 8-11），以及配置后的 payload type。
+    /// 若输入短于 12 字节固定 RTP 头则返回 `None`。
     pub fn rewrite(&mut self, packet: &[u8]) -> Option<Bytes> {
         if packet.len() < 12 {
             return None;
@@ -52,10 +85,16 @@ impl RtpRewriter {
         Some(out.freeze())
     }
 
+    /// Current sequence counter value (the value that will be used next).
+    ///
+    /// 当前序列计数器值（下一次将使用的值）。
     pub fn current_seq(&self) -> u16 {
         self.next_seq
     }
 
+    /// Target SSRC configured for this rewriter.
+    ///
+    /// 该重写器配置的目标 SSRC。
     pub fn target_ssrc(&self) -> u32 {
         self.target_ssrc
     }
