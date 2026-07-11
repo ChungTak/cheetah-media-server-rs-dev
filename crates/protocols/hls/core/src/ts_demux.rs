@@ -1,7 +1,7 @@
 //! MPEG-TS demuxer: parses TS packets into PES frames.
 //!
-//! Extracts PAT/PMT to discover tracks, reassembles PES packets,
-//! and outputs frames with PTS/DTS timestamps.
+//! MPEG-TS 解复用器：将 TS 包解析为 PES 帧。
+//! 提取 PAT/PMT 发现轨道，重组 PES 包，并输出带 PTS/DTS 时间戳的帧。
 
 use bytes::Bytes;
 use cheetah_codec::{CodecId, MediaKind};
@@ -10,15 +10,21 @@ const TS_PACKET_SIZE: usize = 188;
 const SYNC_BYTE: u8 = 0x47;
 
 /// Events emitted by the TS demuxer.
+///
+/// TS 解复用器发出的事件。
 #[derive(Debug, Clone)]
 pub enum TsDemuxEvent {
     /// A track was discovered from PMT.
+    ///
+    /// 从 PMT 发现的轨道。
     TrackFound {
         pid: u16,
         codec: CodecId,
         media_kind: MediaKind,
     },
     /// A complete frame was reassembled from PES.
+    ///
+    /// 从 PES 重组完成的帧。
     Frame {
         media_kind: MediaKind,
         codec: CodecId,
@@ -30,15 +36,30 @@ pub enum TsDemuxEvent {
 }
 
 /// MPEG-TS demuxer state machine.
+///
+/// MPEG-TS 解复用器状态机。
+///
+/// Tracks the PMT PID, per-track PES buffers, and the sync state. The feed APIs handle
+/// both aligned (188-byte) segment data and unaligned raw streams.
+///
+/// 跟踪 PMT PID、每轨道 PES 缓冲与同步状态。
+/// `feed` API 同时处理已对齐（188 字节）的分段数据与未对齐的原始流。
 pub struct TsDemuxer {
     pmt_pid: Option<u16>,
     tracks: Vec<TsTrackState>,
     /// Remainder bytes from unaligned feed (less than 188 bytes).
+    ///
+    /// 未对齐输入的剩余字节（少于 188 字节）。
     remainder: Vec<u8>,
     /// Count of sync losses (for diagnostics).
+    ///
+    /// 同步丢失次数（用于诊断）。
     pub sync_losses: u64,
 }
 
+/// Internal per-track state for PES reassembly.
+///
+/// PES 重组的每轨道内部状态。
 struct TsTrackState {
     pid: u16,
     codec: CodecId,
@@ -48,6 +69,9 @@ struct TsTrackState {
 }
 
 impl TsDemuxer {
+    /// Create a new TS demuxer.
+    ///
+    /// 创建新的 TS 解复用器。
     pub fn new() -> Self {
         Self {
             pmt_pid: None,
@@ -58,6 +82,13 @@ impl TsDemuxer {
     }
 
     /// Feed a complete TS segment (multiple of 188 bytes) and collect events.
+    ///
+    /// Iterates 188-byte chunks, validates sync byte, and dispatches each packet to
+    /// `feed_packet`. After all packets, remaining PES buffers are flushed.
+    ///
+    /// 输入完整的 TS 分段（188 字节的整数倍）并收集事件。
+    /// 遍历每个 188 字节块，校验同步字节，并分派给 `feed_packet`。
+    /// 所有包处理完成后，刷新剩余 PES 缓冲。
     pub fn feed_segment(&mut self, data: &[u8]) -> Vec<TsDemuxEvent> {
         let mut events = Vec::new();
         for chunk in data.chunks(TS_PACKET_SIZE) {
@@ -77,7 +108,12 @@ impl TsDemuxer {
     }
 
     /// Feed raw data that may not be aligned to 188-byte boundaries.
-    /// Handles sync byte search and buffering of partial packets.
+    ///
+    /// Handles sync byte search and buffering of partial packets. Keeps at most 187
+    /// bytes as remainder when no full packet can be parsed.
+    ///
+    /// 输入可能未对齐到 188 字节边界的原始数据。
+    /// 处理同步字节搜索与部分包缓冲；当无法解析完整包时最多保留 187 字节。
     pub fn feed_unaligned(&mut self, data: &[u8]) -> Vec<TsDemuxEvent> {
         let mut events = Vec::new();
         let mut buf = std::mem::take(&mut self.remainder);
@@ -119,6 +155,15 @@ impl TsDemuxer {
         events
     }
 
+    /// Parse a single TS packet and update state.
+    ///
+    /// Reads PID, payload unit start indicator (PUSI), and adaptation field control to
+    /// determine payload start. PAT (PID 0) and PMT packets are parsed to discover tracks;
+    /// PES packets for known tracks are accumulated.
+    ///
+    /// 解析单个 TS 包并更新状态。
+    /// 读取 PID、PUSI 与适配域控制以确定负载起始。
+    /// 解析 PAT（PID 0）与 PMT 包以发现轨道；已知轨道的 PES 包被累积。
     fn feed_packet(&mut self, pkt: &[u8], events: &mut Vec<TsDemuxEvent>) {
         let pid = ((pkt[1] as u16 & 0x1F) << 8) | pkt[2] as u16;
         let pusi = pkt[1] & 0x40 != 0;
@@ -170,6 +215,9 @@ impl TsDemuxer {
         }
     }
 
+    /// Parse the PAT to find the PMT PID.
+    ///
+    /// 解析 PAT 以找到 PMT PID。
     fn parse_pat(&mut self, payload: &[u8], pusi: bool) {
         let data = if pusi && !payload.is_empty() {
             let pointer = payload[0] as usize;
@@ -186,6 +234,15 @@ impl TsDemuxer {
         self.pmt_pid = Some(pmt_pid);
     }
 
+    /// Parse the PMT to discover tracks and their PID/codec mapping.
+    ///
+    /// Iterates the program descriptor loop. For each stream, it maps the MPEG stream type
+    /// to a codec and media kind. Private streams (`stream_type == 0x06`) are further
+    /// disambiguated by `identify_private_stream` from the ES_info descriptors.
+    ///
+    /// 解析 PMT 以发现轨道及其 PID/编解码器映射。
+    /// 遍历节目描述循环；将 MPEG 流类型映射为编解码器与媒体类型。
+    /// 私有流（`stream_type == 0x06`）通过 ES_info 描述符进一步由 `identify_private_stream` 识别。
     fn parse_pmt(&mut self, payload: &[u8], pusi: bool, events: &mut Vec<TsDemuxEvent>) {
         let data = if pusi && !payload.is_empty() {
             let pointer = payload[0] as usize;
@@ -260,6 +317,12 @@ impl Default for TsDemuxer {
 }
 
 /// Parse a PES buffer into a frame event.
+///
+/// Validates the PES start code, extracts PTS/DTS from the optional PES header, and
+/// detects keyframes for H.264/H.265 by scanning the payload for IDR/IRAP NAL units.
+///
+/// 将 PES 缓冲解析为帧事件。
+/// 校验 PES 起始码，从可选 PES 头提取 PTS/DTS，并扫描 H.264/H.265 负载中的 IDR/IRAP NAL 以检测关键帧。
 fn parse_pes_to_frame(track: &mut TsTrackState) -> Option<TsDemuxEvent> {
     let buf = &track.pes_buf;
     // PES start code: 00 00 01 stream_id
@@ -305,7 +368,10 @@ fn parse_pes_to_frame(track: &mut TsTrackState) -> Option<TsDemuxEvent> {
     })
 }
 
-fn decode_timestamp(buf: &[u8]) -> u64 {
+/// Decode a 33-bit MPEG-2 PES timestamp from 5 bytes.
+///
+/// 从 5 字节解码 33 位 MPEG-2 PES 时间戳。
+pub(crate) fn decode_timestamp(buf: &[u8]) -> u64 {
     let b0 = buf[0] as u64;
     let b1 = buf[1] as u64;
     let b2 = buf[2] as u64;
@@ -314,6 +380,14 @@ fn decode_timestamp(buf: &[u8]) -> u64 {
     ((b0 >> 1) & 0x07) << 30 | (b1 << 22) | ((b2 >> 1) << 15) | (b3 << 7) | (b4 >> 1)
 }
 
+/// Determine whether the payload starts with a keyframe for the given codec.
+///
+/// For H.264, looks for NAL type 5 (IDR) in Annex-B start code format.
+/// For H.265, NAL types 16-21 are IRAP (keyframe) frames.
+///
+/// 判断给定编解码器负载是否以关键帧开始。
+/// H.264 在 Annex-B 起始码格式中查找 NAL type 5（IDR）。
+/// H.265 中 NAL type 16-21 为 IRAP（关键帧）。
 fn is_keyframe_payload(data: &[u8], codec: CodecId) -> bool {
     match codec {
         CodecId::H264 => {
@@ -341,7 +415,14 @@ fn is_keyframe_payload(data: &[u8], codec: CodecId) -> bool {
     }
 }
 
-/// Identify a private stream (stream_type=0x06) by parsing ES_info descriptors.
+/// Identify a private stream (`stream_type=0x06`) by parsing ES_info descriptors.
+///
+/// Checks for registration descriptor format identifiers (AV01, Opus, VP09) and the
+/// AV1 video descriptor tag (`0x80`).
+///
+/// 通过解析 ES_info 描述符识别私有流（`stream_type=0x06`）。
+/// 检查 registration descriptor 的 format_identifier（AV01、Opus、VP09）以及
+/// AV1 视频描述符标签（`0x80`）。
 fn identify_private_stream(es_info: &[u8]) -> Option<(CodecId, MediaKind)> {
     let mut offset = 0;
     while offset + 2 <= es_info.len() {
@@ -372,7 +453,9 @@ fn identify_private_stream(es_info: &[u8]) -> Option<(CodecId, MediaKind)> {
     None
 }
 
-/// Find a sync byte (0x47) that is confirmed by a second 0x47 at +188.
+/// Find a sync byte (`0x47`) that is confirmed by a second `0x47` at +188.
+///
+/// 找到同步字节（`0x47`），并通过 +188 位置再次为 `0x47` 进行确认。
 fn find_sync(data: &[u8], start: usize) -> Option<usize> {
     let end = data.len().saturating_sub(TS_PACKET_SIZE);
     for i in start..end {

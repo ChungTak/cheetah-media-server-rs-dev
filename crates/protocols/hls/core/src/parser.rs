@@ -1,8 +1,13 @@
 //! Lightweight M3U8 media playlist parser for HLS pull scenarios.
+//!
+//! 轻量级 M3U8 媒体播放列表解析器，用于 HLS 拉流场景。
+//! 仅解析 `media playlist` 与 `master playlist` 的关键字段，不做完整属性校验。
 
 use crate::error::HlsCoreError;
 
 /// Parsed media playlist.
+///
+/// 解析后的媒体播放列表。
 #[derive(Debug, Clone)]
 pub struct ParsedMediaPlaylist {
     pub target_duration: u32,
@@ -12,6 +17,8 @@ pub struct ParsedMediaPlaylist {
 }
 
 /// A single segment entry from a parsed playlist.
+///
+/// 解析后播放列表中的单个分片条目。
 #[derive(Debug, Clone)]
 pub struct ParsedSegment {
     pub duration: f64,
@@ -19,12 +26,16 @@ pub struct ParsedSegment {
 }
 
 /// Parsed master (multivariant) playlist.
+///
+/// 解析后的主（多码率）播放列表。
 #[derive(Debug, Clone)]
 pub struct ParsedMasterPlaylist {
     pub variants: Vec<ParsedVariant>,
 }
 
 /// A variant stream entry.
+///
+/// 变体流条目。
 #[derive(Debug, Clone)]
 pub struct ParsedVariant {
     pub bandwidth: u64,
@@ -32,6 +43,16 @@ pub struct ParsedVariant {
 }
 
 /// Parse a media playlist from text.
+///
+/// The parser validates the `#EXTM3U` magic, then scans line by line. It extracts
+/// `TARGETDURATION`, `MEDIA-SEQUENCE`, and `#EXT-X-ENDLIST`. Each `#EXTINF:` line
+/// stores the duration in a pending slot; the next non-comment line is consumed as
+/// the segment URI. This is a one-pass finite-state scan over the playlist.
+///
+/// 从文本解析媒体播放列表。
+/// 先校验 `#EXTM3U` 魔数，再逐行扫描。提取 `TARGETDURATION`、`MEDIA-SEQUENCE` 和 `#EXT-X-ENDLIST`。
+/// 每个 `#EXTINF:` 行将时长存入 pending 槽；下一行非注释行作为分片 URI 消费。
+/// 这是针对播放列表的单遍有限状态扫描。
 pub fn parse_media_playlist(input: &str) -> Result<ParsedMediaPlaylist, HlsCoreError> {
     if !input.trim_start().starts_with("#EXTM3U") {
         return Err(HlsCoreError::InvalidPath {
@@ -81,6 +102,14 @@ pub fn parse_media_playlist(input: &str) -> Result<ParsedMediaPlaylist, HlsCoreE
 }
 
 /// Parse a master playlist from text.
+///
+/// Scans for `#EXT-X-STREAM-INF:` tags. The comma-separated attributes are searched for
+/// `BANDWIDTH=`. The first non-comment line after a stream-inf tag is treated as the
+/// variant URI. Unknown attributes are ignored.
+///
+/// 从文本解析主播放列表。
+/// 扫描 `#EXT-X-STREAM-INF:` 标签，在逗号分隔的属性中查找 `BANDWIDTH=`。
+/// 每个 stream-inf 标签后的第一个非注释行作为变体 URI。未知属性被忽略。
 pub fn parse_master_playlist(input: &str) -> Result<ParsedMasterPlaylist, HlsCoreError> {
     if !input.trim_start().starts_with("#EXTM3U") {
         return Err(HlsCoreError::InvalidPath {

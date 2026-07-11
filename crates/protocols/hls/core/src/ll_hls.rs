@@ -1,7 +1,7 @@
 //! Low-Latency HLS (LL-HLS) support.
 //!
-//! Implements EXT-X-PART sub-segment management, cut decision logic, and playlist
-//! tag generation per Apple's Low-Latency HLS specification.
+//! 低延迟 HLS（LL-HLS）支持。
+//! 实现 EXT-X-PART 子分段管理、切分决策逻辑以及符合 Apple LL-HLS 规范的播放列表标签生成。
 
 use std::collections::VecDeque;
 
@@ -9,6 +9,9 @@ use bytes::Bytes;
 
 /// Stable lane identifier for demuxed per-track LLHLS.
 /// Maps to a logical role (video/audio), not a physical TrackId.
+///
+/// 解复用（per-track）LLHLS 的稳定通道标识。
+/// 映射到逻辑角色（video/audio），而非物理 TrackId。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TrackLane {
     Video,
@@ -17,6 +20,8 @@ pub enum TrackLane {
 
 impl TrackLane {
     /// URL prefix for this lane's resources.
+    ///
+    /// 该通道资源的 URL 前缀。
     pub fn prefix(&self) -> &'static str {
         match self {
             TrackLane::Video => "video",
@@ -26,17 +31,28 @@ impl TrackLane {
 }
 
 /// LLHLS packaging mode configuration.
+///
+/// LLHLS 打包模式配置。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LlHlsPackagingMode {
     /// Per-track demuxed audio/video (default for browser LLHLS).
+    ///
+    /// 按轨道分离的音频/视频（浏览器 LLHLS 默认）。
     DemuxedAv,
     /// Video-only workaround (legacy, skips audio in LLHLS fMP4).
+    ///
+    /// 仅视频兼容模式（旧版，在 LLHLS fMP4 中跳过音频）。
     VideoOnly,
     /// Muxed audio+video in single fMP4 (non-browser compat only).
+    ///
+    /// 单 fMP4 中复用音频+视频（仅非浏览器兼容）。
     Muxed,
 }
 
 impl LlHlsPackagingMode {
+    /// Parse packaging mode from a string, defaulting to `DemuxedAv`.
+    ///
+    /// 从字符串解析打包模式，默认返回 `DemuxedAv`。
     pub fn parse(s: &str) -> Self {
         match s {
             "video-only" => Self::VideoOnly,
@@ -47,6 +63,8 @@ impl LlHlsPackagingMode {
 }
 
 /// A partial segment (sub-segment) for LL-HLS.
+///
+/// LL-HLS 的部分分段（子分段）。
 #[derive(Debug, Clone)]
 pub struct HlsPart {
     pub uri: String,
@@ -54,12 +72,18 @@ pub struct HlsPart {
     pub independent: bool,
     pub data: Bytes,
     /// Global part sequence number.
+    ///
+    /// 全局 part 序列号。
     pub sequence: u64,
     /// Parent segment sequence number.
+    ///
+    /// 所属父分段的序列号。
     pub segment_sequence: u64,
 }
 
 /// Completed segment's parts snapshot (archived when segment finalizes).
+///
+/// 已完成分段的 parts 快照（分段完成时归档）。
 #[derive(Debug, Clone)]
 pub struct SegmentParts {
     pub segment_sequence: u64,
@@ -67,27 +91,53 @@ pub struct SegmentParts {
 }
 
 /// LL-HLS state for a single stream.
+///
+/// 单个流的 LL-HLS 状态。
+///
+/// Holds the currently accumulating part, a ring of completed segment parts, and
+/// counters used for `#EXT-X-PART` and `#EXT-X-PRELOAD-HINT` generation.
+///
+/// 保存当前正在累积的 part、已完成分段 parts 的环形缓冲，以及用于生成
+/// `#EXT-X-PART` 和 `#EXT-X-PRELOAD-HINT` 的计数器。
 pub struct LowLatencyState {
     /// Parts of the current (in-progress) segment.
+    ///
+    /// 当前（进行中）分段的 parts。
     current_parts: Vec<HlsPart>,
     /// Archived parts from completed segments (ring buffer).
+    ///
+    /// 已完成分段归档的 parts（环形缓冲）。
     completed_segments_parts: VecDeque<SegmentParts>,
     /// Maximum number of completed segment part-lists to retain.
+    ///
+    /// 保留的已完成分段 part 列表最大数量。
     max_completed_segments: usize,
     part_target_secs: f64,
     /// Global part sequence counter.
+    ///
+    /// 全局 part 序列计数器。
     part_seq: u64,
     /// Current in-progress segment sequence.
+    ///
+    /// 当前进行中分段的序列号。
     parent_segment_seq: u64,
     /// DTS (ms) of the first sample in the current part accumulation.
+    ///
+    /// 当前 part 累积中第一个 sample 的 DTS（毫秒）。
     current_part_start_dts_ms: Option<u64>,
     /// Whether the current part accumulation contains a keyframe.
+    ///
+    /// 当前 part 累积是否包含关键帧。
     current_part_has_keyframe: bool,
     /// Rendition reports for other tracks (populated by module layer for ABR).
+    ///
+    /// 其他轨道的 rendition 报告（由模块层填充，用于 ABR）。
     rendition_reports: Vec<RenditionReport>,
 }
 
-/// Info about another rendition for EXT-X-RENDITION-REPORT.
+/// Info about another rendition for `EXT-X-RENDITION-REPORT`.
+///
+/// 用于 `EXT-X-RENDITION-REPORT` 的其他 rendition 信息。
 #[derive(Debug, Clone)]
 pub struct RenditionReport {
     pub uri: String,
@@ -96,6 +146,9 @@ pub struct RenditionReport {
 }
 
 impl LowLatencyState {
+    /// Create a new LL-HLS state with the given part target duration and archive limit.
+    ///
+    /// 使用给定的 part 目标时长与归档上限创建新的 LL-HLS 状态。
     pub fn new(part_target_ms: u64, max_completed_segments: usize) -> Self {
         Self {
             current_parts: Vec::new(),
@@ -111,11 +164,19 @@ impl LowLatencyState {
     }
 
     /// Update part target duration (e.g., after frame-aligned recalculation).
+    ///
+    /// 更新 part 目标时长（例如在帧对齐重新计算后）。
     pub fn set_part_target_ms(&mut self, ms: u64) {
         self.part_target_secs = ms as f64 / 1000.0;
     }
 
     /// Check if a part cut should happen based on accumulated duration.
+    ///
+    /// A cut is triggered once the difference between `sample_dts_ms` and the first
+    /// sample of the current part reaches the target duration.
+    ///
+    /// 根据累积时长判断是否应该切分一个 part。
+    /// 当 `sample_dts_ms` 与当前 part 第一个 sample 的差值达到目标时长时触发切分。
     pub fn should_cut_part(&self, sample_dts_ms: u64) -> bool {
         let Some(start) = self.current_part_start_dts_ms else {
             return false;
@@ -126,6 +187,12 @@ impl LowLatencyState {
     }
 
     /// Mark that a new sample is being accumulated for the current part.
+    ///
+    /// The first sample of a part determines independence: `INDEPENDENT=YES` is
+    /// only set when the first sample is a keyframe (per Apple LLHLS spec).
+    ///
+    /// 标记新 sample 被累积到当前 part。
+    /// part 的第一个 sample 决定独立性：仅当第一个 sample 为关键帧时设置 `INDEPENDENT=YES`（遵循 Apple LLHLS 规范）。
     pub fn note_sample(&mut self, dts_ms: u64, is_keyframe: bool) {
         if self.current_part_start_dts_ms.is_none() {
             self.current_part_start_dts_ms = Some(dts_ms);
@@ -138,6 +205,12 @@ impl LowLatencyState {
     }
 
     /// Finalize the current part with the given fMP4 data. Returns the completed part.
+    ///
+    /// Assigns the next global part sequence number, archives the part in the current
+    /// segment list, and resets the accumulation state.
+    ///
+    /// 使用给定的 fMP4 数据完成当前 part。返回已完成的 part。
+    /// 分配下一个全局 part 序列号，将 part 归档到当前分段列表，并重置累积状态。
     pub fn finalize_part(&mut self, data: Bytes, duration_secs: f64) -> HlsPart {
         let seq = self.part_seq;
         self.part_seq += 1;
@@ -158,6 +231,12 @@ impl LowLatencyState {
     }
 
     /// Called when a segment boundary is reached. Archives current parts and resets.
+    ///
+    /// If the current segment has produced parts, they are moved into the completed
+    /// ring. The oldest entry is dropped when the archive limit is exceeded.
+    ///
+    /// 分段边界到达时调用。归档当前 parts 并重置状态。
+    /// 若当前分段已生成 parts，则将其移入完成环形缓冲；超过归档上限时丢弃最旧条目。
     pub fn on_segment_boundary(&mut self, new_segment_seq: u64) {
         if !self.current_parts.is_empty() {
             let archived = SegmentParts {
@@ -175,6 +254,11 @@ impl LowLatencyState {
     }
 
     /// Get a part by its global sequence number.
+    ///
+    /// Searches the current in-progress segment first, then completed segments.
+    ///
+    /// 按全局序列号查找 part。
+    /// 先搜索当前进行中的分段，再搜索已完成分段。
     pub fn get_part(&self, part_seq: u64) -> Option<&HlsPart> {
         // Search current parts
         if let Some(p) = self.current_parts.iter().find(|p| p.sequence == part_seq) {
@@ -190,31 +274,47 @@ impl LowLatencyState {
     }
 
     /// Current parts for the active (in-progress) segment.
+    ///
+    /// 当前活动（进行中）分段的 parts。
     pub fn current_parts(&self) -> &[HlsPart] {
         &self.current_parts
     }
 
     /// Archived segment parts (completed segments).
+    ///
+    /// 已归档的分段 parts（已完成分段）。
     pub fn completed_segments_parts(&self) -> &VecDeque<SegmentParts> {
         &self.completed_segments_parts
     }
 
     /// Part target duration in seconds.
+    ///
+    /// part 目标时长（秒）。
     pub fn part_target(&self) -> f64 {
         self.part_target_secs
     }
 
     /// Current parent segment sequence.
+    ///
+    /// 当前父分段序列号。
     pub fn parent_segment_seq(&self) -> u64 {
         self.parent_segment_seq
     }
 
     /// Global part sequence (next part will get this number).
+    ///
+    /// 全局 part 序列号（下一个 part 将使用此编号）。
     pub fn next_part_seq(&self) -> u64 {
         self.part_seq
     }
 
-    /// Generate LL-HLS playlist header tags (SERVER-CONTROL + PART-INF).
+    /// Generate LL-HLS playlist header tags (`SERVER-CONTROL` + `PART-INF`).
+    ///
+    /// `PART-HOLD-BACK` is set to three times the part target to hint the player
+    /// how far behind the live edge it should stay.
+    ///
+    /// 生成 LL-HLS 播放列表头部标签（`SERVER-CONTROL` + `PART-INF`）。
+    /// `PART-HOLD-BACK` 设置为 part 目标时长的三倍，提示播放器应距离直播边缘多远。
     pub fn playlist_header_tags(&self) -> String {
         let part_hold_back = self.part_target_secs * 3.0;
         format!(
@@ -224,7 +324,9 @@ impl LowLatencyState {
         )
     }
 
-    /// Generate EXT-X-PART tags for a given list of parts.
+    /// Generate `#EXT-X-PART` tags for a given list of parts.
+    ///
+    /// 为给定的 part 列表生成 `#EXT-X-PART` 标签。
     pub fn format_part_tags(parts: &[HlsPart], prefix: &str) -> String {
         let mut out = String::new();
         for part in parts {
@@ -240,12 +342,16 @@ impl LowLatencyState {
         out
     }
 
-    /// Generate EXT-X-PART tags for current (in-progress) segment parts.
+    /// Generate `#EXT-X-PART` tags for current (in-progress) segment parts.
+    ///
+    /// 为当前（进行中）分段 parts 生成 `#EXT-X-PART` 标签。
     pub fn part_tags(&self, prefix: &str) -> String {
         Self::format_part_tags(&self.current_parts, prefix)
     }
 
-    /// Generate EXT-X-PRELOAD-HINT tag for the next expected part.
+    /// Generate `#EXT-X-PRELOAD-HINT` tag for the next expected part.
+    ///
+    /// 生成下一个预期 part 的 `#EXT-X-PRELOAD-HINT` 标签。
     pub fn preload_hint_tag(&self, prefix: &str) -> String {
         format!(
             "#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"{prefix}part_{}.m4s\"\n",
@@ -254,11 +360,15 @@ impl LowLatencyState {
     }
 
     /// Set rendition reports (other tracks' state for ABR).
+    ///
+    /// 设置 rendition 报告（其他轨道状态，用于 ABR）。
     pub fn set_rendition_reports(&mut self, reports: Vec<RenditionReport>) {
         self.rendition_reports = reports;
     }
 
-    /// Generate EXT-X-RENDITION-REPORT tags for all other renditions.
+    /// Generate `#EXT-X-RENDITION-REPORT` tags for all other renditions.
+    ///
+    /// 为所有其他 rendition 生成 `#EXT-X-RENDITION-REPORT` 标签。
     pub fn rendition_report_tags(&self) -> String {
         let mut out = String::new();
         for r in &self.rendition_reports {
