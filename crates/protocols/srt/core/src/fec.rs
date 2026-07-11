@@ -54,7 +54,10 @@ pub fn fec_group_id(seq: u32, cols: u32, rows: u32) -> u32 {
     if cols == 0 || rows == 0 {
         return 0;
     }
-    seq / (cols * rows)
+    // Use `u64` for the multiplication so that large `cols`/`rows` cannot
+    // overflow `u32`; `seq` fits in `u32`, so the result fits in `u32`.
+    let block = u64::from(cols) * u64::from(rows);
+    (u64::from(seq) / block) as u32
 }
 
 #[cfg(test)]
@@ -137,5 +140,12 @@ mod tests {
         assert_eq!(fec_group_id(7, 0, 5), 0);
         assert_eq!(fec_group_id(7, 10, 0), 0);
         assert_eq!(fec_group_id(7, 0, 0), 0);
+    }
+
+    #[test]
+    fn fec_group_id_large_dimensions_does_not_overflow() {
+        // 100_000 * 100_000 = 10_000_000_000, which exceeds `u32::MAX`.
+        assert_eq!(fec_group_id(100, 100_000, 100_000), 0);
+        assert_eq!(fec_group_id(u32::MAX, 100_000, 100_000), 0);
     }
 }
