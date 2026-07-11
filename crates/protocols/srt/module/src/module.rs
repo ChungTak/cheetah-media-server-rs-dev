@@ -302,7 +302,10 @@ async fn handle_driver_event(
             stream_id,
             peer_version,
         } => {
-            info!(peer_id = peer_id.0, %remote, ?stream_id, "SRT peer connected");
+            info!(peer_id = peer_id.0, %remote, peer_version = ?peer_version, "SRT peer connected");
+            // Log the raw stream id at debug level only; it may contain secrets such
+            // as `token=...`.
+            debug!(peer_id = peer_id.0, ?stream_id, "SRT peer stream id");
             // The underlying driver does not expose a packet-filter / FEC API as of
             // shiguredo_srt = "=2026.1.0-canary.1"; when FEC is required, reject the
             // connection immediately.

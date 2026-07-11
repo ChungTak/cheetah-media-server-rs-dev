@@ -106,6 +106,19 @@ fn bare_ok_when_allowed() {
 }
 
 #[test]
+fn strict_prefix_false_allows_bare() {
+    let opts = StreamIdParseOptions {
+        strict_prefix: false,
+        allow_bare_key: false,
+        ..Default::default()
+    };
+    let parsed = parse_srt_stream_id_with_options("live/test", &opts).unwrap();
+    assert_eq!(parsed.app, "live");
+    assert_eq!(parsed.stream, "test");
+    assert_eq!(parsed.mode, None);
+}
+
+#[test]
 fn percent_encoded_r_parses() {
     let parsed = parse_srt_stream_id("#!::r=live%2Ftest,m=play").unwrap();
     assert_eq!(parsed.app, "live");

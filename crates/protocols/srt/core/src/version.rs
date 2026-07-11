@@ -23,6 +23,11 @@ pub fn parse_srt_version(s: &str) -> SrtCoreResult<u32> {
     let major = parse_version_component(parts[0], "major", s)?;
     let minor = parse_version_component(parts[1], "minor", s)?;
     let patch = parse_version_component(parts[2], "patch", s)?;
+    if major > 255 || minor > 255 || patch > 255 {
+        return Err(SrtCoreError::InvalidConfig(format!(
+            "SRT version components must be 0-255: `{s}`"
+        )));
+    }
     Ok((major << 16) | (minor << 8) | patch)
 }
 
@@ -85,5 +90,13 @@ mod tests {
         assert!(parse_srt_version("1.3.0.0").is_err());
         assert!(parse_srt_version("1.a.0").is_err());
         assert!(parse_srt_version("").is_err());
+    }
+
+    #[test]
+    fn overflow_component_rejected() {
+        assert!(parse_srt_version("256.0.0").is_err());
+        assert!(parse_srt_version("0.256.0").is_err());
+        assert!(parse_srt_version("0.0.256").is_err());
+        assert!(parse_srt_version("65536.0.0").is_err());
     }
 }

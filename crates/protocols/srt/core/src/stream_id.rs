@@ -71,7 +71,7 @@ pub fn parse_srt_stream_id_with_options(
 
     if let Some(body) = input.strip_prefix("#!::") {
         parse_access_control_body(body, opts)
-    } else if opts.allow_bare_key {
+    } else if opts.allow_bare_key || !opts.strict_prefix {
         parse_bare_stream_key(input, opts)
     } else {
         Err(SrtCoreError::InvalidStreamId(
