@@ -12,12 +12,18 @@ use parking_lot::RwLock;
 use serde_json::{Map, Value};
 
 #[derive(Clone)]
+/// Registered schema metadata and an optional validator closure.
+///
+/// 已注册的 schema 元数据与可选的校验器闭包。
 struct SchemaEntry {
     schema_name: String,
     validator: Option<ConfigValidator>,
 }
 
 #[derive(Default)]
+/// Layered configuration state: default, file, env, and runtime patches.
+///
+/// 分层配置状态：默认值、文件、环境变量与运行时补丁。
 struct ConfigState {
     version: u64,
     global_default: Value,
@@ -32,6 +38,9 @@ struct ConfigState {
     module_schemas: HashMap<ModuleId, SchemaEntry>,
 }
 
+/// In-memory configuration store with layered precedence and schema validation.
+///
+/// 内存配置存储，支持分层优先级与 schema 校验。
 #[derive(Default)]
 pub struct ConfigStore {
     inner: RwLock<ConfigState>,
@@ -39,14 +48,23 @@ pub struct ConfigStore {
 }
 
 impl ConfigStore {
+    /// Create a new empty config store.
+    ///
+    /// 创建新的空配置存储。
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Attach the event bus used for config change notifications.
+    ///
+    /// 附加用于配置变更通知的事件总线。
     pub fn set_event_bus(&self, event_bus: Arc<dyn EventBus>) {
         *self.event_bus.write() = Some(event_bus);
     }
 
+    /// Publish a config event to the event bus if configured.
+    ///
+    /// 若已配置，则向事件总线发布配置事件。
     fn publish_config_event(
         &self,
         scope: String,
@@ -64,18 +82,27 @@ impl ConfigStore {
         }
     }
 
+    /// Register the default config object for a module.
+    ///
+    /// 注册模块的默认配置对象。
     pub fn register_module_default(&self, module_id: ModuleId, value: Value) {
         let mut state = self.inner.write();
         state.module_default.insert(module_id, value);
         state.version += 1;
     }
 
+    /// Set the global default config object.
+    ///
+    /// 设置全局默认配置对象。
     pub fn set_global_default(&self, value: Value) {
         let mut state = self.inner.write();
         state.global_default = value;
         state.version += 1;
     }
 
+    /// Parse a YAML string and load the `global` and `modules` sections.
+    ///
+    /// 解析 YAML 字符串并加载 `global` 与 `modules` 节。
     pub fn load_yaml_str(&self, yaml: &str) -> Result<(), SdkError> {
         let parsed: Value = serde_yaml::from_str(yaml)
             .map_err(|e| SdkError::InvalidArgument(format!("yaml parse error: {e}")))?;
@@ -96,6 +123,9 @@ impl ConfigStore {
         Ok(())
     }
 
+    /// Load environment variables matching `<prefix>GLOBAL__*` and `<prefix>MODULE__<module>__*`.
+    ///
+    /// 加载匹配 `<prefix>GLOBAL__*` 与 `<prefix>MODULE__<module>__*` 的环境变量。
     pub fn load_env(&self, prefix: &str) {
         let mut state = self.inner.write();
         let global_prefix = format!("{prefix}GLOBAL__");
@@ -126,6 +156,9 @@ impl ConfigStore {
         state.version += 1;
     }
 
+    /// Compute the effective global value by merging default, file, env, and runtime layers.
+    ///
+    /// 通过合并 default、file、env 与 runtime 层计算最终全局值。
     fn effective_global(state: &ConfigState) -> Value {
         let mut out = state.global_default.clone();
         merge_value(&mut out, state.global_file.clone());
@@ -134,6 +167,9 @@ impl ConfigStore {
         out
     }
 
+    /// Compute the effective module value by merging default, file, env, and runtime layers.
+    ///
+    /// 通过合并 default、file、env 与 runtime 层计算最终模块值。
     fn effective_module(state: &ConfigState, module_id: &ModuleId) -> Value {
         let mut out = state
             .module_default
@@ -153,6 +189,9 @@ impl ConfigStore {
         out
     }
 
+    /// Collect all module IDs that have a default, file, env, runtime, or schema entry.
+    ///
+    /// 收集所有在 default、file、env、runtime 或 schema 中有条目的模块 ID。
     fn module_ids(state: &ConfigState) -> Vec<ModuleId> {
         let mut out = BTreeSet::new();
         for id in state.module_default.keys() {
@@ -173,6 +212,9 @@ impl ConfigStore {
         out.into_iter().collect()
     }
 
+    /// Run the global schema validator against the proposed value.
+    ///
+    /// 用全局 schema 校验器校验候选值。
     fn validate_global(state: &ConfigState, value: &Value) -> Result<(), SdkError> {
         if let Some(schema) = &state.global_schema {
             if let Some(validator) = &schema.validator {
@@ -182,6 +224,9 @@ impl ConfigStore {
         Ok(())
     }
 
+    /// Run a module schema validator against the proposed value.
+    ///
+    /// 用模块 schema 校验器校验候选值。
     fn validate_module(
         state: &ConfigState,
         module_id: &ModuleId,
@@ -196,6 +241,9 @@ impl ConfigStore {
     }
 }
 
+/// `ConfigProvider` implementation: expose effective global and module values.
+///
+/// `ConfigProvider` 实现：暴露最终全局与模块值。
 impl ConfigProvider for ConfigStore {
     fn global(&self) -> Value {
         let state = self.inner.read();
@@ -212,6 +260,9 @@ impl ConfigProvider for ConfigStore {
     }
 }
 
+/// `ConfigSchemaRegistry` implementation: register schemas and defaults.
+///
+/// `ConfigSchemaRegistry` 实现：注册 schema 与默认值。
 impl ConfigSchemaRegistry for ConfigStore {
     fn register_global_schema(
         &self,
@@ -270,7 +321,13 @@ impl ConfigSchemaRegistry for ConfigStore {
     }
 }
 
+/// `ConfigApplyApi` implementation: apply patches with validation and rollback tokens.
+///
+/// `ConfigApplyApi` 实现：在校验后应用补丁并生成回滚 token。
 impl ConfigApplyApi for ConfigStore {
+    /// Apply a global runtime patch and emit per-module config changes.
+    ///
+    /// 应用全局运行时补丁，并为每个模块生成配置变更。
     fn apply_global_patch(
         &self,
         patch: Value,
@@ -341,6 +398,9 @@ impl ConfigApplyApi for ConfigStore {
         })
     }
 
+    /// Apply a module runtime patch and emit the resulting config change.
+    ///
+    /// 应用模块运行时补丁并生成对应的配置变更。
     fn apply_module_patch(
         &self,
         module_id: &ModuleId,
@@ -398,6 +458,9 @@ impl ConfigApplyApi for ConfigStore {
         })
     }
 
+    /// Restore runtime values from a rollback token.
+    ///
+    /// 用回滚 token 恢复运行时值。
     fn rollback(&self, token: ConfigRollbackToken) -> Result<(), SdkError> {
         let mut state = self.inner.write();
         if let Some(previous_global_runtime) = token.previous_global_runtime {
@@ -421,6 +484,9 @@ impl ConfigApplyApi for ConfigStore {
     }
 }
 
+/// `ConfigAdminApi` implementation: administrative entry points for config patches.
+///
+/// `ConfigAdminApi` 实现：配置补丁的管理入口。
 impl ConfigAdminApi for ConfigStore {
     fn patch_global(
         &self,
@@ -448,6 +514,9 @@ impl ConfigAdminApi for ConfigStore {
     }
 }
 
+/// Deep-merge `patch` into `base`; objects are merged recursively, other values are replaced.
+///
+/// 将 `patch` 深度合并到 `base`；对象递归合并，其他值直接替换。
 fn merge_value(base: &mut Value, patch: Value) {
     match (base, patch) {
         (_, Value::Null) => {}
@@ -466,6 +535,9 @@ fn merge_value(base: &mut Value, patch: Value) {
     }
 }
 
+/// Convert an environment variable string into a JSON bool/number/string value.
+///
+/// 将环境变量字符串转换为 JSON 布尔/数字/字符串值。
 fn env_value_to_json(input: &str) -> Value {
     if input.eq_ignore_ascii_case("true") {
         return Value::Bool(true);
@@ -484,6 +556,9 @@ fn env_value_to_json(input: &str) -> Value {
     Value::String(input.to_string())
 }
 
+/// Split a `__`-separated path and normalize each segment to lowercase ASCII.
+///
+/// 按 `__` 拆分路径并将每段规范化为小写 ASCII。
 fn parse_path(path: &str) -> Vec<String> {
     path.split("__")
         .filter(|s| !s.is_empty())
@@ -491,6 +566,9 @@ fn parse_path(path: &str) -> Vec<String> {
         .collect()
 }
 
+/// Insert a value into a nested JSON object by a path of keys, creating objects as needed.
+///
+/// 按路径将值插入嵌套 JSON 对象，必要时创建中间对象。
 fn insert_path(root: &mut Value, path: &[String], value: Value) {
     if path.is_empty() {
         *root = value;
