@@ -177,9 +177,14 @@ pub async fn open_webrtc_push(
     };
     let allow_private_ips = extras.allow_private_ips.unwrap_or(allow_private_ips);
 
-    let mut config = *extras.driver_config.unwrap_or_default();
-    config.listen_udp = SocketAddr::from(([127, 0, 0, 1], 0));
-    config.public_ips = vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))];
+    let config = match extras.driver_config {
+        Some(cfg) => *cfg,
+        None => cheetah_webrtc_driver_tokio::WebRtcDriverConfig {
+            listen_udp: SocketAddr::from(([127, 0, 0, 1], 0)),
+            public_ips: vec![IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))],
+            ..Default::default()
+        },
+    };
 
     let driver =
         spawn_driver(config, cancel.clone())
