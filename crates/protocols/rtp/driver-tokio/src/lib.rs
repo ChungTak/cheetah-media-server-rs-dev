@@ -1,3 +1,7 @@
+//! Tokio-based RTP/RTCP driver.
+//!
+//! 基于 Tokio 的 RTP/RTCP 驱动。
+
 use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -14,6 +18,9 @@ use cheetah_rtp_core::{
 };
 use cheetah_runtime_api::CancellationToken;
 
+/// Configuration for the Tokio RTP driver.
+///
+/// Tokio RTP 驱动配置。
 #[derive(Debug, Clone)]
 pub struct RtpDriverConfig {
     pub listen_udp: SocketAddr,
@@ -21,6 +28,8 @@ pub struct RtpDriverConfig {
     /// Optional separate RTCP listening UDP socket (`rtcpPort` config). When `None`, RTCP is
     /// expected to flow on the same UDP socket as RTP and gets routed by the core based on
     /// payload type.
+    ///
+    /// 可选的独立 RTCP UDP 监听端口。为 `None` 时，RTCP 与 RTP 共用同一 UDP 套接字，由 core 根据负载类型路由。
     pub listen_rtcp_udp: Option<SocketAddr>,
     pub write_queue_capacity: usize,
     pub read_buffer_size: usize,
@@ -29,11 +38,18 @@ pub struct RtpDriverConfig {
     /// Default TCP framing applied by the core when deframing inbound TCP RTP traffic. Defaults
     /// to `AutoDetect` so we accept both 2-byte length prefixes and 4-byte interleaved frames
     /// without explicit per-session negotiation.
+    ///
+    /// TCP 入站 RTP 分帧模式，默认 `AutoDetect`，支持 2 字节长度前缀与 4 字节交错帧自动识别。
     pub tcp_framing: cheetah_rtp_core::RtpTcpFraming,
     /// Hard upper bound on the dynamic `nMaxRtpLength` learner (defaults to 65 536 bytes).
+    ///
+    /// 动态 `nMaxRtpLength` 学习器的硬上限（默认 65536 字节）。
     pub max_rtp_len_cap: usize,
 }
 
+/// Default values for `RtpDriverConfig`.
+///
+/// `RtpDriverConfig` 默认值。
 impl Default for RtpDriverConfig {
     fn default() -> Self {
         Self {
@@ -50,6 +66,9 @@ impl Default for RtpDriverConfig {
     }
 }
 
+/// Commands sent to the RTP driver loop.
+///
+/// 发送给 RTP 驱动循环的命令。
 #[derive(Debug, Clone)]
 pub enum RtpDriverCommand {
     CreateServer(RtpServerSpec),
@@ -58,21 +77,36 @@ pub enum RtpDriverCommand {
     StopSession(String),
 }
 
+/// Handle to the running RTP driver.
+///
+/// 运行中 RTP 驱动的句柄。
 pub struct RtpDriverHandle {
     cmd_tx: mpsc::Sender<RtpDriverCommand>,
     event_rx: Mutex<mpsc::Receiver<RtpCoreEvent>>,
 }
 
+/// `RtpDriverHandle` API.
+///
+/// `RtpDriverHandle` API。
 impl RtpDriverHandle {
+    /// Send a command to the driver loop.
+    ///
+    /// 向驱动循环发送命令。
     pub async fn send_command(&self, cmd: RtpDriverCommand) {
         let _ = self.cmd_tx.send(cmd).await;
     }
 
+    /// Receive the next event from the driver loop.
+    ///
+    /// 从驱动循环接收下一个事件。
     pub async fn recv_event(&self) -> Option<RtpCoreEvent> {
         self.event_rx.lock().await.recv().await
     }
 }
 
+/// Start the Tokio RTP driver and return a handle.
+///
+/// 启动 Tokio RTP 驱动并返回句柄。
 pub fn start_driver(config: RtpDriverConfig, cancel: CancellationToken) -> RtpDriverHandle {
     let (cmd_tx, cmd_rx) = mpsc::channel(256);
     let (event_tx, event_rx) = mpsc::channel(256);
@@ -85,6 +119,9 @@ pub fn start_driver(config: RtpDriverConfig, cancel: CancellationToken) -> RtpDr
     }
 }
 
+/// Main Tokio driver loop: bind sockets, spawn I/O tasks, and dispatch core I/O.
+///
+/// 主 Tokio 驱动循环：绑定套接字、生成 I/O 任务并调度 core 的输入/输出。
 async fn run_driver_loop(
     config: RtpDriverConfig,
     cmd_rx: mpsc::Receiver<RtpDriverCommand>,
