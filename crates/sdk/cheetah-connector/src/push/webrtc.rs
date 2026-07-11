@@ -116,16 +116,15 @@ impl WebRtcPublisherSink {
 
 impl PublisherSink for WebRtcPublisherSink {
     fn update_tracks(&self, tracks: Vec<TrackInfo>) -> Result<(), SdkError> {
-        {
+        let cloned = {
             let mut guard = self.state.lock();
             if guard.closed {
                 return Err(SdkError::Internal("webrtc push sink closed".to_string()));
             }
             guard.tracks = tracks;
-        }
-        self.send_command(WebRtcSinkCommand::UpdateTracks(
-            self.state.lock().tracks.clone(),
-        ))
+            guard.tracks.clone()
+        };
+        self.send_command(WebRtcSinkCommand::UpdateTracks(cloned))
     }
 
     fn push_frame(&self, frame: Arc<AVFrame>) -> Result<DispatchResult, SdkError> {
