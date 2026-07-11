@@ -39,6 +39,7 @@ pub mod p2p;
 pub mod p2p_jobs;
 pub mod play_disconnect;
 pub mod session;
+pub mod testing;
 
 /// Re-export of the WHIP/WHEP HTTP client, which now lives in the
 /// driver layer (`cheetah-webrtc-driver-tokio`) since it owns TCP/TLS

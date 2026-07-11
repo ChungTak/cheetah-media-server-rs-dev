@@ -53,6 +53,7 @@ members = [
   "crates/runtime/cheetah-runtime-tokio",
   "crates/sdk/cheetah-sdk",
   "crates/sdk/cheetah-sdk-macros",
+  "crates/sdk/cheetah-connector",
   "crates/system/cheetah-config",
   "crates/system/cheetah-control",
   "crates/system/cheetah-engine",

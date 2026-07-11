@@ -1,0 +1,47 @@
+[package]
+name = "cheetah-connector"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "High-level protocol connector facade for external Cheetah integrators"
+
+[features]
+default = []
+# Protocol gating
+rtsp = ["dep:cheetah-rtsp-module", "dep:cheetah-rtsp-driver-tokio"]
+http-flv = ["dep:cheetah-http-flv-module"]
+rtmp = ["dep:cheetah-rtmp-module", "dep:cheetah-rtmp-driver-tokio", "dep:cheetah-rtmp-core"]
+webrtc = ["dep:cheetah-webrtc-module", "dep:cheetah-webrtc-driver-tokio"]
+# In-memory loopback harness
+loopback = ["rtmp", "http-flv"]
+# One-shot enable all directions + loopback
+full = ["rtsp", "http-flv", "rtmp", "webrtc", "loopback"]
+
+[dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+futures.workspace = true
+parking_lot.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+cheetah-sdk = { path = "../cheetah-sdk" }
+cheetah-codec = { path = "../../foundation/cheetah-codec" }
+cheetah-engine = { path = "../../system/cheetah-engine" }
+cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
+cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
+cheetah-config = { path = "../../system/cheetah-config" }
+
+cheetah-rtmp-module = { path = "../../protocols/rtmp/module", optional = true }
+cheetah-rtmp-driver-tokio = { path = "../../protocols/rtmp/driver-tokio", optional = true }
+cheetah-rtmp-core = { path = "../../protocols/rtmp/core", optional = true }
+cheetah-rtsp-module = { path = "../../protocols/rtsp/module", optional = true }
+cheetah-rtsp-driver-tokio = { path = "../../protocols/rtsp/driver-tokio", optional = true }
+cheetah-http-flv-module = { path = "../../protocols/http-flv/module", optional = true }
+cheetah-webrtc-module = { path = "../../protocols/webrtc/module", optional = true }
+cheetah-webrtc-driver-tokio = { path = "../../protocols/webrtc/driver-tokio", optional = true }
+
+[dev-dependencies]
+cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time", "test-util"] }

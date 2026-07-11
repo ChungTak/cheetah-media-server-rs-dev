@@ -83,6 +83,8 @@ pub enum HttpFlvPullError {
     Cancelled,
     #[error("flv demux failed: {0}")]
     FlvDemux(FlvStreamError),
+    #[error("flv ingress failed: {0}")]
+    Ingress(String),
 }
 
 impl HttpFlvPullError {
@@ -90,7 +92,7 @@ impl HttpFlvPullError {
     /// be retried, and `false` for fatal configuration errors.
     ///
     /// 返回 `true` 表示该错误是应重试的瞬时失败，`false` 表示是致命的配置错误。
-    fn retryable(&self) -> bool {
+    pub fn retryable(&self) -> bool {
         !matches!(
             self,
             Self::InvalidUrl(_) | Self::UnsupportedScheme { .. } | Self::InvalidWebSocketAccept
@@ -1254,3 +1256,5 @@ Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n",
         assert_eq!(parsed.path_and_query, "/?type=enhanced&token=abc");
     }
 }
+
+pub mod streaming;
