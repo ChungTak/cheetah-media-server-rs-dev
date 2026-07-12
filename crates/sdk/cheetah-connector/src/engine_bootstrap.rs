@@ -230,10 +230,17 @@ pub(crate) fn validate_capability(
     options: Option<&ConnectorPullOptions>,
 ) -> Result<(), ConnectorError> {
     if !supports(protocol, direction) {
-        return Err(ConnectorError::UnsupportedProtocol {
-            protocol,
-            direction,
-        });
+        return if feature_disabled_for(protocol, direction) {
+            Err(ConnectorError::FeatureDisabled {
+                protocol,
+                feature: feature_name_for(protocol),
+            })
+        } else {
+            Err(ConnectorError::UnsupportedProtocol {
+                protocol,
+                direction,
+            })
+        };
     }
 
     if let Some(opts) = options {
@@ -245,6 +252,25 @@ pub(crate) fn validate_capability(
     }
 
     Ok(())
+}
+
+fn feature_disabled_for(protocol: Protocol, direction: Direction) -> bool {
+    match (protocol, direction) {
+        (Protocol::WebRtc, Direction::Push) => !cfg!(feature = "webrtc"),
+        (Protocol::Rtsp, Direction::Pull) => !cfg!(feature = "rtsp"),
+        (Protocol::Rtmp, Direction::Push) => !cfg!(feature = "rtmp"),
+        (Protocol::HttpFlv, Direction::Pull) => !cfg!(feature = "http-flv"),
+        _ => false,
+    }
+}
+
+fn feature_name_for(protocol: Protocol) -> &'static str {
+    match protocol {
+        Protocol::WebRtc => "webrtc",
+        Protocol::Rtsp => "rtsp",
+        Protocol::Rtmp => "rtmp",
+        Protocol::HttpFlv => "http-flv",
+    }
 }
 
 mod bootstrap {

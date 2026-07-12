@@ -1380,14 +1380,15 @@ impl WebRtcCore {
                         session_id,
                         state: mapped,
                     }));
-                if matches!(mapped, WebRtcIceState::Connected) {
-                    self.pending_outputs.push_back(WebRtcCoreOutput::Event(
-                        WebRtcCoreEvent::Lifecycle {
-                            session_id,
-                            state: WebRtcSessionLifecycle::Connected,
-                        },
-                    ));
-                }
+                // Only `Str0mEvent::Connected` (after DTLS/SRTP is up) emits
+                // `Lifecycle::Connected` so that callers like `open_webrtc_push`
+                // can rely on `Lifecycle::Connected` as "ready to send media".
+                // ICE `Connected` is still surfaced via the `Ice` event.
+                //
+                // 只有 `Str0mEvent::Connected`（DTLS/SRTP 就绪后）才发出
+                // `Lifecycle::Connected`，以便 `open_webrtc_push` 等调用方
+                // 可以依赖 `Lifecycle::Connected` 作为“可发送媒体”。
+                // ICE `Connected` 仍通过 `Ice` 事件暴露。
             }
             Str0mEvent::Connected => {
                 if let Some(session) = self.sessions.get_mut(&session_id) {

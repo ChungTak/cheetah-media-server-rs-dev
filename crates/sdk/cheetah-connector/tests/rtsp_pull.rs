@@ -225,7 +225,7 @@ async fn t_rtsp_07_supports_consistency() {
     assert!(supports(Protocol::Rtmp, Direction::Push));
     assert!(!supports(Protocol::Rtmp, Direction::Pull));
     assert!(!supports(Protocol::WebRtc, Direction::Pull));
-    assert!(!supports(Protocol::WebRtc, Direction::Push));
+    assert!(supports(Protocol::WebRtc, Direction::Push));
     assert!(!supports(Protocol::HttpFlv, Direction::Push));
 }
 
