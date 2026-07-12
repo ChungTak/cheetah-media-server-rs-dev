@@ -5,7 +5,11 @@ use cheetah_runtime_tokio::TokioRuntime;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn supports_matrix_reflects_wired_adapters() {
-    assert!(!supports(Protocol::Rtsp, Direction::Pull));
+    if cfg!(feature = "rtsp") {
+        assert!(supports(Protocol::Rtsp, Direction::Pull));
+    } else {
+        assert!(!supports(Protocol::Rtsp, Direction::Pull));
+    }
     assert!(supports(Protocol::HttpFlv, Direction::Pull));
     assert!(supports(Protocol::Rtmp, Direction::Push));
     assert!(!supports(Protocol::WebRtc, Direction::Push));
@@ -45,6 +49,7 @@ async fn open_pull_rtmp_returns_unsupported_protocol() {
     connector.stop().await;
 }
 
+#[cfg(not(feature = "rtsp"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn open_pull_rtsp_returns_unsupported_protocol() {
     let runtime = Arc::new(TokioRuntime::new()) as Arc<dyn cheetah_runtime_api::RuntimeApi>;

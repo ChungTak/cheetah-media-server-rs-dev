@@ -139,7 +139,28 @@ impl ConnectorBuilder {
             (Some(p), Some(a)) if Arc::ptr_eq(&p, &a) => Some(p),
             (Some(p), None) => Some(p),
             (None, Some(a)) => Some(a),
-            (None, None) => Some(Arc::new(ConfigStore::new())),
+            (None, None) => {
+                let store = Arc::new(ConfigStore::new());
+                // The connector is an SDK facade, not a server. Disable the RTSP and
+                // WebRTC listen servers by default (they are not required for the
+                // high-level pull/push APIs and bind well-known ports). Keep RTMP and
+                // HTTP-FLV enabled on loopback with an OS-assigned port so in-memory
+                // loopback and service-registry discovery work without fixed-port conflicts.
+                let yaml = r"modules:
+  rtmp:
+    enabled: true
+    listen: 127.0.0.1:0
+  http-flv:
+    enabled: true
+    listen: 127.0.0.1:0
+  rtsp:
+    enabled: false
+  webrtc:
+    enabled: false
+";
+                let _ = store.load_yaml_str(yaml);
+                Some(store)
+            }
             _ => None,
         };
 
