@@ -208,9 +208,11 @@ impl MediaControlApi for StreamMediaProvider {
                     }
                 }
                 if let Some(ref schema) = query.schema {
-                    if let Ok(schema) = MediaSchema::parse(schema) {
-                        if key.schema != Some(schema) {
-                            return false;
+                    if let Ok(parsed) = MediaSchema::parse(schema) {
+                        if let Some(ref key_schema) = key.schema {
+                            if *key_schema != parsed {
+                                return false;
+                            }
                         }
                     }
                 }
@@ -672,6 +674,7 @@ impl EngineMediaFacade {
     /// 设置录制 provider。
     pub fn with_record(mut self, record: Arc<dyn RecordApi>) -> Self {
         self.record = record;
+        self.capabilities.remove(MediaCapability::Record);
         self.capabilities.add(MediaCapability::Record, 1);
         self
     }
@@ -681,6 +684,7 @@ impl EngineMediaFacade {
     /// 设置快照 provider。
     pub fn with_snapshot(mut self, snapshot: Arc<dyn SnapshotApi>) -> Self {
         self.snapshot = snapshot;
+        self.capabilities.remove(MediaCapability::Snapshot);
         self.capabilities.add(MediaCapability::Snapshot, 1);
         self
     }
@@ -690,6 +694,7 @@ impl EngineMediaFacade {
     /// 设置代理 provider。
     pub fn with_proxy(mut self, proxy: Arc<dyn cheetah_media_api::port::ProxyApi>) -> Self {
         self.proxy = proxy;
+        self.capabilities.remove(MediaCapability::Proxy);
         self.capabilities.add(MediaCapability::Proxy, 1);
         self
     }
@@ -699,6 +704,7 @@ impl EngineMediaFacade {
     /// 设置 RTP provider。
     pub fn with_rtp(mut self, rtp: Arc<dyn RtpApi>) -> Self {
         self.rtp = rtp;
+        self.capabilities.remove(MediaCapability::Rtp);
         self.capabilities.add(MediaCapability::Rtp, 1);
         self
     }

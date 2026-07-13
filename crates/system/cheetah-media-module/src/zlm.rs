@@ -194,7 +194,7 @@ impl ZlmMediaHttpService {
 
     async fn get_media_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body)?;
+        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
         let query = MediaQuery {
             vhost: body["vhost"].as_str().map(String::from),
             app: body["app"].as_str().map(String::from),
@@ -208,7 +208,7 @@ impl ZlmMediaHttpService {
 
     async fn is_media_online(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body)?;
+        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
         let key = self.parse_media_key(&body)?;
         let online = self.control()?.is_media_online(&ctx, &key).await?;
         Ok(zlm_response(
@@ -220,7 +220,7 @@ impl ZlmMediaHttpService {
 
     async fn get_media_info(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body)?;
+        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
         let key = self.parse_media_key(&body)?;
         let info = self.control()?.get_media(&ctx, &key).await?;
         Ok(zlm_response(0, "success", info))
@@ -328,7 +328,7 @@ impl ZlmMediaHttpService {
             ))
         })?;
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body)?;
+        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
         let key = self.parse_media_key(&body)?;
         let format = body["type"].as_str().unwrap_or("mp4");
         let query = cheetah_media_api::command::RecordTaskQuery {
@@ -359,7 +359,7 @@ impl ZlmMediaHttpService {
             ))
         })?;
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body)?;
+        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
         let key = self.parse_media_key(&body)?;
         let query = cheetah_media_api::command::RecordFileQuery {
             app: Some(key.app.0.clone()),
