@@ -562,7 +562,7 @@ impl ZlmMediaHttpService {
         let quality = params["quality"]
             .as_u64()
             .or_else(|| params["scale"].as_u64())
-            .map(|v| v as u8);
+            .map(|v| v.min(100) as u8);
         let request = SnapshotRequest {
             media_key: key,
             timeout_ms,
@@ -650,26 +650,26 @@ impl ModuleHttpService for ZlmMediaHttpService {
 }
 
 fn zlm_record_format(value: &serde_json::Value) -> Result<String, AdapterError> {
+    if value.is_null() {
+        return Ok("mp4".to_string());
+    }
     if let Some(num) = value.as_u64() {
         let format = match num {
             0 => "mp4",
             1 => "hls",
             2 => "hls",
             3 => "fmp4",
-            _ => {
-                return Err(AdapterError::InvalidRequest(format!(
-                    "unsupported record type {num}"
-                )))
-            }
+            _ => "mp4",
         };
         return Ok(format.to_string());
     }
     if let Some(s) = value.as_str() {
+        if s.trim().is_empty() {
+            return Ok("mp4".to_string());
+        }
         return Ok(s.to_lowercase());
     }
-    Err(AdapterError::InvalidRequest(
-        "record type is required".to_string(),
-    ))
+    Ok("mp4".to_string())
 }
 
 fn parse_zlm_file_id(params: &serde_json::Value) -> Result<String, AdapterError> {
