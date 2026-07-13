@@ -345,8 +345,6 @@ pub struct FfmpegProxyRequest {
     pub source_url: String,
     pub destination: MediaKey,
     #[serde(default)]
-    pub command: Option<String>,
-    #[serde(default)]
     pub timeout_ms: u64,
     #[serde(default)]
     pub input_options: Vec<String>,

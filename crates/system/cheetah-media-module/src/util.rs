@@ -2,6 +2,7 @@
 //!
 //! HTTP adapter 的共享辅助工具。
 
+use crate::error::AdapterError;
 use serde_json::Map;
 
 /// Percent-decode a string, preserving encoded slashes (`%2F` / `%2f`) so that
@@ -71,4 +72,54 @@ pub fn parse_json_u64(value: &serde_json::Value) -> Option<u64> {
     value
         .as_u64()
         .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
+}
+
+/// Parse a user-supplied FFmpeg command string into controlled `input_options`
+/// and `output_options` vectors.
+///
+/// The `ffmpeg` binary token is stripped, the `-i` input option and its argument
+/// are removed from the option list, and the source URL is returned from
+/// `src_url` when present, or from the `-i` argument otherwise. The remaining
+/// tokens are split into options before `-i` (`input_options`) and after the
+/// input source (`output_options`).
+///
+/// 将用户提供的 FFmpeg 命令字符串解析为受控的 `input_options` 和 `output_options` 向量。
+/// 移除 `ffmpeg` 二进制 token，移除 `-i` 输入选项及其参数，`src_url` 优先作为源地址，
+/// 否则从 `-i` 参数获取。剩余 token 按 `-i` 前后分别放入 `input_options` 和 `output_options`。
+pub fn parse_ffmpeg_request(
+    ffmpeg_cmd: Option<&str>,
+    src_url: Option<&str>,
+) -> Result<(String, Vec<String>, Vec<String>), AdapterError> {
+    let mut args = if let Some(cmd) = ffmpeg_cmd.filter(|c| !c.is_empty()) {
+        shlex::split(cmd)
+            .ok_or_else(|| AdapterError::InvalidRequest("invalid ffmpeg_cmd".to_string()))?
+    } else {
+        Vec::new()
+    };
+
+    if let Some(first) = args.first() {
+        if first.eq_ignore_ascii_case("ffmpeg") || first.ends_with("ffmpeg") {
+            args.remove(0);
+        }
+    }
+
+    let (input_options, source_from_cmd, output_options) =
+        if let Some(idx) = args.iter().position(|a| a == "-i") {
+            (
+                args[..idx].to_vec(),
+                args.get(idx + 1).cloned(),
+                args[idx + 2..].to_vec(),
+            )
+        } else {
+            (args, None, Vec::new())
+        };
+
+    let source_url = src_url
+        .map(String::from)
+        .or(source_from_cmd)
+        .ok_or_else(|| {
+            AdapterError::InvalidRequest("src_url or ffmpeg_cmd -i is required".to_string())
+        })?;
+
+    Ok((source_url, input_options, output_options))
 }

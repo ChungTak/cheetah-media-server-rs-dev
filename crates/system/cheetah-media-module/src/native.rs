@@ -170,6 +170,17 @@ impl NativeMediaHttpService {
         })
     }
 
+    fn require_principal(&self, ctx: &MediaRequestContext) -> Result<(), AdapterError> {
+        if ctx.principal.is_none() {
+            return Err(AdapterError::Media(
+                cheetah_media_api::error::MediaError::unauthenticated(
+                    "server admin requires authentication",
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     fn webrtc(&self) -> Result<Arc<dyn WebRtcApi>, AdapterError> {
         self.ctx.media_services.webrtc().ok_or_else(|| {
             AdapterError::Media(
@@ -185,10 +196,15 @@ impl NativeMediaHttpService {
             .find(|h| h.name.eq_ignore_ascii_case("x-request-id"))
             .map(|h| cheetah_media_api::ids::RequestId(h.value.clone()))
             .unwrap_or_else(|| cheetah_media_api::ids::RequestId("".to_string()));
+        let principal = req
+            .headers
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("authorization"))
+            .map(|h| h.value.clone());
         MediaRequestContext {
             request_id,
             correlation_id: None,
-            principal: None,
+            principal,
             source_adapter: "native".to_string(),
             trace_context: None,
             deadline: None,
@@ -429,6 +445,7 @@ impl NativeMediaHttpService {
 
     async fn server_info(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let api = self.server_admin()?;
         let info = api.server_info(&ctx).await?;
         Ok(json_response(&info))
@@ -436,6 +453,7 @@ impl NativeMediaHttpService {
 
     async fn server_config(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let api = self.server_admin()?;
         let config = api.server_config(&ctx).await?;
         Ok(json_response(&config))
@@ -443,17 +461,22 @@ impl NativeMediaHttpService {
 
     async fn server_config_update(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let api = self.server_admin()?;
         let update: ServerConfigUpdate = parse_body(&req)?;
         let config = cheetah_media_api::model::ServerConfig {
             values: update.values,
         };
         api.set_server_config(&ctx, config).await?;
+        if update.restart {
+            api.restart_server(&ctx).await?;
+        }
         Ok(json_response(&serde_json::json!({ "updated": true })))
     }
 
     async fn server_restart(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let api = self.server_admin()?;
         api.restart_server(&ctx).await?;
         Ok(json_response(&serde_json::json!({ "restarting": true })))
@@ -461,6 +484,7 @@ impl NativeMediaHttpService {
 
     async fn server_shutdown(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let api = self.server_admin()?;
         api.shutdown_server(&ctx).await?;
         Ok(json_response(&serde_json::json!({ "shutting_down": true })))
@@ -468,6 +492,7 @@ impl NativeMediaHttpService {
 
     async fn server_ports(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let api = self.server_admin()?;
         let ports = api.list_ports(&ctx).await?;
         Ok(json_response(&serde_json::json!({ "ports": ports })))

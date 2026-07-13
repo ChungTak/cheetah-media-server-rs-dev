@@ -142,6 +142,20 @@ impl MediaError {
         Self::new(MediaErrorCode::Conflict, message)
     }
 
+    /// Unauthenticated error.
+    ///
+    /// 未认证错误。
+    pub fn unauthenticated(message: impl Into<String>) -> Self {
+        Self::new(MediaErrorCode::Unauthenticated, message)
+    }
+
+    /// Permission denied error.
+    ///
+    /// 权限不足错误。
+    pub fn permission_denied(message: impl Into<String>) -> Self {
+        Self::new(MediaErrorCode::PermissionDenied, message)
+    }
+
     /// Unsupported capability error.
     ///
     /// 不支持的能力错误。

@@ -269,11 +269,27 @@ impl ZlmMediaHttpService {
         })
     }
 
-    pub(crate) fn request_context(&self, _req: &HttpRequest) -> MediaRequestContext {
+    pub(crate) fn require_principal(&self, ctx: &MediaRequestContext) -> Result<(), AdapterError> {
+        if ctx.principal.is_none() {
+            return Err(AdapterError::Media(
+                cheetah_media_api::error::MediaError::unauthenticated(
+                    "server admin requires authentication",
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn request_context(&self, req: &HttpRequest) -> MediaRequestContext {
+        let principal = req
+            .headers
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("authorization"))
+            .map(|h| h.value.clone());
         MediaRequestContext {
             request_id: cheetah_media_api::ids::RequestId("".to_string()),
             correlation_id: None,
-            principal: None,
+            principal,
             source_adapter: "zlm".to_string(),
             trace_context: None,
             deadline: None,
@@ -555,7 +571,7 @@ impl ZlmMediaHttpService {
         };
         query.page_size =
             crate::util::parse_json_u64(&params["page_size"]).unwrap_or(ProxyQuery::MAX_PAGE_SIZE);
-        query.page = crate::util::parse_json_u64(&params["page"]).unwrap_or(1);
+        query.page = crate::util::parse_json_u64(&params["page"]).unwrap_or(0);
         query.clamp_page_size();
         let page = proxy_api.list_proxies(&ctx, query).await?;
         Ok(zlm_response(0, "success", page.items))
@@ -610,16 +626,16 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let source_url = params["src_url"]
-            .as_str()
-            .ok_or_else(|| AdapterError::InvalidRequest("src_url is required".to_string()))?;
+        let (source_url, input_options, output_options) = crate::util::parse_ffmpeg_request(
+            params["ffmpeg_cmd"].as_str(),
+            params["src_url"].as_str(),
+        )?;
         let request = FfmpegProxyRequest {
-            source_url: source_url.to_string(),
+            source_url,
             destination: key.clone(),
-            command: params["ffmpeg_cmd"].as_str().map(String::from),
             timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(0),
-            input_options: Default::default(),
-            output_options: Default::default(),
+            input_options,
+            output_options,
             transcode_policy: Default::default(),
             output_policy: Default::default(),
         };
@@ -650,8 +666,9 @@ impl ZlmMediaHttpService {
     }
 
     async fn get_server_load(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let api = self.server_admin()?;
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
+        let api = self.server_admin()?;
         let info = api.server_info(&ctx).await?;
         let data = serde_json::json!({
             "cpu": info.load.cpu_percent,
@@ -663,8 +680,9 @@ impl ZlmMediaHttpService {
     }
 
     async fn get_work_threads_load(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let api = self.server_admin()?;
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
+        let api = self.server_admin()?;
         let info = api.server_info(&ctx).await?;
         Ok(zlm_response(
             0,
@@ -674,15 +692,17 @@ impl ZlmMediaHttpService {
     }
 
     async fn get_server_config(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let api = self.server_admin()?;
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
+        let api = self.server_admin()?;
         let config = api.server_config(&ctx).await?;
         Ok(zlm_response(0, "success", config.values))
     }
 
     async fn set_server_config(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let api = self.server_admin()?;
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
+        let api = self.server_admin()?;
         let params = self.extract_params(&req)?;
         let mut values = std::collections::HashMap::new();
         if let (Some(key), Some(value)) = (params["key"].as_str(), params["value"].as_str()) {
@@ -707,8 +727,9 @@ impl ZlmMediaHttpService {
     }
 
     async fn restart_server(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let api = self.server_admin()?;
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
+        let api = self.server_admin()?;
         api.restart_server(&ctx).await?;
         Ok(zlm_response(
             0,
@@ -718,8 +739,9 @@ impl ZlmMediaHttpService {
     }
 
     async fn shutdown_server(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let api = self.server_admin()?;
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
+        let api = self.server_admin()?;
         api.shutdown_server(&ctx).await?;
         Ok(zlm_response(
             0,
