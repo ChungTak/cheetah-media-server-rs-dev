@@ -183,6 +183,7 @@ impl ZlmMediaHttpService {
     fn extract_params(&self, req: &HttpRequest) -> Result<serde_json::Value, AdapterError> {
         match req.method {
             HttpMethod::Get => Ok(crate::util::query_to_json(req.query.as_deref())),
+            _ if req.body.is_empty() => Ok(crate::util::query_to_json(req.query.as_deref())),
             _ => Ok(serde_json::from_slice(&req.body)?),
         }
     }
