@@ -12,6 +12,7 @@ use cheetah_sdk::{
     ModuleHttpService, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState,
     SdkError,
 };
+use serde::de::DeserializeOwned;
 
 use crate::error::{native_error_response, AdapterError};
 
@@ -201,11 +202,8 @@ impl NativeMediaHttpService {
 
     async fn media_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let query: MediaQuery = if req.body.is_empty() {
-            MediaQuery::default()
-        } else {
-            serde_json::from_slice(&req.body)?
-        };
+        let mut query: MediaQuery = parse_query(&req)?;
+        query.clamp_page_size();
         let page = self.control()?.get_media_list(&ctx, query).await?;
         Ok(json_response(&page))
     }
@@ -243,11 +241,8 @@ impl NativeMediaHttpService {
 
     async fn session_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let query: SessionQuery = if req.body.is_empty() {
-            SessionQuery::default()
-        } else {
-            serde_json::from_slice(&req.body)?
-        };
+        let mut query: SessionQuery = parse_query(&req)?;
+        query.clamp_page_size();
         let page = self.control()?.list_sessions(&ctx, query).await?;
         Ok(json_response(&page))
     }
@@ -276,11 +271,8 @@ impl NativeMediaHttpService {
                 "record not available",
             ))
         })?;
-        let query: RecordTaskQuery = if req.body.is_empty() {
-            RecordTaskQuery::default()
-        } else {
-            serde_json::from_slice(&req.body)?
-        };
+        let mut query: RecordTaskQuery = parse_query(&req)?;
+        query.clamp_page_size();
         let page = record_api.query_record_tasks(&ctx, query).await?;
         Ok(json_response(&page))
     }
@@ -292,11 +284,8 @@ impl NativeMediaHttpService {
                 "record not available",
             ))
         })?;
-        let query: RecordFileQuery = if req.body.is_empty() {
-            RecordFileQuery::default()
-        } else {
-            serde_json::from_slice(&req.body)?
-        };
+        let mut query: RecordFileQuery = parse_query(&req)?;
+        query.clamp_page_size();
         let page = record_api.query_record_files(&ctx, query).await?;
         Ok(json_response(&page))
     }
@@ -406,4 +395,19 @@ fn json_response<T: serde::Serialize>(value: &T) -> HttpResponse {
 
 fn percent_decode(s: &str) -> String {
     crate::util::percent_decode(s)
+}
+
+/// Parse a request body (JSON) or URL query string into the target query type.
+///
+/// 将请求 body（JSON）或 URL query 字符串解析为目标查询类型。
+fn parse_query<T: DeserializeOwned + Default>(req: &HttpRequest) -> Result<T, AdapterError> {
+    if !req.body.is_empty() {
+        return Ok(serde_json::from_slice(&req.body)?);
+    }
+    if let Some(qs) = req.query.as_deref().filter(|q| !q.is_empty()) {
+        let qs = qs.strip_prefix('?').unwrap_or(qs);
+        return serde_urlencoded::from_str(qs)
+            .map_err(|e| AdapterError::Serialization(e.to_string()));
+    }
+    Ok(T::default())
 }

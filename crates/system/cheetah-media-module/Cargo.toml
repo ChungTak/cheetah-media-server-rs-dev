@@ -13,6 +13,7 @@ cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
 cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
 serde.workspace = true
 serde_json.workspace = true
+serde_urlencoded.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
