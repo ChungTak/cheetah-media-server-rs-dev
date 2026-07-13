@@ -55,9 +55,11 @@ members = [
   "crates/sdk/cheetah-sdk",
   "crates/sdk/cheetah-sdk-macros",
   "crates/sdk/cheetah-connector",
+  "crates/sdk/cheetah-media-api",
   "crates/system/cheetah-config",
   "crates/system/cheetah-control",
   "crates/system/cheetah-engine",
+  "crates/system/cheetah-media-module",
   "crates/system/cheetah-record-module",
 ]
 

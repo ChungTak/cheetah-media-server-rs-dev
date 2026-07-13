@@ -13,6 +13,7 @@ anyhow.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 cheetah-codec = { path = "../../foundation/cheetah-codec" }
+cheetah-media-api = { path = "../cheetah-media-api" }
 cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
 cheetah-sdk-macros = { path = "../cheetah-sdk-macros", optional = true }
 serde.workspace = true
