@@ -92,6 +92,38 @@ impl StreamMediaProvider {
         }
     }
 
+    /// Check whether a `SessionInfo` matches the supplied `SessionQuery`.
+    ///
+    /// 检查 `SessionInfo` 是否匹配给定的 `SessionQuery`。
+    fn session_matches_query(session: &SessionInfo, key: &MediaKey, query: &SessionQuery) -> bool {
+        if let Some(ref v) = query.vhost {
+            if key.vhost.0 != *v {
+                return false;
+            }
+        }
+        if let Some(ref a) = query.app {
+            if key.app.0 != *a {
+                return false;
+            }
+        }
+        if let Some(ref st) = query.stream {
+            if key.stream.0 != *st {
+                return false;
+            }
+        }
+        if let Some(kind) = query.kind {
+            if session.kind != kind {
+                return false;
+            }
+        }
+        if let Some(state) = query.state {
+            if session.state != state {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Build a `StreamInfo` from a `StreamSnapshot`.
     ///
     /// 从 `StreamSnapshot` 构建 `StreamInfo`。
@@ -238,7 +270,7 @@ impl MediaControlApi for StreamMediaProvider {
         for s in snapshots {
             let key = Self::stream_key_to_media_key(&s.key);
             if s.publisher_active {
-                items.push(SessionInfo {
+                let session = SessionInfo {
                     session_id: SessionId("publisher".to_string()),
                     kind: SessionKind::Publisher,
                     media_key: key.clone(),
@@ -251,10 +283,13 @@ impl MediaControlApi for StreamMediaProvider {
                     bytes_out: 0,
                     state: SessionState::Connected,
                     close_reason: None,
-                });
+                };
+                if Self::session_matches_query(&session, &key, &query) {
+                    items.push(session);
+                }
             }
             for i in 0..s.subscriber_count {
-                items.push(SessionInfo {
+                let session = SessionInfo {
                     session_id: SessionId(format!("player-{i}")),
                     kind: SessionKind::Player,
                     media_key: key.clone(),
@@ -267,7 +302,10 @@ impl MediaControlApi for StreamMediaProvider {
                     bytes_out: 0,
                     state: SessionState::Connected,
                     close_reason: None,
-                });
+                };
+                if Self::session_matches_query(&session, &key, &query) {
+                    items.push(session);
+                }
             }
         }
         let total = items.len() as u64;

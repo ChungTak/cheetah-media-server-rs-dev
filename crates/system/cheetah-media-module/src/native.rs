@@ -405,8 +405,5 @@ fn json_response<T: serde::Serialize>(value: &T) -> HttpResponse {
 }
 
 fn percent_decode(s: &str) -> String {
-    s.replace("%20", " ")
-        .replace("%2F", "/")
-        .replace("%2f", "/")
-        .replace("%23", "#")
+    crate::util::percent_decode(s)
 }

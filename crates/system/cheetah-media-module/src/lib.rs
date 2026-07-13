@@ -22,6 +22,7 @@
 
 mod error;
 mod native;
+mod util;
 mod zlm;
 
 pub use native::{NativeMediaModule, NativeMediaModuleFactory};

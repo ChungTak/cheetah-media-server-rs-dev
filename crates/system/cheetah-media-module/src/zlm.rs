@@ -180,26 +180,33 @@ impl ZlmMediaHttpService {
         }
     }
 
-    fn parse_media_key(&self, body: &serde_json::Value) -> Result<MediaKey, AdapterError> {
-        let vhost = body["vhost"].as_str().unwrap_or("__defaultVhost__");
-        let app = body["app"]
+    fn extract_params(&self, req: &HttpRequest) -> Result<serde_json::Value, AdapterError> {
+        match req.method {
+            HttpMethod::Get => Ok(crate::util::query_to_json(req.query.as_deref())),
+            _ => Ok(serde_json::from_slice(&req.body)?),
+        }
+    }
+
+    fn parse_media_key(&self, params: &serde_json::Value) -> Result<MediaKey, AdapterError> {
+        let vhost = params["vhost"].as_str().unwrap_or("__defaultVhost__");
+        let app = params["app"]
             .as_str()
             .ok_or_else(|| AdapterError::InvalidRequest("app is required".to_string()))?;
-        let stream = body["stream"]
+        let stream = params["stream"]
             .as_str()
-            .or_else(|| body["stream_id"].as_str())
+            .or_else(|| params["stream_id"].as_str())
             .ok_or_else(|| AdapterError::InvalidRequest("stream is required".to_string()))?;
         MediaKey::new(vhost, app, stream, None).map_err(AdapterError::Media)
     }
 
     async fn get_media_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+        let params = self.extract_params(&req)?;
         let query = MediaQuery {
-            vhost: body["vhost"].as_str().map(String::from),
-            app: body["app"].as_str().map(String::from),
-            stream: body["stream"].as_str().map(String::from),
-            schema: body["schema"].as_str().map(String::from),
+            vhost: params["vhost"].as_str().map(String::from),
+            app: params["app"].as_str().map(String::from),
+            stream: params["stream"].as_str().map(String::from),
+            schema: params["schema"].as_str().map(String::from),
             ..Default::default()
         };
         let page = self.control()?.get_media_list(&ctx, query).await?;
@@ -208,8 +215,8 @@ impl ZlmMediaHttpService {
 
     async fn is_media_online(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
-        let key = self.parse_media_key(&body)?;
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
         let online = self.control()?.is_media_online(&ctx, &key).await?;
         Ok(zlm_response(
             0,
@@ -220,19 +227,19 @@ impl ZlmMediaHttpService {
 
     async fn get_media_info(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
-        let key = self.parse_media_key(&body)?;
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
         let info = self.control()?.get_media(&ctx, &key).await?;
         Ok(zlm_response(0, "success", info))
     }
 
     async fn get_all_session(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+        let params = self.extract_params(&req)?;
         let query = SessionQuery {
-            vhost: body["vhost"].as_str().map(String::from),
-            app: body["app"].as_str().map(String::from),
-            stream: body["stream"].as_str().map(String::from),
+            vhost: params["vhost"].as_str().map(String::from),
+            app: params["app"].as_str().map(String::from),
+            stream: params["stream"].as_str().map(String::from),
             ..Default::default()
         };
         let page = self.control()?.list_sessions(&ctx, query).await?;
@@ -241,8 +248,8 @@ impl ZlmMediaHttpService {
 
     async fn close_stream(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body)?;
-        let key = self.parse_media_key(&body)?;
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
         let _ = self
             .control()?
             .kick_stream(&ctx, &key, CloseReason::Kicked)
@@ -256,8 +263,8 @@ impl ZlmMediaHttpService {
 
     async fn kick_session(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body)?;
-        let id = body["id"]
+        let params = self.extract_params(&req)?;
+        let id = params["id"]
             .as_str()
             .ok_or_else(|| AdapterError::InvalidRequest("id is required".to_string()))?;
         self.control()?
@@ -277,9 +284,9 @@ impl ZlmMediaHttpService {
             ))
         })?;
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body)?;
-        let key = self.parse_media_key(&body)?;
-        let format = body["type"].as_str().unwrap_or("mp4");
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let format = params["type"].as_str().unwrap_or("mp4");
         let request = cheetah_media_api::command::StartRecordRequest {
             media_key: key,
             format: format.to_string(),
@@ -304,9 +311,9 @@ impl ZlmMediaHttpService {
             ))
         })?;
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body)?;
-        let key = self.parse_media_key(&body)?;
-        let format = body["type"].as_str().unwrap_or("mp4");
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let format = params["type"].as_str().unwrap_or("mp4");
         let request = cheetah_media_api::command::StopRecordRequest {
             task_id: cheetah_media_api::ids::RecordTaskId(format!(
                 "{format}-{}-{}",
@@ -328,9 +335,9 @@ impl ZlmMediaHttpService {
             ))
         })?;
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
-        let key = self.parse_media_key(&body)?;
-        let format = body["type"].as_str().unwrap_or("mp4");
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let format = params["type"].as_str().unwrap_or("mp4");
         let query = cheetah_media_api::command::RecordTaskQuery {
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
@@ -359,8 +366,8 @@ impl ZlmMediaHttpService {
             ))
         })?;
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
-        let key = self.parse_media_key(&body)?;
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
         let query = cheetah_media_api::command::RecordFileQuery {
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
@@ -386,8 +393,8 @@ impl ZlmMediaHttpService {
             ))
         })?;
         let ctx = self.request_context(&req);
-        let body: serde_json::Value = serde_json::from_slice(&req.body)?;
-        let key = self.parse_media_key(&body)?;
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
         let query = cheetah_media_api::command::RecordFileQuery {
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
@@ -468,13 +475,13 @@ fn zlm_response<T: serde::Serialize>(code: i32, msg: &str, data: T) -> HttpRespo
     }
 }
 
-fn zlm_json_response(body: serde_json::Value) -> HttpResponse {
+fn zlm_json_response(params: serde_json::Value) -> HttpResponse {
     HttpResponse {
         status: 200,
         headers: vec![HttpHeader {
             name: "content-type".to_string(),
             value: "application/json".to_string(),
         }],
-        body: Bytes::from(serde_json::to_vec(&body).unwrap_or_default()),
+        body: Bytes::from(serde_json::to_vec(&params).unwrap_or_default()),
     }
 }

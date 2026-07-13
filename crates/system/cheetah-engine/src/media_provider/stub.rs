@@ -2,7 +2,9 @@ use async_trait::async_trait;
 use cheetah_media_api::command::*;
 use cheetah_media_api::error::MediaError;
 use cheetah_media_api::ids::{ProxyId, RtpSessionId};
-use cheetah_media_api::model::{Page, ProxyInfo, RecordFile, RecordTask, RtpSession, SnapshotHandle, SnapshotInfo};
+use cheetah_media_api::model::{
+    Page, ProxyInfo, RecordFile, RecordTask, RtpSession, SnapshotHandle, SnapshotInfo,
+};
 use cheetah_media_api::port::{MediaRequestContext, ProxyApi, RecordApi, RtpApi, SnapshotApi};
 
 /// Stub provider for record capabilities. Wired to a dedicated `RecordApi` in the engine.
