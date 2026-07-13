@@ -284,7 +284,7 @@ impl ZlmMediaHttpService {
         let principal = req
             .headers
             .iter()
-            .find(|h| h.name.eq_ignore_ascii_case("authorization"))
+            .find(|h| h.name.eq_ignore_ascii_case("x-principal"))
             .map(|h| h.value.clone());
         MediaRequestContext {
             request_id: cheetah_media_api::ids::RequestId("".to_string()),

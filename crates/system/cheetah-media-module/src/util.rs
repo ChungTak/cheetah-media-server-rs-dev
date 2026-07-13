@@ -108,7 +108,7 @@ pub fn parse_ffmpeg_request(
             (
                 args[..idx].to_vec(),
                 args.get(idx + 1).cloned(),
-                args[idx + 2..].to_vec(),
+                args.get(idx + 2..).unwrap_or_default().to_vec(),
             )
         } else {
             (args, None, Vec::new())
