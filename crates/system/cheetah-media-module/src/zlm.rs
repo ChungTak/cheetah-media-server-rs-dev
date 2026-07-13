@@ -396,7 +396,7 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let mut query = cheetah_media_api::command::RecordFileQuery {
+        let query = cheetah_media_api::command::RecordFileQuery {
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
             page_size: cheetah_media_api::command::RecordFileQuery::MAX_PAGE_SIZE,
@@ -420,7 +420,6 @@ impl ZlmMediaHttpService {
             if (page.items.len() as u64) < query.page_size {
                 break;
             }
-            query.page += 1;
         }
         Ok(zlm_response(
             0,
