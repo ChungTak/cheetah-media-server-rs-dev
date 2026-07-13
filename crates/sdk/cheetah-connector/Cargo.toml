@@ -44,6 +44,10 @@ cheetah-webrtc-media-loopback = { path = "../../protocols/webrtc/testing/media-l
 cheetah-webrtc-driver-tokio = { path = "../../protocols/webrtc/driver-tokio", optional = true }
 cheetah-webrtc-core = { path = "../../protocols/webrtc/core", optional = true }
 
+[[example]]
+name = "external_connector_loopback"
+required-features = ["loopback"]
+
 [dev-dependencies]
 cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
 cheetah-webrtc-driver-tokio = { path = "../../protocols/webrtc/driver-tokio" }

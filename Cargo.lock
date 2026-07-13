@@ -512,6 +512,7 @@ dependencies = [
  "bytes",
  "cheetah-codec",
  "cheetah-config",
+ "cheetah-media-api",
  "cheetah-runtime-api",
  "cheetah-runtime-tokio",
  "cheetah-sdk",
@@ -750,6 +751,33 @@ dependencies = [
  "cheetah-codec",
  "cheetah-http-flv-core",
  "proptest",
+]
+
+[[package]]
+name = "cheetah-media-api"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "cheetah-media-module"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "cheetah-media-api",
+ "cheetah-sdk",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1058,6 +1086,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "cheetah-codec",
+ "cheetah-media-api",
  "cheetah-runtime-api",
  "cheetah-sdk-macros",
  "serde",
@@ -1086,6 +1115,7 @@ dependencies = [
  "cheetah-gb28181-module",
  "cheetah-hls-module",
  "cheetah-http-flv-module",
+ "cheetah-media-module",
  "cheetah-mp4-module",
  "cheetah-record-module",
  "cheetah-rtmp-module",

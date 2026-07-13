@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use cheetah_sdk::{
     CancellationToken, ClusterApi, ConfigApplyApi, ConfigProvider, ConfigSchemaRegistry,
-    CoreAdaptersApi, DatabaseApi, EngineContext, EventBus, FfmpegApi, HealthApi, MetricsApi,
-    ModuleFactory, ModuleManagerApi, PublisherApi, RoomServiceApi, RuntimeApi, SdkError,
-    ServiceRegistry, StreamManagerApi, SubscriberApi, SystemEvent, SystemLifecycleEvent,
+    CoreAdaptersApi, DatabaseApi, EngineContext, EventBus, FfmpegApi, HealthApi, MediaServices,
+    MetricsApi, ModuleFactory, ModuleManagerApi, PublisherApi, RoomServiceApi, RuntimeApi,
+    SdkError, ServiceRegistry, StreamManagerApi, SubscriberApi, SystemEvent, SystemLifecycleEvent,
     TaskSystemApi,
 };
 use parking_lot::RwLock;
@@ -15,6 +15,7 @@ use crate::database::InMemoryDatabase;
 use crate::event::LocalEventBus;
 use crate::ffmpeg::LocalFfmpegService;
 use crate::health::HealthService;
+use crate::media_provider::{EngineMediaFacade, StreamMediaProvider};
 use crate::metrics::MetricsRegistry;
 use crate::module_manager::ModuleManager;
 use crate::proxy::LocalProxyManager;
@@ -149,6 +150,10 @@ impl EngineBuilder {
             module_manager.register_factory(factory)?;
         }
 
+        let stream_provider =
+            StreamMediaProvider::new(stream_manager.clone(), core_adapters.clone());
+        let media_facade = Arc::new(EngineMediaFacade::new(stream_provider));
+
         Ok(Engine {
             config_provider: self.config_provider,
             config_apply_api: self.config_apply_api,
@@ -166,6 +171,7 @@ impl EngineBuilder {
             cluster,
             ffmpeg,
             core_adapters,
+            media_facade,
             root_cancel: RwLock::new(CancellationToken::new()),
         })
     }
@@ -198,6 +204,7 @@ pub struct Engine {
     cluster: Arc<LocalCluster>,
     ffmpeg: Arc<LocalFfmpegService>,
     core_adapters: Arc<LocalCoreAdapters>,
+    media_facade: Arc<crate::media_provider::EngineMediaFacade>,
     root_cancel: RwLock<CancellationToken>,
 }
 
@@ -226,6 +233,7 @@ impl Engine {
             proxy_manager: self.proxy_manager.clone(),
             cluster_api: self.cluster.clone(),
             ffmpeg_api: self.ffmpeg.clone(),
+            media_services: self.media_services(),
         }
     }
 
@@ -383,6 +391,27 @@ impl Engine {
 
     pub fn ffmpeg_api(&self) -> Arc<dyn FfmpegApi> {
         self.ffmpeg.clone()
+    }
+
+    pub fn media_facade(&self) -> Arc<crate::media_provider::EngineMediaFacade> {
+        self.media_facade.clone()
+    }
+
+    fn media_services(&self) -> MediaServices {
+        MediaServices {
+            control: Some(
+                self.media_facade.clone() as Arc<dyn cheetah_media_api::port::MediaControlApi>
+            ),
+            publish_subscribe: Some(
+                self.media_facade.clone() as Arc<dyn cheetah_media_api::port::PublishSubscribeApi>
+            ),
+            record: Some(self.media_facade.clone() as Arc<dyn cheetah_media_api::port::RecordApi>),
+            snapshot: Some(
+                self.media_facade.clone() as Arc<dyn cheetah_media_api::port::SnapshotApi>
+            ),
+            proxy: Some(self.media_facade.clone() as Arc<dyn cheetah_media_api::port::ProxyApi>),
+            rtp: Some(self.media_facade.clone() as Arc<dyn cheetah_media_api::port::RtpApi>),
+        }
     }
 }
 

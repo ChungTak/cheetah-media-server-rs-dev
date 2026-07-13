@@ -1,0 +1,259 @@
+use async_trait::async_trait;
+
+use crate::command::*;
+use crate::error::Result;
+use crate::event::MediaEventSender;
+use crate::ids::*;
+use crate::model::*;
+
+/// Request context passed to media API operations.
+///
+/// 媒体 API 操作传入的请求上下文。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaRequestContext {
+    pub request_id: RequestId,
+    pub correlation_id: Option<String>,
+    pub principal: Option<String>,
+    pub source_adapter: String,
+    pub trace_context: Option<String>,
+    pub deadline: Option<i64>,
+}
+
+impl Default for MediaRequestContext {
+    fn default() -> Self {
+        Self {
+            request_id: RequestId("".to_string()),
+            correlation_id: None,
+            principal: None,
+            source_adapter: "unknown".to_string(),
+            trace_context: None,
+            deadline: None,
+        }
+    }
+}
+
+/// Core media control and query operations.
+///
+/// 核心媒体控制与查询操作。
+#[async_trait]
+pub trait MediaControlApi: Send + Sync {
+    async fn get_media_list(
+        &self,
+        ctx: &MediaRequestContext,
+        query: MediaQuery,
+    ) -> Result<Page<StreamInfo>>;
+
+    async fn get_media(&self, ctx: &MediaRequestContext, key: &MediaKey) -> Result<StreamInfo>;
+
+    async fn is_media_online(
+        &self,
+        ctx: &MediaRequestContext,
+        key: &MediaKey,
+    ) -> Result<OnlineState>;
+
+    async fn list_sessions(
+        &self,
+        ctx: &MediaRequestContext,
+        query: SessionQuery,
+    ) -> Result<Page<SessionInfo>>;
+
+    async fn kick_session(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &SessionId,
+        reason: CloseReason,
+    ) -> Result<()>;
+
+    async fn kick_stream(
+        &self,
+        ctx: &MediaRequestContext,
+        key: &MediaKey,
+        reason: CloseReason,
+    ) -> Result<CloseReport>;
+
+    async fn request_keyframe(&self, ctx: &MediaRequestContext, key: &MediaKey) -> Result<()>;
+}
+
+/// Publish and subscribe operations.
+///
+/// 发布与订阅操作。
+#[async_trait]
+pub trait PublishSubscribeApi: Send + Sync {
+    async fn acquire_publisher(
+        &self,
+        ctx: &MediaRequestContext,
+        request: PublishRequest,
+    ) -> Result<PublisherHandle>;
+
+    async fn open_subscriber(
+        &self,
+        ctx: &MediaRequestContext,
+        request: SubscribeRequest,
+    ) -> Result<SubscriberHandle>;
+
+    async fn close_handle(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &SessionId,
+        reason: CloseReason,
+    ) -> Result<()>;
+}
+
+/// Record operations.
+///
+/// 录制操作。
+#[async_trait]
+pub trait RecordApi: Send + Sync {
+    async fn start_record(
+        &self,
+        ctx: &MediaRequestContext,
+        request: StartRecordRequest,
+    ) -> Result<RecordTask>;
+
+    async fn stop_record(
+        &self,
+        ctx: &MediaRequestContext,
+        request: StopRecordRequest,
+    ) -> Result<RecordTask>;
+
+    async fn query_record_tasks(
+        &self,
+        ctx: &MediaRequestContext,
+        query: RecordTaskQuery,
+    ) -> Result<Page<RecordTask>>;
+
+    async fn query_record_files(
+        &self,
+        ctx: &MediaRequestContext,
+        query: RecordFileQuery,
+    ) -> Result<Page<RecordFile>>;
+
+    async fn delete_record_file(
+        &self,
+        ctx: &MediaRequestContext,
+        request: DeleteRecordRequest,
+    ) -> Result<()>;
+
+    async fn control_record_playback(
+        &self,
+        ctx: &MediaRequestContext,
+        command: RecordPlaybackCommand,
+    ) -> Result<()>;
+}
+
+/// Snapshot operations.
+///
+/// 快照操作。
+#[async_trait]
+pub trait SnapshotApi: Send + Sync {
+    async fn take_snapshot(
+        &self,
+        ctx: &MediaRequestContext,
+        request: SnapshotRequest,
+    ) -> Result<SnapshotHandle>;
+
+    async fn query_snapshots(
+        &self,
+        ctx: &MediaRequestContext,
+        query: SnapshotQuery,
+    ) -> Result<Page<SnapshotInfo>>;
+
+    async fn delete_snapshot_directory(
+        &self,
+        ctx: &MediaRequestContext,
+        request: DeleteSnapshotRequest,
+    ) -> Result<()>;
+}
+
+/// Proxy operations.
+///
+/// 代理操作。
+#[async_trait]
+pub trait ProxyApi: Send + Sync {
+    async fn create_pull_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        request: PullProxyRequest,
+    ) -> Result<ProxyInfo>;
+
+    async fn delete_pull_proxy(&self, ctx: &MediaRequestContext, id: &ProxyId) -> Result<()>;
+
+    async fn list_pull_proxies(
+        &self,
+        ctx: &MediaRequestContext,
+        query: ProxyQuery,
+    ) -> Result<Page<ProxyInfo>>;
+
+    async fn create_push_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        request: PushProxyRequest,
+    ) -> Result<ProxyInfo>;
+
+    async fn delete_push_proxy(&self, ctx: &MediaRequestContext, id: &ProxyId) -> Result<()>;
+
+    async fn create_ffmpeg_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        request: FfmpegProxyRequest,
+    ) -> Result<ProxyInfo>;
+}
+
+/// RTP operations.
+///
+/// RTP 操作。
+#[async_trait]
+pub trait RtpApi: Send + Sync {
+    async fn open_rtp_receiver(
+        &self,
+        ctx: &MediaRequestContext,
+        request: RtpReceiverRequest,
+    ) -> Result<RtpSession>;
+
+    async fn connect_rtp_receiver(
+        &self,
+        ctx: &MediaRequestContext,
+        request: RtpConnectRequest,
+    ) -> Result<RtpSession>;
+
+    async fn open_rtp_sender(
+        &self,
+        ctx: &MediaRequestContext,
+        request: RtpSenderRequest,
+    ) -> Result<RtpSession>;
+
+    async fn stop_rtp_session(&self, ctx: &MediaRequestContext, id: &RtpSessionId) -> Result<()>;
+
+    async fn list_rtp_sessions(
+        &self,
+        ctx: &MediaRequestContext,
+        query: RtpQuery,
+    ) -> Result<Page<RtpSession>>;
+
+    async fn update_rtp_session(
+        &self,
+        ctx: &MediaRequestContext,
+        request: UpdateRtpRequest,
+    ) -> Result<RtpSession>;
+}
+
+/// Combined facade over all media capabilities.
+///
+/// 所有媒体能力的组合 facade。
+///
+/// Provider implementations may split the trait into sub-traits and combine
+/// them behind this facade. Unimplemented methods return `Unsupported`.
+#[async_trait]
+pub trait MediaFacade:
+    MediaControlApi + PublishSubscribeApi + RecordApi + SnapshotApi + ProxyApi + RtpApi + Send + Sync
+{
+    /// Return the capability set currently supported by the facade.
+    ///
+    /// 返回 facade 当前支持的能力集。
+    fn capabilities(&self) -> crate::capability::MediaCapabilitySet;
+
+    /// Subscribe to internal media events.
+    ///
+    /// 订阅内部媒体事件。
+    fn subscribe_events(&self, sender: Box<dyn MediaEventSender>) -> Result<()>;
+}

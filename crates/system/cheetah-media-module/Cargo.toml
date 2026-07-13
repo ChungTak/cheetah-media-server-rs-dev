@@ -1,0 +1,21 @@
+[package]
+name = "cheetah-media-module"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+description = "HTTP adapters (native and ZLMediaKit-compatible) for the Cheetah media API."
+
+[dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
+cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
+serde.workspace = true
+serde_json.workspace = true
+serde_urlencoded.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }

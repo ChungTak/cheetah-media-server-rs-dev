@@ -35,6 +35,7 @@ use cheetah_gb28181_module::Gb28181ModuleFactory;
 use cheetah_hls_module::HlsModuleFactory;
 #[cfg(feature = "http-flv")]
 use cheetah_http_flv_module::HttpFlvModuleFactory;
+use cheetah_media_module::{NativeMediaModuleFactory, ZlmMediaModuleFactory};
 #[cfg(feature = "mp4")]
 use cheetah_mp4_module::Mp4ModuleFactory;
 #[cfg(feature = "record")]
@@ -182,6 +183,11 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "webrtc")]
     {
         builder = builder.register_module_factory(Arc::new(WebRtcModuleFactory));
+    }
+
+    {
+        builder = builder.register_module_factory(Arc::new(NativeMediaModuleFactory));
+        builder = builder.register_module_factory(Arc::new(ZlmMediaModuleFactory));
     }
 
     // Build the engine and wire the config store to the event bus.

@@ -16,6 +16,9 @@ use crate::service::{
 use crate::stream::{CoreAdaptersApi, PublisherApi, StreamManagerApi, SubscriberApi};
 use crate::task::{CancellationToken, TaskSystemApi};
 use crate::EventBus;
+use cheetah_media_api::port::{
+    MediaControlApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi,
+};
 use cheetah_runtime_api::RuntimeApi;
 
 /// Lifecycle state of a module.
@@ -164,6 +167,35 @@ pub struct ModuleManifest {
     pub capabilities: Vec<ModuleCapability>,
 }
 
+/// Media services injected into the engine context.
+///
+/// 注入到引擎上下文中的媒体服务。
+#[derive(Clone)]
+pub struct MediaServices {
+    pub control: Option<Arc<dyn MediaControlApi>>,
+    pub publish_subscribe: Option<Arc<dyn PublishSubscribeApi>>,
+    pub record: Option<Arc<dyn RecordApi>>,
+    pub snapshot: Option<Arc<dyn SnapshotApi>>,
+    pub proxy: Option<Arc<dyn cheetah_media_api::port::ProxyApi>>,
+    pub rtp: Option<Arc<dyn RtpApi>>,
+}
+
+impl MediaServices {
+    /// Create a media services bundle with all capabilities unavailable.
+    ///
+    /// 创建所有能力均不可用的 media services 束。
+    pub fn unavailable() -> Self {
+        Self {
+            control: None,
+            publish_subscribe: None,
+            record: None,
+            snapshot: None,
+            proxy: None,
+            rtp: None,
+        }
+    }
+}
+
 /// Capability injection handle passed to every module during initialization.
 ///
 /// Provides access to runtime, stream management, tasks, events, config, and
@@ -192,6 +224,7 @@ pub struct EngineContext {
     pub proxy_manager: Arc<dyn ProxyManager>,
     pub cluster_api: Arc<dyn ClusterApi>,
     pub ffmpeg_api: Arc<dyn FfmpegApi>,
+    pub media_services: MediaServices,
 }
 
 /// Context used to initialize a module: manifest, engine APIs, and initial config.

@@ -55,9 +55,11 @@ members = [
   "crates/sdk/cheetah-sdk",
   "crates/sdk/cheetah-sdk-macros",
   "crates/sdk/cheetah-connector",
+  "crates/sdk/cheetah-media-api",
   "crates/system/cheetah-config",
   "crates/system/cheetah-control",
   "crates/system/cheetah-engine",
+  "crates/system/cheetah-media-module",
   "crates/system/cheetah-record-module",
 ]
 
@@ -87,6 +89,7 @@ proc-macro2 = "1"
 quote = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_urlencoded = "0.7"
 serde_yaml = "0.9"
 smallvec = "1"
 shiguredo_srt = "=2026.1.0-canary.1"
