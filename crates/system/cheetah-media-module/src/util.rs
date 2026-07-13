@@ -103,7 +103,7 @@ pub fn parse_ffmpeg_request(
         }
     }
 
-    let (input_options, source_from_cmd, output_options) =
+    let (input_options, source_from_cmd, mut output_options) =
         if let Some(idx) = args.iter().position(|a| a == "-i") {
             (
                 args[..idx].to_vec(),
@@ -113,6 +113,14 @@ pub fn parse_ffmpeg_request(
         } else {
             (args, None, Vec::new())
         };
+
+    // The output URL appears after all output options; it is not a generic
+    // option and is already represented by the destination MediaKey.
+    if let Some(last) = output_options.last() {
+        if last.contains("://") {
+            output_options.pop();
+        }
+    }
 
     let source_url = src_url
         .map(String::from)
@@ -133,13 +141,14 @@ pub fn validate_ffmpeg_options(options: &[String]) -> Result<(), AdapterError> {
         ";", "|", "&", "&&", "||", ">", ">>", "<", "<<", "$(", "`", "~", "*", "?", "!", "#", "^",
         "$", "(", ")", "[", "]", "{", "}", "=", "\\",
     ];
+    const DISALLOWED_SUBSTR: &[&str] = &[";", "|", "&", ">", "<", "$(", "`"];
     for token in options {
         if DENIED.contains(&token.as_str()) {
             return Err(AdapterError::InvalidRequest(format!(
                 "unsafe ffmpeg option: {token}"
             )));
         }
-        if token.contains("$(") || token.contains('`') {
+        if DISALLOWED_SUBSTR.iter().any(|s| token.contains(s)) {
             return Err(AdapterError::InvalidRequest(format!(
                 "unsafe ffmpeg option: {token}"
             )));
