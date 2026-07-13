@@ -8,6 +8,7 @@ license.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+cheetah-media-api = { path = "../../../sdk/cheetah-media-api" }
 cheetah-rtp-core = { path = "../core" }
 cheetah-rtp-driver-tokio = { path = "../driver-tokio" }
 cheetah-runtime-api = { path = "../../../runtime/cheetah-runtime-api" }

@@ -27,6 +27,7 @@ use serde_json::Value;
 use tracing::{debug, error, info, warn};
 
 use crate::config::{RtpClientJobConfig, RtpModuleConfig};
+use crate::media_provider::RtpMediaProvider;
 
 const MODULE_ID: &str = "rtp";
 
@@ -138,7 +139,26 @@ impl Module for RtpModule {
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
         self.config = RtpModuleConfig::from_value(ctx.initial_config.clone())
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
+        let engine = ctx.engine.clone();
         self.ctx = Some(ctx.engine);
+
+        // Register the media-domain RtpApi provider so native/ZLM adapters can
+        // drive RTP sessions through the same driver used by the module's HTTP API.
+        let listen_port = self
+            .config
+            .listen_udp
+            .as_deref()
+            .unwrap_or("0.0.0.0:20000")
+            .parse::<SocketAddr>()
+            .map_err(|e| SdkError::InvalidArgument(format!("invalid listen_udp: {e}")))?
+            .port();
+        engine
+            .media_services
+            .register_rtp(Arc::new(RtpMediaProvider::new(
+                self.driver_handle.clone(),
+                listen_port,
+            )));
+
         // Allocate the module-scoped cancellation token now so that callers of
         // `http_service()` (invoked by the engine right after `init`) get a token that will
         // be triggered by `RtpModule::stop()`. Previously this happened only in `start()`,
