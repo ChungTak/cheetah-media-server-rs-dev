@@ -4,11 +4,12 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::command::{
     DeleteRecordRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    SessionQuery, StartRecordRequest, StopRecordRequest,
+    RtpQuery, RtpReceiverRequest, RtpSenderRequest, SessionQuery, StartRecordRequest,
+    StopRecordRequest,
 };
-use cheetah_media_api::ids::{MediaKey, RecordFileId, RecordTaskId, SessionId};
+use cheetah_media_api::ids::{MediaKey, RecordFileId, RecordTaskId, RtpSessionId, SessionId};
 use cheetah_media_api::model::CloseReason;
-use cheetah_media_api::port::{MediaControlApi, MediaRequestContext};
+use cheetah_media_api::port::{MediaControlApi, MediaRequestContext, RtpApi};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -136,6 +137,14 @@ impl NativeMediaHttpService {
         self.ctx.media_services.record().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "record not available",
+            ))
+        })
+    }
+
+    fn rtp(&self) -> Result<Arc<dyn RtpApi>, AdapterError> {
+        self.ctx.media_services.rtp().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "rtp not available",
             ))
         })
     }
@@ -304,15 +313,43 @@ impl NativeMediaHttpService {
         Ok(json_response(&serde_json::json!({ "controlled": true })))
     }
 
+    async fn rtp_receivers(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let rtp_api = self.rtp()?;
+        let request: RtpReceiverRequest = parse_body(&req)?;
+        let session = rtp_api.open_rtp_receiver(&ctx, request).await?;
+        Ok(json_response(&session))
+    }
+
+    async fn rtp_senders(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let rtp_api = self.rtp()?;
+        let request: RtpSenderRequest = parse_body(&req)?;
+        let session = rtp_api.open_rtp_sender(&ctx, request).await?;
+        Ok(json_response(&session))
+    }
+
+    async fn rtp_session_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let rtp_api = self.rtp()?;
+        let id = rtp_id_from_path(&req.path, "/rtp/sessions/", "/stop")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
+        rtp_api.stop_rtp_session(&ctx, &RtpSessionId(id)).await?;
+        Ok(json_response(&serde_json::json!({ "stopped": true })))
+    }
+
+    async fn rtp_sessions(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let rtp_api = self.rtp()?;
+        let mut query: RtpQuery = parse_query(&req)?;
+        query.clamp_page_size();
+        let page = rtp_api.list_rtp_sessions(&ctx, query).await?;
+        Ok(json_response(&page))
+    }
+
     async fn proxies_pull(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         Err(AdapterError::Media(
             cheetah_media_api::error::MediaError::unsupported_capability("proxy"),
-        ))
-    }
-
-    async fn rtp_sessions(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        Err(AdapterError::Media(
-            cheetah_media_api::error::MediaError::unsupported_capability("rtp"),
         ))
     }
 }
@@ -362,6 +399,13 @@ impl ModuleHttpService for NativeMediaHttpService {
                 self.record_playback_control(req).await
             }
             (HttpMethod::Get, "/proxies/pull") => self.proxies_pull(req).await,
+            (HttpMethod::Post, "/rtp/receivers") => self.rtp_receivers(req).await,
+            (HttpMethod::Post, "/rtp/senders") => self.rtp_senders(req).await,
+            (HttpMethod::Post, path)
+                if path.starts_with("/rtp/sessions/") && path.ends_with("/stop") =>
+            {
+                self.rtp_session_stop(req).await
+            }
             (HttpMethod::Get, "/rtp/sessions") => self.rtp_sessions(req).await,
             _ => Err(AdapterError::InvalidRequest("not found".to_string())),
         };
@@ -429,6 +473,13 @@ fn percent_decode(s: &str) -> String {
 ///
 /// 从 `/record/tasks/{id}/stop` 这类路径中提取记录 ID。
 fn record_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
+    rtp_id_from_path(path, prefix, suffix)
+}
+
+/// Extract the RTP session id from a path like /rtp/sessions/{id}/stop.
+///
+/// 从 `/rtp/sessions/{id}/stop` 这类路径中提取 RTP session ID。
+fn rtp_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
     let rest = path.strip_prefix(prefix)?;
     let id = if suffix.is_empty() {
         rest

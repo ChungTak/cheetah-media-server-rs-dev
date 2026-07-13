@@ -63,3 +63,12 @@ pub fn query_to_json(query: Option<&str>) -> serde_json::Value {
     }
     serde_json::Value::Object(map)
 }
+
+/// Parse a JSON value that may be an unsigned integer or a numeric string.
+///
+/// 解析可能是无符号整数或数字字符串的 JSON 值。
+pub fn parse_json_u64(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
+}

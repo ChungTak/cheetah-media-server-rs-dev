@@ -1,11 +1,14 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use cheetah_media_api::command::{MediaQuery, SessionQuery};
-use cheetah_media_api::ids::{MediaKey, SessionId};
-use cheetah_media_api::model::CloseReason;
-use cheetah_media_api::port::{MediaControlApi, MediaRequestContext};
+use cheetah_media_api::command::{
+    MediaQuery, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, SessionQuery,
+};
+use cheetah_media_api::ids::{MediaKey, RtpSessionId, SessionId, StreamKeyBridge};
+use cheetah_media_api::model::{CloseReason, RtpTcpMode};
+use cheetah_media_api::port::{MediaControlApi, MediaRequestContext, RtpApi};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -146,6 +149,27 @@ impl Module for ZlmMediaModule {
                 method: HttpMethod::Post,
                 path: "/api/deleteRecordDirectory".to_string(),
             },
+            // RTP endpoints
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/openRtpServer".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/closeRtpServer".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/startSendRtp".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/stopSendRtp".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Get,
+                path: "/api/getRtpInfo".to_string(),
+            },
         ]
     }
 
@@ -165,6 +189,14 @@ impl ZlmMediaHttpService {
         self.ctx.media_services.control().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "media control not available",
+            ))
+        })
+    }
+
+    fn rtp(&self) -> Result<Arc<dyn RtpApi>, AdapterError> {
+        self.ctx.media_services.rtp().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "rtp not available",
             ))
         })
     }
@@ -445,6 +477,132 @@ impl ZlmMediaHttpService {
             data,
         ))
     }
+
+    async fn open_rtp_server(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let rtp_api = self.rtp()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let tcp_mode = parse_zlm_rtp_tcp_mode(&params);
+        let request = RtpReceiverRequest {
+            media_key: key,
+            port: crate::util::parse_json_u64(&params["port"]).map(|v| v as u16),
+            ip: params["ip"].as_str().map(String::from),
+            ssrc: crate::util::parse_json_u64(&params["ssrc"]).map(|v| v as u32),
+            enable_rtcp: params["enable_rtcp"].as_bool().unwrap_or(false),
+            tcp_mode,
+            payload_type: crate::util::parse_json_u64(&params["payload_type"]).map(|v| v as u8),
+            codec_hint: params["codec_hint"]
+                .as_str()
+                .or_else(|| params["payload_mode"].as_str())
+                .map(String::from),
+            reuse_port: params["reuse_port"].as_bool().unwrap_or(false),
+            timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
+        };
+        let session = rtp_api.open_rtp_receiver(&ctx, request).await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({
+                "port": session.local_port,
+                "ssrc": session.ssrc,
+                "session_id": session.session_id.0,
+            }),
+        ))
+    }
+
+    async fn close_rtp_server(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let rtp_api = self.rtp()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let session_id = zlm_rtp_session_id(&key);
+        rtp_api
+            .stop_rtp_session(&ctx, &RtpSessionId(session_id))
+            .await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({"result": true}),
+        ))
+    }
+
+    async fn start_send_rtp(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let rtp_api = self.rtp()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let destination = parse_zlm_destination(&params)?;
+        let ssrc = crate::util::parse_json_u64(&params["ssrc"]).map(|v| v as u32);
+        let codec_hint = params["codec_hint"]
+            .as_str()
+            .or_else(|| params["payload_mode"].as_str())
+            .or_else(|| {
+                if params["use_ps"].as_bool().unwrap_or(true) {
+                    Some("ps")
+                } else {
+                    Some("es")
+                }
+            })
+            .map(String::from);
+        let request = RtpSenderRequest {
+            media_key: key,
+            destination_endpoint: destination,
+            ssrc,
+            payload_type: crate::util::parse_json_u64(&params["payload_type"]).map(|v| v as u8),
+            codec_hint,
+            mode: RtpSenderMode::Active,
+            transport_options: std::collections::HashMap::new(),
+        };
+        let session = rtp_api.open_rtp_sender(&ctx, request).await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({
+                "ssrc": session.ssrc,
+                "session_id": session.session_id.0,
+            }),
+        ))
+    }
+
+    async fn stop_send_rtp(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let rtp_api = self.rtp()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let session_id = zlm_rtp_session_id(&key);
+        rtp_api
+            .stop_rtp_session(&ctx, &RtpSessionId(session_id))
+            .await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({"result": true}),
+        ))
+    }
+
+    async fn get_rtp_info(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let rtp_api = self.rtp()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let mut query = RtpQuery::default();
+        query.clamp_page_size();
+        let page = rtp_api.list_rtp_sessions(&ctx, query).await?;
+        let info = page.items.into_iter().find(|s| s.media_key == key);
+        let data = info
+            .map(|s| {
+                serde_json::json!({
+                    "session_id": s.session_id.0,
+                    "port": s.local_port,
+                    "ssrc": s.ssrc,
+                    "remote_endpoint": s.remote_endpoint,
+                    "state": s.state,
+                })
+            })
+            .unwrap_or_else(|| serde_json::json!({"exists": false}));
+        Ok(zlm_response(0, "success", data))
+    }
 }
 
 #[async_trait]
@@ -464,6 +622,11 @@ impl ModuleHttpService for ZlmMediaHttpService {
             (HttpMethod::Post, "/api/deleteRecordDirectory") => {
                 self.delete_record_directory(req).await
             }
+            (HttpMethod::Post, "/api/openRtpServer") => self.open_rtp_server(req).await,
+            (HttpMethod::Post, "/api/closeRtpServer") => self.close_rtp_server(req).await,
+            (HttpMethod::Post, "/api/startSendRtp") => self.start_send_rtp(req).await,
+            (HttpMethod::Post, "/api/stopSendRtp") => self.stop_send_rtp(req).await,
+            (HttpMethod::Get, "/api/getRtpInfo") => self.get_rtp_info(req).await,
             _ => Err(AdapterError::InvalidRequest("not found".to_string())),
         };
 
@@ -485,6 +648,52 @@ impl ModuleHttpService for ZlmMediaHttpService {
             }
         }
     }
+}
+
+fn parse_zlm_rtp_tcp_mode(params: &serde_json::Value) -> Option<RtpTcpMode> {
+    if let Some(s) = params["tcp_mode"].as_str() {
+        match s.to_lowercase().as_str() {
+            "passive" | "0" => return Some(RtpTcpMode::Passive),
+            "active" | "1" => return Some(RtpTcpMode::Active),
+            _ => {}
+        }
+    }
+    if params["tcp"].as_bool().unwrap_or(false) || params["enable_tcp"].as_bool().unwrap_or(false) {
+        return Some(RtpTcpMode::Passive);
+    }
+    if params["is_udp"].as_bool().unwrap_or(true) {
+        return None;
+    }
+    Some(RtpTcpMode::Passive)
+}
+
+fn parse_zlm_destination(params: &serde_json::Value) -> Result<String, AdapterError> {
+    if let Some(url) = params["dst_url"].as_str() {
+        if url.parse::<SocketAddr>().is_err() {
+            return Err(AdapterError::InvalidRequest(format!(
+                "invalid destination endpoint: {url}"
+            )));
+        }
+        return Ok(url.to_string());
+    }
+    let ip = params["dst_ip"]
+        .as_str()
+        .ok_or_else(|| AdapterError::InvalidRequest("dst_ip is required".to_string()))?;
+    let port = crate::util::parse_json_u64(&params["dst_port"])
+        .ok_or_else(|| AdapterError::InvalidRequest("dst_port is required".to_string()))?
+        as u16;
+    let endpoint = format!("{ip}:{port}");
+    if endpoint.parse::<SocketAddr>().is_err() {
+        return Err(AdapterError::InvalidRequest(format!(
+            "invalid destination endpoint: {endpoint}"
+        )));
+    }
+    Ok(endpoint)
+}
+
+fn zlm_rtp_session_id(key: &MediaKey) -> String {
+    let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
+    format!("{namespace}/{path}")
 }
 
 fn zlm_response<T: serde::Serialize>(code: i32, msg: &str, data: T) -> HttpResponse {
