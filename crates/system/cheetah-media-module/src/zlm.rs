@@ -358,6 +358,7 @@ impl ZlmMediaHttpService {
             vhost: Some(key.vhost.0.clone()),
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
+            page_size: RecordTaskQuery::MAX_PAGE_SIZE,
             ..Default::default()
         };
         query.clamp_page_size();
@@ -399,6 +400,7 @@ impl ZlmMediaHttpService {
             vhost: Some(key.vhost.0.clone()),
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
+            page_size: RecordTaskQuery::MAX_PAGE_SIZE,
             ..Default::default()
         };
         query.clamp_page_size();
