@@ -150,12 +150,8 @@ impl EngineBuilder {
             module_manager.register_factory(factory)?;
         }
 
-        let stream_provider = StreamMediaProvider::new(
-            stream_manager.clone(),
-            stream_manager.clone(),
-            stream_manager.clone(),
-            core_adapters.clone(),
-        );
+        let stream_provider =
+            StreamMediaProvider::new(stream_manager.clone(), core_adapters.clone());
         let media_facade = Arc::new(EngineMediaFacade::new(stream_provider));
 
         Ok(Engine {
