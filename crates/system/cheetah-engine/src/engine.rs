@@ -152,7 +152,14 @@ impl EngineBuilder {
 
         let stream_provider =
             StreamMediaProvider::new(stream_manager.clone(), core_adapters.clone());
-        let media_facade = Arc::new(EngineMediaFacade::new(stream_provider));
+        let media_facade = Arc::new(EngineMediaFacade::new(stream_provider.clone()));
+        let media_services = MediaServices::unavailable();
+        media_services
+            .register_control(Arc::new(stream_provider.clone())
+                as Arc<dyn cheetah_media_api::port::MediaControlApi>);
+        media_services.register_publish_subscribe(
+            Arc::new(stream_provider) as Arc<dyn cheetah_media_api::port::PublishSubscribeApi>
+        );
 
         Ok(Engine {
             config_provider: self.config_provider,
@@ -172,6 +179,7 @@ impl EngineBuilder {
             ffmpeg,
             core_adapters,
             media_facade,
+            media_services,
             root_cancel: RwLock::new(CancellationToken::new()),
         })
     }
@@ -205,6 +213,7 @@ pub struct Engine {
     ffmpeg: Arc<LocalFfmpegService>,
     core_adapters: Arc<LocalCoreAdapters>,
     media_facade: Arc<crate::media_provider::EngineMediaFacade>,
+    media_services: MediaServices,
     root_cancel: RwLock<CancellationToken>,
 }
 
@@ -233,7 +242,7 @@ impl Engine {
             proxy_manager: self.proxy_manager.clone(),
             cluster_api: self.cluster.clone(),
             ffmpeg_api: self.ffmpeg.clone(),
-            media_services: self.media_services(),
+            media_services: self.media_services.clone(),
         }
     }
 
@@ -395,23 +404,6 @@ impl Engine {
 
     pub fn media_facade(&self) -> Arc<crate::media_provider::EngineMediaFacade> {
         self.media_facade.clone()
-    }
-
-    fn media_services(&self) -> MediaServices {
-        MediaServices {
-            control: Some(
-                self.media_facade.clone() as Arc<dyn cheetah_media_api::port::MediaControlApi>
-            ),
-            publish_subscribe: Some(
-                self.media_facade.clone() as Arc<dyn cheetah_media_api::port::PublishSubscribeApi>
-            ),
-            record: Some(self.media_facade.clone() as Arc<dyn cheetah_media_api::port::RecordApi>),
-            snapshot: Some(
-                self.media_facade.clone() as Arc<dyn cheetah_media_api::port::SnapshotApi>
-            ),
-            proxy: Some(self.media_facade.clone() as Arc<dyn cheetah_media_api::port::ProxyApi>),
-            rtp: Some(self.media_facade.clone() as Arc<dyn cheetah_media_api::port::RtpApi>),
-        }
     }
 }
 
