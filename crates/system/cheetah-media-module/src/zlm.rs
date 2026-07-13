@@ -658,6 +658,13 @@ fn parse_zlm_rtp_tcp_mode(params: &serde_json::Value) -> Option<RtpTcpMode> {
             _ => {}
         }
     }
+    if let Some(n) = crate::util::parse_json_u64(&params["tcp_mode"]) {
+        match n {
+            0 => return Some(RtpTcpMode::Passive),
+            1 => return Some(RtpTcpMode::Active),
+            _ => {}
+        }
+    }
     if params["tcp"].as_bool().unwrap_or(false) || params["enable_tcp"].as_bool().unwrap_or(false) {
         return Some(RtpTcpMode::Passive);
     }
