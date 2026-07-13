@@ -402,13 +402,14 @@ impl ZlmMediaHttpService {
             page_size: cheetah_media_api::command::RecordFileQuery::MAX_PAGE_SIZE,
             ..Default::default()
         };
-        let mut last_err = None;
+        let mut total_deleted = 0usize;
+        let mut total_failed = 0usize;
         loop {
             let page = record_api.query_record_files(&ctx, query.clone()).await?;
             if page.items.is_empty() {
                 break;
             }
-            let mut deleted = 0usize;
+            let mut page_deleted = 0usize;
             for f in &page.items {
                 match record_api
                     .delete_record_file(
@@ -419,26 +420,29 @@ impl ZlmMediaHttpService {
                     )
                     .await
                 {
-                    Ok(()) => deleted += 1,
-                    Err(e) => last_err = Some(e),
+                    Ok(()) => {
+                        page_deleted += 1;
+                        total_deleted += 1;
+                    }
+                    Err(_) => {
+                        total_failed += 1;
+                    }
                 }
             }
-            if (page.items.len() as u64) < query.page_size || deleted == 0 {
-                if deleted == 0 {
-                    return Err(AdapterError::Media(last_err.unwrap_or_else(|| {
-                        cheetah_media_api::error::MediaError::new(
-                            cheetah_media_api::error::MediaErrorCode::StorageFailed,
-                            "failed to delete record files",
-                        )
-                    })));
-                }
+            if (page.items.len() as u64) < query.page_size || page_deleted == 0 {
                 break;
             }
         }
+        let result = total_failed == 0;
+        let data = serde_json::json!({
+            "result": result,
+            "deleted": total_deleted,
+            "failed": total_failed,
+        });
         Ok(zlm_response(
             0,
-            "success",
-            serde_json::json!({"result": true}),
+            if result { "success" } else { "partial success" },
+            data,
         ))
     }
 }
