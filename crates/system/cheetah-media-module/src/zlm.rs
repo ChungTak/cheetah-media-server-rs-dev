@@ -486,12 +486,12 @@ impl ZlmMediaHttpService {
         let tcp_mode = parse_zlm_rtp_tcp_mode(&params);
         let request = RtpReceiverRequest {
             media_key: key,
-            port: crate::util::parse_json_u64(&params["port"]).map(|v| v as u16),
+            port: parse_zlm_u16(&params, "port")?,
             ip: params["ip"].as_str().map(String::from),
-            ssrc: crate::util::parse_json_u64(&params["ssrc"]).map(|v| v as u32),
+            ssrc: parse_zlm_u32(&params, "ssrc")?,
             enable_rtcp: params["enable_rtcp"].as_bool().unwrap_or(false),
             tcp_mode,
-            payload_type: crate::util::parse_json_u64(&params["payload_type"]).map(|v| v as u8),
+            payload_type: parse_zlm_u8(&params, "payload_type")?,
             codec_hint: params["codec_hint"]
                 .as_str()
                 .or_else(|| params["payload_mode"].as_str())
@@ -533,7 +533,7 @@ impl ZlmMediaHttpService {
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let destination = parse_zlm_destination(&params)?;
-        let ssrc = crate::util::parse_json_u64(&params["ssrc"]).map(|v| v as u32);
+        let ssrc = parse_zlm_u32(&params, "ssrc")?;
         let codec_hint = params["codec_hint"]
             .as_str()
             .or_else(|| params["payload_mode"].as_str())
@@ -549,7 +549,7 @@ impl ZlmMediaHttpService {
             media_key: key,
             destination_endpoint: destination,
             ssrc,
-            payload_type: crate::util::parse_json_u64(&params["payload_type"]).map(|v| v as u8),
+            payload_type: parse_zlm_u8(&params, "payload_type")?,
             codec_hint,
             mode: RtpSenderMode::Active,
             transport_options: std::collections::HashMap::new(),
@@ -650,6 +650,39 @@ impl ModuleHttpService for ZlmMediaHttpService {
     }
 }
 
+fn parse_zlm_u16(params: &serde_json::Value, key: &str) -> Result<Option<u16>, AdapterError> {
+    if params[key].is_null() {
+        return Ok(None);
+    }
+    let v = crate::util::parse_json_u64(&params[key])
+        .ok_or_else(|| AdapterError::InvalidRequest(format!("{key} is not a valid number")))?;
+    u16::try_from(v)
+        .map(Some)
+        .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
+}
+
+fn parse_zlm_u32(params: &serde_json::Value, key: &str) -> Result<Option<u32>, AdapterError> {
+    if params[key].is_null() {
+        return Ok(None);
+    }
+    let v = crate::util::parse_json_u64(&params[key])
+        .ok_or_else(|| AdapterError::InvalidRequest(format!("{key} is not a valid number")))?;
+    u32::try_from(v)
+        .map(Some)
+        .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
+}
+
+fn parse_zlm_u8(params: &serde_json::Value, key: &str) -> Result<Option<u8>, AdapterError> {
+    if params[key].is_null() {
+        return Ok(None);
+    }
+    let v = crate::util::parse_json_u64(&params[key])
+        .ok_or_else(|| AdapterError::InvalidRequest(format!("{key} is not a valid number")))?;
+    u8::try_from(v)
+        .map(Some)
+        .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
+}
+
 fn parse_zlm_rtp_tcp_mode(params: &serde_json::Value) -> Option<RtpTcpMode> {
     if let Some(s) = params["tcp_mode"].as_str() {
         match s.to_lowercase().as_str() {
@@ -686,9 +719,8 @@ fn parse_zlm_destination(params: &serde_json::Value) -> Result<String, AdapterEr
     let ip = params["dst_ip"]
         .as_str()
         .ok_or_else(|| AdapterError::InvalidRequest("dst_ip is required".to_string()))?;
-    let port = crate::util::parse_json_u64(&params["dst_port"])
-        .ok_or_else(|| AdapterError::InvalidRequest("dst_port is required".to_string()))?
-        as u16;
+    let port = parse_zlm_u16(params, "dst_port")?
+        .ok_or_else(|| AdapterError::InvalidRequest("dst_port is required".to_string()))?;
     let endpoint = format!("{ip}:{port}");
     if endpoint.parse::<SocketAddr>().is_err() {
         return Err(AdapterError::InvalidRequest(format!(
