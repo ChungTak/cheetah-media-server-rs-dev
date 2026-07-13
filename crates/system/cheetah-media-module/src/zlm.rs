@@ -566,7 +566,7 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let session_id = zlm_rtp_session_id(&key);
+        let session_id = zlm_rtp_session_id(&key, "recv");
         rtp_api
             .stop_rtp_session(&ctx, &RtpSessionId(session_id))
             .await?;
@@ -620,7 +620,7 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let session_id = zlm_rtp_session_id(&key);
+        let session_id = zlm_rtp_session_id(&key, "send");
         rtp_api
             .stop_rtp_session(&ctx, &RtpSessionId(session_id))
             .await?;
@@ -858,15 +858,17 @@ fn parse_zlm_u8(params: &serde_json::Value, key: &str) -> Result<Option<u8>, Ada
 fn parse_zlm_rtp_tcp_mode(params: &serde_json::Value) -> Option<RtpTcpMode> {
     if let Some(s) = params["tcp_mode"].as_str() {
         match s.to_lowercase().as_str() {
-            "passive" | "0" => return Some(RtpTcpMode::Passive),
-            "active" | "1" => return Some(RtpTcpMode::Active),
+            "0" => return None,
+            "passive" | "1" => return Some(RtpTcpMode::Passive),
+            "active" | "2" => return Some(RtpTcpMode::Active),
             _ => {}
         }
     }
     if let Some(n) = crate::util::parse_json_u64(&params["tcp_mode"]) {
         match n {
-            0 => return Some(RtpTcpMode::Passive),
-            1 => return Some(RtpTcpMode::Active),
+            0 => return None,
+            1 => return Some(RtpTcpMode::Passive),
+            2 => return Some(RtpTcpMode::Active),
             _ => {}
         }
     }
@@ -902,9 +904,9 @@ fn parse_zlm_destination(params: &serde_json::Value) -> Result<String, AdapterEr
     Ok(endpoint)
 }
 
-fn zlm_rtp_session_id(key: &MediaKey) -> String {
+fn zlm_rtp_session_id(key: &MediaKey, kind: &str) -> String {
     let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
-    format!("{namespace}/{path}")
+    format!("{kind}/{namespace}/{path}")
 }
 
 fn zlm_record_format(value: &serde_json::Value) -> Result<String, AdapterError> {

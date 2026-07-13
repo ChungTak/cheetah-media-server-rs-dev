@@ -62,9 +62,9 @@ impl RtpMediaProvider {
             .as_millis() as i64
     }
 
-    fn session_key_from_media_key(key: &MediaKey) -> String {
+    fn session_key_from_media_key(key: &MediaKey, kind: &str) -> String {
         let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
-        format!("{namespace}/{path}")
+        format!("{kind}/{namespace}/{path}")
     }
 
     fn parse_payload_mode(hint: &Option<String>, payload_type: Option<u8>) -> RtpPayloadMode {
@@ -153,7 +153,7 @@ impl RtpApi for RtpMediaProvider {
         request: RtpReceiverRequest,
     ) -> Result<RtpSession> {
         let driver = self.driver()?;
-        let session_key = Self::session_key_from_media_key(&request.media_key);
+        let session_key = Self::session_key_from_media_key(&request.media_key, "recv");
         let session_id = RtpSessionId(session_key.clone());
 
         let spec = RtpServerSpec {
@@ -198,7 +198,7 @@ impl RtpApi for RtpMediaProvider {
         request: RtpSenderRequest,
     ) -> Result<RtpSession> {
         let driver = self.driver()?;
-        let session_key = Self::session_key_from_media_key(&request.media_key);
+        let session_key = Self::session_key_from_media_key(&request.media_key, "send");
         let session_id = RtpSessionId(session_key.clone());
 
         let destination: SocketAddr = request.destination_endpoint.parse().map_err(|e| {
