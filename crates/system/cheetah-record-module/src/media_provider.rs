@@ -154,7 +154,7 @@ impl RecordApiPort for RecordMediaProvider {
             format: query.format.clone(),
             start_time_ms: query.start_time_ms,
             end_time_ms: query.end_time_ms,
-            limit: Some(query.page_size as u32),
+            limit: None,
         };
         let response = self.api.query_files(internal).map_err(map_error)?;
         let registry = self.api.registry();
@@ -270,12 +270,12 @@ fn map_file_brief(
     registry: &crate::registry::RecordRegistry,
 ) -> Option<RecordFile> {
     let media_key = registry
-        .get_task(&f.file_id)
+        .get_task(&f.task_id)
         .and_then(|t| MediaKey::with_default_vhost(&t.app, &t.stream, None).ok())
-        .or_else(|| MediaKey::with_default_vhost("__fallback__", &f.file_id, None).ok())?;
+        .or_else(|| MediaKey::with_default_vhost("__fallback__", &f.task_id, None).ok())?;
     Some(RecordFile {
         file_id: RecordFileId(f.file_id.clone()),
-        task_id: RecordTaskId(f.file_id.clone()),
+        task_id: RecordTaskId(f.task_id.clone()),
         media_key,
         format: f.format.clone(),
         path_handle: FileHandle(f.path.clone()),
