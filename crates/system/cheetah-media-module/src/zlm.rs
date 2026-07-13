@@ -586,7 +586,10 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let mut query = RtpQuery::default();
+        let mut query = RtpQuery {
+            page_size: RtpQuery::MAX_PAGE_SIZE,
+            ..Default::default()
+        };
         query.clamp_page_size();
         let page = rtp_api.list_rtp_sessions(&ctx, query).await?;
         let info = page.items.into_iter().find(|s| s.media_key == key);
