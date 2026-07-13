@@ -440,6 +440,7 @@ impl NativeMediaHttpService {
         crate::util::validate_ffmpeg_options(&request.output_options)?;
         // For a native API call, the user should not be able to pass a raw command string.
         request.source_url = request.source_url.trim().to_string();
+        crate::util::validate_ffmpeg_url(&request.source_url)?;
         let info = proxy_api.create_ffmpeg_proxy(&ctx, request).await?;
         Ok(json_response(&info))
     }

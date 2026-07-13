@@ -600,11 +600,12 @@ impl ZlmMediaHttpService {
         let source_url = params["url"]
             .as_str()
             .ok_or_else(|| AdapterError::InvalidRequest("url is required".to_string()))?;
+        crate::util::validate_ffmpeg_url(source_url)?;
         let request = PullProxyRequest {
             source_url: source_url.to_string(),
             destination: key.clone(),
             retry_policy: Default::default(),
-            heartbeat_ms: Some(crate::util::parse_json_u64(&params["heartbeat_ms"]).unwrap_or(0)),
+            heartbeat_ms: crate::util::parse_json_u64(&params["heartbeat_ms"]),
             timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
             transcode_policy: Default::default(),
             output_policy: Default::default(),

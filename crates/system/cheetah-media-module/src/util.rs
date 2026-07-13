@@ -128,6 +128,7 @@ pub fn parse_ffmpeg_request(
         .ok_or_else(|| {
             AdapterError::InvalidRequest("src_url or ffmpeg_cmd -i is required".to_string())
         })?;
+    validate_ffmpeg_url(&source_url)?;
 
     Ok((source_url, input_options, output_options))
 }
@@ -141,7 +142,7 @@ pub fn validate_ffmpeg_options(options: &[String]) -> Result<(), AdapterError> {
         ";", "|", "&", "&&", "||", ">", ">>", "<", "<<", "$(", "`", "~", "*", "?", "!", "#", "^",
         "$", "(", ")", "[", "]", "{", "}", "=", "\\",
     ];
-    const DISALLOWED_SUBSTR: &[&str] = &[";", "|", "&", ">", "<", "$(", "`"];
+    const DISALLOWED_SUBSTR: &[&str] = &[";", "|", "&", ">", "<", "$(", "${", "`"];
     for token in options {
         if DENIED.contains(&token.as_str()) {
             return Err(AdapterError::InvalidRequest(format!(
@@ -153,6 +154,23 @@ pub fn validate_ffmpeg_options(options: &[String]) -> Result<(), AdapterError> {
                 "unsafe ffmpeg option: {token}"
             )));
         }
+    }
+    Ok(())
+}
+
+/// Reject URL strings that contain shell metacharacters or command substitution.
+/// Allows query strings, percent encoding, and common URL components.
+///
+/// 拒绝包含 shell 元字符或命令替换的 URL；保留查询串、百分号编码等 URL 常见字符。
+pub fn validate_ffmpeg_url(url: &str) -> Result<(), AdapterError> {
+    const FORBIDDEN: &[&str] = &[
+        ";", "|", ">", "<", "$(", "${", "`", "*", "~", "!", "#", "^", "$", "(", ")", "[", "]", "{",
+        "}", "\\", "'", "\"", "\n", "\r", "\t", " ",
+    ];
+    if FORBIDDEN.iter().any(|s| url.contains(s)) {
+        return Err(AdapterError::InvalidRequest(format!(
+            "unsafe source URL: {url}"
+        )));
     }
     Ok(())
 }
