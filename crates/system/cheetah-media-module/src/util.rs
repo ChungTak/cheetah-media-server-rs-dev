@@ -232,16 +232,19 @@ pub fn validate_ffmpeg_url(url: &str) -> Result<(), AdapterError> {
 
 /// Constant-time string comparison to avoid timing side-channels.
 ///
-/// The comparison always runs a fixed number of iterations so callers
-/// cannot learn the expected token length by varying the input length.
+/// The comparison always covers every byte of both inputs while running at
+/// least `MAX_SECRET_LEN` iterations, so callers cannot force an early return
+/// by varying the input length.
 ///
-/// 常量时间字符串比较，避免时序侧信道。固定迭代次数，避免通过输入长度推断期望 token 长度。
+/// 常量时间字符串比较，避免时序侧信道。覆盖两个输入的所有字节，同时至少固定迭代
+/// `MAX_SECRET_LEN` 次，避免通过输入长度提前返回。
 pub fn constant_time_eq(a: &str, b: &str) -> bool {
     const MAX_SECRET_LEN: usize = 4096;
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
     let mut diff = (a_bytes.len() != b_bytes.len()) as u8;
-    for i in 0..MAX_SECRET_LEN {
+    let iterations = a_bytes.len().max(b_bytes.len()).max(MAX_SECRET_LEN);
+    for i in 0..iterations {
         let x = a_bytes.get(i).unwrap_or(&0);
         let y = b_bytes.get(i).unwrap_or(&0);
         diff |= x ^ y;

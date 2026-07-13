@@ -11,7 +11,7 @@ use cheetah_sdk::{HttpRequest, HttpResponse};
 
 use crate::error::AdapterError;
 
-use super::{parse_zlm_u16, parse_zlm_u32, parse_zlm_u8, zlm_response, ZlmMediaHttpService};
+use super::{zlm_response, ZlmMediaHttpService};
 
 impl ZlmMediaHttpService {
     pub(crate) async fn open_rtp_server(
@@ -157,6 +157,39 @@ impl ZlmMediaHttpService {
             .unwrap_or_else(|| serde_json::json!({"exists": false}));
         Ok(zlm_response(0, "success", data))
     }
+}
+
+fn parse_zlm_u16(params: &serde_json::Value, key: &str) -> Result<Option<u16>, AdapterError> {
+    if params[key].is_null() {
+        return Ok(None);
+    }
+    let v = crate::util::parse_json_u64(&params[key])
+        .ok_or_else(|| AdapterError::InvalidRequest(format!("{key} is not a valid number")))?;
+    u16::try_from(v)
+        .map(Some)
+        .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
+}
+
+fn parse_zlm_u32(params: &serde_json::Value, key: &str) -> Result<Option<u32>, AdapterError> {
+    if params[key].is_null() {
+        return Ok(None);
+    }
+    let v = crate::util::parse_json_u64(&params[key])
+        .ok_or_else(|| AdapterError::InvalidRequest(format!("{key} is not a valid number")))?;
+    u32::try_from(v)
+        .map(Some)
+        .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
+}
+
+fn parse_zlm_u8(params: &serde_json::Value, key: &str) -> Result<Option<u8>, AdapterError> {
+    if params[key].is_null() {
+        return Ok(None);
+    }
+    let v = crate::util::parse_json_u64(&params[key])
+        .ok_or_else(|| AdapterError::InvalidRequest(format!("{key} is not a valid number")))?;
+    u8::try_from(v)
+        .map(Some)
+        .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
 }
 
 fn parse_zlm_rtp_tcp_mode(params: &serde_json::Value) -> Option<RtpTcpMode> {

@@ -2,16 +2,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use cheetah_media_api::command::{
-    DeleteRecordRequest, FfmpegProxyRequest, MediaQuery, ProxyQuery, PullProxyRequest,
-    RecordFileQuery, RecordTaskQuery, SessionQuery, StartRecordRequest, StopRecordRequest,
-};
-use cheetah_media_api::ids::{MediaKey, ProxyId, RecordTaskId, SessionId, StreamKeyBridge};
-use cheetah_media_api::model::{
-    CloseReason, ProxyKind, RecordTaskState, RecordTemplate, ServerConfig, StoragePolicy,
-};
+use cheetah_media_api::command::{MediaQuery, SessionQuery};
+use cheetah_media_api::ids::{MediaKey, SessionId, StreamKeyBridge};
+use cheetah_media_api::model::CloseReason;
 use cheetah_media_api::port::{
-    MediaControlApi, MediaRequestContext, ProxyApi, RtpApi, ServerAdminApi,
+    MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, ServerAdminApi,
 };
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
@@ -22,7 +17,11 @@ use cheetah_sdk::{
 
 use crate::error::{zlm_error_response, AdapterError};
 
+mod proxy;
+mod record;
+mod routes;
 mod rtp;
+mod server;
 
 const MODULE_ID: &str = "media-http-zlm";
 
@@ -109,120 +108,7 @@ impl Module for ZlmMediaModule {
     }
 
     fn http_routes(&self) -> Vec<HttpRouteDescriptor> {
-        vec![
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getMediaList".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/isMediaOnline".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getMediaInfo".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getAllSession".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/close_stream".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/kick_session".to_string(),
-            },
-            // Record endpoints; detailed implementation in record module / future media provider.
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/startRecord".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/stopRecord".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/isRecording".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getMP4RecordFile".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/deleteRecordDirectory".to_string(),
-            },
-            // RTP endpoints
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/openRtpServer".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/closeRtpServer".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/startSendRtp".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/stopSendRtp".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getRtpInfo".to_string(),
-            },
-            // Proxy endpoints
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/addStreamProxy".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/delStreamProxy".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getAllStreamProxy".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/addFFmpegSource".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/delFFmpegSource".to_string(),
-            },
-            // Server ops endpoints
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getServerLoad".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getWorkThreadsLoad".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getServerConfig".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/setServerConfig".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/restartServer".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/shutdownServer".to_string(),
-            },
-        ]
+        self::routes::http_routes()
     }
 
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
@@ -241,6 +127,14 @@ impl ZlmMediaHttpService {
         self.ctx.media_services.control().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "media control not available",
+            ))
+        })
+    }
+
+    fn record(&self) -> Result<Arc<dyn RecordApi>, AdapterError> {
+        self.ctx.media_services.record().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "record not available",
             ))
         })
     }
@@ -414,366 +308,6 @@ impl ZlmMediaHttpService {
             serde_json::json!({"result": true}),
         ))
     }
-
-    async fn record_start(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.ctx.media_services.record().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "record not available",
-            ))
-        })?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let format = params["type"].as_str().unwrap_or("mp4");
-        let request = StartRecordRequest {
-            media_key: key,
-            format: format.to_string(),
-            template: RecordTemplate::Continuous,
-            segment_duration_ms: None,
-            max_segments: None,
-            storage_policy: StoragePolicy::default(),
-            idempotency_key: None,
-        };
-        let task = record_api.start_record(&ctx, request).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true, "taskId": task.task_id.0}),
-        ))
-    }
-
-    async fn record_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.ctx.media_services.record().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "record not available",
-            ))
-        })?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let format = params["type"].as_str().unwrap_or("mp4");
-        let request = StopRecordRequest {
-            task_id: RecordTaskId(format!("{format}-{}-{}", key.app.0, key.stream.0)),
-        };
-        let _ = record_api.stop_record(&ctx, request).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn is_recording(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.ctx.media_services.record().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "record not available",
-            ))
-        })?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let format = params["type"].as_str().unwrap_or("mp4");
-        let query = RecordTaskQuery {
-            app: Some(key.app.0.clone()),
-            stream: Some(key.stream.0.clone()),
-            ..Default::default()
-        };
-        let page = record_api.query_record_tasks(&ctx, query).await?;
-        let recording = page.items.iter().any(|t| {
-            t.format == format
-                && matches!(t.state, RecordTaskState::Running | RecordTaskState::Pending)
-        });
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"status": recording}),
-        ))
-    }
-
-    async fn get_mp4_files(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.ctx.media_services.record().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "record not available",
-            ))
-        })?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let query = RecordFileQuery {
-            app: Some(key.app.0.clone()),
-            stream: Some(key.stream.0.clone()),
-            format: Some("mp4".to_string()),
-            ..Default::default()
-        };
-        let page = record_api.query_record_files(&ctx, query).await?;
-        let paths: Vec<String> = page.items.iter().map(|f| f.path_handle.0.clone()).collect();
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"paths": paths, "rootPath": ""}),
-        ))
-    }
-
-    async fn delete_record_directory(
-        &self,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.ctx.media_services.record().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "record not available",
-            ))
-        })?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let query = RecordFileQuery {
-            app: Some(key.app.0.clone()),
-            stream: Some(key.stream.0.clone()),
-            page_size: RecordFileQuery::MAX_PAGE_SIZE,
-            ..Default::default()
-        };
-        let mut total_deleted = 0usize;
-        let mut total_failed = 0usize;
-        loop {
-            let page = record_api.query_record_files(&ctx, query.clone()).await?;
-            if page.items.is_empty() {
-                break;
-            }
-            let mut page_deleted = 0usize;
-            for f in &page.items {
-                match record_api
-                    .delete_record_file(
-                        &ctx,
-                        DeleteRecordRequest {
-                            file_id: f.file_id.clone(),
-                        },
-                    )
-                    .await
-                {
-                    Ok(()) => {
-                        page_deleted += 1;
-                        total_deleted += 1;
-                    }
-                    Err(_) => {
-                        total_failed += 1;
-                    }
-                }
-            }
-            if (page.items.len() as u64) < query.page_size || page_deleted == 0 {
-                break;
-            }
-        }
-        let result = total_failed == 0;
-        let data = serde_json::json!({
-            "result": result,
-            "deleted": total_deleted,
-            "failed": total_failed,
-        });
-        Ok(zlm_response(
-            0,
-            if result { "success" } else { "partial success" },
-            data,
-        ))
-    }
-
-    async fn get_all_stream_proxy(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let proxy_api = self.proxy()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let mut query = ProxyQuery {
-            kind: Some(ProxyKind::Pull),
-            ..Default::default()
-        };
-        query.page_size =
-            crate::util::parse_json_u64(&params["page_size"]).unwrap_or(ProxyQuery::MAX_PAGE_SIZE);
-        query.page = crate::util::parse_json_u64(&params["page"]).unwrap_or(0);
-        query.clamp_page_size();
-        let page = proxy_api.list_proxies(&ctx, query).await?;
-        Ok(zlm_response(0, "success", page.items))
-    }
-
-    async fn add_stream_proxy(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let proxy_api = self.proxy()?;
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let source_url = params["url"]
-            .as_str()
-            .ok_or_else(|| AdapterError::InvalidRequest("url is required".to_string()))?;
-        crate::util::validate_ffmpeg_url(source_url)?;
-        let request = PullProxyRequest {
-            source_url: source_url.to_string(),
-            destination: key.clone(),
-            retry_policy: Default::default(),
-            heartbeat_ms: crate::util::parse_json_u64(&params["heartbeat_ms"]),
-            timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
-            transcode_policy: Default::default(),
-            output_policy: Default::default(),
-            record_policy: None,
-        };
-        let info = proxy_api.create_pull_proxy(&ctx, request).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({
-                "key": zlm_key_string(&key),
-                "proxy_id": info.proxy_id.0,
-                "result": true,
-            }),
-        ))
-    }
-
-    async fn del_stream_proxy(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let proxy_api = self.proxy()?;
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let proxy_id = ProxyId(zlm_key_string(&key));
-        proxy_api.delete_pull_proxy(&ctx, &proxy_id).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn add_ffmpeg_source(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let proxy_api = self.proxy()?;
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let (source_url, input_options, output_options) = crate::util::parse_ffmpeg_request(
-            params["ffmpeg_cmd"].as_str(),
-            params["src_url"].as_str(),
-        )?;
-        crate::util::validate_ffmpeg_options(&input_options)?;
-        crate::util::validate_ffmpeg_options(&output_options)?;
-        let request = FfmpegProxyRequest {
-            source_url,
-            destination: key.clone(),
-            timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(0),
-            input_options,
-            output_options,
-            transcode_policy: Default::default(),
-            output_policy: Default::default(),
-        };
-        let info = proxy_api.create_ffmpeg_proxy(&ctx, request).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({
-                "key": zlm_key_string(&key),
-                "proxy_id": info.proxy_id.0,
-                "result": true,
-            }),
-        ))
-    }
-
-    async fn del_ffmpeg_source(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let proxy_api = self.proxy()?;
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let proxy_id = ProxyId(zlm_key_string(&key));
-        proxy_api.delete_ffmpeg_proxy(&ctx, &proxy_id).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn get_server_load(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.server_admin()?;
-        let info = api.server_info(&ctx).await?;
-        let data = serde_json::json!({
-            "cpu": info.load.cpu_percent,
-            "mem": info.load.memory_bytes,
-            "net_in": info.load.network_in,
-            "net_out": info.load.network_out,
-        });
-        Ok(zlm_response(0, "success", data))
-    }
-
-    async fn get_work_threads_load(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.server_admin()?;
-        let info = api.server_info(&ctx).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({ "threads": info.load.threads }),
-        ))
-    }
-
-    async fn get_server_config(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.server_admin()?;
-        let mut config = api.server_config(&ctx).await?;
-        crate::util::filter_sensitive_config_values(&mut config.values);
-        Ok(zlm_response(0, "success", config.values))
-    }
-
-    async fn set_server_config(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.server_admin()?;
-        let params = self.extract_params(&req)?;
-        let mut values = std::collections::HashMap::new();
-        if let (Some(key), Some(value)) = (params["key"].as_str(), params["value"].as_str()) {
-            if !crate::util::is_sensitive_config_key(key) {
-                values.insert(key.to_string(), value.to_string());
-            }
-        } else if let Some(obj) = params.as_object() {
-            for (k, v) in obj {
-                if k == "restart" || crate::util::is_sensitive_config_key(k) {
-                    continue;
-                }
-                if let Some(s) = v.as_str() {
-                    values.insert(k.clone(), s.to_string());
-                }
-            }
-        }
-        let config = ServerConfig { values };
-        api.set_server_config(&ctx, config).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn restart_server(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.server_admin()?;
-        api.restart_server(&ctx).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn shutdown_server(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.server_admin()?;
-        api.shutdown_server(&ctx).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
 }
 
 #[async_trait]
@@ -830,48 +364,6 @@ impl ModuleHttpService for ZlmMediaHttpService {
             }
         }
     }
-}
-
-pub(crate) fn parse_zlm_u16(
-    params: &serde_json::Value,
-    key: &str,
-) -> Result<Option<u16>, AdapterError> {
-    if params[key].is_null() {
-        return Ok(None);
-    }
-    let v = crate::util::parse_json_u64(&params[key])
-        .ok_or_else(|| AdapterError::InvalidRequest(format!("{key} is not a valid number")))?;
-    u16::try_from(v)
-        .map(Some)
-        .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
-}
-
-pub(crate) fn parse_zlm_u32(
-    params: &serde_json::Value,
-    key: &str,
-) -> Result<Option<u32>, AdapterError> {
-    if params[key].is_null() {
-        return Ok(None);
-    }
-    let v = crate::util::parse_json_u64(&params[key])
-        .ok_or_else(|| AdapterError::InvalidRequest(format!("{key} is not a valid number")))?;
-    u32::try_from(v)
-        .map(Some)
-        .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
-}
-
-pub(crate) fn parse_zlm_u8(
-    params: &serde_json::Value,
-    key: &str,
-) -> Result<Option<u8>, AdapterError> {
-    if params[key].is_null() {
-        return Ok(None);
-    }
-    let v = crate::util::parse_json_u64(&params[key])
-        .ok_or_else(|| AdapterError::InvalidRequest(format!("{key} is not a valid number")))?;
-    u8::try_from(v)
-        .map(Some)
-        .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
 }
 
 pub(crate) fn zlm_response<T: serde::Serialize>(code: i32, msg: &str, data: T) -> HttpResponse {
