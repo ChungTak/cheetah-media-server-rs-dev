@@ -358,17 +358,19 @@ impl ZlmMediaHttpService {
             vhost: Some(key.vhost.0.clone()),
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
-            state: Some(RecordTaskState::Running),
             ..Default::default()
         };
         let page = record_api.query_record_tasks(&ctx, query).await?;
         let task = page
             .items
             .into_iter()
-            .find(|t| t.format == format)
+            .find(|t| {
+                t.format == format
+                    && matches!(t.state, RecordTaskState::Running | RecordTaskState::Pending)
+            })
             .ok_or_else(|| {
                 AdapterError::Media(cheetah_media_api::error::MediaError::not_found(
-                    "running record task",
+                    "record task",
                 ))
             })?;
         record_api
