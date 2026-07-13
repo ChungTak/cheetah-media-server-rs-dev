@@ -156,27 +156,128 @@ pub fn validate_ffmpeg_options(options: &[String]) -> Result<(), AdapterError> {
         "$", "(", ")", "[", "]", "{", "}", "=", "\\",
     ];
     const DISALLOWED_SUBSTR: &[&str] = &[";", "|", "&", ">", "<", "$(", "${", "`"];
-    const DANGEROUS_FFMPEG: &[&str] = &[
-        "-protocol_whitelist",
-        "-allowed_extensions",
-        "-protocols",
-        "-concat",
-        "-safe",
-        "-segment_list",
-        "-hls_key_info_file",
-        "-key_info_file",
-        "-i",
-        "-filter_complex",
-        "-lavfi",
-        "-filter_complex_script",
-        "-filter_script",
-        "-vf",
-        "-af",
-        "-filter:v",
-        "-filter:a",
-        "-dump_attachment",
-        "-attach",
+
+    const ALLOWED_FFMPEG_BASE: &[&str] = &[
+        "re",
+        "fflags",
+        "flags",
+        "rtsp_transport",
+        "rtsp_flags",
+        "stimeout",
+        "max_delay",
+        "timeout",
+        "rw_timeout",
+        "listen_timeout",
+        "rtbufsize",
+        "max_packet_size",
+        "probesize",
+        "analyzeduration",
+        "fpsprobesize",
+        "max_ts_probe",
+        "stream_loop",
+        "loop",
+        "live_start_index",
+        "window_size",
+        "extra_size",
+        "ss",
+        "t",
+        "to",
+        "itsoffset",
+        "thread_queue_size",
+        "err_detect",
+        "max_muxing_queue_size",
+        "avoid_negative_ts",
+        "flush_packets",
+        "streamid",
+        "timestamp",
+        "f",
+        "ar",
+        "ac",
+        "ab",
+        "acodec",
+        "vcodec",
+        "codec",
+        "c",
+        "b",
+        "r",
+        "s",
+        "aspect",
+        "g",
+        "keyint_min",
+        "sc_threshold",
+        "bf",
+        "refs",
+        "qcomp",
+        "qmin",
+        "qmax",
+        "maxrate",
+        "minrate",
+        "bufsize",
+        "crf",
+        "cq",
+        "q",
+        "qscale",
+        "preset",
+        "tune",
+        "profile",
+        "level",
+        "pix_fmt",
+        "colorspace",
+        "color_trc",
+        "color_primaries",
+        "color_range",
+        "vsync",
+        "async",
+        "copyts",
+        "start_at_zero",
+        "threads",
+        "thread_queue_size",
+        "max_interleave_delta",
+        "use_wallclock_as_timestamps",
+        "metadata",
+        "map",
+        "map_metadata",
+        "movflags",
+        "muxdelay",
+        "muxpreload",
+        "shortest",
+        "y",
+        "n",
+        "nostats",
+        "hide_banner",
+        "loglevel",
+        "max_error_rate",
+        "stats_period",
+        "dump_separator",
+        "max_alloc",
+        "cpuflags",
+        "ignore_unknown",
+        "copy_unknown",
+        "an",
+        "vn",
+        "sn",
+        "dn",
+        "tag",
+        "bsf",
+        "disposition",
+        "pass",
     ];
+
+    fn is_allowed_ffmpeg_option(token: &str, allowed: &[&str]) -> bool {
+        if !token.starts_with('-') {
+            return true;
+        }
+        if token.len() > 1 {
+            let second = token.as_bytes()[1];
+            if second.is_ascii_digit() || second == b'.' {
+                return true;
+            }
+        }
+        let name = &token[1..];
+        let base = name.split(':').next().unwrap_or(name);
+        allowed.iter().any(|a| base.eq_ignore_ascii_case(a))
+    }
+
     for (i, token) in options.iter().enumerate() {
         if DENIED.contains(&token.as_str()) {
             return Err(AdapterError::InvalidRequest(format!(
@@ -188,10 +289,7 @@ pub fn validate_ffmpeg_options(options: &[String]) -> Result<(), AdapterError> {
                 "unsafe ffmpeg option: {token}"
             )));
         }
-        if DANGEROUS_FFMPEG
-            .iter()
-            .any(|d| token.eq_ignore_ascii_case(d))
-        {
+        if !is_allowed_ffmpeg_option(token, ALLOWED_FFMPEG_BASE) {
             return Err(AdapterError::InvalidRequest(format!(
                 "unsafe ffmpeg option: {token}"
             )));
@@ -219,7 +317,7 @@ pub fn validate_ffmpeg_url(url: &str) -> Result<(), AdapterError> {
         ));
     }
     const FORBIDDEN: &[&str] = &[
-        ";", "|", "&", ">", "<", "$(", "${", "`", "*", "~", "!", "#", "^", "$", "(", ")", "{", "}",
+        ";", "|", ">", "<", "$(", "${", "`", "*", "~", "!", "#", "^", "$", "(", ")", "{", "}",
         "\\", "'", "\"", "\n", "\r", "\t", " ",
     ];
     if FORBIDDEN.iter().any(|s| url.contains(s)) {

@@ -41,6 +41,7 @@ impl NativeMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let api = self.webrtc()?;
         let mut query: WebRtcRoomQuery = parse_query(&req)?;
         query.clamp_page_size();
