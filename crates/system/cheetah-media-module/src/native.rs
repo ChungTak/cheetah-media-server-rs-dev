@@ -2,8 +2,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use cheetah_media_api::command::{MediaQuery, RecordFileQuery, RecordTaskQuery, SessionQuery};
-use cheetah_media_api::ids::{MediaKey, SessionId};
+use cheetah_media_api::command::{
+    DeleteRecordRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
+    SessionQuery, StartRecordRequest, StopRecordRequest,
+};
+use cheetah_media_api::ids::{MediaKey, RecordFileId, RecordTaskId, SessionId};
 use cheetah_media_api::model::CloseReason;
 use cheetah_media_api::port::{MediaControlApi, MediaRequestContext};
 use cheetah_sdk::{
@@ -129,6 +132,14 @@ impl NativeMediaHttpService {
         })
     }
 
+    fn record(&self) -> Result<Arc<dyn cheetah_media_api::port::RecordApi>, AdapterError> {
+        self.ctx.media_services.record().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "record not available",
+            ))
+        })
+    }
+
     fn request_context(&self, req: &HttpRequest) -> MediaRequestContext {
         let request_id = req
             .headers
@@ -226,11 +237,7 @@ impl NativeMediaHttpService {
 
     async fn record_tasks(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let record_api = self.ctx.media_services.record().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "record not available",
-            ))
-        })?;
+        let record_api = self.record()?;
         let mut query: RecordTaskQuery = parse_query(&req)?;
         query.clamp_page_size();
         let page = record_api.query_record_tasks(&ctx, query).await?;
@@ -239,15 +246,62 @@ impl NativeMediaHttpService {
 
     async fn record_files(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let record_api = self.ctx.media_services.record().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "record not available",
-            ))
-        })?;
+        let record_api = self.record()?;
         let mut query: RecordFileQuery = parse_query(&req)?;
         query.clamp_page_size();
         let page = record_api.query_record_files(&ctx, query).await?;
         Ok(json_response(&page))
+    }
+
+    async fn record_start(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let record_api = self.record()?;
+        let request: StartRecordRequest = parse_body(&req)?;
+        let task = record_api.start_record(&ctx, request).await?;
+        Ok(json_response(&task))
+    }
+
+    async fn record_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let record_api = self.record()?;
+        let id = record_id_from_path(&req.path, "/record/tasks/", "/stop")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing task_id".to_string()))?;
+        let request = StopRecordRequest {
+            task_id: RecordTaskId(id),
+        };
+        let task = record_api.stop_record(&ctx, request).await?;
+        Ok(json_response(&task))
+    }
+
+    async fn record_file_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let record_api = self.record()?;
+        let id = record_id_from_path(&req.path, "/record/files/", "")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
+        record_api
+            .delete_record_file(
+                &ctx,
+                DeleteRecordRequest {
+                    file_id: RecordFileId(id),
+                },
+            )
+            .await?;
+        Ok(json_response(&serde_json::json!({ "deleted": true })))
+    }
+
+    async fn record_playback_control(
+        &self,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let record_api = self.record()?;
+        let file_id = record_id_from_path(&req.path, "/record/playback/", "/control")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
+        let command: RecordPlaybackCommand = parse_body(&req)?;
+        record_api
+            .control_record_playback(&ctx, &RecordFileId(file_id), command)
+            .await?;
+        Ok(json_response(&serde_json::json!({ "controlled": true })))
     }
 
     async fn proxies_pull(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
@@ -291,8 +345,22 @@ impl ModuleHttpService for NativeMediaHttpService {
             {
                 self.session_kick(req).await
             }
+            (HttpMethod::Post, "/record/tasks") => self.record_start(req).await,
+            (HttpMethod::Post, path)
+                if path.starts_with("/record/tasks/") && path.ends_with("/stop") =>
+            {
+                self.record_stop(req).await
+            }
             (HttpMethod::Get, "/record/tasks") => self.record_tasks(req).await,
             (HttpMethod::Get, "/record/files") => self.record_files(req).await,
+            (HttpMethod::Delete, path) if path.starts_with("/record/files/") => {
+                self.record_file_delete(req).await
+            }
+            (HttpMethod::Post, path)
+                if path.starts_with("/record/playback/") && path.ends_with("/control") =>
+            {
+                self.record_playback_control(req).await
+            }
             (HttpMethod::Get, "/proxies/pull") => self.proxies_pull(req).await,
             (HttpMethod::Get, "/rtp/sessions") => self.rtp_sessions(req).await,
             _ => Err(AdapterError::InvalidRequest("not found".to_string())),
@@ -357,6 +425,22 @@ fn percent_decode(s: &str) -> String {
     crate::util::percent_decode(s)
 }
 
+/// Extract the record id from a path like /record/tasks/{id}/stop.
+///
+/// 从 `/record/tasks/{id}/stop` 这类路径中提取记录 ID。
+fn record_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
+    let rest = path.strip_prefix(prefix)?;
+    let id = if suffix.is_empty() {
+        rest
+    } else {
+        rest.strip_suffix(suffix)?
+    };
+    if id.is_empty() {
+        return None;
+    }
+    Some(id.to_string())
+}
+
 /// Parse a request body (JSON) or URL query string into the target query type.
 ///
 /// 将请求 body（JSON）或 URL query 字符串解析为目标查询类型。
@@ -370,4 +454,16 @@ fn parse_query<T: DeserializeOwned + Default>(req: &HttpRequest) -> Result<T, Ad
             .map_err(|e| AdapterError::Serialization(e.to_string()));
     }
     Ok(T::default())
+}
+
+/// Parse a JSON request body.
+///
+/// 解析 JSON 请求体。
+fn parse_body<T: DeserializeOwned>(req: &HttpRequest) -> Result<T, AdapterError> {
+    if req.body.is_empty() {
+        return Err(AdapterError::InvalidRequest(
+            "request body is required".to_string(),
+        ));
+    }
+    serde_json::from_slice(&req.body).map_err(|e| AdapterError::Serialization(e.to_string()))
 }

@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cheetah_media_api::command::*;
-use cheetah_media_api::ids::{MediaKey, ProxyId, RtpSessionId, SessionId};
+use cheetah_media_api::ids::{MediaKey, ProxyId, RecordFileId, RtpSessionId, SessionId};
 use cheetah_media_api::model::{
     CloseReason, CloseReport, OnlineState, Page, ProxyInfo, PublisherHandle, RecordFile,
     RecordTask, RtpSession, SessionInfo, SnapshotHandle, SnapshotInfo, StreamInfo,
@@ -227,9 +227,12 @@ impl RecordApi for EngineMediaFacade {
     async fn control_record_playback(
         &self,
         ctx: &MediaRequestContext,
+        file_id: &RecordFileId,
         command: RecordPlaybackCommand,
     ) -> cheetah_media_api::error::Result<()> {
-        self.record.control_record_playback(ctx, command).await
+        self.record
+            .control_record_playback(ctx, file_id, command)
+            .await
     }
 }
 
