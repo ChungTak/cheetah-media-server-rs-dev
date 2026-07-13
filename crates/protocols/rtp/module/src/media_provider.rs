@@ -312,6 +312,8 @@ impl RtpApi for RtpMediaProvider {
         if let Some(pause) = request.pause_check {
             session.state = if pause {
                 RtpSessionState::Paused
+            } else if session.kind == RtpSessionKind::Receiver {
+                RtpSessionState::Listening
             } else {
                 RtpSessionState::Created
             };
