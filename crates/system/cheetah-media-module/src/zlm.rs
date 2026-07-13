@@ -559,9 +559,8 @@ impl ZlmMediaHttpService {
         let key = self.parse_media_key(&params)?;
         let timeout_ms = parse_zlm_timeout_ms(&params);
         let format = params["format"].as_str().unwrap_or("jpg").to_string();
-        let quality = params["quality"]
-            .as_u64()
-            .or_else(|| params["scale"].as_u64())
+        let quality = parse_json_u64(&params["quality"])
+            .or_else(|| parse_json_u64(&params["scale"]))
             .map(|v| v.min(100) as u8);
         let request = SnapshotRequest {
             media_key: key,
@@ -653,7 +652,7 @@ fn zlm_record_format(value: &serde_json::Value) -> Result<String, AdapterError> 
     if value.is_null() {
         return Ok("mp4".to_string());
     }
-    if let Some(num) = value.as_u64() {
+    if let Some(num) = parse_json_u64(value) {
         let format = match num {
             0 => "mp4",
             1 => "hls",
@@ -676,6 +675,18 @@ fn zlm_record_format(value: &serde_json::Value) -> Result<String, AdapterError> 
     Ok("mp4".to_string())
 }
 
+fn parse_json_u64(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
+}
+
+fn parse_json_f64(value: &serde_json::Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
+}
+
 fn parse_zlm_file_id(params: &serde_json::Value) -> Result<String, AdapterError> {
     params["file_id"]
         .as_str()
@@ -690,14 +701,8 @@ fn parse_zlm_playback_value(
     aliases: &[&str],
 ) -> Result<f64, AdapterError> {
     for alias in aliases {
-        if let Some(v) = params[*alias].as_f64() {
+        if let Some(v) = parse_json_f64(&params[*alias]) {
             return Ok(v);
-        }
-        if let Some(v) = params[*alias].as_i64() {
-            return Ok(v as f64);
-        }
-        if let Some(v) = params[*alias].as_u64() {
-            return Ok(v as f64);
         }
     }
     Err(AdapterError::InvalidRequest(
@@ -732,9 +737,8 @@ fn parse_zlm_playback_command(
 }
 
 fn parse_zlm_timeout_ms(params: &serde_json::Value) -> u64 {
-    params["timeout_sec"]
-        .as_u64()
-        .or_else(|| params["timeout"].as_u64())
+    parse_json_u64(&params["timeout_sec"])
+        .or_else(|| parse_json_u64(&params["timeout"]))
         .map(|s| s * 1000)
         .unwrap_or(10_000)
 }
