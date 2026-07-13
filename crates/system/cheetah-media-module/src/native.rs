@@ -184,7 +184,7 @@ impl NativeMediaHttpService {
             ));
         };
         match ctx.principal.as_deref() {
-            Some(token) if token == expected => Ok(()),
+            Some(token) if crate::util::constant_time_eq(token, expected) => Ok(()),
             _ => Err(AdapterError::Media(
                 cheetah_media_api::error::MediaError::unauthenticated(
                     "server admin requires valid authentication",
@@ -494,7 +494,8 @@ impl NativeMediaHttpService {
         let ctx = self.request_context(&req);
         self.require_principal(&ctx)?;
         let api = self.server_admin()?;
-        let config = api.server_config(&ctx).await?;
+        let mut config = api.server_config(&ctx).await?;
+        crate::util::filter_sensitive_config_values(&mut config.values);
         Ok(json_response(&config))
     }
 
@@ -502,7 +503,8 @@ impl NativeMediaHttpService {
         let ctx = self.request_context(&req);
         self.require_principal(&ctx)?;
         let api = self.server_admin()?;
-        let update: ServerConfigUpdate = parse_body(&req)?;
+        let mut update: ServerConfigUpdate = parse_body(&req)?;
+        crate::util::filter_sensitive_config_values(&mut update.values);
         let config = cheetah_media_api::model::ServerConfig {
             values: update.values,
         };

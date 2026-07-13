@@ -283,7 +283,7 @@ impl ZlmMediaHttpService {
             ));
         };
         match ctx.principal.as_deref() {
-            Some(token) if token == expected => Ok(()),
+            Some(token) if crate::util::constant_time_eq(token, expected) => Ok(()),
             _ => Err(AdapterError::Media(
                 cheetah_media_api::error::MediaError::unauthenticated(
                     "server admin requires valid authentication",
@@ -717,7 +717,8 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         self.require_principal(&ctx)?;
         let api = self.server_admin()?;
-        let config = api.server_config(&ctx).await?;
+        let mut config = api.server_config(&ctx).await?;
+        crate::util::filter_sensitive_config_values(&mut config.values);
         Ok(zlm_response(0, "success", config.values))
     }
 
@@ -728,10 +729,12 @@ impl ZlmMediaHttpService {
         let params = self.extract_params(&req)?;
         let mut values = std::collections::HashMap::new();
         if let (Some(key), Some(value)) = (params["key"].as_str(), params["value"].as_str()) {
-            values.insert(key.to_string(), value.to_string());
+            if !crate::util::is_sensitive_config_key(key) {
+                values.insert(key.to_string(), value.to_string());
+            }
         } else if let Some(obj) = params.as_object() {
             for (k, v) in obj {
-                if k == "restart" {
+                if k == "restart" || crate::util::is_sensitive_config_key(k) {
                     continue;
                 }
                 if let Some(s) = v.as_str() {

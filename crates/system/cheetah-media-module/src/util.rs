@@ -152,6 +152,7 @@ pub fn validate_ffmpeg_options(options: &[String]) -> Result<(), AdapterError> {
         "-segment_list",
         "-hls_key_info_file",
         "-key_info_file",
+        "-i",
     ];
     for (i, token) in options.iter().enumerate() {
         if DENIED.contains(&token.as_str()) {
@@ -204,4 +205,43 @@ pub fn validate_ffmpeg_url(url: &str) -> Result<(), AdapterError> {
         )));
     }
     Ok(())
+}
+
+/// Constant-time string comparison to avoid timing side-channels.
+///
+/// 常量时间字符串比较，避免时序侧信道。
+pub fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.bytes().zip(b.bytes()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Keys that should not be readable or writable through generic server config APIs.
+///
+/// 不能通过通用服务器配置 API 读写的高危配置键。
+const SENSITIVE_CONFIG_KEYS: &[&str] = &[
+    "api_secret",
+    "secret_key",
+    "auth_token",
+    "private_key",
+    "password",
+    "token",
+];
+
+pub fn is_sensitive_config_key(key: &str) -> bool {
+    SENSITIVE_CONFIG_KEYS
+        .iter()
+        .any(|k| key.eq_ignore_ascii_case(k))
+}
+
+/// Remove sensitive keys from a config map before returning or storing it.
+///
+/// 在返回或存储配置映射之前移除敏感键。
+pub fn filter_sensitive_config_values(values: &mut std::collections::HashMap<String, String>) {
+    values.retain(|k, _| !is_sensitive_config_key(k));
 }
