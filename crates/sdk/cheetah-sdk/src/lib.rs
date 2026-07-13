@@ -21,6 +21,7 @@ pub mod config;
 pub mod error;
 pub mod event;
 pub mod ids;
+pub mod media_provider;
 pub mod module;
 pub mod service;
 pub mod stream;

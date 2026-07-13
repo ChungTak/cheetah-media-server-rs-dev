@@ -841,6 +841,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "cheetah-codec",
+ "cheetah-media-api",
  "cheetah-runtime-api",
  "cheetah-sdk",
  "futures",

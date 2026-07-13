@@ -19,6 +19,7 @@
 pub mod api;
 pub mod config;
 pub mod executor;
+pub mod media_provider;
 pub mod metadata;
 pub mod module;
 pub mod registry;

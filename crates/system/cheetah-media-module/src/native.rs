@@ -121,8 +121,8 @@ struct NativeMediaHttpService {
 }
 
 impl NativeMediaHttpService {
-    fn control(&self) -> Result<&Arc<dyn MediaControlApi>, AdapterError> {
-        self.ctx.media_services.control.as_ref().ok_or_else(|| {
+    fn control(&self) -> Result<Arc<dyn MediaControlApi>, AdapterError> {
+        self.ctx.media_services.control().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "media control not available",
             ))
@@ -226,7 +226,7 @@ impl NativeMediaHttpService {
 
     async fn record_tasks(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let record_api = self.ctx.media_services.record.as_ref().ok_or_else(|| {
+        let record_api = self.ctx.media_services.record().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "record not available",
             ))
@@ -239,7 +239,7 @@ impl NativeMediaHttpService {
 
     async fn record_files(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
-        let record_api = self.ctx.media_services.record.as_ref().ok_or_else(|| {
+        let record_api = self.ctx.media_services.record().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "record not available",
             ))

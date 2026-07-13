@@ -170,10 +170,11 @@ impl Module for RecordModule {
         ));
         let executor_dyn: Arc<dyn TaskExecutor> = executor.clone();
         self.executor = Some(executor);
-        self.api = Some(Arc::new(RecordApi::new(
-            self.registry.clone(),
-            executor_dyn,
-        )));
+        let record_api = Arc::new(RecordApi::new(self.registry.clone(), executor_dyn));
+        self.api = Some(record_api.clone());
+        ctx.engine.media_services.register_record(Arc::new(
+            crate::media_provider::RecordMediaProvider::new(record_api),
+        ));
         self.state = ModuleState::Initialized;
         Ok(())
     }

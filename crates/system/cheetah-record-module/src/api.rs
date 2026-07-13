@@ -163,6 +163,8 @@ pub struct FileQueryResponse {
 pub struct FileBrief {
     #[serde(rename = "fileId")]
     pub file_id: String,
+    #[serde(rename = "taskId")]
+    pub task_id: String,
     pub format: String,
     pub path: String,
     #[serde(rename = "durationMs")]
@@ -340,6 +342,7 @@ impl RecordApi {
             .into_iter()
             .map(|f| FileBrief {
                 file_id: f.file_id,
+                task_id: f.task_id,
                 format: format_str_to_string(f.format),
                 path: f.path,
                 duration_ms: f.duration_ms,
