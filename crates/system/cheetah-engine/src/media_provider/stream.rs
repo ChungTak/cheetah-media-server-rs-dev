@@ -187,12 +187,9 @@ impl MediaControlApi for StreamMediaProvider {
                     }
                 }
                 if let Some(ref schema) = query.schema {
-                    if let Ok(parsed) = MediaSchema::parse(schema) {
-                        if let Some(ref key_schema) = key.schema {
-                            if *key_schema != parsed {
-                                return false;
-                            }
-                        }
+                    match MediaSchema::parse(schema) {
+                        Ok(parsed) if key.schema.as_ref() == Some(&parsed) => {}
+                        _ => return false,
                     }
                 }
                 if let Some(online) = query.online {
