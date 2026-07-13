@@ -3,12 +3,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::command::{
-    DeleteRecordRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    SessionQuery, StartRecordRequest, StopRecordRequest,
+    DeleteRecordRequest, DeleteSnapshotRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand,
+    RecordTaskQuery, SessionQuery, SnapshotQuery, SnapshotRequest, StartRecordRequest,
+    StopRecordRequest,
 };
 use cheetah_media_api::ids::{MediaKey, RecordFileId, RecordTaskId, SessionId};
 use cheetah_media_api::model::CloseReason;
-use cheetah_media_api::port::{MediaControlApi, MediaRequestContext};
+use cheetah_media_api::port::{MediaControlApi, MediaRequestContext, RecordApi, SnapshotApi};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -132,10 +133,18 @@ impl NativeMediaHttpService {
         })
     }
 
-    fn record(&self) -> Result<Arc<dyn cheetah_media_api::port::RecordApi>, AdapterError> {
+    fn record(&self) -> Result<Arc<dyn RecordApi>, AdapterError> {
         self.ctx.media_services.record().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "record not available",
+            ))
+        })
+    }
+
+    fn snapshot(&self) -> Result<Arc<dyn SnapshotApi>, AdapterError> {
+        self.ctx.media_services.snapshot().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "snapshot not available",
             ))
         })
     }
@@ -304,6 +313,42 @@ impl NativeMediaHttpService {
         Ok(json_response(&serde_json::json!({ "controlled": true })))
     }
 
+    async fn snapshot_create(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let snapshot_api = self.snapshot()?;
+        let request: SnapshotRequest = parse_body(&req)?;
+        let handle = snapshot_api.take_snapshot(&ctx, request).await?;
+        Ok(json_response(&handle))
+    }
+
+    async fn snapshot_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let snapshot_api = self.snapshot()?;
+        let mut query: SnapshotQuery = parse_query(&req)?;
+        query.clamp_page_size();
+        let page = snapshot_api.query_snapshots(&ctx, query).await?;
+        Ok(json_response(&page))
+    }
+
+    async fn snapshot_delete_directory(
+        &self,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let snapshot_api = self.snapshot()?;
+        let request: DeleteSnapshotRequest = parse_body(&req)?;
+        snapshot_api
+            .delete_snapshot_directory(&ctx, request)
+            .await?;
+        Ok(json_response(&serde_json::json!({ "deleted": true })))
+    }
+
+    async fn file_download(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        Err(AdapterError::Media(
+            cheetah_media_api::error::MediaError::unsupported_capability("file download"),
+        ))
+    }
+
     async fn proxies_pull(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         Err(AdapterError::Media(
             cheetah_media_api::error::MediaError::unsupported_capability("proxy"),
@@ -360,6 +405,16 @@ impl ModuleHttpService for NativeMediaHttpService {
                 if path.starts_with("/record/playback/") && path.ends_with("/control") =>
             {
                 self.record_playback_control(req).await
+            }
+            (HttpMethod::Post, "/snapshots") => self.snapshot_create(req).await,
+            (HttpMethod::Get, "/snapshots") => self.snapshot_list(req).await,
+            (HttpMethod::Delete, "/snapshots/directories") => {
+                self.snapshot_delete_directory(req).await
+            }
+            (HttpMethod::Get, path)
+                if path.starts_with("/files/") && path.ends_with("/download") =>
+            {
+                self.file_download(req).await
             }
             (HttpMethod::Get, "/proxies/pull") => self.proxies_pull(req).await,
             (HttpMethod::Get, "/rtp/sessions") => self.rtp_sessions(req).await,
