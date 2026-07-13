@@ -25,10 +25,6 @@ use crate::config::RecordModuleConfig;
 use crate::executor::RecordExecutor;
 use crate::registry::RecordRegistry;
 use crate::task::TaskExecutor;
-use crate::zlm_compat::{
-    ZlmDeleteDirectory, ZlmGetMp4Files, ZlmIsRecording, ZlmRecordCompat, ZlmStartRecord,
-    ZlmStopRecord,
-};
 
 const MODULE_ID: &str = "record";
 
@@ -223,14 +219,12 @@ impl Module for RecordModule {
 
     /// List HTTP routes exposed by the module.
     ///
-    /// Includes the SMS-style endpoints (`/start`, `/stop`, `/list`, etc.) and
-    /// the ZLMediaKit-compatible `/zlm/*` routes, all mounted under the
+    /// Includes the SMS-style endpoints (`/start`, `/stop`, `/list`, etc.) mounted under the
     /// module's `routes_prefix`.
     ///
     /// 列出模块暴露的 HTTP 路由。
     ///
-    /// 包含 SMS 风格端点（`/start`、`/stop`、`/list` 等）与 ZLMediaKit 兼容的
-    /// `/zlm/*` 路由，均挂载在模块的 `routes_prefix` 下。
+    /// 包含 SMS 风格端点（`/start`、`/stop`、`/list` 等），挂载在模块的 `routes_prefix` 下。
     fn http_routes(&self) -> Vec<HttpRouteDescriptor> {
         vec![
             HttpRouteDescriptor {
@@ -257,31 +251,6 @@ impl Module for RecordModule {
                 method: HttpMethod::Post,
                 path: "/file/delete".to_string(),
             },
-            // ZLMediaKit-compatible endpoints. The engine HTTP wrapper mounts
-            // them under the same module routes_prefix; in practice clients
-            // hit `/api/v1/record/zlm/<route>` to reach them. Keeping them
-            // co-located with the cheetah-style routes lets one HTTP service
-            // serve both API surfaces.
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/zlm/startRecord".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/zlm/stopRecord".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/zlm/isRecording".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/zlm/getMP4RecordFile".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/zlm/deleteRecordDirectory".to_string(),
-            },
         ]
     }
 
@@ -290,17 +259,15 @@ impl Module for RecordModule {
     /// 返回将请求路由到 API 的 HTTP 服务处理器。
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
         let api = self.api.as_ref()?.clone();
-        let zlm = ZlmRecordCompat::new(api.clone());
-        Some(Arc::new(RecordHttpService { api, zlm }))
+        Some(Arc::new(RecordHttpService { api }))
     }
 }
 
-/// HTTP service implementation that dispatches to `RecordApi` and ZLM compat.
+/// HTTP service implementation that dispatches to `RecordApi`.
 ///
-/// HTTP 服务实现，将请求分派到 `RecordApi` 与 ZLM 兼容层。
+/// HTTP 服务实现，将请求分派到 `RecordApi`。
 struct RecordHttpService {
     api: Arc<RecordApi>,
-    zlm: ZlmRecordCompat,
 }
 
 #[async_trait]
@@ -354,70 +321,6 @@ impl ModuleHttpService for RecordHttpService {
                     .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
                 let body = serde_json::json!({"code": 200, "msg": "success"});
                 HttpResponse::ok_json(serde_json::to_vec(&body).unwrap())
-            }
-            // ZLMediaKit compat endpoints
-            (HttpMethod::Post, "/zlm/startRecord") => {
-                let body: ZlmStartRecord = serde_json::from_slice(&req.body)
-                    .map_err(|e| SdkError::InvalidArgument(format!("invalid zlm body: {e}")))?;
-                let value = self
-                    .zlm
-                    .start_record(body)
-                    .await
-                    .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
-                HttpResponse::ok_json(serde_json::to_vec(&value).unwrap())
-            }
-            (HttpMethod::Post, "/zlm/stopRecord") => {
-                let body: ZlmStopRecord = serde_json::from_slice(&req.body)
-                    .map_err(|e| SdkError::InvalidArgument(format!("invalid zlm body: {e}")))?;
-                let value = self
-                    .zlm
-                    .stop_record(body)
-                    .await
-                    .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
-                HttpResponse::ok_json(serde_json::to_vec(&value).unwrap())
-            }
-            (HttpMethod::Get, "/zlm/isRecording") => {
-                let body: ZlmIsRecording = if req.body.is_empty() {
-                    return Ok(HttpResponse {
-                        status: 400,
-                        body: bytes::Bytes::from_static(b"{\"code\":-1,\"msg\":\"missing body\"}"),
-                        headers: vec![],
-                    });
-                } else {
-                    serde_json::from_slice(&req.body)
-                        .map_err(|e| SdkError::InvalidArgument(format!("invalid body: {e}")))?
-                };
-                let value = self
-                    .zlm
-                    .is_recording(body)
-                    .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
-                HttpResponse::ok_json(serde_json::to_vec(&value).unwrap())
-            }
-            (HttpMethod::Get, "/zlm/getMP4RecordFile") => {
-                let body: ZlmGetMp4Files = if req.body.is_empty() {
-                    return Ok(HttpResponse {
-                        status: 400,
-                        body: bytes::Bytes::from_static(b"{\"code\":-1,\"msg\":\"missing body\"}"),
-                        headers: vec![],
-                    });
-                } else {
-                    serde_json::from_slice(&req.body)
-                        .map_err(|e| SdkError::InvalidArgument(format!("invalid body: {e}")))?
-                };
-                let value = self
-                    .zlm
-                    .get_mp4_files(body)
-                    .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
-                HttpResponse::ok_json(serde_json::to_vec(&value).unwrap())
-            }
-            (HttpMethod::Post, "/zlm/deleteRecordDirectory") => {
-                let body: ZlmDeleteDirectory = serde_json::from_slice(&req.body)
-                    .map_err(|e| SdkError::InvalidArgument(format!("invalid body: {e}")))?;
-                let value = self
-                    .zlm
-                    .delete_record_directory(body)
-                    .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
-                HttpResponse::ok_json(serde_json::to_vec(&value).unwrap())
             }
             _ => HttpResponse {
                 status: 404,
