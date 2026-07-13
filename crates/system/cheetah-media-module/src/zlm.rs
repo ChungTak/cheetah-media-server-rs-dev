@@ -658,8 +658,12 @@ fn zlm_record_format(value: &serde_json::Value) -> Result<String, AdapterError> 
             0 => "mp4",
             1 => "hls",
             2 => "hls",
-            3 => "mp4",
-            _ => "mp4",
+            3 => "fmp4",
+            other => {
+                return Err(AdapterError::InvalidRequest(format!(
+                    "unsupported numeric record type {other}"
+                )))
+            }
         };
         return Ok(format.to_string());
     }
