@@ -306,10 +306,11 @@ pub fn validate_ffmpeg_options(options: &[String]) -> Result<(), AdapterError> {
     Ok(())
 }
 
-/// Reject URL strings that contain shell metacharacters or command substitution.
-/// Allows query strings, percent encoding, and common URL components.
+/// Reject URL strings that contain shell metacharacters, command substitution,
+/// or a local-only scheme such as file/pipe/unix.
 ///
-/// 拒绝包含 shell 元字符或命令替换的 URL；保留查询串、百分号编码等 URL 常见字符。
+/// 拒绝包含 shell 元字符、命令替换或 file/pipe/unix 等本地 URL scheme 的 URL；
+/// 保留查询串、百分号编码等 URL 常见字符。
 pub fn validate_ffmpeg_url(url: &str) -> Result<(), AdapterError> {
     if url.is_empty() {
         return Err(AdapterError::InvalidRequest(
@@ -325,6 +326,27 @@ pub fn validate_ffmpeg_url(url: &str) -> Result<(), AdapterError> {
             "unsafe source URL: {url}"
         )));
     }
+
+    const ALLOWED_SCHEMES: &[&str] = &[
+        "rtmp", "rtmps", "rtsp", "rtsps", "http", "https", "srt", "udp", "tcp", "rtp", "srtp",
+        "ws", "wss",
+    ];
+    if let Some(pos) = url.find("://") {
+        let scheme = &url[..pos];
+        if !ALLOWED_SCHEMES
+            .iter()
+            .any(|s| scheme.eq_ignore_ascii_case(s))
+        {
+            return Err(AdapterError::InvalidRequest(format!(
+                "unsupported source URL scheme: {url}"
+            )));
+        }
+    } else {
+        return Err(AdapterError::InvalidRequest(format!(
+            "source URL must include a supported scheme: {url}"
+        )));
+    }
+
     Ok(())
 }
 
