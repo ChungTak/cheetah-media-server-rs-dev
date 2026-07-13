@@ -449,6 +449,8 @@ pub struct RtpSenderRequest {
     #[serde(default)]
     pub payload_type: Option<u8>,
     #[serde(default)]
+    pub codec_hint: Option<String>,
+    #[serde(default)]
     pub mode: RtpSenderMode,
     #[serde(default)]
     pub transport_options: HashMap<String, String>,

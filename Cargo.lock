@@ -966,6 +966,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "cheetah-codec",
+ "cheetah-media-api",
  "cheetah-rtp-core",
  "cheetah-rtp-driver-tokio",
  "cheetah-runtime-api",

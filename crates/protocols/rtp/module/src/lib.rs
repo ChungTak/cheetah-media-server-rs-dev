@@ -9,7 +9,9 @@ pub mod config;
 /// RTP module lifecycle, HTTP control API, ingress/egress, and pull jobs.
 ///
 /// RTP 模块生命周期、HTTP 控制 API、入站/出站与拉流任务。
+pub mod media_provider;
 pub mod module;
 
 pub use config::RtpModuleConfig;
+pub use media_provider::RtpMediaProvider;
 pub use module::RtpModuleFactory;
