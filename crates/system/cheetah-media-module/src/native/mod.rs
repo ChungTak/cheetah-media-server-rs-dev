@@ -2,18 +2,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use cheetah_media_api::command::{
-    DeleteRecordRequest, FfmpegProxyRequest, MediaQuery, ProxyQuery, PullProxyRequest,
-    PushProxyRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery, RtpQuery,
-    RtpReceiverRequest, RtpSenderRequest, ServerConfigUpdate, SessionQuery, StartRecordRequest,
-    StopRecordRequest, WebRtcRoomQuery, WebRtcRoomRequest, WhepRequest, WhipRequest,
-};
-use cheetah_media_api::ids::{
-    MediaKey, ProxyId, RecordFileId, RecordTaskId, RtpSessionId, SessionId, WebRtcRoomId,
-};
+use cheetah_media_api::command::{MediaQuery, SessionQuery};
+use cheetah_media_api::ids::{MediaKey, SessionId};
 use cheetah_media_api::model::CloseReason;
 use cheetah_media_api::port::{
-    MediaControlApi, MediaRequestContext, ProxyApi, RtpApi, ServerAdminApi, WebRtcApi,
+    MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, ServerAdminApi, WebRtcApi,
 };
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
@@ -24,6 +17,12 @@ use cheetah_sdk::{
 use serde::de::DeserializeOwned;
 
 use crate::error::{native_error_response, AdapterError};
+
+mod proxy;
+mod record;
+mod rtp;
+mod server;
+mod webrtc;
 
 const MODULE_ID: &str = "media-http-native";
 
@@ -125,7 +124,7 @@ impl Module for NativeMediaModule {
     }
 }
 
-struct NativeMediaHttpService {
+pub(crate) struct NativeMediaHttpService {
     ctx: EngineContext,
 }
 
@@ -138,7 +137,7 @@ impl NativeMediaHttpService {
         })
     }
 
-    fn record(&self) -> Result<Arc<dyn cheetah_media_api::port::RecordApi>, AdapterError> {
+    fn record(&self) -> Result<Arc<dyn RecordApi>, AdapterError> {
         self.ctx.media_services.record().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "record not available",
@@ -303,285 +302,6 @@ impl NativeMediaHttpService {
             .await?;
         Ok(json_response(&serde_json::json!({ "kicked": true })))
     }
-
-    async fn record_tasks(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let record_api = self.record()?;
-        let mut query: RecordTaskQuery = parse_query(&req)?;
-        query.clamp_page_size();
-        let page = record_api.query_record_tasks(&ctx, query).await?;
-        Ok(json_response(&page))
-    }
-
-    async fn record_files(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let record_api = self.record()?;
-        let mut query: RecordFileQuery = parse_query(&req)?;
-        query.clamp_page_size();
-        let page = record_api.query_record_files(&ctx, query).await?;
-        Ok(json_response(&page))
-    }
-
-    async fn record_start(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let record_api = self.record()?;
-        let request: StartRecordRequest = parse_body(&req)?;
-        let task = record_api.start_record(&ctx, request).await?;
-        Ok(json_response(&task))
-    }
-
-    async fn record_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let record_api = self.record()?;
-        let id = record_id_from_path(&req.path, "/record/tasks/", "/stop")
-            .ok_or_else(|| AdapterError::InvalidRequest("missing task_id".to_string()))?;
-        let request = StopRecordRequest {
-            task_id: RecordTaskId(id),
-        };
-        let task = record_api.stop_record(&ctx, request).await?;
-        Ok(json_response(&task))
-    }
-
-    async fn record_file_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let record_api = self.record()?;
-        let id = record_id_from_path(&req.path, "/record/files/", "")
-            .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
-        record_api
-            .delete_record_file(
-                &ctx,
-                DeleteRecordRequest {
-                    file_id: RecordFileId(id),
-                },
-            )
-            .await?;
-        Ok(json_response(&serde_json::json!({ "deleted": true })))
-    }
-
-    async fn record_playback_control(
-        &self,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let record_api = self.record()?;
-        let file_id = record_id_from_path(&req.path, "/record/playback/", "/control")
-            .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
-        let command: RecordPlaybackCommand = parse_body(&req)?;
-        record_api
-            .control_record_playback(&ctx, &RecordFileId(file_id), command)
-            .await?;
-        Ok(json_response(&serde_json::json!({ "controlled": true })))
-    }
-
-    async fn rtp_receivers(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let rtp_api = self.rtp()?;
-        let request: RtpReceiverRequest = parse_body(&req)?;
-        let session = rtp_api.open_rtp_receiver(&ctx, request).await?;
-        Ok(json_response(&session))
-    }
-
-    async fn rtp_senders(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let rtp_api = self.rtp()?;
-        let request: RtpSenderRequest = parse_body(&req)?;
-        let session = rtp_api.open_rtp_sender(&ctx, request).await?;
-        Ok(json_response(&session))
-    }
-
-    async fn rtp_session_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let rtp_api = self.rtp()?;
-        let id = rtp_id_from_path(&req.path, "/rtp/sessions/", "/stop")
-            .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
-        rtp_api.stop_rtp_session(&ctx, &RtpSessionId(id)).await?;
-        Ok(json_response(&serde_json::json!({ "stopped": true })))
-    }
-
-    async fn rtp_sessions(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let rtp_api = self.rtp()?;
-        let mut query: RtpQuery = parse_query(&req)?;
-        query.clamp_page_size();
-        let page = rtp_api.list_rtp_sessions(&ctx, query).await?;
-        Ok(json_response(&page))
-    }
-
-    async fn proxies_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let proxy_api = self.proxy()?;
-        let mut query: ProxyQuery = parse_query(&req)?;
-        query.clamp_page_size();
-        let page = proxy_api.list_proxies(&ctx, query).await?;
-        Ok(json_response(&page))
-    }
-
-    async fn proxies_pull(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let proxy_api = self.proxy()?;
-        let mut request: PullProxyRequest = parse_body(&req)?;
-        request.source_url = request.source_url.trim().to_string();
-        crate::util::validate_ffmpeg_url(&request.source_url)?;
-        let info = proxy_api.create_pull_proxy(&ctx, request).await?;
-        Ok(json_response(&info))
-    }
-
-    async fn proxies_push(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let proxy_api = self.proxy()?;
-        let mut request: PushProxyRequest = parse_body(&req)?;
-        request.destination_url = request.destination_url.trim().to_string();
-        crate::util::validate_ffmpeg_url(&request.destination_url)?;
-        let info = proxy_api.create_push_proxy(&ctx, request).await?;
-        Ok(json_response(&info))
-    }
-
-    async fn proxies_ffmpeg(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let proxy_api = self.proxy()?;
-        let mut request: FfmpegProxyRequest = parse_body(&req)?;
-        crate::util::validate_ffmpeg_options(&request.input_options)?;
-        crate::util::validate_ffmpeg_options(&request.output_options)?;
-        // For a native API call, the user should not be able to pass a raw command string.
-        request.source_url = request.source_url.trim().to_string();
-        crate::util::validate_ffmpeg_url(&request.source_url)?;
-        let info = proxy_api.create_ffmpeg_proxy(&ctx, request).await?;
-        Ok(json_response(&info))
-    }
-
-    async fn proxies_pull_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let proxy_api = self.proxy()?;
-        let id = proxy_id_from_path(&req.path, "/proxies/", "/pull")
-            .ok_or_else(|| AdapterError::InvalidRequest("missing proxy_id".to_string()))?;
-        proxy_api.delete_pull_proxy(&ctx, &ProxyId(id)).await?;
-        Ok(json_response(&serde_json::json!({ "deleted": true })))
-    }
-
-    async fn proxies_push_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let proxy_api = self.proxy()?;
-        let id = proxy_id_from_path(&req.path, "/proxies/", "/push")
-            .ok_or_else(|| AdapterError::InvalidRequest("missing proxy_id".to_string()))?;
-        proxy_api.delete_push_proxy(&ctx, &ProxyId(id)).await?;
-        Ok(json_response(&serde_json::json!({ "deleted": true })))
-    }
-
-    async fn proxies_ffmpeg_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let proxy_api = self.proxy()?;
-        let id = proxy_id_from_path(&req.path, "/proxies/", "/ffmpeg")
-            .ok_or_else(|| AdapterError::InvalidRequest("missing proxy_id".to_string()))?;
-        proxy_api.delete_ffmpeg_proxy(&ctx, &ProxyId(id)).await?;
-        Ok(json_response(&serde_json::json!({ "deleted": true })))
-    }
-
-    async fn server_info(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.server_admin()?;
-        let info = api.server_info(&ctx).await?;
-        Ok(json_response(&info))
-    }
-
-    async fn server_config(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.server_admin()?;
-        let mut config = api.server_config(&ctx).await?;
-        crate::util::filter_sensitive_config_values(&mut config.values);
-        Ok(json_response(&config))
-    }
-
-    async fn server_config_update(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.server_admin()?;
-        let mut update: ServerConfigUpdate = parse_body(&req)?;
-        crate::util::filter_sensitive_config_values(&mut update.values);
-        let config = cheetah_media_api::model::ServerConfig {
-            values: update.values,
-        };
-        api.set_server_config(&ctx, config).await?;
-        if update.restart {
-            api.restart_server(&ctx).await?;
-        }
-        Ok(json_response(&serde_json::json!({ "updated": true })))
-    }
-
-    async fn server_restart(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.server_admin()?;
-        api.restart_server(&ctx).await?;
-        Ok(json_response(&serde_json::json!({ "restarting": true })))
-    }
-
-    async fn server_shutdown(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.server_admin()?;
-        api.shutdown_server(&ctx).await?;
-        Ok(json_response(&serde_json::json!({ "shutting_down": true })))
-    }
-
-    async fn server_ports(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.server_admin()?;
-        let ports = api.list_ports(&ctx).await?;
-        Ok(json_response(&serde_json::json!({ "ports": ports })))
-    }
-
-    async fn webrtc_whip(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let api = self.webrtc()?;
-        let request: WhipRequest = parse_body(&req)?;
-        let response = api.whip_publish(&ctx, request).await?;
-        Ok(json_response(&response))
-    }
-
-    async fn webrtc_whep(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let api = self.webrtc()?;
-        let request: WhepRequest = parse_body(&req)?;
-        let response = api.whep_subscribe(&ctx, request).await?;
-        Ok(json_response(&response))
-    }
-
-    async fn webrtc_rooms_create(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.webrtc()?;
-        let request: WebRtcRoomRequest = parse_body(&req)?;
-        let room = api.create_room(&ctx, request).await?;
-        Ok(json_response(&room))
-    }
-
-    async fn webrtc_rooms_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let api = self.webrtc()?;
-        let mut query: WebRtcRoomQuery = parse_query(&req)?;
-        query.clamp_page_size();
-        let page = api.list_rooms(&ctx, query).await?;
-        Ok(json_response(&page))
-    }
-
-    async fn webrtc_room_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        self.require_principal(&ctx)?;
-        let api = self.webrtc()?;
-        let id = room_id_from_path(&req.path, "/webrtc/rooms/", "")
-            .ok_or_else(|| AdapterError::InvalidRequest("missing room_id".to_string()))?;
-        api.delete_room(&ctx, &WebRtcRoomId(id)).await?;
-        Ok(json_response(&serde_json::json!({ "deleted": true })))
-    }
 }
 
 #[async_trait]
@@ -715,7 +435,7 @@ impl ModuleHttpService for NativeMediaHttpService {
     }
 }
 
-fn json_response<T: serde::Serialize>(value: &T) -> HttpResponse {
+pub(crate) fn json_response<T: serde::Serialize>(value: &T) -> HttpResponse {
     HttpResponse {
         status: 200,
         headers: vec![HttpHeader {
@@ -726,31 +446,31 @@ fn json_response<T: serde::Serialize>(value: &T) -> HttpResponse {
     }
 }
 
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     crate::util::percent_decode(s)
 }
 
 /// Extract the record id from a path like /record/tasks/{id}/stop.
 ///
 /// 从 `/record/tasks/{id}/stop` 这类路径中提取记录 ID。
-fn record_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
+pub(crate) fn record_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
     rtp_id_from_path(path, prefix, suffix)
 }
 
 /// Extract the proxy id from a path like /proxies/{id}/pull.
-fn proxy_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
+pub(crate) fn proxy_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
     rtp_id_from_path(path, prefix, suffix)
 }
 
 /// Extract the WebRTC room id from a path like /webrtc/rooms/{id}.
-fn room_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
+pub(crate) fn room_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
     rtp_id_from_path(path, prefix, suffix)
 }
 
 /// Extract the RTP session id from a path like /rtp/sessions/{id}/stop.
 ///
 /// 从 `/rtp/sessions/{id}/stop` 这类路径中提取 RTP session ID。
-fn rtp_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
+pub(crate) fn rtp_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
     let rest = path.strip_prefix(prefix)?;
     let id = if suffix.is_empty() {
         rest
@@ -766,7 +486,9 @@ fn rtp_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
 /// Parse a request body (JSON) or URL query string into the target query type.
 ///
 /// 将请求 body（JSON）或 URL query 字符串解析为目标查询类型。
-fn parse_query<T: DeserializeOwned + Default>(req: &HttpRequest) -> Result<T, AdapterError> {
+pub(crate) fn parse_query<T: DeserializeOwned + Default>(
+    req: &HttpRequest,
+) -> Result<T, AdapterError> {
     if !req.body.is_empty() {
         return Ok(serde_json::from_slice(&req.body)?);
     }
@@ -781,7 +503,7 @@ fn parse_query<T: DeserializeOwned + Default>(req: &HttpRequest) -> Result<T, Ad
 /// Parse a JSON request body.
 ///
 /// 解析 JSON 请求体。
-fn parse_body<T: DeserializeOwned>(req: &HttpRequest) -> Result<T, AdapterError> {
+pub(crate) fn parse_body<T: DeserializeOwned>(req: &HttpRequest) -> Result<T, AdapterError> {
     if req.body.is_empty() {
         return Err(AdapterError::InvalidRequest(
             "request body is required".to_string(),

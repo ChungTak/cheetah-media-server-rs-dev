@@ -234,22 +234,24 @@ pub fn validate_ffmpeg_url(url: &str) -> Result<(), AdapterError> {
 ///
 /// The comparison always covers every byte of both inputs while running at
 /// least `MAX_SECRET_LEN` iterations, so callers cannot force an early return
-/// by varying the input length.
+/// by varying the input length. Uses `subtle` to help the compiler keep the
+/// computation branch-free.
 ///
 /// 常量时间字符串比较，避免时序侧信道。覆盖两个输入的所有字节，同时至少固定迭代
-/// `MAX_SECRET_LEN` 次，避免通过输入长度提前返回。
+/// `MAX_SECRET_LEN` 次，避免通过输入长度提前返回。使用 `subtle` 帮助编译器保持无分支。
 pub fn constant_time_eq(a: &str, b: &str) -> bool {
+    use subtle::ConstantTimeEq;
     const MAX_SECRET_LEN: usize = 4096;
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
-    let mut diff = (a_bytes.len() != b_bytes.len()) as u8;
+    let mut diff = subtle::Choice::from((a_bytes.len() != b_bytes.len()) as u8);
     let iterations = a_bytes.len().max(b_bytes.len()).max(MAX_SECRET_LEN);
     for i in 0..iterations {
         let x = a_bytes.get(i).unwrap_or(&0);
         let y = b_bytes.get(i).unwrap_or(&0);
-        diff |= x ^ y;
+        diff |= !x.ct_eq(y);
     }
-    diff == 0
+    bool::from(!diff)
 }
 
 /// Substrings that indicate a config key should not be read or written through
