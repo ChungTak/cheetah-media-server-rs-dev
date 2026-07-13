@@ -77,6 +77,19 @@ pub fn parse_json_u64(value: &serde_json::Value) -> Option<u64> {
 /// Parse a user-supplied FFmpeg command string into controlled `input_options`
 /// and `output_options` vectors.
 ///
+/// Recognized FFmpeg output URL schemes. Used to strip the destination URL from
+/// parsed output options while leaving metadata/filter values like `url=...` intact.
+///
+/// 已知的 FFmpeg 输出 URL scheme；用于从输出选项中移除目标 URL，同时保留 `url=...` 等元数据。
+fn is_output_url(token: &str) -> bool {
+    const SCHEMES: &[&str] = &[
+        "rtmp://", "rtmps://", "rtsp://", "rtsps://", "http://", "https://", "srt://", "udp://",
+        "tcp://", "rtp://", "srtp://", "file://", "unix://", "pipe://", "ws://", "wss://",
+    ];
+    let lower = token.to_ascii_lowercase();
+    SCHEMES.iter().any(|scheme| lower.starts_with(scheme))
+}
+
 /// The `ffmpeg` binary token is stripped, the `-i` input option and its argument
 /// are removed from the option list, and the source URL is returned from
 /// `src_url` when present, or from the `-i` argument otherwise. The remaining
@@ -117,7 +130,7 @@ pub fn parse_ffmpeg_request(
     // The output URL appears after all output options; it is not a generic
     // option and is already represented by the destination MediaKey.
     if let Some(last) = output_options.last() {
-        if last.contains("://") {
+        if is_output_url(last) {
             output_options.pop();
         }
     }
@@ -153,6 +166,16 @@ pub fn validate_ffmpeg_options(options: &[String]) -> Result<(), AdapterError> {
         "-hls_key_info_file",
         "-key_info_file",
         "-i",
+        "-filter_complex",
+        "-lavfi",
+        "-filter_complex_script",
+        "-filter_script",
+        "-vf",
+        "-af",
+        "-filter:v",
+        "-filter:a",
+        "-dump_attachment",
+        "-attach",
     ];
     for (i, token) in options.iter().enumerate() {
         if DENIED.contains(&token.as_str()) {
@@ -209,34 +232,39 @@ pub fn validate_ffmpeg_url(url: &str) -> Result<(), AdapterError> {
 
 /// Constant-time string comparison to avoid timing side-channels.
 ///
-/// 常量时间字符串比较，避免时序侧信道。
+/// The comparison always runs a fixed number of iterations so callers
+/// cannot learn the expected token length by varying the input length.
+///
+/// 常量时间字符串比较，避免时序侧信道。固定迭代次数，避免通过输入长度推断期望 token 长度。
 pub fn constant_time_eq(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.bytes().zip(b.bytes()) {
+    const MAX_SECRET_LEN: usize = 4096;
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    let mut diff = (a_bytes.len() != b_bytes.len()) as u8;
+    for i in 0..MAX_SECRET_LEN {
+        let x = a_bytes.get(i).unwrap_or(&0);
+        let y = b_bytes.get(i).unwrap_or(&0);
         diff |= x ^ y;
     }
     diff == 0
 }
 
-/// Keys that should not be readable or writable through generic server config APIs.
+/// Substrings that indicate a config key should not be read or written through
+/// generic server config APIs.
 ///
-/// 不能通过通用服务器配置 API 读写的高危配置键。
-const SENSITIVE_CONFIG_KEYS: &[&str] = &[
-    "api_secret",
-    "secret_key",
-    "auth_token",
-    "private_key",
+/// 不应通过通用服务器配置 API 读写的敏感配置键子串。
+const SENSITIVE_CONFIG_SUBSTR: &[&str] = &[
+    "secret",
     "password",
     "token",
+    "private_key",
+    "api_key",
+    "credential",
 ];
 
 pub fn is_sensitive_config_key(key: &str) -> bool {
-    SENSITIVE_CONFIG_KEYS
-        .iter()
-        .any(|k| key.eq_ignore_ascii_case(k))
+    let lower = key.to_ascii_lowercase();
+    SENSITIVE_CONFIG_SUBSTR.iter().any(|s| lower.contains(s))
 }
 
 /// Remove sensitive keys from a config map before returning or storing it.
