@@ -539,14 +539,14 @@ impl ZlmMediaHttpService {
             port: parse_zlm_u16(&params, "port")?,
             ip: params["ip"].as_str().map(String::from),
             ssrc: parse_zlm_u32(&params, "ssrc")?,
-            enable_rtcp: params["enable_rtcp"].as_bool().unwrap_or(false),
+            enable_rtcp: crate::util::parse_json_bool(&params["enable_rtcp"]).unwrap_or(false),
             tcp_mode,
             payload_type: parse_zlm_u8(&params, "payload_type")?,
             codec_hint: params["codec_hint"]
                 .as_str()
                 .or_else(|| params["payload_mode"].as_str())
                 .map(String::from),
-            reuse_port: params["reuse_port"].as_bool().unwrap_or(false),
+            reuse_port: crate::util::parse_json_bool(&params["reuse_port"]).unwrap_or(false),
             timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
         };
         let session = rtp_api.open_rtp_receiver(&ctx, request).await?;

@@ -72,3 +72,22 @@ pub fn parse_json_u64(value: &serde_json::Value) -> Option<u64> {
         .as_u64()
         .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
 }
+
+/// Parse a JSON value that may be a boolean, a numeric flag (non-zero = true),
+/// or a string like `"true"` / `"1"` / `"yes"` / `"on"`.
+///
+/// 解析可能是布尔值、数字标志或字符串形式的 JSON 值。
+pub fn parse_json_bool(value: &serde_json::Value) -> Option<bool> {
+    if let Some(b) = value.as_bool() {
+        return Some(b);
+    }
+    if let Some(n) = parse_json_u64(value) {
+        return Some(n != 0);
+    }
+    value.as_str().map(|s| {
+        matches!(
+            s.trim().to_lowercase().as_str(),
+            "true" | "1" | "yes" | "on"
+        )
+    })
+}

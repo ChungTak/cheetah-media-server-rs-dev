@@ -297,6 +297,10 @@ impl RtpApi for RtpMediaProvider {
         _ctx: &MediaRequestContext,
         request: UpdateRtpRequest,
     ) -> Result<RtpSession> {
+        if request.pause_check.is_some() {
+            return Err(MediaError::unsupported("rtp session pause"));
+        }
+
         let mut sessions = self.sessions.lock();
         let mut session = sessions
             .get(&request.session_id)
@@ -308,15 +312,6 @@ impl RtpApi for RtpMediaProvider {
         }
         if let Some(payload_type) = request.payload_type {
             session.payload_type = Some(payload_type);
-        }
-        if let Some(pause) = request.pause_check {
-            session.state = if pause {
-                RtpSessionState::Paused
-            } else if session.kind == RtpSessionKind::Receiver {
-                RtpSessionState::Listening
-            } else {
-                RtpSessionState::Created
-            };
         }
 
         sessions.insert(request.session_id, session.clone());
