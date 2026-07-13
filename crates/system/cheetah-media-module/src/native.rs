@@ -101,52 +101,12 @@ impl Module for NativeMediaModule {
     }
 
     fn http_routes(&self) -> Vec<HttpRouteDescriptor> {
-        vec![
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/media".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/media/:vhost/:app/:stream".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/media/:vhost/:app/:stream/online".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/media/:vhost/:app/:stream/close".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/media/:vhost/:app/:stream/keyframe".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/sessions".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/sessions/:session_id/kick".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/record/tasks".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/record/files".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/proxies/pull".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/rtp/sessions".to_string(),
-            },
-        ]
+        // The control-plane dispatcher (`cheetah-control/src/lib.rs`) only does
+        // exact path comparison, so parameterized routes like `/media/:vhost/:app/:stream`
+        // can never match. Returning an empty route list makes `route_match` treat
+        // every request under `/api/v1` as a match, and the `handle` method below
+        // performs its own prefix/suffix routing based on the actual path.
+        Vec::new()
     }
 
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
