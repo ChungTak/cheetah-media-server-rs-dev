@@ -588,7 +588,7 @@ impl ZlmMediaHttpService {
             .as_str()
             .or_else(|| params["payload_mode"].as_str())
             .or_else(|| {
-                if params["use_ps"].as_bool().unwrap_or(true) {
+                if crate::util::parse_json_bool(&params["use_ps"]).unwrap_or(true) {
                     Some("ps")
                 } else {
                     Some("es")
@@ -872,10 +872,12 @@ fn parse_zlm_rtp_tcp_mode(params: &serde_json::Value) -> Option<RtpTcpMode> {
             _ => {}
         }
     }
-    if params["tcp"].as_bool().unwrap_or(false) || params["enable_tcp"].as_bool().unwrap_or(false) {
+    if crate::util::parse_json_bool(&params["tcp"]).unwrap_or(false)
+        || crate::util::parse_json_bool(&params["enable_tcp"]).unwrap_or(false)
+    {
         return Some(RtpTcpMode::Passive);
     }
-    if params["is_udp"].as_bool().unwrap_or(true) {
+    if crate::util::parse_json_bool(&params["is_udp"]).unwrap_or(true) {
         return None;
     }
     Some(RtpTcpMode::Passive)
