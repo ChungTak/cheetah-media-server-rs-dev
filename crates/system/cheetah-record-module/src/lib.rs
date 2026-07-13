@@ -24,7 +24,6 @@ pub mod metadata;
 pub mod module;
 pub mod registry;
 pub mod task;
-pub mod zlm_compat;
 
 pub use api::{RecordApi, RecordApiError};
 pub use config::RecordModuleConfig;
@@ -32,7 +31,3 @@ pub use metadata::{RecordFileMetadata, RecordFileQuery, RecordTaskMetadata};
 pub use module::{RecordModule, RecordModuleFactory};
 pub use registry::{RecordRegistry, RegistryError};
 pub use task::{RecordTask, RecordTaskCommand, RecordTaskState, RecordTaskTemplate, TaskExecutor};
-pub use zlm_compat::{
-    ZlmCompatError, ZlmDeleteDirectory, ZlmGetMp4Files, ZlmIsRecording, ZlmRecordCompat,
-    ZlmStartRecord, ZlmStopRecord,
-};

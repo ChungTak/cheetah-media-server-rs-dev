@@ -4,11 +4,15 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::command::{
-    MediaQuery, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, SessionQuery,
+    DeleteRecordRequest, DeleteSnapshotRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand,
+    RecordTaskQuery, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, SessionQuery,
+    SnapshotRequest, StartRecordRequest, StopRecordRequest,
 };
-use cheetah_media_api::ids::{MediaKey, RtpSessionId, SessionId, StreamKeyBridge};
-use cheetah_media_api::model::{CloseReason, RtpTcpMode};
-use cheetah_media_api::port::{MediaControlApi, MediaRequestContext, RtpApi};
+use cheetah_media_api::ids::{MediaKey, RecordFileId, RtpSessionId, SessionId, StreamKeyBridge};
+use cheetah_media_api::model::{CloseReason, RecordTaskState, RtpTcpMode};
+use cheetah_media_api::port::{
+    MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
+};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -170,6 +174,34 @@ impl Module for ZlmMediaModule {
                 method: HttpMethod::Get,
                 path: "/api/getRtpInfo".to_string(),
             },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/setRecordSpeed".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/seekRecordStamp".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/controlRecordPlay".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/loadMP4File".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Get,
+                path: "/api/getSnap".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/deleteSnapDirectory".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Get,
+                path: "/api/downloadFile".to_string(),
+            },
         ]
     }
 
@@ -197,6 +229,22 @@ impl ZlmMediaHttpService {
         self.ctx.media_services.rtp().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "rtp not available",
+            ))
+        })
+    }
+
+    fn record(&self) -> Result<Arc<dyn RecordApi>, AdapterError> {
+        self.ctx.media_services.record().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "record not available",
+            ))
+        })
+    }
+
+    fn snapshot(&self) -> Result<Arc<dyn SnapshotApi>, AdapterError> {
+        self.ctx.media_services.snapshot().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "snapshot not available",
             ))
         })
     }
@@ -311,18 +359,14 @@ impl ZlmMediaHttpService {
     }
 
     async fn record_start(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.ctx.media_services.record().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "record not available",
-            ))
-        })?;
+        let record_api = self.record()?;
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let format = params["type"].as_str().unwrap_or("mp4");
-        let request = cheetah_media_api::command::StartRecordRequest {
+        let format = zlm_record_format(&params["type"])?;
+        let request = StartRecordRequest {
             media_key: key,
-            format: format.to_string(),
+            format: format.clone(),
             template: cheetah_media_api::model::RecordTemplate::Continuous,
             segment_duration_ms: None,
             max_segments: None,
@@ -338,22 +382,40 @@ impl ZlmMediaHttpService {
     }
 
     async fn record_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.ctx.media_services.record().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "record not available",
-            ))
-        })?;
+        let record_api = self.record()?;
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let format = params["type"].as_str().unwrap_or("mp4");
-        let request = cheetah_media_api::command::StopRecordRequest {
-            task_id: cheetah_media_api::ids::RecordTaskId(format!(
-                "{format}-{}-{}",
-                key.app.0, key.stream.0
-            )),
+        let format = zlm_record_format(&params["type"])?;
+        let mut query = RecordTaskQuery {
+            vhost: Some(key.vhost.0.clone()),
+            app: Some(key.app.0.clone()),
+            stream: Some(key.stream.0.clone()),
+            page_size: RecordTaskQuery::MAX_PAGE_SIZE,
+            ..Default::default()
         };
-        let _ = record_api.stop_record(&ctx, request).await?;
+        query.clamp_page_size();
+        let page = record_api.query_record_tasks(&ctx, query).await?;
+        let task = page
+            .items
+            .into_iter()
+            .find(|t| {
+                t.format == format
+                    && matches!(t.state, RecordTaskState::Running | RecordTaskState::Pending)
+            })
+            .ok_or_else(|| {
+                AdapterError::Media(cheetah_media_api::error::MediaError::not_found(
+                    "record task",
+                ))
+            })?;
+        record_api
+            .stop_record(
+                &ctx,
+                StopRecordRequest {
+                    task_id: task.task_id,
+                },
+            )
+            .await?;
         Ok(zlm_response(
             0,
             "success",
@@ -362,28 +424,23 @@ impl ZlmMediaHttpService {
     }
 
     async fn is_recording(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.ctx.media_services.record().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "record not available",
-            ))
-        })?;
+        let record_api = self.record()?;
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let format = params["type"].as_str().unwrap_or("mp4");
-        let query = cheetah_media_api::command::RecordTaskQuery {
+        let format = zlm_record_format(&params["type"])?;
+        let mut query = RecordTaskQuery {
+            vhost: Some(key.vhost.0.clone()),
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
+            page_size: RecordTaskQuery::MAX_PAGE_SIZE,
             ..Default::default()
         };
+        query.clamp_page_size();
         let page = record_api.query_record_tasks(&ctx, query).await?;
         let recording = page.items.iter().any(|t| {
             t.format == format
-                && matches!(
-                    t.state,
-                    cheetah_media_api::model::RecordTaskState::Running
-                        | cheetah_media_api::model::RecordTaskState::Pending
-                )
+                && matches!(t.state, RecordTaskState::Running | RecordTaskState::Pending)
         });
         Ok(zlm_response(
             0,
@@ -393,20 +450,17 @@ impl ZlmMediaHttpService {
     }
 
     async fn get_mp4_files(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.ctx.media_services.record().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "record not available",
-            ))
-        })?;
+        let record_api = self.record()?;
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let query = cheetah_media_api::command::RecordFileQuery {
+        let mut query = RecordFileQuery {
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
             format: Some("mp4".to_string()),
             ..Default::default()
         };
+        query.clamp_page_size();
         let page = record_api.query_record_files(&ctx, query).await?;
         let paths: Vec<String> = page.items.iter().map(|f| f.path_handle.0.clone()).collect();
         Ok(zlm_response(
@@ -420,18 +474,14 @@ impl ZlmMediaHttpService {
         &self,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.ctx.media_services.record().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "record not available",
-            ))
-        })?;
+        let record_api = self.record()?;
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let query = cheetah_media_api::command::RecordFileQuery {
+        let query = RecordFileQuery {
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
-            page_size: cheetah_media_api::command::RecordFileQuery::MAX_PAGE_SIZE,
+            page_size: RecordFileQuery::MAX_PAGE_SIZE,
             ..Default::default()
         };
         let mut total_deleted = 0usize;
@@ -446,7 +496,7 @@ impl ZlmMediaHttpService {
                 match record_api
                     .delete_record_file(
                         &ctx,
-                        cheetah_media_api::command::DeleteRecordRequest {
+                        DeleteRecordRequest {
                             file_id: f.file_id.clone(),
                         },
                     )
@@ -606,6 +656,118 @@ impl ZlmMediaHttpService {
             .unwrap_or_else(|| serde_json::json!({"exists": false}));
         Ok(zlm_response(0, "success", data))
     }
+
+    async fn set_record_speed(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let record_api = self.record()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let file_id = parse_zlm_file_id(&params)?;
+        let value = parse_zlm_playback_value(&params, &["speed", "scale", "value"])?;
+        record_api
+            .control_record_playback(
+                &ctx,
+                &RecordFileId(file_id),
+                RecordPlaybackCommand::Scale { value },
+            )
+            .await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({"result": true}),
+        ))
+    }
+
+    async fn seek_record_stamp(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let record_api = self.record()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let file_id = parse_zlm_file_id(&params)?;
+        let value = parse_zlm_playback_value(&params, &["stamp", "seek", "value"])?;
+        record_api
+            .control_record_playback(
+                &ctx,
+                &RecordFileId(file_id),
+                RecordPlaybackCommand::Seek {
+                    value: value as i64,
+                },
+            )
+            .await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({"result": true}),
+        ))
+    }
+
+    async fn control_record_play(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let record_api = self.record()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let file_id = parse_zlm_file_id(&params)?;
+        let command = parse_zlm_playback_command(&params)?;
+        record_api
+            .control_record_playback(&ctx, &RecordFileId(file_id), command)
+            .await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({"result": true}),
+        ))
+    }
+
+    async fn load_mp4_file(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        Err(AdapterError::Media(
+            cheetah_media_api::error::MediaError::unsupported_capability("vod"),
+        ))
+    }
+
+    async fn get_snap(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let snapshot_api = self.snapshot()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let timeout_ms = parse_zlm_timeout_ms(&params);
+        let format = params["format"].as_str().unwrap_or("jpg").to_string();
+        let quality = parse_json_u64(&params["quality"])
+            .or_else(|| parse_json_u64(&params["scale"]))
+            .map(|v| v.min(100) as u8);
+        let request = SnapshotRequest {
+            media_key: key,
+            timeout_ms,
+            format,
+            quality,
+            storage_policy: Default::default(),
+            capture_policy: Default::default(),
+        };
+        let handle = snapshot_api.take_snapshot(&ctx, request).await?;
+        Ok(zlm_response(0, "success", handle))
+    }
+
+    async fn delete_snap_directory(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let snapshot_api = self.snapshot()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let request = DeleteSnapshotRequest {
+            media_key: key,
+            directory: params["directory"].as_str().map(String::from),
+            retain_count: params["retain_count"].as_u64().map(|v| v as u32),
+        };
+        snapshot_api
+            .delete_snapshot_directory(&ctx, request)
+            .await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({"result": true}),
+        ))
+    }
+
+    async fn download_file(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        Err(AdapterError::Media(
+            cheetah_media_api::error::MediaError::unsupported_capability("file download"),
+        ))
+    }
 }
 
 #[async_trait]
@@ -630,6 +792,13 @@ impl ModuleHttpService for ZlmMediaHttpService {
             (HttpMethod::Post, "/api/startSendRtp") => self.start_send_rtp(req).await,
             (HttpMethod::Post, "/api/stopSendRtp") => self.stop_send_rtp(req).await,
             (HttpMethod::Get, "/api/getRtpInfo") => self.get_rtp_info(req).await,
+            (HttpMethod::Post, "/api/setRecordSpeed") => self.set_record_speed(req).await,
+            (HttpMethod::Post, "/api/seekRecordStamp") => self.seek_record_stamp(req).await,
+            (HttpMethod::Post, "/api/controlRecordPlay") => self.control_record_play(req).await,
+            (HttpMethod::Post, "/api/loadMP4File") => self.load_mp4_file(req).await,
+            (HttpMethod::Get, "/api/getSnap") => self.get_snap(req).await,
+            (HttpMethod::Post, "/api/deleteSnapDirectory") => self.delete_snap_directory(req).await,
+            (HttpMethod::Get, "/api/downloadFile") => self.download_file(req).await,
             _ => Err(AdapterError::InvalidRequest("not found".to_string())),
         };
 
@@ -736,6 +905,101 @@ fn parse_zlm_destination(params: &serde_json::Value) -> Result<String, AdapterEr
 fn zlm_rtp_session_id(key: &MediaKey) -> String {
     let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
     format!("{namespace}/{path}")
+}
+
+fn zlm_record_format(value: &serde_json::Value) -> Result<String, AdapterError> {
+    if value.is_null() {
+        return Ok("mp4".to_string());
+    }
+    if let Some(num) = parse_json_u64(value) {
+        let format = match num {
+            0 => "mp4",
+            1 => "hls",
+            2 => "hls",
+            3 => "fmp4",
+            other => {
+                return Err(AdapterError::InvalidRequest(format!(
+                    "unsupported numeric record type {other}"
+                )))
+            }
+        };
+        return Ok(format.to_string());
+    }
+    if let Some(s) = value.as_str() {
+        if s.trim().is_empty() {
+            return Ok("mp4".to_string());
+        }
+        return Ok(s.to_lowercase());
+    }
+    Ok("mp4".to_string())
+}
+
+fn parse_json_u64(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
+}
+
+fn parse_json_f64(value: &serde_json::Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
+}
+
+fn parse_zlm_file_id(params: &serde_json::Value) -> Result<String, AdapterError> {
+    params["file_id"]
+        .as_str()
+        .or_else(|| params["fileId"].as_str())
+        .or_else(|| params["file_path"].as_str())
+        .map(String::from)
+        .ok_or_else(|| AdapterError::InvalidRequest("file_id is required".to_string()))
+}
+
+fn parse_zlm_playback_value(
+    params: &serde_json::Value,
+    aliases: &[&str],
+) -> Result<f64, AdapterError> {
+    for alias in aliases {
+        if let Some(v) = parse_json_f64(&params[*alias]) {
+            return Ok(v);
+        }
+    }
+    Err(AdapterError::InvalidRequest(
+        "playback value is required".to_string(),
+    ))
+}
+
+fn parse_zlm_playback_command(
+    params: &serde_json::Value,
+) -> Result<RecordPlaybackCommand, AdapterError> {
+    let command = params["command"]
+        .as_str()
+        .ok_or_else(|| AdapterError::InvalidRequest("command is required".to_string()))?
+        .to_lowercase();
+    match command.as_str() {
+        "pause" => Ok(RecordPlaybackCommand::Pause),
+        "resume" => Ok(RecordPlaybackCommand::Resume),
+        "scale" | "speed" => {
+            let value = parse_zlm_playback_value(params, &["value", "speed", "scale"])?;
+            Ok(RecordPlaybackCommand::Scale { value })
+        }
+        "seek" | "stamp" => {
+            let value = parse_zlm_playback_value(params, &["value", "stamp", "seek"])?;
+            Ok(RecordPlaybackCommand::Seek {
+                value: value as i64,
+            })
+        }
+        _ => Err(AdapterError::InvalidRequest(format!(
+            "unsupported playback command {command}"
+        ))),
+    }
+}
+
+fn parse_zlm_timeout_ms(params: &serde_json::Value) -> u64 {
+    parse_json_u64(&params["timeout_sec"])
+        .or_else(|| parse_json_u64(&params["timeout"]))
+        .map(|s| s * 1000)
+        .unwrap_or(10_000)
 }
 
 fn zlm_response<T: serde::Serialize>(code: i32, msg: &str, data: T) -> HttpResponse {

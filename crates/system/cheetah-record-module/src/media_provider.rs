@@ -213,7 +213,7 @@ fn map_error(err: RecordApiError) -> MediaError {
     match err {
         RecordApiError::InvalidRequest(msg) => MediaError::invalid_argument(msg),
         RecordApiError::UnsupportedFormat(msg) => {
-            MediaError::invalid_argument(format!("unsupported format: {msg}"))
+            MediaError::unsupported(format!("unsupported record format: {msg}"))
         }
         RecordApiError::Registry(e) => match e {
             crate::registry::RegistryError::TaskNotFound(id) => {
