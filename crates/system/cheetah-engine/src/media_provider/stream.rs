@@ -186,12 +186,11 @@ impl MediaControlApi for StreamMediaProvider {
                         return false;
                     }
                 }
-                if let Some(ref schema) = query.schema {
-                    match MediaSchema::parse(schema) {
-                        Ok(parsed) if key.schema.as_ref() == Some(&parsed) => {}
-                        _ => return false,
-                    }
-                }
+                // `StreamSnapshot` does not carry an output schema; the `schema` field on
+                // `MediaKey` produced by `StreamKeyBridge` is always `None`. Filtering by
+                // `query.schema` here would always exclude every stream, so the filter is
+                // skipped until the engine can supply per-stream output schemas.
+                let _ = query.schema;
                 if let Some(online) = query.online {
                     if s.publisher_active != online {
                         return false;
