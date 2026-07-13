@@ -1,14 +1,18 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::command::{
-    MediaQuery, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, SessionQuery,
+    DeleteRecordRequest, FfmpegProxyRequest, MediaQuery, ProxyQuery, PullProxyRequest,
+    RecordFileQuery, RecordTaskQuery, SessionQuery, StartRecordRequest, StopRecordRequest,
 };
-use cheetah_media_api::ids::{MediaKey, RtpSessionId, SessionId, StreamKeyBridge};
-use cheetah_media_api::model::{CloseReason, RtpTcpMode};
-use cheetah_media_api::port::{MediaControlApi, MediaRequestContext, RtpApi};
+use cheetah_media_api::ids::{MediaKey, ProxyId, RecordTaskId, SessionId, StreamKeyBridge};
+use cheetah_media_api::model::{
+    CloseReason, ProxyKind, RecordTaskState, RecordTemplate, ServerConfig, StoragePolicy,
+};
+use cheetah_media_api::port::{
+    MediaControlApi, MediaRequestContext, ProxyApi, RtpApi, ServerAdminApi,
+};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -17,6 +21,8 @@ use cheetah_sdk::{
 };
 
 use crate::error::{zlm_error_response, AdapterError};
+
+mod rtp;
 
 const MODULE_ID: &str = "media-http-zlm";
 
@@ -170,6 +176,52 @@ impl Module for ZlmMediaModule {
                 method: HttpMethod::Get,
                 path: "/api/getRtpInfo".to_string(),
             },
+            // Proxy endpoints
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/addStreamProxy".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/delStreamProxy".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Get,
+                path: "/api/getAllStreamProxy".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/addFFmpegSource".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/delFFmpegSource".to_string(),
+            },
+            // Server ops endpoints
+            HttpRouteDescriptor {
+                method: HttpMethod::Get,
+                path: "/api/getServerLoad".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Get,
+                path: "/api/getWorkThreadsLoad".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Get,
+                path: "/api/getServerConfig".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/setServerConfig".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/restartServer".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/shutdownServer".to_string(),
+            },
         ]
     }
 
@@ -180,7 +232,7 @@ impl Module for ZlmMediaModule {
     }
 }
 
-struct ZlmMediaHttpService {
+pub(crate) struct ZlmMediaHttpService {
     ctx: EngineContext,
 }
 
@@ -193,7 +245,15 @@ impl ZlmMediaHttpService {
         })
     }
 
-    fn rtp(&self) -> Result<Arc<dyn RtpApi>, AdapterError> {
+    fn proxy(&self) -> Result<Arc<dyn ProxyApi>, AdapterError> {
+        self.ctx.media_services.proxy().ok_or_else(|| {
+            AdapterError::Media(
+                cheetah_media_api::error::MediaError::unsupported_capability("proxy"),
+            )
+        })
+    }
+
+    pub(crate) fn rtp(&self) -> Result<Arc<dyn RtpApi>, AdapterError> {
         self.ctx.media_services.rtp().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "rtp not available",
@@ -201,7 +261,15 @@ impl ZlmMediaHttpService {
         })
     }
 
-    fn request_context(&self, _req: &HttpRequest) -> MediaRequestContext {
+    fn server_admin(&self) -> Result<Arc<dyn ServerAdminApi>, AdapterError> {
+        self.ctx.media_services.server_admin().ok_or_else(|| {
+            AdapterError::Media(
+                cheetah_media_api::error::MediaError::unsupported_capability("server_admin"),
+            )
+        })
+    }
+
+    pub(crate) fn request_context(&self, _req: &HttpRequest) -> MediaRequestContext {
         MediaRequestContext {
             request_id: cheetah_media_api::ids::RequestId("".to_string()),
             correlation_id: None,
@@ -212,7 +280,10 @@ impl ZlmMediaHttpService {
         }
     }
 
-    fn extract_params(&self, req: &HttpRequest) -> Result<serde_json::Value, AdapterError> {
+    pub(crate) fn extract_params(
+        &self,
+        req: &HttpRequest,
+    ) -> Result<serde_json::Value, AdapterError> {
         match req.method {
             HttpMethod::Get => Ok(crate::util::query_to_json(req.query.as_deref())),
             _ if req.body.is_empty() => Ok(crate::util::query_to_json(req.query.as_deref())),
@@ -220,7 +291,10 @@ impl ZlmMediaHttpService {
         }
     }
 
-    fn parse_media_key(&self, params: &serde_json::Value) -> Result<MediaKey, AdapterError> {
+    pub(crate) fn parse_media_key(
+        &self,
+        params: &serde_json::Value,
+    ) -> Result<MediaKey, AdapterError> {
         let vhost = params["vhost"].as_str().unwrap_or("__defaultVhost__");
         let app = params["app"]
             .as_str()
@@ -320,13 +394,13 @@ impl ZlmMediaHttpService {
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = params["type"].as_str().unwrap_or("mp4");
-        let request = cheetah_media_api::command::StartRecordRequest {
+        let request = StartRecordRequest {
             media_key: key,
             format: format.to_string(),
-            template: cheetah_media_api::model::RecordTemplate::Continuous,
+            template: RecordTemplate::Continuous,
             segment_duration_ms: None,
             max_segments: None,
-            storage_policy: cheetah_media_api::model::StoragePolicy::default(),
+            storage_policy: StoragePolicy::default(),
             idempotency_key: None,
         };
         let task = record_api.start_record(&ctx, request).await?;
@@ -347,11 +421,8 @@ impl ZlmMediaHttpService {
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = params["type"].as_str().unwrap_or("mp4");
-        let request = cheetah_media_api::command::StopRecordRequest {
-            task_id: cheetah_media_api::ids::RecordTaskId(format!(
-                "{format}-{}-{}",
-                key.app.0, key.stream.0
-            )),
+        let request = StopRecordRequest {
+            task_id: RecordTaskId(format!("{format}-{}-{}", key.app.0, key.stream.0)),
         };
         let _ = record_api.stop_record(&ctx, request).await?;
         Ok(zlm_response(
@@ -371,7 +442,7 @@ impl ZlmMediaHttpService {
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = params["type"].as_str().unwrap_or("mp4");
-        let query = cheetah_media_api::command::RecordTaskQuery {
+        let query = RecordTaskQuery {
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
             ..Default::default()
@@ -379,11 +450,7 @@ impl ZlmMediaHttpService {
         let page = record_api.query_record_tasks(&ctx, query).await?;
         let recording = page.items.iter().any(|t| {
             t.format == format
-                && matches!(
-                    t.state,
-                    cheetah_media_api::model::RecordTaskState::Running
-                        | cheetah_media_api::model::RecordTaskState::Pending
-                )
+                && matches!(t.state, RecordTaskState::Running | RecordTaskState::Pending)
         });
         Ok(zlm_response(
             0,
@@ -401,7 +468,7 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let query = cheetah_media_api::command::RecordFileQuery {
+        let query = RecordFileQuery {
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
             format: Some("mp4".to_string()),
@@ -428,10 +495,10 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let query = cheetah_media_api::command::RecordFileQuery {
+        let query = RecordFileQuery {
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
-            page_size: cheetah_media_api::command::RecordFileQuery::MAX_PAGE_SIZE,
+            page_size: RecordFileQuery::MAX_PAGE_SIZE,
             ..Default::default()
         };
         let mut total_deleted = 0usize;
@@ -446,7 +513,7 @@ impl ZlmMediaHttpService {
                 match record_api
                     .delete_record_file(
                         &ctx,
-                        cheetah_media_api::command::DeleteRecordRequest {
+                        DeleteRecordRequest {
                             file_id: f.file_id.clone(),
                         },
                     )
@@ -478,133 +545,187 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn open_rtp_server(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let rtp_api = self.rtp()?;
+    async fn get_all_stream_proxy(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let tcp_mode = parse_zlm_rtp_tcp_mode(&params);
-        let request = RtpReceiverRequest {
-            media_key: key,
-            port: parse_zlm_u16(&params, "port")?,
-            ip: params["ip"].as_str().map(String::from),
-            ssrc: parse_zlm_u32(&params, "ssrc")?,
-            enable_rtcp: params["enable_rtcp"].as_bool().unwrap_or(false),
-            tcp_mode,
-            payload_type: parse_zlm_u8(&params, "payload_type")?,
-            codec_hint: params["codec_hint"]
-                .as_str()
-                .or_else(|| params["payload_mode"].as_str())
-                .map(String::from),
-            reuse_port: params["reuse_port"].as_bool().unwrap_or(false),
-            timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
-        };
-        let session = rtp_api.open_rtp_receiver(&ctx, request).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({
-                "port": session.local_port,
-                "ssrc": session.ssrc,
-                "session_id": session.session_id.0,
-            }),
-        ))
-    }
-
-    async fn close_rtp_server(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let session_id = zlm_rtp_session_id(&key);
-        rtp_api
-            .stop_rtp_session(&ctx, &RtpSessionId(session_id))
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn start_send_rtp(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let destination = parse_zlm_destination(&params)?;
-        let ssrc = parse_zlm_u32(&params, "ssrc")?;
-        let codec_hint = params["codec_hint"]
-            .as_str()
-            .or_else(|| params["payload_mode"].as_str())
-            .or_else(|| {
-                if params["use_ps"].as_bool().unwrap_or(true) {
-                    Some("ps")
-                } else {
-                    Some("es")
-                }
-            })
-            .map(String::from);
-        let request = RtpSenderRequest {
-            media_key: key,
-            destination_endpoint: destination,
-            ssrc,
-            payload_type: parse_zlm_u8(&params, "payload_type")?,
-            codec_hint,
-            mode: RtpSenderMode::Active,
-            transport_options: std::collections::HashMap::new(),
-        };
-        let session = rtp_api.open_rtp_sender(&ctx, request).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({
-                "ssrc": session.ssrc,
-                "session_id": session.session_id.0,
-            }),
-        ))
-    }
-
-    async fn stop_send_rtp(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let session_id = zlm_rtp_session_id(&key);
-        rtp_api
-            .stop_rtp_session(&ctx, &RtpSessionId(session_id))
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn get_rtp_info(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let mut query = RtpQuery {
-            page_size: RtpQuery::MAX_PAGE_SIZE,
+        let mut query = ProxyQuery {
+            kind: Some(ProxyKind::Pull),
             ..Default::default()
         };
+        query.page_size =
+            crate::util::parse_json_u64(&params["page_size"]).unwrap_or(ProxyQuery::MAX_PAGE_SIZE);
+        query.page = crate::util::parse_json_u64(&params["page"]).unwrap_or(1);
         query.clamp_page_size();
-        let page = rtp_api.list_rtp_sessions(&ctx, query).await?;
-        let info = page.items.into_iter().find(|s| s.media_key == key);
-        let data = info
-            .map(|s| {
-                serde_json::json!({
-                    "session_id": s.session_id.0,
-                    "port": s.local_port,
-                    "ssrc": s.ssrc,
-                    "remote_endpoint": s.remote_endpoint,
-                    "state": s.state,
-                })
-            })
-            .unwrap_or_else(|| serde_json::json!({"exists": false}));
+        let page = proxy_api.list_proxies(&ctx, query).await?;
+        Ok(zlm_response(0, "success", page.items))
+    }
+
+    async fn add_stream_proxy(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let source_url = params["url"]
+            .as_str()
+            .ok_or_else(|| AdapterError::InvalidRequest("url is required".to_string()))?;
+        let request = PullProxyRequest {
+            source_url: source_url.to_string(),
+            destination: key.clone(),
+            retry_policy: Default::default(),
+            heartbeat_ms: Some(crate::util::parse_json_u64(&params["heartbeat_ms"]).unwrap_or(0)),
+            timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
+            transcode_policy: Default::default(),
+            output_policy: Default::default(),
+            record_policy: None,
+        };
+        let info = proxy_api.create_pull_proxy(&ctx, request).await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({
+                "key": zlm_key_string(&key),
+                "proxy_id": info.proxy_id.0,
+                "result": true,
+            }),
+        ))
+    }
+
+    async fn del_stream_proxy(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let proxy_id = ProxyId(zlm_key_string(&key));
+        proxy_api.delete_pull_proxy(&ctx, &proxy_id).await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({"result": true}),
+        ))
+    }
+
+    async fn add_ffmpeg_source(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let source_url = params["src_url"]
+            .as_str()
+            .ok_or_else(|| AdapterError::InvalidRequest("src_url is required".to_string()))?;
+        let request = FfmpegProxyRequest {
+            source_url: source_url.to_string(),
+            destination: key.clone(),
+            command: params["ffmpeg_cmd"].as_str().map(String::from),
+            timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(0),
+            input_options: Default::default(),
+            output_options: Default::default(),
+            transcode_policy: Default::default(),
+            output_policy: Default::default(),
+        };
+        let info = proxy_api.create_ffmpeg_proxy(&ctx, request).await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({
+                "key": zlm_key_string(&key),
+                "proxy_id": info.proxy_id.0,
+                "result": true,
+            }),
+        ))
+    }
+
+    async fn del_ffmpeg_source(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let proxy_id = ProxyId(zlm_key_string(&key));
+        proxy_api.delete_ffmpeg_proxy(&ctx, &proxy_id).await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({"result": true}),
+        ))
+    }
+
+    async fn get_server_load(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let api = self.server_admin()?;
+        let ctx = self.request_context(&req);
+        let info = api.server_info(&ctx).await?;
+        let data = serde_json::json!({
+            "cpu": info.load.cpu_percent,
+            "mem": info.load.memory_bytes,
+            "net_in": info.load.network_in,
+            "net_out": info.load.network_out,
+        });
         Ok(zlm_response(0, "success", data))
+    }
+
+    async fn get_work_threads_load(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let api = self.server_admin()?;
+        let ctx = self.request_context(&req);
+        let info = api.server_info(&ctx).await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({ "threads": info.load.threads }),
+        ))
+    }
+
+    async fn get_server_config(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let api = self.server_admin()?;
+        let ctx = self.request_context(&req);
+        let config = api.server_config(&ctx).await?;
+        Ok(zlm_response(0, "success", config.values))
+    }
+
+    async fn set_server_config(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let api = self.server_admin()?;
+        let ctx = self.request_context(&req);
+        let params = self.extract_params(&req)?;
+        let mut values = std::collections::HashMap::new();
+        if let (Some(key), Some(value)) = (params["key"].as_str(), params["value"].as_str()) {
+            values.insert(key.to_string(), value.to_string());
+        } else if let Some(obj) = params.as_object() {
+            for (k, v) in obj {
+                if k == "restart" {
+                    continue;
+                }
+                if let Some(s) = v.as_str() {
+                    values.insert(k.clone(), s.to_string());
+                }
+            }
+        }
+        let config = ServerConfig { values };
+        api.set_server_config(&ctx, config).await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({"result": true}),
+        ))
+    }
+
+    async fn restart_server(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let api = self.server_admin()?;
+        let ctx = self.request_context(&req);
+        api.restart_server(&ctx).await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({"result": true}),
+        ))
+    }
+
+    async fn shutdown_server(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let api = self.server_admin()?;
+        let ctx = self.request_context(&req);
+        api.shutdown_server(&ctx).await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            serde_json::json!({"result": true}),
+        ))
     }
 }
 
@@ -630,6 +751,17 @@ impl ModuleHttpService for ZlmMediaHttpService {
             (HttpMethod::Post, "/api/startSendRtp") => self.start_send_rtp(req).await,
             (HttpMethod::Post, "/api/stopSendRtp") => self.stop_send_rtp(req).await,
             (HttpMethod::Get, "/api/getRtpInfo") => self.get_rtp_info(req).await,
+            (HttpMethod::Post, "/api/addStreamProxy") => self.add_stream_proxy(req).await,
+            (HttpMethod::Post, "/api/delStreamProxy") => self.del_stream_proxy(req).await,
+            (HttpMethod::Get, "/api/getAllStreamProxy") => self.get_all_stream_proxy(req).await,
+            (HttpMethod::Post, "/api/addFFmpegSource") => self.add_ffmpeg_source(req).await,
+            (HttpMethod::Post, "/api/delFFmpegSource") => self.del_ffmpeg_source(req).await,
+            (HttpMethod::Get, "/api/getServerLoad") => self.get_server_load(req).await,
+            (HttpMethod::Get, "/api/getWorkThreadsLoad") => self.get_work_threads_load(req).await,
+            (HttpMethod::Get, "/api/getServerConfig") => self.get_server_config(req).await,
+            (HttpMethod::Post, "/api/setServerConfig") => self.set_server_config(req).await,
+            (HttpMethod::Post, "/api/restartServer") => self.restart_server(req).await,
+            (HttpMethod::Post, "/api/shutdownServer") => self.shutdown_server(req).await,
             _ => Err(AdapterError::InvalidRequest("not found".to_string())),
         };
 
@@ -653,7 +785,10 @@ impl ModuleHttpService for ZlmMediaHttpService {
     }
 }
 
-fn parse_zlm_u16(params: &serde_json::Value, key: &str) -> Result<Option<u16>, AdapterError> {
+pub(crate) fn parse_zlm_u16(
+    params: &serde_json::Value,
+    key: &str,
+) -> Result<Option<u16>, AdapterError> {
     if params[key].is_null() {
         return Ok(None);
     }
@@ -664,7 +799,10 @@ fn parse_zlm_u16(params: &serde_json::Value, key: &str) -> Result<Option<u16>, A
         .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
 }
 
-fn parse_zlm_u32(params: &serde_json::Value, key: &str) -> Result<Option<u32>, AdapterError> {
+pub(crate) fn parse_zlm_u32(
+    params: &serde_json::Value,
+    key: &str,
+) -> Result<Option<u32>, AdapterError> {
     if params[key].is_null() {
         return Ok(None);
     }
@@ -675,7 +813,10 @@ fn parse_zlm_u32(params: &serde_json::Value, key: &str) -> Result<Option<u32>, A
         .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
 }
 
-fn parse_zlm_u8(params: &serde_json::Value, key: &str) -> Result<Option<u8>, AdapterError> {
+pub(crate) fn parse_zlm_u8(
+    params: &serde_json::Value,
+    key: &str,
+) -> Result<Option<u8>, AdapterError> {
     if params[key].is_null() {
         return Ok(None);
     }
@@ -686,59 +827,7 @@ fn parse_zlm_u8(params: &serde_json::Value, key: &str) -> Result<Option<u8>, Ada
         .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
 }
 
-fn parse_zlm_rtp_tcp_mode(params: &serde_json::Value) -> Option<RtpTcpMode> {
-    if let Some(s) = params["tcp_mode"].as_str() {
-        match s.to_lowercase().as_str() {
-            "passive" | "0" => return Some(RtpTcpMode::Passive),
-            "active" | "1" => return Some(RtpTcpMode::Active),
-            _ => {}
-        }
-    }
-    if let Some(n) = crate::util::parse_json_u64(&params["tcp_mode"]) {
-        match n {
-            0 => return Some(RtpTcpMode::Passive),
-            1 => return Some(RtpTcpMode::Active),
-            _ => {}
-        }
-    }
-    if params["tcp"].as_bool().unwrap_or(false) || params["enable_tcp"].as_bool().unwrap_or(false) {
-        return Some(RtpTcpMode::Passive);
-    }
-    if params["is_udp"].as_bool().unwrap_or(true) {
-        return None;
-    }
-    Some(RtpTcpMode::Passive)
-}
-
-fn parse_zlm_destination(params: &serde_json::Value) -> Result<String, AdapterError> {
-    if let Some(url) = params["dst_url"].as_str() {
-        if url.parse::<SocketAddr>().is_err() {
-            return Err(AdapterError::InvalidRequest(format!(
-                "invalid destination endpoint: {url}"
-            )));
-        }
-        return Ok(url.to_string());
-    }
-    let ip = params["dst_ip"]
-        .as_str()
-        .ok_or_else(|| AdapterError::InvalidRequest("dst_ip is required".to_string()))?;
-    let port = parse_zlm_u16(params, "dst_port")?
-        .ok_or_else(|| AdapterError::InvalidRequest("dst_port is required".to_string()))?;
-    let endpoint = format!("{ip}:{port}");
-    if endpoint.parse::<SocketAddr>().is_err() {
-        return Err(AdapterError::InvalidRequest(format!(
-            "invalid destination endpoint: {endpoint}"
-        )));
-    }
-    Ok(endpoint)
-}
-
-fn zlm_rtp_session_id(key: &MediaKey) -> String {
-    let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
-    format!("{namespace}/{path}")
-}
-
-fn zlm_response<T: serde::Serialize>(code: i32, msg: &str, data: T) -> HttpResponse {
+pub(crate) fn zlm_response<T: serde::Serialize>(code: i32, msg: &str, data: T) -> HttpResponse {
     HttpResponse {
         status: 200,
         headers: vec![HttpHeader {
@@ -765,4 +854,9 @@ fn zlm_json_response(params: serde_json::Value) -> HttpResponse {
         }],
         body: Bytes::from(serde_json::to_vec(&params).unwrap_or_default()),
     }
+}
+
+pub(crate) fn zlm_key_string(key: &MediaKey) -> String {
+    let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
+    format!("{namespace}/{path}")
 }

@@ -3,13 +3,18 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::command::{
-    DeleteRecordRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    RtpQuery, RtpReceiverRequest, RtpSenderRequest, SessionQuery, StartRecordRequest,
-    StopRecordRequest,
+    DeleteRecordRequest, FfmpegProxyRequest, MediaQuery, ProxyQuery, PullProxyRequest,
+    PushProxyRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery, RtpQuery,
+    RtpReceiverRequest, RtpSenderRequest, ServerConfigUpdate, SessionQuery, StartRecordRequest,
+    StopRecordRequest, WebRtcRoomQuery, WebRtcRoomRequest, WhepRequest, WhipRequest,
 };
-use cheetah_media_api::ids::{MediaKey, RecordFileId, RecordTaskId, RtpSessionId, SessionId};
+use cheetah_media_api::ids::{
+    MediaKey, ProxyId, RecordFileId, RecordTaskId, RtpSessionId, SessionId, WebRtcRoomId,
+};
 use cheetah_media_api::model::CloseReason;
-use cheetah_media_api::port::{MediaControlApi, MediaRequestContext, RtpApi};
+use cheetah_media_api::port::{
+    MediaControlApi, MediaRequestContext, ProxyApi, RtpApi, ServerAdminApi, WebRtcApi,
+};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -146,6 +151,30 @@ impl NativeMediaHttpService {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "rtp not available",
             ))
+        })
+    }
+
+    fn proxy(&self) -> Result<Arc<dyn ProxyApi>, AdapterError> {
+        self.ctx.media_services.proxy().ok_or_else(|| {
+            AdapterError::Media(
+                cheetah_media_api::error::MediaError::unsupported_capability("proxy"),
+            )
+        })
+    }
+
+    fn server_admin(&self) -> Result<Arc<dyn ServerAdminApi>, AdapterError> {
+        self.ctx.media_services.server_admin().ok_or_else(|| {
+            AdapterError::Media(
+                cheetah_media_api::error::MediaError::unsupported_capability("server_admin"),
+            )
+        })
+    }
+
+    fn webrtc(&self) -> Result<Arc<dyn WebRtcApi>, AdapterError> {
+        self.ctx.media_services.webrtc().ok_or_else(|| {
+            AdapterError::Media(
+                cheetah_media_api::error::MediaError::unsupported_capability("webrtc"),
+            )
         })
     }
 
@@ -347,10 +376,143 @@ impl NativeMediaHttpService {
         Ok(json_response(&page))
     }
 
-    async fn proxies_pull(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        Err(AdapterError::Media(
-            cheetah_media_api::error::MediaError::unsupported_capability("proxy"),
-        ))
+    async fn proxies_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let proxy_api = self.proxy()?;
+        let mut query: ProxyQuery = parse_query(&req)?;
+        query.clamp_page_size();
+        let page = proxy_api.list_proxies(&ctx, query).await?;
+        Ok(json_response(&page))
+    }
+
+    async fn proxies_pull(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let proxy_api = self.proxy()?;
+        let request: PullProxyRequest = parse_body(&req)?;
+        let info = proxy_api.create_pull_proxy(&ctx, request).await?;
+        Ok(json_response(&info))
+    }
+
+    async fn proxies_push(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let proxy_api = self.proxy()?;
+        let request: PushProxyRequest = parse_body(&req)?;
+        let info = proxy_api.create_push_proxy(&ctx, request).await?;
+        Ok(json_response(&info))
+    }
+
+    async fn proxies_ffmpeg(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let proxy_api = self.proxy()?;
+        let request: FfmpegProxyRequest = parse_body(&req)?;
+        let info = proxy_api.create_ffmpeg_proxy(&ctx, request).await?;
+        Ok(json_response(&info))
+    }
+
+    async fn proxies_pull_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let proxy_api = self.proxy()?;
+        let id = proxy_id_from_path(&req.path, "/proxies/", "/pull")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing proxy_id".to_string()))?;
+        proxy_api.delete_pull_proxy(&ctx, &ProxyId(id)).await?;
+        Ok(json_response(&serde_json::json!({ "deleted": true })))
+    }
+
+    async fn proxies_push_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let proxy_api = self.proxy()?;
+        let id = proxy_id_from_path(&req.path, "/proxies/", "/push")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing proxy_id".to_string()))?;
+        proxy_api.delete_push_proxy(&ctx, &ProxyId(id)).await?;
+        Ok(json_response(&serde_json::json!({ "deleted": true })))
+    }
+
+    async fn server_info(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let api = self.server_admin()?;
+        let info = api.server_info(&ctx).await?;
+        Ok(json_response(&info))
+    }
+
+    async fn server_config(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let api = self.server_admin()?;
+        let config = api.server_config(&ctx).await?;
+        Ok(json_response(&config))
+    }
+
+    async fn server_config_update(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let api = self.server_admin()?;
+        let update: ServerConfigUpdate = parse_body(&req)?;
+        let config = cheetah_media_api::model::ServerConfig {
+            values: update.values,
+        };
+        api.set_server_config(&ctx, config).await?;
+        Ok(json_response(&serde_json::json!({ "updated": true })))
+    }
+
+    async fn server_restart(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let api = self.server_admin()?;
+        api.restart_server(&ctx).await?;
+        Ok(json_response(&serde_json::json!({ "restarting": true })))
+    }
+
+    async fn server_shutdown(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let api = self.server_admin()?;
+        api.shutdown_server(&ctx).await?;
+        Ok(json_response(&serde_json::json!({ "shutting_down": true })))
+    }
+
+    async fn server_ports(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let api = self.server_admin()?;
+        let ports = api.list_ports(&ctx).await?;
+        Ok(json_response(&serde_json::json!({ "ports": ports })))
+    }
+
+    async fn webrtc_whip(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let api = self.webrtc()?;
+        let request: WhipRequest = parse_body(&req)?;
+        let response = api.whip_publish(&ctx, request).await?;
+        Ok(json_response(&response))
+    }
+
+    async fn webrtc_whep(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let api = self.webrtc()?;
+        let request: WhepRequest = parse_body(&req)?;
+        let response = api.whep_subscribe(&ctx, request).await?;
+        Ok(json_response(&response))
+    }
+
+    async fn webrtc_rooms_create(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let api = self.webrtc()?;
+        let request: WebRtcRoomRequest = parse_body(&req)?;
+        let room = api.create_room(&ctx, request).await?;
+        Ok(json_response(&room))
+    }
+
+    async fn webrtc_rooms_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let api = self.webrtc()?;
+        let mut query: WebRtcRoomQuery = parse_query(&req)?;
+        query.clamp_page_size();
+        let page = api.list_rooms(&ctx, query).await?;
+        Ok(json_response(&page))
+    }
+
+    async fn webrtc_room_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let api = self.webrtc()?;
+        let id = room_id_from_path(&req.path, "/webrtc/rooms/", "")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing room_id".to_string()))?;
+        api.delete_room(&ctx, &WebRtcRoomId(id)).await?;
+        Ok(json_response(&serde_json::json!({ "deleted": true })))
     }
 }
 
@@ -398,7 +560,20 @@ impl ModuleHttpService for NativeMediaHttpService {
             {
                 self.record_playback_control(req).await
             }
-            (HttpMethod::Get, "/proxies/pull") => self.proxies_pull(req).await,
+            (HttpMethod::Get, "/proxies") => self.proxies_list(req).await,
+            (HttpMethod::Post, "/proxies/pull") => self.proxies_pull(req).await,
+            (HttpMethod::Post, "/proxies/push") => self.proxies_push(req).await,
+            (HttpMethod::Post, "/proxies/ffmpeg") => self.proxies_ffmpeg(req).await,
+            (HttpMethod::Delete, path)
+                if path.starts_with("/proxies/") && path.ends_with("/pull") =>
+            {
+                self.proxies_pull_delete(req).await
+            }
+            (HttpMethod::Delete, path)
+                if path.starts_with("/proxies/") && path.ends_with("/push") =>
+            {
+                self.proxies_push_delete(req).await
+            }
             (HttpMethod::Post, "/rtp/receivers") => self.rtp_receivers(req).await,
             (HttpMethod::Post, "/rtp/senders") => self.rtp_senders(req).await,
             (HttpMethod::Post, path)
@@ -407,6 +582,19 @@ impl ModuleHttpService for NativeMediaHttpService {
                 self.rtp_session_stop(req).await
             }
             (HttpMethod::Get, "/rtp/sessions") => self.rtp_sessions(req).await,
+            (HttpMethod::Get, "/server/info") => self.server_info(req).await,
+            (HttpMethod::Get, "/server/config") => self.server_config(req).await,
+            (HttpMethod::Post, "/server/config") => self.server_config_update(req).await,
+            (HttpMethod::Post, "/server/restart") => self.server_restart(req).await,
+            (HttpMethod::Post, "/server/shutdown") => self.server_shutdown(req).await,
+            (HttpMethod::Get, "/server/ports") => self.server_ports(req).await,
+            (HttpMethod::Post, "/webrtc/whip") => self.webrtc_whip(req).await,
+            (HttpMethod::Post, "/webrtc/whep") => self.webrtc_whep(req).await,
+            (HttpMethod::Post, "/webrtc/rooms") => self.webrtc_rooms_create(req).await,
+            (HttpMethod::Get, "/webrtc/rooms") => self.webrtc_rooms_list(req).await,
+            (HttpMethod::Delete, path) if path.starts_with("/webrtc/rooms/") => {
+                self.webrtc_room_delete(req).await
+            }
             _ => Err(AdapterError::InvalidRequest("not found".to_string())),
         };
 
@@ -473,6 +661,16 @@ fn percent_decode(s: &str) -> String {
 ///
 /// 从 `/record/tasks/{id}/stop` 这类路径中提取记录 ID。
 fn record_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
+    rtp_id_from_path(path, prefix, suffix)
+}
+
+/// Extract the proxy id from a path like /proxies/{id}/pull.
+fn proxy_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
+    rtp_id_from_path(path, prefix, suffix)
+}
+
+/// Extract the WebRTC room id from a path like /webrtc/rooms/{id}.
+fn room_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
     rtp_id_from_path(path, prefix, suffix)
 }
 

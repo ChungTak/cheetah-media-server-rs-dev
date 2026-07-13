@@ -14,6 +14,8 @@ pub enum MediaCapability {
     Snapshot,
     Proxy,
     Rtp,
+    WebRtc,
+    ServerAdmin,
     Webhook,
     Playback,
 }

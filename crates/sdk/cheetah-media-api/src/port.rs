@@ -179,7 +179,7 @@ pub trait ProxyApi: Send + Sync {
 
     async fn delete_pull_proxy(&self, ctx: &MediaRequestContext, id: &ProxyId) -> Result<()>;
 
-    async fn list_pull_proxies(
+    async fn list_proxies(
         &self,
         ctx: &MediaRequestContext,
         query: ProxyQuery,
@@ -198,6 +198,8 @@ pub trait ProxyApi: Send + Sync {
         ctx: &MediaRequestContext,
         request: FfmpegProxyRequest,
     ) -> Result<ProxyInfo>;
+
+    async fn delete_ffmpeg_proxy(&self, ctx: &MediaRequestContext, id: &ProxyId) -> Result<()>;
 }
 
 /// RTP operations.
@@ -236,6 +238,64 @@ pub trait RtpApi: Send + Sync {
         ctx: &MediaRequestContext,
         request: UpdateRtpRequest,
     ) -> Result<RtpSession>;
+}
+
+/// WebRTC operations (WHIP/WHEP and room keeper).
+///
+/// WebRTC 操作（WHIP/WHEP 和房间 keeper）。
+#[async_trait]
+pub trait WebRtcApi: Send + Sync {
+    async fn whip_publish(
+        &self,
+        ctx: &MediaRequestContext,
+        request: WhipRequest,
+    ) -> Result<WebRtcOfferResponse>;
+
+    async fn whep_subscribe(
+        &self,
+        ctx: &MediaRequestContext,
+        request: WhepRequest,
+    ) -> Result<WebRtcOfferResponse>;
+
+    async fn create_room(
+        &self,
+        ctx: &MediaRequestContext,
+        request: WebRtcRoomRequest,
+    ) -> Result<WebRtcRoom>;
+
+    async fn list_rooms(
+        &self,
+        ctx: &MediaRequestContext,
+        query: WebRtcRoomQuery,
+    ) -> Result<Page<WebRtcRoom>>;
+
+    async fn delete_room(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &crate::ids::WebRtcRoomId,
+    ) -> Result<()>;
+}
+
+/// Server administration operations.
+///
+/// 服务器管理操作。
+#[async_trait]
+pub trait ServerAdminApi: Send + Sync {
+    async fn server_info(&self, ctx: &MediaRequestContext) -> Result<ServerInfo>;
+
+    async fn server_config(&self, ctx: &MediaRequestContext) -> Result<ServerConfig>;
+
+    async fn set_server_config(
+        &self,
+        ctx: &MediaRequestContext,
+        config: ServerConfig,
+    ) -> Result<()>;
+
+    async fn restart_server(&self, ctx: &MediaRequestContext) -> Result<()>;
+
+    async fn shutdown_server(&self, ctx: &MediaRequestContext) -> Result<()>;
+
+    async fn list_ports(&self, ctx: &MediaRequestContext) -> Result<Vec<PortInfo>>;
 }
 
 /// Combined facade over all media capabilities.

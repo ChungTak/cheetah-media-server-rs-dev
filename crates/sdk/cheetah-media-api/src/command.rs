@@ -345,6 +345,10 @@ pub struct FfmpegProxyRequest {
     pub source_url: String,
     pub destination: MediaKey,
     #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub timeout_ms: u64,
+    #[serde(default)]
     pub input_options: Vec<String>,
     #[serde(default)]
     pub output_options: Vec<String>,
@@ -506,6 +510,73 @@ pub struct UpdateRtpRequest {
     pub payload_type: Option<u8>,
     #[serde(default)]
     pub pause_check: Option<bool>,
+}
+
+/// WHIP publish request.
+///
+/// WHIP 发布请求。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WhipRequest {
+    pub media_key: MediaKey,
+    pub offer: String,
+    #[serde(default)]
+    pub trickle_ice: bool,
+}
+
+/// WHEP subscribe request.
+///
+/// WHEP 订阅请求。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WhepRequest {
+    pub media_key: MediaKey,
+    pub offer: String,
+    #[serde(default)]
+    pub trickle_ice: bool,
+}
+
+/// WebRTC room creation request.
+///
+/// WebRTC 房间创建请求。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WebRtcRoomRequest {
+    pub media_key: MediaKey,
+    #[serde(default)]
+    pub max_participants: Option<u32>,
+}
+
+/// WebRTC room query.
+///
+/// WebRTC 房间查询。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct WebRtcRoomQuery {
+    #[serde(default)]
+    pub media_key: Option<MediaKey>,
+    #[serde(default)]
+    pub page: u64,
+    #[serde(default = "default_page_size")]
+    pub page_size: u64,
+}
+
+impl WebRtcRoomQuery {
+    pub const MAX_PAGE_SIZE: u64 = 1_000;
+
+    pub fn clamp_page_size(&mut self) {
+        if self.page_size == 0 {
+            self.page_size = default_page_size();
+        }
+        self.page_size = self.page_size.min(Self::MAX_PAGE_SIZE);
+    }
+}
+
+/// Server config update request.
+///
+/// 服务器配置更新请求。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ServerConfigUpdate {
+    #[serde(default)]
+    pub values: HashMap<String, String>,
+    #[serde(default)]
+    pub restart: bool,
 }
 
 #[cfg(test)]
