@@ -770,7 +770,6 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "bytes",
- "cheetah-engine",
  "cheetah-media-api",
  "cheetah-sdk",
  "serde",

@@ -153,13 +153,16 @@ fn codec_to_api(c: CodecId) -> CodecKind {
     match c {
         CodecId::H264 => CodecKind::H264,
         CodecId::H265 => CodecKind::H265,
+        CodecId::H266 => CodecKind::H266,
         CodecId::AV1 => CodecKind::Av1,
+        CodecId::VP8 => CodecKind::Vp8,
+        CodecId::VP9 => CodecKind::Vp9,
         CodecId::AAC => CodecKind::Aac,
         CodecId::Opus => CodecKind::Opus,
         CodecId::G711A => CodecKind::G711A,
         CodecId::G711U => CodecKind::G711U,
         CodecId::MP3 => CodecKind::Mp3,
-        _ => CodecKind::Unknown,
+        CodecId::MJPEG | CodecId::ADPCM | CodecId::MP2 | CodecId::Unknown => CodecKind::Unknown,
     }
 }
 

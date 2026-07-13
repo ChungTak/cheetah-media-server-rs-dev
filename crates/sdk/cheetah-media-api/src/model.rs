@@ -13,7 +13,10 @@ use crate::ids::*;
 pub enum CodecKind {
     H264,
     H265,
+    H266,
     Av1,
+    Vp8,
+    Vp9,
     Aac,
     Opus,
     G711A,

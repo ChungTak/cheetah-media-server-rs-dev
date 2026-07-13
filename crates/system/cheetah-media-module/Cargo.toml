@@ -9,7 +9,6 @@ description = "HTTP adapters (native and ZLMediaKit-compatible) for the Cheetah 
 [dependencies]
 async-trait.workspace = true
 bytes.workspace = true
-cheetah-engine = { path = "../cheetah-engine" }
 cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
 cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
 serde.workspace = true

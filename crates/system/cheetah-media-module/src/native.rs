@@ -256,7 +256,8 @@ impl NativeMediaHttpService {
         let ctx = self.request_context(&req);
         let parts: Vec<&str> = req.path.split('/').filter(|s| !s.is_empty()).collect();
         let session_id = parts
-            .last()
+            .get(parts.len().saturating_sub(2))
+            .filter(|s| !s.is_empty())
             .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
         self.control()?
             .kick_session(
