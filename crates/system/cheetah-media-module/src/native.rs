@@ -418,22 +418,29 @@ impl NativeMediaHttpService {
 
     async fn proxies_pull(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let proxy_api = self.proxy()?;
-        let request: PullProxyRequest = parse_body(&req)?;
+        let mut request: PullProxyRequest = parse_body(&req)?;
+        request.source_url = request.source_url.trim().to_string();
+        crate::util::validate_ffmpeg_url(&request.source_url)?;
         let info = proxy_api.create_pull_proxy(&ctx, request).await?;
         Ok(json_response(&info))
     }
 
     async fn proxies_push(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let proxy_api = self.proxy()?;
-        let request: PushProxyRequest = parse_body(&req)?;
+        let mut request: PushProxyRequest = parse_body(&req)?;
+        request.destination_url = request.destination_url.trim().to_string();
+        crate::util::validate_ffmpeg_url(&request.destination_url)?;
         let info = proxy_api.create_push_proxy(&ctx, request).await?;
         Ok(json_response(&info))
     }
 
     async fn proxies_ffmpeg(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let proxy_api = self.proxy()?;
         let mut request: FfmpegProxyRequest = parse_body(&req)?;
         crate::util::validate_ffmpeg_options(&request.input_options)?;
@@ -447,6 +454,7 @@ impl NativeMediaHttpService {
 
     async fn proxies_pull_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let proxy_api = self.proxy()?;
         let id = proxy_id_from_path(&req.path, "/proxies/", "/pull")
             .ok_or_else(|| AdapterError::InvalidRequest("missing proxy_id".to_string()))?;
@@ -456,6 +464,7 @@ impl NativeMediaHttpService {
 
     async fn proxies_push_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let proxy_api = self.proxy()?;
         let id = proxy_id_from_path(&req.path, "/proxies/", "/push")
             .ok_or_else(|| AdapterError::InvalidRequest("missing proxy_id".to_string()))?;
@@ -465,6 +474,7 @@ impl NativeMediaHttpService {
 
     async fn proxies_ffmpeg_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let proxy_api = self.proxy()?;
         let id = proxy_id_from_path(&req.path, "/proxies/", "/ffmpeg")
             .ok_or_else(|| AdapterError::InvalidRequest("missing proxy_id".to_string()))?;
@@ -545,6 +555,7 @@ impl NativeMediaHttpService {
 
     async fn webrtc_rooms_create(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let api = self.webrtc()?;
         let request: WebRtcRoomRequest = parse_body(&req)?;
         let room = api.create_room(&ctx, request).await?;
@@ -562,6 +573,7 @@ impl NativeMediaHttpService {
 
     async fn webrtc_room_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let api = self.webrtc()?;
         let id = room_id_from_path(&req.path, "/webrtc/rooms/", "")
             .ok_or_else(|| AdapterError::InvalidRequest("missing room_id".to_string()))?;

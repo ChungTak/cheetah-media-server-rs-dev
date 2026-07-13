@@ -595,6 +595,7 @@ impl ZlmMediaHttpService {
     async fn add_stream_proxy(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let proxy_api = self.proxy()?;
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let source_url = params["url"]
@@ -626,6 +627,7 @@ impl ZlmMediaHttpService {
     async fn del_stream_proxy(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let proxy_api = self.proxy()?;
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let proxy_id = ProxyId(zlm_key_string(&key));
@@ -640,6 +642,7 @@ impl ZlmMediaHttpService {
     async fn add_ffmpeg_source(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let proxy_api = self.proxy()?;
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let (source_url, input_options, output_options) = crate::util::parse_ffmpeg_request(
@@ -672,6 +675,7 @@ impl ZlmMediaHttpService {
     async fn del_ffmpeg_source(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let proxy_api = self.proxy()?;
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let proxy_id = ProxyId(zlm_key_string(&key));

@@ -143,7 +143,17 @@ pub fn validate_ffmpeg_options(options: &[String]) -> Result<(), AdapterError> {
         "$", "(", ")", "[", "]", "{", "}", "=", "\\",
     ];
     const DISALLOWED_SUBSTR: &[&str] = &[";", "|", "&", ">", "<", "$(", "${", "`"];
-    for token in options {
+    const DANGEROUS_FFMPEG: &[&str] = &[
+        "-protocol_whitelist",
+        "-allowed_extensions",
+        "-protocols",
+        "-concat",
+        "-safe",
+        "-segment_list",
+        "-hls_key_info_file",
+        "-key_info_file",
+    ];
+    for (i, token) in options.iter().enumerate() {
         if DENIED.contains(&token.as_str()) {
             return Err(AdapterError::InvalidRequest(format!(
                 "unsafe ffmpeg option: {token}"
@@ -154,6 +164,22 @@ pub fn validate_ffmpeg_options(options: &[String]) -> Result<(), AdapterError> {
                 "unsafe ffmpeg option: {token}"
             )));
         }
+        if DANGEROUS_FFMPEG
+            .iter()
+            .any(|d| token.eq_ignore_ascii_case(d))
+        {
+            return Err(AdapterError::InvalidRequest(format!(
+                "unsafe ffmpeg option: {token}"
+            )));
+        }
+        if token.eq_ignore_ascii_case("-f")
+            && i + 1 < options.len()
+            && options[i + 1].eq_ignore_ascii_case("concat")
+        {
+            return Err(AdapterError::InvalidRequest(
+                "unsafe ffmpeg option: -f concat".to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -163,6 +189,11 @@ pub fn validate_ffmpeg_options(options: &[String]) -> Result<(), AdapterError> {
 ///
 /// 拒绝包含 shell 元字符或命令替换的 URL；保留查询串、百分号编码等 URL 常见字符。
 pub fn validate_ffmpeg_url(url: &str) -> Result<(), AdapterError> {
+    if url.is_empty() {
+        return Err(AdapterError::InvalidRequest(
+            "source URL must not be empty".to_string(),
+        ));
+    }
     const FORBIDDEN: &[&str] = &[
         ";", "|", ">", "<", "$(", "${", "`", "*", "~", "!", "#", "^", "$", "(", ")", "[", "]", "{",
         "}", "\\", "'", "\"", "\n", "\r", "\t", " ",
