@@ -402,22 +402,36 @@ impl ZlmMediaHttpService {
             page_size: cheetah_media_api::command::RecordFileQuery::MAX_PAGE_SIZE,
             ..Default::default()
         };
+        let mut last_err = None;
         loop {
             let page = record_api.query_record_files(&ctx, query.clone()).await?;
             if page.items.is_empty() {
                 break;
             }
+            let mut deleted = 0usize;
             for f in &page.items {
-                let _ = record_api
+                match record_api
                     .delete_record_file(
                         &ctx,
                         cheetah_media_api::command::DeleteRecordRequest {
                             file_id: f.file_id.clone(),
                         },
                     )
-                    .await;
+                    .await
+                {
+                    Ok(()) => deleted += 1,
+                    Err(e) => last_err = Some(e),
+                }
             }
-            if (page.items.len() as u64) < query.page_size {
+            if (page.items.len() as u64) < query.page_size || deleted == 0 {
+                if deleted == 0 {
+                    return Err(AdapterError::Media(last_err.unwrap_or_else(|| {
+                        cheetah_media_api::error::MediaError::new(
+                            cheetah_media_api::error::MediaErrorCode::StorageFailed,
+                            "failed to delete record files",
+                        )
+                    })));
+                }
                 break;
             }
         }
