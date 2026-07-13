@@ -53,3 +53,7 @@
 - 集成rust srt库 `shiguredo_srt`[https://crates.io/crates/shiguredo_srt] ，实现库中的所有功能
 - SRT可以转换成RTSP/RTMP/HLS/WEBRTC等协议
 根据以上需求编写设计和开发计划文档。参考plans-27-webrtc-zlm的目录结构，需要有一个总索引文件，把文档存在dev-docs/plans-28-srt目录下。
+
+
+根据avcodec-rs-media01-requirements.md文档的分析，还需要补充其他功能：
+参考dev-docs/plans/900_sdk_gaps_plan文档格式，编写详细开发计划给编程智能体实现。文档保存在dev-docs/plans/900_sdk_gaps_plan2
