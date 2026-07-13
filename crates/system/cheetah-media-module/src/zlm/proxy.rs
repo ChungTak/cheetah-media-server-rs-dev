@@ -18,6 +18,7 @@ impl ZlmMediaHttpService {
     ) -> Result<HttpResponse, AdapterError> {
         let proxy_api = self.proxy()?;
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let params = self.extract_params(&req)?;
         let mut query = ProxyQuery {
             kind: Some(ProxyKind::Pull),

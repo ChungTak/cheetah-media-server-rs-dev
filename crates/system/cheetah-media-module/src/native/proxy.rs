@@ -18,6 +18,7 @@ impl NativeMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let proxy_api = self.proxy()?;
         let mut query: ProxyQuery = parse_query(&req)?;
         query.clamp_page_size();

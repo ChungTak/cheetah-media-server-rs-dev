@@ -219,8 +219,8 @@ pub fn validate_ffmpeg_url(url: &str) -> Result<(), AdapterError> {
         ));
     }
     const FORBIDDEN: &[&str] = &[
-        ";", "|", ">", "<", "$(", "${", "`", "*", "~", "!", "#", "^", "$", "(", ")", "[", "]", "{",
-        "}", "\\", "'", "\"", "\n", "\r", "\t", " ",
+        ";", "|", "&", ">", "<", "$(", "${", "`", "*", "~", "!", "#", "^", "$", "(", ")", "{", "}",
+        "\\", "'", "\"", "\n", "\r", "\t", " ",
     ];
     if FORBIDDEN.iter().any(|s| url.contains(s)) {
         return Err(AdapterError::InvalidRequest(format!(
