@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use cheetah_media_api::command::*;
 use cheetah_media_api::error::MediaError;
-use cheetah_media_api::ids::{ProxyId, RtpSessionId};
+use cheetah_media_api::ids::{ProxyId, RecordFileId, RtpSessionId};
 use cheetah_media_api::model::{
     Page, ProxyInfo, RecordFile, RecordTask, RtpSession, SnapshotHandle, SnapshotInfo,
 };
@@ -58,6 +58,7 @@ impl RecordApi for RecordMediaProvider {
     async fn control_record_playback(
         &self,
         _ctx: &MediaRequestContext,
+        _file_id: &RecordFileId,
         _command: RecordPlaybackCommand,
     ) -> cheetah_media_api::error::Result<()> {
         Err(MediaError::unsupported_capability("record"))

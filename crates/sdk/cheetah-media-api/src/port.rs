@@ -137,6 +137,7 @@ pub trait RecordApi: Send + Sync {
     async fn control_record_playback(
         &self,
         ctx: &MediaRequestContext,
+        file_id: &RecordFileId,
         command: RecordPlaybackCommand,
     ) -> Result<()>;
 }

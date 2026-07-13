@@ -202,6 +202,7 @@ impl RecordApiPort for RecordMediaProvider {
     async fn control_record_playback(
         &self,
         _ctx: &MediaRequestContext,
+        _file_id: &RecordFileId,
         _command: RecordPlaybackCommand,
     ) -> Result<()> {
         Err(MediaError::unsupported_capability("record playback"))
