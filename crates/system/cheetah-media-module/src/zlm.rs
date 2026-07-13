@@ -354,12 +354,13 @@ impl ZlmMediaHttpService {
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = zlm_record_format(&params["type"])?;
-        let query = RecordTaskQuery {
+        let mut query = RecordTaskQuery {
             vhost: Some(key.vhost.0.clone()),
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
             ..Default::default()
         };
+        query.clamp_page_size();
         let page = record_api.query_record_tasks(&ctx, query).await?;
         let task = page
             .items
@@ -394,12 +395,13 @@ impl ZlmMediaHttpService {
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = zlm_record_format(&params["type"])?;
-        let query = RecordTaskQuery {
+        let mut query = RecordTaskQuery {
             vhost: Some(key.vhost.0.clone()),
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
             ..Default::default()
         };
+        query.clamp_page_size();
         let page = record_api.query_record_tasks(&ctx, query).await?;
         let recording = page.items.iter().any(|t| {
             t.format == format
@@ -417,12 +419,13 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let query = RecordFileQuery {
+        let mut query = RecordFileQuery {
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
             format: Some("mp4".to_string()),
             ..Default::default()
         };
+        query.clamp_page_size();
         let page = record_api.query_record_files(&ctx, query).await?;
         let paths: Vec<String> = page.items.iter().map(|f| f.path_handle.0.clone()).collect();
         Ok(zlm_response(
