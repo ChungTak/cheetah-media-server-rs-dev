@@ -123,3 +123,27 @@ pub fn parse_ffmpeg_request(
 
     Ok((source_url, input_options, output_options))
 }
+
+/// Reject tokens that are common shell metacharacters or contain command
+/// substitution patterns, so they cannot be used to inject shell behavior.
+///
+/// 拒绝常见 shell 元字符或包含命令替换的 token，避免被注入 shell 行为。
+pub fn validate_ffmpeg_options(options: &[String]) -> Result<(), AdapterError> {
+    const DENIED: &[&str] = &[
+        ";", "|", "&", "&&", "||", ">", ">>", "<", "<<", "$(", "`", "~", "*", "?", "!", "#", "^",
+        "$", "(", ")", "[", "]", "{", "}", "=", "\\",
+    ];
+    for token in options {
+        if DENIED.contains(&token.as_str()) {
+            return Err(AdapterError::InvalidRequest(format!(
+                "unsafe ffmpeg option: {token}"
+            )));
+        }
+        if token.contains("$(") || token.contains('`') {
+            return Err(AdapterError::InvalidRequest(format!(
+                "unsafe ffmpeg option: {token}"
+            )));
+        }
+    }
+    Ok(())
+}

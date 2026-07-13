@@ -270,22 +270,37 @@ impl ZlmMediaHttpService {
     }
 
     pub(crate) fn require_principal(&self, ctx: &MediaRequestContext) -> Result<(), AdapterError> {
-        if ctx.principal.is_none() {
+        let global = self.ctx.config_provider.global();
+        let Some(expected) = global
+            .get("media")
+            .and_then(|m| m.get("api_secret"))
+            .and_then(serde_json::Value::as_str)
+        else {
             return Err(AdapterError::Media(
                 cheetah_media_api::error::MediaError::unauthenticated(
-                    "server admin requires authentication",
+                    "server admin authentication not configured",
                 ),
             ));
+        };
+        match ctx.principal.as_deref() {
+            Some(token) if token == expected => Ok(()),
+            _ => Err(AdapterError::Media(
+                cheetah_media_api::error::MediaError::unauthenticated(
+                    "server admin requires valid authentication",
+                ),
+            )),
         }
-        Ok(())
     }
 
     pub(crate) fn request_context(&self, req: &HttpRequest) -> MediaRequestContext {
         let principal = req
             .headers
             .iter()
-            .find(|h| h.name.eq_ignore_ascii_case("x-principal"))
-            .map(|h| h.value.clone());
+            .find(|h| h.name.eq_ignore_ascii_case("authorization"))
+            .and_then(|h| {
+                let value = h.value.trim();
+                value.strip_prefix("Bearer ").map(|t| t.trim().to_string())
+            });
         MediaRequestContext {
             request_id: cheetah_media_api::ids::RequestId("".to_string()),
             correlation_id: None,
@@ -630,6 +645,8 @@ impl ZlmMediaHttpService {
             params["ffmpeg_cmd"].as_str(),
             params["src_url"].as_str(),
         )?;
+        crate::util::validate_ffmpeg_options(&input_options)?;
+        crate::util::validate_ffmpeg_options(&output_options)?;
         let request = FfmpegProxyRequest {
             source_url,
             destination: key.clone(),

@@ -171,14 +171,26 @@ impl NativeMediaHttpService {
     }
 
     fn require_principal(&self, ctx: &MediaRequestContext) -> Result<(), AdapterError> {
-        if ctx.principal.is_none() {
+        let global = self.ctx.config_provider.global();
+        let Some(expected) = global
+            .get("media")
+            .and_then(|m| m.get("api_secret"))
+            .and_then(serde_json::Value::as_str)
+        else {
             return Err(AdapterError::Media(
                 cheetah_media_api::error::MediaError::unauthenticated(
-                    "server admin requires authentication",
+                    "server admin authentication not configured",
                 ),
             ));
+        };
+        match ctx.principal.as_deref() {
+            Some(token) if token == expected => Ok(()),
+            _ => Err(AdapterError::Media(
+                cheetah_media_api::error::MediaError::unauthenticated(
+                    "server admin requires valid authentication",
+                ),
+            )),
         }
-        Ok(())
     }
 
     fn webrtc(&self) -> Result<Arc<dyn WebRtcApi>, AdapterError> {
@@ -199,8 +211,11 @@ impl NativeMediaHttpService {
         let principal = req
             .headers
             .iter()
-            .find(|h| h.name.eq_ignore_ascii_case("x-principal"))
-            .map(|h| h.value.clone());
+            .find(|h| h.name.eq_ignore_ascii_case("authorization"))
+            .and_then(|h| {
+                let value = h.value.trim();
+                value.strip_prefix("Bearer ").map(|t| t.trim().to_string())
+            });
         MediaRequestContext {
             request_id,
             correlation_id: None,
@@ -420,7 +435,11 @@ impl NativeMediaHttpService {
     async fn proxies_ffmpeg(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
         let proxy_api = self.proxy()?;
-        let request: FfmpegProxyRequest = parse_body(&req)?;
+        let mut request: FfmpegProxyRequest = parse_body(&req)?;
+        crate::util::validate_ffmpeg_options(&request.input_options)?;
+        crate::util::validate_ffmpeg_options(&request.output_options)?;
+        // For a native API call, the user should not be able to pass a raw command string.
+        request.source_url = request.source_url.trim().to_string();
         let info = proxy_api.create_ffmpeg_proxy(&ctx, request).await?;
         Ok(json_response(&info))
     }
@@ -440,6 +459,15 @@ impl NativeMediaHttpService {
         let id = proxy_id_from_path(&req.path, "/proxies/", "/push")
             .ok_or_else(|| AdapterError::InvalidRequest("missing proxy_id".to_string()))?;
         proxy_api.delete_push_proxy(&ctx, &ProxyId(id)).await?;
+        Ok(json_response(&serde_json::json!({ "deleted": true })))
+    }
+
+    async fn proxies_ffmpeg_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let proxy_api = self.proxy()?;
+        let id = proxy_id_from_path(&req.path, "/proxies/", "/ffmpeg")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing proxy_id".to_string()))?;
+        proxy_api.delete_ffmpeg_proxy(&ctx, &ProxyId(id)).await?;
         Ok(json_response(&serde_json::json!({ "deleted": true })))
     }
 
@@ -598,6 +626,11 @@ impl ModuleHttpService for NativeMediaHttpService {
                 if path.starts_with("/proxies/") && path.ends_with("/push") =>
             {
                 self.proxies_push_delete(req).await
+            }
+            (HttpMethod::Delete, path)
+                if path.starts_with("/proxies/") && path.ends_with("/ffmpeg") =>
+            {
+                self.proxies_ffmpeg_delete(req).await
             }
             (HttpMethod::Post, "/rtp/receivers") => self.rtp_receivers(req).await,
             (HttpMethod::Post, "/rtp/senders") => self.rtp_senders(req).await,
