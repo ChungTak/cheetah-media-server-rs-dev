@@ -544,6 +544,7 @@ async fn run_driver_loop(
                         ack,
                     } => {
                         let key = spec.session_key.clone();
+                        let explicit_bind = bind_addr.is_some();
                         let actual_addr = match bind_addr {
                             None => default_udp_addr,
                             Some(addr) => {
@@ -633,7 +634,10 @@ async fn run_driver_loop(
                         if let Some(ack) = ack {
                             let _ = ack.send(Ok(actual_addr));
                         }
-                        session_bind_addrs.lock().await.insert(key, bind_addr);
+                        session_bind_addrs
+                            .lock()
+                            .await
+                            .insert(key, if explicit_bind { Some(actual_addr) } else { None });
                         inputs.push(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
                     }
                     RtpDriverCommand::CreateClient(spec) => {
