@@ -93,11 +93,6 @@ impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
     ) -> MediaResult<SessionId> {
         let id = if record.session_id.0.is_empty() {
             self.new_id()
-        } else if self.inner.sessions.contains_key(&record.session_id) {
-            return Err(MediaError::already_exists(format!(
-                "session {}",
-                record.session_id
-            )));
         } else {
             record.session_id.clone()
         };
@@ -108,14 +103,18 @@ impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
         if record.last_seen_at == 0 {
             record.last_seen_at = record.started_at;
         }
-        self.inner.sessions.insert(
-            id.clone(),
-            Record {
-                info: record,
-                close_handle,
-            },
-        );
-        Ok(id)
+        match self.inner.sessions.entry(id.clone()) {
+            dashmap::mapref::entry::Entry::Occupied(_) => {
+                Err(MediaError::already_exists(format!("session {id}")))
+            }
+            dashmap::mapref::entry::Entry::Vacant(e) => {
+                e.insert(Record {
+                    info: record,
+                    close_handle,
+                });
+                Ok(id)
+            }
+        }
     }
 
     async fn unregister_session(
