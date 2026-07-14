@@ -644,7 +644,7 @@ impl ModuleHttpService for RtpHttpService {
                 })?;
 
                 let ssrc = body.get("ssrc").and_then(|v| v.as_u64()).map(|v| v as u32);
-                let payload_type = body
+                let payload_mode = body
                     .get("payloadType")
                     .and_then(parse_payload_mode)
                     .unwrap_or(RtpPayloadMode::Ps);
@@ -684,7 +684,8 @@ impl ModuleHttpService for RtpHttpService {
                         session_key.clone(),
                         media_key,
                         ssrc,
-                        payload_type,
+                        None,
+                        payload_mode,
                         transport_mode,
                         connection_type,
                         track_filter,
@@ -883,6 +884,7 @@ impl ModuleHttpService for RtpHttpService {
                             *dest_addr,
                             dest_addr.to_string(),
                             *ssrc,
+                            None,
                             *payload_mode,
                             *transport_mode,
                             connection_type,
