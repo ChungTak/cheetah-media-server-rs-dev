@@ -159,6 +159,7 @@ impl RtpSessionOrchestrator {
             tcp_mode,
             reuse_port,
             state,
+            check_paused: false,
             created_at: self.now_ms(),
         }
     }
@@ -597,14 +598,47 @@ impl RtpSessionOrchestrator {
         })
     }
 
-    /// Update an RTP session. Currently only metadata that does not require a
-    /// restart is accepted.
+    /// Update an RTP session.
     ///
-    /// 更新 RTP 会话。当前只接受不需要重启的元数据更新。
-    pub fn update_rtp_session(&self, request: UpdateRtpRequest) -> Result<RtpSession> {
-        if request.ssrc.is_some() || request.payload_type.is_some() || request.pause_check.is_some()
-        {
-            return Err(MediaError::unsupported("rtp session update"));
+    /// Currently supports `pause_check` (suspend/restore timeout monitoring) without
+    /// interrupting packet reception. SSRC/payload changes require a rebuild and are
+    /// not yet supported.
+    ///
+    /// 更新 RTP 会话。
+    pub async fn update_rtp_session(&self, request: UpdateRtpRequest) -> Result<RtpSession> {
+        if request.ssrc.is_some() || request.payload_type.is_some() {
+            return Err(MediaError::unsupported("rtp session ssrc/payload update"));
+        }
+
+        // Validate the driver is available before mutating the directory so a failed
+        // send does not leave the local session record inconsistent with the core.
+        let driver = request
+            .pause_check
+            .is_some()
+            .then(|| self.driver())
+            .transpose()?;
+
+        let (session_key, paused) = {
+            let mut sessions = self.sessions.lock();
+            let session = sessions
+                .get_mut(&request.session_id)
+                .ok_or_else(|| MediaError::not_found("rtp session"))?;
+
+            if let Some(paused) = request.pause_check {
+                session.check_paused = paused;
+                (session.session_id.0.clone(), Some(paused))
+            } else {
+                (session.session_id.0.clone(), None)
+            }
+        };
+
+        if let (Some(driver), Some(paused)) = (driver, paused) {
+            driver
+                .send_command(RtpDriverCommand::PauseCheck {
+                    session_key,
+                    paused,
+                })
+                .await;
         }
 
         let sessions = self.sessions.lock();

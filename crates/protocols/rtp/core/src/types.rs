@@ -288,6 +288,13 @@ pub enum RtpCoreCommand {
     ///
     /// 按 key 停止并关闭会话。
     StopSession(RtpSessionKey),
+    /// Pause or resume timeout health checks for a session.
+    ///
+    /// 暂停或恢复会话的超时健康检查。
+    PauseCheck {
+        session_key: RtpSessionKey,
+        paused: bool,
+    },
 }
 
 /// Outputs produced by `RtpCore` for the driver to act on.

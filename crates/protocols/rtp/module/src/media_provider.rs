@@ -143,7 +143,7 @@ impl RtpApi for RtpMediaProvider {
         _ctx: &MediaRequestContext,
         request: UpdateRtpRequest,
     ) -> Result<RtpSession> {
-        self.orchestrator.update_rtp_session(request)
+        self.orchestrator.update_rtp_session(request).await
     }
 
     async fn get_rtp_session(

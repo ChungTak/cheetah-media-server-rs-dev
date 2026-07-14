@@ -540,6 +540,21 @@ async fn run_ingress_worker(
                 if let Some(session) = sessions.remove(&session_key) {
                     let _ = session.sink.close();
                 }
+                let _ = orchestrator.stop_session_by_key(&session_key).await;
+
+                let event_type = if reason.contains("timeout") {
+                    "rtp_session_timeout"
+                } else {
+                    "rtp_session_closed"
+                };
+                ctx.event_bus.publish(SystemEvent::Protocol(ProtocolEvent {
+                    protocol: "rtp".to_string(),
+                    event_type: event_type.to_string(),
+                    payload: serde_json::json!({
+                        "session_key": session_key,
+                        "reason": reason,
+                    }),
+                }));
             }
         }
     }

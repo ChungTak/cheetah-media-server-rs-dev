@@ -111,6 +111,10 @@ pub enum RtpDriverCommand {
     CreateClient(RtpClientSpec),
     SendFrame(Box<RtpSendFrame>),
     StopSession(String),
+    PauseCheck {
+        session_key: String,
+        paused: bool,
+    },
 }
 
 impl std::fmt::Debug for RtpDriverCommand {
@@ -130,6 +134,14 @@ impl std::fmt::Debug for RtpDriverCommand {
             Self::CreateClient(spec) => f.debug_tuple("CreateClient").field(spec).finish(),
             Self::SendFrame(frame) => f.debug_tuple("SendFrame").field(frame).finish(),
             Self::StopSession(key) => f.debug_tuple("StopSession").field(key).finish(),
+            Self::PauseCheck {
+                session_key,
+                paused,
+            } => f
+                .debug_struct("PauseCheck")
+                .field("session_key", session_key)
+                .field("paused", paused)
+                .finish(),
         }
     }
 }
@@ -871,6 +883,12 @@ async fn run_driver_loop(
                         )
                         .await;
                         inputs.push(RtpCoreInput::Command(RtpCoreCommand::StopSession(key)));
+                    }
+                    RtpDriverCommand::PauseCheck { session_key, paused } => {
+                        inputs.push(RtpCoreInput::Command(RtpCoreCommand::PauseCheck {
+                            session_key,
+                            paused,
+                        }));
                     }
                 }
             }
