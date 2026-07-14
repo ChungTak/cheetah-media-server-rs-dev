@@ -1,17 +1,17 @@
-//! RTP route handlers for the ZLMediaKit-compatible adapter.
+//! ZLMediaKit-compatible RTP endpoint handlers.
 //!
-//! 为 ZLMediaKit 兼容适配器实现的 RTP 路由处理器。
+//! ZLMediaKit 兼容的 RTP 端点处理函数。
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 
-use cheetah_media_api::command::{RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest};
-use cheetah_media_api::ids::RtpSessionId;
+use cheetah_media_api::command::{RtpReceiverRequest, RtpSenderMode, RtpSenderRequest};
+use cheetah_media_api::ids::{MediaKey, RtpSessionId, StreamKeyBridge};
 use cheetah_media_api::model::RtpTcpMode;
 use cheetah_sdk::{HttpRequest, HttpResponse};
 
 use crate::error::AdapterError;
-
-use super::{zlm_response, ZlmMediaHttpService};
+use crate::zlm::ZlmMediaHttpService;
 
 impl ZlmMediaHttpService {
     pub(crate) async fn open_rtp_server(
@@ -28,18 +28,18 @@ impl ZlmMediaHttpService {
             port: parse_zlm_u16(&params, "port")?,
             ip: params["ip"].as_str().map(String::from),
             ssrc: parse_zlm_u32(&params, "ssrc")?,
-            enable_rtcp: params["enable_rtcp"].as_bool().unwrap_or(false),
+            enable_rtcp: crate::util::parse_json_bool(&params["enable_rtcp"]).unwrap_or(false),
             tcp_mode,
             payload_type: parse_zlm_u8(&params, "payload_type")?,
             codec_hint: params["codec_hint"]
                 .as_str()
                 .or_else(|| params["payload_mode"].as_str())
                 .map(String::from),
-            reuse_port: params["reuse_port"].as_bool().unwrap_or(false),
+            reuse_port: crate::util::parse_json_bool(&params["reuse_port"]).unwrap_or(false),
             timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
         };
         let session = rtp_api.open_rtp_receiver(&ctx, request).await?;
-        Ok(zlm_response(
+        Ok(super::zlm_response(
             0,
             "success",
             serde_json::json!({
@@ -58,11 +58,11 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let session_id = super::zlm_key_string(&key);
+        let session_id = zlm_rtp_session_id(&key, "recv");
         rtp_api
             .stop_rtp_session(&ctx, &RtpSessionId(session_id))
             .await?;
-        Ok(zlm_response(
+        Ok(super::zlm_response(
             0,
             "success",
             serde_json::json!({"result": true}),
@@ -83,24 +83,37 @@ impl ZlmMediaHttpService {
             .as_str()
             .or_else(|| params["payload_mode"].as_str())
             .or_else(|| {
-                if params["use_ps"].as_bool().unwrap_or(true) {
+                if crate::util::parse_json_bool(&params["use_ps"]).unwrap_or(true) {
                     Some("ps")
                 } else {
                     Some("es")
                 }
             })
             .map(String::from);
+        let tcp_mode = parse_zlm_rtp_tcp_mode(&params);
+        let mut transport_options = HashMap::new();
+        let mode = match tcp_mode {
+            Some(RtpTcpMode::Passive) => {
+                transport_options.insert("tcp".to_string(), "true".to_string());
+                RtpSenderMode::Passive
+            }
+            Some(RtpTcpMode::Active) => {
+                transport_options.insert("tcp".to_string(), "true".to_string());
+                RtpSenderMode::Active
+            }
+            None => RtpSenderMode::Active,
+        };
         let request = RtpSenderRequest {
             media_key: key,
             destination_endpoint: destination,
             ssrc,
             payload_type: parse_zlm_u8(&params, "payload_type")?,
             codec_hint,
-            mode: RtpSenderMode::Active,
-            transport_options: std::collections::HashMap::new(),
+            mode,
+            transport_options,
         };
         let session = rtp_api.open_rtp_sender(&ctx, request).await?;
-        Ok(zlm_response(
+        Ok(super::zlm_response(
             0,
             "success",
             serde_json::json!({
@@ -118,11 +131,11 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let session_id = super::zlm_key_string(&key);
+        let session_id = zlm_rtp_session_id(&key, "send");
         rtp_api
             .stop_rtp_session(&ctx, &RtpSessionId(session_id))
             .await?;
-        Ok(zlm_response(
+        Ok(super::zlm_response(
             0,
             "success",
             serde_json::json!({"result": true}),
@@ -137,13 +150,14 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let mut query = RtpQuery {
-            page_size: RtpQuery::MAX_PAGE_SIZE,
-            ..Default::default()
-        };
-        query.clamp_page_size();
-        let page = rtp_api.list_rtp_sessions(&ctx, query).await?;
-        let info = page.items.into_iter().find(|s| s.media_key == key);
+        let mut info = None;
+        for kind in ["recv", "send"] {
+            let id = zlm_rtp_session_id(&key, kind);
+            if let Ok(session) = rtp_api.get_rtp_session(&ctx, &RtpSessionId(id)).await {
+                info = Some(session);
+                break;
+            }
+        }
         let data = info
             .map(|s| {
                 serde_json::json!({
@@ -155,7 +169,7 @@ impl ZlmMediaHttpService {
                 })
             })
             .unwrap_or_else(|| serde_json::json!({"exists": false}));
-        Ok(zlm_response(0, "success", data))
+        Ok(super::zlm_response(0, "success", data))
     }
 }
 
@@ -195,22 +209,26 @@ fn parse_zlm_u8(params: &serde_json::Value, key: &str) -> Result<Option<u8>, Ada
 fn parse_zlm_rtp_tcp_mode(params: &serde_json::Value) -> Option<RtpTcpMode> {
     if let Some(s) = params["tcp_mode"].as_str() {
         match s.to_lowercase().as_str() {
-            "passive" | "0" => return Some(RtpTcpMode::Passive),
-            "active" | "1" => return Some(RtpTcpMode::Active),
+            "0" => return None,
+            "passive" | "1" => return Some(RtpTcpMode::Passive),
+            "active" | "2" => return Some(RtpTcpMode::Active),
             _ => {}
         }
     }
     if let Some(n) = crate::util::parse_json_u64(&params["tcp_mode"]) {
         match n {
-            0 => return Some(RtpTcpMode::Passive),
-            1 => return Some(RtpTcpMode::Active),
+            0 => return None,
+            1 => return Some(RtpTcpMode::Passive),
+            2 => return Some(RtpTcpMode::Active),
             _ => {}
         }
     }
-    if params["tcp"].as_bool().unwrap_or(false) || params["enable_tcp"].as_bool().unwrap_or(false) {
+    if crate::util::parse_json_bool(&params["tcp"]).unwrap_or(false)
+        || crate::util::parse_json_bool(&params["enable_tcp"]).unwrap_or(false)
+    {
         return Some(RtpTcpMode::Passive);
     }
-    if params["is_udp"].as_bool().unwrap_or(true) {
+    if crate::util::parse_json_bool(&params["is_udp"]).unwrap_or(true) {
         return None;
     }
     Some(RtpTcpMode::Passive)
@@ -237,4 +255,9 @@ fn parse_zlm_destination(params: &serde_json::Value) -> Result<String, AdapterEr
         )));
     }
     Ok(endpoint)
+}
+
+fn zlm_rtp_session_id(key: &MediaKey, kind: &str) -> String {
+    let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
+    format!("{kind}/{namespace}/{path}")
 }

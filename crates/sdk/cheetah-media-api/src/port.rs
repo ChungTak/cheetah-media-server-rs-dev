@@ -238,6 +238,12 @@ pub trait RtpApi: Send + Sync {
         ctx: &MediaRequestContext,
         request: UpdateRtpRequest,
     ) -> Result<RtpSession>;
+
+    async fn get_rtp_session(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &RtpSessionId,
+    ) -> Result<RtpSession>;
 }
 
 /// WebRTC operations (WHIP/WHEP and room keeper).

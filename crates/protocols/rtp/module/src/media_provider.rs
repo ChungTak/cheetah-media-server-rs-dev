@@ -37,6 +37,9 @@ pub struct RtpMediaProvider {
 }
 
 impl RtpMediaProvider {
+    /// Maximum number of tracked RTP sessions before rejecting new ones.
+    const MAX_SESSIONS: usize = 10_000;
+
     /// Create a provider bound to the shared driver handle.
     ///
     /// 创建绑定到共享驱动句柄的 provider。
@@ -62,9 +65,9 @@ impl RtpMediaProvider {
             .as_millis() as i64
     }
 
-    fn session_key_from_media_key(key: &MediaKey) -> String {
+    fn session_key_from_media_key(key: &MediaKey, kind: &str) -> String {
         let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
-        format!("{namespace}/{path}")
+        format!("{kind}/{namespace}/{path}")
     }
 
     fn parse_payload_mode(hint: &Option<String>, payload_type: Option<u8>) -> RtpPayloadMode {
@@ -134,10 +137,13 @@ impl RtpMediaProvider {
         }
     }
 
-    fn insert_session(&self, session: RtpSession) {
-        self.sessions
-            .lock()
-            .insert(session.session_id.clone(), session);
+    fn insert_session(&self, session: RtpSession) -> Result<()> {
+        let mut sessions = self.sessions.lock();
+        if sessions.len() >= Self::MAX_SESSIONS {
+            return Err(MediaError::unavailable("rtp session limit reached"));
+        }
+        sessions.insert(session.session_id.clone(), session);
+        Ok(())
     }
 
     fn remove_session(&self, id: &RtpSessionId) {
@@ -153,21 +159,8 @@ impl RtpApi for RtpMediaProvider {
         request: RtpReceiverRequest,
     ) -> Result<RtpSession> {
         let driver = self.driver()?;
-        let session_key = Self::session_key_from_media_key(&request.media_key);
+        let session_key = Self::session_key_from_media_key(&request.media_key, "recv");
         let session_id = RtpSessionId(session_key.clone());
-
-        let spec = RtpServerSpec {
-            session_key,
-            ssrc: request.ssrc,
-            payload_mode: Self::parse_payload_mode(&request.codec_hint, request.payload_type),
-            transport_mode: RtpTransportMode::RecvOnly,
-            connection_type: Self::receiver_connection_type(request.tcp_mode),
-            track_filter: RtpTrackFilter::All,
-        };
-
-        driver
-            .send_command(RtpDriverCommand::CreateServer(spec))
-            .await;
 
         let session = self.build_session(
             session_id,
@@ -180,7 +173,20 @@ impl RtpApi for RtpMediaProvider {
             request.reuse_port,
             RtpSessionState::Listening,
         );
-        self.insert_session(session.clone());
+        self.insert_session(session.clone())?;
+
+        let spec = RtpServerSpec {
+            session_key,
+            ssrc: request.ssrc,
+            payload_mode: Self::parse_payload_mode(&request.codec_hint, request.payload_type),
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: Self::receiver_connection_type(request.tcp_mode),
+            track_filter: RtpTrackFilter::All,
+        };
+        driver
+            .send_command(RtpDriverCommand::CreateServer(spec))
+            .await;
+
         Ok(session)
     }
 
@@ -198,12 +204,25 @@ impl RtpApi for RtpMediaProvider {
         request: RtpSenderRequest,
     ) -> Result<RtpSession> {
         let driver = self.driver()?;
-        let session_key = Self::session_key_from_media_key(&request.media_key);
+        let session_key = Self::session_key_from_media_key(&request.media_key, "send");
         let session_id = RtpSessionId(session_key.clone());
 
         let destination: SocketAddr = request.destination_endpoint.parse().map_err(|e| {
             MediaError::invalid_argument(format!("invalid destination endpoint: {e}"))
         })?;
+
+        let session = self.build_session(
+            session_id,
+            RtpSessionKind::Sender,
+            request.media_key,
+            Some(request.destination_endpoint),
+            request.ssrc,
+            request.payload_type,
+            None,
+            false,
+            RtpSessionState::Created,
+        );
+        self.insert_session(session.clone())?;
 
         let ssrc = request.ssrc.unwrap_or(0);
         let payload_mode = Self::parse_payload_mode(&request.codec_hint, request.payload_type);
@@ -228,18 +247,6 @@ impl RtpApi for RtpMediaProvider {
             .send_command(RtpDriverCommand::CreateClient(spec))
             .await;
 
-        let session = self.build_session(
-            session_id,
-            RtpSessionKind::Sender,
-            request.media_key,
-            Some(request.destination_endpoint),
-            request.ssrc,
-            request.payload_type,
-            None,
-            false,
-            RtpSessionState::Created,
-        );
-        self.insert_session(session.clone());
         Ok(session)
     }
 
@@ -275,11 +282,13 @@ impl RtpApi for RtpMediaProvider {
         }
 
         let total = items.len() as u64;
-        let start = ((query.page - 1) * query.page_size) as usize;
+        let start = (query.page - 1).saturating_mul(query.page_size) as usize;
         let page_items = if start >= items.len() {
             Vec::new()
         } else {
-            let end = (start + query.page_size as usize).min(items.len());
+            let end = start
+                .saturating_add(query.page_size as usize)
+                .min(items.len());
             items[start..end].to_vec()
         };
 
@@ -297,30 +306,30 @@ impl RtpApi for RtpMediaProvider {
         _ctx: &MediaRequestContext,
         request: UpdateRtpRequest,
     ) -> Result<RtpSession> {
-        let mut sessions = self.sessions.lock();
-        let mut session = sessions
+        if request.ssrc.is_some() || request.payload_type.is_some() || request.pause_check.is_some()
+        {
+            return Err(MediaError::unsupported("rtp session update"));
+        }
+
+        let sessions = self.sessions.lock();
+        let session = sessions
             .get(&request.session_id)
             .cloned()
             .ok_or_else(|| MediaError::not_found("rtp session"))?;
 
-        if let Some(ssrc) = request.ssrc {
-            session.ssrc = Some(ssrc);
-        }
-        if let Some(payload_type) = request.payload_type {
-            session.payload_type = Some(payload_type);
-        }
-        if let Some(pause) = request.pause_check {
-            session.state = if pause {
-                RtpSessionState::Paused
-            } else if session.kind == RtpSessionKind::Receiver {
-                RtpSessionState::Listening
-            } else {
-                RtpSessionState::Created
-            };
-        }
-
-        sessions.insert(request.session_id, session.clone());
         Ok(session)
+    }
+
+    async fn get_rtp_session(
+        &self,
+        _ctx: &MediaRequestContext,
+        id: &RtpSessionId,
+    ) -> Result<RtpSession> {
+        let sessions = self.sessions.lock();
+        sessions
+            .get(id)
+            .cloned()
+            .ok_or_else(|| MediaError::not_found("rtp session"))
     }
 }
 

@@ -7,6 +7,7 @@ use cheetah_media_api::ids::{MediaKey, SessionId, StreamKeyBridge};
 use cheetah_media_api::model::CloseReason;
 use cheetah_media_api::port::{
     MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, ServerAdminApi,
+    SnapshotApi,
 };
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
@@ -22,6 +23,7 @@ mod record;
 mod routes;
 mod rtp;
 mod server;
+mod snapshot;
 
 const MODULE_ID: &str = "media-http-zlm";
 
@@ -135,6 +137,14 @@ impl ZlmMediaHttpService {
         self.ctx.media_services.record().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "record not available",
+            ))
+        })
+    }
+
+    pub(crate) fn snapshot(&self) -> Result<Arc<dyn SnapshotApi>, AdapterError> {
+        self.ctx.media_services.snapshot().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "snapshot not available",
             ))
         })
     }
@@ -332,6 +342,10 @@ impl ModuleHttpService for ZlmMediaHttpService {
             (HttpMethod::Post, "/api/startSendRtp") => self.start_send_rtp(req).await,
             (HttpMethod::Post, "/api/stopSendRtp") => self.stop_send_rtp(req).await,
             (HttpMethod::Get, "/api/getRtpInfo") => self.get_rtp_info(req).await,
+            (HttpMethod::Get, "/api/getSnap") => self.get_snap(req).await,
+            (HttpMethod::Post, "/api/deleteSnapDirectory") => {
+                self.delete_snap_directory(req).await
+            }
             (HttpMethod::Post, "/api/addStreamProxy") => self.add_stream_proxy(req).await,
             (HttpMethod::Post, "/api/delStreamProxy") => self.del_stream_proxy(req).await,
             (HttpMethod::Get, "/api/getAllStreamProxy") => self.get_all_stream_proxy(req).await,

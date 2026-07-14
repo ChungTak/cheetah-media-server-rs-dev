@@ -72,6 +72,15 @@ pub(crate) fn http_routes() -> Vec<HttpRouteDescriptor> {
             method: HttpMethod::Get,
             path: "/api/getRtpInfo".to_string(),
         },
+        // Snapshot endpoints
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/api/getSnap".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Post,
+            path: "/api/deleteSnapDirectory".to_string(),
+        },
         // Proxy endpoints
         HttpRouteDescriptor {
             method: HttpMethod::Post,
