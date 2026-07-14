@@ -1,15 +1,13 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::command::{
-    DeleteRecordRequest, DeleteSnapshotRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand,
-    RecordTaskQuery, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, SessionQuery,
-    SnapshotRequest, StartRecordRequest, StopRecordRequest,
+    DeleteRecordRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
+    SessionQuery, StartRecordRequest, StopRecordRequest,
 };
-use cheetah_media_api::ids::{MediaKey, RecordFileId, RtpSessionId, SessionId, StreamKeyBridge};
-use cheetah_media_api::model::{CloseReason, RecordTaskState, RtpTcpMode};
+use cheetah_media_api::ids::{MediaKey, RecordFileId, SessionId};
+use cheetah_media_api::model::{CloseReason, RecordTaskState};
 use cheetah_media_api::port::{
     MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
 };
@@ -21,6 +19,9 @@ use cheetah_sdk::{
 };
 
 use crate::error::{zlm_error_response, AdapterError};
+
+mod rtp;
+mod snapshot;
 
 const MODULE_ID: &str = "media-http-zlm";
 
@@ -212,7 +213,7 @@ impl Module for ZlmMediaModule {
     }
 }
 
-struct ZlmMediaHttpService {
+pub(crate) struct ZlmMediaHttpService {
     ctx: EngineContext,
 }
 
@@ -225,7 +226,7 @@ impl ZlmMediaHttpService {
         })
     }
 
-    fn rtp(&self) -> Result<Arc<dyn RtpApi>, AdapterError> {
+    pub(crate) fn rtp(&self) -> Result<Arc<dyn RtpApi>, AdapterError> {
         self.ctx.media_services.rtp().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "rtp not available",
@@ -241,7 +242,7 @@ impl ZlmMediaHttpService {
         })
     }
 
-    fn snapshot(&self) -> Result<Arc<dyn SnapshotApi>, AdapterError> {
+    pub(crate) fn snapshot(&self) -> Result<Arc<dyn SnapshotApi>, AdapterError> {
         self.ctx.media_services.snapshot().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "snapshot not available",
@@ -249,7 +250,7 @@ impl ZlmMediaHttpService {
         })
     }
 
-    fn request_context(&self, _req: &HttpRequest) -> MediaRequestContext {
+    pub(crate) fn request_context(&self, _req: &HttpRequest) -> MediaRequestContext {
         MediaRequestContext {
             request_id: cheetah_media_api::ids::RequestId("".to_string()),
             correlation_id: None,
@@ -260,7 +261,10 @@ impl ZlmMediaHttpService {
         }
     }
 
-    fn extract_params(&self, req: &HttpRequest) -> Result<serde_json::Value, AdapterError> {
+    pub(crate) fn extract_params(
+        &self,
+        req: &HttpRequest,
+    ) -> Result<serde_json::Value, AdapterError> {
         match req.method {
             HttpMethod::Get => Ok(crate::util::query_to_json(req.query.as_deref())),
             _ if req.body.is_empty() => Ok(crate::util::query_to_json(req.query.as_deref())),
@@ -268,7 +272,10 @@ impl ZlmMediaHttpService {
         }
     }
 
-    fn parse_media_key(&self, params: &serde_json::Value) -> Result<MediaKey, AdapterError> {
+    pub(crate) fn parse_media_key(
+        &self,
+        params: &serde_json::Value,
+    ) -> Result<MediaKey, AdapterError> {
         let vhost = params["vhost"].as_str().unwrap_or("__defaultVhost__");
         let app = params["app"]
             .as_str()
@@ -528,148 +535,6 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn open_rtp_server(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let tcp_mode = parse_zlm_rtp_tcp_mode(&params);
-        let request = RtpReceiverRequest {
-            media_key: key,
-            port: parse_zlm_u16(&params, "port")?,
-            ip: params["ip"].as_str().map(String::from),
-            ssrc: parse_zlm_u32(&params, "ssrc")?,
-            enable_rtcp: crate::util::parse_json_bool(&params["enable_rtcp"]).unwrap_or(false),
-            tcp_mode,
-            payload_type: parse_zlm_u8(&params, "payload_type")?,
-            codec_hint: params["codec_hint"]
-                .as_str()
-                .or_else(|| params["payload_mode"].as_str())
-                .map(String::from),
-            reuse_port: crate::util::parse_json_bool(&params["reuse_port"]).unwrap_or(false),
-            timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
-        };
-        let session = rtp_api.open_rtp_receiver(&ctx, request).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({
-                "port": session.local_port,
-                "ssrc": session.ssrc,
-                "session_id": session.session_id.0,
-            }),
-        ))
-    }
-
-    async fn close_rtp_server(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let session_id = zlm_rtp_session_id(&key, "recv");
-        rtp_api
-            .stop_rtp_session(&ctx, &RtpSessionId(session_id))
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn start_send_rtp(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let destination = parse_zlm_destination(&params)?;
-        let ssrc = parse_zlm_u32(&params, "ssrc")?;
-        let codec_hint = params["codec_hint"]
-            .as_str()
-            .or_else(|| params["payload_mode"].as_str())
-            .or_else(|| {
-                if crate::util::parse_json_bool(&params["use_ps"]).unwrap_or(true) {
-                    Some("ps")
-                } else {
-                    Some("es")
-                }
-            })
-            .map(String::from);
-        let tcp_mode = parse_zlm_rtp_tcp_mode(&params);
-        let mut transport_options = std::collections::HashMap::new();
-        let mode = match tcp_mode {
-            Some(RtpTcpMode::Passive) => {
-                transport_options.insert("tcp".to_string(), "true".to_string());
-                RtpSenderMode::Passive
-            }
-            Some(RtpTcpMode::Active) => {
-                transport_options.insert("tcp".to_string(), "true".to_string());
-                RtpSenderMode::Active
-            }
-            None => RtpSenderMode::Active,
-        };
-        let request = RtpSenderRequest {
-            media_key: key,
-            destination_endpoint: destination,
-            ssrc,
-            payload_type: parse_zlm_u8(&params, "payload_type")?,
-            codec_hint,
-            mode,
-            transport_options,
-        };
-        let session = rtp_api.open_rtp_sender(&ctx, request).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({
-                "ssrc": session.ssrc,
-                "session_id": session.session_id.0,
-            }),
-        ))
-    }
-
-    async fn stop_send_rtp(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let session_id = zlm_rtp_session_id(&key, "send");
-        rtp_api
-            .stop_rtp_session(&ctx, &RtpSessionId(session_id))
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn get_rtp_info(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let mut query = RtpQuery {
-            page_size: RtpQuery::MAX_PAGE_SIZE,
-            ..Default::default()
-        };
-        query.clamp_page_size();
-        let page = rtp_api.list_rtp_sessions(&ctx, query).await?;
-        let info = page.items.into_iter().find(|s| s.media_key == key);
-        let data = info
-            .map(|s| {
-                serde_json::json!({
-                    "session_id": s.session_id.0,
-                    "port": s.local_port,
-                    "ssrc": s.ssrc,
-                    "remote_endpoint": s.remote_endpoint,
-                    "state": s.state,
-                })
-            })
-            .unwrap_or_else(|| serde_json::json!({"exists": false}));
-        Ok(zlm_response(0, "success", data))
-    }
-
     async fn set_record_speed(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
         let ctx = self.request_context(&req);
@@ -734,48 +599,6 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn get_snap(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let snapshot_api = self.snapshot()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let timeout_ms = parse_zlm_timeout_ms(&params);
-        let format = params["format"].as_str().unwrap_or("jpg").to_string();
-        let quality = parse_json_u64(&params["quality"])
-            .or_else(|| parse_json_u64(&params["scale"]))
-            .map(|v| v.min(100) as u8);
-        let request = SnapshotRequest {
-            media_key: key,
-            timeout_ms,
-            format,
-            quality,
-            storage_policy: Default::default(),
-            capture_policy: Default::default(),
-        };
-        let handle = snapshot_api.take_snapshot(&ctx, request).await?;
-        Ok(zlm_response(0, "success", handle))
-    }
-
-    async fn delete_snap_directory(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let snapshot_api = self.snapshot()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let request = DeleteSnapshotRequest {
-            media_key: key,
-            directory: params["directory"].as_str().map(String::from),
-            retain_count: params["retain_count"].as_u64().map(|v| v as u32),
-        };
-        snapshot_api
-            .delete_snapshot_directory(&ctx, request)
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
     async fn download_file(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         Err(AdapterError::Media(
             cheetah_media_api::error::MediaError::unsupported_capability("file download"),
@@ -833,95 +656,6 @@ impl ModuleHttpService for ZlmMediaHttpService {
             }
         }
     }
-}
-
-fn parse_zlm_u16(params: &serde_json::Value, key: &str) -> Result<Option<u16>, AdapterError> {
-    if params[key].is_null() {
-        return Ok(None);
-    }
-    let v = crate::util::parse_json_u64(&params[key])
-        .ok_or_else(|| AdapterError::InvalidRequest(format!("{key} is not a valid number")))?;
-    u16::try_from(v)
-        .map(Some)
-        .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
-}
-
-fn parse_zlm_u32(params: &serde_json::Value, key: &str) -> Result<Option<u32>, AdapterError> {
-    if params[key].is_null() {
-        return Ok(None);
-    }
-    let v = crate::util::parse_json_u64(&params[key])
-        .ok_or_else(|| AdapterError::InvalidRequest(format!("{key} is not a valid number")))?;
-    u32::try_from(v)
-        .map(Some)
-        .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
-}
-
-fn parse_zlm_u8(params: &serde_json::Value, key: &str) -> Result<Option<u8>, AdapterError> {
-    if params[key].is_null() {
-        return Ok(None);
-    }
-    let v = crate::util::parse_json_u64(&params[key])
-        .ok_or_else(|| AdapterError::InvalidRequest(format!("{key} is not a valid number")))?;
-    u8::try_from(v)
-        .map(Some)
-        .map_err(|_| AdapterError::InvalidRequest(format!("{key} is out of range")))
-}
-
-fn parse_zlm_rtp_tcp_mode(params: &serde_json::Value) -> Option<RtpTcpMode> {
-    if let Some(s) = params["tcp_mode"].as_str() {
-        match s.to_lowercase().as_str() {
-            "0" => return None,
-            "passive" | "1" => return Some(RtpTcpMode::Passive),
-            "active" | "2" => return Some(RtpTcpMode::Active),
-            _ => {}
-        }
-    }
-    if let Some(n) = crate::util::parse_json_u64(&params["tcp_mode"]) {
-        match n {
-            0 => return None,
-            1 => return Some(RtpTcpMode::Passive),
-            2 => return Some(RtpTcpMode::Active),
-            _ => {}
-        }
-    }
-    if crate::util::parse_json_bool(&params["tcp"]).unwrap_or(false)
-        || crate::util::parse_json_bool(&params["enable_tcp"]).unwrap_or(false)
-    {
-        return Some(RtpTcpMode::Passive);
-    }
-    if crate::util::parse_json_bool(&params["is_udp"]).unwrap_or(true) {
-        return None;
-    }
-    Some(RtpTcpMode::Passive)
-}
-
-fn parse_zlm_destination(params: &serde_json::Value) -> Result<String, AdapterError> {
-    if let Some(url) = params["dst_url"].as_str() {
-        if url.parse::<SocketAddr>().is_err() {
-            return Err(AdapterError::InvalidRequest(format!(
-                "invalid destination endpoint: {url}"
-            )));
-        }
-        return Ok(url.to_string());
-    }
-    let ip = params["dst_ip"]
-        .as_str()
-        .ok_or_else(|| AdapterError::InvalidRequest("dst_ip is required".to_string()))?;
-    let port = parse_zlm_u16(params, "dst_port")?
-        .ok_or_else(|| AdapterError::InvalidRequest("dst_port is required".to_string()))?;
-    let endpoint = format!("{ip}:{port}");
-    if endpoint.parse::<SocketAddr>().is_err() {
-        return Err(AdapterError::InvalidRequest(format!(
-            "invalid destination endpoint: {endpoint}"
-        )));
-    }
-    Ok(endpoint)
-}
-
-fn zlm_rtp_session_id(key: &MediaKey, kind: &str) -> String {
-    let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
-    format!("{kind}/{namespace}/{path}")
 }
 
 fn zlm_record_format(value: &serde_json::Value) -> Result<String, AdapterError> {
@@ -1012,14 +746,7 @@ fn parse_zlm_playback_command(
     }
 }
 
-fn parse_zlm_timeout_ms(params: &serde_json::Value) -> u64 {
-    parse_json_u64(&params["timeout_sec"])
-        .or_else(|| parse_json_u64(&params["timeout"]))
-        .map(|s| s * 1000)
-        .unwrap_or(10_000)
-}
-
-fn zlm_response<T: serde::Serialize>(code: i32, msg: &str, data: T) -> HttpResponse {
+pub(crate) fn zlm_response<T: serde::Serialize>(code: i32, msg: &str, data: T) -> HttpResponse {
     HttpResponse {
         status: 200,
         headers: vec![HttpHeader {
