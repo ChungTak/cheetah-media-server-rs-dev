@@ -8,7 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
@@ -66,15 +66,56 @@ impl Default for RtpDriverConfig {
     }
 }
 
+/// Error returned by the Tokio RTP driver when a bind or command cannot be completed.
+///
+/// Tokio RTP 驱动 bind 或命令失败时返回的错误。
+#[derive(Debug)]
+pub struct RtpDriverError {
+    pub message: String,
+}
+
+impl std::fmt::Display for RtpDriverError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for RtpDriverError {}
+
 /// Commands sent to the RTP driver loop.
 ///
 /// 发送给 RTP 驱动循环的命令。
-#[derive(Debug, Clone)]
 pub enum RtpDriverCommand {
-    CreateServer(RtpServerSpec),
+    CreateServer {
+        spec: RtpServerSpec,
+        bind_addr: Option<SocketAddr>,
+        reuse: bool,
+        ack: Option<oneshot::Sender<Result<SocketAddr, String>>>,
+    },
     CreateClient(RtpClientSpec),
     SendFrame(Box<RtpSendFrame>),
     StopSession(String),
+}
+
+impl std::fmt::Debug for RtpDriverCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CreateServer {
+                spec,
+                bind_addr,
+                reuse,
+                ..
+            } => f
+                .debug_struct("CreateServer")
+                .field("spec", spec)
+                .field("bind_addr", bind_addr)
+                .field("reuse", reuse)
+                .finish(),
+            Self::CreateClient(spec) => f.debug_tuple("CreateClient").field(spec).finish(),
+            Self::SendFrame(frame) => f.debug_tuple("SendFrame").field(frame).finish(),
+            Self::StopSession(key) => f.debug_tuple("StopSession").field(key).finish(),
+        }
+    }
 }
 
 /// Handle to the running RTP driver.
@@ -94,6 +135,40 @@ impl RtpDriverHandle {
     /// 向驱动循环发送命令。
     pub async fn send_command(&self, cmd: RtpDriverCommand) {
         let _ = self.cmd_tx.send(cmd).await;
+    }
+
+    /// Bind a server socket for the given spec and wait for the driver to confirm
+    /// the actual local address. `bind_addr` of `None` reuses the driver's default UDP socket.
+    ///
+    /// 绑定服务端套接字并等待驱动返回实际本地地址；`bind_addr` 为 `None` 时复用默认 UDP 套接字。
+    pub async fn create_server(
+        &self,
+        spec: RtpServerSpec,
+        bind_addr: Option<SocketAddr>,
+        reuse: bool,
+    ) -> Result<SocketAddr, RtpDriverError> {
+        let (tx, rx) = oneshot::channel();
+        let cmd = RtpDriverCommand::CreateServer {
+            spec,
+            bind_addr,
+            reuse,
+            ack: Some(tx),
+        };
+        if self.cmd_tx.send(cmd).await.is_err() {
+            return Err(RtpDriverError {
+                message: "driver command channel closed".to_string(),
+            });
+        }
+        match tokio::time::timeout(Duration::from_secs(5), rx).await {
+            Ok(Ok(Ok(addr))) => Ok(addr),
+            Ok(Ok(Err(reason))) => Err(RtpDriverError { message: reason }),
+            Ok(Err(_)) => Err(RtpDriverError {
+                message: "driver dropped bind acknowledgement".to_string(),
+            }),
+            Err(_) => Err(RtpDriverError {
+                message: "bind acknowledgement timed out".to_string(),
+            }),
+        }
     }
 
     /// Receive the next event from the driver loop.
@@ -119,6 +194,38 @@ pub fn start_driver(config: RtpDriverConfig, cancel: CancellationToken) -> RtpDr
     }
 }
 
+/// Spawn a UDP recv task that forwards datagrams into the core input channel.
+///
+/// 生成 UDP 接收任务，将数据报转发到 core 输入通道。
+fn spawn_udp_reader(
+    socket: Arc<UdpSocket>,
+    cancel: CancellationToken,
+    udp_rx_tx: mpsc::Sender<RtpDatagram>,
+    buf_size: usize,
+) {
+    tokio::spawn(async move {
+        let mut buf = vec![0u8; buf_size];
+        loop {
+            tokio::select! {
+                _ = cancel.cancelled() => break,
+                res = socket.recv_from(&mut buf) => {
+                    match res {
+                        Ok((len, src)) => {
+                            let data = Bytes::copy_from_slice(&buf[..len]);
+                            if udp_rx_tx.send(RtpDatagram { source: src, data }).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            warn!("UDP receive error: {e}");
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
 /// Main Tokio driver loop: bind sockets, spawn I/O tasks, and dispatch core I/O.
 ///
 /// 主 Tokio 驱动循环：绑定套接字、生成 I/O 任务并调度 core 的输入/输出。
@@ -129,10 +236,7 @@ async fn run_driver_loop(
     cancel: CancellationToken,
 ) {
     let udp_socket = match UdpSocket::bind(config.listen_udp).await {
-        Ok(s) => {
-            info!("RTP UDP Driver listening on {}", config.listen_udp);
-            Arc::new(s)
-        }
+        Ok(s) => Arc::new(s),
         Err(e) => {
             error!("RTP UDP Driver bind failed on {}: {e}", config.listen_udp);
             return;
@@ -206,33 +310,26 @@ async fn run_driver_loop(
         Arc::new(Mutex::new(HashMap::new()));
     let next_conn_id = Arc::new(Mutex::new(1u64));
 
-    // Spawn UDP recv task
-    {
-        let udp_socket = udp_socket.clone();
-        let cancel = cancel.clone();
-        let buf_size = config.read_buffer_size;
-        tokio::spawn(async move {
-            let mut buf = vec![0u8; buf_size];
-            loop {
-                tokio::select! {
-                    _ = cancel.cancelled() => break,
-                    res = udp_socket.recv_from(&mut buf) => {
-                        match res {
-                            Ok((len, src)) => {
-                                let data = Bytes::copy_from_slice(&buf[..len]);
-                                if udp_rx_tx.send(RtpDatagram { source: src, data }).await.is_err() {
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                warn!("UDP receive error: {e}");
-                            }
-                        }
-                    }
-                }
-            }
-        });
-    }
+    // Per-session UDP sockets bound to explicit addresses (e.g. GB28181 port allocations).
+    // Each socket has a cancellation token and a session refcount so it is closed when the
+    // last session using it stops.
+    let per_session_sockets: Arc<Mutex<HashMap<SocketAddr, Arc<UdpSocket>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let per_session_cancels: Arc<Mutex<HashMap<SocketAddr, CancellationToken>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let per_session_counts: Arc<Mutex<HashMap<SocketAddr, usize>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    let session_bind_addrs: Arc<Mutex<HashMap<String, Option<SocketAddr>>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
+    // Spawn default UDP recv task.
+    let default_udp_addr = udp_socket.local_addr().unwrap_or(config.listen_udp);
+    spawn_udp_reader(
+        udp_socket.clone(),
+        cancel.clone(),
+        udp_rx_tx.clone(),
+        config.read_buffer_size,
+    );
 
     // Spawn dedicated RTCP UDP reader if configured.
     if let Some(rtcp_socket) = rtcp_socket.clone() {
@@ -440,7 +537,103 @@ async fn run_driver_loop(
             }
             Some(cmd) = cmd_rx_internal.recv() => {
                 match cmd {
-                    RtpDriverCommand::CreateServer(spec) => {
+                    RtpDriverCommand::CreateServer {
+                        spec,
+                        bind_addr,
+                        reuse,
+                        ack,
+                    } => {
+                        let key = spec.session_key.clone();
+                        let actual_addr = match bind_addr {
+                            None => default_udp_addr,
+                            Some(addr) => {
+                                let should_reuse = reuse && addr.port() != 0;
+                                if should_reuse {
+                                    let sockets = per_session_sockets.lock().await;
+                                    if let Some(socket) = sockets.get(&addr) {
+                                        let actual = socket.local_addr().unwrap_or(addr);
+                                        drop(sockets);
+                                        let mut counts = per_session_counts.lock().await;
+                                        *counts.entry(actual).or_insert(0) += 1;
+                                        actual
+                                    } else {
+                                        drop(sockets);
+                                        match UdpSocket::bind(addr).await {
+                                            Ok(s) => {
+                                                let actual = s.local_addr().unwrap_or(addr);
+                                                let socket = Arc::new(s);
+                                                let socket_cancel = cancel.child_token();
+                                                spawn_udp_reader(
+                                                    socket.clone(),
+                                                    socket_cancel.clone(),
+                                                    udp_rx_tx.clone(),
+                                                    config.read_buffer_size,
+                                                );
+                                                per_session_sockets
+                                                    .lock()
+                                                    .await
+                                                    .insert(actual, socket);
+                                                per_session_cancels
+                                                    .lock()
+                                                    .await
+                                                    .insert(actual, socket_cancel);
+                                                per_session_counts
+                                                    .lock()
+                                                    .await
+                                                    .insert(actual, 1);
+                                                actual
+                                            }
+                                            Err(e) => {
+                                                let reason = format!(
+                                                    "failed to bind UDP socket {addr}: {e}"
+                                                );
+                                                if let Some(ack) = ack {
+                                                    let _ = ack.send(Err(reason));
+                                                }
+                                                continue;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    match UdpSocket::bind(addr).await {
+                                        Ok(s) => {
+                                            let actual = s.local_addr().unwrap_or(addr);
+                                            let socket = Arc::new(s);
+                                            let socket_cancel = cancel.child_token();
+                                            spawn_udp_reader(
+                                                socket.clone(),
+                                                socket_cancel.clone(),
+                                                udp_rx_tx.clone(),
+                                                config.read_buffer_size,
+                                            );
+                                            per_session_sockets
+                                                .lock()
+                                                .await
+                                                .insert(actual, socket);
+                                            per_session_cancels
+                                                .lock()
+                                                .await
+                                                .insert(actual, socket_cancel);
+                                            per_session_counts.lock().await.insert(actual, 1);
+                                            actual
+                                        }
+                                        Err(e) => {
+                                            let reason = format!(
+                                                "failed to bind UDP socket {addr}: {e}"
+                                            );
+                                            if let Some(ack) = ack {
+                                                let _ = ack.send(Err(reason));
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                }
+                            }
+                        };
+                        if let Some(ack) = ack {
+                            let _ = ack.send(Ok(actual_addr));
+                        }
+                        session_bind_addrs.lock().await.insert(key, bind_addr);
                         inputs.push(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
                     }
                     RtpDriverCommand::CreateClient(spec) => {
@@ -591,6 +784,20 @@ async fn run_driver_loop(
                         inputs.push(RtpCoreInput::Command(RtpCoreCommand::SendFrame(*send_frame)));
                     }
                     RtpDriverCommand::StopSession(key) => {
+                        if let Some(Some(addr)) = session_bind_addrs.lock().await.remove(key.as_str()) {
+                            let mut counts = per_session_counts.lock().await;
+                            if let Some(count) = counts.get_mut(&addr) {
+                                *count -= 1;
+                                if *count == 0 {
+                                    counts.remove(&addr);
+                                    drop(counts);
+                                    per_session_sockets.lock().await.remove(&addr);
+                                    if let Some(token) = per_session_cancels.lock().await.remove(&addr) {
+                                        token.cancel();
+                                    }
+                                }
+                            }
+                        }
                         inputs.push(RtpCoreInput::Command(RtpCoreCommand::StopSession(key)));
                     }
                 }
@@ -669,7 +876,7 @@ async fn run_driver_loop(
 mod tests {
     use super::*;
     use cheetah_codec::{RtpHeader, RtpPacket};
-    use cheetah_rtp_core::RtpPayloadMode;
+    use cheetah_rtp_core::{RtpPayloadMode, RtpTrackFilter, RtpTransportMode};
 
     #[tokio::test]
     async fn test_rtp_driver_udp_and_tcp_ingress() {
@@ -772,6 +979,89 @@ mod tests {
                 assert_eq!(payload_mode, RtpPayloadMode::Ps);
             }
             _ => panic!("Expected SessionCreated event for TCP session"),
+        }
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_create_server_binds_and_returns_actual_port() {
+        let cancel = CancellationToken::new();
+
+        let temp_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let tcp_addr = temp_tcp.local_addr().unwrap();
+        drop(temp_tcp);
+
+        let config = RtpDriverConfig {
+            listen_udp: "127.0.0.1:20000".parse().unwrap(),
+            listen_tcp: tcp_addr,
+            listen_rtcp_udp: None,
+            write_queue_capacity: 10,
+            read_buffer_size: 4096,
+            session_idle_timeout_ms: 5000,
+            max_sessions: 5,
+            tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
+            max_rtp_len_cap: 65536,
+        };
+
+        let handle = start_driver(config, cancel.clone());
+
+        // Ask the driver to bind an ephemeral UDP socket for this server session.
+        let bind_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let spec = RtpServerSpec {
+            session_key: "live/port-ack".to_string(),
+            ssrc: Some(4242),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        };
+
+        let actual_addr = handle
+            .create_server(spec, Some(bind_addr), false)
+            .await
+            .expect("create_server should acknowledge the bound address");
+        assert_ne!(
+            actual_addr.port(),
+            0,
+            "ephemeral bind should return a real port"
+        );
+
+        // Send a packet to the returned port and confirm the pre-created session receives it.
+        let client_socket = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 1,
+                timestamp: 100,
+                ssrc: 4242,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0x01, 0x02, 0x03]),
+        };
+        client_socket
+            .send_to(&rtp.encode(), actual_addr)
+            .await
+            .unwrap();
+
+        let event = tokio::time::timeout(Duration::from_secs(5), handle.recv_event())
+            .await
+            .unwrap()
+            .unwrap();
+
+        match event {
+            RtpCoreEvent::SessionCreated {
+                session_key,
+                ssrc,
+                payload_mode,
+                ..
+            } => {
+                assert_eq!(session_key, "live/port-ack");
+                assert_eq!(ssrc, 4242);
+                assert_eq!(payload_mode, RtpPayloadMode::Ps);
+            }
+            _ => panic!("Expected SessionCreated event"),
         }
 
         cancel.cancel();

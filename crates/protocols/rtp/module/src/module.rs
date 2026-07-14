@@ -147,18 +147,20 @@ impl Module for RtpModule {
         let engine = ctx.engine.clone();
         self.ctx = Some(ctx.engine);
 
-        let listen_port = self
+        let default_bind_addr = self
             .config
             .listen_udp
             .as_deref()
             .unwrap_or("0.0.0.0:20000")
             .parse::<SocketAddr>()
-            .map_err(|e| SdkError::InvalidArgument(format!("invalid listen_udp: {e}")))?
-            .port();
+            .map_err(|e| SdkError::InvalidArgument(format!("invalid listen_udp: {e}")))?;
 
         // Shared driver handle slot. Populated in `start()` once the Tokio driver is bound.
         let driver_handle: Arc<Mutex<Option<Arc<RtpDriverHandle>>>> = Arc::new(Mutex::new(None));
-        let orchestrator = Arc::new(RtpSessionOrchestrator::new(driver_handle, listen_port));
+        let orchestrator = Arc::new(RtpSessionOrchestrator::new(
+            driver_handle,
+            default_bind_addr,
+        ));
         self.orchestrator = Some(orchestrator.clone());
 
         // Register the media-domain RtpApi provider so native/ZLM adapters can
@@ -611,10 +613,12 @@ impl ModuleHttpService for RtpHttpService {
                 let body: Value = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid json body: {e}")))?;
 
-                // SMS-compatible: `port` is OPTIONAL. When omitted the module returns the
-                // already-listening RTP port from configuration; this matches the SMS pattern of
-                // pre-allocating a shared receive port and binding `app/stream/ssrc` to it.
-                let _port = body.get("port").and_then(|v| v.as_u64()).map(|v| v as u16);
+                // SMS-compatible: `port` is OPTIONAL. When omitted the module reuses the
+                // already-bound driver UDP socket; when provided the driver binds a dedicated
+                // socket on the default interface and confirms the actual bound port.
+                let port = body.get("port").and_then(|v| v.as_u64()).map(|v| v as u16);
+                let bind_addr =
+                    port.map(|p| SocketAddr::new(self.orchestrator.default_bind_addr().ip(), p));
 
                 // Accept SMS `socketType` (string `tcp`/`udp`/`both` or numeric 1/2/3) but
                 // record it for diagnostic purposes only — the active driver listens on whatever
@@ -690,6 +694,7 @@ impl ModuleHttpService for RtpHttpService {
                         connection_type,
                         track_filter,
                         tcp_mode,
+                        bind_addr,
                         false,
                         RtpSessionState::Listening,
                     )
