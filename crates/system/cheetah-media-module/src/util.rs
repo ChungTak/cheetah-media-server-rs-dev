@@ -91,3 +91,41 @@ pub fn parse_json_bool(value: &serde_json::Value) -> Option<bool> {
         )
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_decode_keeps_encoded_slashes() {
+        assert_eq!(percent_decode("live%2Ftest"), "live%2Ftest");
+        assert_eq!(percent_decode("live%2ftest"), "live%2Ftest");
+        assert_eq!(percent_decode("a%20b"), "a b");
+    }
+
+    #[test]
+    fn query_to_json_decodes_plus_and_percent() {
+        let value = query_to_json(Some("vhost=__defaultVhost__&app=live&stream=a+b%2F1"));
+        let map = value.as_object().unwrap();
+        assert_eq!(map["vhost"], "__defaultVhost__");
+        assert_eq!(map["app"], "live");
+        assert_eq!(map["stream"], "a b%2F1");
+    }
+
+    #[test]
+    fn parse_json_u64_handles_number_and_string() {
+        assert_eq!(parse_json_u64(&serde_json::json!(42)), Some(42));
+        assert_eq!(parse_json_u64(&serde_json::json!("123")), Some(123));
+        assert_eq!(parse_json_u64(&serde_json::json!("abc")), None);
+    }
+
+    #[test]
+    fn parse_json_bool_handles_variants() {
+        assert_eq!(parse_json_bool(&serde_json::json!(true)), Some(true));
+        assert_eq!(parse_json_bool(&serde_json::json!(false)), Some(false));
+        assert_eq!(parse_json_bool(&serde_json::json!(1)), Some(true));
+        assert_eq!(parse_json_bool(&serde_json::json!(0)), Some(false));
+        assert_eq!(parse_json_bool(&serde_json::json!("yes")), Some(true));
+        assert_eq!(parse_json_bool(&serde_json::json!("off")), Some(false));
+    }
+}

@@ -57,8 +57,8 @@ rg -o '"/api/[A-Za-z0-9_/-]+"' crates/system/cheetah-media-module/src/zlm.rs | s
 | GAP-CFG-01 | adapter 配置 | prefix 固定、apply_config 空操作 | 独立启停、prefix、重启语义 | P1 |
 | GAP-ZLM-01 | API 目录 | 23/64 | 64/64 路由和状态 | P0 |
 | GAP-ZLM-02 | wire compatibility | 无 golden | 字段、错误、别名锁定 | P0 |
-| GAP-SIG-01 | signal contract | fake-only 且当前不编译 | 生产 provider E2E | P0 |
-| GAP-TOOL-01 | Rust toolchain | `1.96.1` 当前不可获取 | 固定可用工具链 | P0 |
+| GAP-SIG-01 | signal contract | fake-only，S0 后测试可编译 | 生产 provider E2E | P0 |
+| GAP-TOOL-01 | Rust toolchain | `rust-toolchain.toml` 固定 1.94.1 并已安装 | 固定可用工具链 | P0 |
 
 ## 4. “完成”判定规则
 
@@ -75,11 +75,12 @@ route 存在但返回 Unsupported，只能标记“路由已登记”；fake pro
 
 ## 5. 已知测试基线
 
-审计时使用已安装 stable 工具链得到：
+S0 重新审计后的测试基线：
 
-- `cheetah-media-api`、`cheetah-engine`、`cheetah-record-module`、`cheetah-rtp-module` 共 73 个测试通过；media module 为 0 tests。
-- 加入 `cheetah-sdk` contract tests 后编译失败：fake RTP provider 缺 `get_rtp_session`，GB28181 request 缺 `codec_hint`。
-- 多协议加 record/RTP 的 server 组合可以 `cargo check`，但这不代表运行时行为可用。
+- Rust 工具链固定为 `1.94.1`（`rust-toolchain.toml`），`cargo fmt` / `cargo clippy` / `cargo test` 可运行。
+- `cheetah-sdk` contract tests 编译通过；`FakeMediaProvider` 补齐 `get_rtp_session`；`RtpSenderRequest` 补齐 `codec_hint`。
+- `cheetah-media-api`、`cheetah-engine`、`cheetah-record-module`、`cheetah-rtp-module` 共 73 个测试通过；`cheetah-media-module` 新增 7 个单元测试。
+- 工作区 `cargo test --workspace --lib` 通过 306 个测试。
 
 S0 必须先恢复 SDK contract tests 编译，再开始功能扩展。
 

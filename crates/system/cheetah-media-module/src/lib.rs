@@ -27,3 +27,41 @@ mod zlm;
 
 pub use native::{NativeMediaModule, NativeMediaModuleFactory};
 pub use zlm::{ZlmMediaModule, ZlmMediaModuleFactory};
+
+#[cfg(test)]
+mod tests {
+    use cheetah_sdk::{Module, ModuleFactory};
+
+    use crate::{
+        NativeMediaModule, NativeMediaModuleFactory, ZlmMediaModule, ZlmMediaModuleFactory,
+    };
+
+    #[test]
+    fn zlm_module_has_routes() {
+        let module = ZlmMediaModule::new();
+        let routes = module.http_routes();
+        assert!(!routes.is_empty(), "ZLM module must expose routes");
+        let paths: std::collections::HashSet<_> = routes.into_iter().map(|r| r.path).collect();
+        assert!(paths.contains("/api/getMediaList"));
+        assert!(paths.contains("/api/kick_session"));
+    }
+
+    #[test]
+    fn native_module_has_empty_routes_for_fuzzy_prefix_matching() {
+        let module = NativeMediaModule::new();
+        let routes = module.http_routes();
+        assert!(
+            routes.is_empty(),
+            "native module delegates routing to handle()"
+        );
+    }
+
+    #[test]
+    fn factory_manifests_match_module_ids() {
+        let native = NativeMediaModuleFactory.manifest();
+        let zlm = ZlmMediaModuleFactory.manifest();
+        assert!(!native.module_id.0.is_empty());
+        assert!(!zlm.module_id.0.is_empty());
+        assert!(zlm.routes_prefix.starts_with('/'));
+    }
+}
