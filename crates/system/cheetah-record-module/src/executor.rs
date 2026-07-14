@@ -19,6 +19,7 @@ use cheetah_codec::record::{
     RecordWriteEvent,
 };
 use cheetah_codec::TrackInfo;
+use cheetah_media_api::{FileStoreEntry, MediaKey};
 use cheetah_sdk::{
     BootstrapPolicy, CancellationToken, EngineContext, JoinHandle, StreamKey, SubscriberOptions,
 };
@@ -389,14 +390,50 @@ async fn run_record_task(
     }
 
     let end_ms = wall_clock_ms();
+    let media_key = MediaKey::new(
+        &task.template.vhost,
+        &task.template.app,
+        &task.template.stream,
+        None,
+    )
+    .unwrap_or_else(|_| {
+        MediaKey::with_default_vhost(&task.template.app, &task.template.stream, None)
+            .expect("media key must be valid")
+    });
+    let file_entry = FileStoreEntry {
+        media_key,
+        file_type: "record".to_string(),
+        content_type: format_content_type(format),
+        size_bytes: bytes_written,
+        created_at_ms: start_ms,
+        expires_at_ms: None,
+        absolute_path: path.to_string_lossy().to_string(),
+        owner_principal: None,
+        allowed_principals: Vec::new(),
+    };
+    let ctx = cheetah_media_api::port::MediaRequestContext {
+        request_id: cheetah_media_api::ids::RequestId(task_id.clone()),
+        source_adapter: "record".to_string(),
+        ..Default::default()
+    };
+    let handle = match engine.media_file_store.register_file(&ctx, file_entry) {
+        Ok(h) => h,
+        Err(err) => {
+            warn!(%task_id, %err, "record: file store registration failed");
+            mark_failed(&registry, &task_id);
+            return;
+        }
+    };
+
     let file_meta = RecordFileMetadata {
-        file_id: format!("{}-{}", task_id, start_ms),
+        file_id: handle.0.clone(),
         task_id: task_id.clone(),
         format: RecordFormatStr::from(format),
         vhost: task.template.vhost.clone(),
         app: task.template.app.clone(),
         stream: task.template.stream.clone(),
         path: path.to_string_lossy().to_string(),
+        file_handle: Some(handle.0.clone()),
         duration_ms: end_ms.saturating_sub(start_ms) as u64,
         size_bytes: bytes_written,
         start_time_ms: start_ms,
@@ -542,6 +579,18 @@ fn build_output_path(
     );
     path.push(name);
     path
+}
+
+/// Map a `RecordFormat` to a MIME type for the file store.
+///
+/// 将 `RecordFormat` 映射为文件存储的 MIME 类型。
+fn format_content_type(format: RecordFormat) -> String {
+    match format {
+        RecordFormat::Flv => "video/x-flv".to_string(),
+        RecordFormat::Hls => "application/vnd.apple.mpegurl".to_string(),
+        RecordFormat::Mp4 => "video/mp4".to_string(),
+        RecordFormat::Ps => "video/mp2t".to_string(),
+    }
 }
 
 /// Sanitize a path segment by replacing path separators and dots.

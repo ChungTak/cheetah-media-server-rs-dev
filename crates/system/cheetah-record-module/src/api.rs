@@ -180,7 +180,11 @@ pub struct FileQueryResponse {
 
 /// Brief summary of a file returned by the file query endpoint.
 ///
-/// 文件查询端点返回的文件摘要。
+/// `file_handle` is the unguessable token used for subsequent download
+/// requests. Server absolute paths are intentionally not exposed.
+///
+/// 文件查询端点返回的文件摘要。`file_handle` 是后续下载请求使用的不可猜测令牌，
+/// 不暴露服务器绝对路径。
 #[derive(Debug, Clone, Serialize)]
 pub struct FileBrief {
     #[serde(rename = "fileId")]
@@ -191,7 +195,8 @@ pub struct FileBrief {
     pub vhost: String,
     pub app: String,
     pub stream: String,
-    pub path: String,
+    #[serde(rename = "fileHandle")]
+    pub file_handle: String,
     #[serde(rename = "durationMs")]
     pub duration_ms: u64,
     #[serde(rename = "sizeBytes")]
@@ -373,18 +378,21 @@ impl RecordApi {
         let files = result
             .items
             .into_iter()
-            .map(|f| FileBrief {
-                file_id: f.file_id,
-                task_id: f.task_id,
-                format: format_str_to_string(f.format),
-                vhost: f.vhost,
-                app: f.app,
-                stream: f.stream,
-                path: f.path,
-                duration_ms: f.duration_ms,
-                size_bytes: f.size_bytes,
-                start_time_ms: f.start_time_ms,
-                end_time_ms: f.end_time_ms,
+            .map(|f| {
+                let file_id = f.file_id.clone();
+                FileBrief {
+                    file_id: file_id.clone(),
+                    task_id: f.task_id,
+                    format: format_str_to_string(f.format),
+                    vhost: f.vhost,
+                    app: f.app,
+                    stream: f.stream,
+                    file_handle: f.file_handle.clone().unwrap_or(file_id),
+                    duration_ms: f.duration_ms,
+                    size_bytes: f.size_bytes,
+                    start_time_ms: f.start_time_ms,
+                    end_time_ms: f.end_time_ms,
+                }
             })
             .collect();
         Ok(FileQueryResult {

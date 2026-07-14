@@ -156,6 +156,13 @@ impl MediaError {
         Self::new(MediaErrorCode::Unavailable, message)
     }
 
+    /// Storage operation failed.
+    ///
+    /// 存储操作失败。
+    pub fn storage_failed(message: impl Into<String>) -> Self {
+        Self::new(MediaErrorCode::StorageFailed, message)
+    }
+
     /// Internal error.
     ///
     /// 内部错误。

@@ -9,6 +9,7 @@ use cheetah_media_api::error::{MediaError, Result};
 use cheetah_media_api::ids::{FileHandle, MediaKey, RecordFileId, RecordTaskId};
 use cheetah_media_api::model::{Page, RecordFile, RecordTask, RecordTaskState};
 use cheetah_media_api::port::{MediaRequestContext, RecordApi as RecordApiPort};
+use cheetah_media_api::MediaFileStoreApi;
 
 use crate::api::{RecordApi, RecordApiError, RecordTemplate};
 use crate::metadata::RecordTaskState as InternalRecordTaskState;
@@ -23,16 +24,18 @@ use crate::registry::RegistryError;
 pub struct RecordMediaProvider {
     api: Arc<RecordApi>,
     playback: Arc<PlaybackRegistry>,
+    file_store: Arc<dyn MediaFileStoreApi>,
 }
 
 impl RecordMediaProvider {
-    /// Create a provider wrapping the record module's API handle.
+    /// Create a provider wrapping the record module's API handle and file store.
     ///
-    /// 创建包装录制模块 API 句柄的 provider。
-    pub fn new(api: Arc<RecordApi>) -> Self {
+    /// 创建包装录制模块 API 句柄与文件存储的 provider。
+    pub fn new(api: Arc<RecordApi>, file_store: Arc<dyn MediaFileStoreApi>) -> Self {
         Self {
             api,
             playback: Arc::new(PlaybackRegistry::new()),
+            file_store,
         }
     }
 }
@@ -248,9 +251,13 @@ impl RecordApiPort for RecordMediaProvider {
 
     async fn delete_record_file(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         request: DeleteRecordRequest,
     ) -> Result<()> {
+        let now = now_ms();
+        self.file_store
+            .delete(ctx, &FileHandle(request.file_id.0.clone()), now)
+            .ok();
         self.api
             .delete_file(crate::api::FileDeleteRequest {
                 file_id: request.file_id.0,
@@ -322,7 +329,7 @@ fn map_file_brief(f: &crate::api::FileBrief) -> Option<RecordFile> {
         task_id: RecordTaskId(f.task_id.clone()),
         media_key,
         format: f.format.clone(),
-        path_handle: FileHandle(f.file_id.clone()),
+        path_handle: FileHandle(f.file_handle.clone()),
         year,
         month,
         day,
@@ -414,6 +421,60 @@ mod tests {
     use cheetah_media_api::model::StoragePolicy;
 
     struct MockExecutor;
+    struct MockFileStore;
+
+    impl cheetah_media_api::MediaFileStoreApi for MockFileStore {
+        fn register_file(
+            &self,
+            _ctx: &cheetah_media_api::port::MediaRequestContext,
+            _entry: cheetah_media_api::FileStoreEntry,
+        ) -> cheetah_media_api::error::Result<cheetah_media_api::ids::FileHandle> {
+            Ok(cheetah_media_api::ids::FileHandle("mock".to_string()))
+        }
+
+        fn resolve_for_read(
+            &self,
+            _ctx: &cheetah_media_api::port::MediaRequestContext,
+            _handle: &cheetah_media_api::ids::FileHandle,
+            _resource_scope: Option<&cheetah_media_api::ids::MediaKey>,
+            _now_ms: i64,
+        ) -> cheetah_media_api::error::Result<cheetah_media_api::FileStoreEntry> {
+            Err(cheetah_media_api::error::MediaError::not_found("mock"))
+        }
+
+        fn delete(
+            &self,
+            _ctx: &cheetah_media_api::port::MediaRequestContext,
+            _handle: &cheetah_media_api::ids::FileHandle,
+            _now_ms: i64,
+        ) -> cheetah_media_api::error::Result<()> {
+            Ok(())
+        }
+
+        fn delete_batch(
+            &self,
+            _ctx: &cheetah_media_api::port::MediaRequestContext,
+            _query: cheetah_media_api::FileStoreQuery,
+            _batch_limit: u32,
+            _now_ms: i64,
+        ) -> cheetah_media_api::error::Result<cheetah_media_api::DeleteBatchResult> {
+            Ok(cheetah_media_api::DeleteBatchResult {
+                deleted: 0,
+                failed: 0,
+            })
+        }
+
+        fn resolve_download(
+            &self,
+            _ctx: &cheetah_media_api::port::MediaRequestContext,
+            _handle: &cheetah_media_api::ids::FileHandle,
+            _range: Option<cheetah_media_api::FileRange>,
+            _filename: Option<String>,
+            _now_ms: i64,
+        ) -> cheetah_media_api::error::Result<cheetah_media_api::FileDownload> {
+            Err(cheetah_media_api::error::MediaError::not_found("mock"))
+        }
+    }
 
     #[async_trait]
     impl crate::task::TaskExecutor for MockExecutor {
@@ -429,10 +490,13 @@ mod tests {
     }
 
     fn provider() -> RecordMediaProvider {
-        RecordMediaProvider::new(Arc::new(crate::api::RecordApi::new(
-            Arc::new(crate::registry::RecordRegistry::new(16)),
-            Arc::new(MockExecutor),
-        )))
+        RecordMediaProvider::new(
+            Arc::new(crate::api::RecordApi::new(
+                Arc::new(crate::registry::RecordRegistry::new(16)),
+                Arc::new(MockExecutor),
+            )),
+            Arc::new(MockFileStore),
+        )
     }
 
     #[tokio::test]
@@ -552,6 +616,7 @@ mod tests {
                     app: "live".to_string(),
                     stream: format!("stream-{i}"),
                     path: format!("/rec/live/stream-{i}/2026/f{i}.mp4"),
+                    file_handle: None,
                     duration_ms: 1_000,
                     size_bytes: 1000,
                     start_time_ms: i as i64 * 1000,
@@ -624,6 +689,7 @@ mod tests {
                     app: "live".to_string(),
                     stream: format!("stream-{i}"),
                     path: format!("/rec/live/stream-{i}/2026/f{i}.mp4"),
+                    file_handle: None,
                     duration_ms: 1_000,
                     size_bytes: 1000,
                     start_time_ms: i as i64 * 1000,
@@ -675,6 +741,7 @@ mod tests {
                 app: "live".to_string(),
                 stream: "test".to_string(),
                 path: "/rec/live/test/2026/f1-1.mp4".to_string(),
+                file_handle: None,
                 duration_ms: 10_000,
                 size_bytes: 1_000_000,
                 start_time_ms: 1_000,

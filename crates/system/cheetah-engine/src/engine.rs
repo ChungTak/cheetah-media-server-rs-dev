@@ -3,9 +3,9 @@ use std::sync::Arc;
 use cheetah_sdk::{
     CancellationToken, ClusterApi, ConfigApplyApi, ConfigProvider, ConfigSchemaRegistry,
     CoreAdaptersApi, DatabaseApi, EngineContext, EventBus, FfmpegApi, HealthApi, MediaDataPlaneApi,
-    MediaServices, MediaSessionDirectoryApi, MetricsApi, ModuleFactory, ModuleManagerApi,
-    PublisherApi, RoomServiceApi, RuntimeApi, SdkError, ServiceRegistry, StreamManagerApi,
-    SubscriberApi, SystemEvent, SystemLifecycleEvent, TaskSystemApi,
+    MediaFileStoreApi, MediaServices, MediaSessionDirectoryApi, MetricsApi, ModuleFactory,
+    ModuleManagerApi, PublisherApi, RoomServiceApi, RuntimeApi, SdkError, ServiceRegistry,
+    StreamManagerApi, SubscriberApi, SystemEvent, SystemLifecycleEvent, TaskSystemApi,
 };
 use parking_lot::RwLock;
 
@@ -16,7 +16,8 @@ use crate::event::LocalEventBus;
 use crate::ffmpeg::LocalFfmpegService;
 use crate::health::HealthService;
 use crate::media_provider::{
-    EngineMediaDataPlane, EngineMediaFacade, EngineMediaSessionDirectory, StreamMediaProvider,
+    EngineMediaDataPlane, EngineMediaFacade, EngineMediaFileStore, EngineMediaSessionDirectory,
+    StreamMediaProvider,
 };
 use crate::metrics::MetricsRegistry;
 use crate::module_manager::ModuleManager;
@@ -173,6 +174,7 @@ impl EngineBuilder {
         media_services.register_publish_subscribe(
             Arc::new(stream_provider) as Arc<dyn cheetah_media_api::port::PublishSubscribeApi>
         );
+        let media_file_store: Arc<dyn MediaFileStoreApi> = Arc::new(EngineMediaFileStore::new());
         let media_facade = Arc::new(EngineMediaFacade::new(media_services.clone()));
 
         Ok(Engine {
@@ -196,6 +198,7 @@ impl EngineBuilder {
             media_services,
             session_directory,
             media_data_plane,
+            media_file_store,
             root_cancel: RwLock::new(CancellationToken::new()),
         })
     }
@@ -232,6 +235,7 @@ pub struct Engine {
     media_services: MediaServices,
     session_directory: Arc<dyn MediaSessionDirectoryApi>,
     media_data_plane: Arc<dyn MediaDataPlaneApi>,
+    media_file_store: Arc<dyn MediaFileStoreApi>,
     root_cancel: RwLock<CancellationToken>,
 }
 
@@ -263,6 +267,7 @@ impl Engine {
             media_services: self.media_services.clone(),
             media_session_directory: self.session_directory.clone(),
             media_data_plane: self.media_data_plane.clone(),
+            media_file_store: self.media_file_store.clone(),
         }
     }
 

@@ -7,11 +7,14 @@ use cheetah_media_api::command::{
     RecordTaskQuery, RtpQuery, RtpReceiverRequest, RtpSenderRequest, SessionQuery, SnapshotQuery,
     SnapshotRequest, StartRecordRequest, StopRecordRequest,
 };
-use cheetah_media_api::ids::{MediaKey, RecordFileId, RecordTaskId, RtpSessionId, SessionId};
+use cheetah_media_api::ids::{
+    FileHandle, MediaKey, RecordFileId, RecordTaskId, RtpSessionId, SessionId,
+};
 use cheetah_media_api::model::CloseReason;
 use cheetah_media_api::port::{
     MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
 };
+use cheetah_media_api::{FileRange, MediaFileStoreApi};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -157,6 +160,10 @@ impl NativeMediaHttpService {
                 "snapshot not available",
             ))
         })
+    }
+
+    fn file_store(&self) -> Arc<dyn MediaFileStoreApi> {
+        self.ctx.media_file_store.clone()
     }
 
     fn request_context(&self, req: &HttpRequest) -> MediaRequestContext {
@@ -387,10 +394,34 @@ impl NativeMediaHttpService {
         Ok(json_response(&serde_json::json!({ "deleted": true })))
     }
 
-    async fn file_download(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        Err(AdapterError::Media(
-            cheetah_media_api::error::MediaError::unsupported_capability("file download"),
-        ))
+    async fn file_download(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let ctx = self.request_context(&req);
+        let handle = file_id_from_download_path(&req.path).ok_or_else(|| {
+            AdapterError::InvalidRequest("invalid file download path".to_string())
+        })?;
+        let filename = query_param(&req, "filename");
+        let range = parse_range_header(&req.headers);
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        // Resolve the entry first so we can validate suffix ranges and return a
+        // consistent total size in the Content-Range header.
+        let handle = FileHandle(handle);
+        let entry = self
+            .file_store()
+            .resolve_for_read(&ctx, &handle, None, now_ms)
+            .map_err(AdapterError::Media)?;
+        let total = entry.size_bytes;
+        let range = normalize_range(range, total);
+
+        let download = self
+            .file_store()
+            .resolve_download(&ctx, &handle, range, filename, now_ms)
+            .map_err(AdapterError::Media)?;
+
+        Ok(download_response(download, range, total))
     }
 
     async fn proxies_pull(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
@@ -586,4 +617,142 @@ fn parse_body<T: DeserializeOwned>(req: &HttpRequest) -> Result<T, AdapterError>
         ));
     }
     serde_json::from_slice(&req.body).map_err(|e| AdapterError::Serialization(e.to_string()))
+}
+
+/// Extract the file handle from a path like `/files/{handle}/download`.
+///
+/// 从 `/files/{handle}/download` 路径中提取文件句柄。
+fn file_id_from_download_path(path: &str) -> Option<String> {
+    let rest = path.strip_prefix("/files/")?;
+    let id = rest.strip_suffix("/download")?;
+    if id.is_empty() || id.contains('/') || id.contains("..") {
+        return None;
+    }
+    Some(id.to_string())
+}
+
+/// Return the value of a URL query parameter, if any.
+///
+/// 返回 URL 查询参数值。
+fn query_param(req: &HttpRequest, name: &str) -> Option<String> {
+    let qs = req.query.as_deref()?;
+    let qs = qs.strip_prefix('?').unwrap_or(qs);
+    for pair in qs.split('&') {
+        if let Some((k, v)) = pair.split_once('=') {
+            if k == name {
+                return Some(crate::util::percent_decode(v));
+            }
+        } else if pair == name {
+            return Some(String::new());
+        }
+    }
+    None
+}
+
+/// Parse a `Range: bytes=start-end` header.
+///
+/// Supports `bytes=start-end`, `bytes=start-` and `bytes=-suffix`. Suffix
+/// ranges are represented as `(0, suffix_len)` and normalized later using
+/// the file size.
+///
+/// 解析 `Range: bytes=start-end` 头。
+fn parse_range_header(headers: &[HttpHeader]) -> Option<FileRange> {
+    let value = header_value(headers, "range")?;
+    let value = value.trim();
+    let value = value.strip_prefix("bytes=")?;
+    let (start, end) = value.split_once('-')?;
+    let start = start.trim();
+    let end = end.trim();
+
+    if start.is_empty() && end.is_empty() {
+        return None;
+    }
+
+    if start.is_empty() {
+        // Suffix range: bytes=-N means the last N bytes.
+        let suffix = end.parse::<u64>().ok()?;
+        Some(FileRange {
+            start: 0,
+            end: Some(suffix),
+        })
+    } else if end.is_empty() {
+        Some(FileRange {
+            start: start.parse::<u64>().ok()?,
+            end: None,
+        })
+    } else {
+        Some(FileRange {
+            start: start.parse::<u64>().ok()?,
+            end: Some(end.parse::<u64>().ok()?),
+        })
+    }
+}
+
+/// Clamp a requested range to the file size and expand suffix ranges.
+///
+/// 将请求范围限制在文件大小内并展开后缀范围。
+fn normalize_range(range: Option<FileRange>, total: u64) -> Option<FileRange> {
+    let r = range?;
+    // Suffix range: stored as (0, suffix_len) by the parser.
+    let start = if r.start == 0 && r.end.is_some_and(|e| e > 0 && e <= total) {
+        // Heuristic: treat `bytes=-N` as a suffix if end <= total.
+        total.saturating_sub(r.end.unwrap_or(0))
+    } else {
+        r.start.min(total)
+    };
+    let end = r
+        .end
+        .map(|e| e.min(total.saturating_sub(1)))
+        .unwrap_or_else(|| total.saturating_sub(1));
+    if start > end {
+        return None;
+    }
+    Some(FileRange {
+        start,
+        end: Some(end),
+    })
+}
+
+/// Build an HTTP response from a `FileDownload`.
+///
+/// 从 `FileDownload` 构建 HTTP 响应。
+fn download_response(
+    download: cheetah_media_api::FileDownload,
+    range: Option<FileRange>,
+    total: u64,
+) -> HttpResponse {
+    let mut headers = vec![
+        HttpHeader {
+            name: "content-type".to_string(),
+            value: download.content_type,
+        },
+        HttpHeader {
+            name: "content-length".to_string(),
+            value: download.body.len().to_string(),
+        },
+        HttpHeader {
+            name: "content-disposition".to_string(),
+            value: format!("attachment; filename=\"{}\"", download.filename),
+        },
+    ];
+
+    let status = if let Some(r) = range {
+        let end = r
+            .end
+            .unwrap_or(total.saturating_sub(1))
+            .min(total.saturating_sub(1));
+        headers.push(HttpHeader {
+            name: "content-range".to_string(),
+            value: format!("bytes {}-{}/{}", r.start, end, total),
+        });
+        206
+    } else {
+        200
+    };
+
+    HttpResponse {
+        status,
+        headers,
+        body: download.body,
+    }
 }

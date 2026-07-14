@@ -10,6 +10,7 @@ arc-swap.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 dashmap.workspace = true
+getrandom.workspace = true
 parking_lot.workspace = true
 cheetah-codec = { path = "../../foundation/cheetah-codec" }
 cheetah-media-api = { path = "../../sdk/cheetah-media-api" }

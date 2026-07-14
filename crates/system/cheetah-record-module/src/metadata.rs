@@ -99,10 +99,11 @@ impl From<RecordFormatStr> for RecordFormat {
 /// Persisted metadata for a record file.
 ///
 /// Records the on-disk path, time range, size, and a summary of tracks.
+/// The `file_handle` field is the public `FileHandle` token returned to
+/// clients; `path` is kept internal for directory filtering and cleanup.
 ///
 /// 录制文件的持久化元数据。
-///
-/// 记录文件路径、时间范围、大小以及轨道摘要。
+/// `file_handle` 是返回给客户端的公共 `FileHandle` 令牌；`path` 仅内部用于目录过滤与清理。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordFileMetadata {
     pub file_id: String,
@@ -112,6 +113,8 @@ pub struct RecordFileMetadata {
     pub app: String,
     pub stream: String,
     pub path: String,
+    #[serde(default)]
+    pub file_handle: Option<String>,
     pub duration_ms: u64,
     pub size_bytes: u64,
     pub start_time_ms: i64,
