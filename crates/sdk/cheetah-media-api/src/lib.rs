@@ -15,6 +15,7 @@ pub mod command;
 pub mod error;
 pub mod event;
 pub mod ids;
+pub mod media_file_store;
 pub mod model;
 pub mod port;
 
@@ -22,6 +23,10 @@ pub use capability::{MediaCapability, MediaCapabilitySet};
 pub use error::{MediaError, MediaErrorCode};
 pub use event::MediaEvent;
 pub use ids::{AppName, MediaKey, MediaSchema, StreamName, VhostName};
+pub use media_file_store::{
+    sanitize_filename, DeleteBatchResult, FileDownload, FileRange, FileStoreEntry, FileStoreQuery,
+    MediaFileStoreApi,
+};
 pub use port::{
     MediaControlApi, MediaFacade, MediaRequestContext, ProxyApi, PublishSubscribeApi, RecordApi,
     RtpApi, SnapshotApi,

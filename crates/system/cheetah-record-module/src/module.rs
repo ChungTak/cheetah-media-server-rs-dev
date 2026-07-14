@@ -177,7 +177,10 @@ impl Module for RecordModule {
         };
         self.media_services_registration =
             Some(ctx.engine.media_services.register_record_with_capabilities(
-                Arc::new(crate::media_provider::RecordMediaProvider::new(record_api)),
+                Arc::new(crate::media_provider::RecordMediaProvider::new(
+                    record_api,
+                    ctx.engine.media_file_store.clone(),
+                )),
                 record_capabilities,
             ));
         self.state = ModuleState::Initialized;

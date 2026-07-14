@@ -8,7 +8,7 @@ description = "Media-domain ports, models, events, and errors for the Cheetah st
 
 [dependencies]
 async-trait.workspace = true
-bytes.workspace = true
+bytes = { workspace = true, features = ["serde"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -32,6 +32,10 @@ pub mod task;
 #[cfg(feature = "macros")]
 pub use cheetah_sdk_macros::ConfigSchema;
 
+pub use cheetah_media_api::media_file_store::{
+    sanitize_filename, DeleteBatchResult, FileDownload, FileRange, FileStoreEntry, FileStoreQuery,
+    MediaFileStoreApi,
+};
 pub use cheetah_runtime_api::{
     AsyncTcpListener, AsyncTcpStream, AsyncTimer, AsyncUdpSocket, CancellationToken, JoinHandle,
     OneShotReceiver, OneShotRecvError, OneShotSendError, OneShotSender, Runtime, RuntimeApi,
