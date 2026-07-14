@@ -129,6 +129,7 @@ impl StreamMediaProvider {
             vhost: Some(key.vhost.0),
             app: Some(key.app.0),
             stream: Some(key.stream.0),
+            page_size: SessionQuery::MAX_PAGE_SIZE,
             ..SessionQuery::default()
         };
         query.clamp_page_size();
@@ -140,8 +141,8 @@ impl StreamMediaProvider {
         let mut publishers = 0u64;
         for s in page.items {
             match s.kind {
-                SessionKind::Publisher | SessionKind::RtpSender => publishers += 1,
-                SessionKind::Player | SessionKind::Proxy | SessionKind::RtpReceiver => readers += 1,
+                SessionKind::Publisher | SessionKind::RtpReceiver => publishers += 1,
+                SessionKind::Player | SessionKind::Proxy | SessionKind::RtpSender => readers += 1,
             }
             info.bytes_in += s.bytes_in;
             info.bytes_out += s.bytes_out;
@@ -189,6 +190,11 @@ impl MediaControlApi for StreamMediaProvider {
             .await
             .map_err(Self::map_sdk_error)?;
         let now = now_ms();
+        if query.schema.is_some() {
+            return Err(MediaError::invalid_argument(
+                "schema filter is not supported by the stream provider".to_string(),
+            ));
+        }
         let mut items: Vec<StreamInfo> = Vec::with_capacity(snapshots.len());
         for s in snapshots {
             let key = Self::stream_key_to_media_key(&s.key);
@@ -211,11 +217,6 @@ impl MediaControlApi for StreamMediaProvider {
                 if s.publisher_active != online {
                     continue;
                 }
-            }
-            if let Some(ref schema) = query.schema {
-                return Err(MediaError::invalid_argument(format!(
-                    "schema filter {schema} is not supported by the stream provider"
-                )));
             }
             let info = self.enrich_stream_info(ctx, &s, now).await?;
             items.push(info);
