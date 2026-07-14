@@ -48,6 +48,11 @@ pub struct RecordModuleConfig {
     /// 落盘元数据刷新间隔，单位为毫秒。
     #[serde(default = "default_metadata_flush_interval_ms")]
     pub metadata_flush_interval_ms: u32,
+    /// Interval in milliseconds between `RecordProgress` events.
+    ///
+    /// 录制进度事件发送间隔，单位为毫秒。
+    #[serde(default = "default_progress_interval_ms")]
+    pub progress_interval_ms: u32,
     /// Whether to remove stale files under `root_path` on module start.
     ///
     /// 是否在模块启动时清理 `root_path` 下的陈旧文件。
@@ -78,6 +83,10 @@ fn default_queue_capacity() -> usize {
 
 fn default_metadata_flush_interval_ms() -> u32 {
     1000
+}
+
+fn default_progress_interval_ms() -> u32 {
+    5000
 }
 
 /// Format-specific sub-configurations.
@@ -228,6 +237,7 @@ impl Default for RecordModuleConfig {
             max_tasks: default_max_tasks(),
             queue_capacity: default_queue_capacity(),
             metadata_flush_interval_ms: default_metadata_flush_interval_ms(),
+            progress_interval_ms: default_progress_interval_ms(),
             cleanup_on_start: false,
             formats: RecordFormatsConfig::default(),
         }
@@ -270,6 +280,9 @@ impl RecordModuleConfig {
         }
         if self.root_path.is_empty() {
             return Err("root_path must not be empty".into());
+        }
+        if self.progress_interval_ms > 0 && self.progress_interval_ms < 100 {
+            return Err("progress_interval_ms must be 0 or >= 100".into());
         }
         Ok(())
     }

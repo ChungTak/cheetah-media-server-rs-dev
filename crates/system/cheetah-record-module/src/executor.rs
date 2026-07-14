@@ -19,6 +19,9 @@ use cheetah_codec::record::{
     RecordWriteEvent,
 };
 use cheetah_codec::TrackInfo;
+use cheetah_media_api::event::{
+    EventHeader, MediaEvent, RecordCompleted, RecordProgress, RecordStarted,
+};
 use cheetah_media_api::{FileStoreEntry, MediaKey};
 use cheetah_sdk::{
     BootstrapPolicy, CancellationToken, EngineContext, JoinHandle, StreamKey, SubscriberOptions,
@@ -189,6 +192,13 @@ async fn run_record_task(
     // id, and the registry metadata. Calling `wall_clock_ms()` twice when
     // building the path is unsafe across a midnight tick.
     let start_ms = wall_clock_ms();
+    let media_key = build_media_key(&task.template);
+
+    let event_ctx = EventContext {
+        task_id: task_id.clone(),
+        media_key: media_key.clone(),
+        sender: engine.media_event_sender.clone(),
+    };
 
     // Build the output file path now so that an early failure surfaces
     // before we open a subscriber.
@@ -200,6 +210,8 @@ async fn run_record_task(
             return;
         }
     }
+
+    publish_record_started(&event_ctx, format);
 
     // Wait for the source stream to appear (publisher may not be ready yet).
     let snapshot = match wait_for_stream(&engine, &stream_key, &cancel).await {
@@ -244,6 +256,9 @@ async fn run_record_task(
     let mut current_tracks = snapshot.tracks.clone();
     let mut last_track_check_frames = 0usize;
     let mut intermediate_events: Vec<RecordWriteEvent> = Vec::new();
+    let mut staged_bytes: u64 = 0;
+    let mut last_progress_at = start_ms;
+    let progress_interval_ms = config.progress_interval_ms as i64;
 
     loop {
         let cancel_fut = cancel.cancelled().fuse();
@@ -276,10 +291,20 @@ async fn run_record_task(
                     Ok(events) => {
                         if !events.is_empty() {
                             for ev in events {
+                                if let RecordWriteEvent::Bytes(ref buf) = ev {
+                                    staged_bytes += buf.len() as u64;
+                                }
                                 stage_event(ev, &mut intermediate_events, &task_id);
                             }
                         }
                         frames_written += 1;
+                        let now = wall_clock_ms();
+                        if progress_interval_ms > 0
+                            && now.saturating_sub(last_progress_at) >= progress_interval_ms
+                        {
+                            publish_record_progress(&event_ctx, start_ms, staged_bytes);
+                            last_progress_at = now;
+                        }
                     }
                     Err(err) => {
                         warn!(%task_id, %err, "record: writer push_frame failed");
@@ -443,6 +468,7 @@ async fn run_record_task(
     if let Err(err) = registry.insert_file(file_meta) {
         warn!(%task_id, %err, "record: insert_file failed");
     }
+    publish_record_completed(&event_ctx, start_ms, end_ms, bytes_written, &handle, format);
     info!(%task_id, ?path, %bytes_written, %frames_written, "record: task finished");
     mark_stopped(&registry, &task_id);
 }
@@ -667,6 +693,76 @@ fn mark_failed(registry: &RecordRegistry, task_id: &str) {
 /// 在注册表中将任务标记为 `Stopped`，忽略错误。
 fn mark_stopped(registry: &RecordRegistry, task_id: &str) {
     let _ = registry.update_task_state(task_id, RecordTaskState::Stopped);
+}
+
+/// Context used when publishing media events for a running task.
+struct EventContext {
+    task_id: String,
+    media_key: Option<MediaKey>,
+    sender: Arc<dyn cheetah_media_api::event::MediaEventSender>,
+}
+
+fn build_media_key(template: &crate::task::RecordTaskTemplate) -> Option<MediaKey> {
+    MediaKey::new(&template.vhost, &template.app, &template.stream, None)
+        .or_else(|_| MediaKey::with_default_vhost(&template.app, &template.stream, None))
+        .ok()
+}
+
+fn publish_record_started(ctx: &EventContext, format: RecordFormat) {
+    let header = event_header(ctx, "record");
+    let event = MediaEvent::RecordStarted(RecordStarted {
+        header,
+        task_id: cheetah_media_api::ids::RecordTaskId(ctx.task_id.clone()),
+        format: format.extension().to_string(),
+    });
+    let _ = ctx.sender.send(event);
+}
+
+fn publish_record_progress(ctx: &EventContext, start_ms: i64, size_bytes: u64) {
+    let now = wall_clock_ms();
+    let header = event_header(ctx, "record");
+    let event = MediaEvent::RecordProgress(RecordProgress {
+        header,
+        task_id: cheetah_media_api::ids::RecordTaskId(ctx.task_id.clone()),
+        duration_ms: now.saturating_sub(start_ms) as u64,
+        size_bytes,
+        file_path: None,
+    });
+    let _ = ctx.sender.send(event);
+}
+
+fn publish_record_completed(
+    ctx: &EventContext,
+    start_ms: i64,
+    end_ms: i64,
+    file_size: u64,
+    handle: &cheetah_media_api::ids::FileHandle,
+    format: RecordFormat,
+) {
+    let header = event_header(ctx, "record");
+    let event = MediaEvent::RecordCompleted(RecordCompleted {
+        header,
+        task_id: cheetah_media_api::ids::RecordTaskId(ctx.task_id.clone()),
+        format: format.extension().to_string(),
+        file_path: handle.0.clone(),
+        file_size,
+        time_len_ms: end_ms.saturating_sub(start_ms) as u64,
+        folder: String::new(),
+        url: None,
+    });
+    let _ = ctx.sender.send(event);
+}
+
+fn event_header(ctx: &EventContext, source: &str) -> EventHeader {
+    let now = wall_clock_ms();
+    EventHeader {
+        event_id: format!("{}-{}-{}-now", source, ctx.task_id, now),
+        occurred_at: now,
+        sequence: None,
+        media_key: ctx.media_key.clone(),
+        source: source.to_string(),
+        correlation_id: None,
+    }
 }
 
 #[cfg(test)]

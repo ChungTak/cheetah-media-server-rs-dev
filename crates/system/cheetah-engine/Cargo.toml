@@ -16,6 +16,7 @@ cheetah-codec = { path = "../../foundation/cheetah-codec" }
 cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
 cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
 cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 
