@@ -116,7 +116,10 @@ impl Module for ProxyModule {
 
         self.registry = Arc::new(ProxyRegistry::new(self.config.max_total_proxies));
 
-        let provider = Arc::new(ProxyMediaProvider::new(&ctx, &self.config));
+        let provider = Arc::new(ProxyMediaProvider::new(
+            &ctx,
+            self.registry.as_ref().clone(),
+        ));
         self.registration = Some(ctx.media_services.register_proxy(provider));
         self.state = ModuleState::Running;
         Ok(())

@@ -29,10 +29,10 @@ pub struct ProxyMediaProvider {
 }
 
 impl ProxyMediaProvider {
-    /// Create a provider from the engine context and config.
-    pub fn new(ctx: &EngineContext, config: &crate::config::ProxyModuleConfig) -> Self {
+    /// Create a provider from the engine context and a shared registry.
+    pub fn new(ctx: &EngineContext, registry: ProxyRegistry) -> Self {
         Self {
-            registry: ProxyRegistry::new(config.max_total_proxies),
+            registry,
             connector_api: ctx.connector_api.clone(),
             media_event_sender: Some(ctx.media_event_sender.clone()),
         }
@@ -227,8 +227,11 @@ fn generate_id() -> String {
     let mut buf = [0u8; 8];
     if getrandom::getrandom(&mut buf).is_err() {
         // Fall back to a timestamp + counter based id if getrandom fails.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let now = now_ms() as u64;
-        return format!("{:x}{:x}", now, buf[0]);
+        let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
+        return format!("{:x}{:x}", now, seq);
     }
     buf.iter().map(|b| format!("{:02x}", b)).collect()
 }
