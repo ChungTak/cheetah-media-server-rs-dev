@@ -10,19 +10,21 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use cheetah_media_api::command::{
-    RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest,
-    UpdateRtpRequest,
-};
-use cheetah_media_api::error::{MediaError, Result};
-use cheetah_media_api::ids::{MediaKey, RtpSessionId, StreamKeyBridge};
-use cheetah_media_api::model::{Page, RtpSession, RtpSessionKind, RtpSessionState, RtpTcpMode};
-use cheetah_media_api::port::{MediaRequestContext, RtpApi};
 use cheetah_rtp_core::{
     RtpClientSpec, RtpConnectionType, RtpPayloadMode, RtpServerSpec, RtpTrackFilter,
     RtpTransportMode,
 };
 use cheetah_rtp_driver_tokio::{RtpDriverCommand, RtpDriverHandle};
+use cheetah_sdk::media_api::command::{
+    RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest,
+    UpdateRtpRequest,
+};
+use cheetah_sdk::media_api::error::{MediaError, Result};
+use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId, StreamKeyBridge};
+use cheetah_sdk::media_api::model::{
+    Page, RtpSession, RtpSessionKind, RtpSessionState, RtpTcpMode,
+};
+use cheetah_sdk::media_api::port::{MediaRequestContext, RtpApi};
 use parking_lot::Mutex;
 
 /// Media-domain `RtpApi` provider backed by the module's Tokio driver.
@@ -30,16 +32,21 @@ use parking_lot::Mutex;
 /// 由模块 Tokio 驱动支撑的 `RtpApi` provider。
 pub struct RtpMediaProvider {
     driver_handle: Arc<Mutex<Option<Arc<RtpDriverHandle>>>>,
+    sessions: Arc<Mutex<HashMap<RtpSessionId, RtpSession>>>,
     listen_port: u16,
 }
 
 impl RtpMediaProvider {
+    /// Maximum number of tracked RTP sessions before rejecting new ones.
+    const MAX_SESSIONS: usize = 10_000;
+
     /// Create a provider bound to the shared driver handle.
     ///
     /// 创建绑定到共享驱动句柄的 provider。
     pub fn new(driver_handle: Arc<Mutex<Option<Arc<RtpDriverHandle>>>>, listen_port: u16) -> Self {
         Self {
             driver_handle,
+            sessions: Arc::new(Mutex::new(HashMap::new())),
             listen_port,
         }
     }
@@ -58,9 +65,9 @@ impl RtpMediaProvider {
             .as_millis() as i64
     }
 
-    fn session_key_from_media_key(key: &MediaKey) -> String {
+    fn session_key_from_media_key(key: &MediaKey, kind: &str) -> String {
         let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
-        format!("{namespace}/{path}")
+        format!("{kind}/{namespace}/{path}")
     }
 
     fn parse_payload_mode(hint: &Option<String>, payload_type: Option<u8>) -> RtpPayloadMode {
@@ -129,6 +136,19 @@ impl RtpMediaProvider {
             created_at: self.now_ms(),
         }
     }
+
+    fn insert_session(&self, session: RtpSession) -> Result<()> {
+        let mut sessions = self.sessions.lock();
+        if sessions.len() >= Self::MAX_SESSIONS {
+            return Err(MediaError::unavailable("rtp session limit reached"));
+        }
+        sessions.insert(session.session_id.clone(), session);
+        Ok(())
+    }
+
+    fn remove_session(&self, id: &RtpSessionId) {
+        self.sessions.lock().remove(id);
+    }
 }
 
 #[async_trait]
@@ -139,23 +159,10 @@ impl RtpApi for RtpMediaProvider {
         request: RtpReceiverRequest,
     ) -> Result<RtpSession> {
         let driver = self.driver()?;
-        let session_key = Self::session_key_from_media_key(&request.media_key);
+        let session_key = Self::session_key_from_media_key(&request.media_key, "recv");
         let session_id = RtpSessionId(session_key.clone());
 
-        let spec = RtpServerSpec {
-            session_key,
-            ssrc: request.ssrc,
-            payload_mode: Self::parse_payload_mode(&request.codec_hint, request.payload_type),
-            transport_mode: RtpTransportMode::RecvOnly,
-            connection_type: Self::receiver_connection_type(request.tcp_mode),
-            track_filter: RtpTrackFilter::All,
-        };
-
-        driver
-            .send_command(RtpDriverCommand::CreateServer(spec))
-            .await;
-
-        Ok(self.build_session(
+        let session = self.build_session(
             session_id,
             RtpSessionKind::Receiver,
             request.media_key,
@@ -165,7 +172,22 @@ impl RtpApi for RtpMediaProvider {
             request.tcp_mode,
             request.reuse_port,
             RtpSessionState::Listening,
-        ))
+        );
+        self.insert_session(session.clone())?;
+
+        let spec = RtpServerSpec {
+            session_key,
+            ssrc: request.ssrc,
+            payload_mode: Self::parse_payload_mode(&request.codec_hint, request.payload_type),
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: Self::receiver_connection_type(request.tcp_mode),
+            track_filter: RtpTrackFilter::All,
+        };
+        driver
+            .send_command(RtpDriverCommand::CreateServer(spec))
+            .await;
+
+        Ok(session)
     }
 
     async fn connect_rtp_receiver(
@@ -182,12 +204,25 @@ impl RtpApi for RtpMediaProvider {
         request: RtpSenderRequest,
     ) -> Result<RtpSession> {
         let driver = self.driver()?;
-        let session_key = Self::session_key_from_media_key(&request.media_key);
+        let session_key = Self::session_key_from_media_key(&request.media_key, "send");
         let session_id = RtpSessionId(session_key.clone());
 
         let destination: SocketAddr = request.destination_endpoint.parse().map_err(|e| {
             MediaError::invalid_argument(format!("invalid destination endpoint: {e}"))
         })?;
+
+        let session = self.build_session(
+            session_id,
+            RtpSessionKind::Sender,
+            request.media_key,
+            Some(request.destination_endpoint),
+            request.ssrc,
+            request.payload_type,
+            None,
+            false,
+            RtpSessionState::Created,
+        );
+        self.insert_session(session.clone())?;
 
         let ssrc = request.ssrc.unwrap_or(0);
         let payload_mode = Self::parse_payload_mode(&request.codec_hint, request.payload_type);
@@ -212,17 +247,7 @@ impl RtpApi for RtpMediaProvider {
             .send_command(RtpDriverCommand::CreateClient(spec))
             .await;
 
-        Ok(self.build_session(
-            session_id,
-            RtpSessionKind::Sender,
-            request.media_key,
-            Some(request.destination_endpoint),
-            request.ssrc,
-            request.payload_type,
-            None,
-            false,
-            RtpSessionState::Created,
-        ))
+        Ok(session)
     }
 
     async fn stop_rtp_session(&self, _ctx: &MediaRequestContext, id: &RtpSessionId) -> Result<()> {
@@ -230,6 +255,7 @@ impl RtpApi for RtpMediaProvider {
         driver
             .send_command(RtpDriverCommand::StopSession(id.0.clone()))
             .await;
+        self.remove_session(id);
         Ok(())
     }
 
@@ -240,11 +266,37 @@ impl RtpApi for RtpMediaProvider {
     ) -> Result<Page<RtpSession>> {
         let mut query = query;
         query.clamp_page_size();
+        if query.page == 0 {
+            query.page = 1;
+        }
+
+        let sessions = self.sessions.lock();
+        let mut items: Vec<RtpSession> = sessions.values().cloned().collect();
+        drop(sessions);
+
+        if let Some(kind) = query.kind {
+            items.retain(|s| s.kind == kind);
+        }
+        if let Some(state) = query.state {
+            items.retain(|s| s.state == state);
+        }
+
+        let total = items.len() as u64;
+        let start = (query.page - 1).saturating_mul(query.page_size) as usize;
+        let page_items = if start >= items.len() {
+            Vec::new()
+        } else {
+            let end = start
+                .saturating_add(query.page_size as usize)
+                .min(items.len());
+            items[start..end].to_vec()
+        };
+
         Ok(Page {
-            items: Vec::new(),
+            items: page_items,
             page: query.page,
             page_size: query.page_size,
-            total: 0,
+            total,
             next_cursor: None,
         })
     }
@@ -252,9 +304,32 @@ impl RtpApi for RtpMediaProvider {
     async fn update_rtp_session(
         &self,
         _ctx: &MediaRequestContext,
-        _request: UpdateRtpRequest,
+        request: UpdateRtpRequest,
     ) -> Result<RtpSession> {
-        Err(MediaError::unsupported("RTP session update"))
+        if request.ssrc.is_some() || request.payload_type.is_some() || request.pause_check.is_some()
+        {
+            return Err(MediaError::unsupported("rtp session update"));
+        }
+
+        let sessions = self.sessions.lock();
+        let session = sessions
+            .get(&request.session_id)
+            .cloned()
+            .ok_or_else(|| MediaError::not_found("rtp session"))?;
+
+        Ok(session)
+    }
+
+    async fn get_rtp_session(
+        &self,
+        _ctx: &MediaRequestContext,
+        id: &RtpSessionId,
+    ) -> Result<RtpSession> {
+        let sessions = self.sessions.lock();
+        sessions
+            .get(id)
+            .cloned()
+            .ok_or_else(|| MediaError::not_found("rtp session"))
     }
 }
 

@@ -363,6 +363,14 @@ impl RtpApi for EngineMediaFacade {
     ) -> cheetah_media_api::error::Result<RtpSession> {
         self.rtp.update_rtp_session(ctx, request).await
     }
+
+    async fn get_rtp_session(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &RtpSessionId,
+    ) -> cheetah_media_api::error::Result<RtpSession> {
+        self.rtp.get_rtp_session(ctx, id).await
+    }
 }
 
 #[async_trait]

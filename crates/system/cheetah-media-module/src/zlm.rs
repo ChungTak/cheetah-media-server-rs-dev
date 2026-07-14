@@ -3,12 +3,14 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::command::{
-    DeleteRecordRequest, DeleteSnapshotRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand,
-    RecordTaskQuery, SessionQuery, SnapshotRequest, StartRecordRequest, StopRecordRequest,
+    DeleteRecordRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
+    SessionQuery, StartRecordRequest, StopRecordRequest,
 };
 use cheetah_media_api::ids::{MediaKey, RecordFileId, SessionId};
 use cheetah_media_api::model::{CloseReason, RecordTaskState};
-use cheetah_media_api::port::{MediaControlApi, MediaRequestContext, RecordApi, SnapshotApi};
+use cheetah_media_api::port::{
+    MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
+};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -17,6 +19,9 @@ use cheetah_sdk::{
 };
 
 use crate::error::{zlm_error_response, AdapterError};
+
+mod rtp;
+mod snapshot;
 
 const MODULE_ID: &str = "media-http-zlm";
 
@@ -149,6 +154,27 @@ impl Module for ZlmMediaModule {
                 method: HttpMethod::Post,
                 path: "/api/deleteRecordDirectory".to_string(),
             },
+            // RTP endpoints
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/openRtpServer".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/closeRtpServer".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/startSendRtp".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Post,
+                path: "/api/stopSendRtp".to_string(),
+            },
+            HttpRouteDescriptor {
+                method: HttpMethod::Get,
+                path: "/api/getRtpInfo".to_string(),
+            },
             HttpRouteDescriptor {
                 method: HttpMethod::Post,
                 path: "/api/setRecordSpeed".to_string(),
@@ -187,7 +213,7 @@ impl Module for ZlmMediaModule {
     }
 }
 
-struct ZlmMediaHttpService {
+pub(crate) struct ZlmMediaHttpService {
     ctx: EngineContext,
 }
 
@@ -200,6 +226,14 @@ impl ZlmMediaHttpService {
         })
     }
 
+    pub(crate) fn rtp(&self) -> Result<Arc<dyn RtpApi>, AdapterError> {
+        self.ctx.media_services.rtp().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "rtp not available",
+            ))
+        })
+    }
+
     fn record(&self) -> Result<Arc<dyn RecordApi>, AdapterError> {
         self.ctx.media_services.record().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
@@ -208,7 +242,7 @@ impl ZlmMediaHttpService {
         })
     }
 
-    fn snapshot(&self) -> Result<Arc<dyn SnapshotApi>, AdapterError> {
+    pub(crate) fn snapshot(&self) -> Result<Arc<dyn SnapshotApi>, AdapterError> {
         self.ctx.media_services.snapshot().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "snapshot not available",
@@ -216,7 +250,7 @@ impl ZlmMediaHttpService {
         })
     }
 
-    fn request_context(&self, _req: &HttpRequest) -> MediaRequestContext {
+    pub(crate) fn request_context(&self, _req: &HttpRequest) -> MediaRequestContext {
         MediaRequestContext {
             request_id: cheetah_media_api::ids::RequestId("".to_string()),
             correlation_id: None,
@@ -227,7 +261,10 @@ impl ZlmMediaHttpService {
         }
     }
 
-    fn extract_params(&self, req: &HttpRequest) -> Result<serde_json::Value, AdapterError> {
+    pub(crate) fn extract_params(
+        &self,
+        req: &HttpRequest,
+    ) -> Result<serde_json::Value, AdapterError> {
         match req.method {
             HttpMethod::Get => Ok(crate::util::query_to_json(req.query.as_deref())),
             _ if req.body.is_empty() => Ok(crate::util::query_to_json(req.query.as_deref())),
@@ -235,7 +272,10 @@ impl ZlmMediaHttpService {
         }
     }
 
-    fn parse_media_key(&self, params: &serde_json::Value) -> Result<MediaKey, AdapterError> {
+    pub(crate) fn parse_media_key(
+        &self,
+        params: &serde_json::Value,
+    ) -> Result<MediaKey, AdapterError> {
         let vhost = params["vhost"].as_str().unwrap_or("__defaultVhost__");
         let app = params["app"]
             .as_str()
@@ -559,48 +599,6 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn get_snap(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let snapshot_api = self.snapshot()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let timeout_ms = parse_zlm_timeout_ms(&params);
-        let format = params["format"].as_str().unwrap_or("jpg").to_string();
-        let quality = parse_json_u64(&params["quality"])
-            .or_else(|| parse_json_u64(&params["scale"]))
-            .map(|v| v.min(100) as u8);
-        let request = SnapshotRequest {
-            media_key: key,
-            timeout_ms,
-            format,
-            quality,
-            storage_policy: Default::default(),
-            capture_policy: Default::default(),
-        };
-        let handle = snapshot_api.take_snapshot(&ctx, request).await?;
-        Ok(zlm_response(0, "success", handle))
-    }
-
-    async fn delete_snap_directory(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let snapshot_api = self.snapshot()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let request = DeleteSnapshotRequest {
-            media_key: key,
-            directory: params["directory"].as_str().map(String::from),
-            retain_count: params["retain_count"].as_u64().map(|v| v as u32),
-        };
-        snapshot_api
-            .delete_snapshot_directory(&ctx, request)
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
     async fn download_file(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         Err(AdapterError::Media(
             cheetah_media_api::error::MediaError::unsupported_capability("file download"),
@@ -625,6 +623,11 @@ impl ModuleHttpService for ZlmMediaHttpService {
             (HttpMethod::Post, "/api/deleteRecordDirectory") => {
                 self.delete_record_directory(req).await
             }
+            (HttpMethod::Post, "/api/openRtpServer") => self.open_rtp_server(req).await,
+            (HttpMethod::Post, "/api/closeRtpServer") => self.close_rtp_server(req).await,
+            (HttpMethod::Post, "/api/startSendRtp") => self.start_send_rtp(req).await,
+            (HttpMethod::Post, "/api/stopSendRtp") => self.stop_send_rtp(req).await,
+            (HttpMethod::Get, "/api/getRtpInfo") => self.get_rtp_info(req).await,
             (HttpMethod::Post, "/api/setRecordSpeed") => self.set_record_speed(req).await,
             (HttpMethod::Post, "/api/seekRecordStamp") => self.seek_record_stamp(req).await,
             (HttpMethod::Post, "/api/controlRecordPlay") => self.control_record_play(req).await,
@@ -743,14 +746,7 @@ fn parse_zlm_playback_command(
     }
 }
 
-fn parse_zlm_timeout_ms(params: &serde_json::Value) -> u64 {
-    parse_json_u64(&params["timeout_sec"])
-        .or_else(|| parse_json_u64(&params["timeout"]))
-        .map(|s| s * 1000)
-        .unwrap_or(10_000)
-}
-
-fn zlm_response<T: serde::Serialize>(code: i32, msg: &str, data: T) -> HttpResponse {
+pub(crate) fn zlm_response<T: serde::Serialize>(code: i32, msg: &str, data: T) -> HttpResponse {
     HttpResponse {
         status: 200,
         headers: vec![HttpHeader {

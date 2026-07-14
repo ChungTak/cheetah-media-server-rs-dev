@@ -66,3 +66,8 @@ pub use stream::{
 pub use task::{
     TaskKind, TaskOutcome, TaskSnapshot, TaskState, TaskSystemApi, TaskTerminalOutcome,
 };
+
+/// Re-export of the media-domain API crate for use by feature modules.
+///
+/// 为 feature module 提供的媒体领域 API crate 再导出。
+pub use cheetah_media_api as media_api;
