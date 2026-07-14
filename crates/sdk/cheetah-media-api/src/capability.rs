@@ -16,6 +16,7 @@ pub enum MediaCapability {
     Rtp,
     Webhook,
     Playback,
+    UrlResolve,
 }
 
 /// Runtime state of a capability advertised by a provider.

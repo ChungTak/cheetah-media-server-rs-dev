@@ -244,6 +244,36 @@ pub trait RtpApi: Send + Sync {
     ) -> Result<RtpSession>;
 }
 
+/// Template used by a protocol module to register how URLs for a given schema
+/// should be built.
+///
+/// 协议模块用于注册指定 schema URL 生成方式的模板。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UrlResolverTemplate {
+    pub protocol: Option<String>,
+    pub host: Option<String>,
+    pub port: Option<u16>,
+    pub path_template: String,
+    pub requires_token: bool,
+}
+
+/// Resolves a `MediaKey` into playable URLs for one or more output schemas.
+///
+/// 将 `MediaKey` 解析为一个或多个输出 schema 的可播放 URL。
+#[async_trait]
+pub trait MediaUrlResolverApi: Send + Sync {
+    async fn resolve_urls(
+        &self,
+        ctx: &MediaRequestContext,
+        key: &MediaKey,
+        schemas: &[MediaSchema],
+    ) -> Result<Vec<MediaUrl>>;
+
+    fn register_template(&self, schema: MediaSchema, template: UrlResolverTemplate) -> Result<()>;
+
+    fn supports_schema(&self, schema: MediaSchema) -> bool;
+}
+
 /// Combined facade over all media capabilities.
 ///
 /// 所有媒体能力的组合 facade。

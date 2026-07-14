@@ -18,7 +18,7 @@ use crate::ffmpeg::EngineFfmpegService;
 use crate::health::HealthService;
 use crate::media_provider::{
     EngineMediaDataPlane, EngineMediaFacade, EngineMediaFileStore, EngineMediaSessionDirectory,
-    MediaEventDispatcher, StreamMediaProvider,
+    EngineMediaUrlResolver, MediaEventDispatcher, StreamMediaProvider,
 };
 use crate::metrics::MetricsRegistry;
 use crate::module_manager::ModuleManager;
@@ -150,6 +150,9 @@ impl EngineBuilder {
         let database = Arc::new(InMemoryDatabase::default());
         let proxy_manager = Arc::new(LocalProxyManager::default());
         let cluster = Arc::new(LocalCluster::default());
+        let media_url_resolver = Arc::new(EngineMediaUrlResolver::from_config(
+            &self.config_provider.global(),
+        ));
         let ffmpeg_binary_path = self.ffmpeg_binary_path.clone().or_else(|| {
             self.config_provider
                 .global()
@@ -158,7 +161,12 @@ impl EngineBuilder {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string())
         });
-        let ffmpeg = Arc::new(EngineFfmpegService::with_binary_path(ffmpeg_binary_path));
+        let ffmpeg = Arc::new(EngineFfmpegService::with_binary_path_and_url_resolver(
+            ffmpeg_binary_path,
+            Some(
+                media_url_resolver.clone() as Arc<dyn cheetah_media_api::port::MediaUrlResolverApi>
+            ),
+        ));
         let core_adapters = Arc::new(LocalCoreAdapters::new(stream_manager.clone()));
 
         if let Some(registry) = &self.config_schema_registry {
@@ -185,6 +193,9 @@ impl EngineBuilder {
             stream_manager.clone(),
             media_data_plane.clone(),
             session_directory.clone(),
+            Some(
+                media_url_resolver.clone() as Arc<dyn cheetah_media_api::port::MediaUrlResolverApi>
+            ),
         );
 
         let media_services = MediaServices::unavailable();
@@ -195,6 +206,9 @@ impl EngineBuilder {
             Arc::new(stream_provider) as Arc<dyn cheetah_media_api::port::PublishSubscribeApi>
         );
         let media_file_store: Arc<dyn MediaFileStoreApi> = Arc::new(EngineMediaFileStore::new());
+        media_services.register_url_resolver(
+            media_url_resolver.clone() as Arc<dyn cheetah_media_api::port::MediaUrlResolverApi>
+        );
         let media_event_dispatcher = Arc::new(MediaEventDispatcher::new(event_bus.clone()));
         let media_facade = Arc::new(EngineMediaFacade::new(
             media_services.clone(),
@@ -223,6 +237,7 @@ impl EngineBuilder {
             session_directory,
             media_data_plane,
             media_file_store,
+            media_url_resolver: media_url_resolver.clone(),
             media_event_dispatcher: media_event_dispatcher.clone(),
             connector_api: RwLock::new(None),
             root_cancel: RwLock::new(CancellationToken::new()),
@@ -262,6 +277,7 @@ pub struct Engine {
     session_directory: Arc<dyn MediaSessionDirectoryApi>,
     media_data_plane: Arc<dyn MediaDataPlaneApi>,
     media_file_store: Arc<dyn MediaFileStoreApi>,
+    media_url_resolver: Arc<EngineMediaUrlResolver>,
     media_event_dispatcher: Arc<MediaEventDispatcher>,
     connector_api: RwLock<Option<Arc<dyn ConnectorApi>>>,
     root_cancel: RwLock<CancellationToken>,
@@ -297,6 +313,7 @@ impl Engine {
             media_data_plane: self.media_data_plane.clone(),
             media_file_store: self.media_file_store.clone(),
             media_event_sender: self.media_event_dispatcher.clone() as Arc<dyn MediaEventSender>,
+            media_url_resolver_api: Some(self.media_url_resolver.clone()),
             connector_api: self.connector_api.read().clone(),
         }
     }
@@ -462,6 +479,10 @@ impl Engine {
 
     pub fn ffmpeg_api(&self) -> Arc<dyn FfmpegApi> {
         self.ffmpeg.clone()
+    }
+
+    pub fn media_url_resolver_api(&self) -> Arc<dyn cheetah_media_api::port::MediaUrlResolverApi> {
+        self.media_url_resolver.clone()
     }
 
     pub fn media_facade(&self) -> Arc<crate::media_provider::EngineMediaFacade> {

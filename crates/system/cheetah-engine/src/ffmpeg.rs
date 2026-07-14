@@ -3,9 +3,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use cheetah_media_api::ids::MediaSchema;
 use cheetah_media_api::model::{
     FfmpegJobSpec, FfmpegResourceLimits, OutputPolicy, TranscodePolicy,
 };
+use cheetah_media_api::port::{MediaRequestContext, MediaUrlResolverApi};
 use cheetah_sdk::{CancellationToken, FfmpegApi, FfmpegJob, FfmpegJobOutcome, SdkError};
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
@@ -21,6 +23,7 @@ const ALLOWED_SOURCE_SCHEMES: &[&str] = &["http", "https", "rtmp", "rtmps", "rts
 pub struct EngineFfmpegService {
     jobs: Arc<DashMap<String, FfmpegProcess>>,
     binary_path: Option<String>,
+    url_resolver: Option<Arc<dyn MediaUrlResolverApi>>,
 }
 
 impl Default for EngineFfmpegService {
@@ -28,6 +31,7 @@ impl Default for EngineFfmpegService {
         Self {
             jobs: Arc::new(DashMap::new()),
             binary_path: None,
+            url_resolver: None,
         }
     }
 }
@@ -44,6 +48,18 @@ impl EngineFfmpegService {
         Self {
             jobs: Arc::new(DashMap::new()),
             binary_path,
+            url_resolver: None,
+        }
+    }
+
+    pub fn with_binary_path_and_url_resolver(
+        binary_path: Option<String>,
+        url_resolver: Option<Arc<dyn MediaUrlResolverApi>>,
+    ) -> Self {
+        Self {
+            jobs: Arc::new(DashMap::new()),
+            binary_path,
+            url_resolver,
         }
     }
 
@@ -54,6 +70,35 @@ impl EngineFfmpegService {
         Err(SdkError::Unavailable(
             "ffmpeg binary path not configured".to_string(),
         ))
+    }
+
+    async fn resolve_output_url(&self, spec: &FfmpegJobSpec) -> Result<String, SdkError> {
+        let schema = output_policy_to_schema(&spec.output_policy).ok_or_else(|| {
+            SdkError::InvalidArgument(format!(
+                "unsupported output policy {:?}",
+                spec.output_policy
+            ))
+        })?;
+        let resolver = self.url_resolver.as_ref().ok_or_else(|| {
+            SdkError::Unavailable("MediaUrlResolverApi not configured".to_string())
+        })?;
+        let urls = resolver
+            .resolve_urls(
+                &MediaRequestContext::default(),
+                &spec.destination,
+                &[schema],
+            )
+            .await
+            .map_err(|e| SdkError::Unavailable(format!("failed to resolve output URL: {e}")))?;
+        let url = urls
+            .into_iter()
+            .find(|u| u.available)
+            .map(|u| u.url)
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| {
+                SdkError::Unavailable("no available URL for output policy".to_string())
+            })?;
+        Ok(url)
     }
 
     fn validate_spec(spec: &FfmpegJobSpec) -> Result<(), SdkError> {
@@ -90,16 +135,23 @@ impl EngineFfmpegService {
                 "at least one of audio or video must be enabled".to_string(),
             ));
         }
-        if spec.output_policy != OutputPolicy::None {
-            return Err(SdkError::InvalidArgument(
-                "non-null output_policy requires MediaUrlResolverApi (S4-T6)".to_string(),
-            ));
-        }
         Ok(())
     }
 
     fn build_args(spec: &FfmpegJobSpec) -> Vec<String> {
         let mut args = vec!["-y".to_string()];
+
+        if let Some(scheme) = spec.source_url.split("://").next() {
+            let scheme = scheme.to_lowercase();
+            if let Some(whitelist) = input_protocol_whitelist(&scheme) {
+                args.push("-protocol_whitelist".to_string());
+                args.push(whitelist);
+            }
+            if matches!(scheme.as_str(), "http" | "https") {
+                args.push("-max_redirects".to_string());
+                args.push("0".to_string());
+            }
+        }
 
         args.push("-i".to_string());
         args.push(spec.source_url.clone());
@@ -145,6 +197,49 @@ impl EngineFfmpegService {
 
         args
     }
+
+    async fn append_output_arg(
+        &self,
+        args: &mut Vec<String>,
+        spec: &FfmpegJobSpec,
+    ) -> Result<(), SdkError> {
+        if spec.output_policy == OutputPolicy::None {
+            return Ok(());
+        }
+        let output_url = self.resolve_output_url(spec).await?;
+
+        // FFmpeg does not understand our signed tokens; drop the query string
+        // before handing the URL to the external process.
+        let ffmpeg_output = output_url
+            .split('?')
+            .next()
+            .unwrap_or(&output_url)
+            .to_string();
+        args.push(ffmpeg_output);
+        Ok(())
+    }
+}
+
+fn input_protocol_whitelist(scheme: &str) -> Option<String> {
+    match scheme {
+        "http" | "https" => Some("http,https,tcp,tls".to_string()),
+        "rtmp" | "rtmps" => Some("rtmp,rtmps,tcp".to_string()),
+        "rtsp" | "rtsps" => Some("rtsp,rtsps,tcp,udp".to_string()),
+        "srt" => Some("srt,udp".to_string()),
+        _ => None,
+    }
+}
+
+fn output_policy_to_schema(policy: &OutputPolicy) -> Option<MediaSchema> {
+    match policy {
+        OutputPolicy::None => None,
+        OutputPolicy::Hls => Some(MediaSchema::Hls),
+        OutputPolicy::Mp4 => Some(MediaSchema::Fmp4),
+        OutputPolicy::Flv => Some(MediaSchema::HttpFlv),
+        OutputPolicy::Fmp4 => Some(MediaSchema::Fmp4),
+        OutputPolicy::Rtmp => Some(MediaSchema::Rtmp),
+        OutputPolicy::Rtsp => Some(MediaSchema::Rtsp),
+    }
 }
 
 #[async_trait]
@@ -160,7 +255,8 @@ impl FfmpegApi for EngineFfmpegService {
         }
 
         let binary = self.resolve_binary()?;
-        let args = Self::build_args(&job.spec);
+        let mut args = Self::build_args(&job.spec);
+        self.append_output_arg(&mut args, &job.spec).await?;
 
         let mut cmd = Command::new(&binary);
         cmd.args(&args).stdout(Stdio::null()).stderr(Stdio::piped());
@@ -221,19 +317,27 @@ impl FfmpegApi for EngineFfmpegService {
     }
 
     async fn wait_job(&self, job_id: &str) -> Result<FfmpegJobOutcome, SdkError> {
-        let notify = {
-            let entry = self
-                .jobs
-                .get(job_id)
-                .ok_or_else(|| SdkError::NotFound(format!("ffmpeg job {job_id}")))?;
-            if let Some(outcome) = entry.value().outcome.lock().unwrap().clone() {
-                return Ok(outcome);
-            }
-            entry.value().notify.clone()
-        };
-
+        // Create and enable the Notified future *before* checking the outcome so
+        // that a completion happening between the check and the await is not lost.
+        let notify = self
+            .jobs
+            .get(job_id)
+            .ok_or_else(|| SdkError::NotFound(format!("ffmpeg job {job_id}")))?
+            .value()
+            .notify
+            .clone();
         let mut notified = std::pin::pin!(notify.notified_owned());
         let already_ready = notified.as_mut().enable();
+
+        let entry = self
+            .jobs
+            .get(job_id)
+            .ok_or_else(|| SdkError::NotFound(format!("ffmpeg job {job_id}")))?;
+        if let Some(outcome) = entry.value().outcome.lock().unwrap().clone() {
+            return Ok(outcome);
+        }
+        drop(entry);
+
         if !already_ready {
             notified.await;
         }
@@ -513,7 +617,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_non_null_output_policy() {
+    async fn non_null_output_policy_requires_url_resolver() {
         let svc = EngineFfmpegService::with_binary_path(Some("/bin/true".to_string()));
         let mut spec = fake_spec("http://example", 5000);
         spec.output_policy = OutputPolicy::Mp4;
@@ -525,7 +629,7 @@ mod tests {
             })
             .await
             .unwrap_err();
-        assert!(matches!(err, SdkError::InvalidArgument(_)));
+        assert!(matches!(err, SdkError::Unavailable(_)));
     }
 
     #[tokio::test]

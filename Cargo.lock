@@ -521,9 +521,11 @@ dependencies = [
  "cheetah-sdk",
  "dashmap",
  "getrandom 0.2.17",
+ "hmac",
  "libc",
  "parking_lot",
  "serde_json",
+ "sha2",
  "tokio",
  "tracing",
 ]

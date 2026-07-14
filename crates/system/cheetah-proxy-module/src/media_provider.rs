@@ -11,10 +11,10 @@ use cheetah_media_api::command::{
 use cheetah_media_api::error::{MediaError, MediaErrorCode, Result};
 use cheetah_media_api::event::{EventHeader, MediaEvent, MediaEventSender};
 use cheetah_media_api::ids::StreamKeyBridge;
-use cheetah_media_api::ids::{MediaKey, ProxyId};
+use cheetah_media_api::ids::{MediaKey, MediaSchema, ProxyId};
 use cheetah_media_api::model::Page;
-use cheetah_media_api::model::{OutputPolicy, ProxyInfo, ProxyKind, ProxyState};
-use cheetah_media_api::port::{MediaRequestContext, ProxyApi};
+use cheetah_media_api::model::{MediaUrl, OutputPolicy, ProxyInfo, ProxyKind, ProxyState};
+use cheetah_media_api::port::{MediaRequestContext, MediaUrlResolverApi, ProxyApi};
 use cheetah_sdk::connector::ConnectorDirection;
 use cheetah_sdk::{
     CancellationToken, ConnectorApi, EngineContext, FfmpegApi, FfmpegJob, FfmpegJobSpec,
@@ -34,6 +34,7 @@ pub struct ProxyMediaProvider {
     publisher_api: Arc<dyn PublisherApi>,
     subscriber_api: Arc<dyn SubscriberApi>,
     runtime_api: Arc<dyn RuntimeApi>,
+    url_resolver_api: Option<Arc<dyn MediaUrlResolverApi>>,
     media_event_sender: Option<Arc<dyn MediaEventSender>>,
 }
 
@@ -47,6 +48,7 @@ impl ProxyMediaProvider {
             publisher_api: ctx.publisher_api.clone(),
             subscriber_api: ctx.subscriber_api.clone(),
             runtime_api: ctx.runtime_api.clone(),
+            url_resolver_api: ctx.media_url_resolver_api.clone(),
             media_event_sender: Some(ctx.media_event_sender.clone()),
         }
     }
@@ -60,6 +62,7 @@ impl ProxyMediaProvider {
         publisher_api: Arc<dyn PublisherApi>,
         subscriber_api: Arc<dyn SubscriberApi>,
         runtime_api: Arc<dyn RuntimeApi>,
+        url_resolver_api: Option<Arc<dyn MediaUrlResolverApi>>,
     ) -> Self {
         Self {
             registry,
@@ -68,6 +71,7 @@ impl ProxyMediaProvider {
             publisher_api,
             subscriber_api,
             runtime_api,
+            url_resolver_api,
             media_event_sender: None,
         }
     }
@@ -108,6 +112,7 @@ impl ProxyMediaProvider {
         kind: ProxyKind,
         source: &str,
         destination: &MediaKey,
+        output_urls: Vec<MediaUrl>,
     ) -> Result<ProxyInfo> {
         let now = now_ms();
         Ok(ProxyInfo {
@@ -120,8 +125,46 @@ impl ProxyMediaProvider {
             last_error: None,
             created_at: now,
             updated_at: now,
-            output_urls: Vec::new(),
+            output_urls,
         })
+    }
+
+    fn output_policy_to_schema(policy: &OutputPolicy) -> Option<MediaSchema> {
+        match policy {
+            OutputPolicy::None => None,
+            OutputPolicy::Hls => Some(MediaSchema::Hls),
+            OutputPolicy::Mp4 => Some(MediaSchema::Fmp4),
+            OutputPolicy::Flv => Some(MediaSchema::HttpFlv),
+            OutputPolicy::Fmp4 => Some(MediaSchema::Fmp4),
+            OutputPolicy::Rtmp => Some(MediaSchema::Rtmp),
+            OutputPolicy::Rtsp => Some(MediaSchema::Rtsp),
+        }
+    }
+
+    async fn resolve_output_urls(
+        &self,
+        ctx: &MediaRequestContext,
+        destination: &MediaKey,
+        policy: &OutputPolicy,
+    ) -> Result<Vec<MediaUrl>> {
+        let schema = Self::output_policy_to_schema(policy);
+        let Some(schema) = schema else {
+            return Ok(Vec::new());
+        };
+        let Some(resolver) = &self.url_resolver_api else {
+            return Err(MediaError::unsupported(
+                "non-null output_policy requires MediaUrlResolverApi",
+            ));
+        };
+        let urls = resolver.resolve_urls(ctx, destination, &[schema]).await?;
+        if urls.iter().any(|u| u.available) {
+            Ok(urls)
+        } else {
+            Err(MediaError::unavailable(format!(
+                "no available URL for output policy {:?}",
+                policy
+            )))
+        }
     }
 
     fn upsert_and_emit(&self, info: ProxyInfo) -> ProxyInfo {
@@ -176,8 +219,12 @@ impl ProxyApi for ProxyMediaProvider {
             .await
             .map_err(map_sdk_error)?;
 
-        let info =
-            self.build_proxy_info(ProxyKind::Pull, &request.source_url, &request.destination)?;
+        let info = self.build_proxy_info(
+            ProxyKind::Pull,
+            &request.source_url,
+            &request.destination,
+            Vec::new(),
+        )?;
         let info_id = info.proxy_id.clone();
         let inserted = self.upsert_and_emit(info);
 
@@ -280,6 +327,7 @@ impl ProxyApi for ProxyMediaProvider {
             ProxyKind::Push,
             &request.destination_url,
             &request.source_media_key,
+            Vec::new(),
         )?;
         let info_id = info.proxy_id.clone();
         let inserted = self.upsert_and_emit(info);
@@ -333,16 +381,14 @@ impl ProxyApi for ProxyMediaProvider {
 
     async fn create_ffmpeg_proxy(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         request: FfmpegProxyRequest,
     ) -> Result<ProxyInfo> {
         Self::validate_url(&request.source_url)?;
 
-        if request.output_policy != OutputPolicy::None {
-            return Err(MediaError::unsupported(
-                "non-null output_policy requires MediaUrlResolverApi (S4-T6)",
-            ));
-        }
+        let output_urls = self
+            .resolve_output_urls(ctx, &request.destination, &request.output_policy)
+            .await?;
 
         let spec = FfmpegJobSpec {
             source_url: request.source_url.clone(),
@@ -355,8 +401,12 @@ impl ProxyApi for ProxyMediaProvider {
             enable_video: request.enable_video,
         };
 
-        let info =
-            self.build_proxy_info(ProxyKind::Ffmpeg, &request.source_url, &request.destination)?;
+        let info = self.build_proxy_info(
+            ProxyKind::Ffmpeg,
+            &spec.source_url,
+            &spec.destination,
+            output_urls,
+        )?;
         let info_id = info.proxy_id.clone();
         let inserted = self.upsert_and_emit(info);
 
@@ -466,6 +516,7 @@ mod tests {
             Arc::new(FakePublisherApi),
             Arc::new(FakeSubscriberApi),
             Arc::new(FakeRuntime),
+            None,
         )
     }
 

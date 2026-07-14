@@ -1,7 +1,8 @@
 use std::sync::{Arc, RwLock};
 
 use cheetah_media_api::port::{
-    MediaControlApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi,
+    MediaControlApi, MediaUrlResolverApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi,
+    SnapshotApi,
 };
 use cheetah_media_api::{MediaCapability, MediaCapabilitySet};
 
@@ -300,6 +301,54 @@ impl MediaServices {
             .map(|e| e.provider.clone())
     }
 
+    /// Register the URL resolver provider.
+    ///
+    /// 注册 URL 解析 provider。
+    pub fn register_url_resolver(
+        &self,
+        url_resolver: Arc<dyn MediaUrlResolverApi>,
+    ) -> ProviderRegistration {
+        self.register_url_resolver_with_capabilities(
+            url_resolver,
+            url_resolver_default_capabilities(),
+        )
+    }
+
+    /// Register the URL resolver provider with explicit capabilities.
+    ///
+    /// 注册带显式能力声明的 URL 解析 provider。
+    pub fn register_url_resolver_with_capabilities(
+        &self,
+        url_resolver: Arc<dyn MediaUrlResolverApi>,
+        capabilities: MediaCapabilitySet,
+    ) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        registry.url_resolver = Some(ProviderEntry {
+            provider: url_resolver,
+            generation,
+            capabilities,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::UrlResolve,
+            provider_id: format!("url_resolver:{generation}"),
+            generation,
+        }
+    }
+
+    /// Return the current URL resolver provider, if any.
+    ///
+    /// 返回当前 URL 解析 provider（如有）。
+    pub fn url_resolver(&self) -> Option<Arc<dyn MediaUrlResolverApi>> {
+        self.inner
+            .read()
+            .expect("media services lock")
+            .url_resolver
+            .as_ref()
+            .map(|e| e.provider.clone())
+    }
+
     /// Unregister a provider using a previously returned `ProviderRegistration`.
     /// Returns `true` if the registration matched and the provider was removed.
     ///
@@ -342,6 +391,9 @@ impl MediaServices {
         if let Some(entry) = &registry.rtp {
             set.merge(&entry.capabilities);
         }
+        if let Some(entry) = &registry.url_resolver {
+            set.merge(&entry.capabilities);
+        }
         set
     }
 }
@@ -355,6 +407,7 @@ struct MediaProviderRegistry {
     snapshot: Option<ProviderEntry<Arc<dyn SnapshotApi>>>,
     proxy: Option<ProviderEntry<Arc<dyn ProxyApi>>>,
     rtp: Option<ProviderEntry<Arc<dyn RtpApi>>>,
+    url_resolver: Option<ProviderEntry<Arc<dyn MediaUrlResolverApi>>>,
 }
 
 struct ProviderEntry<P> {
@@ -370,6 +423,7 @@ enum ProviderSlot<'a> {
     Snapshot(&'a mut Option<ProviderEntry<Arc<dyn SnapshotApi>>>),
     Proxy(&'a mut Option<ProviderEntry<Arc<dyn ProxyApi>>>),
     Rtp(&'a mut Option<ProviderEntry<Arc<dyn RtpApi>>>),
+    UrlResolver(&'a mut Option<ProviderEntry<Arc<dyn MediaUrlResolverApi>>>),
 }
 
 impl<'a> ProviderSlot<'a> {
@@ -381,6 +435,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::Snapshot(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Proxy(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Rtp(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::UrlResolver(opt) => opt.as_ref().map(|e| e.generation),
         }
     }
 
@@ -392,6 +447,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::Snapshot(opt) => **opt = None,
             ProviderSlot::Proxy(opt) => **opt = None,
             ProviderSlot::Rtp(opt) => **opt = None,
+            ProviderSlot::UrlResolver(opt) => **opt = None,
         }
     }
 }
@@ -415,6 +471,7 @@ impl MediaProviderRegistry {
             MediaCapability::Snapshot => Some(ProviderSlot::Snapshot(&mut self.snapshot)),
             MediaCapability::Proxy => Some(ProviderSlot::Proxy(&mut self.proxy)),
             MediaCapability::Rtp => Some(ProviderSlot::Rtp(&mut self.rtp)),
+            MediaCapability::UrlResolve => Some(ProviderSlot::UrlResolver(&mut self.url_resolver)),
             MediaCapability::Webhook => None,
         }
     }
@@ -455,6 +512,12 @@ fn proxy_default_capabilities() -> MediaCapabilitySet {
 fn rtp_default_capabilities() -> MediaCapabilitySet {
     let mut set = MediaCapabilitySet::empty();
     set.add(MediaCapability::Rtp, 1);
+    set
+}
+
+fn url_resolver_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::UrlResolve, 1);
     set
 }
 
