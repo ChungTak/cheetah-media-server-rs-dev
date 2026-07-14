@@ -6,7 +6,6 @@ use async_trait::async_trait;
 use cheetah_media_api::model::{
     FfmpegJobSpec, FfmpegResourceLimits, OutputPolicy, TranscodePolicy,
 };
-use cheetah_runtime_api::{oneshot_channel, OneShotReceiver, OneShotSender};
 use cheetah_sdk::{CancellationToken, FfmpegApi, FfmpegJob, FfmpegJobOutcome, SdkError};
 use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
@@ -37,8 +36,7 @@ struct FfmpegProcess {
     job: FfmpegJob,
     cancel: CancellationToken,
     outcome: Arc<Mutex<Option<FfmpegJobOutcome>>>,
-    signal_tx: Mutex<Option<OneShotSender>>,
-    signal_rx: Mutex<Option<OneShotReceiver>>,
+    notify: Arc<tokio::sync::Notify>,
 }
 
 impl EngineFfmpegService {
@@ -176,14 +174,13 @@ impl FfmpegApi for EngineFfmpegService {
 
         let cancel = CancellationToken::new();
         let outcome = Arc::new(Mutex::new(None));
-        let (tx, rx) = oneshot_channel();
+        let notify = Arc::new(tokio::sync::Notify::new());
 
         let process = FfmpegProcess {
             job: job.clone(),
             cancel: cancel.clone(),
             outcome: outcome.clone(),
-            signal_tx: Mutex::new(Some(tx)),
-            signal_rx: Mutex::new(Some(rx)),
+            notify: notify.clone(),
         };
 
         let cancel_for_task = cancel.clone();
@@ -207,9 +204,7 @@ impl FfmpegApi for EngineFfmpegService {
             let result = run_child(child, cancel_for_task, job.spec.timeout_ms).await;
             if let Some(proc) = jobs.get(&job_id) {
                 *proc.value().outcome.lock().unwrap() = Some(result.clone());
-                if let Some(tx) = proc.value().signal_tx.lock().unwrap().take() {
-                    let _ = tx.send();
-                }
+                proc.value().notify.notify_waiters();
             }
         });
 
@@ -226,7 +221,7 @@ impl FfmpegApi for EngineFfmpegService {
     }
 
     async fn wait_job(&self, job_id: &str) -> Result<FfmpegJobOutcome, SdkError> {
-        let rx = {
+        let notify = {
             let entry = self
                 .jobs
                 .get(job_id)
@@ -234,12 +229,10 @@ impl FfmpegApi for EngineFfmpegService {
             if let Some(outcome) = entry.value().outcome.lock().unwrap().clone() {
                 return Ok(outcome);
             }
-            let maybe_rx = entry.value().signal_rx.lock().unwrap().take();
-            maybe_rx.ok_or_else(|| SdkError::Conflict("ffmpeg job already awaited".to_string()))?
+            entry.value().notify.clone()
         };
 
-        let mut rx = rx;
-        let _ = rx.recv().await;
+        notify.notified().await;
 
         let entry = self
             .jobs
