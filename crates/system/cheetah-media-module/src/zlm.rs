@@ -595,14 +595,27 @@ impl ZlmMediaHttpService {
                 }
             })
             .map(String::from);
+        let tcp_mode = parse_zlm_rtp_tcp_mode(&params);
+        let mut transport_options = std::collections::HashMap::new();
+        let mode = match tcp_mode {
+            Some(RtpTcpMode::Passive) => {
+                transport_options.insert("tcp".to_string(), "true".to_string());
+                RtpSenderMode::Passive
+            }
+            Some(RtpTcpMode::Active) => {
+                transport_options.insert("tcp".to_string(), "true".to_string());
+                RtpSenderMode::Active
+            }
+            None => RtpSenderMode::Active,
+        };
         let request = RtpSenderRequest {
             media_key: key,
             destination_endpoint: destination,
             ssrc,
             payload_type: parse_zlm_u8(&params, "payload_type")?,
             codec_hint,
-            mode: RtpSenderMode::Active,
-            transport_options: std::collections::HashMap::new(),
+            mode,
+            transport_options,
         };
         let session = rtp_api.open_rtp_sender(&ctx, request).await?;
         Ok(zlm_response(
