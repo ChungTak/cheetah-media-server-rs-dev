@@ -6,8 +6,7 @@ use cheetah_media_api::command::{MediaQuery, SessionQuery};
 use cheetah_media_api::ids::{MediaKey, SessionId, StreamKeyBridge};
 use cheetah_media_api::model::CloseReason;
 use cheetah_media_api::port::{
-    MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, ServerAdminApi,
-    SnapshotApi,
+    MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, ServerAdminApi, SnapshotApi,
 };
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
@@ -343,9 +342,7 @@ impl ModuleHttpService for ZlmMediaHttpService {
             (HttpMethod::Post, "/api/stopSendRtp") => self.stop_send_rtp(req).await,
             (HttpMethod::Get, "/api/getRtpInfo") => self.get_rtp_info(req).await,
             (HttpMethod::Get, "/api/getSnap") => self.get_snap(req).await,
-            (HttpMethod::Post, "/api/deleteSnapDirectory") => {
-                self.delete_snap_directory(req).await
-            }
+            (HttpMethod::Post, "/api/deleteSnapDirectory") => self.delete_snap_directory(req).await,
             (HttpMethod::Post, "/api/addStreamProxy") => self.add_stream_proxy(req).await,
             (HttpMethod::Post, "/api/delStreamProxy") => self.del_stream_proxy(req).await,
             (HttpMethod::Get, "/api/getAllStreamProxy") => self.get_all_stream_proxy(req).await,
