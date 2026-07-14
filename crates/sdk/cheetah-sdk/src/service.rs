@@ -155,7 +155,7 @@ pub trait ClusterApi: Send + Sync {
     fn list_nodes(&self) -> Vec<ClusterNode>;
 }
 
-use cheetah_media_api::model::FfmpegJobSpec;
+pub use cheetah_media_api::model::FfmpegJobSpec;
 
 /// Final outcome of an FFmpeg job.
 ///

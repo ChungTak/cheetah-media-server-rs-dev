@@ -13,12 +13,12 @@ use cheetah_media_api::event::{EventHeader, MediaEvent, MediaEventSender};
 use cheetah_media_api::ids::StreamKeyBridge;
 use cheetah_media_api::ids::{MediaKey, ProxyId};
 use cheetah_media_api::model::Page;
-use cheetah_media_api::model::{ProxyInfo, ProxyKind, ProxyState};
+use cheetah_media_api::model::{OutputPolicy, ProxyInfo, ProxyKind, ProxyState};
 use cheetah_media_api::port::{MediaRequestContext, ProxyApi};
 use cheetah_sdk::connector::ConnectorDirection;
 use cheetah_sdk::{
-    CancellationToken, ConnectorApi, EngineContext, PublisherApi, PublisherOptions, RuntimeApi,
-    StreamKey, SubscriberApi, SubscriberOptions,
+    CancellationToken, ConnectorApi, EngineContext, FfmpegApi, FfmpegJob, FfmpegJobSpec,
+    PublisherApi, PublisherOptions, RuntimeApi, StreamKey, SubscriberApi, SubscriberOptions,
 };
 
 use crate::registry::ProxyRegistry;
@@ -30,6 +30,7 @@ use crate::runner;
 pub struct ProxyMediaProvider {
     registry: ProxyRegistry,
     connector_api: Option<Arc<dyn ConnectorApi>>,
+    ffmpeg_api: Arc<dyn FfmpegApi>,
     publisher_api: Arc<dyn PublisherApi>,
     subscriber_api: Arc<dyn SubscriberApi>,
     runtime_api: Arc<dyn RuntimeApi>,
@@ -42,6 +43,7 @@ impl ProxyMediaProvider {
         Self {
             registry,
             connector_api: ctx.connector_api.clone(),
+            ffmpeg_api: ctx.ffmpeg_api.clone(),
             publisher_api: ctx.publisher_api.clone(),
             subscriber_api: ctx.subscriber_api.clone(),
             runtime_api: ctx.runtime_api.clone(),
@@ -54,6 +56,7 @@ impl ProxyMediaProvider {
     fn with_apis(
         registry: ProxyRegistry,
         connector_api: Option<Arc<dyn ConnectorApi>>,
+        ffmpeg_api: Arc<dyn FfmpegApi>,
         publisher_api: Arc<dyn PublisherApi>,
         subscriber_api: Arc<dyn SubscriberApi>,
         runtime_api: Arc<dyn RuntimeApi>,
@@ -61,6 +64,7 @@ impl ProxyMediaProvider {
         Self {
             registry,
             connector_api,
+            ffmpeg_api,
             publisher_api,
             subscriber_api,
             runtime_api,
@@ -333,10 +337,72 @@ impl ProxyApi for ProxyMediaProvider {
         request: FfmpegProxyRequest,
     ) -> Result<ProxyInfo> {
         Self::validate_url(&request.source_url)?;
-        self.check_protocol_support(&request.source_url, ConnectorDirection::Pull)?;
-        Err(MediaError::unsupported(
-            "FFmpeg proxy is not implemented yet",
-        ))
+
+        if request.output_policy != OutputPolicy::None {
+            return Err(MediaError::unsupported(
+                "non-null output_policy requires MediaUrlResolverApi (S4-T6)",
+            ));
+        }
+
+        let spec = FfmpegJobSpec {
+            source_url: request.source_url.clone(),
+            destination: request.destination.clone(),
+            transcode_policy: request.transcode_policy.clone(),
+            output_policy: request.output_policy,
+            timeout_ms: request.timeout_ms,
+            resource_limits: request.resource_limits.clone(),
+            enable_audio: request.enable_audio,
+            enable_video: request.enable_video,
+        };
+
+        let info =
+            self.build_proxy_info(ProxyKind::Ffmpeg, &request.source_url, &request.destination)?;
+        let info_id = info.proxy_id.clone();
+        let inserted = self.upsert_and_emit(info);
+
+        if inserted.proxy_id != info_id {
+            return Ok(inserted);
+        }
+
+        let proxy_id = inserted.proxy_id.clone();
+        let job = FfmpegJob {
+            job_id: proxy_id.0.clone(),
+            proxy_id: proxy_id.0.clone(),
+            spec,
+        };
+
+        if let Err(e) = self.ffmpeg_api.submit_job(job).await {
+            let _ = self.registry.delete(&proxy_id);
+            return Err(map_sdk_error(e));
+        }
+
+        let cancel = CancellationToken::new();
+        let runner_cancel = cancel.clone();
+        let registry = self.registry.clone();
+        let event_sender = self.media_event_sender.clone();
+        let ffmpeg_api = self.ffmpeg_api.clone();
+        let runtime_api = self.runtime_api.clone();
+        let proxy_id_for_runner = proxy_id.clone();
+
+        let handle = runtime_api.spawn(Box::pin(async move {
+            crate::ffmpeg_runner::run(
+                registry,
+                event_sender,
+                ffmpeg_api,
+                proxy_id_for_runner,
+                runner_cancel,
+            )
+            .await;
+        }));
+
+        if !self
+            .registry
+            .attach_task(&inserted.proxy_id, cancel.clone(), handle)
+        {
+            cancel.cancel();
+        }
+
+        Ok(inserted)
     }
 }
 
@@ -381,8 +447,12 @@ mod tests {
     use std::result::Result as StdResult;
 
     use super::*;
+    use cheetah_media_api::command::FfmpegProxyRequest;
     use cheetah_media_api::ids::MediaKey;
-    use cheetah_sdk::{PublishLease, PublisherSink, SdkError, SubscriberSource};
+    use cheetah_sdk::{
+        FfmpegApi, FfmpegJob, FfmpegJobOutcome, PublishLease, PublisherSink, SdkError,
+        SubscriberSource,
+    };
 
     fn fake_key(stream: &str) -> MediaKey {
         MediaKey::with_default_vhost("live", stream, None).unwrap()
@@ -392,6 +462,7 @@ mod tests {
         ProxyMediaProvider::with_apis(
             ProxyRegistry::new(10),
             None,
+            Arc::new(FakeFfmpegApi),
             Arc::new(FakePublisherApi),
             Arc::new(FakeSubscriberApi),
             Arc::new(FakeRuntime),
@@ -461,6 +532,27 @@ mod tests {
             _options: SubscriberOptions,
         ) -> StdResult<Box<dyn SubscriberSource>, SdkError> {
             Err(SdkError::Unavailable("no subscriber".to_string()))
+        }
+    }
+
+    struct FakeFfmpegApi;
+
+    #[async_trait]
+    impl FfmpegApi for FakeFfmpegApi {
+        async fn submit_job(&self, _job: FfmpegJob) -> StdResult<(), SdkError> {
+            Err(SdkError::Unavailable("no ffmpeg".to_string()))
+        }
+
+        async fn cancel_job(&self, _job_id: &str) -> StdResult<(), SdkError> {
+            Ok(())
+        }
+
+        async fn wait_job(&self, _job_id: &str) -> StdResult<FfmpegJobOutcome, SdkError> {
+            Err(SdkError::Unavailable("no ffmpeg".to_string()))
+        }
+
+        fn list_jobs(&self) -> Vec<FfmpegJob> {
+            Vec::new()
         }
     }
 
@@ -553,5 +645,23 @@ mod tests {
         > {
             Box::pin(async { Ok(()) })
         }
+    }
+
+    #[tokio::test]
+    async fn create_ffmpeg_proxy_rejects_non_null_output_policy() {
+        let p = provider();
+        let req = FfmpegProxyRequest {
+            source_url: "http://example/stream".to_string(),
+            destination: fake_key("s"),
+            transcode_policy: Default::default(),
+            output_policy: OutputPolicy::Mp4,
+            timeout_ms: 5000,
+            resource_limits: Default::default(),
+            enable_audio: true,
+            enable_video: true,
+        };
+        let ctx = MediaRequestContext::default();
+        let err = p.create_ffmpeg_proxy(&ctx, req).await.unwrap_err();
+        assert_eq!(err.code, MediaErrorCode::Unsupported);
     }
 }

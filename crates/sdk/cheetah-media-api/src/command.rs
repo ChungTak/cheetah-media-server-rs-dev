@@ -356,7 +356,7 @@ pub struct FfmpegProxyRequest {
     pub timeout_ms: u64,
     #[serde(default)]
     pub resource_limits: FfmpegResourceLimits,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub enable_audio: bool,
     #[serde(default = "default_true")]
     pub enable_video: bool,
