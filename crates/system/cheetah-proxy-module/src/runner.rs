@@ -132,6 +132,7 @@ async fn run_pull_inner(
         if !tracks.is_empty() {
             let _ = sink.update_tracks(tracks);
         }
+        retry_count = 0;
         update_proxy_state(
             registry,
             event_sender,
@@ -304,6 +305,7 @@ async fn run_push_inner(
         if !tracks.is_empty() {
             let _ = s.update_tracks(tracks);
         }
+        retry_count = 0;
         update_proxy_state(
             registry,
             event_sender,
@@ -436,8 +438,8 @@ async fn sleep_or_cancel(
     pin_mut!(timer_fut, cancel_fut);
 
     select_biased! {
-        _ = timer_fut => false,
         _ = cancel_fut => true,
+        _ = timer_fut => false,
     }
 }
 
