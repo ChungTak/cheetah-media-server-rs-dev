@@ -21,8 +21,8 @@ use cheetah_sdk::{
     BootstrapPolicy, CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest,
     HttpResponse, HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
     ModuleHttpService, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
-    ModuleSchemaRegistration, ModuleState, ProviderRegistration, PublishLease, PublisherOptions,
-    PublisherSink, SdkError, StreamKey, SubscriberOptions,
+    ModuleSchemaRegistration, ModuleState, ProtocolEvent, ProviderRegistration, PublishLease,
+    PublisherOptions, PublisherSink, SdkError, StreamKey, SubscriberOptions, SystemEvent,
 };
 use futures::{pin_mut, select_biased, FutureExt};
 use parking_lot::Mutex;
@@ -290,9 +290,17 @@ impl Module for RtpModule {
             let runtime_api = ctx.runtime_api.clone();
             let handle = driver.clone();
             let cancel = cancel.clone();
+            let orchestrator_for_ingress = orchestrator.clone();
             let publish_frame_cache = config.publish_frame_cache_frames;
             runtime_api.spawn(Box::pin(async move {
-                run_ingress_worker(ctx, handle, cancel, publish_frame_cache).await;
+                run_ingress_worker(
+                    ctx,
+                    handle,
+                    orchestrator_for_ingress,
+                    cancel,
+                    publish_frame_cache,
+                )
+                .await;
             }));
         }
 
@@ -397,6 +405,10 @@ struct ActiveIngressSession {
     _lease: PublishLease,
     sink: Box<dyn PublisherSink>,
     _tracks: Vec<TrackInfo>,
+    /// Stream key used to publish into the engine.
+    stream_key: StreamKey,
+    /// Whether the media-online event has already been emitted for this session.
+    online_reported: bool,
     /// Bounded cache of frames that arrived before the publisher was ready / authenticated.
     /// ZLM-style behaviour: see `vendor-ref/ZLMediaKit/src/Rtp/RtpProcess.cpp` `_cached_func`.
     pending_frames: std::collections::VecDeque<Arc<cheetah_codec::AVFrame>>,
@@ -410,6 +422,7 @@ struct ActiveIngressSession {
 async fn run_ingress_worker(
     ctx: EngineContext,
     handle: Arc<RtpDriverHandle>,
+    orchestrator: Arc<RtpSessionOrchestrator>,
     cancel: CancellationToken,
     publish_frame_cache_capacity: usize,
 ) {
@@ -449,6 +462,8 @@ async fn run_ingress_worker(
                                 _lease: lease,
                                 sink,
                                 _tracks: Vec::new(),
+                                stream_key: sk.clone(),
+                                online_reported: false,
                                 pending_frames: std::collections::VecDeque::new(),
                                 pending_frames_capacity: publish_frame_cache_capacity,
                                 publisher_ready: true,
@@ -479,6 +494,25 @@ async fn run_ingress_worker(
                             let _ = session.sink.push_frame(buffered);
                         }
                         let _ = session.sink.push_frame(frame_arc);
+
+                        if !session.online_reported {
+                            session.online_reported = true;
+                            let session_id =
+                                cheetah_sdk::media_api::ids::RtpSessionId(session_key.clone());
+                            let _ = orchestrator
+                                .set_session_state(&session_id, RtpSessionState::Connected);
+                            ctx.event_bus.publish(SystemEvent::Protocol(ProtocolEvent {
+                                protocol: "rtp".to_string(),
+                                event_type: "media_online".to_string(),
+                                payload: serde_json::json!({
+                                    "session_key": session_key,
+                                    "stream_key": {
+                                        "namespace": session.stream_key.namespace,
+                                        "path": session.stream_key.path,
+                                    },
+                                }),
+                            }));
+                        }
                     } else if session.pending_frames_capacity > 0 {
                         if session.pending_frames.len() >= session.pending_frames_capacity {
                             session.pending_frames.pop_front();

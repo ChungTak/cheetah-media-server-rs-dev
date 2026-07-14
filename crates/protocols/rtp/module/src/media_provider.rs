@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use cheetah_sdk::media_api::command::{
     RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderRequest, UpdateRtpRequest,
 };
-use cheetah_sdk::media_api::error::{MediaError, Result};
+use cheetah_sdk::media_api::error::Result;
 use cheetah_sdk::media_api::ids::RtpSessionId;
 use cheetah_sdk::media_api::model::{Page, RtpSession};
 use cheetah_sdk::media_api::port::{MediaRequestContext, RtpApi};
@@ -53,9 +53,9 @@ impl RtpApi for RtpMediaProvider {
     async fn connect_rtp_receiver(
         &self,
         _ctx: &MediaRequestContext,
-        _request: RtpConnectRequest,
+        request: RtpConnectRequest,
     ) -> Result<RtpSession> {
-        Err(MediaError::unsupported("active RTP receiver connection"))
+        self.orchestrator.connect_rtp_receiver(request).await
     }
 
     async fn open_rtp_sender(

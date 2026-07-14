@@ -13,8 +13,8 @@ use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
 use cheetah_rtp_core::{
-    RtpClientSpec, RtpCore, RtpCoreCommand, RtpCoreEvent, RtpCoreInput, RtpCoreOutput, RtpDatagram,
-    RtpSendFrame, RtpServerSpec, RtpTcpChunk, RtpTransportMode,
+    RtpClientSpec, RtpConnectionType, RtpCore, RtpCoreCommand, RtpCoreEvent, RtpCoreInput,
+    RtpCoreOutput, RtpDatagram, RtpSendFrame, RtpServerSpec, RtpTcpChunk,
 };
 use cheetah_runtime_api::CancellationToken;
 
@@ -708,7 +708,7 @@ async fn run_driver_loop(
                     }
                     RtpDriverCommand::CreateClient(spec) => {
                         // If it's a TCP client connect, we need to spin up the connection first
-                        if spec.tcp_conn_id.is_none() && spec.transport_mode == RtpTransportMode::SendOnly {
+                        if spec.tcp_conn_id.is_none() && spec.connection_type == Some(RtpConnectionType::TcpActive) {
                             // Active TCP Client connect
                             let dest = spec.destination;
                             let mut spec_clone = spec.clone();
@@ -717,7 +717,6 @@ async fn run_driver_loop(
                             let tcp_rx_tx_clone = tcp_rx_tx.clone();
                             let cmd_tx_clone = cmd_tx.clone();
                             let cancel_clone = cancel.clone();
-
                             tokio::spawn(async move {
                                 match TcpStream::connect(dest).await {
                                     Ok(stream) => {
@@ -732,12 +731,17 @@ async fn run_driver_loop(
                                         spec_clone.tcp_conn_id = Some(conn_id);
                                         let _ = cmd_tx_clone.send(RtpDriverCommand::CreateClient(spec_clone)).await;
 
-                                        let (reader, mut writer) = tokio::io::split(stream);
-                                        let (writer_tx, mut writer_rx) = mpsc::channel::<Bytes>(config.write_queue_capacity);
+                                        let (reader, writer) = tokio::io::split(stream);
+
+                                        // Register the writer before spawning the reader so any
+                                        // outbound data produced by the core (RTCP feedback, etc.)
+                                        // can be sent as soon as the connection is live.
+                                        let (writer_tx, mut writer_rx) =
+                                            mpsc::channel::<Bytes>(config.write_queue_capacity);
                                         tcp_writers_clone.lock().await.insert(conn_id, writer_tx);
 
                                         // Spawn TCP client reader
-                                        let cancel_child = cancel_clone.child_token();
+                                        let cancel_reader = cancel_clone.child_token();
                                         tokio::spawn(async move {
                                             let mut reader = reader;
                                             let mut buf = vec![0u8; config.read_buffer_size];
@@ -746,7 +750,7 @@ async fn run_driver_loop(
                                             let mut checked_ehome = false;
                                             loop {
                                                 tokio::select! {
-                                                    _ = cancel_child.cancelled() => break,
+                                                    _ = cancel_reader.cancelled() => break,
                                                     res = reader.read(&mut buf) => {
                                                         match res {
                                                             Ok(0) => break,
@@ -821,12 +825,15 @@ async fn run_driver_loop(
                                             }
                                         });
 
-                                        // Spawn TCP client writer
-                                        let cancel_child = cancel_clone.child_token();
+                                        // Spawn TCP client writer so the core can send RTCP
+                                        // feedback and, for send-capable sessions, RTP data back.
+                                        let cancel_writer = cancel_clone.child_token();
+                                        let tcp_writers_remove = tcp_writers_clone.clone();
                                         tokio::spawn(async move {
+                                            let mut writer = writer;
                                             loop {
                                                 tokio::select! {
-                                                    _ = cancel_child.cancelled() => break,
+                                                    _ = cancel_writer.cancelled() => break,
                                                     msg = writer_rx.recv() => {
                                                         match msg {
                                                             Some(data) => {
@@ -839,6 +846,7 @@ async fn run_driver_loop(
                                                     }
                                                 }
                                             }
+                                            tcp_writers_remove.lock().await.remove(&conn_id);
                                         });
                                     }
                                     Err(e) => {

@@ -18,7 +18,8 @@ use cheetah_rtp_core::{
 };
 use cheetah_rtp_driver_tokio::{RtpDriverCommand, RtpDriverHandle, RtpSocketReuse};
 use cheetah_sdk::media_api::command::{
-    RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, UpdateRtpRequest,
+    RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest,
+    UpdateRtpRequest,
 };
 use cheetah_sdk::media_api::error::{MediaError, Result};
 use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId, StreamKeyBridge};
@@ -306,7 +307,16 @@ impl RtpSessionOrchestrator {
         let session_key = Self::session_key_from_media_key(&request.media_key, "recv");
         let payload_mode = Self::parse_payload_mode(&request.codec_hint, request.payload_type);
         let connection_type = Self::receiver_connection_type(request.tcp_mode);
-        let bind_addr = self.receiver_bind_addr(request.ip.as_deref(), request.port)?;
+        let bind_addr = if connection_type == Some(RtpConnectionType::TcpActive) {
+            None
+        } else {
+            self.receiver_bind_addr(request.ip.as_deref(), request.port)?
+        };
+        let state = if connection_type == Some(RtpConnectionType::TcpActive) {
+            RtpSessionState::Created
+        } else {
+            RtpSessionState::Listening
+        };
         self.create_server_session(
             session_key,
             request.media_key,
@@ -319,9 +329,93 @@ impl RtpSessionOrchestrator {
             request.tcp_mode,
             bind_addr,
             request.reuse_port,
-            RtpSessionState::Listening,
+            state,
         )
         .await
+    }
+
+    /// Connect an RTP receiver to a remote endpoint. Used for TCP active mode.
+    ///
+    /// 为 RTP 接收端主动连接到远端地址（TCP active 模式）。
+    pub async fn connect_rtp_receiver(&self, request: RtpConnectRequest) -> Result<RtpSession> {
+        let destination: SocketAddr = request
+            .remote_endpoint
+            .parse()
+            .map_err(|e| MediaError::invalid_argument(format!("invalid remote endpoint: {e}")))?;
+
+        let (session_key, ssrc, payload_mode, tcp_mode) = {
+            let mut sessions = self.sessions.lock();
+            let session = sessions
+                .get_mut(&request.session_id)
+                .ok_or_else(|| MediaError::not_found("rtp session"))?;
+            if session.kind != RtpSessionKind::Receiver {
+                return Err(MediaError::invalid_argument("session is not a receiver"));
+            }
+            if session.ssrc.is_none() && request.ssrc.is_some() {
+                session.ssrc = request.ssrc;
+            }
+            session.remote_endpoint = Some(request.remote_endpoint.clone());
+            session.state = RtpSessionState::Created;
+            let ssrc = session.ssrc.unwrap_or(0);
+            let payload_mode = Self::parse_payload_mode(&None, session.payload_type);
+            (
+                session.session_id.0.clone(),
+                ssrc,
+                payload_mode,
+                session.tcp_mode,
+            )
+        };
+
+        let connection_type = match tcp_mode {
+            Some(RtpTcpMode::Active) => Some(RtpConnectionType::TcpActive),
+            Some(RtpTcpMode::Passive) => {
+                return Err(MediaError::invalid_argument(
+                    "connect_rtp_receiver requires a TCP active session",
+                ));
+            }
+            None => {
+                return Err(MediaError::invalid_argument(
+                    "connect_rtp_receiver requires a TCP active session",
+                ));
+            }
+        };
+        let spec = RtpClientSpec {
+            session_key,
+            destination,
+            ssrc,
+            payload_mode,
+            transport_mode: RtpTransportMode::RecvOnly,
+            tcp_conn_id: None,
+            connection_type,
+            track_filter: RtpTrackFilter::All,
+        };
+
+        let driver = self.driver()?;
+        driver
+            .send_command(RtpDriverCommand::CreateClient(spec))
+            .await;
+
+        let sessions = self.sessions.lock();
+        sessions
+            .get(&request.session_id)
+            .cloned()
+            .ok_or_else(|| MediaError::not_found("rtp session"))
+    }
+
+    /// Set the state of a tracked RTP session.
+    ///
+    /// 设置已跟踪 RTP 会话的状态。
+    pub fn set_session_state(
+        &self,
+        id: &RtpSessionId,
+        state: RtpSessionState,
+    ) -> Result<RtpSession> {
+        let mut sessions = self.sessions.lock();
+        let session = sessions
+            .get_mut(id)
+            .ok_or_else(|| MediaError::not_found("rtp session"))?;
+        session.state = state;
+        Ok(session.clone())
     }
 
     /// Resolve a receiver bind address from an optional explicit `ip`/`port`.
