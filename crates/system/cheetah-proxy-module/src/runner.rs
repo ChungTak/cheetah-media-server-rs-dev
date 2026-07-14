@@ -109,6 +109,7 @@ async fn run_pull_inner(
                     return Err(e);
                 }
                 retry_count += 1;
+                registry.update_retry_count(proxy_id, retry_count);
                 update_proxy_state(
                     registry,
                     event_sender,
@@ -166,6 +167,7 @@ async fn run_pull_inner(
                     return Err(err);
                 }
                 retry_count += 1;
+                registry.update_retry_count(proxy_id, retry_count);
                 update_proxy_state(
                     registry,
                     event_sender,
@@ -274,6 +276,7 @@ async fn run_push_inner(
                         return Err(e);
                     }
                     retry_count += 1;
+                    registry.update_retry_count(proxy_id, retry_count);
                     update_proxy_state(
                         registry,
                         event_sender,
@@ -316,10 +319,8 @@ async fn run_push_inner(
 
         let frame_result = forward_frames(source, s, cancel).await;
 
-        if frame_result.is_error() {
-            if let Some(old) = sink.take() {
-                let _ = old.close();
-            }
+        if let Some(s) = sink.take() {
+            let _ = s.close();
         }
 
         match frame_result {
@@ -344,6 +345,7 @@ async fn run_push_inner(
                     return Err(e);
                 }
                 retry_count += 1;
+                registry.update_retry_count(proxy_id, retry_count);
                 update_proxy_state(
                     registry,
                     event_sender,
@@ -408,12 +410,6 @@ async fn forward_frames(
             Ok(None) => return ForwardResult::SourceEnded,
             Err(e) => return ForwardResult::Error(map_sdk_error(e)),
         }
-    }
-}
-
-impl ForwardResult {
-    fn is_error(&self) -> bool {
-        matches!(self, ForwardResult::Error(_))
     }
 }
 
