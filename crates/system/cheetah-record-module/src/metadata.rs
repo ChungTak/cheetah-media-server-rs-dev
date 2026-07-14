@@ -142,11 +142,14 @@ pub struct RecordTrackSummary {
 /// 所有字段均为可选；缺失字段视为通配。
 #[derive(Debug, Clone, Default)]
 pub struct RecordFileQuery {
+    pub vhost: Option<String>,
     pub app: Option<String>,
     pub stream: Option<String>,
     pub format: Option<RecordFormatStr>,
     pub start_time_ms: Option<i64>,
     pub end_time_ms: Option<i64>,
+    pub file_id: Option<String>,
+    pub directory: Option<String>,
     pub limit: Option<u32>,
 }
 

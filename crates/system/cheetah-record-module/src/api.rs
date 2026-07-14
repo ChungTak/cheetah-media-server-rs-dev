@@ -140,6 +140,8 @@ pub struct TaskBrief {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct FileQueryRequest {
     #[serde(default)]
+    pub vhost: Option<String>,
+    #[serde(default)]
     pub app: Option<String>,
     #[serde(default)]
     pub stream: Option<String>,
@@ -149,8 +151,21 @@ pub struct FileQueryRequest {
     pub start_time_ms: Option<i64>,
     #[serde(rename = "endTime", default)]
     pub end_time_ms: Option<i64>,
+    #[serde(rename = "fileId", default)]
+    pub file_id: Option<String>,
+    #[serde(default)]
+    pub directory: Option<String>,
     #[serde(default)]
     pub limit: Option<u32>,
+}
+
+/// Result returned by `RecordApi::query_files`.
+///
+/// `RecordApi::query_files` 返回的结果。
+#[derive(Debug, Clone)]
+pub struct FileQueryResult {
+    pub total: usize,
+    pub files: Vec<FileBrief>,
 }
 
 /// `GET /api/v1/record/file/query` response.
@@ -338,22 +353,25 @@ impl RecordApi {
     /// Query files from the registry using the public request shape.
     ///
     /// 使用公共请求结构从注册表查询文件。
-    pub fn query_files(&self, req: FileQueryRequest) -> Result<FileQueryResponse, RecordApiError> {
+    pub fn query_files(&self, req: FileQueryRequest) -> Result<FileQueryResult, RecordApiError> {
         let format = match req.format.as_deref() {
             Some(s) => Some(parse_format_str(s)?),
             None => None,
         };
         let q = RecordFileQuery {
+            vhost: req.vhost,
             app: req.app,
             stream: req.stream,
             format,
             start_time_ms: req.start_time_ms,
             end_time_ms: req.end_time_ms,
+            file_id: req.file_id,
+            directory: req.directory,
             limit: req.limit,
         };
-        let data = self
-            .registry
-            .query_files(&q)
+        let result = self.registry.query_files(&q);
+        let files = result
+            .items
             .into_iter()
             .map(|f| FileBrief {
                 file_id: f.file_id,
@@ -369,10 +387,9 @@ impl RecordApi {
                 end_time_ms: f.end_time_ms,
             })
             .collect();
-        Ok(FileQueryResponse {
-            code: 200,
-            msg: "success".to_string(),
-            data,
+        Ok(FileQueryResult {
+            total: result.total,
+            files,
         })
     }
 

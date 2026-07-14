@@ -321,10 +321,15 @@ impl ModuleHttpService for RecordHttpService {
                 } else {
                     serde_json::from_slice(&req.body).unwrap_or_default()
                 };
-                let resp = self
+                let result = self
                     .api
                     .query_files(q)
                     .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
+                let resp = crate::api::FileQueryResponse {
+                    code: 200,
+                    msg: "success".to_string(),
+                    data: result.files,
+                };
                 HttpResponse::ok_json(serde_json::to_vec(&resp).unwrap())
             }
             (HttpMethod::Post, "/file/delete") => {

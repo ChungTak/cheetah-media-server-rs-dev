@@ -159,6 +159,8 @@ impl RecordApiPort for RecordMediaProvider {
     ) -> Result<Page<RecordTask>> {
         // The registry capacity bounds the task set, so collecting here is
         // effectively bounded. Sort by start time descending before paging.
+        let mut query = query;
+        query.clamp_page_size();
         let mut items: Vec<RecordTask> = self
             .api
             .registry()
@@ -195,34 +197,38 @@ impl RecordApiPort for RecordMediaProvider {
         _ctx: &MediaRequestContext,
         query: RecordFileQuery,
     ) -> Result<Page<RecordFile>> {
+        let mut query = query;
+        query.clamp_page_size();
         // Bound the internal query so we never load an unbounded file inventory.
+        // The registry returns files sorted by start time descending and provides
+        // the total number of matching files.
         let limit = query
             .page
             .max(1)
             .saturating_mul(query.page_size)
             .min(RecordFileQuery::MAX_PAGE_SIZE) as u32;
         let internal = crate::api::FileQueryRequest {
+            vhost: query.vhost.clone(),
             app: query.app.clone(),
             stream: query.stream.clone(),
             format: query.format.clone(),
             start_time_ms: query.start_time_ms,
             end_time_ms: query.end_time_ms,
+            file_id: query.file_id.clone(),
+            directory: query.directory.clone(),
             limit: Some(limit),
         };
-        let response = self.api.query_files(internal).map_err(map_error)?;
-        let mut items: Vec<RecordFile> = response
-            .data
+        let result = self.api.query_files(internal).map_err(map_error)?;
+        // All registry-level filters (vhost, app, stream, format, time, file_id,
+        // directory) are applied inside the registry, so `result.total` is the
+        // true matching count. map_file_brief only converts metadata; it should
+        // not fail for valid registry entries.
+        let items: Vec<RecordFile> = result
+            .files
             .into_iter()
-            .filter_map(|f| {
-                let file = map_file_brief(&f)?;
-                if !filter_file(&file, &query) {
-                    return None;
-                }
-                Some(file)
-            })
+            .filter_map(|f| map_file_brief(&f))
             .collect();
-        items.sort_by(|a, b| b.start_time_ms.cmp(&a.start_time_ms));
-        let total = items.len() as u64;
+        let total = result.total as u64;
         let page = query.page.max(1);
         let page_size = query.page_size;
         let start = ((page - 1) * page_size) as usize;
@@ -364,25 +370,6 @@ fn filter_task(task: &RecordTask, query: &RecordTaskQuery) -> bool {
     }
     if let Some(state) = query.state {
         if task.state != state {
-            return false;
-        }
-    }
-    true
-}
-
-fn filter_file(file: &RecordFile, query: &RecordFileQuery) -> bool {
-    if let Some(ref v) = query.vhost {
-        if file.media_key.vhost.0 != *v {
-            return false;
-        }
-    }
-    if let Some(ref file_id) = query.file_id {
-        if file.file_id.0 != *file_id {
-            return false;
-        }
-    }
-    if let Some(ref directory) = query.directory {
-        if !file.path_handle.0.contains(directory) {
             return false;
         }
     }
@@ -547,6 +534,130 @@ mod tests {
         assert_eq!(civil_from_days(20512), (2026, 2, 28));
         // 2026-05-23 (existing executor test case) is 20596 days.
         assert_eq!(civil_from_days(20596), (2026, 5, 23));
+    }
+
+    #[tokio::test]
+    async fn query_record_files_reports_total_and_pages_descending() {
+        let provider = provider();
+        let ctx = MediaRequestContext::default();
+        for i in 0..5 {
+            provider
+                .api
+                .registry()
+                .insert_file(crate::metadata::RecordFileMetadata {
+                    file_id: format!("f{i}"),
+                    task_id: format!("t{i}"),
+                    format: crate::metadata::RecordFormatStr::Mp4,
+                    vhost: cheetah_media_api::ids::DEFAULT_VHOST.to_string(),
+                    app: "live".to_string(),
+                    stream: format!("stream-{i}"),
+                    path: format!("/rec/live/stream-{i}/2026/f{i}.mp4"),
+                    duration_ms: 1_000,
+                    size_bytes: 1000,
+                    start_time_ms: i as i64 * 1000,
+                    end_time_ms: (i as i64 + 1) * 1000,
+                    track_summary: vec![],
+                })
+                .unwrap();
+        }
+        let page = provider
+            .query_record_files(
+                &ctx,
+                RecordFileQuery {
+                    page: 1,
+                    page_size: 2,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.total, 5);
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.items[0].file_id.0, "f4");
+        assert_eq!(page.items[1].file_id.0, "f3");
+
+        let page = provider
+            .query_record_files(
+                &ctx,
+                RecordFileQuery {
+                    page: 2,
+                    page_size: 2,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.total, 5);
+        assert_eq!(page.items.len(), 2);
+        assert_eq!(page.items[0].file_id.0, "f2");
+        assert_eq!(page.items[1].file_id.0, "f1");
+
+        // Zero page size is clamped to the default.
+        let page = provider
+            .query_record_files(
+                &ctx,
+                RecordFileQuery {
+                    page: 1,
+                    page_size: 0,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.total, 5);
+        assert_eq!(page.items.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn query_record_files_filters_by_file_id_and_total_is_accurate() {
+        let provider = provider();
+        let ctx = MediaRequestContext::default();
+        for i in 0..3 {
+            provider
+                .api
+                .registry()
+                .insert_file(crate::metadata::RecordFileMetadata {
+                    file_id: format!("f{i}"),
+                    task_id: format!("t{i}"),
+                    format: crate::metadata::RecordFormatStr::Mp4,
+                    vhost: cheetah_media_api::ids::DEFAULT_VHOST.to_string(),
+                    app: "live".to_string(),
+                    stream: format!("stream-{i}"),
+                    path: format!("/rec/live/stream-{i}/2026/f{i}.mp4"),
+                    duration_ms: 1_000,
+                    size_bytes: 1000,
+                    start_time_ms: i as i64 * 1000,
+                    end_time_ms: (i as i64 + 1) * 1000,
+                    track_summary: vec![],
+                })
+                .unwrap();
+        }
+        let page = provider
+            .query_record_files(
+                &ctx,
+                RecordFileQuery {
+                    file_id: Some("f1".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items.len(), 1);
+        assert_eq!(page.items[0].file_id.0, "f1");
+
+        let page = provider
+            .query_record_files(
+                &ctx,
+                RecordFileQuery {
+                    directory: Some("stream-2".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].file_id.0, "f2");
     }
 
     #[tokio::test]
