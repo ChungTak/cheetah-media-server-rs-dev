@@ -476,6 +476,26 @@ impl RtpApi for FakeMediaProvider {
         Ok(())
     }
 
+    async fn get_rtp_session(
+        &self,
+        _ctx: &MediaRequestContext,
+        id: &RtpSessionId,
+    ) -> MediaResult<RtpSession> {
+        Ok(RtpSession {
+            session_id: id.clone(),
+            kind: RtpSessionKind::Receiver,
+            media_key: key(),
+            local_port: None,
+            remote_endpoint: None,
+            ssrc: None,
+            payload_type: None,
+            tcp_mode: None,
+            reuse_port: false,
+            state: RtpSessionState::Created,
+            created_at: 0,
+        })
+    }
+
     async fn list_rtp_sessions(
         &self,
         _ctx: &MediaRequestContext,
