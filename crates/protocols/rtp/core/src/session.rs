@@ -9,8 +9,9 @@ use cheetah_codec::{
 
 use crate::error::RtpCoreDiagnostic;
 use crate::types::{
-    RtcpSend, RtpCoreCommand, RtpCoreEvent, RtpCoreInput, RtpCoreOutput, RtpDatagram,
-    RtpSessionKey, RtpTcpChunk, RtpTcpSend, RtpTrackFilter, RtpTransportMode, RtpUdpSend,
+    RtcpSend, RtpConnectionType, RtpCoreCommand, RtpCoreEvent, RtpCoreInput, RtpCoreOutput,
+    RtpDatagram, RtpSessionKey, RtpTcpChunk, RtpTcpSend, RtpTrackFilter, RtpTransportMode,
+    RtpUdpSend,
 };
 
 enum SessionDemuxer {
@@ -23,9 +24,15 @@ enum SessionDemuxer {
 struct RtpSession {
     _session_key: RtpSessionKey,
     ssrc: u32,
+    /// Payload mode used to initialize the ingress demuxer.
     payload_mode: RtpPayloadMode,
+    /// Payload mode used when packetizing outbound `SendFrame` frames.
+    egress_payload_mode: RtpPayloadMode,
     transport_mode: RtpTransportMode,
+    /// Filter applied to demuxed frames before they leave the core.
     track_filter: RtpTrackFilter,
+    /// Filter applied to frames fed to `SendFrame`.
+    egress_track_filter: RtpTrackFilter,
 
     // Ingress state
     demuxer: SessionDemuxer,
@@ -278,8 +285,10 @@ impl RtpCore {
                                 _session_key: session_key.clone(),
                                 ssrc,
                                 payload_mode: RtpPayloadMode::Ehome,
+                                egress_payload_mode: RtpPayloadMode::Ehome,
                                 transport_mode: RtpTransportMode::RecvOnly,
                                 track_filter: RtpTrackFilter::All,
+                                egress_track_filter: RtpTrackFilter::All,
                                 demuxer: SessionDemuxer::Pending,
                                 last_seq: None,
                                 source_addr: None,
@@ -415,6 +424,7 @@ impl RtpCore {
                                                         RtpCoreEvent::Frame {
                                                             session_key: session_key.clone(),
                                                             frame: *frame,
+                                                            source_addr: session.source_addr,
                                                         },
                                                     ));
                                                 }
@@ -490,6 +500,7 @@ impl RtpCore {
                                                 RtpCoreEvent::Frame {
                                                     session_key: session_key.clone(),
                                                     frame,
+                                                    source_addr: session.source_addr,
                                                 },
                                             ));
                                         }
@@ -639,8 +650,10 @@ impl RtpCore {
                 _session_key: key.clone(),
                 ssrc,
                 payload_mode: mode,
+                egress_payload_mode: mode,
                 transport_mode: RtpTransportMode::RecvOnly,
                 track_filter: RtpTrackFilter::All,
+                egress_track_filter: RtpTrackFilter::All,
                 demuxer: SessionDemuxer::Pending,
                 last_seq: None,
                 source_addr,
@@ -757,6 +770,7 @@ impl RtpCore {
 
         // Feed to demuxers
         let track_filter = session.track_filter;
+        let source_addr = session.source_addr;
         match &mut session.demuxer {
             SessionDemuxer::Ts(demuxer) => {
                 let demux_events = demuxer.push(&rtp.payload);
@@ -777,6 +791,7 @@ impl RtpCore {
                             outputs.push(RtpCoreOutput::Event(RtpCoreEvent::Frame {
                                 session_key: session_key.clone(),
                                 frame,
+                                source_addr,
                             }));
                         }
                         _ => {}
@@ -806,6 +821,7 @@ impl RtpCore {
                             outputs.push(RtpCoreOutput::Event(RtpCoreEvent::Frame {
                                 session_key: session_key.clone(),
                                 frame: *frame,
+                                source_addr,
                             }));
                         }
                         _ => {}
@@ -993,8 +1009,10 @@ impl RtpCore {
                     _session_key: spec.session_key.clone(),
                     ssrc,
                     payload_mode: spec.payload_mode,
+                    egress_payload_mode: spec.payload_mode,
                     transport_mode: spec.transport_mode,
                     track_filter,
+                    egress_track_filter: spec.track_filter,
                     demuxer: SessionDemuxer::Pending,
                     last_seq: None,
                     source_addr: None,
@@ -1035,6 +1053,14 @@ impl RtpCore {
                     if session.destination.is_none() {
                         session.destination = Some(spec.destination);
                     }
+                    // VoiceTalk upgrades an existing inbound session to SendRecv and locks
+                    // egress to audio so the same socket can push talkback audio back.
+                    if spec.connection_type == Some(RtpConnectionType::VoiceTalk) {
+                        session.transport_mode = spec.transport_mode;
+                        session.egress_track_filter = spec.track_filter;
+                        session.egress_payload_mode = spec.payload_mode;
+                        session.destination = Some(spec.destination);
+                    }
                     return;
                 }
                 let track_filter = spec.track_filter;
@@ -1042,8 +1068,10 @@ impl RtpCore {
                     _session_key: spec.session_key.clone(),
                     ssrc: spec.ssrc,
                     payload_mode: spec.payload_mode,
+                    egress_payload_mode: spec.payload_mode,
                     transport_mode: spec.transport_mode,
                     track_filter,
+                    egress_track_filter: spec.track_filter,
                     demuxer: SessionDemuxer::Pending,
                     last_seq: None,
                     source_addr: None,
@@ -1079,6 +1107,12 @@ impl RtpCore {
                     if session.transport_mode == RtpTransportMode::RecvOnly {
                         return;
                     }
+                    if !track_filter_allows_track(
+                        session.egress_track_filter,
+                        send_frame.frame.media_kind,
+                    ) {
+                        return;
+                    }
 
                     // Mux frame data or directly packetize if it is raw payload bytes
                     let payload = &send_frame.frame.payload;
@@ -1102,22 +1136,23 @@ impl RtpCore {
                     let rtp_clock = cheetah_codec::RtpClock { rate: clock_rate };
                     let timestamp = rtp_clock.micros_to_ticks(send_frame.frame.pts_us);
 
-                    let payload_type = match (session.payload_mode, send_frame.frame.media_kind) {
-                        (RtpPayloadMode::Ps, _) => 96,
-                        (RtpPayloadMode::Ts, _) => 33,
-                        // Audio in raw / ES mode: prefer the canonical static PTs for codecs
-                        // that have well-known assignments (RFC 3551). Falls back to a
-                        // dynamic PT when the codec has no static assignment.
-                        (_, cheetah_codec::MediaKind::Audio) => match send_frame.frame.codec {
-                            cheetah_codec::CodecId::G711U => 0,
-                            cheetah_codec::CodecId::G711A => 8,
-                            cheetah_codec::CodecId::MP3 => 14,
+                    let payload_type =
+                        match (session.egress_payload_mode, send_frame.frame.media_kind) {
+                            (RtpPayloadMode::Ps, _) => 96,
+                            (RtpPayloadMode::Ts, _) => 33,
+                            // Audio in raw / ES mode: prefer the canonical static PTs for codecs
+                            // that have well-known assignments (RFC 3551). Falls back to a
+                            // dynamic PT when the codec has no static assignment.
+                            (_, cheetah_codec::MediaKind::Audio) => match send_frame.frame.codec {
+                                cheetah_codec::CodecId::G711U => 0,
+                                cheetah_codec::CodecId::G711A => 8,
+                                cheetah_codec::CodecId::MP3 => 14,
+                                _ => 97,
+                            },
+                            // Video in raw / ES mode uses dynamic PT 96.
+                            (_, cheetah_codec::MediaKind::Video) => 96,
                             _ => 97,
-                        },
-                        // Video in raw / ES mode uses dynamic PT 96.
-                        (_, cheetah_codec::MediaKind::Video) => 96,
-                        _ => 97,
-                    };
+                        };
 
                     let rtp_header = RtpHeader {
                         version: 2,
@@ -1179,8 +1214,12 @@ fn track_filter_allows_track(filter: RtpTrackFilter, kind: cheetah_codec::MediaK
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::RtpServerSpec;
-    use cheetah_codec::{RtpHeader, RtpPacket};
+    use crate::types::{
+        RtpClientSpec, RtpConnectionType, RtpDatagram, RtpSendFrame, RtpServerSpec,
+    };
+    use cheetah_codec::{
+        AVFrame, CodecId, FrameFormat, MediaKind, RtpHeader, RtpPacket, Timebase, TrackId,
+    };
     use std::net::SocketAddr;
 
     #[test]
@@ -1468,5 +1507,96 @@ mod tests {
                 cap: 1500,
             })
         )));
+    }
+
+    #[test]
+    fn test_voice_talk_upgrades_session_and_sends_audio() {
+        // An inbound session can be upgraded to VoiceTalk, reusing the same socket
+        // (same session_key) to push audio back to the peer.
+        let mut core = RtpCore::new(10, 30_000);
+        let session_key = "recv/talk/cam".to_string();
+        let ssrc = 7777u32;
+
+        let server_spec = RtpServerSpec {
+            session_key: session_key.clone(),
+            ssrc: Some(ssrc),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        };
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(
+            server_spec,
+        )));
+
+        // The peer address would normally be learned from the first ingress frame.
+        let peer = "127.0.0.1:15060".parse::<SocketAddr>().unwrap();
+
+        // Upgrade the same session to VoiceTalk / SendRecv with audio-only egress.
+        let client_spec = RtpClientSpec {
+            session_key: session_key.clone(),
+            destination: peer,
+            ssrc,
+            payload_mode: RtpPayloadMode::RawAudio,
+            transport_mode: RtpTransportMode::SendRecv,
+            tcp_conn_id: None,
+            connection_type: Some(RtpConnectionType::VoiceTalk),
+            track_filter: RtpTrackFilter::OnlyAudio,
+        };
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateClient(
+            client_spec,
+        )));
+
+        // Audio frame should be emitted as UDP with static PT 0 (G.711 u-law).
+        let audio = AVFrame::new(
+            TrackId(1),
+            MediaKind::Audio,
+            CodecId::G711U,
+            FrameFormat::G711Packet,
+            0,
+            0,
+            Timebase::new(1, 8000),
+            Bytes::from(vec![0xD5; 160]),
+        );
+        let outputs = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::SendFrame(
+            RtpSendFrame {
+                session_key: session_key.clone(),
+                frame: audio,
+            },
+        )));
+
+        let mut sent = false;
+        for output in outputs {
+            if let RtpCoreOutput::SendUdp(udp) = output {
+                assert_eq!(udp.destination, peer);
+                assert_eq!(udp.session_key, session_key);
+                let parsed = RtpPacket::parse(&udp.data).unwrap();
+                assert_eq!(parsed.header.ssrc, ssrc);
+                assert_eq!(parsed.header.payload_type, 0);
+                sent = true;
+            }
+        }
+        assert!(sent, "expected SendUdp output for voice talk audio");
+
+        // Video frame should be dropped by the OnlyAudio track filter.
+        let video = AVFrame::new(
+            TrackId(2),
+            MediaKind::Video,
+            CodecId::H264,
+            FrameFormat::CanonicalH26x,
+            0,
+            0,
+            Timebase::new(1, 90_000),
+            Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x09]),
+        );
+        let outputs = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::SendFrame(
+            RtpSendFrame {
+                session_key,
+                frame: video,
+            },
+        )));
+        assert!(!outputs
+            .iter()
+            .any(|o| matches!(o, RtpCoreOutput::SendUdp(_))));
     }
 }

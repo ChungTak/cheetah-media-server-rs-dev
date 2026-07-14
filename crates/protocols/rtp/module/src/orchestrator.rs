@@ -413,6 +413,28 @@ impl RtpSessionOrchestrator {
         Ok(session.clone())
     }
 
+    /// Record the peer address observed for a session and move it to Connected.
+    ///
+    /// 记录会话观测到的对端地址，并将其状态推进到 Connected。
+    pub fn set_session_remote_endpoint(
+        &self,
+        id: &RtpSessionId,
+        remote: SocketAddr,
+    ) -> Result<RtpSession> {
+        let mut sessions = self.sessions.lock();
+        let session = sessions
+            .get_mut(id)
+            .ok_or_else(|| MediaError::not_found("rtp session"))?;
+        session.remote_endpoint = Some(remote.to_string());
+        if matches!(
+            session.state,
+            RtpSessionState::Listening | RtpSessionState::Created
+        ) {
+            session.state = RtpSessionState::Connected;
+        }
+        Ok(session.clone())
+    }
+
     /// Resolve a receiver bind address from an optional explicit `ip`/`port`.
     /// `port` of `None` or `0` asks the driver to allocate an ephemeral port from
     /// the default interface.
@@ -445,16 +467,15 @@ impl RtpSessionOrchestrator {
     ///
     /// 通过领域请求打开 RTP 发送端。
     pub async fn open_rtp_sender(&self, request: RtpSenderRequest) -> Result<RtpSession> {
+        if request.mode == RtpSenderMode::Talk {
+            return self.open_rtp_talk(request).await;
+        }
+
         let session_key = Self::session_key_from_media_key(&request.media_key, "send");
         let destination: SocketAddr = request.destination_endpoint.parse().map_err(|e| {
             MediaError::invalid_argument(format!("invalid destination endpoint: {e}"))
         })?;
         let payload_mode = Self::parse_payload_mode(&request.codec_hint, request.payload_type);
-        let transport_mode = if request.mode == RtpSenderMode::Talk {
-            RtpTransportMode::SendRecv
-        } else {
-            RtpTransportMode::SendOnly
-        };
         let connection_type =
             Self::sender_connection_type(request.mode, &request.transport_options);
         self.create_client_session(
@@ -465,11 +486,68 @@ impl RtpSessionOrchestrator {
             request.ssrc,
             request.payload_type,
             payload_mode,
-            transport_mode,
+            RtpTransportMode::SendOnly,
             connection_type,
             RtpTrackFilter::All,
         )
         .await
+    }
+
+    /// Upgrade an existing inbound session to bidirectional talkback audio.
+    ///
+    /// 将现有入站会话升级为双向对讲音频。
+    pub async fn open_rtp_talk(&self, request: RtpSenderRequest) -> Result<RtpSession> {
+        let recv_key = Self::session_key_from_media_key(&request.media_key, "recv");
+        let id = RtpSessionId(recv_key.clone());
+
+        // Lock the directory, validate and mutate the receiver session, then release the
+        // guard before any `.await` because `parking_lot::MutexGuard` is not `Send`.
+        let destination = {
+            let mut sessions = self.sessions.lock();
+            let session = sessions
+                .get_mut(&id)
+                .ok_or_else(|| MediaError::not_found("rtp receiver session"))?;
+
+            if session.kind != RtpSessionKind::Receiver && session.kind != RtpSessionKind::Talk {
+                return Err(MediaError::invalid_argument("session is not a receiver"));
+            }
+
+            let destination = session
+                .remote_endpoint
+                .as_deref()
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| {
+                    MediaError::unavailable("receiver has not received any traffic yet")
+                })?;
+
+            session.kind = RtpSessionKind::Talk;
+            session.state = RtpSessionState::Connected;
+            destination
+        };
+
+        let payload_mode = Self::parse_payload_mode(&request.codec_hint, request.payload_type);
+        let ssrc = request.ssrc.unwrap_or(0);
+        let spec = RtpClientSpec {
+            session_key: recv_key.clone(),
+            destination,
+            ssrc,
+            payload_mode,
+            transport_mode: RtpTransportMode::SendRecv,
+            tcp_conn_id: None,
+            connection_type: Some(RtpConnectionType::VoiceTalk),
+            track_filter: RtpTrackFilter::OnlyAudio,
+        };
+
+        let driver = self.driver()?;
+        driver
+            .send_command(RtpDriverCommand::CreateClient(spec))
+            .await;
+
+        let sessions = self.sessions.lock();
+        sessions
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| MediaError::not_found("rtp session"))
     }
 
     /// Stop an RTP session by domain identifier.

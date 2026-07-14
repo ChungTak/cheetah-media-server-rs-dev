@@ -488,7 +488,11 @@ async fn run_ingress_worker(
                     session._tracks = tracks;
                 }
             }
-            RtpCoreEvent::Frame { session_key, frame } => {
+            RtpCoreEvent::Frame {
+                session_key,
+                frame,
+                source_addr,
+            } => {
                 if let Some(session) = sessions.get_mut(&session_key) {
                     let frame_arc = Arc::new(frame);
                     if session.publisher_ready {
@@ -502,8 +506,12 @@ async fn run_ingress_worker(
                             session.online_reported = true;
                             let session_id =
                                 cheetah_sdk::media_api::ids::RtpSessionId(session_key.clone());
-                            let _ = orchestrator
-                                .set_session_state(&session_id, RtpSessionState::Connected);
+                            if let Some(addr) = source_addr {
+                                let _ = orchestrator.set_session_remote_endpoint(&session_id, addr);
+                            } else {
+                                let _ = orchestrator
+                                    .set_session_state(&session_id, RtpSessionState::Connected);
+                            }
                             ctx.event_bus.publish(SystemEvent::Protocol(ProtocolEvent {
                                 protocol: "rtp".to_string(),
                                 event_type: "media_online".to_string(),
