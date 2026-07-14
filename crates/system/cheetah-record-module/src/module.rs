@@ -15,7 +15,7 @@ use cheetah_sdk::{
     CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
     ModuleHttpService, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
-    ModuleSchemaRegistration, ModuleState, SdkError,
+    ModuleSchemaRegistration, ModuleState, ProviderRegistration, SdkError,
 };
 
 use crate::api::{
@@ -98,6 +98,7 @@ pub struct RecordModule {
     registry: Arc<RecordRegistry>,
     executor: Option<Arc<RecordExecutor>>,
     api: Option<Arc<RecordApi>>,
+    media_services_registration: Option<ProviderRegistration>,
 }
 
 impl RecordModule {
@@ -116,6 +117,7 @@ impl RecordModule {
             registry: Arc::new(RecordRegistry::new(0)),
             executor: None,
             api: None,
+            media_services_registration: None,
         }
     }
 }
@@ -168,9 +170,16 @@ impl Module for RecordModule {
         self.executor = Some(executor);
         let record_api = Arc::new(RecordApi::new(self.registry.clone(), executor_dyn));
         self.api = Some(record_api.clone());
-        ctx.engine.media_services.register_record(Arc::new(
-            crate::media_provider::RecordMediaProvider::new(record_api),
-        ));
+        let record_capabilities = {
+            let mut set = cheetah_media_api::MediaCapabilitySet::empty();
+            set.add(cheetah_media_api::MediaCapability::Record, 1);
+            set
+        };
+        self.media_services_registration =
+            Some(ctx.engine.media_services.register_record_with_capabilities(
+                Arc::new(crate::media_provider::RecordMediaProvider::new(record_api)),
+                record_capabilities,
+            ));
         self.state = ModuleState::Initialized;
         Ok(())
     }
@@ -199,6 +208,11 @@ impl Module for RecordModule {
     async fn stop(&mut self) -> Result<(), SdkError> {
         if let Some(executor) = self.executor.as_ref() {
             executor.shutdown().await;
+        }
+        if let Some(reg) = self.media_services_registration.take() {
+            if let Some(ctx) = self.ctx.as_ref() {
+                ctx.media_services.unregister(&reg);
+            }
         }
         self.state = ModuleState::Stopped;
         Ok(())

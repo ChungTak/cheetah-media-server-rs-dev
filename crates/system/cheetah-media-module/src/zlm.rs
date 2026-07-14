@@ -250,14 +250,20 @@ impl ZlmMediaHttpService {
         })
     }
 
-    pub(crate) fn request_context(&self, _req: &HttpRequest) -> MediaRequestContext {
+    pub(crate) fn request_context(&self, req: &HttpRequest) -> MediaRequestContext {
+        let request_id = header_value(&req.headers, "x-request-id")
+            .map(|v| cheetah_media_api::ids::RequestId(v.to_string()))
+            .unwrap_or_else(|| cheetah_media_api::ids::RequestId("".to_string()));
+        let deadline = header_value(&req.headers, "x-deadline").and_then(|v| v.parse::<i64>().ok());
         MediaRequestContext {
-            request_id: cheetah_media_api::ids::RequestId("".to_string()),
-            correlation_id: None,
-            principal: None,
+            request_id,
+            correlation_id: header_value(&req.headers, "x-correlation-id").map(|s| s.to_string()),
+            principal: header_value(&req.headers, "x-principal")
+                .or_else(|| header_value(&req.headers, "x-user-id"))
+                .map(|s| s.to_string()),
             source_adapter: "zlm".to_string(),
-            trace_context: None,
-            deadline: None,
+            trace_context: header_value(&req.headers, "x-trace-context").map(|s| s.to_string()),
+            deadline,
         }
     }
 
@@ -290,13 +296,16 @@ impl ZlmMediaHttpService {
     async fn get_media_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
-        let query = MediaQuery {
+        let mut query = MediaQuery {
             vhost: params["vhost"].as_str().map(String::from),
             app: params["app"].as_str().map(String::from),
             stream: params["stream"].as_str().map(String::from),
             schema: params["schema"].as_str().map(String::from),
+            page: page_from_params(&params),
+            page_size: page_size_from_params(&params),
             ..Default::default()
         };
+        query.clamp_page_size();
         let page = self.control()?.get_media_list(&ctx, query).await?;
         Ok(zlm_response(0, "success", page))
     }
@@ -324,12 +333,15 @@ impl ZlmMediaHttpService {
     async fn get_all_session(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
-        let query = SessionQuery {
+        let mut query = SessionQuery {
             vhost: params["vhost"].as_str().map(String::from),
             app: params["app"].as_str().map(String::from),
             stream: params["stream"].as_str().map(String::from),
+            page: page_from_params(&params),
+            page_size: page_size_from_params(&params),
             ..Default::default()
         };
+        query.clamp_page_size();
         let page = self.control()?.list_sessions(&ctx, query).await?;
         Ok(zlm_response(0, "success", page))
     }
@@ -465,6 +477,8 @@ impl ZlmMediaHttpService {
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
             format: Some("mp4".to_string()),
+            page: page_from_params(&params),
+            page_size: page_size_from_params(&params),
             ..Default::default()
         };
         query.clamp_page_size();
@@ -485,12 +499,13 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let query = RecordFileQuery {
+        let mut query = RecordFileQuery {
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
             page_size: RecordFileQuery::MAX_PAGE_SIZE,
             ..Default::default()
         };
+        query.clamp_page_size();
         let mut total_deleted = 0usize;
         let mut total_failed = 0usize;
         loop {
@@ -773,4 +788,22 @@ fn zlm_json_response(params: serde_json::Value) -> HttpResponse {
         }],
         body: Bytes::from(serde_json::to_vec(&params).unwrap_or_default()),
     }
+}
+
+fn header_value<'a>(headers: &'a [HttpHeader], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case(name))
+        .map(|h| h.value.as_str())
+}
+
+fn page_from_params(params: &serde_json::Value) -> u64 {
+    params["page"].as_u64().unwrap_or(0)
+}
+
+fn page_size_from_params(params: &serde_json::Value) -> u64 {
+    params["pageSize"]
+        .as_u64()
+        .or_else(|| params["page_size"].as_u64())
+        .unwrap_or(20)
 }

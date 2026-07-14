@@ -18,8 +18,8 @@ use cheetah_sdk::{
     BootstrapPolicy, CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest,
     HttpResponse, HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
     ModuleHttpService, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
-    ModuleSchemaRegistration, ModuleState, PublishLease, PublisherOptions, PublisherSink, SdkError,
-    StreamKey, SubscriberOptions,
+    ModuleSchemaRegistration, ModuleState, ProviderRegistration, PublishLease, PublisherOptions,
+    PublisherSink, SdkError, StreamKey, SubscriberOptions,
 };
 use futures::{pin_mut, select_biased, FutureExt};
 use parking_lot::Mutex;
@@ -88,6 +88,7 @@ pub struct RtpModule {
     cancel_token: Option<CancellationToken>,
     active_egress: Arc<Mutex<HashMap<String, CancellationToken>>>,
     client_targets: Arc<Mutex<HashMap<String, Vec<String>>>>,
+    media_services_registration: Option<ProviderRegistration>,
 }
 
 /// `RtpModule` constructor.
@@ -106,6 +107,7 @@ impl RtpModule {
             cancel_token: None,
             active_egress: Arc::new(Mutex::new(HashMap::new())),
             client_targets: Arc::new(Mutex::new(HashMap::new())),
+            media_services_registration: None,
         }
     }
 }
@@ -152,12 +154,19 @@ impl Module for RtpModule {
             .parse::<SocketAddr>()
             .map_err(|e| SdkError::InvalidArgument(format!("invalid listen_udp: {e}")))?
             .port();
-        engine
-            .media_services
-            .register_rtp(Arc::new(RtpMediaProvider::new(
-                self.driver_handle.clone(),
-                listen_port,
-            )));
+        let rtp_capabilities = {
+            let mut set = cheetah_sdk::media_api::MediaCapabilitySet::empty();
+            set.add(cheetah_sdk::media_api::MediaCapability::Rtp, 1);
+            set
+        };
+        self.media_services_registration =
+            Some(engine.media_services.register_rtp_with_capabilities(
+                Arc::new(RtpMediaProvider::new(
+                    self.driver_handle.clone(),
+                    listen_port,
+                )),
+                rtp_capabilities,
+            ));
 
         // Allocate the module-scoped cancellation token now so that callers of
         // `http_service()` (invoked by the engine right after `init`) get a token that will
@@ -303,6 +312,11 @@ impl Module for RtpModule {
         // subsequent restart starts from a clean state.
         self.active_egress.lock().clear();
         self.client_targets.lock().clear();
+        if let Some(reg) = self.media_services_registration.take() {
+            if let Some(ctx) = self.ctx.as_ref() {
+                ctx.media_services.unregister(&reg);
+            }
+        }
         self.state = ModuleState::Stopped;
         Ok(())
     }

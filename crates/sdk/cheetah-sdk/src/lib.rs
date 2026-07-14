@@ -51,7 +51,7 @@ pub use ids::{
 pub use module::{
     EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse, HttpRouteDescriptor,
     HttpRouteMount, MediaServices, Module, ModuleCapability, ModuleFactory, ModuleHttpService,
-    ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState,
+    ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState, ProviderRegistration,
 };
 pub use service::{
     ClusterApi, ClusterNode, DatabaseApi, FfmpegApi, FfmpegJob, HealthApi, MetricsApi,
