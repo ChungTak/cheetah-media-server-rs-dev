@@ -127,7 +127,8 @@ impl SnapshotApi for SnapshotMediaProvider {
         all.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
         let total = all.len() as u64;
-        let start = query.page.saturating_mul(query.page_size) as usize;
+        let page = query.page.max(1);
+        let start = ((page - 1).saturating_mul(query.page_size)) as usize;
         let items = if start >= all.len() {
             Vec::new()
         } else {
@@ -140,7 +141,7 @@ impl SnapshotApi for SnapshotMediaProvider {
         Ok(Page {
             items,
             total,
-            page: query.page,
+            page,
             page_size: query.page_size,
             next_cursor: None,
         })
