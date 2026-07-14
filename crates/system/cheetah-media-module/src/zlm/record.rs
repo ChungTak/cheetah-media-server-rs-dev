@@ -5,7 +5,6 @@
 use cheetah_media_api::command::{
     DeleteRecordRequest, RecordFileQuery, RecordTaskQuery, StartRecordRequest, StopRecordRequest,
 };
-use cheetah_media_api::ids::RecordTaskId;
 use cheetah_media_api::model::{RecordTaskState, RecordTemplate, StoragePolicy};
 use cheetah_sdk::{HttpRequest, HttpResponse};
 
@@ -22,10 +21,10 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let format = params["type"].as_str().unwrap_or("mp4");
+        let format = zlm_record_format(&params["type"])?;
         let request = StartRecordRequest {
             media_key: key,
-            format: format.to_string(),
+            format: format.clone(),
             template: RecordTemplate::Continuous,
             segment_duration_ms: None,
             max_segments: None,
@@ -45,11 +44,36 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let format = params["type"].as_str().unwrap_or("mp4");
-        let request = StopRecordRequest {
-            task_id: RecordTaskId(format!("{format}-{}-{}", key.app.0, key.stream.0)),
+        let format = zlm_record_format(&params["type"])?;
+        let mut query = RecordTaskQuery {
+            vhost: Some(key.vhost.0.clone()),
+            app: Some(key.app.0.clone()),
+            stream: Some(key.stream.0.clone()),
+            page_size: RecordTaskQuery::MAX_PAGE_SIZE,
+            ..Default::default()
         };
-        let _ = record_api.stop_record(&ctx, request).await?;
+        query.clamp_page_size();
+        let page = record_api.query_record_tasks(&ctx, query).await?;
+        let task = page
+            .items
+            .into_iter()
+            .find(|t| {
+                t.format == format
+                    && matches!(t.state, RecordTaskState::Running | RecordTaskState::Pending)
+            })
+            .ok_or_else(|| {
+                AdapterError::Media(cheetah_media_api::error::MediaError::not_found(
+                    "record task",
+                ))
+            })?;
+        record_api
+            .stop_record(
+                &ctx,
+                StopRecordRequest {
+                    task_id: task.task_id,
+                },
+            )
+            .await?;
         Ok(zlm_response(
             0,
             "success",
@@ -65,12 +89,15 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let format = params["type"].as_str().unwrap_or("mp4");
-        let query = RecordTaskQuery {
+        let format = zlm_record_format(&params["type"])?;
+        let mut query = RecordTaskQuery {
+            vhost: Some(key.vhost.0.clone()),
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
+            page_size: RecordTaskQuery::MAX_PAGE_SIZE,
             ..Default::default()
         };
+        query.clamp_page_size();
         let page = record_api.query_record_tasks(&ctx, query).await?;
         let recording = page.items.iter().any(|t| {
             t.format == format
@@ -91,12 +118,14 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let query = RecordFileQuery {
+        let mut query = RecordFileQuery {
+            vhost: Some(key.vhost.0.clone()),
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
             format: Some("mp4".to_string()),
             ..Default::default()
         };
+        query.clamp_page_size();
         let page = record_api.query_record_files(&ctx, query).await?;
         let paths: Vec<String> = page.items.iter().map(|f| f.path_handle.0.clone()).collect();
         Ok(zlm_response(
@@ -114,12 +143,14 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let query = RecordFileQuery {
+        let mut query = RecordFileQuery {
+            vhost: Some(key.vhost.0.clone()),
             app: Some(key.app.0.clone()),
             stream: Some(key.stream.0.clone()),
             page_size: RecordFileQuery::MAX_PAGE_SIZE,
             ..Default::default()
         };
+        query.clamp_page_size();
         let mut total_deleted = 0usize;
         let mut total_failed = 0usize;
         loop {
@@ -163,4 +194,34 @@ impl ZlmMediaHttpService {
             data,
         ))
     }
+}
+
+/// Parse the ZLMediaKit record `type` parameter into a normalized format string.
+///
+/// Supports numeric values (0=mp4, 1=hls, 2=hls, 3=fmp4) and string values.
+/// Missing or empty values default to "mp4".
+fn zlm_record_format(value: &serde_json::Value) -> Result<String, AdapterError> {
+    if value.is_null() {
+        return Ok("mp4".to_string());
+    }
+    if let Some(num) = crate::util::parse_json_u64(value) {
+        let format = match num {
+            0 => "mp4",
+            1 | 2 => "hls",
+            3 => "fmp4",
+            other => {
+                return Err(AdapterError::InvalidRequest(format!(
+                    "unsupported numeric record type {other}"
+                )))
+            }
+        };
+        return Ok(format.to_string());
+    }
+    if let Some(s) = value.as_str() {
+        if s.trim().is_empty() {
+            return Ok("mp4".to_string());
+        }
+        return Ok(s.to_lowercase());
+    }
+    Ok("mp4".to_string())
 }
