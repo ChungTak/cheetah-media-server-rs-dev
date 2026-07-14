@@ -211,8 +211,12 @@ impl ProxyApi for ProxyMediaProvider {
             .await;
         }));
 
-        self.registry
-            .attach_task(&inserted.proxy_id, cancel, handle);
+        if !self
+            .registry
+            .attach_task(&inserted.proxy_id, cancel.clone(), handle)
+        {
+            cancel.cancel();
+        }
         Ok(inserted)
     }
 
@@ -306,8 +310,12 @@ impl ProxyApi for ProxyMediaProvider {
             .await;
         }));
 
-        self.registry
-            .attach_task(&inserted.proxy_id, cancel, handle);
+        if !self
+            .registry
+            .attach_task(&inserted.proxy_id, cancel.clone(), handle)
+        {
+            cancel.cancel();
+        }
         Ok(inserted)
     }
 

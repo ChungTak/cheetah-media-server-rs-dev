@@ -416,7 +416,9 @@ async fn sleep_or_cancel(
 
 fn backoff_ms(retry_count: u32, policy: &RetryPolicy) -> u64 {
     let base = policy.retry_delay_ms;
-    let exp = 1u64.checked_shl(retry_count.min(60)).unwrap_or(u64::MAX);
+    let exp = 1u64
+        .checked_shl(retry_count.saturating_sub(1).min(60))
+        .unwrap_or(u64::MAX);
     let delay = base.saturating_mul(exp);
     delay.min(policy.max_retry_delay_ms)
 }
