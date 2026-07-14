@@ -24,7 +24,10 @@ enum SessionDemuxer {
 struct RtpSession {
     _session_key: RtpSessionKey,
     ssrc: u32,
+    /// Payload mode used to initialize the ingress demuxer.
     payload_mode: RtpPayloadMode,
+    /// Payload mode used when packetizing outbound `SendFrame` frames.
+    egress_payload_mode: RtpPayloadMode,
     transport_mode: RtpTransportMode,
     /// Filter applied to demuxed frames before they leave the core.
     track_filter: RtpTrackFilter,
@@ -282,6 +285,7 @@ impl RtpCore {
                                 _session_key: session_key.clone(),
                                 ssrc,
                                 payload_mode: RtpPayloadMode::Ehome,
+                                egress_payload_mode: RtpPayloadMode::Ehome,
                                 transport_mode: RtpTransportMode::RecvOnly,
                                 track_filter: RtpTrackFilter::All,
                                 egress_track_filter: RtpTrackFilter::All,
@@ -646,6 +650,7 @@ impl RtpCore {
                 _session_key: key.clone(),
                 ssrc,
                 payload_mode: mode,
+                egress_payload_mode: mode,
                 transport_mode: RtpTransportMode::RecvOnly,
                 track_filter: RtpTrackFilter::All,
                 egress_track_filter: RtpTrackFilter::All,
@@ -1004,6 +1009,7 @@ impl RtpCore {
                     _session_key: spec.session_key.clone(),
                     ssrc,
                     payload_mode: spec.payload_mode,
+                    egress_payload_mode: spec.payload_mode,
                     transport_mode: spec.transport_mode,
                     track_filter,
                     egress_track_filter: spec.track_filter,
@@ -1052,8 +1058,8 @@ impl RtpCore {
                     if spec.connection_type == Some(RtpConnectionType::VoiceTalk) {
                         session.transport_mode = spec.transport_mode;
                         session.egress_track_filter = spec.track_filter;
+                        session.egress_payload_mode = spec.payload_mode;
                         session.destination = Some(spec.destination);
-                        session.payload_mode = spec.payload_mode;
                     }
                     return;
                 }
@@ -1062,6 +1068,7 @@ impl RtpCore {
                     _session_key: spec.session_key.clone(),
                     ssrc: spec.ssrc,
                     payload_mode: spec.payload_mode,
+                    egress_payload_mode: spec.payload_mode,
                     transport_mode: spec.transport_mode,
                     track_filter,
                     egress_track_filter: spec.track_filter,
@@ -1129,22 +1136,23 @@ impl RtpCore {
                     let rtp_clock = cheetah_codec::RtpClock { rate: clock_rate };
                     let timestamp = rtp_clock.micros_to_ticks(send_frame.frame.pts_us);
 
-                    let payload_type = match (session.payload_mode, send_frame.frame.media_kind) {
-                        (RtpPayloadMode::Ps, _) => 96,
-                        (RtpPayloadMode::Ts, _) => 33,
-                        // Audio in raw / ES mode: prefer the canonical static PTs for codecs
-                        // that have well-known assignments (RFC 3551). Falls back to a
-                        // dynamic PT when the codec has no static assignment.
-                        (_, cheetah_codec::MediaKind::Audio) => match send_frame.frame.codec {
-                            cheetah_codec::CodecId::G711U => 0,
-                            cheetah_codec::CodecId::G711A => 8,
-                            cheetah_codec::CodecId::MP3 => 14,
+                    let payload_type =
+                        match (session.egress_payload_mode, send_frame.frame.media_kind) {
+                            (RtpPayloadMode::Ps, _) => 96,
+                            (RtpPayloadMode::Ts, _) => 33,
+                            // Audio in raw / ES mode: prefer the canonical static PTs for codecs
+                            // that have well-known assignments (RFC 3551). Falls back to a
+                            // dynamic PT when the codec has no static assignment.
+                            (_, cheetah_codec::MediaKind::Audio) => match send_frame.frame.codec {
+                                cheetah_codec::CodecId::G711U => 0,
+                                cheetah_codec::CodecId::G711A => 8,
+                                cheetah_codec::CodecId::MP3 => 14,
+                                _ => 97,
+                            },
+                            // Video in raw / ES mode uses dynamic PT 96.
+                            (_, cheetah_codec::MediaKind::Video) => 96,
                             _ => 97,
-                        },
-                        // Video in raw / ES mode uses dynamic PT 96.
-                        (_, cheetah_codec::MediaKind::Video) => 96,
-                        _ => 97,
-                    };
+                        };
 
                     let rtp_header = RtpHeader {
                         version: 2,
