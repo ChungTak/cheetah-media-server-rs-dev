@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 
-use cheetah_media_api::command::{RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest};
+use cheetah_media_api::command::{RtpReceiverRequest, RtpSenderMode, RtpSenderRequest};
 use cheetah_media_api::ids::{MediaKey, RtpSessionId, StreamKeyBridge};
 use cheetah_media_api::model::RtpTcpMode;
 use cheetah_sdk::{HttpRequest, HttpResponse};
@@ -150,13 +150,14 @@ impl ZlmMediaHttpService {
         let ctx = self.request_context(&req);
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let mut query = RtpQuery {
-            page_size: RtpQuery::MAX_PAGE_SIZE,
-            ..Default::default()
-        };
-        query.clamp_page_size();
-        let page = rtp_api.list_rtp_sessions(&ctx, query).await?;
-        let info = page.items.into_iter().find(|s| s.media_key == key);
+        let mut info = None;
+        for kind in ["recv", "send"] {
+            let id = zlm_rtp_session_id(&key, kind);
+            if let Ok(session) = rtp_api.get_rtp_session(&ctx, &RtpSessionId(id)).await {
+                info = Some(session);
+                break;
+            }
+        }
         let data = info
             .map(|s| {
                 serde_json::json!({

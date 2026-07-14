@@ -210,4 +210,12 @@ impl RtpApi for RtpMediaProvider {
     ) -> cheetah_media_api::error::Result<RtpSession> {
         Err(MediaError::unsupported_capability("rtp"))
     }
+
+    async fn get_rtp_session(
+        &self,
+        _ctx: &MediaRequestContext,
+        _id: &RtpSessionId,
+    ) -> cheetah_media_api::error::Result<RtpSession> {
+        Err(MediaError::unsupported_capability("rtp"))
+    }
 }

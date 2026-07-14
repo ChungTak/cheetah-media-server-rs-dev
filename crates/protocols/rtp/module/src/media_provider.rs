@@ -282,11 +282,13 @@ impl RtpApi for RtpMediaProvider {
         }
 
         let total = items.len() as u64;
-        let start = ((query.page - 1) * query.page_size) as usize;
+        let start = (query.page - 1).saturating_mul(query.page_size) as usize;
         let page_items = if start >= items.len() {
             Vec::new()
         } else {
-            let end = (start + query.page_size as usize).min(items.len());
+            let end = start
+                .saturating_add(query.page_size as usize)
+                .min(items.len());
             items[start..end].to_vec()
         };
 
@@ -316,6 +318,18 @@ impl RtpApi for RtpMediaProvider {
             .ok_or_else(|| MediaError::not_found("rtp session"))?;
 
         Ok(session)
+    }
+
+    async fn get_rtp_session(
+        &self,
+        _ctx: &MediaRequestContext,
+        id: &RtpSessionId,
+    ) -> Result<RtpSession> {
+        let sessions = self.sessions.lock();
+        sessions
+            .get(id)
+            .cloned()
+            .ok_or_else(|| MediaError::not_found("rtp session"))
     }
 }
 
