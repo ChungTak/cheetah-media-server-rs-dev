@@ -56,7 +56,7 @@ impl EngineMediaFileStore {
 
     fn is_authorized(&self, ctx: &MediaRequestContext, entry: &FileStoreEntry) -> bool {
         match &ctx.principal {
-            None => true,
+            None => entry.owner_principal.is_none() && entry.allowed_principals.is_empty(),
             Some(principal) => {
                 if let Some(owner) = &entry.owner_principal {
                     if owner == principal {
@@ -106,7 +106,10 @@ impl EngineMediaFileStore {
         let (start, end) = match range {
             Some(r) => {
                 let start = r.start.min(total);
-                let end = r.end.map(|e| e.min(total - 1)).unwrap_or(total - 1);
+                let end = r
+                    .end
+                    .map(|e| e.min(total.saturating_sub(1)))
+                    .unwrap_or_else(|| total.saturating_sub(1));
                 if start > end {
                     return Err(MediaError::invalid_argument("invalid byte range"));
                 }

@@ -163,7 +163,10 @@ pub fn sanitize_filename(name: &str, fallback: &str) -> String {
     if name.is_empty() {
         return fallback.to_string();
     }
-    let mut sanitized = name.replace("..", "_").replace(['/', '\\', '\0'], "_");
+    let mut sanitized = name
+        .replace("..", "_")
+        .replace(['/', '\\', '\0', '\r', '\n', '"'], "_")
+        .replace(|c: char| c.is_ascii_control(), "_");
     sanitized.truncate(255);
     if sanitized.is_empty() {
         fallback.to_string()

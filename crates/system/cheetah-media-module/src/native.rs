@@ -649,14 +649,23 @@ fn query_param(req: &HttpRequest, name: &str) -> Option<String> {
     None
 }
 
+/// A parsed HTTP `Range` request, distinct from the SDK `FileRange` so
+/// suffix and explicit ranges can be told apart before the file size is known.
+///
+/// 解析后的 HTTP `Range` 请求。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HttpRange {
+    From(u64),
+    Bounded(u64, u64),
+    Suffix(u64),
+}
+
 /// Parse a `Range: bytes=start-end` header.
 ///
-/// Supports `bytes=start-end`, `bytes=start-` and `bytes=-suffix`. Suffix
-/// ranges are represented as `(0, suffix_len)` and normalized later using
-/// the file size.
+/// Supports `bytes=start-end`, `bytes=start-` and `bytes=-suffix`.
 ///
 /// 解析 `Range: bytes=start-end` 头。
-fn parse_range_header(headers: &[HttpHeader]) -> Option<FileRange> {
+fn parse_range_header(headers: &[HttpHeader]) -> Option<HttpRange> {
     let value = header_value(headers, "range")?;
     let value = value.trim();
     let value = value.strip_prefix("bytes=")?;
@@ -671,39 +680,37 @@ fn parse_range_header(headers: &[HttpHeader]) -> Option<FileRange> {
     if start.is_empty() {
         // Suffix range: bytes=-N means the last N bytes.
         let suffix = end.parse::<u64>().ok()?;
-        Some(FileRange {
-            start: 0,
-            end: Some(suffix),
-        })
+        if suffix == 0 {
+            return None;
+        }
+        Some(HttpRange::Suffix(suffix))
     } else if end.is_empty() {
-        Some(FileRange {
-            start: start.parse::<u64>().ok()?,
-            end: None,
-        })
+        let start = start.parse::<u64>().ok()?;
+        Some(HttpRange::From(start))
     } else {
-        Some(FileRange {
-            start: start.parse::<u64>().ok()?,
-            end: Some(end.parse::<u64>().ok()?),
-        })
+        let start = start.parse::<u64>().ok()?;
+        let end = end.parse::<u64>().ok()?;
+        if start > end {
+            return None;
+        }
+        Some(HttpRange::Bounded(start, end))
     }
 }
 
-/// Clamp a requested range to the file size and expand suffix ranges.
+/// Clamp a requested range to the file size and return an explicit `FileRange`.
 ///
-/// 将请求范围限制在文件大小内并展开后缀范围。
-fn normalize_range(range: Option<FileRange>, total: u64) -> Option<FileRange> {
+/// 将请求范围限制在文件大小内并返回显式 `FileRange`。
+fn normalize_range(range: Option<HttpRange>, total: u64) -> Option<FileRange> {
     let r = range?;
-    // Suffix range: stored as (0, suffix_len) by the parser.
-    let start = if r.start == 0 && r.end.is_some_and(|e| e > 0 && e <= total) {
-        // Heuristic: treat `bytes=-N` as a suffix if end <= total.
-        total.saturating_sub(r.end.unwrap_or(0))
-    } else {
-        r.start.min(total)
+    let max_end = total.saturating_sub(1);
+    let (start, end) = match r {
+        HttpRange::From(s) => (s.min(total), max_end),
+        HttpRange::Bounded(s, e) => (s.min(total), e.min(max_end)),
+        HttpRange::Suffix(n) => {
+            let start = total.saturating_sub(n);
+            (start, max_end)
+        }
     };
-    let end = r
-        .end
-        .map(|e| e.min(total.saturating_sub(1)))
-        .unwrap_or_else(|| total.saturating_sub(1));
     if start > end {
         return None;
     }
