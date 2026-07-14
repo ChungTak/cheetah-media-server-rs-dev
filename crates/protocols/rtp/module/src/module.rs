@@ -30,7 +30,7 @@ use serde_json::Value;
 use tracing::{debug, error, info};
 
 use crate::config::{RtpClientJobConfig, RtpModuleConfig};
-use crate::egress::{run_egress_session, sleep_or_cancel};
+use crate::egress::{run_egress_session, sleep_or_cancel, EgressCleanup};
 use crate::media_provider::RtpMediaProvider;
 use crate::orchestrator::RtpSessionOrchestrator;
 
@@ -992,6 +992,8 @@ impl ModuleHttpService for RtpHttpService {
                     let driver_cmd_tx = self.driver()?;
                     let cancel_clone = cancel_token.clone();
                     let orchestrator = self.orchestrator.clone();
+                    let cleanup =
+                        EgressCleanup::new(self.active_egress.clone(), session_key.clone());
 
                     runtime_api.spawn(Box::pin(async move {
                         run_egress_session(
@@ -1001,6 +1003,7 @@ impl ModuleHttpService for RtpHttpService {
                             stream_key,
                             cancel_clone,
                             Some(orchestrator),
+                            Some(cleanup),
                         )
                         .await;
                     }));

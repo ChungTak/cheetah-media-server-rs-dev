@@ -2,6 +2,7 @@
 //!
 //! RTP 发送端与拉流任务的共享出口辅助函数。
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -14,9 +15,34 @@ use cheetah_sdk::{
     SystemEvent,
 };
 use futures::{pin_mut, select_biased, FutureExt};
+use parking_lot::Mutex;
 use tracing::{debug, warn};
 
 use crate::orchestrator::RtpSessionOrchestrator;
+
+/// Shared map used to track active egress workers by logical session key.
+///
+/// 用于按逻辑 session key 追踪活动 egress worker 的共享映射。
+pub(crate) type ActiveEgressMap = Arc<Mutex<HashMap<String, CancellationToken>>>;
+
+/// Removes the active-egress tracking entry for a session key when dropped.
+///
+/// 当退出作用域时移除对应 session key 的活动 egress 追踪项。
+pub(crate) struct EgressCleanup(Option<(ActiveEgressMap, String)>);
+
+impl EgressCleanup {
+    pub(crate) fn new(map: ActiveEgressMap, key: String) -> Self {
+        Self(Some((map, key)))
+    }
+}
+
+impl Drop for EgressCleanup {
+    fn drop(&mut self) {
+        if let Some((map, key)) = self.0.take() {
+            map.lock().remove(&key);
+        }
+    }
+}
 
 /// Sleep until `duration` or cancellation, returning true if cancelled.
 ///
@@ -82,7 +108,11 @@ pub(crate) async fn run_egress_session(
     stream_key: StreamKey,
     cancel: CancellationToken,
     orchestrator: Option<Arc<RtpSessionOrchestrator>>,
+    cleanup: Option<EgressCleanup>,
 ) {
+    // The cleanup guard removes the active-egress tracking entry on any exit,
+    // including natural completion, cancellation, and errors.
+    let _cleanup = cleanup;
     if session_keys.is_empty() {
         return;
     }

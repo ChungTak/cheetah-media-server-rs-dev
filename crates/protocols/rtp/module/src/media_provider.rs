@@ -3,7 +3,6 @@
 //!
 //! 由模块共享的 `RtpSessionOrchestrator` 支撑的 `RtpApi` provider。
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -17,9 +16,8 @@ use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId};
 use cheetah_sdk::media_api::model::{Page, RtpSession};
 use cheetah_sdk::media_api::port::{MediaRequestContext, RtpApi};
 use cheetah_sdk::{CancellationToken, EngineContext, StreamKey};
-use parking_lot::Mutex;
 
-use crate::egress::run_egress_session;
+use crate::egress::{run_egress_session, ActiveEgressMap, EgressCleanup};
 use crate::orchestrator::RtpSessionOrchestrator;
 
 /// Media-domain `RtpApi` provider.
@@ -30,7 +28,7 @@ pub struct RtpMediaProvider {
     engine: EngineContext,
     module_cancel: CancellationToken,
     /// Active sender egress tasks keyed by session key so `stop_rtp_session` can cancel them.
-    active_senders: Arc<Mutex<HashMap<String, CancellationToken>>>,
+    active_senders: ActiveEgressMap,
 }
 
 impl RtpMediaProvider {
@@ -46,7 +44,7 @@ impl RtpMediaProvider {
             orchestrator,
             engine,
             module_cancel,
-            active_senders: Arc::new(Mutex::new(HashMap::new())),
+            active_senders: ActiveEgressMap::default(),
         }
     }
 
@@ -107,6 +105,7 @@ impl RtpApi for RtpMediaProvider {
 
         let engine = self.engine.clone();
         let orchestrator = self.orchestrator.clone();
+        let cleanup = EgressCleanup::new(self.active_senders.clone(), session_key.clone());
         let runtime_api = self.engine.runtime_api.clone();
         runtime_api.spawn(Box::pin(async move {
             run_egress_session(
@@ -116,6 +115,7 @@ impl RtpApi for RtpMediaProvider {
                 stream_key,
                 cancel,
                 Some(orchestrator),
+                Some(cleanup),
             )
             .await;
         }));
