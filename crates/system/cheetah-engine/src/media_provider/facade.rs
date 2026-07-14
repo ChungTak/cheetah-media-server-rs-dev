@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use cheetah_media_api::command::*;
 use cheetah_media_api::error::{MediaError, Result as MediaResult};
+use cheetah_media_api::event::MediaEventSender;
 use cheetah_media_api::ids::{MediaKey, ProxyId, RecordFileId, RtpSessionId, SessionId};
 use cheetah_media_api::model::{
     CloseReason, CloseReport, OnlineState, Page, ProxyInfo, PublisherHandle, RecordFile,
@@ -14,20 +17,26 @@ use cheetah_media_api::port::{
 use cheetah_media_api::MediaCapabilitySet;
 use cheetah_sdk::MediaServices;
 
+use super::events::MediaEventDispatcher;
+
 /// Engine media facade backed by the runtime `MediaServices` registry.
 ///
 /// 由运行时 `MediaServices` 注册表支撑的引擎媒体 facade。
 #[derive(Clone)]
 pub struct EngineMediaFacade {
     services: MediaServices,
+    dispatcher: Arc<MediaEventDispatcher>,
 }
 
 impl EngineMediaFacade {
-    /// Build a facade backed by a `MediaServices` registry.
+    /// Build a facade backed by a `MediaServices` registry and event dispatcher.
     ///
-    /// 使用 `MediaServices` 注册表构建 facade。
-    pub fn new(services: MediaServices) -> Self {
-        Self { services }
+    /// 使用 `MediaServices` 注册表和事件分发器构建 facade。
+    pub fn new(services: MediaServices, dispatcher: Arc<MediaEventDispatcher>) -> Self {
+        Self {
+            services,
+            dispatcher,
+        }
     }
 }
 
@@ -439,10 +448,8 @@ impl MediaFacade for EngineMediaFacade {
         self.services.capabilities()
     }
 
-    fn subscribe_events(
-        &self,
-        _sender: Box<dyn cheetah_media_api::event::MediaEventSender>,
-    ) -> MediaResult<()> {
+    fn subscribe_events(&self, sender: Box<dyn MediaEventSender>) -> MediaResult<()> {
+        self.dispatcher.set_subscriber(sender);
         Ok(())
     }
 }
