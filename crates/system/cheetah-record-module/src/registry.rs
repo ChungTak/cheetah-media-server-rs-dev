@@ -155,22 +155,33 @@ impl RecordRegistry {
         self.files.read().get(file_id).cloned()
     }
 
-    /// Query the file inventory with optional filters, sorted by start time.
+    /// Query the file inventory with optional filters, sorted by start time descending.
     ///
-    /// 使用可选过滤条件查询文件清单，按开始时间排序。
-    pub fn query_files(&self, query: &RecordFileQuery) -> Vec<RecordFileMetadata> {
+    /// Returns the total number of matching files and the requested window. The
+    /// window is bounded by `query.limit` so callers never receive an unbounded
+    /// collection.
+    ///
+    /// 使用可选过滤条件查询文件清单，按开始时间降序排列。
+    pub fn query_files(&self, query: &RecordFileQuery) -> QueryFilesResult {
         let files = self.files.read();
-        let mut filtered: Vec<RecordFileMetadata> = files
-            .values()
-            .filter(|f| filter_file(f, query))
-            .cloned()
-            .collect();
-        filtered.sort_by_key(|f| f.start_time_ms);
+        let mut refs: Vec<&RecordFileMetadata> =
+            files.values().filter(|f| filter_file(f, query)).collect();
+        let total = refs.len();
+        refs.sort_by(|a, b| b.start_time_ms.cmp(&a.start_time_ms));
         if let Some(limit) = query.limit {
-            filtered.truncate(limit as usize);
+            refs.truncate(limit as usize);
         }
-        filtered
+        let items = refs.into_iter().cloned().collect();
+        QueryFilesResult { total, items }
     }
+}
+
+/// Result of a file inventory query.
+///
+/// 文件清单查询结果。
+pub struct QueryFilesResult {
+    pub total: usize,
+    pub items: Vec<RecordFileMetadata>,
 }
 
 /// Apply the query filters to a single file record.
@@ -182,13 +193,23 @@ impl RecordRegistry {
 ///
 /// `app`/`stream` 使用子串匹配，方便客户端按前缀查询而无需额外索引。
 fn filter_file(f: &RecordFileMetadata, query: &RecordFileQuery) -> bool {
+    if let Some(file_id) = &query.file_id {
+        if &f.file_id != file_id {
+            return false;
+        }
+    }
+    if let Some(vhost) = &query.vhost {
+        if &f.vhost != vhost {
+            return false;
+        }
+    }
     if let Some(app) = &query.app {
-        if !f.path.contains(app.as_str()) {
+        if !f.app.contains(app.as_str()) {
             return false;
         }
     }
     if let Some(stream) = &query.stream {
-        if !f.path.contains(stream.as_str()) {
+        if !f.stream.contains(stream.as_str()) {
             return false;
         }
     }
@@ -204,6 +225,11 @@ fn filter_file(f: &RecordFileMetadata, query: &RecordFileQuery) -> bool {
     }
     if let Some(e) = query.end_time_ms {
         if f.start_time_ms > e {
+            return false;
+        }
+    }
+    if let Some(directory) = &query.directory {
+        if !f.path.contains(directory.as_str()) {
             return false;
         }
     }
@@ -290,7 +316,7 @@ mod tests {
             ..Default::default()
         };
         let results = r.query_files(&q);
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].file_id, "f1");
+        assert_eq!(results.items.len(), 1);
+        assert_eq!(results.items[0].file_id, "f1");
     }
 }
