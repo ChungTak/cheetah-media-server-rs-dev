@@ -54,6 +54,8 @@ struct RtpSession {
     last_rtcp_report_ms: u64,
     /// Last time an RTCP RR was observed for this sender; used by RR-timeout sender shutdown.
     last_rr_received_ms: u64,
+    /// When true, idle/RR timeout checks are skipped but the session keeps receiving.
+    check_paused: bool,
     /// Largest RTP payload observed on this session in bytes. Mirrors ABL's `nMaxRtpLength`
     /// dynamic learner so the driver can right-size send buffers and the module can flag
     /// pathological streams. Always bounded by the core's `max_rtp_len_cap`.
@@ -289,6 +291,7 @@ impl RtpCore {
                                 transport_mode: RtpTransportMode::RecvOnly,
                                 track_filter: RtpTrackFilter::All,
                                 egress_track_filter: RtpTrackFilter::All,
+                                check_paused: false,
                                 demuxer: SessionDemuxer::Pending,
                                 last_seq: None,
                                 source_addr: None,
@@ -654,6 +657,7 @@ impl RtpCore {
                 transport_mode: RtpTransportMode::RecvOnly,
                 track_filter: RtpTrackFilter::All,
                 egress_track_filter: RtpTrackFilter::All,
+                check_paused: false,
                 demuxer: SessionDemuxer::Pending,
                 last_seq: None,
                 source_addr,
@@ -850,43 +854,49 @@ impl RtpCore {
         let mut to_remove = Vec::with_capacity(1);
 
         for (key, session) in &mut self.sessions {
-            // Idle timeout only applies to sessions that can receive traffic. Pure senders are
-            // supervised by RR-timeout instead. This mirrors ZLM's `RtpProcess` vs `RtpSender`
-            // lifecycle split.
-            let is_receiver = matches!(
-                session.transport_mode,
-                RtpTransportMode::RecvOnly | RtpTransportMode::SendRecv
-            );
-            if is_receiver
-                && session.last_activity_ms != 0
-                && now_ms.saturating_sub(session.last_activity_ms) > self.session_idle_timeout_ms
-            {
-                to_remove.push((key.clone(), "Idle timeout".to_string()));
-                continue;
-            }
-
-            if session.last_activity_ms == 0 {
-                session.last_activity_ms = now_ms;
-            }
-
-            // RR-timeout sender shutdown (ZLM-style):
-            //   - Only senders care about RR feedback.
-            //   - We baseline `last_rr_received_ms` to the first tick after creation, then
-            //     consider the sender dead if no RR has arrived within `session_idle_timeout_ms`
-            //     after that baseline.
-            //   - Pure recv sessions are covered by the idle path above.
-            let is_sender = matches!(
-                session.transport_mode,
-                RtpTransportMode::SendOnly | RtpTransportMode::SendRecv
-            );
-            if is_sender {
-                if session.last_rr_received_ms == 0 {
-                    session.last_rr_received_ms = now_ms;
-                } else if now_ms.saturating_sub(session.last_rr_received_ms)
-                    > self.session_idle_timeout_ms
+            // Pause check suspends idle/RR timeout monitoring without stopping packet processing.
+            if !session.check_paused {
+                // Idle timeout only applies to sessions that can receive traffic. Pure senders are
+                // supervised by RR-timeout instead. This mirrors ZLM's `RtpProcess` vs `RtpSender`
+                // lifecycle split.
+                let is_receiver = matches!(
+                    session.transport_mode,
+                    RtpTransportMode::RecvOnly | RtpTransportMode::SendRecv
+                );
+                if is_receiver
+                    && session.last_activity_ms != 0
+                    && now_ms.saturating_sub(session.last_activity_ms)
+                        > self.session_idle_timeout_ms
                 {
-                    to_remove.push((key.clone(), "RR timeout".to_string()));
+                    to_remove.push((key.clone(), "Idle timeout".to_string()));
                     continue;
+                }
+
+                // Baseline activity on the first non-paused tick so a freshly created or
+                // resumed session is not immediately closed.
+                if session.last_activity_ms == 0 {
+                    session.last_activity_ms = now_ms;
+                }
+
+                // RR-timeout sender shutdown (ZLM-style):
+                //   - Only senders care about RR feedback.
+                //   - We baseline `last_rr_received_ms` to the first tick after creation, then
+                //     consider the sender dead if no RR has arrived within `session_idle_timeout_ms`
+                //     after that baseline.
+                //   - Pure recv sessions are covered by the idle path above.
+                let is_sender = matches!(
+                    session.transport_mode,
+                    RtpTransportMode::SendOnly | RtpTransportMode::SendRecv
+                );
+                if is_sender {
+                    if session.last_rr_received_ms == 0 {
+                        session.last_rr_received_ms = now_ms;
+                    } else if now_ms.saturating_sub(session.last_rr_received_ms)
+                        > self.session_idle_timeout_ms
+                    {
+                        to_remove.push((key.clone(), "RR timeout".to_string()));
+                        continue;
+                    }
                 }
             }
 
@@ -1013,6 +1023,7 @@ impl RtpCore {
                     transport_mode: spec.transport_mode,
                     track_filter,
                     egress_track_filter: spec.track_filter,
+                    check_paused: false,
                     demuxer: SessionDemuxer::Pending,
                     last_seq: None,
                     source_addr: None,
@@ -1072,6 +1083,7 @@ impl RtpCore {
                     transport_mode: spec.transport_mode,
                     track_filter,
                     egress_track_filter: spec.track_filter,
+                    check_paused: false,
                     demuxer: SessionDemuxer::Pending,
                     last_seq: None,
                     source_addr: None,
@@ -1192,6 +1204,20 @@ impl RtpCore {
             RtpCoreCommand::StopSession(key) => {
                 self.close_session(key, "Stopped by command".to_string(), outputs);
             }
+            RtpCoreCommand::PauseCheck {
+                session_key,
+                paused,
+            } => {
+                if let Some(session) = self.sessions.get_mut(&session_key) {
+                    session.check_paused = paused;
+                    // Reset activity baseline on resume so the next tick does not immediately
+                    // fire an idle timeout that accrued while checks were paused.
+                    if !paused {
+                        session.last_activity_ms = self.now_ms;
+                        session.last_rr_received_ms = self.now_ms;
+                    }
+                }
+            }
         }
     }
 }
@@ -1301,6 +1327,49 @@ mod tests {
             }
         }
         assert!(has_closed);
+    }
+
+    #[test]
+    fn test_rtp_core_pause_check_delays_timeout() {
+        let mut core = RtpCore::new(10, 1000); // 1000ms timeout
+
+        let spec = RtpServerSpec {
+            session_key: "paused_session".to_string(),
+            ssrc: Some(12345),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        };
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
+
+        // Pause timeout checks while the session receives no traffic.
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::PauseCheck {
+            session_key: "paused_session".to_string(),
+            paused: true,
+        }));
+
+        // Tick well past the idle timeout while paused: session must stay alive.
+        let outputs = core.handle_input(RtpCoreInput::Tick { now_ms: 5000 });
+        assert!(!outputs
+            .iter()
+            .any(|o| matches!(o, RtpCoreOutput::Event(RtpCoreEvent::SessionClosed { .. }))));
+
+        // Resume checks; the next tick should baseline activity, not immediately close.
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::PauseCheck {
+            session_key: "paused_session".to_string(),
+            paused: false,
+        }));
+        let outputs = core.handle_input(RtpCoreInput::Tick { now_ms: 5500 });
+        assert!(!outputs
+            .iter()
+            .any(|o| matches!(o, RtpCoreOutput::Event(RtpCoreEvent::SessionClosed { .. }))));
+
+        // Only after the timeout window passes again does the session close.
+        let outputs = core.handle_input(RtpCoreInput::Tick { now_ms: 6600 });
+        assert!(outputs
+            .iter()
+            .any(|o| matches!(o, RtpCoreOutput::Event(RtpCoreEvent::SessionClosed { .. }))));
     }
 
     #[test]

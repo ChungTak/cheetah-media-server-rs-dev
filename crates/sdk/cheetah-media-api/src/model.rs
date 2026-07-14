@@ -320,6 +320,7 @@ pub struct RtpSession {
     pub tcp_mode: Option<RtpTcpMode>,
     pub reuse_port: bool,
     pub state: RtpSessionState,
+    pub check_paused: bool,
     pub created_at: i64,
 }
 
