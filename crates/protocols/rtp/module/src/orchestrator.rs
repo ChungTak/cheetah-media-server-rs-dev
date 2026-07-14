@@ -220,7 +220,7 @@ impl RtpSessionOrchestrator {
         media_key: MediaKey,
         destination: SocketAddr,
         remote_endpoint: String,
-        ssrc: u32,
+        ssrc: Option<u32>,
         payload_type: Option<u8>,
         payload_mode: RtpPayloadMode,
         transport_mode: RtpTransportMode,
@@ -234,7 +234,7 @@ impl RtpSessionOrchestrator {
             RtpSessionKind::Sender,
             media_key,
             Some(remote_endpoint),
-            Some(ssrc),
+            ssrc,
             payload_type,
             None,
             false,
@@ -245,7 +245,7 @@ impl RtpSessionOrchestrator {
         let spec = RtpClientSpec {
             session_key,
             destination,
-            ssrc,
+            ssrc: ssrc.unwrap_or(0),
             payload_mode,
             transport_mode,
             tcp_conn_id: None,
@@ -262,12 +262,15 @@ impl RtpSessionOrchestrator {
     ///
     /// 通过会话键停止会话。
     pub async fn stop_session_by_key(&self, session_key: &str) -> Result<()> {
+        // Remove the local session record first so the caller is not blocked
+        // waiting for a driver that may already be shut down.
+        let id = RtpSessionId(session_key.to_string());
+        self.remove_session(&id);
+
         let driver = self.driver()?;
         driver
             .send_command(RtpDriverCommand::StopSession(session_key.to_string()))
             .await;
-        let id = RtpSessionId(session_key.to_string());
-        self.remove_session(&id);
         Ok(())
     }
 
@@ -302,7 +305,6 @@ impl RtpSessionOrchestrator {
         let destination: SocketAddr = request.destination_endpoint.parse().map_err(|e| {
             MediaError::invalid_argument(format!("invalid destination endpoint: {e}"))
         })?;
-        let ssrc = request.ssrc.unwrap_or(0);
         let payload_mode = Self::parse_payload_mode(&request.codec_hint, request.payload_type);
         let transport_mode = if request.mode == RtpSenderMode::Talk {
             RtpTransportMode::SendRecv
@@ -316,7 +318,7 @@ impl RtpSessionOrchestrator {
             request.media_key,
             destination,
             request.destination_endpoint,
-            ssrc,
+            request.ssrc,
             request.payload_type,
             payload_mode,
             transport_mode,

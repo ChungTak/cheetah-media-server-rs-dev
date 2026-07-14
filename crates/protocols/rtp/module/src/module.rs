@@ -883,7 +883,7 @@ impl ModuleHttpService for RtpHttpService {
                             media_key.clone(),
                             *dest_addr,
                             dest_addr.to_string(),
-                            *ssrc,
+                            Some(*ssrc),
                             None,
                             *payload_mode,
                             *transport_mode,
