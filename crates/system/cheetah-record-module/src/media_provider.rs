@@ -12,6 +12,7 @@ use cheetah_media_api::port::{MediaRequestContext, RecordApi as RecordApiPort};
 
 use crate::api::{RecordApi, RecordApiError, RecordTemplate};
 use crate::metadata::RecordTaskState as InternalRecordTaskState;
+use crate::playback::PlaybackRegistry;
 use crate::registry::RegistryError;
 
 /// Bridge from the record module's internal `RecordApi` to the media-domain
@@ -21,6 +22,7 @@ use crate::registry::RegistryError;
 #[derive(Clone)]
 pub struct RecordMediaProvider {
     api: Arc<RecordApi>,
+    playback: Arc<PlaybackRegistry>,
 }
 
 impl RecordMediaProvider {
@@ -28,7 +30,10 @@ impl RecordMediaProvider {
     ///
     /// 创建包装录制模块 API 句柄的 provider。
     pub fn new(api: Arc<RecordApi>) -> Self {
-        Self { api }
+        Self {
+            api,
+            playback: Arc::new(PlaybackRegistry::new()),
+        }
     }
 }
 
@@ -250,10 +255,14 @@ impl RecordApiPort for RecordMediaProvider {
     async fn control_record_playback(
         &self,
         _ctx: &MediaRequestContext,
-        _file_id: &RecordFileId,
-        _command: RecordPlaybackCommand,
+        file_id: &RecordFileId,
+        command: RecordPlaybackCommand,
     ) -> Result<()> {
-        Err(MediaError::unsupported_capability("record playback"))
+        let file = self.api.registry().get_file(&file_id.0).ok_or_else(|| {
+            MediaError::not_found(format!("record file not found: {}", file_id.0))
+        })?;
+        let _ = self.playback.apply(&file_id.0, file.duration_ms, command)?;
+        Ok(())
     }
 }
 
@@ -405,6 +414,7 @@ fn civil_from_days(days: i64) -> (u32, u32, u32) {
     let mp = (5 * doy + 2) / 153;
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
     (y as u32, m as u32, d as u32)
 }
 
@@ -527,5 +537,84 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(files.items.len(), 0);
+    }
+
+    #[test]
+    fn ymd_from_ms_has_correct_year_for_january_and_february() {
+        // 2026-01-15 is 20468 days since 1970-01-01.
+        assert_eq!(civil_from_days(20468), (2026, 1, 15));
+        // 2026-02-28 is 20512 days since 1970-01-01.
+        assert_eq!(civil_from_days(20512), (2026, 2, 28));
+        // 2026-05-23 (existing executor test case) is 20596 days.
+        assert_eq!(civil_from_days(20596), (2026, 5, 23));
+    }
+
+    #[tokio::test]
+    async fn control_playback_validates_and_changes_state() {
+        let provider = provider();
+        let ctx = MediaRequestContext::default();
+        provider
+            .api
+            .registry()
+            .insert_file(crate::metadata::RecordFileMetadata {
+                file_id: "f1".to_string(),
+                task_id: "t1".to_string(),
+                format: crate::metadata::RecordFormatStr::Mp4,
+                vhost: cheetah_media_api::ids::DEFAULT_VHOST.to_string(),
+                app: "live".to_string(),
+                stream: "test".to_string(),
+                path: "/rec/live/test/2026/f1-1.mp4".to_string(),
+                duration_ms: 10_000,
+                size_bytes: 1_000_000,
+                start_time_ms: 1_000,
+                end_time_ms: 11_000,
+                track_summary: vec![],
+            })
+            .unwrap();
+
+        provider
+            .control_record_playback(
+                &ctx,
+                &RecordFileId("f1".to_string()),
+                RecordPlaybackCommand::Pause,
+            )
+            .await
+            .unwrap();
+
+        let state = provider
+            .playback
+            .get("f1")
+            .expect("playback session missing");
+        assert!(state.paused);
+
+        provider
+            .control_record_playback(
+                &ctx,
+                &RecordFileId("f1".to_string()),
+                RecordPlaybackCommand::Scale { value: 2.0 },
+            )
+            .await
+            .unwrap();
+        assert_eq!(provider.playback.get("f1").unwrap().scale, 2.0);
+
+        let err = provider
+            .control_record_playback(
+                &ctx,
+                &RecordFileId("f1".to_string()),
+                RecordPlaybackCommand::Seek { value: 20_000 },
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("seek"));
+
+        let err = provider
+            .control_record_playback(
+                &ctx,
+                &RecordFileId("missing".to_string()),
+                RecordPlaybackCommand::Pause,
+            )
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("not found"));
     }
 }

@@ -148,6 +148,13 @@ impl RecordRegistry {
             .ok_or_else(|| RegistryError::FileNotFound(file_id.to_string()))
     }
 
+    /// Return a single file by id, if present.
+    ///
+    /// 按 id 返回单个文件（如有）。
+    pub fn get_file(&self, file_id: &str) -> Option<RecordFileMetadata> {
+        self.files.read().get(file_id).cloned()
+    }
+
     /// Query the file inventory with optional filters, sorted by start time.
     ///
     /// 使用可选过滤条件查询文件清单，按开始时间排序。

@@ -22,6 +22,7 @@ pub mod executor;
 pub mod media_provider;
 pub mod metadata;
 pub mod module;
+pub mod playback;
 pub mod registry;
 pub mod task;
 
