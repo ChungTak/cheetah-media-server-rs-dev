@@ -7,6 +7,7 @@ use cheetah_media_api::ids::{MediaKey, MediaSchema};
 use cheetah_media_api::model::MediaUrl;
 use cheetah_media_api::port::{MediaRequestContext, MediaUrlResolverApi, UrlResolverTemplate};
 use hmac::{Hmac, Mac};
+use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use serde_json::Value;
 use sha2::Sha256;
 
@@ -97,29 +98,6 @@ impl EngineMediaUrlResolver {
         }
     }
 
-    fn default_protocol(schema: MediaSchema, tls: bool) -> Option<&'static str> {
-        match schema {
-            MediaSchema::Hls | MediaSchema::HttpFlv | MediaSchema::Fmp4 | MediaSchema::Ts => {
-                if tls {
-                    Some("https")
-                } else {
-                    Some("http")
-                }
-            }
-            MediaSchema::Webrtc => {
-                if tls {
-                    Some("https")
-                } else {
-                    Some("http")
-                }
-            }
-            MediaSchema::Rtmp => Some("rtmp"),
-            MediaSchema::Rtsp => Some("rtsp"),
-            MediaSchema::Srt => Some("srt"),
-            MediaSchema::Rtp | _ => None,
-        }
-    }
-
     fn resolve_one(&self, key: &MediaKey, schema: MediaSchema) -> MediaUrl {
         let template = self
             .templates
@@ -139,7 +117,7 @@ impl EngineMediaUrlResolver {
         let protocol = template
             .protocol
             .as_deref()
-            .or_else(|| Self::default_protocol(schema, self.config.tls))
+            .or_else(|| schema.default_url_protocol(self.config.tls))
             .unwrap_or("http");
 
         let host = template.host.as_deref().unwrap_or(&self.config.public_host);
@@ -178,10 +156,20 @@ impl EngineMediaUrlResolver {
 
     fn fill_path(&self, template: &str, key: &MediaKey) -> String {
         template
-            .replace("{vhost}", &key.vhost.0)
-            .replace("{app}", &key.app.0)
-            .replace("{stream}", &key.stream.0)
+            .replace("{vhost}", &encode_path_segment(&key.vhost.0))
+            .replace("{app}", &encode_path_segment(&key.app.0))
+            .replace("{stream}", &encode_path_segment(&key.stream.0))
     }
+}
+
+const PATH_SEGMENT_SET: percent_encoding::AsciiSet = NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'_')
+    .remove(b'.')
+    .remove(b'~');
+
+fn encode_path_segment(s: &str) -> String {
+    percent_encode(s.as_bytes(), &PATH_SEGMENT_SET).to_string()
 }
 
 #[async_trait]

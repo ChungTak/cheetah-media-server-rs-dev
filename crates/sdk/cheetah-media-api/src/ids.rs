@@ -178,6 +178,29 @@ impl MediaSchema {
             ))),
         }
     }
+
+    /// Return the default URL protocol/scheme for this schema.
+    ///
+    /// 返回此 schema 默认的 URL protocol/scheme。
+    pub fn default_url_protocol(self, tls: bool) -> Option<&'static str> {
+        match self {
+            MediaSchema::Hls
+            | MediaSchema::HttpFlv
+            | MediaSchema::Fmp4
+            | MediaSchema::Ts
+            | MediaSchema::Webrtc => {
+                if tls {
+                    Some("https")
+                } else {
+                    Some("http")
+                }
+            }
+            MediaSchema::Rtmp => Some("rtmp"),
+            MediaSchema::Rtsp => Some("rtsp"),
+            MediaSchema::Srt => Some("srt"),
+            MediaSchema::Rtp => None,
+        }
+    }
 }
 
 impl fmt::Display for MediaSchema {

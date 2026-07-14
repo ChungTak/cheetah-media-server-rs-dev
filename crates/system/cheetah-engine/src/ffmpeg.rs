@@ -208,6 +208,11 @@ impl EngineFfmpegService {
         }
         let output_url = self.resolve_output_url(spec).await?;
 
+        if let Some(fmt) = output_format_for_policy(&spec.output_policy) {
+            args.push("-f".to_string());
+            args.push(fmt.to_string());
+        }
+
         // FFmpeg does not understand our signed tokens; drop the query string
         // before handing the URL to the external process.
         let ffmpeg_output = output_url
@@ -239,6 +244,18 @@ fn output_policy_to_schema(policy: &OutputPolicy) -> Option<MediaSchema> {
         OutputPolicy::Fmp4 => Some(MediaSchema::Fmp4),
         OutputPolicy::Rtmp => Some(MediaSchema::Rtmp),
         OutputPolicy::Rtsp => Some(MediaSchema::Rtsp),
+    }
+}
+
+fn output_format_for_policy(policy: &OutputPolicy) -> Option<&'static str> {
+    match policy {
+        OutputPolicy::None => None,
+        OutputPolicy::Hls => Some("hls"),
+        OutputPolicy::Mp4 => Some("mp4"),
+        OutputPolicy::Flv => Some("flv"),
+        OutputPolicy::Fmp4 => Some("mp4"),
+        OutputPolicy::Rtmp => Some("flv"),
+        OutputPolicy::Rtsp => Some("rtsp"),
     }
 }
 

@@ -524,6 +524,7 @@ dependencies = [
  "hmac",
  "libc",
  "parking_lot",
+ "percent-encoding",
  "serde_json",
  "sha2",
  "tokio",
