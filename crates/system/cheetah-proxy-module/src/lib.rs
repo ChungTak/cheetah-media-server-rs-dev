@@ -6,5 +6,6 @@ pub mod config;
 pub mod media_provider;
 pub mod module;
 pub mod registry;
+pub mod runner;
 
 pub use module::ProxyModuleFactory;
