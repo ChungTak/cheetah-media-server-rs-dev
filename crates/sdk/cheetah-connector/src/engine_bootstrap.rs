@@ -4,6 +4,7 @@ use std::sync::Arc;
 use cheetah_config::ConfigStore;
 use cheetah_engine::{DispatcherMode, Engine, EngineBuilder};
 use cheetah_runtime_api::RuntimeApi;
+#[allow(unused_imports)]
 use cheetah_sdk::{ConfigApplyApi, ConfigProvider, ModuleFactory};
 
 use crate::error::ConnectorError;
@@ -172,6 +173,7 @@ impl ConnectorBuilder {
             (provider.unwrap(), apply.unwrap())
         };
 
+        #[allow(unused_mut)]
         let mut builder = EngineBuilder::new(config_provider, config_apply, self.runtime)
             .with_dispatcher_mode(self.dispatcher_mode);
 

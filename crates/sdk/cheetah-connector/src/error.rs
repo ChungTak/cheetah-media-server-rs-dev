@@ -165,6 +165,25 @@ impl From<SdkError> for ConnectorError {
     }
 }
 
+impl From<ConnectorError> for SdkError {
+    fn from(err: ConnectorError) -> Self {
+        match err {
+            ConnectorError::InvalidUrl { .. } | ConnectorError::InvalidArgument(_) => {
+                Self::InvalidArgument(err.to_string())
+            }
+            ConnectorError::UnsupportedProtocol { .. } | ConnectorError::FeatureDisabled { .. } => {
+                Self::Unavailable(err.to_string())
+            }
+            ConnectorError::Connect { .. }
+            | ConnectorError::Protocol { .. }
+            | ConnectorError::Backpressure { .. }
+            | ConnectorError::Closed { .. }
+            | ConnectorError::Media { .. } => Self::Unavailable(err.to_string()),
+            ConnectorError::Internal(_) => Self::Internal(err.to_string()),
+        }
+    }
+}
+
 fn retryable_protocol_source(source: &(dyn Error + Send + Sync + 'static)) -> bool {
     if let Some(io) = source.downcast_ref::<std::io::Error>() {
         return matches!(
