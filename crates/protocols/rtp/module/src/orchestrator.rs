@@ -16,7 +16,7 @@ use cheetah_rtp_core::{
     RtpClientSpec, RtpConnectionType, RtpPayloadMode, RtpServerSpec, RtpTrackFilter,
     RtpTransportMode,
 };
-use cheetah_rtp_driver_tokio::{RtpDriverCommand, RtpDriverHandle};
+use cheetah_rtp_driver_tokio::{RtpDriverCommand, RtpDriverHandle, RtpSocketReuse};
 use cheetah_sdk::media_api::command::{
     RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, UpdateRtpRequest,
 };
@@ -204,8 +204,13 @@ impl RtpSessionOrchestrator {
             connection_type,
             track_filter,
         };
+        let socket_reuse = if reuse_port {
+            RtpSocketReuse::Reuse
+        } else {
+            RtpSocketReuse::Exclusive
+        };
         let actual_addr = driver
-            .create_server(spec, bind_addr, reuse_port)
+            .create_server(spec, bind_addr, socket_reuse)
             .await
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
 

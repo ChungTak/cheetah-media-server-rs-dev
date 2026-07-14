@@ -82,6 +82,22 @@ impl std::fmt::Display for RtpDriverError {
 
 impl std::error::Error for RtpDriverError {}
 
+/// Whether a bound per-session UDP socket may be shared with other sessions on the same address.
+///
+/// 绑定的每会话 UDP 套接字是否可与其他会话共享同一地址。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RtpSocketReuse {
+    /// Bind a fresh, exclusive socket for this session.
+    ///
+    /// 为该会话绑定一个独占的新套接字。
+    #[default]
+    Exclusive,
+    /// Reuse an existing per-session socket already bound to the same address.
+    ///
+    /// 复用已绑定到同一地址的现有每会话套接字。
+    Reuse,
+}
+
 /// Commands sent to the RTP driver loop.
 ///
 /// 发送给 RTP 驱动循环的命令。
@@ -89,7 +105,7 @@ pub enum RtpDriverCommand {
     CreateServer {
         spec: RtpServerSpec,
         bind_addr: Option<SocketAddr>,
-        reuse: bool,
+        reuse: RtpSocketReuse,
         ack: Option<oneshot::Sender<Result<SocketAddr, String>>>,
     },
     CreateClient(RtpClientSpec),
@@ -108,8 +124,8 @@ impl std::fmt::Debug for RtpDriverCommand {
             } => f
                 .debug_struct("CreateServer")
                 .field("spec", spec)
-                .field("bind_addr", bind_addr)
                 .field("reuse", reuse)
+                .field("bind_addr", bind_addr)
                 .finish(),
             Self::CreateClient(spec) => f.debug_tuple("CreateClient").field(spec).finish(),
             Self::SendFrame(frame) => f.debug_tuple("SendFrame").field(frame).finish(),
@@ -145,7 +161,7 @@ impl RtpDriverHandle {
         &self,
         spec: RtpServerSpec,
         bind_addr: Option<SocketAddr>,
-        reuse: bool,
+        reuse: RtpSocketReuse,
     ) -> Result<SocketAddr, RtpDriverError> {
         let (tx, rx) = oneshot::channel();
         let cmd = RtpDriverCommand::CreateServer {
@@ -250,6 +266,30 @@ async fn release_session_socket(
             }
         }
     }
+}
+
+/// Return the per-session UDP socket for `session_key` if one was bound, otherwise the default
+/// shared UDP socket.
+///
+/// 返回 `session_key` 绑定的每会话 UDP 套接字；若不存在则返回默认共享 UDP 套接字。
+async fn resolve_udp_socket(
+    session_key: &str,
+    session_bind_addrs: &Mutex<HashMap<String, Option<SocketAddr>>>,
+    per_session_sockets: &Mutex<HashMap<SocketAddr, Arc<UdpSocket>>>,
+    default_socket: &Arc<UdpSocket>,
+) -> Arc<UdpSocket> {
+    let maybe_addr = session_bind_addrs
+        .lock()
+        .await
+        .get(session_key)
+        .copied()
+        .flatten();
+    if let Some(addr) = maybe_addr {
+        if let Some(socket) = per_session_sockets.lock().await.get(&addr).cloned() {
+            return socket;
+        }
+    }
+    default_socket.clone()
 }
 
 /// Main Tokio driver loop: bind sockets, spawn I/O tasks, and dispatch core I/O.
@@ -574,7 +614,7 @@ async fn run_driver_loop(
                         let actual_addr = match bind_addr {
                             None => default_udp_addr,
                             Some(addr) => {
-                                let should_reuse = reuse && addr.port() != 0;
+                                let should_reuse = reuse == RtpSocketReuse::Reuse && addr.port() != 0;
                                 if should_reuse {
                                     let sockets = per_session_sockets.lock().await;
                                     if let Some(socket) = sockets.get(&addr) {
@@ -842,7 +882,13 @@ async fn run_driver_loop(
             for output in outputs {
                 match output {
                     RtpCoreOutput::SendUdp(udp_send) => {
-                        let socket = udp_socket.clone();
+                        let socket = resolve_udp_socket(
+                            &udp_send.session_key,
+                            &session_bind_addrs,
+                            &per_session_sockets,
+                            &udp_socket,
+                        )
+                        .await;
                         tokio::spawn(async move {
                             let _ = socket.send_to(&udp_send.data, udp_send.destination).await;
                         });
@@ -873,8 +919,15 @@ async fn run_driver_loop(
                                     .await;
                             });
                         } else {
-                            // Fallback: tunnel RTCP over the same UDP socket as RTP.
-                            let socket = udp_socket.clone();
+                            // Fallback: tunnel RTCP over the same UDP socket as RTP,
+                            // using the session's dedicated socket if it exists.
+                            let socket = resolve_udp_socket(
+                                &rtcp_send.session_key,
+                                &session_bind_addrs,
+                                &per_session_sockets,
+                                &udp_socket,
+                            )
+                            .await;
                             tokio::spawn(async move {
                                 let _ =
                                     socket.send_to(&rtcp_send.data, rtcp_send.destination).await;
@@ -1050,7 +1103,7 @@ mod tests {
         };
 
         let actual_addr = handle
-            .create_server(spec, Some(bind_addr), false)
+            .create_server(spec, Some(bind_addr), RtpSocketReuse::Exclusive)
             .await
             .expect("create_server should acknowledge the bound address");
         assert_ne!(
