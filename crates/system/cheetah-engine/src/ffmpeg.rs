@@ -3,14 +3,18 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use cheetah_media_api::model::{FfmpegJobSpec, OutputPolicy, TranscodePolicy};
+use cheetah_media_api::model::{
+    FfmpegJobSpec, FfmpegResourceLimits, OutputPolicy, TranscodePolicy,
+};
 use cheetah_runtime_api::{oneshot_channel, OneShotReceiver, OneShotSender};
 use cheetah_sdk::{CancellationToken, FfmpegApi, FfmpegJob, FfmpegJobOutcome, SdkError};
+use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
 
 const STDERR_PREVIEW_BYTES: usize = 1024;
+const ALLOWED_SOURCE_SCHEMES: &[&str] = &["http", "https", "rtmp", "rtmps", "rtsp", "rtsps", "srt"];
 
 /// In-memory ffmpeg job registry that spawns and monitors external FFmpeg processes.
 ///
@@ -64,6 +68,14 @@ impl EngineFfmpegService {
             return Err(SdkError::InvalidArgument(
                 "ffmpeg source URL is missing scheme".to_string(),
             ));
+        }
+        if let Some(scheme) = spec.source_url.split("://").next() {
+            let scheme = scheme.to_lowercase();
+            if !ALLOWED_SOURCE_SCHEMES.contains(&scheme.as_str()) {
+                return Err(SdkError::InvalidArgument(format!(
+                    "ffmpeg source URL scheme '{scheme}' is not allowed"
+                )));
+            }
         }
         if spec.source_url.starts_with('-') {
             return Err(SdkError::InvalidArgument(
@@ -139,13 +151,23 @@ impl FfmpegApi for EngineFfmpegService {
     async fn submit_job(&self, job: FfmpegJob) -> Result<(), SdkError> {
         Self::validate_spec(&job.spec)?;
 
+        if self.jobs.contains_key(&job.job_id) {
+            return Err(SdkError::AlreadyExists(format!(
+                "ffmpeg job {}",
+                job.job_id
+            )));
+        }
+
         let binary = self.resolve_binary()?;
         let args = Self::build_args(&job.spec);
 
-        let mut child = Command::new(&binary)
-            .args(&args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+        let mut cmd = Command::new(&binary);
+        cmd.args(&args).stdout(Stdio::null()).stderr(Stdio::piped());
+
+        #[cfg(unix)]
+        apply_resource_limits(&mut cmd, &job.spec.resource_limits, job.spec.timeout_ms);
+
+        let mut child = cmd
             .spawn()
             .map_err(|e| SdkError::Unavailable(format!("failed to spawn ffmpeg process: {e}")))?;
 
@@ -161,18 +183,25 @@ impl FfmpegApi for EngineFfmpegService {
             signal_rx: Mutex::new(Some(rx)),
         };
 
-        if self.jobs.insert(job.job_id.clone(), process).is_some() {
-            let _ = child.kill().await;
-            return Err(SdkError::AlreadyExists(format!(
-                "ffmpeg job {}",
-                job.job_id
-            )));
+        let cancel_for_task = cancel.clone();
+        let entry = self.jobs.entry(job.job_id.clone());
+        match entry {
+            Entry::Occupied(_) => {
+                let _ = child.kill().await;
+                return Err(SdkError::AlreadyExists(format!(
+                    "ffmpeg job {}",
+                    job.job_id
+                )));
+            }
+            Entry::Vacant(v) => {
+                v.insert(process);
+            }
         }
 
         let job_id = job.job_id.clone();
         let jobs = self.jobs.clone();
         tokio::spawn(async move {
-            let result = run_child(child, cancel, job.spec.timeout_ms).await;
+            let result = run_child(child, cancel_for_task, job.spec.timeout_ms).await;
             if let Some(proc) = jobs.get(&job_id) {
                 *proc.value().outcome.lock().unwrap() = Some(result.clone());
                 if let Some(tx) = proc.value().signal_tx.lock().unwrap().take() {
@@ -272,6 +301,48 @@ async fn read_stderr_preview(child: &mut Child) -> String {
         Ok(Ok(n)) if n > 0 => String::from_utf8_lossy(&buf[..n]).into_owned(),
         _ => String::new(),
     }
+}
+
+#[cfg(unix)]
+fn apply_resource_limits(cmd: &mut Command, limits: &FfmpegResourceLimits, timeout_ms: u64) {
+    let memory = limits.max_memory_bytes;
+    let cpu_percent = limits.max_cpu_percent;
+    if memory.is_none() && cpu_percent.is_none() {
+        return;
+    }
+    unsafe {
+        cmd.pre_exec(move || set_rlimits(memory, cpu_percent, timeout_ms));
+    }
+}
+
+#[cfg(unix)]
+fn set_rlimits(
+    memory: Option<u64>,
+    cpu_percent: Option<u32>,
+    timeout_ms: u64,
+) -> std::io::Result<()> {
+    if let Some(bytes) = memory {
+        let limit = libc::rlimit {
+            rlim_cur: bytes,
+            rlim_max: bytes,
+        };
+        if unsafe { libc::setrlimit(libc::RLIMIT_AS, &limit) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    if let Some(percent) = cpu_percent {
+        let timeout_s = timeout_ms / 1000;
+        let cpu_s = (timeout_s * percent as u64) / 100;
+        let cpu_s = cpu_s.max(1);
+        let limit = libc::rlimit {
+            rlim_cur: cpu_s,
+            rlim_max: cpu_s,
+        };
+        if unsafe { libc::setrlimit(libc::RLIMIT_CPU, &limit) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -458,7 +529,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn duplicate_job_id_is_rejected() {
+    async fn duplicate_job_id_is_rejected_and_original_untouched() {
         let bin = fake_ffmpeg_bin("#!/bin/sh\nexit 0\n");
         let svc = EngineFfmpegService::with_binary_path(Some(bin));
         svc.submit_job(fake_job("j11", "http://example", 5000))
@@ -469,6 +540,8 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, SdkError::AlreadyExists(_)));
+        let outcome = svc.wait_job("j11").await.unwrap();
+        assert_eq!(outcome, FfmpegJobOutcome::Succeeded);
     }
 
     #[tokio::test]
@@ -479,5 +552,46 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, SdkError::Unavailable(_)));
+    }
+
+    #[tokio::test]
+    async fn rejects_file_scheme() {
+        let svc = EngineFfmpegService::with_binary_path(Some("/bin/true".to_string()));
+        let err = svc
+            .submit_job(fake_job("j13", "file:///etc/passwd", 5000))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SdkError::InvalidArgument(_)));
+    }
+
+    #[tokio::test]
+    async fn rejects_data_scheme() {
+        let svc = EngineFfmpegService::with_binary_path(Some("/bin/true".to_string()));
+        let err = svc
+            .submit_job(fake_job("j14", "data://text/plain,foo", 5000))
+            .await
+            .unwrap_err();
+        assert!(matches!(err, SdkError::InvalidArgument(_)));
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn memory_resource_limit_is_enforced() {
+        let bin = fake_ffmpeg_bin("#!/bin/sh\nexit 0\n");
+        let svc = EngineFfmpegService::with_binary_path(Some(bin));
+        let mut spec = fake_spec("http://example", 1000);
+        spec.resource_limits.max_memory_bytes = Some(1);
+        svc.submit_job(FfmpegJob {
+            job_id: "j15".to_string(),
+            proxy_id: "j15".to_string(),
+            spec,
+        })
+        .await
+        .unwrap();
+        let outcome = svc.wait_job("j15").await.unwrap();
+        assert!(
+            !matches!(outcome, FfmpegJobOutcome::Succeeded),
+            "expected job to fail under memory limit, got {outcome:?}"
+        );
     }
 }
