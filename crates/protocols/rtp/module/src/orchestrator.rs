@@ -326,11 +326,15 @@ impl RtpSessionOrchestrator {
     /// 从可选的显式 ip/port 解析接收端绑定地址；port 为 None 或 0 时让驱动在默认接口上
     /// 分配临时端口。
     fn receiver_bind_addr(&self, ip: Option<&str>, port: Option<u16>) -> Option<SocketAddr> {
-        let ip = ip
-            .and_then(|s| s.parse::<IpAddr>().ok())
-            .unwrap_or(self.default_bind_addr.ip());
-        let port = port.unwrap_or(0);
-        Some(SocketAddr::new(ip, port))
+        let parsed_ip = ip.and_then(|s| s.parse::<IpAddr>().ok());
+        match (parsed_ip, port) {
+            (None, None) | (None, Some(0)) => None,
+            _ => {
+                let ip = parsed_ip.unwrap_or(self.default_bind_addr.ip());
+                let port = port.unwrap_or(0);
+                Some(SocketAddr::new(ip, port))
+            }
+        }
     }
 
     /// Open an RTP sender from a domain request.
