@@ -226,6 +226,32 @@ fn spawn_udp_reader(
     });
 }
 
+/// Release any dedicated UDP socket associated with a stopped/closed session.
+///
+/// 释放与会话关联的专用 UDP 套接字。
+async fn release_session_socket(
+    key: &str,
+    session_bind_addrs: &Mutex<HashMap<String, Option<SocketAddr>>>,
+    per_session_counts: &Mutex<HashMap<SocketAddr, usize>>,
+    per_session_sockets: &Mutex<HashMap<SocketAddr, Arc<UdpSocket>>>,
+    per_session_cancels: &Mutex<HashMap<SocketAddr, CancellationToken>>,
+) {
+    if let Some(Some(addr)) = session_bind_addrs.lock().await.remove(key) {
+        let mut counts = per_session_counts.lock().await;
+        if let Some(count) = counts.get_mut(&addr) {
+            *count -= 1;
+            if *count == 0 {
+                counts.remove(&addr);
+                drop(counts);
+                per_session_sockets.lock().await.remove(&addr);
+                if let Some(token) = per_session_cancels.lock().await.remove(&addr) {
+                    token.cancel();
+                }
+            }
+        }
+    }
+}
+
 /// Main Tokio driver loop: bind sockets, spawn I/O tasks, and dispatch core I/O.
 ///
 /// 主 Tokio 驱动循环：绑定套接字、生成 I/O 任务并调度 core 的输入/输出。
@@ -788,20 +814,14 @@ async fn run_driver_loop(
                         inputs.push(RtpCoreInput::Command(RtpCoreCommand::SendFrame(*send_frame)));
                     }
                     RtpDriverCommand::StopSession(key) => {
-                        if let Some(Some(addr)) = session_bind_addrs.lock().await.remove(key.as_str()) {
-                            let mut counts = per_session_counts.lock().await;
-                            if let Some(count) = counts.get_mut(&addr) {
-                                *count -= 1;
-                                if *count == 0 {
-                                    counts.remove(&addr);
-                                    drop(counts);
-                                    per_session_sockets.lock().await.remove(&addr);
-                                    if let Some(token) = per_session_cancels.lock().await.remove(&addr) {
-                                        token.cancel();
-                                    }
-                                }
-                            }
-                        }
+                        release_session_socket(
+                            &key,
+                            &session_bind_addrs,
+                            &per_session_counts,
+                            &per_session_sockets,
+                            &per_session_cancels,
+                        )
+                        .await;
                         inputs.push(RtpCoreInput::Command(RtpCoreCommand::StopSession(key)));
                     }
                 }
@@ -869,6 +889,14 @@ async fn run_driver_loop(
                     }
                     RtpCoreOutput::CloseSession(key) => {
                         debug!("Closing RTP session key: {key}");
+                        release_session_socket(
+                            &key,
+                            &session_bind_addrs,
+                            &per_session_counts,
+                            &per_session_sockets,
+                            &per_session_cancels,
+                        )
+                        .await;
                     }
                 }
             }
