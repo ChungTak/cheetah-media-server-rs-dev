@@ -23,7 +23,7 @@ pub use core_adapters::LocalCoreAdapters;
 pub use database::InMemoryDatabase;
 pub use engine::{Engine, EngineBuilder};
 pub use event::LocalEventBus;
-pub use ffmpeg::LocalFfmpegService;
+pub use ffmpeg::EngineFfmpegService;
 pub use health::HealthService;
 pub use media_provider::{EngineMediaFacade, StreamMediaProvider};
 pub use metrics::MetricsRegistry;

@@ -11,16 +11,18 @@ async-trait.workspace = true
 bytes.workspace = true
 dashmap.workspace = true
 getrandom.workspace = true
+libc = "0.2"
 parking_lot.workspace = true
 cheetah-codec = { path = "../../foundation/cheetah-codec" }
 cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
 cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
 cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
 serde_json.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["process"] }
 tracing.workspace = true
 
 [dev-dependencies]
 cheetah-config = { path = "../cheetah-config" }
 cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
 serde_json.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }

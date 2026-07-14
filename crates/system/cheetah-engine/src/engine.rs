@@ -14,7 +14,7 @@ use crate::cluster::LocalCluster;
 use crate::core_adapters::LocalCoreAdapters;
 use crate::database::InMemoryDatabase;
 use crate::event::LocalEventBus;
-use crate::ffmpeg::LocalFfmpegService;
+use crate::ffmpeg::EngineFfmpegService;
 use crate::health::HealthService;
 use crate::media_provider::{
     EngineMediaDataPlane, EngineMediaFacade, EngineMediaFileStore, EngineMediaSessionDirectory,
@@ -47,6 +47,7 @@ pub struct EngineBuilder {
     event_bus_capacity: usize,
     ring_capacity: usize,
     dispatcher_mode: DispatcherMode,
+    ffmpeg_binary_path: Option<String>,
     factories: Vec<Arc<dyn ModuleFactory>>,
 }
 
@@ -67,6 +68,7 @@ impl EngineBuilder {
             event_bus_capacity: 1024,
             ring_capacity: 2048,
             dispatcher_mode: DispatcherMode::PerStream,
+            ffmpeg_binary_path: None,
             factories: Vec::new(),
         }
     }
@@ -84,6 +86,14 @@ impl EngineBuilder {
     /// 设置用于 GOP 引导的每流环形缓冲区容量。
     pub fn with_ring_capacity(mut self, capacity: usize) -> Self {
         self.ring_capacity = capacity.max(128);
+        self
+    }
+
+    /// Set the FFmpeg binary path used for `FfmpegApi` job execution.
+    ///
+    /// 设置 `FfmpegApi` 执行使用的 FFmpeg 二进制路径。
+    pub fn with_ffmpeg_binary_path(mut self, path: impl Into<String>) -> Self {
+        self.ffmpeg_binary_path = Some(path.into());
         self
     }
 
@@ -140,7 +150,15 @@ impl EngineBuilder {
         let database = Arc::new(InMemoryDatabase::default());
         let proxy_manager = Arc::new(LocalProxyManager::default());
         let cluster = Arc::new(LocalCluster::default());
-        let ffmpeg = Arc::new(LocalFfmpegService::default());
+        let ffmpeg_binary_path = self.ffmpeg_binary_path.clone().or_else(|| {
+            self.config_provider
+                .global()
+                .get("ffmpeg")
+                .and_then(|v| v.get("binary_path"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        });
+        let ffmpeg = Arc::new(EngineFfmpegService::with_binary_path(ffmpeg_binary_path));
         let core_adapters = Arc::new(LocalCoreAdapters::new(stream_manager.clone()));
 
         if let Some(registry) = &self.config_schema_registry {
@@ -237,7 +255,7 @@ pub struct Engine {
     database: Arc<InMemoryDatabase>,
     proxy_manager: Arc<LocalProxyManager>,
     cluster: Arc<LocalCluster>,
-    ffmpeg: Arc<LocalFfmpegService>,
+    ffmpeg: Arc<EngineFfmpegService>,
     core_adapters: Arc<LocalCoreAdapters>,
     media_facade: Arc<crate::media_provider::EngineMediaFacade>,
     media_services: MediaServices,

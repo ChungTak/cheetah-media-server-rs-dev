@@ -339,19 +339,35 @@ pub struct PushProxyRequest {
 
 /// FFmpeg proxy request.
 ///
-/// FFmpeg 代理请求。
+/// Maps to a typed `FfmpegJobSpec` after validation. Arbitrary FFmpeg CLI options
+/// are not accepted; all behaviour is controlled by explicitly typed fields.
+///
+/// FFmpeg 代理请求。校验后映射为类型化的 `FfmpegJobSpec`；不接受任意 FFmpeg CLI
+/// 选项，所有行为由显式类型字段控制。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FfmpegProxyRequest {
     pub source_url: String,
     pub destination: MediaKey,
     #[serde(default)]
-    pub input_options: Vec<String>,
-    #[serde(default)]
-    pub output_options: Vec<String>,
-    #[serde(default)]
     pub transcode_policy: TranscodePolicy,
     #[serde(default)]
     pub output_policy: OutputPolicy,
+    #[serde(default = "default_ffmpeg_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default)]
+    pub resource_limits: FfmpegResourceLimits,
+    #[serde(default = "default_true")]
+    pub enable_audio: bool,
+    #[serde(default = "default_true")]
+    pub enable_video: bool,
+}
+
+fn default_ffmpeg_timeout_ms() -> u64 {
+    60_000
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Retry policy.
