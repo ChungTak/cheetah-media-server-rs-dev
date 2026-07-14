@@ -6,14 +6,18 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use cheetah_rtp_driver_tokio::RtpDriverHandle;
 use cheetah_sdk::media_api::command::{
     RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderRequest, UpdateRtpRequest,
 };
 use cheetah_sdk::media_api::error::Result;
-use cheetah_sdk::media_api::ids::RtpSessionId;
+use cheetah_sdk::media_api::ids::StreamKeyBridge;
+use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId};
 use cheetah_sdk::media_api::model::{Page, RtpSession};
 use cheetah_sdk::media_api::port::{MediaRequestContext, RtpApi};
+use cheetah_sdk::{CancellationToken, EngineContext, StreamKey};
 
+use crate::egress::{run_egress_session, ActiveEgressMap, EgressCleanup};
 use crate::orchestrator::RtpSessionOrchestrator;
 
 /// Media-domain `RtpApi` provider.
@@ -21,14 +25,27 @@ use crate::orchestrator::RtpSessionOrchestrator;
 /// `RtpApi` provider。
 pub struct RtpMediaProvider {
     orchestrator: Arc<RtpSessionOrchestrator>,
+    engine: EngineContext,
+    module_cancel: CancellationToken,
+    /// Active sender egress tasks keyed by session key so `stop_rtp_session` can cancel them.
+    active_senders: ActiveEgressMap,
 }
 
 impl RtpMediaProvider {
     /// Create a provider backed by the shared orchestrator.
     ///
     /// 创建由共享编排器支撑的 provider。
-    pub fn new(orchestrator: Arc<RtpSessionOrchestrator>) -> Self {
-        Self { orchestrator }
+    pub fn new(
+        orchestrator: Arc<RtpSessionOrchestrator>,
+        engine: EngineContext,
+        module_cancel: CancellationToken,
+    ) -> Self {
+        Self {
+            orchestrator,
+            engine,
+            module_cancel,
+            active_senders: ActiveEgressMap::default(),
+        }
     }
 
     /// Return the orchestrator so the module can share the same instance with
@@ -37,6 +54,16 @@ impl RtpMediaProvider {
     /// 返回编排器，以便模块将它与 HTTP 服务共享。
     pub fn orchestrator(&self) -> Arc<RtpSessionOrchestrator> {
         self.orchestrator.clone()
+    }
+
+    fn driver(&self) -> Result<Arc<RtpDriverHandle>> {
+        self.orchestrator.driver()
+    }
+
+    /// Build the `StreamKey` that the engine uses for a given `MediaKey`.
+    fn stream_key_for_media_key(media_key: &MediaKey) -> StreamKey {
+        let (namespace, path) = StreamKeyBridge::to_namespace_path(media_key);
+        StreamKey::new(namespace, path)
     }
 }
 
@@ -63,10 +90,43 @@ impl RtpApi for RtpMediaProvider {
         _ctx: &MediaRequestContext,
         request: RtpSenderRequest,
     ) -> Result<RtpSession> {
-        self.orchestrator.open_rtp_sender(request).await
+        // Create the driver-side sender session first.
+        let session = self.orchestrator.open_rtp_sender(request.clone()).await?;
+        let session_key = session.session_id.0.clone();
+
+        // Determine the engine stream we need to subscribe to.
+        let stream_key = Self::stream_key_for_media_key(&request.media_key);
+
+        let driver = self.driver()?;
+        let cancel = self.module_cancel.child_token();
+        self.active_senders
+            .lock()
+            .insert(session_key.clone(), cancel.clone());
+
+        let engine = self.engine.clone();
+        let orchestrator = self.orchestrator.clone();
+        let cleanup = EgressCleanup::new(self.active_senders.clone(), session_key.clone());
+        let runtime_api = self.engine.runtime_api.clone();
+        runtime_api.spawn(Box::pin(async move {
+            run_egress_session(
+                engine,
+                driver,
+                vec![session_key],
+                stream_key,
+                cancel,
+                Some(orchestrator),
+                Some(cleanup),
+            )
+            .await;
+        }));
+
+        Ok(session)
     }
 
     async fn stop_rtp_session(&self, _ctx: &MediaRequestContext, id: &RtpSessionId) -> Result<()> {
+        if let Some(cancel) = self.active_senders.lock().remove(&id.0) {
+            cancel.cancel();
+        }
         self.orchestrator.stop_rtp_session(id).await
     }
 
