@@ -1,0 +1,380 @@
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
+
+use cheetah_codec::AVFrame;
+use cheetah_sdk::media_api::command::{
+    RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, StartRecordRequest, StopRecordRequest,
+};
+use cheetah_sdk::media_api::model::{OnlineState, RecordTaskState};
+use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
+use cheetah_sdk::media_api::{MediaKey, MediaRequestContext};
+use cheetah_sdk::StreamKey;
+use tokio::time::{sleep, timeout};
+
+mod support;
+
+use support::*;
+
+const SSRC: u32 = 0x12345678;
+const INGEST_PT: u8 = 100;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gb28181_udp_receiver_ingest_stream_online_and_keyframe_request() {
+    let harness = Gb28181TestHarness::start().await;
+    let media = harness.media_facade();
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_device_001", "ch_001", None).unwrap();
+    let stream_key = StreamKey::new("gb28181_device_001", "ch_001");
+
+    let request = RtpReceiverRequest {
+        media_key: media_key.clone(),
+        port: Some(0),
+        ip: None,
+        ssrc: Some(SSRC),
+        enable_rtcp: false,
+        tcp_mode: None,
+        payload_type: Some(INGEST_PT),
+        codec_hint: Some("ps".to_string()),
+        reuse_port: false,
+        timeout_ms: 0,
+    };
+
+    let session = media.open_rtp_receiver(&ctx, request).await.unwrap();
+    let recv_port = session.local_port.expect("receiver bound port");
+    let recv_addr: SocketAddr = format!("127.0.0.1:{recv_port}").parse().unwrap();
+
+    let socket = bind_udp_socket().await;
+
+    // Warm up the inbound session with one video + one audio PS/RTP packet so the
+    // publisher is established and tracks are discovered before we subscribe.
+    send_rtp(
+        &socket,
+        recv_addr,
+        mux_ps_frame(&make_video_frame(0)),
+        SSRC,
+        1,
+        0,
+        INGEST_PT,
+    )
+    .await;
+    send_rtp(
+        &socket,
+        recv_addr,
+        mux_ps_frame(&make_audio_frame(80)),
+        SSRC,
+        2,
+        80,
+        INGEST_PT,
+    )
+    .await;
+
+    harness
+        .wait_for_stream_online(&stream_key, Duration::from_secs(5))
+        .await;
+
+    let mut subscriber = harness.open_subscriber(stream_key.clone()).await;
+    let mut saw_video = false;
+    let mut saw_audio = false;
+    let mut seq: u32 = 3;
+    let mut pts: i64 = 100_000;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline && !(saw_video && saw_audio) {
+        // Keep feeding keyframes and audio. The PS demuxer emits a video frame when the
+        // next video pack header arrives, so each iteration after the first produces a keyframe.
+        send_rtp(
+            &socket,
+            recv_addr,
+            mux_ps_frame(&make_video_frame(pts)),
+            SSRC,
+            seq as u16,
+            (pts / 100 * 9) as u32,
+            INGEST_PT,
+        )
+        .await;
+        seq += 1;
+        send_rtp(
+            &socket,
+            recv_addr,
+            mux_ps_frame(&make_audio_frame(pts + 80)),
+            SSRC,
+            seq as u16,
+            ((pts + 80) / 100 * 9) as u32,
+            INGEST_PT,
+        )
+        .await;
+        seq += 1;
+        pts += 100_000;
+
+        if let Ok(Ok(Some(frame))) = timeout(Duration::from_millis(200), subscriber.recv()).await {
+            if frame.media_kind == cheetah_codec::MediaKind::Video && frame.is_key_frame() {
+                saw_video = true;
+            }
+            if frame.media_kind == cheetah_codec::MediaKind::Audio {
+                saw_audio = true;
+            }
+        }
+    }
+    assert!(saw_video, "expected a video keyframe");
+    assert!(saw_audio, "expected an audio frame");
+
+    let info = media.get_media(&ctx, &media_key).await.unwrap();
+    assert_eq!(info.online, OnlineState::Online);
+    assert!(!info.tracks.is_empty(), "expected track metadata");
+    media.request_keyframe(&ctx, &media_key).await.unwrap();
+
+    let record_task = media
+        .start_record(
+            &ctx,
+            StartRecordRequest {
+                media_key: media_key.clone(),
+                format: "mp4".to_string(),
+                template: Default::default(),
+                segment_duration_ms: None,
+                max_segments: None,
+                storage_policy: Default::default(),
+                idempotency_key: None,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(record_task.state, RecordTaskState::Running);
+
+    for _ in 0..5 {
+        send_rtp(
+            &socket,
+            recv_addr,
+            mux_ps_frame(&make_video_frame(pts)),
+            SSRC,
+            seq as u16,
+            (pts / 100 * 9) as u32,
+            INGEST_PT,
+        )
+        .await;
+        seq += 1;
+        pts += 100_000;
+        sleep(Duration::from_millis(50)).await;
+    }
+
+    let stopped = media
+        .stop_record(
+            &ctx,
+            StopRecordRequest {
+                task_id: record_task.task_id,
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(stopped.state, RecordTaskState::Completed);
+
+    media
+        .stop_rtp_session(&ctx, &session.session_id)
+        .await
+        .unwrap();
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gb28181_udp_sender_egress_emits_real_rtp_packets() {
+    let harness = Gb28181TestHarness::start().await;
+    let media = harness.media_facade();
+    let ctx = MediaRequestContext::default();
+
+    let source_key = StreamKey::new("rtp_sender_source", "main");
+    let source_media_key = stream_key_to_media_key(&source_key);
+    let publisher = harness
+        .open_publisher(
+            source_key.clone(),
+            vec![make_video_track(), make_audio_track()],
+        )
+        .await;
+
+    let recv_socket = bind_udp_socket().await;
+    let dest_addr = recv_socket.local_addr().unwrap();
+
+    let request = RtpSenderRequest {
+        media_key: source_media_key.clone(),
+        destination_endpoint: dest_addr.to_string(),
+        ssrc: Some(SSRC),
+        payload_type: Some(INGEST_PT),
+        codec_hint: Some("ps".to_string()),
+        mode: RtpSenderMode::Active,
+        transport_options: HashMap::new(),
+    };
+
+    let _sender_session = media.open_rtp_sender(&ctx, request).await.unwrap();
+
+    for i in 0..10 {
+        let ps = mux_ps_frame(&make_video_frame(i * 100_000));
+        publisher
+            .push_frame(Arc::new(AVFrame {
+                payload: ps,
+                ..make_video_frame(i * 100_000)
+            }))
+            .unwrap();
+        sleep(Duration::from_millis(50)).await;
+    }
+
+    let mut saw_rtp = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline && !saw_rtp {
+        if let Some((header, _payload, _addr)) =
+            recv_rtp(&recv_socket, Duration::from_millis(200)).await
+        {
+            assert_eq!(header.version, 2);
+            assert_eq!(header.ssrc, SSRC);
+            assert_eq!(header.payload_type, 96, "PS mode uses PT 96");
+            saw_rtp = true;
+        }
+    }
+    assert!(saw_rtp, "expected to receive RTP packets from sender");
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gb28181_talkback_audio_round_trip() {
+    let harness = Gb28181TestHarness::start().await;
+    let media = harness.media_facade();
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_talk", "cam_001", None).unwrap();
+    let request = RtpReceiverRequest {
+        media_key: media_key.clone(),
+        port: Some(0),
+        ip: None,
+        ssrc: Some(SSRC),
+        enable_rtcp: false,
+        tcp_mode: None,
+        payload_type: Some(INGEST_PT),
+        codec_hint: Some("ps".to_string()),
+        reuse_port: false,
+        timeout_ms: 0,
+    };
+
+    let session = media.open_rtp_receiver(&ctx, request).await.unwrap();
+    let recv_port = session.local_port.unwrap();
+    let recv_addr: SocketAddr = format!("127.0.0.1:{recv_port}").parse().unwrap();
+
+    let socket = bind_udp_socket().await;
+    let src_addr = socket.local_addr().unwrap();
+
+    // Send an audio-only PS packet so the receiver records our source endpoint.
+    send_rtp(
+        &socket,
+        recv_addr,
+        mux_ps_frame(&make_audio_frame(80)),
+        SSRC,
+        1,
+        0,
+        INGEST_PT,
+    )
+    .await;
+
+    // Give the ingress worker time to update the receiver's remote endpoint.
+    sleep(Duration::from_millis(200)).await;
+
+    // Upgrade the inbound session to talkback, sending audio back to `src_addr`.
+    let talk_request = RtpSenderRequest {
+        media_key: media_key.clone(),
+        destination_endpoint: src_addr.to_string(),
+        ssrc: Some(SSRC),
+        payload_type: Some(8),
+        codec_hint: Some("raw_audio".to_string()),
+        mode: RtpSenderMode::Talk,
+        transport_options: HashMap::new(),
+    };
+    media.open_rtp_sender(&ctx, talk_request).await.unwrap();
+
+    // Feed a short burst of audio frames; the talk egress echoes each one back as raw G.711A RTP.
+    let mut saw_talkback = false;
+    let mut seq: u16 = 2;
+    let mut pts: i64 = 160;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline && !saw_talkback {
+        send_rtp(
+            &socket,
+            recv_addr,
+            mux_ps_frame(&make_audio_frame(pts)),
+            SSRC,
+            seq,
+            (pts / 100 * 9) as u32,
+            INGEST_PT,
+        )
+        .await;
+        seq = seq.wrapping_add(1);
+        pts += 80;
+
+        if let Some((header, _payload, addr)) = recv_rtp(&socket, Duration::from_millis(100)).await
+        {
+            if addr == recv_addr && header.payload_type == 8 {
+                saw_talkback = true;
+            }
+        }
+    }
+    assert!(saw_talkback, "expected talkback RTP from the receiver");
+
+    media
+        .stop_rtp_session(&ctx, &session.session_id)
+        .await
+        .unwrap();
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gb28181_session_stop_releases_port() {
+    let harness = Gb28181TestHarness::start().await;
+    let media = harness.media_facade();
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_stop", "cam_001", None).unwrap();
+    let request = RtpReceiverRequest {
+        media_key: media_key.clone(),
+        port: Some(0),
+        ip: None,
+        ssrc: Some(SSRC),
+        enable_rtcp: false,
+        tcp_mode: None,
+        payload_type: Some(INGEST_PT),
+        codec_hint: Some("ps".to_string()),
+        reuse_port: false,
+        timeout_ms: 0,
+    };
+
+    let session = media.open_rtp_receiver(&ctx, request).await.unwrap();
+    let recv_port = session.local_port.unwrap();
+
+    let probe = tokio::net::UdpSocket::bind(format!("127.0.0.1:{recv_port}")).await;
+    assert!(
+        probe.is_err(),
+        "port should be occupied while session is active"
+    );
+
+    media
+        .stop_rtp_session(&ctx, &session.session_id)
+        .await
+        .unwrap();
+
+    // The socket is released asynchronously after the driver cancels the reader task;
+    // retry a few times before failing.
+    let mut probe2 = Err(std::io::Error::other("not attempted"));
+    for _ in 0..20 {
+        sleep(Duration::from_millis(50)).await;
+        probe2 = tokio::net::UdpSocket::bind(format!("127.0.0.1:{recv_port}")).await;
+        if probe2.is_ok() {
+            break;
+        }
+    }
+    assert!(probe2.is_ok(), "port should be released after stop");
+    drop(probe2);
+
+    assert!(media
+        .get_rtp_session(&ctx, &session.session_id)
+        .await
+        .is_err());
+
+    harness.stop().await;
+}
