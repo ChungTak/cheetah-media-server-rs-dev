@@ -10,10 +10,13 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cheetah_codec::TrackInfo;
 use cheetah_rtp_core::{
-    RtpClientSpec, RtpConnectionType, RtpCoreEvent, RtpPayloadMode, RtpSendFrame, RtpServerSpec,
-    RtpTrackFilter, RtpTransportMode,
+    RtpClientSpec, RtpConnectionType, RtpCoreEvent, RtpPayloadMode, RtpSendFrame, RtpTrackFilter,
+    RtpTransportMode,
 };
 use cheetah_rtp_driver_tokio::{start_driver, RtpDriverCommand, RtpDriverConfig, RtpDriverHandle};
+use cheetah_sdk::media_api::error::MediaError;
+use cheetah_sdk::media_api::ids::MediaKey;
+use cheetah_sdk::media_api::model::{RtpSessionState, RtpTcpMode};
 use cheetah_sdk::{
     BootstrapPolicy, CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest,
     HttpResponse, HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -28,6 +31,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::config::{RtpClientJobConfig, RtpModuleConfig};
 use crate::media_provider::RtpMediaProvider;
+use crate::orchestrator::RtpSessionOrchestrator;
 
 const MODULE_ID: &str = "rtp";
 
@@ -81,10 +85,9 @@ pub struct RtpModule {
     state: ModuleState,
     config: RtpModuleConfig,
     ctx: Option<EngineContext>,
-    /// Shared with the HTTP service so the latter sees the driver as soon as `start` sets it.
-    /// `update_http_mount` runs at init time — before `start` — so the module can't pass a
-    /// concrete handle directly.
-    driver_handle: Arc<Mutex<Option<Arc<RtpDriverHandle>>>>,
+    /// Shared session orchestrator created in `init` and used by both the
+    /// `RtpApi` provider and the module's HTTP service.
+    orchestrator: Option<Arc<RtpSessionOrchestrator>>,
     cancel_token: Option<CancellationToken>,
     active_egress: Arc<Mutex<HashMap<String, CancellationToken>>>,
     client_targets: Arc<Mutex<HashMap<String, Vec<String>>>>,
@@ -103,7 +106,7 @@ impl RtpModule {
             state: ModuleState::Created,
             config: RtpModuleConfig::default(),
             ctx: None,
-            driver_handle: Arc::new(Mutex::new(None)),
+            orchestrator: None,
             cancel_token: None,
             active_egress: Arc::new(Mutex::new(HashMap::new())),
             client_targets: Arc::new(Mutex::new(HashMap::new())),
@@ -144,8 +147,6 @@ impl Module for RtpModule {
         let engine = ctx.engine.clone();
         self.ctx = Some(ctx.engine);
 
-        // Register the media-domain RtpApi provider so native/ZLM adapters can
-        // drive RTP sessions through the same driver used by the module's HTTP API.
         let listen_port = self
             .config
             .listen_udp
@@ -154,6 +155,14 @@ impl Module for RtpModule {
             .parse::<SocketAddr>()
             .map_err(|e| SdkError::InvalidArgument(format!("invalid listen_udp: {e}")))?
             .port();
+
+        // Shared driver handle slot. Populated in `start()` once the Tokio driver is bound.
+        let driver_handle: Arc<Mutex<Option<Arc<RtpDriverHandle>>>> = Arc::new(Mutex::new(None));
+        let orchestrator = Arc::new(RtpSessionOrchestrator::new(driver_handle, listen_port));
+        self.orchestrator = Some(orchestrator.clone());
+
+        // Register the media-domain RtpApi provider so native/ZLM adapters can
+        // drive RTP sessions through the same orchestrator used by the module's HTTP API.
         let rtp_capabilities = {
             let mut set = cheetah_sdk::media_api::MediaCapabilitySet::empty();
             set.add(cheetah_sdk::media_api::MediaCapability::Rtp, 1);
@@ -161,10 +170,7 @@ impl Module for RtpModule {
         };
         self.media_services_registration =
             Some(engine.media_services.register_rtp_with_capabilities(
-                Arc::new(RtpMediaProvider::new(
-                    self.driver_handle.clone(),
-                    listen_port,
-                )),
+                Arc::new(RtpMediaProvider::new(orchestrator)),
                 rtp_capabilities,
             ));
 
@@ -266,13 +272,21 @@ impl Module for RtpModule {
         };
 
         let handle = Arc::new(start_driver(driver_config, cancel.clone()));
-        *self.driver_handle.lock() = Some(handle.clone());
+
+        let orchestrator = self.orchestrator.clone().ok_or_else(|| {
+            SdkError::InvalidArgument("RtpModule::start called before init".to_string())
+        })?;
+        orchestrator.set_driver_handle(handle.clone());
+
+        let driver = orchestrator
+            .driver()
+            .map_err(|e| SdkError::Unavailable(e.message.to_string()))?;
 
         // Spawn ingress worker
         {
             let ctx = ctx.clone();
             let runtime_api = ctx.runtime_api.clone();
-            let handle = handle.clone();
+            let handle = driver.clone();
             let cancel = cancel.clone();
             let publish_frame_cache = config.publish_frame_cache_frames;
             runtime_api.spawn(Box::pin(async move {
@@ -288,7 +302,7 @@ impl Module for RtpModule {
             let job = job.clone();
             let ctx = ctx.clone();
             let runtime_api = ctx.runtime_api.clone();
-            let handle = handle.clone();
+            let handle = driver.clone();
             let cancel = cancel.clone();
             runtime_api.spawn(Box::pin(async move {
                 run_pull_job_supervisor(ctx, handle, job, cancel).await;
@@ -306,7 +320,9 @@ impl Module for RtpModule {
         // Drop the driver handle so any HTTP request that arrives while we're stopping (or
         // before a subsequent restart re-initialises) gets `Unavailable` instead of trying
         // to talk to a dead driver.
-        *self.driver_handle.lock() = None;
+        if let Some(orchestrator) = self.orchestrator.as_ref() {
+            orchestrator.clear_driver_handle();
+        }
         // Clear in-flight egress sessions and per-stream client routing tables; the cancel
         // cascade above terminates any spawned senders, but we also reset the maps so a
         // subsequent restart starts from a clean state.
@@ -361,11 +377,10 @@ impl Module for RtpModule {
         let engine = self.ctx.clone()?;
         // Cancel token is allocated in `init`; treat its absence as a programming error.
         let module_cancel = self.cancel_token.clone()?;
+        let orchestrator = self.orchestrator.clone()?;
         Some(Arc::new(RtpHttpService {
             engine,
-            // Shared handle storage: at init time this slot is empty; `start` populates it
-            // before the HTTP service starts dispatching requests.
-            driver_handle: self.driver_handle.clone(),
+            orchestrator,
             active_egress: self.active_egress.clone(),
             client_targets: self.client_targets.clone(),
             module_cancel,
@@ -560,9 +575,8 @@ async fn run_pull_job_supervisor(
 /// RTP 模块的 HTTP 控制 API。
 struct RtpHttpService {
     engine: EngineContext,
-    /// Shared with `RtpModule`. Populated by `start()` and read on every HTTP request; if
-    /// the module hasn't started yet, the lookup returns `Unavailable` so callers can retry.
-    driver_handle: Arc<Mutex<Option<Arc<RtpDriverHandle>>>>,
+    /// Shared session orchestrator used by the `RtpApi` provider and HTTP routes.
+    orchestrator: Arc<RtpSessionOrchestrator>,
     active_egress: Arc<Mutex<HashMap<String, CancellationToken>>>,
     /// Maps logical session_key -> internal driver target session keys (1 entry for single target,
     /// `key#0`/`key#1`/... for multi-target senderInfos use cases).
@@ -580,10 +594,9 @@ impl RtpHttpService {
     ///
     /// 获取驱动句柄；若未启动则返回 `Unavailable`。
     fn driver(&self) -> Result<Arc<RtpDriverHandle>, SdkError> {
-        self.driver_handle
-            .lock()
-            .clone()
-            .ok_or_else(|| SdkError::Unavailable("RTP driver not yet started".to_string()))
+        self.orchestrator
+            .driver()
+            .map_err(|e| SdkError::Unavailable(e.message.to_string()))
     }
 }
 
@@ -601,7 +614,7 @@ impl ModuleHttpService for RtpHttpService {
                 // SMS-compatible: `port` is OPTIONAL. When omitted the module returns the
                 // already-listening RTP port from configuration; this matches the SMS pattern of
                 // pre-allocating a shared receive port and binding `app/stream/ssrc` to it.
-                let port = body.get("port").and_then(|v| v.as_u64()).map(|v| v as u16);
+                let _port = body.get("port").and_then(|v| v.as_u64()).map(|v| v as u16);
 
                 // Accept SMS `socketType` (string `tcp`/`udp`/`both` or numeric 1/2/3) but
                 // record it for diagnostic purposes only — the active driver listens on whatever
@@ -631,7 +644,7 @@ impl ModuleHttpService for RtpHttpService {
                 })?;
 
                 let ssrc = body.get("ssrc").and_then(|v| v.as_u64()).map(|v| v as u32);
-                let payload_type = body
+                let payload_mode = body
                     .get("payloadType")
                     .and_then(parse_payload_mode)
                     .unwrap_or(RtpPayloadMode::Ps);
@@ -656,20 +669,32 @@ impl ModuleHttpService for RtpHttpService {
                         .unwrap_or(RtpTrackFilter::All),
                 };
 
+                let tcp_mode = match connection_type {
+                    Some(RtpConnectionType::TcpPassive) => Some(RtpTcpMode::Passive),
+                    Some(RtpConnectionType::TcpActive) => Some(RtpTcpMode::Active),
+                    _ => None,
+                };
+                let media_key = MediaKey::with_default_vhost(&app_name, &stream_name, None)
+                    .map_err(|e| SdkError::InvalidArgument(e.message.to_string()))?;
                 let session_key = format!("{app_name}/{stream_name}");
 
-                let spec = RtpServerSpec {
-                    session_key: session_key.clone(),
-                    ssrc,
-                    payload_mode: payload_type,
-                    transport_mode,
-                    connection_type,
-                    track_filter,
-                };
-
-                self.driver()?
-                    .send_command(RtpDriverCommand::CreateServer(spec))
-                    .await;
+                let session = self
+                    .orchestrator
+                    .create_server_session(
+                        session_key.clone(),
+                        media_key,
+                        ssrc,
+                        None,
+                        payload_mode,
+                        transport_mode,
+                        connection_type,
+                        track_filter,
+                        tcp_mode,
+                        false,
+                        RtpSessionState::Listening,
+                    )
+                    .await
+                    .map_err(media_error_to_sdk_error)?;
 
                 // ABL-style advisory egress flags. We don't mutate state in the RTP module for
                 // these — other modules (HLS / MP4) own the actual egress lifecycle — but we
@@ -689,7 +714,7 @@ impl ModuleHttpService for RtpHttpService {
                     "code": 200,
                     "msg": "success",
                     "data": {
-                        "port": port.unwrap_or(0),
+                        "port": session.local_port.unwrap_or(0),
                         "socketType": socket_type,
                         "sessionKey": session_key,
                         "ssrc": ssrc.unwrap_or(0),
@@ -714,9 +739,10 @@ impl ModuleHttpService for RtpHttpService {
 
                 let session_key = format!("{app_name}/{stream_name}");
 
-                self.driver()?
-                    .send_command(RtpDriverCommand::StopSession(session_key))
-                    .await;
+                self.orchestrator
+                    .stop_session_by_key(&session_key)
+                    .await
+                    .map_err(media_error_to_sdk_error)?;
 
                 let response = serde_json::json!({
                     "code": 200,
@@ -823,6 +849,8 @@ impl ModuleHttpService for RtpHttpService {
                     targets.push((dest_addr, ssrc, default_payload, default_transport));
                 }
 
+                let media_key = MediaKey::with_default_vhost(&app_name, &stream_name, None)
+                    .map_err(|e| SdkError::InvalidArgument(e.message.to_string()))?;
                 let session_key = format!("{app_name}/{stream_name}");
                 let mut session_keys = Vec::new();
 
@@ -849,20 +877,21 @@ impl ModuleHttpService for RtpHttpService {
                         format!("{session_key}#{idx}")
                     };
 
-                    let spec = RtpClientSpec {
-                        session_key: target_session.clone(),
-                        destination: *dest_addr,
-                        ssrc: *ssrc,
-                        payload_mode: *payload_mode,
-                        transport_mode: *transport_mode,
-                        tcp_conn_id: None,
-                        connection_type,
-                        track_filter,
-                    };
-
-                    self.driver()?
-                        .send_command(RtpDriverCommand::CreateClient(spec))
-                        .await;
+                    self.orchestrator
+                        .create_client_session(
+                            target_session.clone(),
+                            media_key.clone(),
+                            *dest_addr,
+                            dest_addr.to_string(),
+                            Some(*ssrc),
+                            None,
+                            *payload_mode,
+                            *transport_mode,
+                            connection_type,
+                            track_filter,
+                        )
+                        .await
+                        .map_err(media_error_to_sdk_error)?;
                     session_keys.push(target_session);
                 }
 
@@ -966,11 +995,11 @@ impl ModuleHttpService for RtpHttpService {
                     .lock()
                     .remove(&session_key)
                     .unwrap_or_else(|| vec![session_key.clone()]);
-                if !driver_sessions.is_empty() {
-                    let driver = self.driver()?;
-                    for sk in driver_sessions {
-                        driver.send_command(RtpDriverCommand::StopSession(sk)).await;
-                    }
+                for sk in driver_sessions {
+                    self.orchestrator
+                        .stop_session_by_key(&sk)
+                        .await
+                        .map_err(media_error_to_sdk_error)?;
                 }
 
                 let response = serde_json::json!({
@@ -1175,6 +1204,25 @@ fn parse_only_audio_to_filter(val: &serde_json::Value) -> RtpTrackFilter {
             _ => RtpTrackFilter::All,
         },
         _ => RtpTrackFilter::All,
+    }
+}
+
+/// Map a domain `MediaError` into the module-facing `SdkError` used by HTTP routes.
+///
+/// 将领域 `MediaError` 映射为 HTTP 路由使用的模块 `SdkError`。
+fn media_error_to_sdk_error(err: MediaError) -> SdkError {
+    let msg = err.message.to_string();
+    match err.code {
+        cheetah_sdk::media_api::error::MediaErrorCode::InvalidArgument => {
+            SdkError::InvalidArgument(msg)
+        }
+        cheetah_sdk::media_api::error::MediaErrorCode::NotFound => SdkError::NotFound(msg),
+        cheetah_sdk::media_api::error::MediaErrorCode::AlreadyExists => {
+            SdkError::AlreadyExists(msg)
+        }
+        cheetah_sdk::media_api::error::MediaErrorCode::Conflict => SdkError::Conflict(msg),
+        cheetah_sdk::media_api::error::MediaErrorCode::Unavailable => SdkError::Unavailable(msg),
+        _ => SdkError::Internal(msg),
     }
 }
 
