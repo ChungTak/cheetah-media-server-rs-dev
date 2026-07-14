@@ -36,22 +36,12 @@ impl EngineMediaFileStore {
         Self::default()
     }
 
-    fn generate_handle() -> String {
+    fn generate_handle() -> Result<String> {
         let mut buf = [0u8; 16];
-        if getrandom::getrandom(&mut buf).is_err() {
-            // Fallback to a timestamp-based token only if the system RNG is
-            // unavailable; this should be rare.
-            let mut seed = 0u64;
-            for b in buf.iter().take(8) {
-                seed = (seed << 8) | u64::from(*b);
-            }
-            seed ^= std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos() as u64)
-                .unwrap_or(0);
-            return format!("{seed:032x}");
-        }
-        buf.iter().map(|b| format!("{b:02x}")).collect()
+        getrandom::getrandom(&mut buf).map_err(|e| {
+            MediaError::unavailable(format!("failed to generate secure file handle: {e}"))
+        })?;
+        Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
     }
 
     fn is_authorized(&self, ctx: &MediaRequestContext, entry: &FileStoreEntry) -> bool {
@@ -100,30 +90,38 @@ impl EngineMediaFileStore {
         true
     }
 
-    fn read_range(path: &str, range: Option<FileRange>, total: u64) -> Result<Bytes> {
+    fn read_range(path: &str, range: Option<FileRange>, total: u64) -> Result<(u64, u64, Bytes)> {
         let mut file = File::open(path)
             .map_err(|e| MediaError::storage_failed(format!("failed to open file: {e}")))?;
+        let max_end = total.saturating_sub(1);
         let (start, end) = match range {
+            Some(r) if r.is_suffix => {
+                if r.start == 0 {
+                    return Err(MediaError::invalid_argument("invalid suffix range"));
+                }
+                let start = total.saturating_sub(r.start).min(total);
+                (start, max_end)
+            }
             Some(r) => {
                 let start = r.start.min(total);
-                let end = r
-                    .end
-                    .map(|e| e.min(total.saturating_sub(1)))
-                    .unwrap_or_else(|| total.saturating_sub(1));
+                let end = r.end.map(|e| e.min(max_end)).unwrap_or_else(|| max_end);
                 if start > end {
                     return Err(MediaError::invalid_argument("invalid byte range"));
                 }
                 (start, end)
             }
-            None => (0, total.saturating_sub(1)),
+            None => (0, max_end),
         };
+        if start > total {
+            return Ok((start, end, Bytes::new()));
+        }
         file.seek(SeekFrom::Start(start))
             .map_err(|e| MediaError::storage_failed(format!("failed to seek file: {e}")))?;
-        let size = (end - start + 1) as usize;
+        let size = (end.saturating_sub(start).saturating_add(1)) as usize;
         let mut buf = vec![0u8; size];
         file.read_exact(&mut buf)
             .map_err(|e| MediaError::storage_failed(format!("failed to read file: {e}")))?;
-        Ok(Bytes::from(buf))
+        Ok((start, end, Bytes::from(buf)))
     }
 }
 
@@ -141,7 +139,7 @@ impl MediaFileStoreApi for EngineMediaFileStore {
                 "file size must be greater than 0",
             ));
         }
-        let handle = Self::generate_handle();
+        let handle = Self::generate_handle()?;
         let file_entry = FileStoreEntry {
             owner_principal: entry.owner_principal.or_else(|| ctx.principal.clone()),
             ..entry
@@ -276,7 +274,7 @@ impl MediaFileStoreApi for EngineMediaFileStore {
             &handle.0,
         );
 
-        let body = Self::read_range(&entry.absolute_path, range, total)?;
+        let (start, end, body) = Self::read_range(&entry.absolute_path, range, total)?;
 
         let content_type = if entry.content_type.is_empty() {
             guess_content_type(&safe_name)
@@ -284,12 +282,14 @@ impl MediaFileStoreApi for EngineMediaFileStore {
             entry.content_type.clone()
         };
 
+        let effective_range = range.map(|_| FileRange::bounded(start, end));
+
         Ok(FileDownload {
             content_type,
             total_size: total,
             body,
             filename: safe_name,
-            range,
+            range: effective_range,
         })
     }
 }
@@ -318,11 +318,12 @@ mod tests {
     use cheetah_media_api::ids::MediaKey;
 
     fn make_entry(path: &str) -> FileStoreEntry {
+        let size_bytes = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
         FileStoreEntry {
             media_key: MediaKey::new("__defaultVhost__", "live", "test", None).unwrap(),
             file_type: "record".to_string(),
             content_type: "video/mp4".to_string(),
-            size_bytes: 4,
+            size_bytes,
             created_at_ms: 1000,
             expires_at_ms: None,
             absolute_path: path.to_string(),
@@ -332,8 +333,21 @@ mod tests {
     }
 
     fn write_temp_file(content: &[u8]) -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::SystemTime;
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir();
-        let path = dir.join(format!("cheetah-file-store-test-{}", std::process::id()));
+        let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let path = dir.join(format!(
+            "cheetah-file-store-test-{}-{}-{}",
+            std::process::id(),
+            now,
+            id
+        ));
         std::fs::write(&path, content).unwrap();
         path.to_string_lossy().to_string()
     }
@@ -386,16 +400,7 @@ mod tests {
         let ctx = MediaRequestContext::default();
         let handle = store.register_file(&ctx, make_entry(&path)).unwrap();
         let dl = store
-            .resolve_download(
-                &ctx,
-                &handle,
-                Some(FileRange {
-                    start: 2,
-                    end: Some(5),
-                }),
-                None,
-                2000,
-            )
+            .resolve_download(&ctx, &handle, Some(FileRange::bounded(2, 5)), None, 2000)
             .unwrap();
         assert_eq!(dl.body, bytes::Bytes::from_static(b"2345"));
         assert_eq!(dl.total_size, 10);

@@ -74,11 +74,45 @@ pub struct DeleteBatchResult {
 
 /// A byte range within a file.
 ///
+/// When `is_suffix` is `true`, `start` is the number of bytes to read from
+/// the end of the file and `end` is ignored.
+///
 /// 文件内的字节范围。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FileRange {
     pub start: u64,
     pub end: Option<u64>,
+    #[serde(default)]
+    pub is_suffix: bool,
+}
+
+impl FileRange {
+    /// Read from `start` through the end of the file.
+    pub fn from(start: u64) -> Self {
+        Self {
+            start,
+            end: None,
+            is_suffix: false,
+        }
+    }
+
+    /// Read the explicit inclusive byte range `[start, end]`.
+    pub fn bounded(start: u64, end: u64) -> Self {
+        Self {
+            start,
+            end: Some(end),
+            is_suffix: false,
+        }
+    }
+
+    /// Read the last `n` bytes of the file.
+    pub fn suffix(n: u64) -> Self {
+        Self {
+            start: n,
+            end: None,
+            is_suffix: true,
+        }
+    }
 }
 
 /// Prepared response for a file download.

@@ -400,28 +400,18 @@ impl NativeMediaHttpService {
             AdapterError::InvalidRequest("invalid file download path".to_string())
         })?;
         let filename = query_param(&req, "filename");
-        let range = parse_range_header(&req.headers);
+        let range = parse_range_header(&req.headers).map(http_range_to_file_range);
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
 
-        // Resolve the entry first so we can validate suffix ranges and return a
-        // consistent total size in the Content-Range header.
-        let handle = FileHandle(handle);
-        let entry = self
-            .file_store()
-            .resolve_for_read(&ctx, &handle, None, now_ms)
-            .map_err(AdapterError::Media)?;
-        let total = entry.size_bytes;
-        let range = normalize_range(range, total);
-
         let download = self
             .file_store()
-            .resolve_download(&ctx, &handle, range, filename, now_ms)
+            .resolve_download(&ctx, &FileHandle(handle), range, filename, now_ms)
             .map_err(AdapterError::Media)?;
 
-        Ok(download_response(download, range, total))
+        Ok(download_response(download))
     }
 
     async fn proxies_pull(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
@@ -697,37 +687,24 @@ fn parse_range_header(headers: &[HttpHeader]) -> Option<HttpRange> {
     }
 }
 
-/// Clamp a requested range to the file size and return an explicit `FileRange`.
+/// Convert a parsed HTTP range into a `FileRange` for the file store.
 ///
-/// 将请求范围限制在文件大小内并返回显式 `FileRange`。
-fn normalize_range(range: Option<HttpRange>, total: u64) -> Option<FileRange> {
-    let r = range?;
-    let max_end = total.saturating_sub(1);
-    let (start, end) = match r {
-        HttpRange::From(s) => (s.min(total), max_end),
-        HttpRange::Bounded(s, e) => (s.min(total), e.min(max_end)),
-        HttpRange::Suffix(n) => {
-            let start = total.saturating_sub(n);
-            (start, max_end)
-        }
-    };
-    if start > end {
-        return None;
+/// Suffix ranges keep their length in `start` with `is_suffix` set.
+///
+/// 将解析后的 HTTP range 转换为文件存储使用的 `FileRange`。
+fn http_range_to_file_range(range: HttpRange) -> FileRange {
+    match range {
+        HttpRange::From(start) => FileRange::from(start),
+        HttpRange::Bounded(start, end) => FileRange::bounded(start, end),
+        HttpRange::Suffix(n) => FileRange::suffix(n),
     }
-    Some(FileRange {
-        start,
-        end: Some(end),
-    })
 }
 
 /// Build an HTTP response from a `FileDownload`.
 ///
 /// 从 `FileDownload` 构建 HTTP 响应。
-fn download_response(
-    download: cheetah_media_api::FileDownload,
-    range: Option<FileRange>,
-    total: u64,
-) -> HttpResponse {
+fn download_response(download: cheetah_media_api::FileDownload) -> HttpResponse {
+    let total = download.total_size;
     let mut headers = vec![
         HttpHeader {
             name: "content-type".to_string(),
@@ -743,11 +720,8 @@ fn download_response(
         },
     ];
 
-    let status = if let Some(r) = range {
-        let end = r
-            .end
-            .unwrap_or(total.saturating_sub(1))
-            .min(total.saturating_sub(1));
+    let status = if let Some(r) = download.range {
+        let end = r.end.unwrap_or(total.saturating_sub(1));
         headers.push(HttpHeader {
             name: "content-range".to_string(),
             value: format!("bytes {}-{}/{}", r.start, end, total),
