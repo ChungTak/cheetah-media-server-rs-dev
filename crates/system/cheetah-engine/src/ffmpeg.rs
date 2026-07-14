@@ -115,25 +115,28 @@ impl EngineFfmpegService {
             h264_decode_encode,
         } = &spec.transcode_policy;
 
-        if !spec.enable_video || *disable_video {
+        let video_enabled = spec.enable_video && !disable_video;
+        let audio_enabled = spec.enable_audio && !disable_audio;
+
+        if !video_enabled {
             args.push("-vn".to_string());
+        } else {
+            if *h264_decode_encode {
+                args.push("-vcodec".to_string());
+                args.push("libx264".to_string());
+            }
+            if out_width.is_some() || out_height.is_some() {
+                let w = out_width.map_or_else(|| "-1".to_string(), |v| v.to_string());
+                let h = out_height.map_or_else(|| "-1".to_string(), |v| v.to_string());
+                args.push("-vf".to_string());
+                args.push(format!("scale={w}:{h}"));
+            }
         }
-        if !spec.enable_audio || *disable_audio {
+        if !audio_enabled {
             args.push("-an".to_string());
-        }
-        if *g711_to_aac {
+        } else if *g711_to_aac {
             args.push("-acodec".to_string());
             args.push("aac".to_string());
-        }
-        if *h264_decode_encode {
-            args.push("-vcodec".to_string());
-            args.push("libx264".to_string());
-        }
-        if out_width.is_some() || out_height.is_some() {
-            let w = out_width.map_or_else(|| "-1".to_string(), |v| v.to_string());
-            let h = out_height.map_or_else(|| "-1".to_string(), |v| v.to_string());
-            args.push("-vf".to_string());
-            args.push(format!("scale={w}:{h}"));
         }
 
         if spec.output_policy == OutputPolicy::None {
@@ -593,5 +596,27 @@ mod tests {
             !matches!(outcome, FfmpegJobOutcome::Succeeded),
             "expected job to fail under memory limit, got {outcome:?}"
         );
+    }
+
+    #[test]
+    fn build_args_skips_video_codec_when_video_disabled() {
+        let mut spec = fake_spec("http://example", 5000);
+        spec.enable_video = false;
+        spec.transcode_policy.h264_decode_encode = true;
+        spec.transcode_policy.out_width = Some(1280);
+        let args = EngineFfmpegService::build_args(&spec);
+        assert!(args.contains(&"-vn".to_string()));
+        assert!(!args.contains(&"-vcodec".to_string()));
+        assert!(!args.contains(&"-vf".to_string()));
+    }
+
+    #[test]
+    fn build_args_skips_audio_codec_when_audio_disabled() {
+        let mut spec = fake_spec("http://example", 5000);
+        spec.enable_audio = false;
+        spec.transcode_policy.g711_to_aac = true;
+        let args = EngineFfmpegService::build_args(&spec);
+        assert!(args.contains(&"-an".to_string()));
+        assert!(!args.contains(&"-acodec".to_string()));
     }
 }
