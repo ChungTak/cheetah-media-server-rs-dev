@@ -93,6 +93,9 @@ impl EngineMediaFileStore {
     fn read_range(path: &str, range: Option<FileRange>, total: u64) -> Result<(u64, u64, Bytes)> {
         let mut file = File::open(path)
             .map_err(|e| MediaError::storage_failed(format!("failed to open file: {e}")))?;
+        if total == 0 {
+            return Ok((0, 0, Bytes::new()));
+        }
         let max_end = total.saturating_sub(1);
         let (start, end) = match range {
             Some(r) if r.is_suffix => {
@@ -404,6 +407,21 @@ mod tests {
             .unwrap();
         assert_eq!(dl.body, bytes::Bytes::from_static(b"2345"));
         assert_eq!(dl.total_size, 10);
+    }
+
+    #[test]
+    fn download_zero_length_file_returns_empty_body() {
+        let path = write_temp_file(b"0123456789");
+        let store = EngineMediaFileStore::new();
+        let ctx = MediaRequestContext::default();
+        let handle = store.register_file(&ctx, make_entry(&path)).unwrap();
+        // Simulate external truncation after registration.
+        std::fs::write(&path, b"").unwrap();
+        let dl = store
+            .resolve_download(&ctx, &handle, None, None, 2000)
+            .unwrap();
+        assert_eq!(dl.body, bytes::Bytes::new());
+        assert_eq!(dl.total_size, 0);
     }
 
     #[test]
