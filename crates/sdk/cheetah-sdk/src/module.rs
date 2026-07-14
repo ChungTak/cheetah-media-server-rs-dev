@@ -21,6 +21,7 @@ use crate::ConnectorApi;
 use crate::EventBus;
 use crate::MediaFileStoreApi;
 use cheetah_media_api::event::MediaEventSender;
+use cheetah_media_api::port::MediaUrlResolverApi;
 use cheetah_runtime_api::RuntimeApi;
 
 /// Lifecycle state of a module.
@@ -204,6 +205,7 @@ pub struct EngineContext {
     pub media_data_plane: Arc<dyn MediaDataPlaneApi>,
     pub media_file_store: Arc<dyn MediaFileStoreApi>,
     pub media_event_sender: Arc<dyn MediaEventSender>,
+    pub media_url_resolver_api: Option<Arc<dyn MediaUrlResolverApi>>,
     pub connector_api: Option<Arc<dyn ConnectorApi>>,
 }
 

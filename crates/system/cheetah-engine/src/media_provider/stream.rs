@@ -8,7 +8,9 @@ use cheetah_media_api::command::*;
 use cheetah_media_api::error::MediaError;
 use cheetah_media_api::ids::*;
 use cheetah_media_api::model::*;
-use cheetah_media_api::port::{MediaControlApi, MediaRequestContext, PublishSubscribeApi};
+use cheetah_media_api::port::{
+    MediaControlApi, MediaRequestContext, MediaUrlResolverApi, PublishSubscribeApi,
+};
 use cheetah_sdk::media_data_plane::{MediaDataPlaneApi, MediaFramePublisher, MediaFrameSubscriber};
 use cheetah_sdk::media_session::{MediaSessionDirectoryApi, SessionCloseHandle};
 use cheetah_sdk::{SdkError, StreamKey, StreamManagerApi};
@@ -31,6 +33,7 @@ pub struct StreamMediaProvider {
     stream_manager: Arc<dyn StreamManagerApi>,
     media_data_plane: Arc<dyn MediaDataPlaneApi>,
     session_directory: Arc<dyn MediaSessionDirectoryApi>,
+    url_resolver: Option<Arc<dyn MediaUrlResolverApi>>,
     publishers: Arc<PublisherMap>,
     subscribers: Arc<SubscriberMap>,
     next_id: Arc<AtomicU64>,
@@ -41,11 +44,13 @@ impl StreamMediaProvider {
         stream_manager: Arc<dyn StreamManagerApi>,
         media_data_plane: Arc<dyn MediaDataPlaneApi>,
         session_directory: Arc<dyn MediaSessionDirectoryApi>,
+        url_resolver: Option<Arc<dyn MediaUrlResolverApi>>,
     ) -> Self {
         Self {
             stream_manager,
             media_data_plane,
             session_directory,
+            url_resolver,
             publishers: Arc::new(PublisherMap::new()),
             subscribers: Arc::new(SubscriberMap::new()),
             next_id: Arc::new(AtomicU64::new(1)),
@@ -166,6 +171,26 @@ impl StreamMediaProvider {
         }
         if let (Some(start), Some(end)) = (started_at, last_seen_at) {
             info.duration_ms = (end - start).max(0) as u64;
+        }
+        if let Some(resolver) = &self.url_resolver {
+            if let Ok(urls) = resolver
+                .resolve_urls(
+                    ctx,
+                    &info.key,
+                    &[
+                        MediaSchema::Hls,
+                        MediaSchema::HttpFlv,
+                        MediaSchema::Fmp4,
+                        MediaSchema::Ts,
+                        MediaSchema::Webrtc,
+                        MediaSchema::Rtmp,
+                        MediaSchema::Rtsp,
+                    ],
+                )
+                .await
+            {
+                info.urls = urls;
+            }
         }
         Ok(info)
     }
@@ -481,7 +506,7 @@ mod tests {
             Arc::new(EngineMediaDataPlane::new(publisher_api, subscriber_api));
         let directory: Arc<dyn MediaSessionDirectoryApi> =
             Arc::new(EngineMediaSessionDirectory::new());
-        StreamMediaProvider::new(manager, data_plane, directory)
+        StreamMediaProvider::new(manager, data_plane, directory, None)
     }
 
     fn publish_request(key: &MediaKey) -> PublishRequest {
