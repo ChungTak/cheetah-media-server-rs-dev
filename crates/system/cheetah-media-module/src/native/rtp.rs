@@ -16,6 +16,7 @@ impl NativeMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let rtp_api = self.rtp()?;
         let request: RtpReceiverRequest = parse_body(&req)?;
         let session = rtp_api.open_rtp_receiver(&ctx, request).await?;
@@ -23,6 +24,7 @@ impl NativeMediaHttpService {
     }
     pub(crate) async fn rtp_senders(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let rtp_api = self.rtp()?;
         let request: RtpSenderRequest = parse_body(&req)?;
         let session = rtp_api.open_rtp_sender(&ctx, request).await?;
@@ -33,6 +35,7 @@ impl NativeMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let rtp_api = self.rtp()?;
         let id = rtp_id_from_path(&req.path, "/rtp/sessions/", "/stop")
             .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;

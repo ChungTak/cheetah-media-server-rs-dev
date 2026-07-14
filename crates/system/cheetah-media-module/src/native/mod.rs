@@ -169,7 +169,7 @@ impl NativeMediaHttpService {
         })
     }
 
-    fn require_principal(&self, ctx: &MediaRequestContext) -> Result<(), AdapterError> {
+    pub(crate) fn require_principal(&self, ctx: &MediaRequestContext) -> Result<(), AdapterError> {
         let global = self.ctx.config_provider.global();
         let Some(expected) = global
             .get("media")

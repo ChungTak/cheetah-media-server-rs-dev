@@ -203,6 +203,12 @@ impl ZlmMediaHttpService {
             .and_then(|h| {
                 let value = h.value.trim();
                 value.strip_prefix("Bearer ").map(|t| t.trim().to_string())
+            })
+            .or_else(|| {
+                // ZLMediaKit clients conventionally pass the secret as a query
+                // parameter; fall back to that when no Bearer header is present.
+                let params = crate::util::query_to_json(req.query.as_deref());
+                params["secret"].as_str().map(|s| s.trim().to_string())
             });
         MediaRequestContext {
             request_id: cheetah_media_api::ids::RequestId("".to_string()),

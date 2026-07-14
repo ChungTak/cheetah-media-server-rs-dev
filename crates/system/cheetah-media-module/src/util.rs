@@ -174,7 +174,8 @@ pub fn validate_ffmpeg_options(options: &[String]) -> Result<(), AdapterError> {
         ";", "|", "&", "&&", "||", ">", ">>", "<", "<<", "$(", "`", "~", "*", "?", "!", "#", "^",
         "$", "(", ")", "[", "]", "{", "}", "=", "\\",
     ];
-    const DISALLOWED_SUBSTR: &[&str] = &[";", "|", "&", ">", "<", "$(", "${", "`"];
+    const DISALLOWED_SUBSTR: &[&str] =
+        &[";", "|", "&", ">", "<", "$(", "${", "`", "\n", "\r", "\t"];
 
     const ALLOWED_FFMPEG_BASE: &[&str] = &[
         "re",

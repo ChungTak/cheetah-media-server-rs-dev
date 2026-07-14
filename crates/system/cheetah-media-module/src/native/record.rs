@@ -41,6 +41,7 @@ impl NativeMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let record_api = self.record()?;
         let request: StartRecordRequest = parse_body(&req)?;
         let task = record_api.start_record(&ctx, request).await?;
@@ -48,6 +49,7 @@ impl NativeMediaHttpService {
     }
     pub(crate) async fn record_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let record_api = self.record()?;
         let id = record_id_from_path(&req.path, "/record/tasks/", "/stop")
             .ok_or_else(|| AdapterError::InvalidRequest("missing task_id".to_string()))?;
@@ -62,6 +64,7 @@ impl NativeMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let record_api = self.record()?;
         let id = record_id_from_path(&req.path, "/record/files/", "")
             .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
@@ -80,6 +83,7 @@ impl NativeMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let ctx = self.request_context(&req);
+        self.require_principal(&ctx)?;
         let record_api = self.record()?;
         let file_id = record_id_from_path(&req.path, "/record/playback/", "/control")
             .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
