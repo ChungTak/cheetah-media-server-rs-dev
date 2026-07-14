@@ -21,7 +21,9 @@ pub mod config;
 pub mod error;
 pub mod event;
 pub mod ids;
+pub mod media_data_plane;
 pub mod media_provider;
+pub mod media_session;
 pub mod module;
 pub mod service;
 pub mod stream;
@@ -48,6 +50,10 @@ pub use event::{
 pub use ids::{
     ModuleId, PublisherId, RoomId, SessionId, StreamId, StreamKey, SubscriberId, TaskId,
 };
+pub use media_data_plane::{
+    default_media_data_plane, MediaDataPlaneApi, MediaFramePublisher, MediaFrameSubscriber,
+};
+pub use media_session::{default_session_directory, MediaSessionDirectoryApi, SessionCloseHandle};
 pub use module::{
     EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse, HttpRouteDescriptor,
     HttpRouteMount, MediaServices, Module, ModuleCapability, ModuleFactory, ModuleHttpService,

@@ -170,6 +170,7 @@ pub struct SessionInfo {
     pub bytes_out: u64,
     pub state: SessionState,
     pub close_reason: Option<CloseReason>,
+    pub owner_module: String,
 }
 
 /// Record task state.

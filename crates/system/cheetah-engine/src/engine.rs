@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use cheetah_sdk::{
     CancellationToken, ClusterApi, ConfigApplyApi, ConfigProvider, ConfigSchemaRegistry,
-    CoreAdaptersApi, DatabaseApi, EngineContext, EventBus, FfmpegApi, HealthApi, MediaServices,
-    MetricsApi, ModuleFactory, ModuleManagerApi, PublisherApi, RoomServiceApi, RuntimeApi,
-    SdkError, ServiceRegistry, StreamManagerApi, SubscriberApi, SystemEvent, SystemLifecycleEvent,
-    TaskSystemApi,
+    CoreAdaptersApi, DatabaseApi, EngineContext, EventBus, FfmpegApi, HealthApi, MediaDataPlaneApi,
+    MediaServices, MediaSessionDirectoryApi, MetricsApi, ModuleFactory, ModuleManagerApi,
+    PublisherApi, RoomServiceApi, RuntimeApi, SdkError, ServiceRegistry, StreamManagerApi,
+    SubscriberApi, SystemEvent, SystemLifecycleEvent, TaskSystemApi,
 };
 use parking_lot::RwLock;
 
@@ -15,7 +15,9 @@ use crate::database::InMemoryDatabase;
 use crate::event::LocalEventBus;
 use crate::ffmpeg::LocalFfmpegService;
 use crate::health::HealthService;
-use crate::media_provider::{EngineMediaFacade, StreamMediaProvider};
+use crate::media_provider::{
+    EngineMediaDataPlane, EngineMediaFacade, EngineMediaSessionDirectory, StreamMediaProvider,
+};
 use crate::metrics::MetricsRegistry;
 use crate::module_manager::ModuleManager;
 use crate::proxy::LocalProxyManager;
@@ -150,12 +152,26 @@ impl EngineBuilder {
             module_manager.register_factory(factory)?;
         }
 
-        let stream_provider =
-            StreamMediaProvider::new(stream_manager.clone(), core_adapters.clone());
+        let publisher_api: Arc<dyn PublisherApi> = stream_manager.clone();
+        let subscriber_api: Arc<dyn SubscriberApi> = stream_manager.clone();
+        let session_directory: Arc<dyn MediaSessionDirectoryApi> =
+            Arc::new(EngineMediaSessionDirectory::new());
+        let media_data_plane: Arc<dyn MediaDataPlaneApi> = Arc::new(EngineMediaDataPlane::new(
+            publisher_api.clone(),
+            subscriber_api.clone(),
+        ));
+        let stream_provider = StreamMediaProvider::new(
+            stream_manager.clone(),
+            media_data_plane.clone(),
+            session_directory.clone(),
+        );
 
         let media_services = MediaServices::unavailable();
-        media_services.register_control(
-            Arc::new(stream_provider) as Arc<dyn cheetah_media_api::port::MediaControlApi>
+        media_services
+            .register_control(Arc::new(stream_provider.clone())
+                as Arc<dyn cheetah_media_api::port::MediaControlApi>);
+        media_services.register_publish_subscribe(
+            Arc::new(stream_provider) as Arc<dyn cheetah_media_api::port::PublishSubscribeApi>
         );
         let media_facade = Arc::new(EngineMediaFacade::new(media_services.clone()));
 
@@ -178,6 +194,8 @@ impl EngineBuilder {
             core_adapters,
             media_facade,
             media_services,
+            session_directory,
+            media_data_plane,
             root_cancel: RwLock::new(CancellationToken::new()),
         })
     }
@@ -212,6 +230,8 @@ pub struct Engine {
     core_adapters: Arc<LocalCoreAdapters>,
     media_facade: Arc<crate::media_provider::EngineMediaFacade>,
     media_services: MediaServices,
+    session_directory: Arc<dyn MediaSessionDirectoryApi>,
+    media_data_plane: Arc<dyn MediaDataPlaneApi>,
     root_cancel: RwLock<CancellationToken>,
 }
 
@@ -241,6 +261,8 @@ impl Engine {
             cluster_api: self.cluster.clone(),
             ffmpeg_api: self.ffmpeg.clone(),
             media_services: self.media_services.clone(),
+            media_session_directory: self.session_directory.clone(),
+            media_data_plane: self.media_data_plane.clone(),
         }
     }
 
