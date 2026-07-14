@@ -382,9 +382,15 @@ impl PublishSubscribeApi for StreamMediaProvider {
             close_reason: None,
             owner_module: "stream".to_string(),
         };
-        self.session_directory
+        if let Err(e) = self
+            .session_directory
             .register_session(ctx, record, close_handle)
-            .await?;
+            .await
+        {
+            self.publishers.remove(&id);
+            let _ = publisher.close().await;
+            return Err(e);
+        }
         Ok(PublisherHandle {
             session_id: id.clone(),
             media_key: request.media_key,
@@ -423,9 +429,16 @@ impl PublishSubscribeApi for StreamMediaProvider {
             close_reason: None,
             owner_module: "stream".to_string(),
         };
-        self.session_directory
+        if let Err(e) = self
+            .session_directory
             .register_session(ctx, record, close_handle)
-            .await?;
+            .await
+        {
+            self.subscribers.remove(&id);
+            let mut guard = subscriber.lock().await;
+            let _ = guard.close().await;
+            return Err(e);
+        }
         Ok(SubscriberHandle {
             session_id: id,
             media_key: request.media_key,
