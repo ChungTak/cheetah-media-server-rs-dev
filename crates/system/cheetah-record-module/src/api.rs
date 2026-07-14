@@ -52,6 +52,8 @@ pub enum RecordApiError {
 #[derive(Debug, Clone, Deserialize)]
 pub struct StartRecordRequest {
     pub format: String,
+    #[serde(default = "default_vhost")]
+    pub vhost: String,
     pub app: String,
     pub stream: String,
     #[serde(default)]
@@ -60,6 +62,10 @@ pub struct StartRecordRequest {
     pub task_id: Option<String>,
     #[serde(rename = "recordTemplate", default)]
     pub record_template: Option<RecordTemplate>,
+}
+
+fn default_vhost() -> String {
+    cheetah_media_api::ids::DEFAULT_VHOST.to_string()
 }
 
 /// Optional recording template controlling duration and segmentation.
@@ -122,6 +128,7 @@ pub struct TaskBrief {
     #[serde(rename = "taskId")]
     pub task_id: String,
     pub format: String,
+    pub vhost: String,
     pub app: String,
     pub stream: String,
     pub state: String,
@@ -166,6 +173,9 @@ pub struct FileBrief {
     #[serde(rename = "taskId")]
     pub task_id: String,
     pub format: String,
+    pub vhost: String,
+    pub app: String,
+    pub stream: String,
     pub path: String,
     #[serde(rename = "durationMs")]
     pub duration_ms: u64,
@@ -239,17 +249,20 @@ impl RecordApi {
             .task_id
             .clone()
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| format!("{}-{}-{}", req.format, req.app, req.stream));
+            .unwrap_or_else(|| format!("{}-{}-{}-{}", req.format, req.vhost, req.app, req.stream));
 
         let tpl = req.record_template.unwrap_or_default();
+        let vhost = req.vhost.clone();
+        let source_stream_key = req
+            .uri
+            .clone()
+            .unwrap_or_else(|| source_stream_key(&vhost, &req.app, &req.stream));
         let template = RecordTaskTemplate {
             format,
+            vhost: vhost.clone(),
             app: req.app.clone(),
             stream: req.stream.clone(),
-            source_stream_key: req
-                .uri
-                .clone()
-                .unwrap_or_else(|| format!("{}/{}", req.app, req.stream)),
+            source_stream_key,
             duration_limit_ms: tpl.duration.unwrap_or(0),
             segment_duration_ms: tpl.segment_duration.unwrap_or(0),
             segment_count_limit: tpl.segment_count.unwrap_or(0),
@@ -258,8 +271,9 @@ impl RecordApi {
         let metadata = crate::metadata::RecordTaskMetadata {
             task_id: task_id.clone(),
             format: RecordFormatStr::from(format),
-            app: req.app,
-            stream: req.stream,
+            vhost: vhost.clone(),
+            app: req.app.clone(),
+            stream: req.stream.clone(),
             source_stream_key: template.source_stream_key.clone(),
             state: RecordTaskState::Pending,
             create_time_ms: now_ms(),
@@ -308,6 +322,7 @@ impl RecordApi {
             .map(|t| TaskBrief {
                 task_id: t.task_id,
                 format: format_str_to_string(t.format),
+                vhost: t.vhost,
                 app: t.app,
                 stream: t.stream,
                 state: format!("{:?}", t.state).to_lowercase(),
@@ -344,6 +359,9 @@ impl RecordApi {
                 file_id: f.file_id,
                 task_id: f.task_id,
                 format: format_str_to_string(f.format),
+                vhost: f.vhost,
+                app: f.app,
+                stream: f.stream,
                 path: f.path,
                 duration_ms: f.duration_ms,
                 size_bytes: f.size_bytes,
@@ -413,6 +431,17 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// Encode the source stream key the same way `StreamKeyBridge` encodes a
+/// `MediaKey` into a `namespace/path` pair: `{app}/{stream}` for the default
+/// vhost, `{vhost}#{app}/{stream}` otherwise.
+fn source_stream_key(vhost: &str, app: &str, stream: &str) -> String {
+    if vhost == cheetah_media_api::ids::DEFAULT_VHOST {
+        format!("{}/{}", app, stream)
+    } else {
+        format!("{}#{}/{}", vhost, app, stream)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,6 +465,7 @@ mod tests {
         let resp = api
             .start(StartRecordRequest {
                 format: "mp4".to_string(),
+                vhost: cheetah_media_api::ids::DEFAULT_VHOST.to_string(),
                 app: "live".to_string(),
                 stream: "test".to_string(),
                 uri: None,
@@ -457,6 +487,7 @@ mod tests {
         let err = api
             .start(StartRecordRequest {
                 format: "asf".to_string(),
+                vhost: cheetah_media_api::ids::DEFAULT_VHOST.to_string(),
                 app: "live".to_string(),
                 stream: "test".to_string(),
                 uri: None,

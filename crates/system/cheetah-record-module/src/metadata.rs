@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 pub struct RecordTaskMetadata {
     pub task_id: String,
     pub format: RecordFormatStr,
+    pub vhost: String,
     pub app: String,
     pub stream: String,
     pub source_stream_key: String,
@@ -107,6 +108,9 @@ pub struct RecordFileMetadata {
     pub file_id: String,
     pub task_id: String,
     pub format: RecordFormatStr,
+    pub vhost: String,
+    pub app: String,
+    pub stream: String,
     pub path: String,
     pub duration_ms: u64,
     pub size_bytes: u64,

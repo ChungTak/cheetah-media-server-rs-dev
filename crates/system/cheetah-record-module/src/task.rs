@@ -23,6 +23,7 @@ pub use crate::metadata::RecordTaskState;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordTaskTemplate {
     pub format: RecordFormat,
+    pub vhost: String,
     pub app: String,
     pub stream: String,
     pub source_stream_key: String,

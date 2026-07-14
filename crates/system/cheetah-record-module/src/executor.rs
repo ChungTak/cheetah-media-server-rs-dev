@@ -393,6 +393,9 @@ async fn run_record_task(
         file_id: format!("{}-{}", task_id, start_ms),
         task_id: task_id.clone(),
         format: RecordFormatStr::from(format),
+        vhost: task.template.vhost.clone(),
+        app: task.template.app.clone(),
+        stream: task.template.stream.clone(),
         path: path.to_string_lossy().to_string(),
         duration_ms: end_ms.saturating_sub(start_ms) as u64,
         size_bytes: bytes_written,
@@ -459,7 +462,12 @@ fn parse_stream_key(source: &str, template: &crate::task::RecordTaskTemplate) ->
     if let Some((ns, path)) = source.split_once('/') {
         StreamKey::new(ns, path)
     } else {
-        StreamKey::new(template.app.as_str(), template.stream.as_str())
+        let ns = if template.vhost == cheetah_media_api::ids::DEFAULT_VHOST {
+            template.app.clone()
+        } else {
+            format!("{}#{}", template.vhost, template.app)
+        };
+        StreamKey::new(&ns, &template.stream)
     }
 }
 
@@ -520,6 +528,9 @@ fn build_output_path(
 ) -> PathBuf {
     let mut path = PathBuf::from(&config.root_path);
     let date = format_ymd(timestamp_ms);
+    if task.template.vhost != cheetah_media_api::ids::DEFAULT_VHOST {
+        path.push(sanitize_segment(&task.template.vhost));
+    }
     path.push(&task.template.app);
     path.push(&task.template.stream);
     path.push(date);
@@ -624,6 +635,7 @@ mod tests {
     fn parse_stream_key_splits_namespace() {
         let tpl = crate::task::RecordTaskTemplate {
             format: RecordFormat::Mp4,
+            vhost: cheetah_media_api::ids::DEFAULT_VHOST.into(),
             app: "live".into(),
             stream: "abc".into(),
             source_stream_key: "live/abc".into(),
@@ -640,6 +652,7 @@ mod tests {
     fn parse_stream_key_falls_back_to_template_when_no_slash() {
         let tpl = crate::task::RecordTaskTemplate {
             format: RecordFormat::Mp4,
+            vhost: cheetah_media_api::ids::DEFAULT_VHOST.into(),
             app: "live".into(),
             stream: "abc".into(),
             source_stream_key: "abc".into(),
@@ -670,6 +683,7 @@ mod tests {
             task_id: "rec-live-stream/x.mp4".into(),
             template: crate::task::RecordTaskTemplate {
                 format: RecordFormat::Mp4,
+                vhost: cheetah_media_api::ids::DEFAULT_VHOST.into(),
                 app: "live".into(),
                 stream: "stream".into(),
                 source_stream_key: "live/stream".into(),
