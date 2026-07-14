@@ -1,8 +1,21 @@
 use std::sync::{Arc, RwLock};
 
 use cheetah_media_api::port::{
-    MediaControlApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi,
+    MediaControlApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi,
 };
+use cheetah_media_api::{MediaCapability, MediaCapabilitySet};
+
+/// A registration handle returned when a provider is registered with
+/// `MediaServices`. It can be used to unregister the provider safely across
+/// restarts and concurrent replacements.
+///
+/// `MediaServices` 注册 provider 后返回的句柄，可用于安全地跨重启或并发替换注销 provider。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderRegistration {
+    pub capability: MediaCapability,
+    pub provider_id: String,
+    pub generation: u64,
+}
 
 /// Mutable registry of media capability providers.
 ///
@@ -32,8 +45,31 @@ impl MediaServices {
     /// Register the control provider.
     ///
     /// 注册控制 provider。
-    pub fn register_control(&self, control: Arc<dyn MediaControlApi>) {
-        self.inner.write().expect("media services lock").control = Some(control);
+    pub fn register_control(&self, control: Arc<dyn MediaControlApi>) -> ProviderRegistration {
+        self.register_control_with_capabilities(control, control_default_capabilities())
+    }
+
+    /// Register the control provider with explicit capabilities.
+    ///
+    /// 注册带显式能力声明的控制 provider。
+    pub fn register_control_with_capabilities(
+        &self,
+        control: Arc<dyn MediaControlApi>,
+        capabilities: MediaCapabilitySet,
+    ) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        registry.control = Some(ProviderEntry {
+            provider: control,
+            generation,
+            capabilities,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::Query,
+            provider_id: format!("control:{generation}"),
+            generation,
+        }
     }
 
     /// Return the current control provider, if any.
@@ -44,17 +80,44 @@ impl MediaServices {
             .read()
             .expect("media services lock")
             .control
-            .clone()
+            .as_ref()
+            .map(|e| e.provider.clone())
     }
 
     /// Register the publish/subscribe provider.
     ///
     /// 注册发布/订阅 provider。
-    pub fn register_publish_subscribe(&self, publish_subscribe: Arc<dyn PublishSubscribeApi>) {
-        self.inner
-            .write()
-            .expect("media services lock")
-            .publish_subscribe = Some(publish_subscribe);
+    pub fn register_publish_subscribe(
+        &self,
+        publish_subscribe: Arc<dyn PublishSubscribeApi>,
+    ) -> ProviderRegistration {
+        self.register_publish_subscribe_with_capabilities(
+            publish_subscribe,
+            publish_subscribe_default_capabilities(),
+        )
+    }
+
+    /// Register the publish/subscribe provider with explicit capabilities.
+    ///
+    /// 注册带显式能力声明的发布/订阅 provider。
+    pub fn register_publish_subscribe_with_capabilities(
+        &self,
+        publish_subscribe: Arc<dyn PublishSubscribeApi>,
+        capabilities: MediaCapabilitySet,
+    ) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        registry.publish_subscribe = Some(ProviderEntry {
+            provider: publish_subscribe,
+            generation,
+            capabilities,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::Publish,
+            provider_id: format!("publish_subscribe:{generation}"),
+            generation,
+        }
     }
 
     /// Return the current publish/subscribe provider, if any.
@@ -65,14 +128,38 @@ impl MediaServices {
             .read()
             .expect("media services lock")
             .publish_subscribe
-            .clone()
+            .as_ref()
+            .map(|e| e.provider.clone())
     }
 
     /// Register the record provider.
     ///
     /// 注册录制 provider。
-    pub fn register_record(&self, record: Arc<dyn RecordApi>) {
-        self.inner.write().expect("media services lock").record = Some(record);
+    pub fn register_record(&self, record: Arc<dyn RecordApi>) -> ProviderRegistration {
+        self.register_record_with_capabilities(record, record_default_capabilities())
+    }
+
+    /// Register the record provider with explicit capabilities.
+    ///
+    /// 注册带显式能力声明的录制 provider。
+    pub fn register_record_with_capabilities(
+        &self,
+        record: Arc<dyn RecordApi>,
+        capabilities: MediaCapabilitySet,
+    ) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        registry.record = Some(ProviderEntry {
+            provider: record,
+            generation,
+            capabilities,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::Record,
+            provider_id: format!("record:{generation}"),
+            generation,
+        }
     }
 
     /// Return the current record provider, if any.
@@ -83,14 +170,38 @@ impl MediaServices {
             .read()
             .expect("media services lock")
             .record
-            .clone()
+            .as_ref()
+            .map(|e| e.provider.clone())
     }
 
     /// Register the snapshot provider.
     ///
     /// 注册快照 provider。
-    pub fn register_snapshot(&self, snapshot: Arc<dyn SnapshotApi>) {
-        self.inner.write().expect("media services lock").snapshot = Some(snapshot);
+    pub fn register_snapshot(&self, snapshot: Arc<dyn SnapshotApi>) -> ProviderRegistration {
+        self.register_snapshot_with_capabilities(snapshot, snapshot_default_capabilities())
+    }
+
+    /// Register the snapshot provider with explicit capabilities.
+    ///
+    /// 注册带显式能力声明的快照 provider。
+    pub fn register_snapshot_with_capabilities(
+        &self,
+        snapshot: Arc<dyn SnapshotApi>,
+        capabilities: MediaCapabilitySet,
+    ) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        registry.snapshot = Some(ProviderEntry {
+            provider: snapshot,
+            generation,
+            capabilities,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::Snapshot,
+            provider_id: format!("snapshot:{generation}"),
+            generation,
+        }
     }
 
     /// Return the current snapshot provider, if any.
@@ -101,54 +212,479 @@ impl MediaServices {
             .read()
             .expect("media services lock")
             .snapshot
-            .clone()
+            .as_ref()
+            .map(|e| e.provider.clone())
     }
 
     /// Register the proxy provider.
     ///
     /// 注册代理 provider。
-    pub fn register_proxy(&self, proxy: Arc<dyn cheetah_media_api::port::ProxyApi>) {
-        self.inner.write().expect("media services lock").proxy = Some(proxy);
+    pub fn register_proxy(&self, proxy: Arc<dyn ProxyApi>) -> ProviderRegistration {
+        self.register_proxy_with_capabilities(proxy, proxy_default_capabilities())
+    }
+
+    /// Register the proxy provider with explicit capabilities.
+    ///
+    /// 注册带显式能力声明的代理 provider。
+    pub fn register_proxy_with_capabilities(
+        &self,
+        proxy: Arc<dyn ProxyApi>,
+        capabilities: MediaCapabilitySet,
+    ) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        registry.proxy = Some(ProviderEntry {
+            provider: proxy,
+            generation,
+            capabilities,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::Proxy,
+            provider_id: format!("proxy:{generation}"),
+            generation,
+        }
     }
 
     /// Return the current proxy provider, if any.
     ///
     /// 返回当前代理 provider（如有）。
-    pub fn proxy(&self) -> Option<Arc<dyn cheetah_media_api::port::ProxyApi>> {
+    pub fn proxy(&self) -> Option<Arc<dyn ProxyApi>> {
         self.inner
             .read()
             .expect("media services lock")
             .proxy
-            .clone()
+            .as_ref()
+            .map(|e| e.provider.clone())
     }
 
     /// Register the RTP provider.
     ///
     /// 注册 RTP provider。
-    pub fn register_rtp(&self, rtp: Arc<dyn RtpApi>) {
-        self.inner.write().expect("media services lock").rtp = Some(rtp);
+    pub fn register_rtp(&self, rtp: Arc<dyn RtpApi>) -> ProviderRegistration {
+        self.register_rtp_with_capabilities(rtp, rtp_default_capabilities())
+    }
+
+    /// Register the RTP provider with explicit capabilities.
+    ///
+    /// 注册带显式能力声明的 RTP provider。
+    pub fn register_rtp_with_capabilities(
+        &self,
+        rtp: Arc<dyn RtpApi>,
+        capabilities: MediaCapabilitySet,
+    ) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        registry.rtp = Some(ProviderEntry {
+            provider: rtp,
+            generation,
+            capabilities,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::Rtp,
+            provider_id: format!("rtp:{generation}"),
+            generation,
+        }
     }
 
     /// Return the current RTP provider, if any.
     ///
     /// 返回当前 RTP provider（如有）。
     pub fn rtp(&self) -> Option<Arc<dyn RtpApi>> {
-        self.inner.read().expect("media services lock").rtp.clone()
+        self.inner
+            .read()
+            .expect("media services lock")
+            .rtp
+            .as_ref()
+            .map(|e| e.provider.clone())
+    }
+
+    /// Unregister a provider using a previously returned `ProviderRegistration`.
+    /// Returns `true` if the registration matched and the provider was removed.
+    ///
+    /// 使用之前返回的 `ProviderRegistration` 注销 provider。若 generation 匹配且成功移除则返回 `true`。
+    pub fn unregister(&self, registration: &ProviderRegistration) -> bool {
+        let mut registry = self.inner.write().expect("media services lock");
+        let mut slot = match registry.slot_for(registration.capability) {
+            Some(slot) => slot,
+            None => return false,
+        };
+        if slot.generation() != Some(registration.generation) {
+            return false;
+        }
+        slot.take();
+        true
+    }
+
+    /// Return the current capability set advertised by the registry. The set is
+    /// the union of all registered provider capabilities.
+    ///
+    /// 返回注册表当前宣告的能力集，即所有已注册 provider 能力集的并集。
+    pub fn capabilities(&self) -> MediaCapabilitySet {
+        let registry = self.inner.read().expect("media services lock");
+        let mut set = MediaCapabilitySet::empty();
+        if let Some(entry) = &registry.control {
+            set.merge(&entry.capabilities);
+        }
+        if let Some(entry) = &registry.publish_subscribe {
+            set.merge(&entry.capabilities);
+        }
+        if let Some(entry) = &registry.record {
+            set.merge(&entry.capabilities);
+        }
+        if let Some(entry) = &registry.snapshot {
+            set.merge(&entry.capabilities);
+        }
+        if let Some(entry) = &registry.proxy {
+            set.merge(&entry.capabilities);
+        }
+        if let Some(entry) = &registry.rtp {
+            set.merge(&entry.capabilities);
+        }
+        set
     }
 }
 
 #[derive(Default)]
 struct MediaProviderRegistry {
-    control: Option<Arc<dyn MediaControlApi>>,
-    publish_subscribe: Option<Arc<dyn PublishSubscribeApi>>,
-    record: Option<Arc<dyn RecordApi>>,
-    snapshot: Option<Arc<dyn SnapshotApi>>,
-    proxy: Option<Arc<dyn cheetah_media_api::port::ProxyApi>>,
-    rtp: Option<Arc<dyn RtpApi>>,
+    generation: u64,
+    control: Option<ProviderEntry<Arc<dyn MediaControlApi>>>,
+    publish_subscribe: Option<ProviderEntry<Arc<dyn PublishSubscribeApi>>>,
+    record: Option<ProviderEntry<Arc<dyn RecordApi>>>,
+    snapshot: Option<ProviderEntry<Arc<dyn SnapshotApi>>>,
+    proxy: Option<ProviderEntry<Arc<dyn ProxyApi>>>,
+    rtp: Option<ProviderEntry<Arc<dyn RtpApi>>>,
+}
+
+struct ProviderEntry<P> {
+    provider: P,
+    generation: u64,
+    capabilities: MediaCapabilitySet,
+}
+
+enum ProviderSlot<'a> {
+    Control(&'a mut Option<ProviderEntry<Arc<dyn MediaControlApi>>>),
+    PublishSubscribe(&'a mut Option<ProviderEntry<Arc<dyn PublishSubscribeApi>>>),
+    Record(&'a mut Option<ProviderEntry<Arc<dyn RecordApi>>>),
+    Snapshot(&'a mut Option<ProviderEntry<Arc<dyn SnapshotApi>>>),
+    Proxy(&'a mut Option<ProviderEntry<Arc<dyn ProxyApi>>>),
+    Rtp(&'a mut Option<ProviderEntry<Arc<dyn RtpApi>>>),
+}
+
+impl<'a> ProviderSlot<'a> {
+    fn generation(&self) -> Option<u64> {
+        match self {
+            ProviderSlot::Control(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::PublishSubscribe(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::Record(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::Snapshot(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::Proxy(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::Rtp(opt) => opt.as_ref().map(|e| e.generation),
+        }
+    }
+
+    fn take(&mut self) {
+        match self {
+            ProviderSlot::Control(opt) => **opt = None,
+            ProviderSlot::PublishSubscribe(opt) => **opt = None,
+            ProviderSlot::Record(opt) => **opt = None,
+            ProviderSlot::Snapshot(opt) => **opt = None,
+            ProviderSlot::Proxy(opt) => **opt = None,
+            ProviderSlot::Rtp(opt) => **opt = None,
+        }
+    }
 }
 
 impl MediaProviderRegistry {
     fn empty() -> Self {
         Self::default()
+    }
+
+    fn slot_for(&mut self, capability: MediaCapability) -> Option<ProviderSlot<'_>> {
+        match capability {
+            MediaCapability::Query | MediaCapability::SessionControl => {
+                Some(ProviderSlot::Control(&mut self.control))
+            }
+            MediaCapability::Publish | MediaCapability::Subscribe => {
+                Some(ProviderSlot::PublishSubscribe(&mut self.publish_subscribe))
+            }
+            MediaCapability::Record | MediaCapability::Playback => {
+                Some(ProviderSlot::Record(&mut self.record))
+            }
+            MediaCapability::Snapshot => Some(ProviderSlot::Snapshot(&mut self.snapshot)),
+            MediaCapability::Proxy => Some(ProviderSlot::Proxy(&mut self.proxy)),
+            MediaCapability::Rtp => Some(ProviderSlot::Rtp(&mut self.rtp)),
+            MediaCapability::Webhook => None,
+        }
+    }
+}
+
+fn control_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::Query, 1);
+    set.add(MediaCapability::SessionControl, 1);
+    set
+}
+
+fn publish_subscribe_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::Publish, 1);
+    set.add(MediaCapability::Subscribe, 1);
+    set
+}
+
+fn record_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::Record, 1);
+    set
+}
+
+fn snapshot_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::Snapshot, 1);
+    set
+}
+
+fn proxy_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::Proxy, 1);
+    set
+}
+
+fn rtp_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::Rtp, 1);
+    set
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_capabilities_are_empty() {
+        let services = MediaServices::unavailable();
+        let caps = services.capabilities();
+        assert!(caps.capabilities.is_empty());
+    }
+
+    #[test]
+    fn register_control_updates_capabilities() {
+        struct DummyControl;
+        #[async_trait::async_trait]
+        impl MediaControlApi for DummyControl {
+            async fn get_media_list(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _query: cheetah_media_api::command::MediaQuery,
+            ) -> cheetah_media_api::error::Result<
+                cheetah_media_api::model::Page<cheetah_media_api::model::StreamInfo>,
+            > {
+                unimplemented!()
+            }
+            async fn get_media(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _key: &cheetah_media_api::ids::MediaKey,
+            ) -> cheetah_media_api::error::Result<cheetah_media_api::model::StreamInfo>
+            {
+                unimplemented!()
+            }
+            async fn is_media_online(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _key: &cheetah_media_api::ids::MediaKey,
+            ) -> cheetah_media_api::error::Result<cheetah_media_api::model::OnlineState>
+            {
+                unimplemented!()
+            }
+            async fn list_sessions(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _query: cheetah_media_api::command::SessionQuery,
+            ) -> cheetah_media_api::error::Result<
+                cheetah_media_api::model::Page<cheetah_media_api::model::SessionInfo>,
+            > {
+                unimplemented!()
+            }
+            async fn kick_session(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _id: &cheetah_media_api::ids::SessionId,
+                _reason: cheetah_media_api::model::CloseReason,
+            ) -> cheetah_media_api::error::Result<()> {
+                unimplemented!()
+            }
+            async fn kick_stream(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _key: &cheetah_media_api::ids::MediaKey,
+                _reason: cheetah_media_api::model::CloseReason,
+            ) -> cheetah_media_api::error::Result<cheetah_media_api::model::CloseReport>
+            {
+                unimplemented!()
+            }
+            async fn request_keyframe(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _key: &cheetah_media_api::ids::MediaKey,
+            ) -> cheetah_media_api::error::Result<()> {
+                unimplemented!()
+            }
+        }
+
+        let services = MediaServices::unavailable();
+        services.register_control(Arc::new(DummyControl));
+        let caps = services.capabilities();
+        assert!(caps.has(MediaCapability::Query));
+        assert!(caps.has(MediaCapability::SessionControl));
+    }
+
+    #[test]
+    fn unregister_with_stale_registration_is_noop() {
+        struct DummyControl;
+        #[async_trait::async_trait]
+        impl MediaControlApi for DummyControl {
+            async fn get_media_list(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _query: cheetah_media_api::command::MediaQuery,
+            ) -> cheetah_media_api::error::Result<
+                cheetah_media_api::model::Page<cheetah_media_api::model::StreamInfo>,
+            > {
+                unimplemented!()
+            }
+            async fn get_media(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _key: &cheetah_media_api::ids::MediaKey,
+            ) -> cheetah_media_api::error::Result<cheetah_media_api::model::StreamInfo>
+            {
+                unimplemented!()
+            }
+            async fn is_media_online(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _key: &cheetah_media_api::ids::MediaKey,
+            ) -> cheetah_media_api::error::Result<cheetah_media_api::model::OnlineState>
+            {
+                unimplemented!()
+            }
+            async fn list_sessions(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _query: cheetah_media_api::command::SessionQuery,
+            ) -> cheetah_media_api::error::Result<
+                cheetah_media_api::model::Page<cheetah_media_api::model::SessionInfo>,
+            > {
+                unimplemented!()
+            }
+            async fn kick_session(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _id: &cheetah_media_api::ids::SessionId,
+                _reason: cheetah_media_api::model::CloseReason,
+            ) -> cheetah_media_api::error::Result<()> {
+                unimplemented!()
+            }
+            async fn kick_stream(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _key: &cheetah_media_api::ids::MediaKey,
+                _reason: cheetah_media_api::model::CloseReason,
+            ) -> cheetah_media_api::error::Result<cheetah_media_api::model::CloseReport>
+            {
+                unimplemented!()
+            }
+            async fn request_keyframe(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _key: &cheetah_media_api::ids::MediaKey,
+            ) -> cheetah_media_api::error::Result<()> {
+                unimplemented!()
+            }
+        }
+
+        let services = MediaServices::unavailable();
+        let reg = services.register_control(Arc::new(DummyControl));
+        services.register_control(Arc::new(DummyControl));
+        assert!(
+            !services.unregister(&reg),
+            "stale registration must not remove newer provider"
+        );
+        assert!(services.control().is_some());
+    }
+
+    #[test]
+    fn unregister_with_current_registration_removes_provider() {
+        struct DummyControl;
+        #[async_trait::async_trait]
+        impl MediaControlApi for DummyControl {
+            async fn get_media_list(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _query: cheetah_media_api::command::MediaQuery,
+            ) -> cheetah_media_api::error::Result<
+                cheetah_media_api::model::Page<cheetah_media_api::model::StreamInfo>,
+            > {
+                unimplemented!()
+            }
+            async fn get_media(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _key: &cheetah_media_api::ids::MediaKey,
+            ) -> cheetah_media_api::error::Result<cheetah_media_api::model::StreamInfo>
+            {
+                unimplemented!()
+            }
+            async fn is_media_online(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _key: &cheetah_media_api::ids::MediaKey,
+            ) -> cheetah_media_api::error::Result<cheetah_media_api::model::OnlineState>
+            {
+                unimplemented!()
+            }
+            async fn list_sessions(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _query: cheetah_media_api::command::SessionQuery,
+            ) -> cheetah_media_api::error::Result<
+                cheetah_media_api::model::Page<cheetah_media_api::model::SessionInfo>,
+            > {
+                unimplemented!()
+            }
+            async fn kick_session(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _id: &cheetah_media_api::ids::SessionId,
+                _reason: cheetah_media_api::model::CloseReason,
+            ) -> cheetah_media_api::error::Result<()> {
+                unimplemented!()
+            }
+            async fn kick_stream(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _key: &cheetah_media_api::ids::MediaKey,
+                _reason: cheetah_media_api::model::CloseReason,
+            ) -> cheetah_media_api::error::Result<cheetah_media_api::model::CloseReport>
+            {
+                unimplemented!()
+            }
+            async fn request_keyframe(
+                &self,
+                _ctx: &cheetah_media_api::port::MediaRequestContext,
+                _key: &cheetah_media_api::ids::MediaKey,
+            ) -> cheetah_media_api::error::Result<()> {
+                unimplemented!()
+            }
+        }
+
+        let services = MediaServices::unavailable();
+        let reg = services.register_control(Arc::new(DummyControl));
+        assert!(services.unregister(&reg));
+        assert!(services.control().is_none());
+        assert!(!services.capabilities().has(MediaCapability::Query));
     }
 }

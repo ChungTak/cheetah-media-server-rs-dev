@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use cheetah_media_api::port::{ProxyApi, RecordApi, RtpApi, SnapshotApi};
 use cheetah_sdk::{
     CancellationToken, ClusterApi, ConfigApplyApi, ConfigProvider, ConfigSchemaRegistry,
     CoreAdaptersApi, DatabaseApi, EngineContext, EventBus, FfmpegApi, HealthApi, MediaServices,
@@ -153,22 +152,12 @@ impl EngineBuilder {
 
         let stream_provider =
             StreamMediaProvider::new(stream_manager.clone(), core_adapters.clone());
-        let media_facade = Arc::new(EngineMediaFacade::new(stream_provider.clone()));
+
         let media_services = MediaServices::unavailable();
-        media_services
-            .register_control(Arc::new(stream_provider.clone())
-                as Arc<dyn cheetah_media_api::port::MediaControlApi>);
-        media_services.register_publish_subscribe(
-            Arc::new(stream_provider) as Arc<dyn cheetah_media_api::port::PublishSubscribeApi>
+        media_services.register_control(
+            Arc::new(stream_provider) as Arc<dyn cheetah_media_api::port::MediaControlApi>
         );
-        let record_provider: Arc<dyn RecordApi> = media_facade.clone();
-        let snapshot_provider: Arc<dyn SnapshotApi> = media_facade.clone();
-        let proxy_provider: Arc<dyn ProxyApi> = media_facade.clone();
-        let rtp_provider: Arc<dyn RtpApi> = media_facade.clone();
-        media_services.register_record(record_provider);
-        media_services.register_snapshot(snapshot_provider);
-        media_services.register_proxy(proxy_provider);
-        media_services.register_rtp(rtp_provider);
+        let media_facade = Arc::new(EngineMediaFacade::new(media_services.clone()));
 
         Ok(Engine {
             config_provider: self.config_provider,

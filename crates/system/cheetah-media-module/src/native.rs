@@ -160,19 +160,19 @@ impl NativeMediaHttpService {
     }
 
     fn request_context(&self, req: &HttpRequest) -> MediaRequestContext {
-        let request_id = req
-            .headers
-            .iter()
-            .find(|h| h.name.eq_ignore_ascii_case("x-request-id"))
-            .map(|h| cheetah_media_api::ids::RequestId(h.value.clone()))
+        let request_id = header_value(&req.headers, "x-request-id")
+            .map(|v| cheetah_media_api::ids::RequestId(v.to_string()))
             .unwrap_or_else(|| cheetah_media_api::ids::RequestId("".to_string()));
+        let deadline = header_value(&req.headers, "x-deadline").and_then(|v| v.parse::<i64>().ok());
         MediaRequestContext {
             request_id,
-            correlation_id: None,
-            principal: None,
+            correlation_id: header_value(&req.headers, "x-correlation-id").map(|s| s.to_string()),
+            principal: header_value(&req.headers, "x-principal")
+                .or_else(|| header_value(&req.headers, "x-user-id"))
+                .map(|s| s.to_string()),
             source_adapter: "native".to_string(),
-            trace_context: None,
-            deadline: None,
+            trace_context: header_value(&req.headers, "x-trace-context").map(|s| s.to_string()),
+            deadline,
         }
     }
 
@@ -398,12 +398,18 @@ impl NativeMediaHttpService {
             cheetah_media_api::error::MediaError::unsupported_capability("proxy"),
         ))
     }
+
+    async fn capabilities(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let caps = self.ctx.media_services.capabilities();
+        Ok(json_response(&caps))
+    }
 }
 
 #[async_trait]
 impl ModuleHttpService for NativeMediaHttpService {
     async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
         let result = match (req.method, req.path.as_str()) {
+            (HttpMethod::Get, "/media/capabilities") => self.capabilities(req).await,
             (HttpMethod::Get, "/media") => self.media_list(req).await,
             (HttpMethod::Get, path) if path.starts_with("/media/") && path.ends_with("/online") => {
                 self.media_online(req).await
@@ -508,6 +514,13 @@ impl ModuleHttpService for NativeMediaHttpService {
             }),
         }
     }
+}
+
+fn header_value<'a>(headers: &'a [HttpHeader], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|h| h.name.eq_ignore_ascii_case(name))
+        .map(|h| h.value.as_str())
 }
 
 fn json_response<T: serde::Serialize>(value: &T) -> HttpResponse {
