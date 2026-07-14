@@ -744,10 +744,10 @@ fn publish_record_completed(
         header,
         task_id: cheetah_media_api::ids::RecordTaskId(ctx.task_id.clone()),
         format: format.extension().to_string(),
-        file_path: handle.0.clone(),
+        file_handle: handle.clone(),
         file_size,
         time_len_ms: end_ms.saturating_sub(start_ms) as u64,
-        folder: String::new(),
+        folder: None,
         url: None,
     });
     let _ = ctx.sender.send(event);

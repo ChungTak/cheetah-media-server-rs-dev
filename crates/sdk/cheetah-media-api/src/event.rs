@@ -120,10 +120,11 @@ pub struct RecordCompleted {
     pub header: EventHeader,
     pub task_id: RecordTaskId,
     pub format: String,
-    pub file_path: String,
+    /// Public, unguessable file handle. Server absolute paths are not exposed.
+    pub file_handle: FileHandle,
     pub file_size: u64,
     pub time_len_ms: u64,
-    pub folder: String,
+    pub folder: Option<String>,
     pub url: Option<String>,
 }
 
