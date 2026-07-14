@@ -32,6 +32,7 @@ impl fmt::Debug for PullHandle {
 }
 
 impl PullHandle {
+    #[cfg(any(feature = "http-flv", feature = "rtsp"))]
     pub(crate) fn new(protocol: Protocol, url: String, inner: Box<dyn SubscriberSource>) -> Self {
         Self {
             protocol,
@@ -95,6 +96,13 @@ impl PullHandle {
     pub fn as_subscriber(&mut self) -> &mut (dyn SubscriberSource + 'static) {
         self.inner.as_mut()
     }
+
+    /// Consume the handle and return the underlying subscriber source.
+    ///
+    /// 消费句柄并返回底层订阅源。
+    pub fn into_subscriber_source(self) -> Box<dyn SubscriberSource> {
+        self.inner
+    }
 }
 
 /// A handle returned by [`RuntimeConnector::open_push`].
@@ -121,6 +129,7 @@ impl fmt::Debug for PushHandle {
 }
 
 impl PushHandle {
+    #[cfg(any(feature = "rtmp", feature = "webrtc"))]
     pub(crate) fn new(
         protocol: Protocol,
         url: String,
@@ -209,6 +218,13 @@ impl PushHandle {
     /// 暴露底层 sink，供调用者需要 `&dyn PublisherSink` 时使用。
     pub fn as_sink(&self) -> &dyn PublisherSink {
         self.inner.as_ref()
+    }
+
+    /// Consume the handle and return the underlying publisher sink.
+    ///
+    /// 消费句柄并返回底层发布 sink。
+    pub fn into_publisher_sink(self) -> Box<dyn PublisherSink> {
+        self.inner
     }
 }
 

@@ -25,6 +25,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use cheetah_config::ConfigStore;
+use cheetah_connector::EngineConnector;
 use cheetah_control::{spawn_server, ControlState};
 use cheetah_engine::{DispatcherMode, EngineBuilder};
 #[cfg(feature = "fmp4")]
@@ -38,10 +39,10 @@ use cheetah_http_flv_module::HttpFlvModuleFactory;
 use cheetah_media_module::{NativeMediaModuleFactory, ZlmMediaModuleFactory};
 #[cfg(feature = "mp4")]
 use cheetah_mp4_module::Mp4ModuleFactory;
+#[cfg(feature = "proxy")]
+use cheetah_proxy_module::ProxyModuleFactory;
 #[cfg(feature = "record")]
 use cheetah_record_module::RecordModuleFactory;
-#[cfg(feature = "snapshot")]
-use cheetah_snapshot_module::SnapshotModuleFactory;
 #[cfg(feature = "rtmp")]
 use cheetah_rtmp_module::RtmpModuleFactory;
 #[cfg(feature = "rtp")]
@@ -50,6 +51,8 @@ use cheetah_rtp_module::RtpModuleFactory;
 use cheetah_rtsp_module::RtspModuleFactory;
 use cheetah_runtime_tokio::TokioRuntime;
 use cheetah_sdk::{ConfigProvider, ConfigSchemaRegistry, ServiceDescriptor};
+#[cfg(feature = "snapshot")]
+use cheetah_snapshot_module::SnapshotModuleFactory;
 #[cfg(feature = "srt")]
 use cheetah_srt_module::SrtModuleFactory;
 #[cfg(feature = "ts")]
@@ -187,6 +190,11 @@ async fn main() -> anyhow::Result<()> {
         builder = builder.register_module_factory(Arc::new(SnapshotModuleFactory));
     }
 
+    #[cfg(feature = "proxy")]
+    {
+        builder = builder.register_module_factory(Arc::new(ProxyModuleFactory));
+    }
+
     #[cfg(feature = "webrtc")]
     {
         builder = builder.register_module_factory(Arc::new(WebRtcModuleFactory));
@@ -199,8 +207,13 @@ async fn main() -> anyhow::Result<()> {
 
     // Build the engine and wire the config store to the event bus.
     // 构建引擎，并将配置存储连接到事件总线。
-    let engine = builder.build()?;
+    let engine = Arc::new(builder.build()?);
     config.set_event_bus(engine.event_bus_api());
+
+    // Inject the runtime connector so modules can open external pull/push streams.
+    // 注入运行时 connector，供模块打开外部拉/推流。
+    let connector = EngineConnector::new(engine.clone());
+    engine.set_connector(Arc::new(connector));
 
     // Register the control HTTP service in the service registry.
     // 在服务注册表中注册 control HTTP 服务。

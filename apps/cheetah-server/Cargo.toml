@@ -16,6 +16,7 @@ rtp = ["dep:cheetah-rtp-module"]
 mp4 = ["dep:cheetah-mp4-module"]
 record = ["dep:cheetah-record-module"]
 snapshot = ["dep:cheetah-snapshot-module"]
+proxy = ["dep:cheetah-proxy-module"]
 webrtc = ["dep:cheetah-webrtc-module"]
 srt = ["dep:cheetah-srt-module"]
 # GB28181 needs the RTP module at runtime for media delivery (matches the manifest declared
@@ -26,6 +27,7 @@ tokio-console = ["dep:console-subscriber", "tokio/tracing"]
 [dependencies]
 anyhow.workspace = true
 cheetah-config = { path = "../../crates/system/cheetah-config" }
+cheetah-connector = { path = "../../crates/sdk/cheetah-connector" }
 cheetah-control = { path = "../../crates/system/cheetah-control" }
 cheetah-engine = { path = "../../crates/system/cheetah-engine" }
 cheetah-media-module = { path = "../../crates/system/cheetah-media-module" }
@@ -38,6 +40,7 @@ cheetah-rtsp-module = { path = "../../crates/protocols/rtsp/module", optional = 
 cheetah-ts-module = { path = "../../crates/protocols/ts/module", optional = true }
 cheetah-rtp-module = { path = "../../crates/protocols/rtp/module", optional = true }
 cheetah-mp4-module = { path = "../../crates/protocols/mp4/module", optional = true }
+cheetah-proxy-module = { path = "../../crates/system/cheetah-proxy-module", optional = true }
 cheetah-record-module = { path = "../../crates/system/cheetah-record-module", optional = true }
 cheetah-snapshot-module = { path = "../../crates/system/cheetah-snapshot-module", optional = true }
 cheetah-webrtc-module = { path = "../../crates/protocols/webrtc/module", optional = true }

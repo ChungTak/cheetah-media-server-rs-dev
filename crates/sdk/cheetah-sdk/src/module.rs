@@ -17,6 +17,7 @@ use crate::service::{
 };
 use crate::stream::{CoreAdaptersApi, PublisherApi, StreamManagerApi, SubscriberApi};
 use crate::task::{CancellationToken, TaskSystemApi};
+use crate::ConnectorApi;
 use crate::EventBus;
 use crate::MediaFileStoreApi;
 use cheetah_media_api::event::MediaEventSender;
@@ -203,6 +204,7 @@ pub struct EngineContext {
     pub media_data_plane: Arc<dyn MediaDataPlaneApi>,
     pub media_file_store: Arc<dyn MediaFileStoreApi>,
     pub media_event_sender: Arc<dyn MediaEventSender>,
+    pub connector_api: Option<Arc<dyn ConnectorApi>>,
 }
 
 /// Context used to initialize a module: manifest, engine APIs, and initial config.

@@ -2,9 +2,15 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cheetah_engine::Engine;
+use cheetah_sdk::{
+    ConnectorApi, ConnectorDirection, ConnectorPullOptions as SdkPullOptions,
+    ConnectorPushOptions as SdkPushOptions, PublisherSink, SdkError, SubscriberSource,
+};
 
 use crate::error::ConnectorError;
-use crate::handles::{LoopbackPair, PullHandle, PushHandle};
+#[cfg(feature = "loopback")]
+use crate::handles::LoopbackPair;
+use crate::handles::{PullHandle, PushHandle};
 #[cfg(feature = "loopback")]
 use crate::options::LoopbackOptions;
 use crate::options::{ConnectorPullOptions, ConnectorPushOptions};
@@ -92,7 +98,7 @@ impl EngineConnector {
 
     /// Open an in-memory loopback pair (RTMP push -> HTTP-FLV pull).
     ///
-    /// 打开内存 loopback 对（RTMP push -> HTTP-FLV pull）。
+    /// 打开内存 loopback 对（RTMP 推 → HTTP-FLV 拉）。
     #[cfg(feature = "loopback")]
     pub async fn open_in_memory_loopback(
         &self,
@@ -107,7 +113,7 @@ impl RuntimeConnector for EngineConnector {
     async fn open_pull(
         &self,
         protocol: Protocol,
-        url: &str,
+        _url: &str,
         options: ConnectorPullOptions,
     ) -> Result<PullHandle, ConnectorError> {
         crate::engine_bootstrap::validate_capability(protocol, Direction::Pull, Some(&options))?;
@@ -116,11 +122,11 @@ impl RuntimeConnector for EngineConnector {
         match protocol {
             #[cfg(feature = "http-flv")]
             Protocol::HttpFlv => {
-                crate::pull::http_flv::open_http_flv_pull(self.engine.clone(), url, options).await
+                crate::pull::http_flv::open_http_flv_pull(self.engine.clone(), _url, options).await
             }
             #[cfg(feature = "rtsp")]
             Protocol::Rtsp => {
-                crate::pull::rtsp::open_rtsp_pull(self.engine.clone(), url, options).await
+                crate::pull::rtsp::open_rtsp_pull(self.engine.clone(), _url, options).await
             }
             #[cfg(feature = "rtmp")]
             Protocol::Rtmp => Err(ConnectorError::UnsupportedProtocol {
@@ -142,8 +148,8 @@ impl RuntimeConnector for EngineConnector {
     async fn open_push(
         &self,
         protocol: Protocol,
-        url: &str,
-        options: ConnectorPushOptions,
+        _url: &str,
+        _options: ConnectorPushOptions,
     ) -> Result<PushHandle, ConnectorError> {
         crate::engine_bootstrap::validate_capability(protocol, Direction::Push, None)?;
 
@@ -151,11 +157,11 @@ impl RuntimeConnector for EngineConnector {
         match protocol {
             #[cfg(feature = "rtmp")]
             Protocol::Rtmp => {
-                crate::push::rtmp::open_rtmp_push(self.engine.clone(), url, options).await
+                crate::push::rtmp::open_rtmp_push(self.engine.clone(), _url, _options).await
             }
             #[cfg(feature = "webrtc")]
             Protocol::WebRtc => {
-                crate::push::webrtc::open_webrtc_push(self.engine.clone(), url, options).await
+                crate::push::webrtc::open_webrtc_push(self.engine.clone(), _url, _options).await
             }
             #[cfg(feature = "rtsp")]
             Protocol::Rtsp => Err(ConnectorError::UnsupportedProtocol {
@@ -172,5 +178,70 @@ impl RuntimeConnector for EngineConnector {
                 direction: Direction::Push,
             }),
         }
+    }
+}
+
+fn scheme_from_url(url: &str) -> &str {
+    url.split("://").next().unwrap_or("")
+}
+
+fn resolve_protocol(scheme: Option<&str>, url: &str) -> Result<Protocol, SdkError> {
+    let scheme = scheme.unwrap_or_else(|| scheme_from_url(url));
+    match scheme.to_ascii_lowercase().as_str() {
+        "rtsp" => Ok(Protocol::Rtsp),
+        "http" | "https" => Ok(Protocol::HttpFlv),
+        "rtmp" | "rtmps" | "rtmpt" => Ok(Protocol::Rtmp),
+        "webrtc" | "whip" => Ok(Protocol::WebRtc),
+        _ => Err(SdkError::InvalidArgument(format!(
+            "unsupported or missing protocol scheme in URL: {url}"
+        ))),
+    }
+}
+
+fn direction_from_sdk(direction: ConnectorDirection) -> Direction {
+    match direction {
+        ConnectorDirection::Pull => Direction::Pull,
+        ConnectorDirection::Push => Direction::Push,
+    }
+}
+
+#[async_trait]
+impl ConnectorApi for EngineConnector {
+    async fn open_pull(
+        &self,
+        url: &str,
+        options: SdkPullOptions,
+    ) -> Result<Box<dyn SubscriberSource>, SdkError> {
+        let protocol = resolve_protocol(options.protocol.as_deref(), url)?;
+        let handle = <Self as RuntimeConnector>::open_pull(
+            self,
+            protocol,
+            url,
+            ConnectorPullOptions::default(),
+        )
+        .await?;
+        Ok(handle.into_subscriber_source())
+    }
+
+    async fn open_push(
+        &self,
+        url: &str,
+        options: SdkPushOptions,
+    ) -> Result<Box<dyn PublisherSink>, SdkError> {
+        let protocol = resolve_protocol(options.protocol.as_deref(), url)?;
+        let handle = <Self as RuntimeConnector>::open_push(
+            self,
+            protocol,
+            url,
+            ConnectorPushOptions::default(),
+        )
+        .await?;
+        Ok(handle.into_publisher_sink())
+    }
+
+    fn supports(&self, protocol: &str, direction: ConnectorDirection) -> bool {
+        resolve_protocol(Some(protocol), protocol)
+            .map(|p| crate::protocol::supports(p, direction_from_sdk(direction)))
+            .unwrap_or(false)
     }
 }

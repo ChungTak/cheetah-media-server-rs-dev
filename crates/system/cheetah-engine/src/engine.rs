@@ -2,10 +2,11 @@ use std::sync::Arc;
 
 use cheetah_sdk::{
     CancellationToken, ClusterApi, ConfigApplyApi, ConfigProvider, ConfigSchemaRegistry,
-    CoreAdaptersApi, DatabaseApi, EngineContext, EventBus, FfmpegApi, HealthApi, MediaDataPlaneApi,
-    MediaFileStoreApi, MediaServices, MediaSessionDirectoryApi, MetricsApi, ModuleFactory,
-    ModuleManagerApi, PublisherApi, RoomServiceApi, RuntimeApi, SdkError, ServiceRegistry,
-    StreamManagerApi, SubscriberApi, SystemEvent, SystemLifecycleEvent, TaskSystemApi,
+    ConnectorApi, CoreAdaptersApi, DatabaseApi, EngineContext, EventBus, FfmpegApi, HealthApi,
+    MediaDataPlaneApi, MediaFileStoreApi, MediaServices, MediaSessionDirectoryApi, MetricsApi,
+    ModuleFactory, ModuleManagerApi, PublisherApi, RoomServiceApi, RuntimeApi, SdkError,
+    ServiceRegistry, StreamManagerApi, SubscriberApi, SystemEvent, SystemLifecycleEvent,
+    TaskSystemApi,
 };
 use parking_lot::RwLock;
 
@@ -205,6 +206,7 @@ impl EngineBuilder {
             media_data_plane,
             media_file_store,
             media_event_dispatcher: media_event_dispatcher.clone(),
+            connector_api: RwLock::new(None),
             root_cancel: RwLock::new(CancellationToken::new()),
         })
     }
@@ -243,6 +245,7 @@ pub struct Engine {
     media_data_plane: Arc<dyn MediaDataPlaneApi>,
     media_file_store: Arc<dyn MediaFileStoreApi>,
     media_event_dispatcher: Arc<MediaEventDispatcher>,
+    connector_api: RwLock<Option<Arc<dyn ConnectorApi>>>,
     root_cancel: RwLock<CancellationToken>,
 }
 
@@ -276,7 +279,15 @@ impl Engine {
             media_data_plane: self.media_data_plane.clone(),
             media_file_store: self.media_file_store.clone(),
             media_event_sender: self.media_event_dispatcher.clone() as Arc<dyn MediaEventSender>,
+            connector_api: self.connector_api.read().clone(),
         }
+    }
+
+    /// Set the runtime connector used by modules for external pull/push.
+    ///
+    /// 设置模块用于外部拉/推的运行时 connector。
+    pub fn set_connector(&self, connector: Arc<dyn ConnectorApi>) {
+        *self.connector_api.write() = Some(connector);
     }
 
     /// Initialize and start all registered modules.
