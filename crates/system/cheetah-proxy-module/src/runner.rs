@@ -21,6 +21,18 @@ use futures::{pin_mut, select_biased, FutureExt};
 
 use crate::registry::ProxyRegistry;
 
+/// Result of forwarding frames until the loop terminates.
+///
+/// 转发循环终止的原因。
+enum ForwardResult {
+    /// The cancellation token was triggered.
+    Cancelled,
+    /// The source reported a clean end-of-stream.
+    SourceEnded,
+    /// A sink/source error occurred.
+    Error(MediaError),
+}
+
 /// Run a pull proxy until completion or cancellation.
 ///
 /// 运行拉流代理直到完成或被取消。
@@ -37,7 +49,7 @@ pub async fn run_pull(
     cancel: CancellationToken,
     runtime_api: Arc<dyn RuntimeApi>,
 ) {
-    let result = run_pull_inner(
+    let _ = run_pull_inner(
         &registry,
         &event_sender,
         connector_api.as_ref(),
@@ -52,12 +64,6 @@ pub async fn run_pull(
 
     let _ = sink.close();
     let _ = publisher_api.release_publisher(&lease).await;
-
-    let (state, last_error) = match result {
-        Ok(()) => (ProxyState::Stopped, None),
-        Err(e) => (ProxyState::Failed, Some(e.to_string())),
-    };
-    update_proxy_state(&registry, &event_sender, &proxy_id, state, last_error);
 }
 
 async fn run_pull_inner(
@@ -72,6 +78,7 @@ async fn run_pull_inner(
     runtime_api: &dyn RuntimeApi,
 ) -> Result<(), MediaError> {
     if cancel.is_cancelled() {
+        update_proxy_state(registry, event_sender, proxy_id, ProxyState::Stopped, None);
         return Ok(());
     }
 
@@ -110,11 +117,13 @@ async fn run_pull_inner(
                     last_error.clone(),
                 );
                 if sleep_or_cancel(runtime_api, retry_count, retry_policy, cancel).await {
+                    update_proxy_state(registry, event_sender, proxy_id, ProxyState::Stopped, None);
                     return Ok(());
                 }
                 continue;
             }
             None => {
+                update_proxy_state(registry, event_sender, proxy_id, ProxyState::Stopped, None);
                 return Ok(());
             }
         };
@@ -131,16 +140,20 @@ async fn run_pull_inner(
             None,
         );
 
-        let frame_err = forward_frames(&mut source, sink, cancel).await;
+        let frame_result = forward_frames(&mut source, sink, cancel).await;
         let _ = source.close().await;
 
-        match frame_err {
-            None => {
+        match frame_result {
+            ForwardResult::Cancelled => {
                 update_proxy_state(registry, event_sender, proxy_id, ProxyState::Stopped, None);
                 return Ok(());
             }
-            Some(e) => {
-                last_error = Some(e.to_string());
+            ForwardResult::SourceEnded | ForwardResult::Error(_) => {
+                let err = match frame_result {
+                    ForwardResult::Error(e) => e,
+                    _ => MediaError::unavailable("source closed"),
+                };
+                last_error = Some(err.to_string());
                 if retry_count >= retry_policy.max_retries {
                     update_proxy_state(
                         registry,
@@ -149,7 +162,7 @@ async fn run_pull_inner(
                         ProxyState::Failed,
                         last_error,
                     );
-                    return Err(e);
+                    return Err(err);
                 }
                 retry_count += 1;
                 update_proxy_state(
@@ -199,7 +212,7 @@ pub async fn run_push(
     cancel: CancellationToken,
     runtime_api: Arc<dyn RuntimeApi>,
 ) {
-    let result = run_push_inner(
+    let _ = run_push_inner(
         &registry,
         &event_sender,
         connector_api.as_ref(),
@@ -213,12 +226,6 @@ pub async fn run_push(
     .await;
 
     let _ = source.close().await;
-
-    let (state, last_error) = match result {
-        Ok(()) => (ProxyState::Stopped, None),
-        Err(e) => (ProxyState::Failed, Some(e.to_string())),
-    };
-    update_proxy_state(&registry, &event_sender, &proxy_id, state, last_error);
 }
 
 async fn run_push_inner(
@@ -233,6 +240,7 @@ async fn run_push_inner(
     runtime_api: &dyn RuntimeApi,
 ) -> Result<(), MediaError> {
     if cancel.is_cancelled() {
+        update_proxy_state(registry, event_sender, proxy_id, ProxyState::Stopped, None);
         return Ok(());
     }
 
@@ -273,11 +281,19 @@ async fn run_push_inner(
                         last_error.clone(),
                     );
                     if sleep_or_cancel(runtime_api, retry_count, retry_policy, cancel).await {
+                        update_proxy_state(
+                            registry,
+                            event_sender,
+                            proxy_id,
+                            ProxyState::Stopped,
+                            None,
+                        );
                         return Ok(());
                     }
                     continue;
                 }
                 None => {
+                    update_proxy_state(registry, event_sender, proxy_id, ProxyState::Stopped, None);
                     return Ok(());
                 }
             }
@@ -296,20 +312,24 @@ async fn run_push_inner(
             None,
         );
 
-        let frame_err = forward_frames(source, s, cancel).await;
+        let frame_result = forward_frames(source, s, cancel).await;
 
-        if frame_err.is_some() {
+        if frame_result.is_error() {
             if let Some(old) = sink.take() {
                 let _ = old.close();
             }
         }
 
-        match frame_err {
-            None => {
+        match frame_result {
+            ForwardResult::Cancelled => {
                 update_proxy_state(registry, event_sender, proxy_id, ProxyState::Stopped, None);
                 return Ok(());
             }
-            Some(e) => {
+            ForwardResult::SourceEnded => {
+                update_proxy_state(registry, event_sender, proxy_id, ProxyState::Stopped, None);
+                return Ok(());
+            }
+            ForwardResult::Error(e) => {
                 last_error = Some(e.to_string());
                 if retry_count >= retry_policy.max_retries {
                     update_proxy_state(
@@ -329,6 +349,7 @@ async fn run_push_inner(
                     ProxyState::Reconnecting,
                     last_error.clone(),
                 );
+                sink = None;
                 if sleep_or_cancel(runtime_api, retry_count, retry_policy, cancel).await {
                     update_proxy_state(registry, event_sender, proxy_id, ProxyState::Stopped, None);
                     return Ok(());
@@ -359,10 +380,10 @@ async fn forward_frames(
     source: &mut Box<dyn SubscriberSource>,
     sink: &dyn PublisherSink,
     cancel: &CancellationToken,
-) -> Option<MediaError> {
+) -> ForwardResult {
     loop {
         if cancel.is_cancelled() {
-            return None;
+            return ForwardResult::Cancelled;
         }
 
         let recv_fut = source.recv().fuse();
@@ -370,7 +391,7 @@ async fn forward_frames(
         pin_mut!(recv_fut, cancel_fut);
 
         let next = select_biased! {
-            _ = cancel_fut => return None,
+            _ = cancel_fut => return ForwardResult::Cancelled,
             frame = recv_fut => frame,
         };
 
@@ -378,13 +399,19 @@ async fn forward_frames(
             Ok(Some(frame)) => match sink.push_frame(frame) {
                 Ok(DispatchResult::Accepted | DispatchResult::DroppedByPolicy) => {}
                 Ok(DispatchResult::RejectedClosed) => {
-                    return Some(MediaError::unavailable("sink closed"));
+                    return ForwardResult::Error(MediaError::unavailable("sink closed"));
                 }
-                Err(e) => return Some(map_sdk_error(e)),
+                Err(e) => return ForwardResult::Error(map_sdk_error(e)),
             },
-            Ok(None) => return Some(MediaError::unavailable("source closed")),
-            Err(e) => return Some(map_sdk_error(e)),
+            Ok(None) => return ForwardResult::SourceEnded,
+            Err(e) => return ForwardResult::Error(map_sdk_error(e)),
         }
+    }
+}
+
+impl ForwardResult {
+    fn is_error(&self) -> bool {
+        matches!(self, ForwardResult::Error(_))
     }
 }
 
