@@ -902,6 +902,7 @@ impl RtpCore {
 
                         if let Some(dest) = session.destination.or(session.source_addr) {
                             outputs.push(RtpCoreOutput::SendRtcp(RtcpSend {
+                                session_key: session._session_key.clone(),
                                 destination: dest,
                                 conn_id: session.tcp_conn_id,
                                 data: Bytes::from(rr),
@@ -923,6 +924,7 @@ impl RtpCore {
 
                         if let Some(dest) = session.destination {
                             outputs.push(RtpCoreOutput::SendRtcp(RtcpSend {
+                                session_key: session._session_key.clone(),
                                 destination: dest,
                                 conn_id: session.tcp_conn_id,
                                 data: Bytes::from(sr),
@@ -1128,6 +1130,7 @@ impl RtpCore {
                             }));
                         } else if let Some(dest) = session.destination {
                             outputs.push(RtpCoreOutput::SendUdp(RtpUdpSend {
+                                session_key: session._session_key.clone(),
                                 destination: dest,
                                 data: encoded,
                             }));

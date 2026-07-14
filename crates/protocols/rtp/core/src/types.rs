@@ -165,6 +165,7 @@ pub struct RtpTcpChunk {
 /// 出站 UDP 数据报。
 #[derive(Debug, Clone)]
 pub struct RtpUdpSend {
+    pub session_key: RtpSessionKey,
     pub destination: SocketAddr,
     pub data: Bytes,
 }
@@ -183,6 +184,7 @@ pub struct RtpTcpSend {
 /// RTCP 反馈或报告可以封装在 UDP 中发送，也可以绑定到某个 TCP 连接。
 #[derive(Debug, Clone)]
 pub struct RtcpSend {
+    pub session_key: RtpSessionKey,
     pub destination: SocketAddr,
     /// Optional TCP connection ID for RTP-over-TCP RTCP transport.
     ///
