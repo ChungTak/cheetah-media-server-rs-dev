@@ -33,7 +33,7 @@ use parking_lot::Mutex;
 /// 共享的 RTP 会话状态与驱动命令分发器。
 pub struct RtpSessionOrchestrator {
     driver_handle: Arc<Mutex<Option<Arc<RtpDriverHandle>>>>,
-    sessions: Arc<Mutex<HashMap<RtpSessionId, RtpSession>>>,
+    pub(crate) sessions: Arc<Mutex<HashMap<RtpSessionId, RtpSession>>>,
     /// Default address used when a caller does not supply an explicit IP/port.
     default_bind_addr: SocketAddr,
 }
@@ -454,14 +454,11 @@ impl RtpSessionOrchestrator {
                 })?),
                 None => None,
             };
-        match (parsed_ip, port) {
-            (None, None) | (None, Some(0)) => Ok(None),
-            _ => {
-                let ip = parsed_ip.unwrap_or(self.default_bind_addr.ip());
-                let port = port.unwrap_or(0);
-                Ok(Some(SocketAddr::new(ip, port)))
-            }
-        }
+        // A missing port or port 0 means "allocate a dedicated per-session UDP socket";
+        // only TCP active mode bypasses UDP binding by passing `None` from the caller.
+        let ip = parsed_ip.unwrap_or(self.default_bind_addr.ip());
+        let port = port.unwrap_or(0);
+        Ok(Some(SocketAddr::new(ip, port)))
     }
 
     /// Open an RTP sender from a domain request.

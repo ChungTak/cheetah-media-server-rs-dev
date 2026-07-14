@@ -322,7 +322,9 @@ impl Module for RtpModule {
             }));
         }
 
-        cancel.cancelled().await;
+        // Background driver/ingress/egress loops are already spawned; return so the
+        // engine startup pipeline can complete. The spawned tasks observe `cancel` and
+        // are stopped from `RtpModule::stop`.
         Ok(())
     }
 
@@ -564,15 +566,16 @@ async fn run_ingress_worker(
     }
 }
 
-/// Parse `session_key` into a `StreamKey` (namespace/path), defaulting to `live`.
+/// Parse `session_key` (`{kind}/{namespace}/{path}`) into a `StreamKey`.
 ///
-/// 将 `session_key` 解析为 `StreamKey`（命名空间/路径），默认命名空间为 `live`。
+/// 将 `session_key`（`{kind}/{namespace}/{path}`）解析为 `StreamKey`。
 fn parse_session_key(key: &str) -> StreamKey {
-    if let Some(pos) = key.find('/') {
-        let (ns, path) = key.split_at(pos);
-        StreamKey::new(ns, &path[1..])
-    } else {
-        StreamKey::new("live", key)
+    let mut it = key.splitn(3, '/');
+    it.next(); // skip kind prefix
+    match (it.next(), it.next()) {
+        (Some(ns), Some(path)) => StreamKey::new(ns, path),
+        (Some(path), None) => StreamKey::new("live", path),
+        _ => StreamKey::new("live", key),
     }
 }
 

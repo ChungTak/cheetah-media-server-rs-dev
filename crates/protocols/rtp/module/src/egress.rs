@@ -9,7 +9,7 @@ use std::time::Duration;
 use cheetah_rtp_core::RtpSendFrame;
 use cheetah_rtp_driver_tokio::{RtpDriverCommand, RtpDriverHandle, RtpSocketReuse};
 use cheetah_sdk::media_api::ids::RtpSessionId;
-use cheetah_sdk::media_api::model::RtpSessionState;
+use cheetah_sdk::media_api::model::{RtpSessionKind, RtpSessionState};
 use cheetah_sdk::{
     BootstrapPolicy, CancellationToken, EngineContext, ProtocolEvent, StreamKey, SubscriberOptions,
     SystemEvent,
@@ -94,6 +94,32 @@ pub(crate) async fn wait_for_stream(
     }
 }
 
+/// Choose a bootstrap policy for an egress worker based on the session kind.
+///
+/// VoiceTalk (bidirectional audio) is often audio-only, so waiting for a video
+/// random-access point would block forever. Other egress paths start from the
+/// most recent tail to minimize latency.
+///
+/// 根据会话类型为 egress worker 选择引导策略。
+/// VoiceTalk（双向对讲）通常只有音频，等待视频随机访问点会永久阻塞；
+/// 其他 egress 路径从最近的尾部开始以降低延迟。
+fn bootstrap_policy_for_sessions(
+    orchestrator: Option<&Arc<RtpSessionOrchestrator>>,
+    session_keys: &[String],
+) -> BootstrapPolicy {
+    if let Some(orchestrator) = orchestrator {
+        let sessions = orchestrator.sessions.lock();
+        if session_keys.iter().any(|k| {
+            sessions
+                .get(&RtpSessionId(k.clone()))
+                .is_some_and(|s| s.kind == RtpSessionKind::Talk)
+        }) {
+            return BootstrapPolicy::none();
+        }
+    }
+    BootstrapPolicy::live_tail(150, None)
+}
+
 /// Subscribe to an engine stream and fan out frames to one or more RTP target sessions.
 ///
 /// On the first successfully delivered frame, every target session is promoted to
@@ -123,13 +149,14 @@ pub(crate) async fn run_egress_session(
         return;
     };
 
+    let bootstrap_policy = bootstrap_policy_for_sessions(orchestrator.as_ref(), &session_keys);
     let mut subscriber = match engine
         .subscriber_api
         .subscribe(
             stream_key.clone(),
             SubscriberOptions {
                 queue_capacity: 256,
-                bootstrap_policy: BootstrapPolicy::live_tail(150, None),
+                bootstrap_policy,
                 ..Default::default()
             },
         )
