@@ -1,4 +1,7 @@
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
 
 use async_trait::async_trait;
 use cheetah_media_api::command::*;
@@ -6,45 +9,49 @@ use cheetah_media_api::error::MediaError;
 use cheetah_media_api::ids::*;
 use cheetah_media_api::model::*;
 use cheetah_media_api::port::{MediaControlApi, MediaRequestContext, PublishSubscribeApi};
-use cheetah_sdk::{CoreAdaptersApi, SdkError, StreamKey, StreamManagerApi};
+use cheetah_sdk::media_data_plane::{MediaDataPlaneApi, MediaFramePublisher, MediaFrameSubscriber};
+use cheetah_sdk::media_session::{MediaSessionDirectoryApi, SessionCloseHandle};
+use cheetah_sdk::{SdkError, StreamKey, StreamManagerApi};
+use dashmap::DashMap;
+use tokio::sync::Mutex;
 
 use super::util::{codec_to_api, media_kind_to_type, now_ms, readiness_to_api};
+
+type PublisherMap = DashMap<SessionId, Arc<Box<dyn MediaFramePublisher>>>;
+type SubscriberMap = DashMap<SessionId, Arc<Mutex<Box<dyn MediaFrameSubscriber>>>>;
 
 /// Bridge from `cheetah-sdk` stream primitives to `cheetah-media-api` ports.
 ///
 /// `StreamMediaProvider` implements query, session control, and keyframe request by
 /// delegating to the engine's `StreamManagerApi` and `CoreAdaptersApi`. Publish and
-/// subscribe are not yet supported through this provider and return `Unsupported`.
-/// Other capabilities (record, snapshot, proxy, RTP) are handled by dedicated providers.
-///
-/// 从 `cheetah-sdk` 流原语到 `cheetah-media-api` 端口的桥接。
-///
-/// `StreamMediaProvider` 通过委托引擎的 `StreamManagerApi` 和 `CoreAdaptersApi`
-/// 实现查询、会话控制和关键帧请求。发布和订阅尚未通过该 provider 支持，返回
-/// `Unsupported`。其它能力（录制、快照、代理、RTP）由专用 provider 处理。
+/// subscribe are bridged through `MediaDataPlaneApi` and tracked in the shared
+/// `MediaSessionDirectoryApi`.
 #[derive(Clone)]
 pub struct StreamMediaProvider {
     stream_manager: Arc<dyn StreamManagerApi>,
-    core_adapters: Arc<dyn CoreAdaptersApi>,
+    media_data_plane: Arc<dyn MediaDataPlaneApi>,
+    session_directory: Arc<dyn MediaSessionDirectoryApi>,
+    publishers: Arc<PublisherMap>,
+    subscribers: Arc<SubscriberMap>,
+    next_id: Arc<AtomicU64>,
 }
 
 impl StreamMediaProvider {
-    /// Create a new provider backed by the engine stream manager.
-    ///
-    /// 创建由引擎流管理器支撑的 provider。
     pub fn new(
         stream_manager: Arc<dyn StreamManagerApi>,
-        core_adapters: Arc<dyn CoreAdaptersApi>,
+        media_data_plane: Arc<dyn MediaDataPlaneApi>,
+        session_directory: Arc<dyn MediaSessionDirectoryApi>,
     ) -> Self {
         Self {
             stream_manager,
-            core_adapters,
+            media_data_plane,
+            session_directory,
+            publishers: Arc::new(PublisherMap::new()),
+            subscribers: Arc::new(SubscriberMap::new()),
+            next_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
-    /// Convert an SDK `SdkError` to a media-domain `MediaError`.
-    ///
-    /// 将 SDK `SdkError` 转换为媒体领域 `MediaError`。
     fn map_sdk_error(err: SdkError) -> MediaError {
         match err {
             SdkError::NotFound(msg) => MediaError::not_found(msg),
@@ -56,26 +63,19 @@ impl StreamMediaProvider {
         }
     }
 
-    /// Convert a `StreamKey` to a `MediaKey` using the reversible bridge.
-    ///
-    /// 使用可逆桥接将 `StreamKey` 转换为 `MediaKey`。
     fn stream_key_to_media_key(key: &StreamKey) -> MediaKey {
-        StreamKeyBridge::from_namespace_path(&key.namespace, &key.path).unwrap_or_else(|_| {
-            MediaKey::new("__fallback__", &key.namespace, &key.path, None).unwrap()
-        })
+        cheetah_sdk::media_api::ids::StreamKeyBridge::from_namespace_path(&key.namespace, &key.path)
+            .unwrap_or_else(|_| {
+                MediaKey::new("__fallback__", &key.namespace, &key.path, None).unwrap()
+            })
     }
 
-    /// Convert a `MediaKey` to a `StreamKey`.
-    ///
-    /// 将 `MediaKey` 转换为 `StreamKey`。
     fn media_key_to_stream_key(key: &MediaKey) -> StreamKey {
-        let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
+        let (namespace, path) =
+            cheetah_sdk::media_api::ids::StreamKeyBridge::to_namespace_path(key);
         StreamKey::new(namespace, path)
     }
 
-    /// Convert codec `TrackInfo` to a media-domain `TrackSummary`.
-    ///
-    /// 将 codec `TrackInfo` 转换为媒体领域 `TrackSummary`。
     fn track_summary(t: &cheetah_codec::TrackInfo) -> TrackSummary {
         TrackSummary {
             track_id: t.track_id.0.to_string(),
@@ -92,41 +92,6 @@ impl StreamMediaProvider {
         }
     }
 
-    /// Check whether a `SessionInfo` matches the supplied `SessionQuery`.
-    ///
-    /// 检查 `SessionInfo` 是否匹配给定的 `SessionQuery`。
-    fn session_matches_query(session: &SessionInfo, key: &MediaKey, query: &SessionQuery) -> bool {
-        if let Some(ref v) = query.vhost {
-            if key.vhost.0 != *v {
-                return false;
-            }
-        }
-        if let Some(ref a) = query.app {
-            if key.app.0 != *a {
-                return false;
-            }
-        }
-        if let Some(ref st) = query.stream {
-            if key.stream.0 != *st {
-                return false;
-            }
-        }
-        if let Some(kind) = query.kind {
-            if session.kind != kind {
-                return false;
-            }
-        }
-        if let Some(state) = query.state {
-            if session.state != state {
-                return false;
-            }
-        }
-        true
-    }
-
-    /// Build a `StreamInfo` from a `StreamSnapshot`.
-    ///
-    /// 从 `StreamSnapshot` 构建 `StreamInfo`。
     fn stream_info(snapshot: &cheetah_sdk::StreamSnapshot, now_ms: i64) -> StreamInfo {
         let key = Self::stream_key_to_media_key(&snapshot.key);
         let online = if snapshot.publisher_active {
@@ -141,8 +106,8 @@ impl StreamMediaProvider {
             regist: snapshot.publisher_active,
             created_at: now_ms,
             last_activity_at: now_ms,
-            readers: snapshot.subscriber_count as u64,
-            publishers: if snapshot.publisher_active { 1 } else { 0 },
+            readers: 0,
+            publishers: 0,
             bytes_in: 0,
             bytes_out: 0,
             duration_ms: 0,
@@ -151,13 +116,71 @@ impl StreamMediaProvider {
             metadata: std::collections::HashMap::new(),
         }
     }
+
+    async fn enrich_stream_info(
+        &self,
+        ctx: &MediaRequestContext,
+        snapshot: &cheetah_sdk::StreamSnapshot,
+        now_ms: i64,
+    ) -> cheetah_media_api::error::Result<StreamInfo> {
+        let mut info = Self::stream_info(snapshot, now_ms);
+        let key = info.key.clone();
+        let mut query = SessionQuery {
+            vhost: Some(key.vhost.0),
+            app: Some(key.app.0),
+            stream: Some(key.stream.0),
+            page_size: SessionQuery::MAX_PAGE_SIZE,
+            ..SessionQuery::default()
+        };
+        query.clamp_page_size();
+        let page = self.session_directory.list_sessions(ctx, query).await?;
+
+        let mut started_at: Option<i64> = None;
+        let mut last_seen_at: Option<i64> = None;
+        let mut readers = 0u64;
+        let mut publishers = 0u64;
+        for s in page.items {
+            match s.kind {
+                SessionKind::Publisher | SessionKind::RtpReceiver => publishers += 1,
+                SessionKind::Player | SessionKind::Proxy | SessionKind::RtpSender => readers += 1,
+            }
+            info.bytes_in += s.bytes_in;
+            info.bytes_out += s.bytes_out;
+            if started_at.is_none_or(|t| s.started_at < t) {
+                started_at = Some(s.started_at);
+            }
+            if last_seen_at.is_none_or(|t| s.last_seen_at > t) {
+                last_seen_at = Some(s.last_seen_at);
+            }
+            if info.origin.is_none() {
+                info.origin = s.remote_endpoint;
+            }
+        }
+        info.readers = readers;
+        info.publishers = publishers;
+        if let Some(t) = started_at {
+            info.created_at = t;
+        }
+        if let Some(t) = last_seen_at {
+            info.last_activity_at = t;
+        }
+        if let (Some(start), Some(end)) = (started_at, last_seen_at) {
+            info.duration_ms = (end - start).max(0) as u64;
+        }
+        Ok(info)
+    }
+
+    fn new_session_id(&self, kind: &str) -> SessionId {
+        let n = self.next_id.fetch_add(1, Ordering::Relaxed);
+        SessionId(format!("stream-{kind}-{n:016x}"))
+    }
 }
 
 #[async_trait]
 impl MediaControlApi for StreamMediaProvider {
     async fn get_media_list(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         mut query: MediaQuery,
     ) -> cheetah_media_api::error::Result<Page<StreamInfo>> {
         query.clamp_page_size();
@@ -167,39 +190,37 @@ impl MediaControlApi for StreamMediaProvider {
             .await
             .map_err(Self::map_sdk_error)?;
         let now = now_ms();
-        let items: Vec<StreamInfo> = snapshots
-            .into_iter()
-            .filter(|s| {
-                let key = Self::stream_key_to_media_key(&s.key);
-                if let Some(ref v) = query.vhost {
-                    if key.vhost.0 != *v {
-                        return false;
-                    }
+        if query.schema.is_some() {
+            return Err(MediaError::invalid_argument(
+                "schema filter is not supported by the stream provider".to_string(),
+            ));
+        }
+        let mut items: Vec<StreamInfo> = Vec::with_capacity(snapshots.len());
+        for s in snapshots {
+            let key = Self::stream_key_to_media_key(&s.key);
+            if let Some(ref v) = query.vhost {
+                if key.vhost.0 != *v {
+                    continue;
                 }
-                if let Some(ref a) = query.app {
-                    if key.app.0 != *a {
-                        return false;
-                    }
+            }
+            if let Some(ref a) = query.app {
+                if key.app.0 != *a {
+                    continue;
                 }
-                if let Some(ref st) = query.stream {
-                    if key.stream.0 != *st {
-                        return false;
-                    }
+            }
+            if let Some(ref st) = query.stream {
+                if key.stream.0 != *st {
+                    continue;
                 }
-                // `StreamSnapshot` does not carry an output schema; the `schema` field on
-                // `MediaKey` produced by `StreamKeyBridge` is always `None`. Filtering by
-                // `query.schema` here would always exclude every stream, so the filter is
-                // skipped until the engine can supply per-stream output schemas.
-                let _ = query.schema;
-                if let Some(online) = query.online {
-                    if s.publisher_active != online {
-                        return false;
-                    }
+            }
+            if let Some(online) = query.online {
+                if s.publisher_active != online {
+                    continue;
                 }
-                true
-            })
-            .map(|s| Self::stream_info(&s, now))
-            .collect();
+            }
+            let info = self.enrich_stream_info(ctx, &s, now).await?;
+            items.push(info);
+        }
         let total = items.len() as u64;
         let page = query.page.max(1);
         let page_size = query.page_size;
@@ -220,7 +241,7 @@ impl MediaControlApi for StreamMediaProvider {
 
     async fn get_media(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         key: &MediaKey,
     ) -> cheetah_media_api::error::Result<StreamInfo> {
         let stream_key = Self::media_key_to_stream_key(key);
@@ -230,7 +251,7 @@ impl MediaControlApi for StreamMediaProvider {
             .await
             .map_err(Self::map_sdk_error)?
             .ok_or_else(|| MediaError::not_found(format!("stream {key}")))?;
-        Ok(Self::stream_info(&snapshot, now_ms()))
+        self.enrich_stream_info(ctx, &snapshot, now_ms()).await
     }
 
     async fn is_media_online(
@@ -253,100 +274,34 @@ impl MediaControlApi for StreamMediaProvider {
 
     async fn list_sessions(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         mut query: SessionQuery,
     ) -> cheetah_media_api::error::Result<Page<SessionInfo>> {
         query.clamp_page_size();
-        let snapshots = self
-            .stream_manager
-            .list_streams()
-            .await
-            .map_err(Self::map_sdk_error)?;
-        let mut items = Vec::new();
-        for s in snapshots {
-            let key = Self::stream_key_to_media_key(&s.key);
-            if s.publisher_active {
-                let session = SessionInfo {
-                    session_id: SessionId("publisher".to_string()),
-                    kind: SessionKind::Publisher,
-                    media_key: key.clone(),
-                    remote_endpoint: None,
-                    local_endpoint: None,
-                    protocol: "internal".to_string(),
-                    started_at: 0,
-                    last_seen_at: now_ms(),
-                    bytes_in: 0,
-                    bytes_out: 0,
-                    state: SessionState::Connected,
-                    close_reason: None,
-                };
-                if Self::session_matches_query(&session, &key, &query) {
-                    items.push(session);
-                }
-            }
-            for i in 0..s.subscriber_count {
-                let session = SessionInfo {
-                    session_id: SessionId(format!("player-{i}")),
-                    kind: SessionKind::Player,
-                    media_key: key.clone(),
-                    remote_endpoint: None,
-                    local_endpoint: None,
-                    protocol: "internal".to_string(),
-                    started_at: 0,
-                    last_seen_at: now_ms(),
-                    bytes_in: 0,
-                    bytes_out: 0,
-                    state: SessionState::Connected,
-                    close_reason: None,
-                };
-                if Self::session_matches_query(&session, &key, &query) {
-                    items.push(session);
-                }
-            }
-        }
-        let total = items.len() as u64;
-        let page = query.page.max(1);
-        let page_size = query.page_size;
-        let start = ((page - 1) * page_size) as usize;
-        let paged = items
-            .into_iter()
-            .skip(start)
-            .take(page_size as usize)
-            .collect();
-        Ok(Page {
-            items: paged,
-            page,
-            page_size,
-            total,
-            next_cursor: None,
-        })
+        self.session_directory.list_sessions(ctx, query).await
     }
 
     async fn kick_session(
         &self,
-        _ctx: &MediaRequestContext,
-        _id: &SessionId,
-        _reason: CloseReason,
+        ctx: &MediaRequestContext,
+        id: &SessionId,
+        reason: CloseReason,
     ) -> cheetah_media_api::error::Result<()> {
-        Err(MediaError::unsupported("kick_session"))
+        self.session_directory
+            .close_session(ctx, id, reason)
+            .await
+            .map(|_| ())
     }
 
     async fn kick_stream(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         key: &MediaKey,
         reason: CloseReason,
     ) -> cheetah_media_api::error::Result<CloseReport> {
-        let stream_key = Self::media_key_to_stream_key(key);
-        self.core_adapters
-            .close_stream(&stream_key)
+        self.session_directory
+            .close_sessions_for_key(ctx, key, reason)
             .await
-            .map_err(Self::map_sdk_error)?;
-        Ok(CloseReport {
-            media_key: key.clone(),
-            closed_sessions: Vec::new(),
-            reason,
-        })
     }
 
     async fn request_keyframe(
@@ -362,30 +317,288 @@ impl MediaControlApi for StreamMediaProvider {
     }
 }
 
+struct PublisherCloseHandle {
+    publishers: Arc<PublisherMap>,
+    id: SessionId,
+    publisher: Arc<Box<dyn MediaFramePublisher>>,
+}
+
+#[async_trait]
+impl SessionCloseHandle for PublisherCloseHandle {
+    async fn close(&self, _reason: CloseReason) -> cheetah_media_api::error::Result<SessionId> {
+        self.publishers.remove(&self.id);
+        self.publisher.close().await?;
+        Ok(self.id.clone())
+    }
+}
+
+struct SubscriberCloseHandle {
+    subscribers: Arc<SubscriberMap>,
+    id: SessionId,
+}
+
+#[async_trait]
+impl SessionCloseHandle for SubscriberCloseHandle {
+    async fn close(&self, _reason: CloseReason) -> cheetah_media_api::error::Result<SessionId> {
+        if let Some((_, sub)) = self.subscribers.remove(&self.id) {
+            let mut guard = sub.lock().await;
+            guard.close().await?;
+        }
+        Ok(self.id.clone())
+    }
+}
+
 #[async_trait]
 impl PublishSubscribeApi for StreamMediaProvider {
     async fn acquire_publisher(
         &self,
-        _ctx: &MediaRequestContext,
-        _request: PublishRequest,
+        ctx: &MediaRequestContext,
+        request: PublishRequest,
     ) -> cheetah_media_api::error::Result<PublisherHandle> {
-        Err(MediaError::unsupported_capability("publish"))
+        let publisher = self
+            .media_data_plane
+            .open_frame_publisher(ctx, request.clone())
+            .await?;
+        let id = self.new_session_id("pub");
+        let publisher = Arc::new(publisher);
+        self.publishers.insert(id.clone(), publisher.clone());
+        let close_handle = Box::new(PublisherCloseHandle {
+            publishers: self.publishers.clone(),
+            id: id.clone(),
+            publisher: publisher.clone(),
+        });
+        let record = SessionInfo {
+            session_id: id.clone(),
+            kind: SessionKind::Publisher,
+            media_key: request.media_key.clone(),
+            remote_endpoint: request.remote_endpoint,
+            local_endpoint: None,
+            protocol: request.protocol,
+            started_at: now_ms(),
+            last_seen_at: now_ms(),
+            bytes_in: 0,
+            bytes_out: 0,
+            state: SessionState::Connected,
+            close_reason: None,
+            owner_module: "stream".to_string(),
+        };
+        if let Err(e) = self
+            .session_directory
+            .register_session(ctx, record, close_handle)
+            .await
+        {
+            self.publishers.remove(&id);
+            let _ = publisher.close().await;
+            return Err(e);
+        }
+        Ok(PublisherHandle {
+            session_id: id.clone(),
+            media_key: request.media_key,
+            lease_token: id.0,
+        })
     }
 
     async fn open_subscriber(
         &self,
-        _ctx: &MediaRequestContext,
-        _request: SubscribeRequest,
+        ctx: &MediaRequestContext,
+        request: SubscribeRequest,
     ) -> cheetah_media_api::error::Result<SubscriberHandle> {
-        Err(MediaError::unsupported_capability("subscribe"))
+        let subscriber = self
+            .media_data_plane
+            .open_frame_subscriber(ctx, request.clone())
+            .await?;
+        let id = self.new_session_id("sub");
+        let subscriber = Arc::new(Mutex::new(subscriber));
+        self.subscribers.insert(id.clone(), subscriber.clone());
+        let close_handle = Box::new(SubscriberCloseHandle {
+            subscribers: self.subscribers.clone(),
+            id: id.clone(),
+        });
+        let record = SessionInfo {
+            session_id: id.clone(),
+            kind: SessionKind::Player,
+            media_key: request.media_key.clone(),
+            remote_endpoint: None,
+            local_endpoint: None,
+            protocol: request.subscriber_kind.clone(),
+            started_at: now_ms(),
+            last_seen_at: now_ms(),
+            bytes_in: 0,
+            bytes_out: 0,
+            state: SessionState::Connected,
+            close_reason: None,
+            owner_module: "stream".to_string(),
+        };
+        if let Err(e) = self
+            .session_directory
+            .register_session(ctx, record, close_handle)
+            .await
+        {
+            self.subscribers.remove(&id);
+            let mut guard = subscriber.lock().await;
+            let _ = guard.close().await;
+            return Err(e);
+        }
+        Ok(SubscriberHandle {
+            session_id: id,
+            media_key: request.media_key,
+            output_schema: request.output_schema,
+            url: None,
+        })
     }
 
     async fn close_handle(
         &self,
-        _ctx: &MediaRequestContext,
-        _id: &SessionId,
-        _reason: CloseReason,
+        ctx: &MediaRequestContext,
+        id: &SessionId,
+        reason: CloseReason,
     ) -> cheetah_media_api::error::Result<()> {
-        Err(MediaError::unsupported("close_handle"))
+        self.session_directory
+            .close_session(ctx, id, reason)
+            .await
+            .map(|_| ())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+    use crate::media_provider::{EngineMediaDataPlane, EngineMediaSessionDirectory};
+    use crate::stream::{DispatcherMode, StreamManager};
+    use cheetah_media_api::command::{PublishRequest, SessionQuery, SubscribeRequest};
+    use cheetah_media_api::ids::{MediaKey, MediaSchema};
+    use cheetah_media_api::model::{CloseReason, SessionKind};
+    use cheetah_runtime_tokio::TokioRuntime;
+
+    fn test_provider() -> StreamMediaProvider {
+        let runtime: Arc<dyn cheetah_sdk::RuntimeApi> = Arc::new(TokioRuntime::new());
+        let manager = Arc::new(StreamManager::new(DispatcherMode::PerStream, 128, runtime));
+        let publisher_api: Arc<dyn cheetah_sdk::PublisherApi> = manager.clone();
+        let subscriber_api: Arc<dyn cheetah_sdk::SubscriberApi> = manager.clone();
+        let data_plane: Arc<dyn MediaDataPlaneApi> =
+            Arc::new(EngineMediaDataPlane::new(publisher_api, subscriber_api));
+        let directory: Arc<dyn MediaSessionDirectoryApi> =
+            Arc::new(EngineMediaSessionDirectory::new());
+        StreamMediaProvider::new(manager, data_plane, directory)
+    }
+
+    fn publish_request(key: &MediaKey) -> PublishRequest {
+        PublishRequest {
+            media_key: key.clone(),
+            protocol: "test".to_string(),
+            origin: None,
+            remote_endpoint: None,
+            lease_token: None,
+            auth_context: Default::default(),
+            metadata: Default::default(),
+        }
+    }
+
+    fn subscribe_request(key: &MediaKey) -> SubscribeRequest {
+        SubscribeRequest {
+            media_key: key.clone(),
+            output_schema: MediaSchema::Webrtc,
+            subscriber_kind: "webrtc".to_string(),
+            start_policy: Default::default(),
+            auth_context: Default::default(),
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn acquire_publisher_registers_session() {
+        let provider = test_provider();
+        let key = MediaKey::with_default_vhost("live", "session-test", None).unwrap();
+        let ctx = MediaRequestContext::default();
+
+        let handle = provider
+            .acquire_publisher(&ctx, publish_request(&key))
+            .await
+            .unwrap();
+        assert_eq!(handle.media_key, key);
+
+        let mut query = SessionQuery::default();
+        query.kind = Some(SessionKind::Publisher);
+        let page = provider.list_sessions(&ctx, query).await.unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].kind, SessionKind::Publisher);
+
+        provider
+            .kick_session(&ctx, &handle.session_id, CloseReason::Kicked)
+            .await
+            .unwrap();
+        let mut query = SessionQuery::default();
+        query.kind = Some(SessionKind::Publisher);
+        let page = provider.list_sessions(&ctx, query).await.unwrap();
+        assert!(page.items.is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn second_publisher_on_same_key_is_rejected() {
+        let provider = test_provider();
+        let key = MediaKey::with_default_vhost("live", "exclusive-pub", None).unwrap();
+        let ctx = MediaRequestContext::default();
+
+        let _ = provider
+            .acquire_publisher(&ctx, publish_request(&key))
+            .await
+            .unwrap();
+        let err = provider
+            .acquire_publisher(&ctx, publish_request(&key))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("already exists") || err.to_string().contains("conflict"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn open_subscriber_registers_player_session() {
+        let provider = test_provider();
+        let key = MediaKey::with_default_vhost("live", "sub-test", None).unwrap();
+        let ctx = MediaRequestContext::default();
+
+        let _pub_handle = provider
+            .acquire_publisher(&ctx, publish_request(&key))
+            .await
+            .unwrap();
+        let sub = provider
+            .open_subscriber(&ctx, subscribe_request(&key))
+            .await
+            .unwrap();
+        assert_eq!(sub.media_key, key);
+
+        let mut query = SessionQuery::default();
+        query.kind = Some(SessionKind::Player);
+        let page = provider.list_sessions(&ctx, query).await.unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].kind, SessionKind::Player);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn kick_stream_closes_all_sessions_for_key() {
+        let provider = test_provider();
+        let key = MediaKey::with_default_vhost("live", "kick-stream", None).unwrap();
+        let ctx = MediaRequestContext::default();
+
+        let _pub_handle = provider
+            .acquire_publisher(&ctx, publish_request(&key))
+            .await
+            .unwrap();
+        let _sub_handle = provider
+            .open_subscriber(&ctx, subscribe_request(&key))
+            .await
+            .unwrap();
+
+        let report = provider
+            .kick_stream(&ctx, &key, CloseReason::Kicked)
+            .await
+            .unwrap();
+        assert_eq!(report.closed_sessions.len(), 2);
+
+        let page = provider
+            .list_sessions(&ctx, SessionQuery::default())
+            .await
+            .unwrap();
+        assert!(page.items.is_empty());
     }
 }

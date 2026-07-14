@@ -9,6 +9,8 @@ use crate::config::{
 };
 use crate::error::SdkError;
 use crate::ids::ModuleId;
+use crate::media_data_plane::MediaDataPlaneApi;
+use crate::media_session::MediaSessionDirectoryApi;
 use crate::service::{
     ClusterApi, DatabaseApi, FfmpegApi, HealthApi, MetricsApi, ModuleManagerApi, ProxyManager,
     RoomServiceApi, ServiceRegistry,
@@ -195,6 +197,8 @@ pub struct EngineContext {
     pub cluster_api: Arc<dyn ClusterApi>,
     pub ffmpeg_api: Arc<dyn FfmpegApi>,
     pub media_services: MediaServices,
+    pub media_session_directory: Arc<dyn MediaSessionDirectoryApi>,
+    pub media_data_plane: Arc<dyn MediaDataPlaneApi>,
 }
 
 /// Context used to initialize a module: manifest, engine APIs, and initial config.
