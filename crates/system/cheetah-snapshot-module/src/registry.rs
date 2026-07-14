@@ -2,6 +2,8 @@
 //!
 //! 内存中的截图注册表。
 
+use std::collections::HashSet;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use cheetah_media_api::ids::{MediaKey, SnapshotId};
@@ -11,9 +13,19 @@ use parking_lot::Mutex;
 /// In-memory registry of snapshot metadata.
 ///
 /// 截图元数据内存注册表。
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct SnapshotRegistry {
     inner: Arc<Mutex<Vec<SnapshotInfo>>>,
+    max_per_key: Arc<AtomicUsize>,
+}
+
+impl Default for SnapshotRegistry {
+    fn default() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(Vec::new())),
+            max_per_key: Arc::new(AtomicUsize::new(0)),
+        }
+    }
 }
 
 impl SnapshotRegistry {
@@ -22,14 +34,42 @@ impl SnapshotRegistry {
         Self::default()
     }
 
+    /// Set the maximum number of snapshots kept per media key. `0` means unlimited.
+    pub fn set_max_per_key(&self, max: u32) {
+        self.max_per_key.store(max as usize, Ordering::SeqCst);
+    }
+
     /// Insert or replace a snapshot entry by id.
     pub fn upsert(&self, info: SnapshotInfo) {
         let mut guard = self.inner.lock();
         if let Some(existing) = guard.iter_mut().find(|i| i.snapshot_id == info.snapshot_id) {
-            *existing = info;
+            *existing = info.clone();
         } else {
-            guard.push(info);
+            guard.push(info.clone());
         }
+        self.evict_oldest_if_needed(&mut guard, &info.media_key);
+    }
+
+    fn evict_oldest_if_needed(&self, guard: &mut Vec<SnapshotInfo>, key: &MediaKey) {
+        let max = self.max_per_key.load(Ordering::SeqCst);
+        if max == 0 {
+            return;
+        }
+        let mut matching: Vec<_> = guard
+            .iter()
+            .filter(|i| &i.media_key == key)
+            .cloned()
+            .collect();
+        if matching.len() <= max {
+            return;
+        }
+        matching.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        let to_remove: HashSet<_> = matching
+            .iter()
+            .take(matching.len() - max)
+            .map(|i| i.snapshot_id.clone())
+            .collect();
+        guard.retain(|i| !(i.media_key == *key && to_remove.contains(&i.snapshot_id)));
     }
 
     /// Retrieve a snapshot by id.
@@ -78,14 +118,14 @@ mod tests {
     use cheetah_media_api::ids::FileHandle;
     use cheetah_media_api::model::SnapshotState;
 
-    fn sample_info(id: &str, key: &str, state: SnapshotState) -> SnapshotInfo {
+    fn sample_info(id: &str, key: &str, state: SnapshotState, created_at: i64) -> SnapshotInfo {
         let media_key = MediaKey::with_default_vhost("live", key, None).unwrap();
         SnapshotInfo {
             snapshot_id: SnapshotId(id.to_string()),
             media_key,
             state,
             path_handle: FileHandle(format!("handle-{id}")),
-            created_at: 1,
+            created_at,
             size_bytes: Some(42),
             format: "jpg".to_string(),
         }
@@ -94,7 +134,7 @@ mod tests {
     #[test]
     fn upsert_and_get() {
         let reg = SnapshotRegistry::new();
-        let info = sample_info("a", "s1", SnapshotState::Completed);
+        let info = sample_info("a", "s1", SnapshotState::Completed, 1);
         reg.upsert(info.clone());
         assert_eq!(reg.get(&SnapshotId("a".to_string())), Some(info));
     }
@@ -104,8 +144,8 @@ mod tests {
         let reg = SnapshotRegistry::new();
         let key1 = MediaKey::with_default_vhost("live", "s1", None).unwrap();
         let key2 = MediaKey::with_default_vhost("live", "s2", None).unwrap();
-        reg.upsert(sample_info("a", "s1", SnapshotState::Completed));
-        reg.upsert(sample_info("b", "s2", SnapshotState::Completed));
+        reg.upsert(sample_info("a", "s1", SnapshotState::Completed, 1));
+        reg.upsert(sample_info("b", "s2", SnapshotState::Completed, 1));
 
         let found = reg.list(Some(&key1));
         assert_eq!(found.len(), 1);
@@ -119,8 +159,8 @@ mod tests {
     fn delete_by_media_key() {
         let reg = SnapshotRegistry::new();
         let key1 = MediaKey::with_default_vhost("live", "s1", None).unwrap();
-        reg.upsert(sample_info("a", "s1", SnapshotState::Completed));
-        reg.upsert(sample_info("b", "s2", SnapshotState::Completed));
+        reg.upsert(sample_info("a", "s1", SnapshotState::Completed, 1));
+        reg.upsert(sample_info("b", "s2", SnapshotState::Completed, 1));
 
         assert_eq!(reg.delete_by_media_key(&key1), 1);
         assert_eq!(reg.list(None).len(), 1);
@@ -129,14 +169,56 @@ mod tests {
     #[test]
     fn upsert_replaces_existing() {
         let reg = SnapshotRegistry::new();
-        let mut info = sample_info("a", "s1", SnapshotState::Pending);
+        let info = sample_info("a", "s1", SnapshotState::Pending, 1);
         reg.upsert(info.clone());
-        info.state = SnapshotState::Completed;
-        reg.upsert(info.clone());
+        let completed = sample_info("a", "s1", SnapshotState::Completed, 1);
+        reg.upsert(completed.clone());
         assert_eq!(
             reg.get(&SnapshotId("a".to_string())).unwrap().state,
             SnapshotState::Completed
         );
         assert_eq!(reg.list(None).len(), 1);
+    }
+
+    #[test]
+    fn max_per_key_evicts_oldest() {
+        let reg = SnapshotRegistry::new();
+        reg.set_max_per_key(2);
+        reg.upsert(sample_info("a", "s1", SnapshotState::Completed, 1));
+        reg.upsert(sample_info("b", "s1", SnapshotState::Completed, 2));
+        reg.upsert(sample_info("c", "s1", SnapshotState::Completed, 3));
+
+        let ids: Vec<_> = reg
+            .list(None)
+            .iter()
+            .map(|i| i.snapshot_id.0.clone())
+            .collect();
+        assert_eq!(ids, vec!["b", "c"]);
+    }
+
+    #[test]
+    fn max_per_key_zero_is_unlimited() {
+        let reg = SnapshotRegistry::new();
+        reg.upsert(sample_info("a", "s1", SnapshotState::Completed, 1));
+        reg.upsert(sample_info("b", "s1", SnapshotState::Completed, 2));
+        reg.upsert(sample_info("c", "s1", SnapshotState::Completed, 3));
+        assert_eq!(reg.list(None).len(), 3);
+    }
+
+    #[test]
+    fn max_per_key_only_affects_same_key() {
+        let reg = SnapshotRegistry::new();
+        reg.set_max_per_key(1);
+        reg.upsert(sample_info("a", "s1", SnapshotState::Completed, 1));
+        reg.upsert(sample_info("b", "s2", SnapshotState::Completed, 2));
+
+        assert_eq!(reg.list(None).len(), 2);
+        assert_eq!(
+            reg.list(Some(
+                &MediaKey::with_default_vhost("live", "s1", None).unwrap()
+            ))
+            .len(),
+            1
+        );
     }
 }

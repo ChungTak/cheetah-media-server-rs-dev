@@ -60,7 +60,7 @@ pub async fn run_snapshot(
         ctx.runtime_api
             .now()
             .as_micros()
-            .saturating_add(timeout_ms * 1_000),
+            .saturating_add(timeout_ms.saturating_mul(1_000)),
     );
 
     let frame = match wait_for_keyframe(&mut *subscriber, deadline, ctx.runtime_api.as_ref()).await
