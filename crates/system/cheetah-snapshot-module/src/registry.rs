@@ -17,6 +17,7 @@ use parking_lot::Mutex;
 pub struct SnapshotRegistry {
     inner: Arc<Mutex<Vec<SnapshotInfo>>>,
     max_per_key: Arc<AtomicUsize>,
+    max_total: Arc<AtomicUsize>,
 }
 
 impl Default for SnapshotRegistry {
@@ -24,6 +25,7 @@ impl Default for SnapshotRegistry {
         Self {
             inner: Arc::new(Mutex::new(Vec::new())),
             max_per_key: Arc::new(AtomicUsize::new(0)),
+            max_total: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
@@ -39,6 +41,11 @@ impl SnapshotRegistry {
         self.max_per_key.store(max as usize, Ordering::SeqCst);
     }
 
+    /// Set the global maximum number of snapshot entries. `0` means unlimited.
+    pub fn set_max_total(&self, max: u32) {
+        self.max_total.store(max as usize, Ordering::SeqCst);
+    }
+
     /// Insert or replace a snapshot entry by id.
     pub fn upsert(&self, info: SnapshotInfo) {
         let mut guard = self.inner.lock();
@@ -47,15 +54,16 @@ impl SnapshotRegistry {
         } else {
             guard.push(info.clone());
         }
-        self.evict_oldest_if_needed(&mut guard, &info.media_key);
+        self.evict_oldest_per_key(&mut guard, &info.media_key);
+        self.evict_global_oldest(&mut guard);
     }
 
-    fn evict_oldest_if_needed(&self, guard: &mut Vec<SnapshotInfo>, key: &MediaKey) {
+    fn evict_oldest_per_key(&self, guard: &mut Vec<SnapshotInfo>, key: &MediaKey) {
         let max = self.max_per_key.load(Ordering::SeqCst);
         if max == 0 {
             return;
         }
-        let mut matching: Vec<_> = guard
+        let matching: Vec<_> = guard
             .iter()
             .filter(|i| &i.media_key == key)
             .cloned()
@@ -63,13 +71,23 @@ impl SnapshotRegistry {
         if matching.len() <= max {
             return;
         }
-        matching.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-        let to_remove: HashSet<_> = matching
+        let mut sorted = matching;
+        sorted.sort_by(|a, b| a.created_at.cmp(&b.created_at));
+        let to_remove: HashSet<_> = sorted
             .iter()
-            .take(matching.len() - max)
+            .take(sorted.len() - max)
             .map(|i| i.snapshot_id.clone())
             .collect();
         guard.retain(|i| !(i.media_key == *key && to_remove.contains(&i.snapshot_id)));
+    }
+
+    fn evict_global_oldest(&self, guard: &mut Vec<SnapshotInfo>) {
+        let max = self.max_total.load(Ordering::SeqCst);
+        if max == 0 || guard.len() <= max {
+            return;
+        }
+        guard.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        guard.truncate(max);
     }
 
     /// Retrieve a snapshot by id.
@@ -199,6 +217,7 @@ mod tests {
     #[test]
     fn max_per_key_zero_is_unlimited() {
         let reg = SnapshotRegistry::new();
+        reg.set_max_total(100);
         reg.upsert(sample_info("a", "s1", SnapshotState::Completed, 1));
         reg.upsert(sample_info("b", "s1", SnapshotState::Completed, 2));
         reg.upsert(sample_info("c", "s1", SnapshotState::Completed, 3));
@@ -209,6 +228,7 @@ mod tests {
     fn max_per_key_only_affects_same_key() {
         let reg = SnapshotRegistry::new();
         reg.set_max_per_key(1);
+        reg.set_max_total(100);
         reg.upsert(sample_info("a", "s1", SnapshotState::Completed, 1));
         reg.upsert(sample_info("b", "s2", SnapshotState::Completed, 2));
 
@@ -220,5 +240,21 @@ mod tests {
             .len(),
             1
         );
+    }
+
+    #[test]
+    fn max_total_evicts_oldest_across_keys() {
+        let reg = SnapshotRegistry::new();
+        reg.set_max_total(2);
+        reg.upsert(sample_info("a", "s1", SnapshotState::Completed, 1));
+        reg.upsert(sample_info("b", "s2", SnapshotState::Completed, 2));
+        reg.upsert(sample_info("c", "s3", SnapshotState::Completed, 3));
+
+        let ids: Vec<_> = reg
+            .list(None)
+            .iter()
+            .map(|i| i.snapshot_id.0.clone())
+            .collect();
+        assert_eq!(ids, vec!["c", "b"]);
     }
 }

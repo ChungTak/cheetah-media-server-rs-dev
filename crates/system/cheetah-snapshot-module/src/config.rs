@@ -22,8 +22,12 @@ pub struct SnapshotModuleConfig {
     pub default_timeout_ms: u64,
 
     /// Maximum number of snapshots kept per media key. `0` means unlimited.
-    #[serde(default)]
+    #[serde(default = "default_max_snapshots_per_key")]
     pub max_snapshots_per_key: u32,
+
+    /// Global maximum number of snapshot metadata entries kept in memory.
+    #[serde(default = "default_max_total_snapshots")]
+    pub max_total_snapshots: u32,
 }
 
 impl Default for SnapshotModuleConfig {
@@ -32,7 +36,8 @@ impl Default for SnapshotModuleConfig {
             root_path: default_root_path(),
             default_format: default_format(),
             default_timeout_ms: default_timeout_ms(),
-            max_snapshots_per_key: 0,
+            max_snapshots_per_key: default_max_snapshots_per_key(),
+            max_total_snapshots: default_max_total_snapshots(),
         }
     }
 }
@@ -48,6 +53,9 @@ impl SnapshotModuleConfig {
         }
         if self.default_timeout_ms == 0 {
             return Err("snapshot default_timeout_ms must be greater than 0".to_string());
+        }
+        if self.max_total_snapshots == 0 {
+            return Err("snapshot max_total_snapshots must be greater than 0".to_string());
         }
         Ok(())
     }
@@ -77,6 +85,14 @@ fn default_format() -> String {
 }
 
 fn default_timeout_ms() -> u64 {
+    10_000
+}
+
+fn default_max_snapshots_per_key() -> u32 {
+    100
+}
+
+fn default_max_total_snapshots() -> u32 {
     10_000
 }
 

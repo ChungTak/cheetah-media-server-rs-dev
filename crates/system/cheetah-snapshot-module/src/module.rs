@@ -104,6 +104,7 @@ impl Module for SnapshotModule {
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
         self.registry
             .set_max_per_key(self.config.max_snapshots_per_key);
+        self.registry.set_max_total(self.config.max_total_snapshots);
         self.ctx = Some(ctx.engine);
         self.state = ModuleState::Initialized;
         Ok(())
