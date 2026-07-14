@@ -232,7 +232,11 @@ impl FfmpegApi for EngineFfmpegService {
             entry.value().notify.clone()
         };
 
-        notify.notified().await;
+        let mut notified = std::pin::pin!(notify.notified_owned());
+        let already_ready = notified.as_mut().enable();
+        if !already_ready {
+            notified.await;
+        }
 
         let entry = self
             .jobs
@@ -611,5 +615,34 @@ mod tests {
         let args = EngineFfmpegService::build_args(&spec);
         assert!(args.contains(&"-an".to_string()));
         assert!(!args.contains(&"-acodec".to_string()));
+    }
+
+    #[tokio::test]
+    async fn wait_job_is_safe_after_wait_future_dropped() {
+        let bin = fake_ffmpeg_bin("#!/bin/sh\nsleep 0.1\nexit 0\n");
+        let svc = EngineFfmpegService::with_binary_path(Some(bin));
+        svc.submit_job(fake_job("j16", "http://example", 5000))
+            .await
+            .unwrap();
+
+        // Poll wait_job once, then abort the future before it completes.
+        let wait_fut = std::pin::pin!(svc.wait_job("j16"));
+        let abort = tokio::time::timeout(Duration::from_millis(1), wait_fut).await;
+        assert!(abort.is_err());
+
+        let outcome = svc.wait_job("j16").await.unwrap();
+        assert_eq!(outcome, FfmpegJobOutcome::Succeeded);
+    }
+
+    #[tokio::test]
+    async fn multiple_concurrent_wait_job_calls_return_same_outcome() {
+        let bin = fake_ffmpeg_bin("#!/bin/sh\nexit 0\n");
+        let svc = EngineFfmpegService::with_binary_path(Some(bin));
+        svc.submit_job(fake_job("j17", "http://example", 5000))
+            .await
+            .unwrap();
+        let (a, b) = tokio::join!(svc.wait_job("j17"), svc.wait_job("j17"));
+        assert_eq!(a.unwrap(), FfmpegJobOutcome::Succeeded);
+        assert_eq!(b.unwrap(), FfmpegJobOutcome::Succeeded);
     }
 }
