@@ -25,6 +25,7 @@ id_wrapper!(RecordFileId, String);
 id_wrapper!(SnapshotId, String);
 id_wrapper!(ProxyId, String);
 id_wrapper!(RtpSessionId, String);
+id_wrapper!(WebRtcRoomId, String);
 id_wrapper!(FileHandle, String);
 id_wrapper!(IdempotencyKey, String);
 id_wrapper!(RequestId, String);

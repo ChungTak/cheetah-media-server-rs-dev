@@ -2,14 +2,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use cheetah_media_api::command::{
-    DeleteRecordRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    SessionQuery, StartRecordRequest, StopRecordRequest,
-};
-use cheetah_media_api::ids::{MediaKey, RecordFileId, SessionId};
-use cheetah_media_api::model::{CloseReason, RecordTaskState};
+use cheetah_media_api::command::{MediaQuery, SessionQuery};
+use cheetah_media_api::ids::{MediaKey, SessionId, StreamKeyBridge};
+use cheetah_media_api::model::CloseReason;
 use cheetah_media_api::port::{
-    MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
+    MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, ServerAdminApi, SnapshotApi,
 };
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
@@ -20,7 +17,11 @@ use cheetah_sdk::{
 
 use crate::error::{zlm_error_response, AdapterError};
 
+mod proxy;
+mod record;
+mod routes;
 mod rtp;
+mod server;
 mod snapshot;
 
 const MODULE_ID: &str = "media-http-zlm";
@@ -108,102 +109,7 @@ impl Module for ZlmMediaModule {
     }
 
     fn http_routes(&self) -> Vec<HttpRouteDescriptor> {
-        vec![
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getMediaList".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/isMediaOnline".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getMediaInfo".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getAllSession".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/close_stream".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/kick_session".to_string(),
-            },
-            // Record endpoints; detailed implementation in record module / future media provider.
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/startRecord".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/stopRecord".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/isRecording".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getMP4RecordFile".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/deleteRecordDirectory".to_string(),
-            },
-            // RTP endpoints
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/openRtpServer".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/closeRtpServer".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/startSendRtp".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/stopSendRtp".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getRtpInfo".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/setRecordSpeed".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/seekRecordStamp".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/controlRecordPlay".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/loadMP4File".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getSnap".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/deleteSnapDirectory".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/downloadFile".to_string(),
-            },
-        ]
+        self::routes::http_routes()
     }
 
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
@@ -226,14 +132,6 @@ impl ZlmMediaHttpService {
         })
     }
 
-    pub(crate) fn rtp(&self) -> Result<Arc<dyn RtpApi>, AdapterError> {
-        self.ctx.media_services.rtp().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "rtp not available",
-            ))
-        })
-    }
-
     fn record(&self) -> Result<Arc<dyn RecordApi>, AdapterError> {
         self.ctx.media_services.record().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
@@ -250,11 +148,72 @@ impl ZlmMediaHttpService {
         })
     }
 
-    pub(crate) fn request_context(&self, _req: &HttpRequest) -> MediaRequestContext {
+    fn proxy(&self) -> Result<Arc<dyn ProxyApi>, AdapterError> {
+        self.ctx.media_services.proxy().ok_or_else(|| {
+            AdapterError::Media(
+                cheetah_media_api::error::MediaError::unsupported_capability("proxy"),
+            )
+        })
+    }
+
+    pub(crate) fn rtp(&self) -> Result<Arc<dyn RtpApi>, AdapterError> {
+        self.ctx.media_services.rtp().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "rtp not available",
+            ))
+        })
+    }
+
+    fn server_admin(&self) -> Result<Arc<dyn ServerAdminApi>, AdapterError> {
+        self.ctx.media_services.server_admin().ok_or_else(|| {
+            AdapterError::Media(
+                cheetah_media_api::error::MediaError::unsupported_capability("server_admin"),
+            )
+        })
+    }
+
+    pub(crate) fn require_principal(&self, ctx: &MediaRequestContext) -> Result<(), AdapterError> {
+        let global = self.ctx.config_provider.global();
+        let Some(expected) = global
+            .get("media")
+            .and_then(|m| m.get("api_secret"))
+            .and_then(serde_json::Value::as_str)
+        else {
+            return Err(AdapterError::Media(
+                cheetah_media_api::error::MediaError::unauthenticated(
+                    "server admin authentication not configured",
+                ),
+            ));
+        };
+        match ctx.principal.as_deref() {
+            Some(token) if crate::util::constant_time_eq(token, expected) => Ok(()),
+            _ => Err(AdapterError::Media(
+                cheetah_media_api::error::MediaError::unauthenticated(
+                    "server admin requires valid authentication",
+                ),
+            )),
+        }
+    }
+
+    pub(crate) fn request_context(&self, req: &HttpRequest) -> MediaRequestContext {
+        let principal = req
+            .headers
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("authorization"))
+            .and_then(|h| {
+                let value = h.value.trim();
+                value.strip_prefix("Bearer ").map(|t| t.trim().to_string())
+            })
+            .or_else(|| {
+                // ZLMediaKit clients conventionally pass the secret as a query
+                // parameter; fall back to that when no Bearer header is present.
+                let params = crate::util::query_to_json(req.query.as_deref());
+                params["secret"].as_str().map(|s| s.trim().to_string())
+            });
         MediaRequestContext {
             request_id: cheetah_media_api::ids::RequestId("".to_string()),
             correlation_id: None,
-            principal: None,
+            principal,
             source_adapter: "zlm".to_string(),
             trace_context: None,
             deadline: None,
@@ -364,246 +323,6 @@ impl ZlmMediaHttpService {
             serde_json::json!({"result": true}),
         ))
     }
-
-    async fn record_start(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let format = zlm_record_format(&params["type"])?;
-        let request = StartRecordRequest {
-            media_key: key,
-            format: format.clone(),
-            template: cheetah_media_api::model::RecordTemplate::Continuous,
-            segment_duration_ms: None,
-            max_segments: None,
-            storage_policy: cheetah_media_api::model::StoragePolicy::default(),
-            idempotency_key: None,
-        };
-        let task = record_api.start_record(&ctx, request).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true, "taskId": task.task_id.0}),
-        ))
-    }
-
-    async fn record_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let format = zlm_record_format(&params["type"])?;
-        let mut query = RecordTaskQuery {
-            vhost: Some(key.vhost.0.clone()),
-            app: Some(key.app.0.clone()),
-            stream: Some(key.stream.0.clone()),
-            page_size: RecordTaskQuery::MAX_PAGE_SIZE,
-            ..Default::default()
-        };
-        query.clamp_page_size();
-        let page = record_api.query_record_tasks(&ctx, query).await?;
-        let task = page
-            .items
-            .into_iter()
-            .find(|t| {
-                t.format == format
-                    && matches!(t.state, RecordTaskState::Running | RecordTaskState::Pending)
-            })
-            .ok_or_else(|| {
-                AdapterError::Media(cheetah_media_api::error::MediaError::not_found(
-                    "record task",
-                ))
-            })?;
-        record_api
-            .stop_record(
-                &ctx,
-                StopRecordRequest {
-                    task_id: task.task_id,
-                },
-            )
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn is_recording(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let format = zlm_record_format(&params["type"])?;
-        let mut query = RecordTaskQuery {
-            vhost: Some(key.vhost.0.clone()),
-            app: Some(key.app.0.clone()),
-            stream: Some(key.stream.0.clone()),
-            page_size: RecordTaskQuery::MAX_PAGE_SIZE,
-            ..Default::default()
-        };
-        query.clamp_page_size();
-        let page = record_api.query_record_tasks(&ctx, query).await?;
-        let recording = page.items.iter().any(|t| {
-            t.format == format
-                && matches!(t.state, RecordTaskState::Running | RecordTaskState::Pending)
-        });
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"status": recording}),
-        ))
-    }
-
-    async fn get_mp4_files(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let mut query = RecordFileQuery {
-            app: Some(key.app.0.clone()),
-            stream: Some(key.stream.0.clone()),
-            format: Some("mp4".to_string()),
-            ..Default::default()
-        };
-        query.clamp_page_size();
-        let page = record_api.query_record_files(&ctx, query).await?;
-        let paths: Vec<String> = page.items.iter().map(|f| f.path_handle.0.clone()).collect();
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"paths": paths, "rootPath": ""}),
-        ))
-    }
-
-    async fn delete_record_directory(
-        &self,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let query = RecordFileQuery {
-            app: Some(key.app.0.clone()),
-            stream: Some(key.stream.0.clone()),
-            page_size: RecordFileQuery::MAX_PAGE_SIZE,
-            ..Default::default()
-        };
-        let mut total_deleted = 0usize;
-        let mut total_failed = 0usize;
-        loop {
-            let page = record_api.query_record_files(&ctx, query.clone()).await?;
-            if page.items.is_empty() {
-                break;
-            }
-            let mut page_deleted = 0usize;
-            for f in &page.items {
-                match record_api
-                    .delete_record_file(
-                        &ctx,
-                        DeleteRecordRequest {
-                            file_id: f.file_id.clone(),
-                        },
-                    )
-                    .await
-                {
-                    Ok(()) => {
-                        page_deleted += 1;
-                        total_deleted += 1;
-                    }
-                    Err(_) => {
-                        total_failed += 1;
-                    }
-                }
-            }
-            if (page.items.len() as u64) < query.page_size || page_deleted == 0 {
-                break;
-            }
-        }
-        let result = total_failed == 0;
-        let data = serde_json::json!({
-            "result": result,
-            "deleted": total_deleted,
-            "failed": total_failed,
-        });
-        Ok(zlm_response(
-            0,
-            if result { "success" } else { "partial success" },
-            data,
-        ))
-    }
-
-    async fn set_record_speed(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let file_id = parse_zlm_file_id(&params)?;
-        let value = parse_zlm_playback_value(&params, &["speed", "scale", "value"])?;
-        record_api
-            .control_record_playback(
-                &ctx,
-                &RecordFileId(file_id),
-                RecordPlaybackCommand::Scale { value },
-            )
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn seek_record_stamp(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let file_id = parse_zlm_file_id(&params)?;
-        let value = parse_zlm_playback_value(&params, &["stamp", "seek", "value"])?;
-        record_api
-            .control_record_playback(
-                &ctx,
-                &RecordFileId(file_id),
-                RecordPlaybackCommand::Seek {
-                    value: value as i64,
-                },
-            )
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn control_record_play(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let ctx = self.request_context(&req);
-        let params = self.extract_params(&req)?;
-        let file_id = parse_zlm_file_id(&params)?;
-        let command = parse_zlm_playback_command(&params)?;
-        record_api
-            .control_record_playback(&ctx, &RecordFileId(file_id), command)
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn load_mp4_file(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        Err(AdapterError::Media(
-            cheetah_media_api::error::MediaError::unsupported_capability("vod"),
-        ))
-    }
-
-    async fn download_file(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        Err(AdapterError::Media(
-            cheetah_media_api::error::MediaError::unsupported_capability("file download"),
-        ))
-    }
 }
 
 #[async_trait]
@@ -628,13 +347,19 @@ impl ModuleHttpService for ZlmMediaHttpService {
             (HttpMethod::Post, "/api/startSendRtp") => self.start_send_rtp(req).await,
             (HttpMethod::Post, "/api/stopSendRtp") => self.stop_send_rtp(req).await,
             (HttpMethod::Get, "/api/getRtpInfo") => self.get_rtp_info(req).await,
-            (HttpMethod::Post, "/api/setRecordSpeed") => self.set_record_speed(req).await,
-            (HttpMethod::Post, "/api/seekRecordStamp") => self.seek_record_stamp(req).await,
-            (HttpMethod::Post, "/api/controlRecordPlay") => self.control_record_play(req).await,
-            (HttpMethod::Post, "/api/loadMP4File") => self.load_mp4_file(req).await,
             (HttpMethod::Get, "/api/getSnap") => self.get_snap(req).await,
             (HttpMethod::Post, "/api/deleteSnapDirectory") => self.delete_snap_directory(req).await,
-            (HttpMethod::Get, "/api/downloadFile") => self.download_file(req).await,
+            (HttpMethod::Post, "/api/addStreamProxy") => self.add_stream_proxy(req).await,
+            (HttpMethod::Post, "/api/delStreamProxy") => self.del_stream_proxy(req).await,
+            (HttpMethod::Get, "/api/getAllStreamProxy") => self.get_all_stream_proxy(req).await,
+            (HttpMethod::Post, "/api/addFFmpegSource") => self.add_ffmpeg_source(req).await,
+            (HttpMethod::Post, "/api/delFFmpegSource") => self.del_ffmpeg_source(req).await,
+            (HttpMethod::Get, "/api/getServerLoad") => self.get_server_load(req).await,
+            (HttpMethod::Get, "/api/getWorkThreadsLoad") => self.get_work_threads_load(req).await,
+            (HttpMethod::Get, "/api/getServerConfig") => self.get_server_config(req).await,
+            (HttpMethod::Post, "/api/setServerConfig") => self.set_server_config(req).await,
+            (HttpMethod::Post, "/api/restartServer") => self.restart_server(req).await,
+            (HttpMethod::Post, "/api/shutdownServer") => self.shutdown_server(req).await,
             _ => Err(AdapterError::InvalidRequest("not found".to_string())),
         };
 
@@ -655,94 +380,6 @@ impl ModuleHttpService for ZlmMediaHttpService {
                 Ok(zlm_json_response(body))
             }
         }
-    }
-}
-
-fn zlm_record_format(value: &serde_json::Value) -> Result<String, AdapterError> {
-    if value.is_null() {
-        return Ok("mp4".to_string());
-    }
-    if let Some(num) = parse_json_u64(value) {
-        let format = match num {
-            0 => "mp4",
-            1 => "hls",
-            2 => "hls",
-            3 => "fmp4",
-            other => {
-                return Err(AdapterError::InvalidRequest(format!(
-                    "unsupported numeric record type {other}"
-                )))
-            }
-        };
-        return Ok(format.to_string());
-    }
-    if let Some(s) = value.as_str() {
-        if s.trim().is_empty() {
-            return Ok("mp4".to_string());
-        }
-        return Ok(s.to_lowercase());
-    }
-    Ok("mp4".to_string())
-}
-
-fn parse_json_u64(value: &serde_json::Value) -> Option<u64> {
-    value
-        .as_u64()
-        .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
-}
-
-fn parse_json_f64(value: &serde_json::Value) -> Option<f64> {
-    value
-        .as_f64()
-        .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
-}
-
-fn parse_zlm_file_id(params: &serde_json::Value) -> Result<String, AdapterError> {
-    params["file_id"]
-        .as_str()
-        .or_else(|| params["fileId"].as_str())
-        .or_else(|| params["file_path"].as_str())
-        .map(String::from)
-        .ok_or_else(|| AdapterError::InvalidRequest("file_id is required".to_string()))
-}
-
-fn parse_zlm_playback_value(
-    params: &serde_json::Value,
-    aliases: &[&str],
-) -> Result<f64, AdapterError> {
-    for alias in aliases {
-        if let Some(v) = parse_json_f64(&params[*alias]) {
-            return Ok(v);
-        }
-    }
-    Err(AdapterError::InvalidRequest(
-        "playback value is required".to_string(),
-    ))
-}
-
-fn parse_zlm_playback_command(
-    params: &serde_json::Value,
-) -> Result<RecordPlaybackCommand, AdapterError> {
-    let command = params["command"]
-        .as_str()
-        .ok_or_else(|| AdapterError::InvalidRequest("command is required".to_string()))?
-        .to_lowercase();
-    match command.as_str() {
-        "pause" => Ok(RecordPlaybackCommand::Pause),
-        "resume" => Ok(RecordPlaybackCommand::Resume),
-        "scale" | "speed" => {
-            let value = parse_zlm_playback_value(params, &["value", "speed", "scale"])?;
-            Ok(RecordPlaybackCommand::Scale { value })
-        }
-        "seek" | "stamp" => {
-            let value = parse_zlm_playback_value(params, &["value", "stamp", "seek"])?;
-            Ok(RecordPlaybackCommand::Seek {
-                value: value as i64,
-            })
-        }
-        _ => Err(AdapterError::InvalidRequest(format!(
-            "unsupported playback command {command}"
-        ))),
     }
 }
 
@@ -773,4 +410,9 @@ fn zlm_json_response(params: serde_json::Value) -> HttpResponse {
         }],
         body: Bytes::from(serde_json::to_vec(&params).unwrap_or_default()),
     }
+}
+
+pub(crate) fn zlm_key_string(key: &MediaKey) -> String {
+    let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
+    format!("{namespace}/{path}")
 }

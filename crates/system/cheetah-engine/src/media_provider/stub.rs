@@ -122,7 +122,7 @@ impl ProxyApi for ProxyMediaProvider {
         Err(MediaError::unsupported_capability("proxy"))
     }
 
-    async fn list_pull_proxies(
+    async fn list_proxies(
         &self,
         _ctx: &MediaRequestContext,
         _query: ProxyQuery,
@@ -151,6 +151,14 @@ impl ProxyApi for ProxyMediaProvider {
         _ctx: &MediaRequestContext,
         _request: FfmpegProxyRequest,
     ) -> cheetah_media_api::error::Result<ProxyInfo> {
+        Err(MediaError::unsupported_capability("proxy"))
+    }
+
+    async fn delete_ffmpeg_proxy(
+        &self,
+        _ctx: &MediaRequestContext,
+        _id: &ProxyId,
+    ) -> cheetah_media_api::error::Result<()> {
         Err(MediaError::unsupported_capability("proxy"))
     }
 }

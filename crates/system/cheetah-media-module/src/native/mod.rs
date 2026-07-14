@@ -2,15 +2,11 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use cheetah_media_api::command::{
-    DeleteRecordRequest, DeleteSnapshotRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand,
-    RecordTaskQuery, RtpQuery, RtpReceiverRequest, RtpSenderRequest, SessionQuery, SnapshotQuery,
-    SnapshotRequest, StartRecordRequest, StopRecordRequest,
-};
-use cheetah_media_api::ids::{MediaKey, RecordFileId, RecordTaskId, RtpSessionId, SessionId};
+use cheetah_media_api::command::{MediaQuery, SessionQuery};
+use cheetah_media_api::ids::{MediaKey, SessionId};
 use cheetah_media_api::model::CloseReason;
 use cheetah_media_api::port::{
-    MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
+    MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, ServerAdminApi, WebRtcApi,
 };
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
@@ -21,6 +17,12 @@ use cheetah_sdk::{
 use serde::de::DeserializeOwned;
 
 use crate::error::{native_error_response, AdapterError};
+
+mod proxy;
+mod record;
+mod rtp;
+mod server;
+mod webrtc;
 
 const MODULE_ID: &str = "media-http-native";
 
@@ -122,7 +124,7 @@ impl Module for NativeMediaModule {
     }
 }
 
-struct NativeMediaHttpService {
+pub(crate) struct NativeMediaHttpService {
     ctx: EngineContext,
 }
 
@@ -151,11 +153,50 @@ impl NativeMediaHttpService {
         })
     }
 
-    fn snapshot(&self) -> Result<Arc<dyn SnapshotApi>, AdapterError> {
-        self.ctx.media_services.snapshot().ok_or_else(|| {
-            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
-                "snapshot not available",
-            ))
+    fn proxy(&self) -> Result<Arc<dyn ProxyApi>, AdapterError> {
+        self.ctx.media_services.proxy().ok_or_else(|| {
+            AdapterError::Media(
+                cheetah_media_api::error::MediaError::unsupported_capability("proxy"),
+            )
+        })
+    }
+
+    fn server_admin(&self) -> Result<Arc<dyn ServerAdminApi>, AdapterError> {
+        self.ctx.media_services.server_admin().ok_or_else(|| {
+            AdapterError::Media(
+                cheetah_media_api::error::MediaError::unsupported_capability("server_admin"),
+            )
+        })
+    }
+
+    pub(crate) fn require_principal(&self, ctx: &MediaRequestContext) -> Result<(), AdapterError> {
+        let global = self.ctx.config_provider.global();
+        let Some(expected) = global
+            .get("media")
+            .and_then(|m| m.get("api_secret"))
+            .and_then(serde_json::Value::as_str)
+        else {
+            return Err(AdapterError::Media(
+                cheetah_media_api::error::MediaError::unauthenticated(
+                    "server admin authentication not configured",
+                ),
+            ));
+        };
+        match ctx.principal.as_deref() {
+            Some(token) if crate::util::constant_time_eq(token, expected) => Ok(()),
+            _ => Err(AdapterError::Media(
+                cheetah_media_api::error::MediaError::unauthenticated(
+                    "server admin requires valid authentication",
+                ),
+            )),
+        }
+    }
+
+    fn webrtc(&self) -> Result<Arc<dyn WebRtcApi>, AdapterError> {
+        self.ctx.media_services.webrtc().ok_or_else(|| {
+            AdapterError::Media(
+                cheetah_media_api::error::MediaError::unsupported_capability("webrtc"),
+            )
         })
     }
 
@@ -166,10 +207,18 @@ impl NativeMediaHttpService {
             .find(|h| h.name.eq_ignore_ascii_case("x-request-id"))
             .map(|h| cheetah_media_api::ids::RequestId(h.value.clone()))
             .unwrap_or_else(|| cheetah_media_api::ids::RequestId("".to_string()));
+        let principal = req
+            .headers
+            .iter()
+            .find(|h| h.name.eq_ignore_ascii_case("authorization"))
+            .and_then(|h| {
+                let value = h.value.trim();
+                value.strip_prefix("Bearer ").map(|t| t.trim().to_string())
+            });
         MediaRequestContext {
             request_id,
             correlation_id: None,
-            principal: None,
+            principal,
             source_adapter: "native".to_string(),
             trace_context: None,
             deadline: None,
@@ -253,151 +302,6 @@ impl NativeMediaHttpService {
             .await?;
         Ok(json_response(&serde_json::json!({ "kicked": true })))
     }
-
-    async fn record_tasks(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let record_api = self.record()?;
-        let mut query: RecordTaskQuery = parse_query(&req)?;
-        query.clamp_page_size();
-        let page = record_api.query_record_tasks(&ctx, query).await?;
-        Ok(json_response(&page))
-    }
-
-    async fn record_files(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let record_api = self.record()?;
-        let mut query: RecordFileQuery = parse_query(&req)?;
-        query.clamp_page_size();
-        let page = record_api.query_record_files(&ctx, query).await?;
-        Ok(json_response(&page))
-    }
-
-    async fn record_start(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let record_api = self.record()?;
-        let request: StartRecordRequest = parse_body(&req)?;
-        let task = record_api.start_record(&ctx, request).await?;
-        Ok(json_response(&task))
-    }
-
-    async fn record_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let record_api = self.record()?;
-        let id = record_id_from_path(&req.path, "/record/tasks/", "/stop")
-            .ok_or_else(|| AdapterError::InvalidRequest("missing task_id".to_string()))?;
-        let request = StopRecordRequest {
-            task_id: RecordTaskId(id),
-        };
-        let task = record_api.stop_record(&ctx, request).await?;
-        Ok(json_response(&task))
-    }
-
-    async fn record_file_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let record_api = self.record()?;
-        let id = record_id_from_path(&req.path, "/record/files/", "")
-            .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
-        record_api
-            .delete_record_file(
-                &ctx,
-                DeleteRecordRequest {
-                    file_id: RecordFileId(id),
-                },
-            )
-            .await?;
-        Ok(json_response(&serde_json::json!({ "deleted": true })))
-    }
-
-    async fn record_playback_control(
-        &self,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let record_api = self.record()?;
-        let file_id = record_id_from_path(&req.path, "/record/playback/", "/control")
-            .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
-        let command: RecordPlaybackCommand = parse_body(&req)?;
-        record_api
-            .control_record_playback(&ctx, &RecordFileId(file_id), command)
-            .await?;
-        Ok(json_response(&serde_json::json!({ "controlled": true })))
-    }
-
-    async fn rtp_receivers(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let rtp_api = self.rtp()?;
-        let request: RtpReceiverRequest = parse_body(&req)?;
-        let session = rtp_api.open_rtp_receiver(&ctx, request).await?;
-        Ok(json_response(&session))
-    }
-
-    async fn rtp_senders(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let rtp_api = self.rtp()?;
-        let request: RtpSenderRequest = parse_body(&req)?;
-        let session = rtp_api.open_rtp_sender(&ctx, request).await?;
-        Ok(json_response(&session))
-    }
-
-    async fn rtp_session_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let rtp_api = self.rtp()?;
-        let id = rtp_id_from_path(&req.path, "/rtp/sessions/", "/stop")
-            .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
-        rtp_api.stop_rtp_session(&ctx, &RtpSessionId(id)).await?;
-        Ok(json_response(&serde_json::json!({ "stopped": true })))
-    }
-
-    async fn rtp_sessions(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let rtp_api = self.rtp()?;
-        let mut query: RtpQuery = parse_query(&req)?;
-        query.clamp_page_size();
-        let page = rtp_api.list_rtp_sessions(&ctx, query).await?;
-        Ok(json_response(&page))
-    }
-
-    async fn snapshot_create(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let snapshot_api = self.snapshot()?;
-        let request: SnapshotRequest = parse_body(&req)?;
-        let handle = snapshot_api.take_snapshot(&ctx, request).await?;
-        Ok(json_response(&handle))
-    }
-
-    async fn snapshot_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let snapshot_api = self.snapshot()?;
-        let mut query: SnapshotQuery = parse_query(&req)?;
-        query.clamp_page_size();
-        let page = snapshot_api.query_snapshots(&ctx, query).await?;
-        Ok(json_response(&page))
-    }
-
-    async fn snapshot_delete_directory(
-        &self,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
-        let snapshot_api = self.snapshot()?;
-        let request: DeleteSnapshotRequest = parse_body(&req)?;
-        snapshot_api
-            .delete_snapshot_directory(&ctx, request)
-            .await?;
-        Ok(json_response(&serde_json::json!({ "deleted": true })))
-    }
-
-    async fn file_download(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        Err(AdapterError::Media(
-            cheetah_media_api::error::MediaError::unsupported_capability("file download"),
-        ))
-    }
-
-    async fn proxies_pull(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        Err(AdapterError::Media(
-            cheetah_media_api::error::MediaError::unsupported_capability("proxy"),
-        ))
-    }
 }
 
 #[async_trait]
@@ -444,17 +348,25 @@ impl ModuleHttpService for NativeMediaHttpService {
             {
                 self.record_playback_control(req).await
             }
-            (HttpMethod::Post, "/snapshots") => self.snapshot_create(req).await,
-            (HttpMethod::Get, "/snapshots") => self.snapshot_list(req).await,
-            (HttpMethod::Delete, "/snapshots/directories") => {
-                self.snapshot_delete_directory(req).await
-            }
-            (HttpMethod::Get, path)
-                if path.starts_with("/files/") && path.ends_with("/download") =>
+            (HttpMethod::Get, "/proxies") => self.proxies_list(req).await,
+            (HttpMethod::Post, "/proxies/pull") => self.proxies_pull(req).await,
+            (HttpMethod::Post, "/proxies/push") => self.proxies_push(req).await,
+            (HttpMethod::Post, "/proxies/ffmpeg") => self.proxies_ffmpeg(req).await,
+            (HttpMethod::Delete, path)
+                if path.starts_with("/proxies/") && path.ends_with("/pull") =>
             {
-                self.file_download(req).await
+                self.proxies_pull_delete(req).await
             }
-            (HttpMethod::Get, "/proxies/pull") => self.proxies_pull(req).await,
+            (HttpMethod::Delete, path)
+                if path.starts_with("/proxies/") && path.ends_with("/push") =>
+            {
+                self.proxies_push_delete(req).await
+            }
+            (HttpMethod::Delete, path)
+                if path.starts_with("/proxies/") && path.ends_with("/ffmpeg") =>
+            {
+                self.proxies_ffmpeg_delete(req).await
+            }
             (HttpMethod::Post, "/rtp/receivers") => self.rtp_receivers(req).await,
             (HttpMethod::Post, "/rtp/senders") => self.rtp_senders(req).await,
             (HttpMethod::Post, path)
@@ -463,6 +375,19 @@ impl ModuleHttpService for NativeMediaHttpService {
                 self.rtp_session_stop(req).await
             }
             (HttpMethod::Get, "/rtp/sessions") => self.rtp_sessions(req).await,
+            (HttpMethod::Get, "/server/info") => self.server_info(req).await,
+            (HttpMethod::Get, "/server/config") => self.server_config(req).await,
+            (HttpMethod::Post, "/server/config") => self.server_config_update(req).await,
+            (HttpMethod::Post, "/server/restart") => self.server_restart(req).await,
+            (HttpMethod::Post, "/server/shutdown") => self.server_shutdown(req).await,
+            (HttpMethod::Get, "/server/ports") => self.server_ports(req).await,
+            (HttpMethod::Post, "/webrtc/whip") => self.webrtc_whip(req).await,
+            (HttpMethod::Post, "/webrtc/whep") => self.webrtc_whep(req).await,
+            (HttpMethod::Post, "/webrtc/rooms") => self.webrtc_rooms_create(req).await,
+            (HttpMethod::Get, "/webrtc/rooms") => self.webrtc_rooms_list(req).await,
+            (HttpMethod::Delete, path) if path.starts_with("/webrtc/rooms/") => {
+                self.webrtc_room_delete(req).await
+            }
             _ => Err(AdapterError::InvalidRequest("not found".to_string())),
         };
 
@@ -510,7 +435,7 @@ impl ModuleHttpService for NativeMediaHttpService {
     }
 }
 
-fn json_response<T: serde::Serialize>(value: &T) -> HttpResponse {
+pub(crate) fn json_response<T: serde::Serialize>(value: &T) -> HttpResponse {
     HttpResponse {
         status: 200,
         headers: vec![HttpHeader {
@@ -521,21 +446,31 @@ fn json_response<T: serde::Serialize>(value: &T) -> HttpResponse {
     }
 }
 
-fn percent_decode(s: &str) -> String {
+pub(crate) fn percent_decode(s: &str) -> String {
     crate::util::percent_decode(s)
 }
 
 /// Extract the record id from a path like /record/tasks/{id}/stop.
 ///
 /// 从 `/record/tasks/{id}/stop` 这类路径中提取记录 ID。
-fn record_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
+pub(crate) fn record_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
+    rtp_id_from_path(path, prefix, suffix)
+}
+
+/// Extract the proxy id from a path like /proxies/{id}/pull.
+pub(crate) fn proxy_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
+    rtp_id_from_path(path, prefix, suffix)
+}
+
+/// Extract the WebRTC room id from a path like /webrtc/rooms/{id}.
+pub(crate) fn room_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
     rtp_id_from_path(path, prefix, suffix)
 }
 
 /// Extract the RTP session id from a path like /rtp/sessions/{id}/stop.
 ///
 /// 从 `/rtp/sessions/{id}/stop` 这类路径中提取 RTP session ID。
-fn rtp_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
+pub(crate) fn rtp_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
     let rest = path.strip_prefix(prefix)?;
     let id = if suffix.is_empty() {
         rest
@@ -551,7 +486,9 @@ fn rtp_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
 /// Parse a request body (JSON) or URL query string into the target query type.
 ///
 /// 将请求 body（JSON）或 URL query 字符串解析为目标查询类型。
-fn parse_query<T: DeserializeOwned + Default>(req: &HttpRequest) -> Result<T, AdapterError> {
+pub(crate) fn parse_query<T: DeserializeOwned + Default>(
+    req: &HttpRequest,
+) -> Result<T, AdapterError> {
     if !req.body.is_empty() {
         return Ok(serde_json::from_slice(&req.body)?);
     }
@@ -566,7 +503,7 @@ fn parse_query<T: DeserializeOwned + Default>(req: &HttpRequest) -> Result<T, Ad
 /// Parse a JSON request body.
 ///
 /// 解析 JSON 请求体。
-fn parse_body<T: DeserializeOwned>(req: &HttpRequest) -> Result<T, AdapterError> {
+pub(crate) fn parse_body<T: DeserializeOwned>(req: &HttpRequest) -> Result<T, AdapterError> {
     if req.body.is_empty() {
         return Err(AdapterError::InvalidRequest(
             "request body is required".to_string(),

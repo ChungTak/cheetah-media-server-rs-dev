@@ -775,6 +775,8 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_urlencoded",
+ "shlex",
+ "subtle",
  "thiserror",
  "tokio",
  "tracing",

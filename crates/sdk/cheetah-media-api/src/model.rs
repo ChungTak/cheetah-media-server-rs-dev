@@ -455,6 +455,95 @@ pub enum RecordTemplate {
     Event,
 }
 
+/// WebRTC offer/answer response.
+///
+/// WebRTC offer/answer 响应。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WebRtcOfferResponse {
+    pub url: String,
+    pub answer: String,
+    pub expires_at: Option<i64>,
+}
+
+/// WebRTC room state.
+///
+/// WebRTC 房间状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebRtcRoomState {
+    Active,
+    Closed,
+    Failed,
+}
+
+/// WebRTC room information.
+///
+/// WebRTC 房间信息。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WebRtcRoom {
+    pub room_id: crate::ids::WebRtcRoomId,
+    pub media_key: MediaKey,
+    pub participant_count: u32,
+    pub state: WebRtcRoomState,
+    pub created_at: i64,
+}
+
+/// Server load metrics.
+///
+/// 服务器负载指标。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ServerLoad {
+    pub cpu_percent: f64,
+    pub memory_bytes: u64,
+    pub network_in: u64,
+    pub network_out: u64,
+    #[serde(default)]
+    pub threads: Vec<ThreadLoad>,
+}
+
+/// Per-thread load metrics.
+///
+/// 每线程负载指标。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ThreadLoad {
+    pub tid: u64,
+    pub name: String,
+    pub cpu_percent: f64,
+}
+
+/// Server configuration snapshot.
+///
+/// 服务器配置快照。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct ServerConfig {
+    #[serde(default)]
+    pub values: HashMap<String, String>,
+}
+
+/// Listening port information.
+///
+/// 监听端口信息。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PortInfo {
+    pub protocol: String,
+    pub port: u16,
+    #[serde(default)]
+    pub schema: Option<String>,
+}
+
+/// Server information summary.
+///
+/// 服务器信息摘要。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ServerInfo {
+    pub version: String,
+    pub uptime_ms: u64,
+    pub load: ServerLoad,
+    pub config: ServerConfig,
+    #[serde(default)]
+    pub ports: Vec<PortInfo>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

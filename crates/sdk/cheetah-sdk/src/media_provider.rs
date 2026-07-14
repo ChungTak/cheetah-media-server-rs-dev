@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use cheetah_media_api::port::{
-    MediaControlApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi,
+    MediaControlApi, PublishSubscribeApi, RecordApi, RtpApi, ServerAdminApi, SnapshotApi, WebRtcApi,
 };
 
 /// Mutable registry of media capability providers.
@@ -135,6 +135,45 @@ impl MediaServices {
     pub fn rtp(&self) -> Option<Arc<dyn RtpApi>> {
         self.inner.read().expect("media services lock").rtp.clone()
     }
+
+    /// Register the WebRTC provider.
+    ///
+    /// 注册 WebRTC provider。
+    pub fn register_webrtc(&self, webrtc: Arc<dyn WebRtcApi>) {
+        self.inner.write().expect("media services lock").webrtc = Some(webrtc);
+    }
+
+    /// Return the current WebRTC provider, if any.
+    ///
+    /// 返回当前 WebRTC provider（如有）。
+    pub fn webrtc(&self) -> Option<Arc<dyn WebRtcApi>> {
+        self.inner
+            .read()
+            .expect("media services lock")
+            .webrtc
+            .clone()
+    }
+
+    /// Register the server admin provider.
+    ///
+    /// 注册服务器管理 provider。
+    pub fn register_server_admin(&self, server_admin: Arc<dyn ServerAdminApi>) {
+        self.inner
+            .write()
+            .expect("media services lock")
+            .server_admin = Some(server_admin);
+    }
+
+    /// Return the current server admin provider, if any.
+    ///
+    /// 返回当前服务器管理 provider（如有）。
+    pub fn server_admin(&self) -> Option<Arc<dyn ServerAdminApi>> {
+        self.inner
+            .read()
+            .expect("media services lock")
+            .server_admin
+            .clone()
+    }
 }
 
 #[derive(Default)]
@@ -145,6 +184,8 @@ struct MediaProviderRegistry {
     snapshot: Option<Arc<dyn SnapshotApi>>,
     proxy: Option<Arc<dyn cheetah_media_api::port::ProxyApi>>,
     rtp: Option<Arc<dyn RtpApi>>,
+    webrtc: Option<Arc<dyn WebRtcApi>>,
+    server_admin: Option<Arc<dyn ServerAdminApi>>,
 }
 
 impl MediaProviderRegistry {

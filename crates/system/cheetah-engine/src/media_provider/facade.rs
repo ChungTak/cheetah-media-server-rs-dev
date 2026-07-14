@@ -281,12 +281,12 @@ impl ProxyApi for EngineMediaFacade {
         self.proxy.delete_pull_proxy(ctx, id).await
     }
 
-    async fn list_pull_proxies(
+    async fn list_proxies(
         &self,
         ctx: &MediaRequestContext,
         query: ProxyQuery,
     ) -> cheetah_media_api::error::Result<Page<ProxyInfo>> {
-        self.proxy.list_pull_proxies(ctx, query).await
+        self.proxy.list_proxies(ctx, query).await
     }
 
     async fn create_push_proxy(
@@ -311,6 +311,14 @@ impl ProxyApi for EngineMediaFacade {
         request: FfmpegProxyRequest,
     ) -> cheetah_media_api::error::Result<ProxyInfo> {
         self.proxy.create_ffmpeg_proxy(ctx, request).await
+    }
+
+    async fn delete_ffmpeg_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &ProxyId,
+    ) -> cheetah_media_api::error::Result<()> {
+        self.proxy.delete_ffmpeg_proxy(ctx, id).await
     }
 }
 

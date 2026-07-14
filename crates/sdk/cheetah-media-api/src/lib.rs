@@ -24,5 +24,5 @@ pub use event::MediaEvent;
 pub use ids::{AppName, MediaKey, MediaSchema, StreamName, VhostName};
 pub use port::{
     MediaControlApi, MediaFacade, MediaRequestContext, ProxyApi, PublishSubscribeApi, RecordApi,
-    RtpApi, SnapshotApi,
+    RtpApi, ServerAdminApi, SnapshotApi, WebRtcApi,
 };
