@@ -26,7 +26,10 @@ struct RtpSession {
     ssrc: u32,
     payload_mode: RtpPayloadMode,
     transport_mode: RtpTransportMode,
+    /// Filter applied to demuxed frames before they leave the core.
     track_filter: RtpTrackFilter,
+    /// Filter applied to frames fed to `SendFrame`.
+    egress_track_filter: RtpTrackFilter,
 
     // Ingress state
     demuxer: SessionDemuxer,
@@ -281,6 +284,7 @@ impl RtpCore {
                                 payload_mode: RtpPayloadMode::Ehome,
                                 transport_mode: RtpTransportMode::RecvOnly,
                                 track_filter: RtpTrackFilter::All,
+                                egress_track_filter: RtpTrackFilter::All,
                                 demuxer: SessionDemuxer::Pending,
                                 last_seq: None,
                                 source_addr: None,
@@ -644,6 +648,7 @@ impl RtpCore {
                 payload_mode: mode,
                 transport_mode: RtpTransportMode::RecvOnly,
                 track_filter: RtpTrackFilter::All,
+                egress_track_filter: RtpTrackFilter::All,
                 demuxer: SessionDemuxer::Pending,
                 last_seq: None,
                 source_addr,
@@ -1001,6 +1006,7 @@ impl RtpCore {
                     payload_mode: spec.payload_mode,
                     transport_mode: spec.transport_mode,
                     track_filter,
+                    egress_track_filter: spec.track_filter,
                     demuxer: SessionDemuxer::Pending,
                     last_seq: None,
                     source_addr: None,
@@ -1045,7 +1051,7 @@ impl RtpCore {
                     // egress to audio so the same socket can push talkback audio back.
                     if spec.connection_type == Some(RtpConnectionType::VoiceTalk) {
                         session.transport_mode = spec.transport_mode;
-                        session.track_filter = spec.track_filter;
+                        session.egress_track_filter = spec.track_filter;
                         session.destination = Some(spec.destination);
                         session.payload_mode = spec.payload_mode;
                     }
@@ -1058,6 +1064,7 @@ impl RtpCore {
                     payload_mode: spec.payload_mode,
                     transport_mode: spec.transport_mode,
                     track_filter,
+                    egress_track_filter: spec.track_filter,
                     demuxer: SessionDemuxer::Pending,
                     last_seq: None,
                     source_addr: None,
@@ -1093,8 +1100,10 @@ impl RtpCore {
                     if session.transport_mode == RtpTransportMode::RecvOnly {
                         return;
                     }
-                    if !track_filter_allows_track(session.track_filter, send_frame.frame.media_kind)
-                    {
+                    if !track_filter_allows_track(
+                        session.egress_track_filter,
+                        send_frame.frame.media_kind,
+                    ) {
                         return;
                     }
 
