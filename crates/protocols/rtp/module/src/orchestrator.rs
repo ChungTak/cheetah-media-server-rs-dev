@@ -262,15 +262,18 @@ impl RtpSessionOrchestrator {
     ///
     /// 通过会话键停止会话。
     pub async fn stop_session_by_key(&self, session_key: &str) -> Result<()> {
-        // Remove the local session record first so the caller is not blocked
-        // waiting for a driver that may already be shut down.
         let id = RtpSessionId(session_key.to_string());
-        self.remove_session(&id);
 
-        let driver = self.driver()?;
-        driver
-            .send_command(RtpDriverCommand::StopSession(session_key.to_string()))
-            .await;
+        // Best-effort stop command: if the driver is up, send the command before
+        // removing the record. If the driver is not running (shutdown, not yet
+        // started, or restart), there is no active session to stop, so we still
+        // remove the local record to keep the directory consistent.
+        if let Ok(driver) = self.driver() {
+            driver
+                .send_command(RtpDriverCommand::StopSession(session_key.to_string()))
+                .await;
+        }
+        self.remove_session(&id);
         Ok(())
     }
 
