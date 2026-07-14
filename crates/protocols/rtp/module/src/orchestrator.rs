@@ -301,7 +301,7 @@ impl RtpSessionOrchestrator {
         let session_key = Self::session_key_from_media_key(&request.media_key, "recv");
         let payload_mode = Self::parse_payload_mode(&request.codec_hint, request.payload_type);
         let connection_type = Self::receiver_connection_type(request.tcp_mode);
-        let bind_addr = self.receiver_bind_addr(request.ip.as_deref(), request.port);
+        let bind_addr = self.receiver_bind_addr(request.ip.as_deref(), request.port)?;
         self.create_server_session(
             session_key,
             request.media_key,
@@ -325,14 +325,24 @@ impl RtpSessionOrchestrator {
     ///
     /// 从可选的显式 ip/port 解析接收端绑定地址；port 为 None 或 0 时让驱动在默认接口上
     /// 分配临时端口。
-    fn receiver_bind_addr(&self, ip: Option<&str>, port: Option<u16>) -> Option<SocketAddr> {
-        let parsed_ip = ip.and_then(|s| s.parse::<IpAddr>().ok());
+    fn receiver_bind_addr(
+        &self,
+        ip: Option<&str>,
+        port: Option<u16>,
+    ) -> Result<Option<SocketAddr>> {
+        let parsed_ip =
+            match ip {
+                Some(s) => Some(s.parse::<IpAddr>().map_err(|e| {
+                    MediaError::invalid_argument(format!("invalid rtp bind ip: {e}"))
+                })?),
+                None => None,
+            };
         match (parsed_ip, port) {
-            (None, None) | (None, Some(0)) => None,
+            (None, None) | (None, Some(0)) => Ok(None),
             _ => {
                 let ip = parsed_ip.unwrap_or(self.default_bind_addr.ip());
                 let port = port.unwrap_or(0);
-                Some(SocketAddr::new(ip, port))
+                Ok(Some(SocketAddr::new(ip, port)))
             }
         }
     }
