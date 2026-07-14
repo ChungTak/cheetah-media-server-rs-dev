@@ -61,6 +61,7 @@ members = [
   "crates/system/cheetah-engine",
   "crates/system/cheetah-media-module",
   "crates/system/cheetah-record-module",
+  "crates/system/cheetah-snapshot-module",
 ]
 
 [workspace.package]
@@ -95,6 +96,7 @@ smallvec = "1"
 shiguredo_srt = "=2026.1.0-canary.1"
 str0m = { version = "0.19.0", default-features = false, features = ["rust-crypto"] }
 syn = { version = "2", features = ["full"] }
+tempfile = "3"
 thiserror = "2"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-pemfile = "2"

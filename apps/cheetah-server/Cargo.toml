@@ -15,6 +15,7 @@ fmp4 = ["dep:cheetah-fmp4-module"]
 rtp = ["dep:cheetah-rtp-module"]
 mp4 = ["dep:cheetah-mp4-module"]
 record = ["dep:cheetah-record-module"]
+snapshot = ["dep:cheetah-snapshot-module"]
 webrtc = ["dep:cheetah-webrtc-module"]
 srt = ["dep:cheetah-srt-module"]
 # GB28181 needs the RTP module at runtime for media delivery (matches the manifest declared
@@ -38,6 +39,7 @@ cheetah-ts-module = { path = "../../crates/protocols/ts/module", optional = true
 cheetah-rtp-module = { path = "../../crates/protocols/rtp/module", optional = true }
 cheetah-mp4-module = { path = "../../crates/protocols/mp4/module", optional = true }
 cheetah-record-module = { path = "../../crates/system/cheetah-record-module", optional = true }
+cheetah-snapshot-module = { path = "../../crates/system/cheetah-snapshot-module", optional = true }
 cheetah-webrtc-module = { path = "../../crates/protocols/webrtc/module", optional = true }
 cheetah-srt-module = { path = "../../crates/protocols/srt/module", optional = true }
 cheetah-runtime-tokio = { path = "../../crates/runtime/cheetah-runtime-tokio" }

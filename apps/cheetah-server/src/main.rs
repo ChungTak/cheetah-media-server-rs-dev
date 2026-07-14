@@ -40,6 +40,8 @@ use cheetah_media_module::{NativeMediaModuleFactory, ZlmMediaModuleFactory};
 use cheetah_mp4_module::Mp4ModuleFactory;
 #[cfg(feature = "record")]
 use cheetah_record_module::RecordModuleFactory;
+#[cfg(feature = "snapshot")]
+use cheetah_snapshot_module::SnapshotModuleFactory;
 #[cfg(feature = "rtmp")]
 use cheetah_rtmp_module::RtmpModuleFactory;
 #[cfg(feature = "rtp")]
@@ -178,6 +180,11 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "record")]
     {
         builder = builder.register_module_factory(Arc::new(RecordModuleFactory));
+    }
+
+    #[cfg(feature = "snapshot")]
+    {
+        builder = builder.register_module_factory(Arc::new(SnapshotModuleFactory));
     }
 
     #[cfg(feature = "webrtc")]
