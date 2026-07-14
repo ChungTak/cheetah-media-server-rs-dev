@@ -155,20 +155,36 @@ pub trait ClusterApi: Send + Sync {
     fn list_nodes(&self) -> Vec<ClusterNode>;
 }
 
+use cheetah_media_api::model::FfmpegJobSpec;
+
+/// Final outcome of an FFmpeg job.
+///
+/// FFmpeg 任务的最终 outcome。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FfmpegJobOutcome {
+    Succeeded,
+    Failed(String),
+    Cancelled,
+    Timeout,
+}
+
 /// FFmpeg job description.
 ///
 /// FFmpeg 任务描述。
 #[derive(Debug, Clone)]
 pub struct FfmpegJob {
     pub job_id: String,
-    pub command: String,
+    pub proxy_id: String,
+    pub spec: FfmpegJobSpec,
 }
 
-/// API for submitting and cancelling FFmpeg jobs.
+/// API for submitting, cancelling, and monitoring FFmpeg jobs.
 ///
-/// 提交和取消 FFmpeg 任务的 API。
+/// 提交、取消和监控 FFmpeg 任务的 API。
+#[async_trait]
 pub trait FfmpegApi: Send + Sync {
-    fn submit_job(&self, job: FfmpegJob) -> Result<(), SdkError>;
-    fn cancel_job(&self, job_id: &str) -> Result<(), SdkError>;
+    async fn submit_job(&self, job: FfmpegJob) -> Result<(), SdkError>;
+    async fn cancel_job(&self, job_id: &str) -> Result<(), SdkError>;
+    async fn wait_job(&self, job_id: &str) -> Result<FfmpegJobOutcome, SdkError>;
     fn list_jobs(&self) -> Vec<FfmpegJob>;
 }

@@ -444,6 +444,49 @@ pub struct StoragePolicy {
     pub max_age_secs: Option<u64>,
 }
 
+/// Resource limits for an external FFmpeg process.
+///
+/// 外部 FFmpeg 进程的资源限制。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct FfmpegResourceLimits {
+    pub max_memory_bytes: Option<u64>,
+    pub max_cpu_percent: Option<u32>,
+}
+
+/// Typed FFmpeg job specification.
+///
+/// All fields are explicit, enumerable values; arbitrary shell strings or
+/// extra arguments are not allowed. The binary path is controlled by the
+/// deployment, not the request.
+///
+/// 类型化的 FFmpeg 任务规格。所有字段都是显式可枚举值，不允许任意 shell 字符串
+/// 或额外参数；二进制路径由部署配置控制。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FfmpegJobSpec {
+    pub source_url: String,
+    pub destination: MediaKey,
+    #[serde(default)]
+    pub transcode_policy: TranscodePolicy,
+    #[serde(default)]
+    pub output_policy: OutputPolicy,
+    #[serde(default = "default_ffmpeg_timeout_ms")]
+    pub timeout_ms: u64,
+    #[serde(default)]
+    pub resource_limits: FfmpegResourceLimits,
+    #[serde(default)]
+    pub enable_audio: bool,
+    #[serde(default = "default_true")]
+    pub enable_video: bool,
+}
+
+fn default_ffmpeg_timeout_ms() -> u64 {
+    60_000
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// Record template.
 ///
 /// 录制模板。

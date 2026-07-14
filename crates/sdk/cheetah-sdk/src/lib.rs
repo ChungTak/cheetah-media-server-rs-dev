@@ -66,9 +66,9 @@ pub use module::{
     ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState, ProviderRegistration,
 };
 pub use service::{
-    ClusterApi, ClusterNode, DatabaseApi, FfmpegApi, FfmpegJob, HealthApi, MetricsApi,
-    ModuleConfigApplyReport, ModuleManagerApi, ProxyManager, ProxyRoute, RoomParticipant,
-    RoomServiceApi, RoomSnapshot, ServiceDescriptor, ServiceRegistry,
+    ClusterApi, ClusterNode, DatabaseApi, FfmpegApi, FfmpegJob, FfmpegJobOutcome, FfmpegJobSpec,
+    HealthApi, MetricsApi, ModuleConfigApplyReport, ModuleManagerApi, ProxyManager, ProxyRoute,
+    RoomParticipant, RoomServiceApi, RoomSnapshot, ServiceDescriptor, ServiceRegistry,
 };
 pub use stream::{
     BackpressurePolicy, BootstrapMode, BootstrapPolicy, CoreAdaptersApi, DispatchResult,
