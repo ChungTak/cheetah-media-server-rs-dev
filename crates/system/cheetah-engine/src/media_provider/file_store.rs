@@ -22,6 +22,12 @@ use cheetah_media_api::media_file_store::{
 use cheetah_media_api::port::MediaRequestContext;
 use parking_lot::RwLock;
 
+/// Maximum number of bytes a single `resolve_download` call will read into
+/// memory. Requests for larger ranges must be split by the caller.
+///
+/// 单次 resolve_download 调用最多读取的字节数。
+const MAX_DOWNLOAD_RANGE_BYTES: usize = 8 * 1024 * 1024;
+
 /// Default engine file store.
 ///
 /// 默认引擎文件存储。
@@ -45,18 +51,19 @@ impl EngineMediaFileStore {
     }
 
     fn is_authorized(&self, ctx: &MediaRequestContext, entry: &FileStoreEntry) -> bool {
+        // Files with no owner and no allowed list are public.
+        if entry.owner_principal.is_none() && entry.allowed_principals.is_empty() {
+            return true;
+        }
         match &ctx.principal {
-            None => entry.owner_principal.is_none() && entry.allowed_principals.is_empty(),
+            None => false,
             Some(principal) => {
                 if let Some(owner) = &entry.owner_principal {
                     if owner == principal {
                         return true;
                     }
                 }
-                if entry.allowed_principals.iter().any(|p| p == principal) {
-                    return true;
-                }
-                false
+                entry.allowed_principals.iter().any(|p| p == principal)
             }
         }
     }
@@ -121,6 +128,11 @@ impl EngineMediaFileStore {
         file.seek(SeekFrom::Start(start))
             .map_err(|e| MediaError::storage_failed(format!("failed to seek file: {e}")))?;
         let size = (end.saturating_sub(start).saturating_add(1)) as usize;
+        if size > MAX_DOWNLOAD_RANGE_BYTES {
+            return Err(MediaError::invalid_argument(
+                "requested download range exceeds maximum allowed size",
+            ));
+        }
         let mut buf = vec![0u8; size];
         file.read_exact(&mut buf)
             .map_err(|e| MediaError::storage_failed(format!("failed to read file: {e}")))?;
@@ -422,6 +434,51 @@ mod tests {
             .unwrap();
         assert_eq!(dl.body, bytes::Bytes::new());
         assert_eq!(dl.total_size, 0);
+    }
+
+    #[test]
+    fn authenticated_user_can_access_public_file() {
+        let path = write_temp_file(b"public");
+        let store = EngineMediaFileStore::new();
+        let ctx = MediaRequestContext {
+            principal: Some("alice".to_string()),
+            ..Default::default()
+        };
+        let handle = store.register_file(&ctx, make_entry(&path)).unwrap();
+        let dl = store
+            .resolve_download(&ctx, &handle, None, None, 2000)
+            .unwrap();
+        assert_eq!(dl.body, bytes::Bytes::from_static(b"public"));
+    }
+
+    #[test]
+    fn download_range_capped_to_max_size() {
+        let oversized = vec![0u8; MAX_DOWNLOAD_RANGE_BYTES + 1];
+        let path = write_temp_file(&oversized);
+        let store = EngineMediaFileStore::new();
+        let ctx = MediaRequestContext::default();
+        let handle = store.register_file(&ctx, make_entry(&path)).unwrap();
+
+        // Full download of a file larger than the cap is rejected.
+        let err = store
+            .resolve_download(&ctx, &handle, None, None, 2000)
+            .unwrap_err();
+        assert_eq!(
+            err.code,
+            cheetah_media_api::error::MediaErrorCode::InvalidArgument
+        );
+
+        // A range at the cap is accepted.
+        let dl = store
+            .resolve_download(
+                &ctx,
+                &handle,
+                Some(FileRange::bounded(0, MAX_DOWNLOAD_RANGE_BYTES as u64 - 1)),
+                None,
+                2000,
+            )
+            .unwrap();
+        assert_eq!(dl.body.len(), MAX_DOWNLOAD_RANGE_BYTES);
     }
 
     #[test]
