@@ -157,14 +157,14 @@ async fn write_and_register(
     payload: Bytes,
 ) -> Result<SnapshotOutcome, MediaError> {
     let mut dir = PathBuf::from(&config.root_path);
-    dir.push(&media_key.vhost.0);
-    dir.push(&media_key.app.0);
-    dir.push(&media_key.stream.0);
+    dir.push(sanitize_segment(&media_key.vhost.0));
+    dir.push(sanitize_segment(&media_key.app.0));
+    dir.push(sanitize_segment(&media_key.stream.0));
     fs::create_dir_all(&dir)
         .await
         .map_err(|e| MediaError::storage_failed(format!("failed to create snapshot dir: {e}")))?;
 
-    let filename = format!("{}-{}-{created_at}.{format}", snapshot_id.0, format);
+    let filename = format!("{}-{created_at}.{format}", snapshot_id.0);
     let mut temp_path = dir.clone();
     temp_path.push(format!(".tmp-{filename}"));
     let mut final_path = dir.clone();
@@ -249,6 +249,18 @@ fn is_format_supported(format: &str) -> bool {
     matches!(format, "jpg" | "jpeg")
 }
 
+/// Replace path separators and dots with underscores so a user-controlled
+/// string cannot traverse out of the configured root directory.
+fn sanitize_segment(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | '.' => '_',
+            _ => c,
+        })
+        .collect()
+}
+
 fn content_type_for_format(format: &str) -> String {
     match format {
         "jpg" | "jpeg" => "image/jpeg".to_string(),
@@ -283,6 +295,14 @@ mod tests {
     #[test]
     fn unknown_content_type_is_octet_stream() {
         assert_eq!(content_type_for_format("png"), "application/octet-stream");
+    }
+
+    #[test]
+    fn sanitize_segment_replaces_separators_and_dots() {
+        assert_eq!(sanitize_segment("a/b"), "a_b");
+        assert_eq!(sanitize_segment(r"a\b"), "a_b");
+        assert_eq!(sanitize_segment(".."), "__");
+        assert_eq!(sanitize_segment("a.b"), "a_b");
     }
 }
 

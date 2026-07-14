@@ -76,6 +76,7 @@ impl SnapshotRegistry {
 mod tests {
     use super::*;
     use cheetah_media_api::ids::FileHandle;
+    use cheetah_media_api::model::SnapshotState;
 
     fn sample_info(id: &str, key: &str, state: SnapshotState) -> SnapshotInfo {
         let media_key = MediaKey::with_default_vhost("live", key, None).unwrap();
