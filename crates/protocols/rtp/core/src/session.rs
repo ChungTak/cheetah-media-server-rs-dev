@@ -1021,7 +1021,20 @@ impl RtpCore {
                 }));
             }
             RtpCoreCommand::CreateClient(spec) => {
-                if self.sessions.contains_key(&spec.session_key) {
+                if let Some(session) = self.sessions.get_mut(&spec.session_key) {
+                    // Active TCP connect for an existing server/receiver session: attach the new
+                    // TCP connection id and destination so ingress can flow on it.
+                    if let Some(conn_id) = spec.tcp_conn_id {
+                        if let Some(old) = session.tcp_conn_id {
+                            self.tcp_conn_to_session.remove(&old);
+                        }
+                        session.tcp_conn_id = Some(conn_id);
+                        self.tcp_conn_to_session
+                            .insert(conn_id, spec.session_key.clone());
+                    }
+                    if session.destination.is_none() {
+                        session.destination = Some(spec.destination);
+                    }
                     return;
                 }
                 let track_filter = spec.track_filter;
