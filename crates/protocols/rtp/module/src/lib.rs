@@ -11,7 +11,9 @@ pub mod config;
 /// RTP 模块生命周期、HTTP 控制 API、入站/出站与拉流任务。
 pub mod media_provider;
 pub mod module;
+pub mod orchestrator;
 
 pub use config::RtpModuleConfig;
 pub use media_provider::RtpMediaProvider;
 pub use module::RtpModuleFactory;
+pub use orchestrator::RtpSessionOrchestrator;
