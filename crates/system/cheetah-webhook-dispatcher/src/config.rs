@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::time::Duration;
 
 /// Failure policy for synchronous decision hooks when the target does not
@@ -24,7 +25,7 @@ pub struct WebhookDispatcherConfig {
 /// A single webhook target.
 ///
 /// 单个 webhook 目标。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WebhookProfile {
     /// Logical name for logs; never sent.
     pub name: String,
@@ -86,6 +87,27 @@ impl WebhookProfile {
 
     pub fn decision_timeout(&self) -> Duration {
         Duration::from_millis(self.decision_timeout_ms)
+    }
+}
+
+impl fmt::Debug for WebhookProfile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebhookProfile")
+            .field("name", &self.name)
+            .field("url", &self.url)
+            .field("events", &self.events)
+            .field("secret", &self.secret.as_deref().map(|_| "***"))
+            .field("timeout_ms", &self.timeout_ms)
+            .field("max_body_bytes", &self.max_body_bytes)
+            .field("max_retries", &self.max_retries)
+            .field("retry_interval_ms", &self.retry_interval_ms)
+            .field("circuit_failure_threshold", &self.circuit_failure_threshold)
+            .field("circuit_open_ms", &self.circuit_open_ms)
+            .field("allowed_cidrs", &self.allowed_cidrs)
+            .field("decision_events", &self.decision_events)
+            .field("decision_timeout_ms", &self.decision_timeout_ms)
+            .field("decision_failure_policy", &self.decision_failure_policy)
+            .finish()
     }
 }
 
