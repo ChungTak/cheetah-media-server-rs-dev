@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::command::*;
 use crate::error::Result;
-use crate::event::MediaEventSender;
+use crate::event::{MediaEventSender, MediaEventSubscription};
 use crate::ids::*;
 use crate::model::*;
 
@@ -261,6 +261,10 @@ pub trait MediaFacade:
 
     /// Subscribe to internal media events.
     ///
-    /// 订阅内部媒体事件。
-    fn subscribe_events(&self, sender: Box<dyn MediaEventSender>) -> Result<()>;
+    /// Returns a subscription handle; dropping it cancels the subscription.
+    /// 订阅内部媒体事件，返回可取消的订阅句柄。
+    fn subscribe_events(
+        &self,
+        sender: Box<dyn MediaEventSender>,
+    ) -> Result<Box<dyn MediaEventSubscription>>;
 }

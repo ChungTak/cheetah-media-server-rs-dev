@@ -201,6 +201,85 @@ pub trait MediaEventSubscriber: Send + Sync {
     fn on_lagged(&self, dropped: u64) -> crate::error::Result<()>;
 }
 
+/// A subscription to the media event bus.
+///
+/// Dropping the handle automatically unsubscribes; `unsubscribe` allows
+/// explicit cancellation before the handle goes out of scope.
+///
+/// 媒体事件总线的订阅句柄。
+/// 句柄 Drop 时自动取消订阅；`unsubscribe` 允许在作用域结束前显式取消。
+pub trait MediaEventSubscription: Send + Sync {
+    fn id(&self) -> String;
+    fn unsubscribe(&self) -> crate::error::Result<()>;
+}
+
+/// Bounded, typed media event bus.
+///
+/// - Each subscriber has its own bounded queue.
+/// - Slow subscribers receive `lagged` callbacks and a cumulative dropped count.
+/// - Sequence numbers are maintained per resource (`media_key` or `source`).
+///
+/// 有界、类型化的媒体事件总线。
+/// - 每个订阅者拥有独立的有界队列。
+/// - 慢速订阅者会收到 `lagged` 回调与累计丢包计数。
+/// - sequence 按资源（`media_key` 或 `source`）维护。
+pub trait MediaEventBusApi: Send + Sync {
+    fn publish(&self, event: MediaEvent) -> crate::error::Result<()>;
+    fn subscribe(
+        &self,
+        sender: Box<dyn MediaEventSender>,
+        capacity: usize,
+    ) -> crate::error::Result<Box<dyn MediaEventSubscription>>;
+    fn unsubscribe(&self, id: &str) -> crate::error::Result<()>;
+}
+
+impl MediaEvent {
+    /// Mutable access to the shared event header.
+    ///
+    /// 获取共享事件头部的可变引用。
+    pub fn header_mut(&mut self) -> &mut EventHeader {
+        match self {
+            MediaEvent::StreamPublished(e) => &mut e.header,
+            MediaEvent::StreamUnpublished(e) => &mut e.header,
+            MediaEvent::StreamOnlineChanged(e) => &mut e.header,
+            MediaEvent::SessionOpened(e) => &mut e.header,
+            MediaEvent::SessionClosed(e) => &mut e.header,
+            MediaEvent::RecordStarted(e) => &mut e.header,
+            MediaEvent::RecordProgress(e) => &mut e.header,
+            MediaEvent::RecordCompleted(e) => &mut e.header,
+            MediaEvent::SnapshotCompleted(e) => &mut e.header,
+            MediaEvent::RtpSessionTimeout(e) => &mut e.header,
+            MediaEvent::ProxyStateChanged(e) => &mut e.header,
+            MediaEvent::ServerLifecycle(e) => &mut e.header,
+        }
+    }
+
+    /// Return a key used for per-resource sequence numbering.
+    ///
+    /// 返回用于按资源维护 sequence 的键。
+    pub fn resource_key(&self) -> String {
+        let header = match self {
+            MediaEvent::StreamPublished(e) => &e.header,
+            MediaEvent::StreamUnpublished(e) => &e.header,
+            MediaEvent::StreamOnlineChanged(e) => &e.header,
+            MediaEvent::SessionOpened(e) => &e.header,
+            MediaEvent::SessionClosed(e) => &e.header,
+            MediaEvent::RecordStarted(e) => &e.header,
+            MediaEvent::RecordProgress(e) => &e.header,
+            MediaEvent::RecordCompleted(e) => &e.header,
+            MediaEvent::SnapshotCompleted(e) => &e.header,
+            MediaEvent::RtpSessionTimeout(e) => &e.header,
+            MediaEvent::ProxyStateChanged(e) => &e.header,
+            MediaEvent::ServerLifecycle(e) => &e.header,
+        };
+        header
+            .media_key
+            .as_ref()
+            .map(|k| format!("mk:{}", k.to_canonical()))
+            .unwrap_or_else(|| format!("src:{}", header.source))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
