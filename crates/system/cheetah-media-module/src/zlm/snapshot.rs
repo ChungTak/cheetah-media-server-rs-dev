@@ -3,15 +3,19 @@
 //! ZLMediaKit 兼容的截图端点处理函数。
 
 use cheetah_media_api::command::{DeleteSnapshotRequest, SnapshotRequest};
+use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::{HttpRequest, HttpResponse};
 
 use super::{zlm_response, ZlmMediaHttpService};
 use crate::error::AdapterError;
 
 impl ZlmMediaHttpService {
-    pub(crate) async fn get_snap(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+    pub(crate) async fn get_snap(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let snapshot_api = self.snapshot()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let timeout_ms = parse_zlm_timeout_ms(&params);
@@ -27,16 +31,16 @@ impl ZlmMediaHttpService {
             storage_policy: Default::default(),
             capture_policy: Default::default(),
         };
-        let handle = snapshot_api.take_snapshot(&ctx, request).await?;
+        let handle = snapshot_api.take_snapshot(ctx, request).await?;
         Ok(zlm_response(0, "success", handle))
     }
 
     pub(crate) async fn delete_snap_directory(
         &self,
+        ctx: &MediaRequestContext,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let snapshot_api = self.snapshot()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let request = DeleteSnapshotRequest {
@@ -44,9 +48,7 @@ impl ZlmMediaHttpService {
             directory: params["directory"].as_str().map(String::from),
             retain_count: params["retain_count"].as_u64().map(|v| v as u32),
         };
-        snapshot_api
-            .delete_snapshot_directory(&ctx, request)
-            .await?;
+        snapshot_api.delete_snapshot_directory(ctx, request).await?;
         Ok(zlm_response(
             0,
             "success",

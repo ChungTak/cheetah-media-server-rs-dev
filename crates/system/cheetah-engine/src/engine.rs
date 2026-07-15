@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use cheetah_media_api::audit::AuditApi;
 use cheetah_media_api::event::{
     EventHeader, MediaEvent, MediaEventBusApi, ServerLifecycle, ServerLifecycleKind,
 };
@@ -181,6 +182,7 @@ impl EngineBuilder {
         let control_auth: Arc<dyn cheetah_media_api::port::ControlAuthApi> = Arc::new(
             crate::control_auth::ConfigControlAuth::new(self.config_provider.clone()),
         );
+        let audit_api: Arc<dyn AuditApi> = Arc::new(crate::audit::TracingAuditApi::new());
         let media_event_bus = Arc::new(crate::media_provider::LocalMediaEventBus::new(
             self.runtime_api.clone(),
         ));
@@ -215,6 +217,7 @@ impl EngineBuilder {
             media_file_store,
             media_event_bus,
             control_auth,
+            audit_api,
             root_cancel: RwLock::new(CancellationToken::new()),
         })
     }
@@ -254,6 +257,7 @@ pub struct Engine {
     media_file_store: Arc<dyn MediaFileStoreApi>,
     media_event_bus: Arc<crate::media_provider::LocalMediaEventBus>,
     control_auth: Arc<dyn cheetah_media_api::port::ControlAuthApi>,
+    audit_api: Arc<dyn cheetah_media_api::audit::AuditApi>,
     root_cancel: RwLock<CancellationToken>,
 }
 
@@ -288,6 +292,7 @@ impl Engine {
             media_file_store: self.media_file_store.clone(),
             media_event_bus: self.media_event_bus.clone(),
             control_auth_api: self.control_auth.clone(),
+            audit_api: self.audit_api.clone(),
         }
     }
 
