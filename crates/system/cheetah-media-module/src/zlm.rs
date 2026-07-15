@@ -312,8 +312,13 @@ impl ZlmMediaHttpService {
                         "zlm secret not configured",
                     ))
                 })?;
-                let provided = query_param(req, "secret");
-                if provided.as_deref() != Some(expected) {
+                use subtle::ConstantTimeEq;
+                let provided = query_param(req, "secret").unwrap_or_default();
+                let provided_bytes = provided.as_bytes();
+                let expected_bytes = expected.as_bytes();
+                let valid = provided_bytes.len() == expected_bytes.len()
+                    && bool::from(provided_bytes.ct_eq(expected_bytes));
+                if !valid {
                     return Err(AdapterError::Media(MediaError::new(
                         MediaErrorCode::Unauthenticated,
                         "invalid zlm secret",

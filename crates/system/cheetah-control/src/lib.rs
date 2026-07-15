@@ -245,10 +245,12 @@ fn sanitize_config(value: &serde_json::Value) -> serde_json::Value {
                         | "api_secret"
                 ) || k.ends_with("_token")
                     || k.ends_with("_secret");
-                if redacted && v.is_object() {
-                    out.insert(k.clone(), serde_json::Value::Object(serde_json::Map::new()));
-                } else if redacted && (v.is_string() || v.is_number() || v.is_array()) {
-                    out.insert(k.clone(), serde_json::Value::String("***".to_string()));
+                if redacted {
+                    if v.is_object() {
+                        out.insert(k.clone(), serde_json::Value::Object(serde_json::Map::new()));
+                    } else {
+                        out.insert(k.clone(), serde_json::Value::String("***".to_string()));
+                    }
                 } else {
                     out.insert(k.clone(), sanitize_config(v));
                 }
@@ -744,7 +746,7 @@ mod tests {
 
     use super::{
         patch_global_config, path_template_match, relative_path, root_route_match, route_match,
-        ControlState, PatchRequest,
+        sanitize_config, ControlState, PatchRequest,
     };
 
     struct DummyHttpService;
@@ -1215,5 +1217,26 @@ mod tests {
             *config.rollback_called.lock().expect("rollback lock"),
             "rollback must be called when module apply fails"
         );
+    }
+
+    #[test]
+    fn sanitize_config_redacts_booleans_and_nulls() {
+        let input = json!({
+            "secret": true,
+            "api_key": null,
+            "nested": {
+                "deployment_tokens": false,
+                "plain": "visible"
+            },
+            "tokens": [1, 2, 3],
+            "normal": 42
+        });
+        let out = sanitize_config(&input);
+        assert_eq!(out["secret"], "***");
+        assert_eq!(out["api_key"], "***");
+        assert_eq!(out["nested"]["deployment_tokens"], "***");
+        assert_eq!(out["nested"]["plain"], "visible");
+        assert_eq!(out["tokens"], "***");
+        assert_eq!(out["normal"], 42);
     }
 }

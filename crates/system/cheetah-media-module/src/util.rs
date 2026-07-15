@@ -143,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn request_deadline_caps_client_value() {
+    fn request_deadline_caps_client_value_and_returns_none_by_default() {
         let before = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -151,12 +151,7 @@ mod tests {
         let far_future = before + 600_000; // 10 minutes
         let d = request_deadline(Some(far_future), 30_000).unwrap();
         assert!(d <= before + 30_000 && d >= before);
-        let d2 = request_deadline(None, 30_000).unwrap();
-        let after = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
-        assert!(d2 <= after + 30_000 && d2 >= before);
+        assert_eq!(request_deadline(None, 30_000), None);
     }
 
     #[test]
@@ -210,20 +205,16 @@ pub fn generate_request_id() -> String {
 ///
 /// 根据可选的客户端 deadline 头计算请求 deadline。
 ///
-/// The client value is clamped to `now + default_timeout_ms` so callers cannot
-/// request unbounded server-side wait times. When no header is present the
-/// route-default deadline is returned.
+/// When a client deadline is provided it is clamped to `now + default_timeout_ms`
+/// so callers cannot request unbounded server-side wait times. When no header is
+/// present `None` is returned and the route-level timeout is used instead.
 pub fn request_deadline(client_deadline_ms: Option<i64>, default_timeout_ms: i64) -> Option<i64> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64;
     let max_deadline = now + default_timeout_ms;
-    Some(
-        client_deadline_ms
-            .map(|d| d.min(max_deadline))
-            .unwrap_or(max_deadline),
-    )
+    client_deadline_ms.map(|d| d.min(max_deadline))
 }
 
 /// Set or overwrite the `x-request-id` header on an incoming request.
