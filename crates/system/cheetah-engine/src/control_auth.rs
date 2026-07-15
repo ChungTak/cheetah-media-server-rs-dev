@@ -131,10 +131,7 @@ impl ControlAuthApi for ConfigControlAuth {
 
         // Anonymous callers get read-only access by default. High-risk operations
         // require an explicit scope from a token or deployment credential.
-        Ok(Principal {
-            identity: "anonymous".to_string(),
-            scopes: vec![MediaScope::MediaRead],
-        })
+        Ok(Principal::anonymous())
     }
 }
 

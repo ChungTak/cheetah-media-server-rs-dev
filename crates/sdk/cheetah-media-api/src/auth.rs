@@ -79,7 +79,7 @@ impl Principal {
     pub fn anonymous() -> Self {
         Self {
             identity: "anonymous".to_string(),
-            scopes: Vec::new(),
+            scopes: vec![MediaScope::MediaRead],
         }
     }
 
