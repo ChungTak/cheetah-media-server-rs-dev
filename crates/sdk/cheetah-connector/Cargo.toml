@@ -6,7 +6,7 @@ license.workspace = true
 description = "High-level protocol connector facade for external Cheetah integrators"
 
 [features]
-default = []
+default = ["full"]
 # Protocol gating
 rtsp = ["dep:cheetah-rtsp-module", "dep:cheetah-rtsp-driver-tokio"]
 http-flv = ["dep:cheetah-http-flv-module"]
