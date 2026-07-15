@@ -498,6 +498,9 @@ pub trait Runtime: Send + Sync + 'static {
 ///
 /// 提供与 `Runtime` 相同的能力，但通过 trait 对象暴露，因此可以注入具体运行时
 /// 而无需全系统单态化。
+pub type ConnectTlsFuture<'a> =
+    Pin<Box<dyn Future<Output = io::Result<Box<dyn AsyncTcpStream>>> + Send + 'a>>;
+
 pub trait RuntimeApi: Send + Sync + 'static {
     fn now(&self) -> MonoTime;
     fn spawn(&self, fut: Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
@@ -508,6 +511,7 @@ pub trait RuntimeApi: Send + Sync + 'static {
     ) -> Result<Box<dyn JoinHandle>, SpawnError>;
     fn bind_udp(&self, addr: SocketAddr) -> io::Result<Box<dyn AsyncUdpSocket>>;
     fn connect_tcp(&self, addr: SocketAddr) -> io::Result<Box<dyn AsyncTcpStream>>;
+    fn connect_tls<'a>(&'a self, addr: SocketAddr, server_name: &str) -> ConnectTlsFuture<'a>;
     fn bind_tcp(&self, addr: SocketAddr) -> io::Result<Box<dyn AsyncTcpListener>>;
     fn wrap_udp_socket(&self, socket: StdUdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>>;
     fn wrap_tcp_listener(&self, listener: StdTcpListener) -> io::Result<Box<dyn AsyncTcpListener>>;

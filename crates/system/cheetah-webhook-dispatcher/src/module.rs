@@ -1,6 +1,7 @@
 use cheetah_sdk::{
     ConfigEffect, EngineContext, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
-    ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState, SdkError,
+    ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState, ProviderRegistration,
+    SdkError,
 };
 use std::sync::Arc;
 
@@ -44,6 +45,7 @@ pub struct WebhookModule {
     ctx: Option<EngineContext>,
     dispatcher: Option<WebhookDispatcher>,
     decision_client: Option<WebhookDecisionClient>,
+    media_services_registration: Option<ProviderRegistration>,
     handle: Option<crate::dispatcher::WebhookDispatcherHandle>,
 }
 
@@ -54,6 +56,7 @@ impl WebhookModule {
             ctx: None,
             dispatcher: None,
             decision_client: None,
+            media_services_registration: None,
             handle: None,
         }
     }
@@ -114,9 +117,11 @@ impl Module for WebhookModule {
                 .map_err(|e| SdkError::InvalidArgument(e.to_string()))?
         };
         let decision_client = Self::build_decision_client(config.clone(), &ctx.engine);
-        ctx.engine
-            .media_services
-            .register_webhook(Arc::new(decision_client.clone()));
+        self.media_services_registration = Some(
+            ctx.engine
+                .media_services
+                .register_webhook(Arc::new(decision_client.clone())),
+        );
         self.dispatcher = Some(Self::build_dispatcher(config, &ctx.engine));
         self.decision_client = Some(decision_client);
         self.ctx = Some(ctx.engine);
@@ -143,6 +148,11 @@ impl Module for WebhookModule {
     async fn stop(&mut self) -> Result<(), SdkError> {
         if let Some(handle) = self.handle.take() {
             handle.stop();
+        }
+        if let Some(reg) = self.media_services_registration.take() {
+            if let Some(ctx) = self.ctx.as_ref() {
+                ctx.media_services.unregister(&reg);
+            }
         }
         self.state = ModuleState::Stopped;
         Ok(())

@@ -48,8 +48,6 @@ pub enum WebhookSendError {
     InvalidResponse,
     #[error("denied by policy: {0}")]
     Policy(String),
-    #[error("HTTPS/TLS is not yet supported")]
-    TlsNotSupported,
 }
 
 /// Runtime-backed HTTP/1.1 client.
@@ -75,10 +73,6 @@ impl WebhookSender for RuntimeHttpClient {
             }
         };
 
-        if parsed.scheme == "https" {
-            return Err(WebhookSendError::TlsNotSupported);
-        }
-
         let start = std::time::Instant::now();
         let deadline = self
             .runtime_api
@@ -86,7 +80,11 @@ impl WebhookSender for RuntimeHttpClient {
             .as_micros()
             .saturating_add(request.timeout.as_micros() as u64);
 
-        let mut stream = self.runtime_api.connect_tcp(addr)?;
+        let mut stream = if parsed.scheme == "https" {
+            self.runtime_api.connect_tls(addr, &parsed.host).await?
+        } else {
+            self.runtime_api.connect_tcp(addr)?
+        };
 
         let req = build_request(&parsed, &request.headers, &request.body);
 
