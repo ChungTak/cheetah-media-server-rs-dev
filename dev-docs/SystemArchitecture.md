@@ -935,6 +935,7 @@ pub struct EngineContext {
     pub media_file_store: std::sync::Arc<dyn MediaFileStoreApi>,
     pub media_event_bus: std::sync::Arc<dyn MediaEventBusApi>,
     pub control_auth_api: std::sync::Arc<dyn ControlAuthApi>,
+    pub audit_api: std::sync::Arc<dyn AuditApi>,
 }
 ```
 
@@ -1496,7 +1497,7 @@ cheetah 不只是一个流媒体引擎，还包括完整的交付面：
   - 包含 `runtime_api`、`publisher_api`、`subscriber_api`、`core_adapters_api`
   - 包含 `config_provider` 与 `config_apply_api`
   - 包含 `service_registry`、`database_api`、`proxy_manager`、`cluster_api`、`ffmpeg_api`
-  - 包含 `media_services`、`media_session_directory`、`media_data_plane`、`media_file_store`、`media_event_bus`、`control_auth_api`
+  - 包含 `media_services`、`media_session_directory`、`media_data_plane`、`media_file_store`、`media_event_bus`、`control_auth_api`、`audit_api`
 - `control` 必须形成闭环：
   - `PATCH /api/v1/config` 与 `PATCH /api/v1/config/modules/:module_id` 在写入配置后，触发模块配置应用
   - 对外返回模块配置应用报告（effect 列表）
