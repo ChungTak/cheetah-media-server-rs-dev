@@ -6,7 +6,7 @@ use cheetah_media_api::ids::*;
 use cheetah_media_api::model::*;
 use cheetah_sdk::MediaServices;
 
-use crate::support::{ctx, FakeMediaProvider};
+use crate::fake_support::{ctx, FakeMediaProvider};
 
 /// Simulate an ONVIF project that discovers a media resource, creates a pull proxy,
 /// takes a snapshot, starts/stops a recording, and requests a keyframe.

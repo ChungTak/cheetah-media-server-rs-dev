@@ -21,4 +21,10 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+cheetah-config = { path = "../../system/cheetah-config" }
+cheetah-engine = { path = "../../system/cheetah-engine" }
+cheetah-proxy-module = { path = "../../system/cheetah-proxy-module" }
+cheetah-record-module = { path = "../../system/cheetah-record-module" }
+cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
+cheetah-rtp-module = { path = "../../protocols/rtp/module" }
 tokio = { workspace = true }

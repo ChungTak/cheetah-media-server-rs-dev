@@ -7,7 +7,7 @@ use cheetah_media_api::model::*;
 use cheetah_media_api::MediaFacade;
 use cheetah_sdk::MediaServices;
 
-use crate::support::{ctx, FakeEventSender, FakeMediaProvider};
+use crate::fake_support::{ctx, FakeEventSender, FakeMediaProvider};
 
 /// Simulate a Matter project that queries capabilities, creates/destroys a playback
 /// subscription, takes a snapshot, starts a recording, and subscribes to events.

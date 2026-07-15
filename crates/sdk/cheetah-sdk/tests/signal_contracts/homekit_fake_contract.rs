@@ -6,7 +6,7 @@ use cheetah_media_api::ids::*;
 use cheetah_media_api::model::*;
 use cheetah_sdk::MediaServices;
 
-use crate::support::{ctx, FakeMediaProvider};
+use crate::fake_support::{ctx, FakeMediaProvider};
 
 /// Simulate an Apple HomeKit project that opens a subscriber with a specific output
 /// schema, requests a keyframe, and closes the subscriber when the HAP session ends.
@@ -82,7 +82,7 @@ async fn homekit_can_subscribe_and_close_multiple_times() {
         let ctx = ctx();
         let key = MediaKey::with_default_vhost(
             "homekit",
-            &format!("accessory_{i}"),
+            format!("accessory_{i}"),
             Some(MediaSchema::Webrtc),
         )
         .expect("valid HomeKit key");

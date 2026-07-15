@@ -6,7 +6,7 @@ use cheetah_media_api::ids::*;
 use cheetah_media_api::model::*;
 use cheetah_sdk::MediaServices;
 
-use crate::support::{ctx, FakeMediaProvider};
+use crate::fake_support::{ctx, FakeMediaProvider};
 
 /// Simulate a GB28181 project that opens an RTP receiver, queries media status,
 /// stops the session, and uses RTP talk for two-way audio.

@@ -1,17 +1,26 @@
 //! External signal integration contract tests.
 //!
-//! These tests use independent test doubles to simulate the media calls made by
-//! external signaling projects (GB28181, ONVIF, Apple HomeKit, Matter). They do
-//! not implement any signaling protocol; they only verify that the SDK media
-//! ports expose the flows required by those projects.
+//! These tests verify the SDK media ports required by external signaling
+//! projects (GB28181, ONVIF, Apple HomeKit, Matter). The `fake_*` tests use
+//! in-memory doubles to validate parameter/contract paths. The `production_*`
+//! tests start a real `Engine` with `RtpModule`, `RecordModule`, `ProxyModule`,
+//! and a test fixture module to exercise real providers.
 //!
 //! 外部信令集成契约测试。
 //!
-//! 这些测试使用独立测试 double 模拟外部信令项目（GB28181、ONVIF、Apple HomeKit、Matter）
-//! 的媒体调用。它们不实现任何信令协议，只验证 SDK 媒体端口是否能暴露这些项目所需的流程。
+//! `fake_*` 测试使用内存 double 验证参数/契约路径。
+//! `production_*` 测试启动真实 Engine 与 RtpModule、RecordModule、ProxyModule
+//! 以及测试 fixture module，以验证真实 provider。
 
-mod gb28181;
-mod homekit;
-mod matter;
-mod onvif;
-mod support;
+mod common_production_contract;
+mod fake_support;
+mod production_support;
+
+mod gb28181_fake_contract;
+mod gb28181_production_contract;
+mod homekit_fake_contract;
+mod homekit_production_contract;
+mod matter_fake_contract;
+mod matter_production_contract;
+mod onvif_fake_contract;
+mod onvif_production_contract;
