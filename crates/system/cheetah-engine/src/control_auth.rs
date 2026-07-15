@@ -141,11 +141,13 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 impl ControlAuthApi for ConfigControlAuth {
     fn authenticate(&self, credentials: &AuthCredentials) -> Result<Principal> {
         // Bearer token from the Authorization header takes precedence.
-        if let Some(token) = credentials
-            .authorization_header
-            .as_deref()
-            .and_then(|h| self.bearer_token(Some(h)))
-        {
+        if let Some(header) = credentials.authorization_header.as_deref() {
+            let Some(token) = self.bearer_token(Some(header)) else {
+                return Err(MediaError::new(
+                    MediaErrorCode::Unauthenticated,
+                    "unsupported authorization scheme",
+                ));
+            };
             let list = self.token_list();
             if let Some((identity, scopes)) = self.find_credential(&list, &token) {
                 return Ok(Principal { identity, scopes });
