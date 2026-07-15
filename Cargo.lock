@@ -780,6 +780,7 @@ dependencies = [
  "cheetah-engine",
  "cheetah-media-api",
  "cheetah-proxy-module",
+ "cheetah-record-module",
  "cheetah-rtp-module",
  "cheetah-runtime-tokio",
  "cheetah-sdk",
