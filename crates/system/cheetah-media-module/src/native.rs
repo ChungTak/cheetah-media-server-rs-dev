@@ -7,8 +7,8 @@ use cheetah_media_api::audit::{AuditApi, AuditEvent, AuditResult};
 use cheetah_media_api::command::{
     DeleteRecordRequest, DeleteSnapshotRequest, FfmpegProxyRequest, MediaQuery, ProxyQuery,
     PullProxyRequest, PushProxyRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    RtpQuery, RtpReceiverRequest, RtpSenderRequest, SessionQuery, SnapshotQuery, SnapshotRequest,
-    StartRecordRequest, StopRecordRequest,
+    RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderRequest, SessionQuery, SnapshotQuery,
+    SnapshotRequest, StartRecordRequest, StopRecordRequest, UpdateRtpRequest,
 };
 use cheetah_media_api::ids::{
     FileHandle, MediaKey, ProxyId, RecordFileId, RecordTaskId, RtpSessionId, SessionId,
@@ -306,7 +306,27 @@ impl NativeMediaHttpService {
                 Some("proxy.ffmpeg.delete")
             }
             (HttpMethod::Post, "/rtp/receivers") => Some("rtp.receiver.open"),
+            (HttpMethod::Post, _)
+                if path.starts_with("/rtp/receivers/") && path.ends_with("/connect") =>
+            {
+                Some("rtp.receiver.connect")
+            }
             (HttpMethod::Post, "/rtp/senders") => Some("rtp.sender.open"),
+            (HttpMethod::Get, _)
+                if path.starts_with("/rtp/sessions/") && !path.ends_with("/stop") =>
+            {
+                Some("rtp.session.get")
+            }
+            (HttpMethod::Patch, _)
+                if path.starts_with("/rtp/sessions/") && !path.ends_with("/stop") =>
+            {
+                Some("rtp.session.update")
+            }
+            (HttpMethod::Delete, _)
+                if path.starts_with("/rtp/sessions/") && !path.ends_with("/stop") =>
+            {
+                Some("rtp.session.delete")
+            }
             (HttpMethod::Post, path)
                 if path.starts_with("/rtp/sessions/") && path.ends_with("/stop") =>
             {
@@ -616,7 +636,12 @@ impl NativeMediaHttpService {
         let id = rtp_id_from_path(&req.path, "/rtp/sessions/", "/stop")
             .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
         rtp_api.stop_rtp_session(ctx, &RtpSessionId(id)).await?;
-        Ok(json_response(&serde_json::json!({ "stopped": true })))
+        let mut resp = no_content_response();
+        resp.headers.push(HttpHeader {
+            name: "Deprecation".to_string(),
+            value: "true".to_string(),
+        });
+        Ok(resp)
     }
 
     async fn rtp_sessions(
@@ -629,6 +654,58 @@ impl NativeMediaHttpService {
         query.clamp_page_size();
         let page = rtp_api.list_rtp_sessions(ctx, query).await?;
         Ok(json_response(&page))
+    }
+
+    async fn rtp_receiver_connect(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let rtp_api = self.rtp()?;
+        let id = rtp_id_from_path(&req.path, "/rtp/receivers/", "/connect")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing receiver_id".to_string()))?;
+        let mut request: RtpConnectRequest = parse_body(&req)?;
+        request.session_id = RtpSessionId(id);
+        let session = rtp_api.connect_rtp_receiver(ctx, request).await?;
+        Ok(json_response(&session))
+    }
+
+    async fn rtp_session_get(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let rtp_api = self.rtp()?;
+        let id = rtp_id_from_path(&req.path, "/rtp/sessions/", "")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
+        let session = rtp_api.get_rtp_session(ctx, &RtpSessionId(id)).await?;
+        Ok(json_response(&session))
+    }
+
+    async fn rtp_session_patch(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let rtp_api = self.rtp()?;
+        let id = rtp_id_from_path(&req.path, "/rtp/sessions/", "")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
+        let mut request: UpdateRtpRequest = parse_body(&req)?;
+        request.session_id = RtpSessionId(id);
+        let session = rtp_api.update_rtp_session(ctx, request).await?;
+        Ok(json_response(&session))
+    }
+
+    async fn rtp_session_delete(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let rtp_api = self.rtp()?;
+        let id = rtp_id_from_path(&req.path, "/rtp/sessions/", "")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
+        rtp_api.stop_rtp_session(ctx, &RtpSessionId(id)).await?;
+        Ok(no_content_response())
     }
 
     async fn snapshot_create(
@@ -962,13 +1039,33 @@ impl ModuleHttpService for NativeMediaHttpService {
                     self.proxy_ffmpeg_delete(&ctx, req).await
                 }
                 (HttpMethod::Post, "/rtp/receivers") => self.rtp_receivers(&ctx, req).await,
+                (HttpMethod::Post, path)
+                    if path.starts_with("/rtp/receivers/") && path.ends_with("/connect") =>
+                {
+                    self.rtp_receiver_connect(&ctx, req).await
+                }
                 (HttpMethod::Post, "/rtp/senders") => self.rtp_senders(&ctx, req).await,
+                (HttpMethod::Get, "/rtp/sessions") => self.rtp_sessions(&ctx, req).await,
+                (HttpMethod::Get, path)
+                    if path.starts_with("/rtp/sessions/") && !path.ends_with("/stop") =>
+                {
+                    self.rtp_session_get(&ctx, req).await
+                }
+                (HttpMethod::Patch, path)
+                    if path.starts_with("/rtp/sessions/") && !path.ends_with("/stop") =>
+                {
+                    self.rtp_session_patch(&ctx, req).await
+                }
+                (HttpMethod::Delete, path)
+                    if path.starts_with("/rtp/sessions/") && !path.ends_with("/stop") =>
+                {
+                    self.rtp_session_delete(&ctx, req).await
+                }
                 (HttpMethod::Post, path)
                     if path.starts_with("/rtp/sessions/") && path.ends_with("/stop") =>
                 {
                     self.rtp_session_stop(&ctx, req).await
                 }
-                (HttpMethod::Get, "/rtp/sessions") => self.rtp_sessions(&ctx, req).await,
                 _ => Err(AdapterError::InvalidRequest("not found".to_string())),
             };
 
@@ -1039,6 +1136,14 @@ fn json_response<T: serde::Serialize>(value: &T) -> HttpResponse {
             value: "application/json".to_string(),
         }],
         body: Bytes::from(serde_json::to_vec(value).unwrap_or_default()),
+    }
+}
+
+fn no_content_response() -> HttpResponse {
+    HttpResponse {
+        status: 204,
+        headers: vec![],
+        body: Bytes::new(),
     }
 }
 

@@ -146,11 +146,27 @@ pub fn native_http_routes() -> Vec<HttpRouteDescriptor> {
         },
         HttpRouteDescriptor {
             method: HttpMethod::Post,
+            path: "/rtp/receivers/{receiver_id}/connect".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Post,
             path: "/rtp/senders".to_string(),
         },
         HttpRouteDescriptor {
             method: HttpMethod::Get,
             path: "/rtp/sessions".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/rtp/sessions/{session_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Patch,
+            path: "/rtp/sessions/{session_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Delete,
+            path: "/rtp/sessions/{session_id}".to_string(),
         },
         HttpRouteDescriptor {
             method: HttpMethod::Post,
@@ -228,8 +244,26 @@ pub fn native_required_scope(method: HttpMethod, path: &str) -> Option<MediaScop
             Some(MediaScope::MediaControl)
         }
         (HttpMethod::Post, "/rtp/receivers") => Some(MediaScope::MediaPublish),
+        (HttpMethod::Post, _)
+            if path.starts_with("/rtp/receivers/") && path.ends_with("/connect") =>
+        {
+            Some(MediaScope::MediaPublish)
+        }
         (HttpMethod::Post, "/rtp/senders") => Some(MediaScope::MediaConsume),
         (HttpMethod::Get, "/rtp/sessions") => Some(MediaScope::MediaRead),
+        (HttpMethod::Get, _) if path.starts_with("/rtp/sessions/") && !path.ends_with("/stop") => {
+            Some(MediaScope::MediaRead)
+        }
+        (HttpMethod::Patch, _)
+            if path.starts_with("/rtp/sessions/") && !path.ends_with("/stop") =>
+        {
+            Some(MediaScope::MediaControl)
+        }
+        (HttpMethod::Delete, _)
+            if path.starts_with("/rtp/sessions/") && !path.ends_with("/stop") =>
+        {
+            Some(MediaScope::MediaControl)
+        }
         (HttpMethod::Post, _) if path.starts_with("/rtp/sessions/") && path.ends_with("/stop") => {
             Some(MediaScope::MediaControl)
         }
@@ -338,6 +372,34 @@ mod tests {
         assert!(paths.contains(&(HttpMethod::Post, "/proxies/pull")));
         assert!(paths.contains(&(HttpMethod::Delete, "/proxies/push/{proxy_id}")));
         assert!(paths.contains(&(HttpMethod::Post, "/proxies/ffmpeg")));
-        assert_eq!(routes.len(), 35);
+        assert!(paths.contains(&(HttpMethod::Post, "/rtp/receivers/{receiver_id}/connect")));
+        assert!(paths.contains(&(HttpMethod::Get, "/rtp/sessions/{session_id}")));
+        assert!(paths.contains(&(HttpMethod::Patch, "/rtp/sessions/{session_id}")));
+        assert!(paths.contains(&(HttpMethod::Delete, "/rtp/sessions/{session_id}")));
+        assert_eq!(routes.len(), 39);
+    }
+
+    #[test]
+    fn rtp_routes_require_correct_scopes() {
+        assert_eq!(
+            native_required_scope(HttpMethod::Post, "/rtp/receivers/uuid/connect"),
+            Some(MediaScope::MediaPublish)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Get, "/rtp/sessions/uuid"),
+            Some(MediaScope::MediaRead)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Patch, "/rtp/sessions/uuid"),
+            Some(MediaScope::MediaControl)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Delete, "/rtp/sessions/uuid"),
+            Some(MediaScope::MediaControl)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Get, "/rtp/sessions"),
+            Some(MediaScope::MediaRead)
+        );
     }
 }
