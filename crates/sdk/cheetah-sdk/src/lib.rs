@@ -18,6 +18,7 @@
 //! - `Config*` trait：运行时配置的 schema、校验、应用与回滚。
 
 pub mod config;
+pub mod deadline;
 pub mod error;
 pub mod event;
 pub mod ids;
@@ -47,6 +48,7 @@ pub use config::{
     ConfigProvider, ConfigRollbackToken, ConfigSchemaRegistry, ConfigValidator, ConfigValueChange,
     ModuleConfigChange, ModuleSchemaRegistration, RegisteredSchema,
 };
+pub use deadline::{cancellation_child, Deadline};
 pub use error::SdkError;
 pub use event::{
     ConfigEvent, EventBus, EventSubscriber, ModuleEvent, ModuleEventKind, ProtocolEvent,

@@ -12,6 +12,7 @@ use cheetah_media_api::ids::{MediaKey, SessionId};
 use cheetah_media_api::model::{CloseReason, CloseReport, Page, SessionInfo, SessionState};
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::media_session::{MediaSessionDirectoryApi, SessionCloseHandle};
+use cheetah_sdk::Deadline;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 
@@ -136,10 +137,13 @@ impl Default for EngineMediaSessionDirectory {
 impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
     async fn register_session(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         mut record: SessionInfo,
         close_handle: Box<dyn SessionCloseHandle>,
     ) -> MediaResult<SessionId> {
+        if let Err(e) = Deadline::from_context(ctx).check() {
+            return Err(MediaError::unavailable(e.to_string()));
+        }
         let id = if record.session_id.0.is_empty() {
             self.new_id()
         } else {

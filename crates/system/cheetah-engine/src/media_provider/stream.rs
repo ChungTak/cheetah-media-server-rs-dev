@@ -14,7 +14,7 @@ use cheetah_media_api::port::{
 };
 use cheetah_sdk::media_data_plane::{MediaDataPlaneApi, MediaFramePublisher, MediaFrameSubscriber};
 use cheetah_sdk::media_session::{MediaSessionDirectoryApi, SessionCloseHandle};
-use cheetah_sdk::{SdkError, StreamKey, StreamManagerApi};
+use cheetah_sdk::{Deadline, SdkError, StreamKey, StreamManagerApi};
 use dashmap::DashMap;
 use tokio::sync::Mutex;
 
@@ -77,6 +77,12 @@ impl StreamMediaProvider {
             None => true,
             Some(p) => p.authorizes(scope, key),
         }
+    }
+
+    fn check_deadline(ctx: &MediaRequestContext) -> cheetah_media_api::error::Result<()> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))
     }
 
     fn stream_key_to_media_key(key: &StreamKey) -> MediaKey {
@@ -202,6 +208,7 @@ impl MediaControlApi for StreamMediaProvider {
         ctx: &MediaRequestContext,
         mut query: MediaQuery,
     ) -> cheetah_media_api::error::Result<Page<StreamInfo>> {
+        Self::check_deadline(ctx)?;
         query.clamp_page_size();
         let snapshots = self
             .stream_manager
@@ -266,6 +273,7 @@ impl MediaControlApi for StreamMediaProvider {
         ctx: &MediaRequestContext,
         key: &MediaKey,
     ) -> cheetah_media_api::error::Result<StreamInfo> {
+        Self::check_deadline(ctx)?;
         if !Self::authorized(ctx, &MediaScope::MediaRead, Some(key)) {
             return Err(MediaError::not_found(format!("stream {key}")));
         }
@@ -284,6 +292,7 @@ impl MediaControlApi for StreamMediaProvider {
         ctx: &MediaRequestContext,
         key: &MediaKey,
     ) -> cheetah_media_api::error::Result<OnlineState> {
+        Self::check_deadline(ctx)?;
         if !Self::authorized(ctx, &MediaScope::MediaRead, Some(key)) {
             return Ok(OnlineState::Unknown);
         }
@@ -305,6 +314,7 @@ impl MediaControlApi for StreamMediaProvider {
         ctx: &MediaRequestContext,
         mut query: SessionQuery,
     ) -> cheetah_media_api::error::Result<Page<SessionInfo>> {
+        Self::check_deadline(ctx)?;
         query.clamp_page_size();
         self.session_directory.list_sessions(ctx, query).await
     }
@@ -315,6 +325,7 @@ impl MediaControlApi for StreamMediaProvider {
         id: &SessionId,
         reason: CloseReason,
     ) -> cheetah_media_api::error::Result<()> {
+        Self::check_deadline(ctx)?;
         self.session_directory
             .close_session(ctx, id, reason)
             .await
@@ -327,6 +338,7 @@ impl MediaControlApi for StreamMediaProvider {
         key: &MediaKey,
         reason: CloseReason,
     ) -> cheetah_media_api::error::Result<CloseReport> {
+        Self::check_deadline(ctx)?;
         self.session_directory
             .close_sessions_for_key(ctx, key, reason)
             .await
@@ -337,6 +349,7 @@ impl MediaControlApi for StreamMediaProvider {
         ctx: &MediaRequestContext,
         key: &MediaKey,
     ) -> cheetah_media_api::error::Result<()> {
+        Self::check_deadline(ctx)?;
         if !Self::authorized(ctx, &MediaScope::MediaControl, Some(key)) {
             return Err(MediaError::not_found(format!("stream {key}")));
         }
@@ -386,6 +399,7 @@ impl PublishSubscribeApi for StreamMediaProvider {
         ctx: &MediaRequestContext,
         request: PublishRequest,
     ) -> cheetah_media_api::error::Result<PublisherHandle> {
+        Self::check_deadline(ctx)?;
         let publisher = self
             .media_data_plane
             .open_frame_publisher(ctx, request.clone())
@@ -434,6 +448,7 @@ impl PublishSubscribeApi for StreamMediaProvider {
         ctx: &MediaRequestContext,
         request: SubscribeRequest,
     ) -> cheetah_media_api::error::Result<SubscriberHandle> {
+        Self::check_deadline(ctx)?;
         let subscriber = self
             .media_data_plane
             .open_frame_subscriber(ctx, request.clone())
@@ -484,6 +499,7 @@ impl PublishSubscribeApi for StreamMediaProvider {
         id: &SessionId,
         reason: CloseReason,
     ) -> cheetah_media_api::error::Result<()> {
+        Self::check_deadline(ctx)?;
         self.session_directory
             .close_session(ctx, id, reason)
             .await
