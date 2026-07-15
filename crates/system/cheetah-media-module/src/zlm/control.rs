@@ -8,11 +8,12 @@ use cheetah_media_api::media_file_store::FileRange;
 use cheetah_media_api::model::{CloseReason, SessionKind};
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::{HttpHeader, HttpRequest, HttpResponse};
-use serde_json::json;
 
 use crate::error::AdapterError;
 use crate::zlm::{
-    page_from_params, page_size_from_params, zlm_record_format, zlm_response, ZlmMediaHttpService,
+    page_from_params, page_size_from_params, zlm_record_format, zlm_response, CloseStreamsResult,
+    Data, Empty, KickSessionsResult, SessionItem, StartRecordResult, ZlmMediaHttpService,
+    ZlmResponse,
 };
 
 impl ZlmMediaHttpService {
@@ -33,7 +34,8 @@ impl ZlmMediaHttpService {
         };
         query.clamp_page_size();
         let page = self.control()?.list_sessions(ctx, query).await?;
-        Ok(zlm_response(0, "success", page))
+        let items: Vec<SessionItem> = page.items.into_iter().map(SessionItem::from).collect();
+        Ok(zlm_response(ZlmResponse::ok(Data::new(items))))
     }
 
     pub(crate) async fn close_streams(
@@ -43,10 +45,30 @@ impl ZlmMediaHttpService {
     ) -> Result<HttpResponse, AdapterError> {
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        self.control()?
+        let control = self.control()?;
+        let mut query = SessionQuery {
+            vhost: Some(key.vhost.0.clone()),
+            app: Some(key.app.0.clone()),
+            stream: Some(key.stream.0.clone()),
+            page_size: SessionQuery::MAX_PAGE_SIZE,
+            ..Default::default()
+        };
+        query.clamp_page_size();
+        let page = control.list_sessions(ctx, query).await?;
+        let count_hit = page.items.len() as u64;
+        let count_closed = if control
             .kick_stream(ctx, &key, CloseReason::Kicked)
-            .await?;
-        Ok(zlm_response(0, "success", json!({"result": true})))
+            .await
+            .is_ok()
+        {
+            count_hit
+        } else {
+            0
+        };
+        Ok(zlm_response(ZlmResponse::ok(CloseStreamsResult {
+            count_hit,
+            count_closed,
+        })))
     }
 
     pub(crate) async fn kick_sessions(
@@ -64,11 +86,7 @@ impl ZlmMediaHttpService {
             control
                 .kick_session(ctx, &SessionId(id.to_string()), CloseReason::Kicked)
                 .await?;
-            return Ok(zlm_response(
-                0,
-                "success",
-                json!({"result": true, "kicked": 1}),
-            ));
+            return Ok(zlm_response(ZlmResponse::with_msg(0, "success", Empty)));
         }
 
         let key = self.parse_media_key(&params)?;
@@ -81,21 +99,17 @@ impl ZlmMediaHttpService {
         };
         query.clamp_page_size();
         let page = control.list_sessions(ctx, query).await?;
-        let mut kicked = 0usize;
+        let count_hit = page.items.len() as u64;
         for session in &page.items {
-            if control
+            let _ = control
                 .kick_session(ctx, &session.session_id, CloseReason::Kicked)
-                .await
-                .is_ok()
-            {
-                kicked += 1;
-            }
+                .await;
         }
-        Ok(zlm_response(
+        Ok(zlm_response(ZlmResponse::with_msg(
             0,
             "success",
-            json!({"result": true, "kicked": kicked}),
-        ))
+            KickSessionsResult { count_hit },
+        )))
     }
 
     pub(crate) async fn start_record_task(
@@ -123,11 +137,10 @@ impl ZlmMediaHttpService {
                 .map(cheetah_media_api::ids::IdempotencyKey),
         };
         let task = record_api.start_record(&ctx, request).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            json!({"result": true, "taskId": task.task_id.0}),
-        ))
+        Ok(zlm_response(ZlmResponse::ok(StartRecordResult {
+            result: true,
+            task_id: task.task_id.0,
+        })))
     }
 
     pub(crate) async fn download_file(

@@ -5,6 +5,7 @@ use cheetah_config::ConfigStore;
 use cheetah_engine::EngineBuilder;
 use cheetah_media_module::ZlmMediaModuleFactory;
 use cheetah_proxy_module::ProxyModuleFactory;
+use cheetah_rtp_module::RtpModuleFactory;
 use cheetah_runtime_tokio::TokioRuntime;
 use cheetah_sdk::{HttpMethod, HttpRequest};
 use serde_json::json;
@@ -16,11 +17,17 @@ fn make_engine() -> Arc<cheetah_engine::Engine> {
             "zlm": {
                 "auth": { "mode": "none" }
             }
+        },
+        "rtp": {
+            "enabled": true
         }
     }));
     let runtime = Arc::new(TokioRuntime::new());
+    let schema_registry = config.clone();
     let engine = EngineBuilder::new(config.clone(), config, runtime)
+        .with_config_schema_registry(schema_registry)
         .register_module_factory(Arc::new(ProxyModuleFactory))
+        .register_module_factory(Arc::new(RtpModuleFactory))
         .register_module_factory(Arc::new(ZlmMediaModuleFactory))
         .build()
         .expect("engine build");
@@ -52,7 +59,7 @@ fn body_json(resp: &cheetah_sdk::HttpResponse) -> serde_json::Value {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn zlm_proxy_l1_lifecycle() {
+async fn zlm_ffmpeg_source_l2_lifecycle() {
     let engine = make_engine();
     engine.start().await.expect("engine start");
 
@@ -65,46 +72,40 @@ async fn zlm_proxy_l1_lifecycle() {
     let service = mount.service.clone();
 
     let add = post(
-        "/api/addStreamProxy",
+        "/api/addFFmpegSource",
         json!({
-            "url": "http://example.com/live.flv",
+            "src_url": "http://example.com/live.flv",
             "vhost": "__defaultVhost__",
             "app": "live",
-            "stream": "test"
+            "stream": "ffmpeg"
         }),
     );
-    let resp = service.handle(add).await.expect("add stream proxy");
-    assert_eq!(resp.status, 200);
+    let resp = service.handle(add).await.expect("add ffmpeg source");
     let body = body_json(&resp);
-    assert_eq!(body["code"], 0, "add stream proxy failed: {body}");
+    assert_eq!(body["code"], 0, "add ffmpeg source failed: {body}");
     let key = body["data"]["key"]
         .as_str()
         .expect("key in response")
         .to_string();
 
-    let list = get("/api/listStreamProxy", None);
-    let resp = service.handle(list).await.expect("list stream proxy");
+    let list = get("/api/listFFmpegSource", None);
+    let resp = service.handle(list).await.expect("list ffmpeg source");
     let body = body_json(&resp);
     assert_eq!(body["data"].as_array().map(|a| a.len()).unwrap_or(0), 1);
 
-    let get_info = get("/api/getProxyInfo", Some(format!("key={key}")));
-    let resp = service.handle(get_info).await.expect("get proxy info");
-    let body = body_json(&resp);
-    assert_eq!(body["data"]["key"], key);
-
-    let del = post("/api/delStreamProxy", json!({"key": key}));
-    let resp = service.handle(del).await.expect("del stream proxy");
+    let del = post("/api/delFFmpegSource", json!({"key": key}));
+    let resp = service.handle(del).await.expect("del ffmpeg source");
     let body = body_json(&resp);
     assert_eq!(body["code"], 0);
 
-    let list = get("/api/listStreamProxy", None);
+    let list = get("/api/listFFmpegSource", None);
     let resp = service.handle(list).await.expect("list after delete");
     let body = body_json(&resp);
     assert_eq!(body["data"].as_array().map(|a| a.len()).unwrap_or(0), 0);
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn zlm_pusher_proxy_l1_lifecycle() {
+async fn zlm_rtp_multiplex_and_check_control() {
     let engine = make_engine();
     engine.start().await.expect("engine start");
 
@@ -116,35 +117,50 @@ async fn zlm_pusher_proxy_l1_lifecycle() {
         .expect("zlm mount");
     let service = mount.service.clone();
 
-    let add = post(
-        "/api/addStreamPusherProxy",
+    let open = post(
+        "/api/openRtpServerMultiplex",
         json!({
-            "dst_url": "rtmp://example.com/live/push",
             "vhost": "__defaultVhost__",
             "app": "live",
-            "stream": "test"
+            "stream": "rtp-multiplex"
         }),
     );
-    let resp = service.handle(add).await.expect("add pusher proxy");
+    let resp = service
+        .handle(open)
+        .await
+        .expect("open rtp server multiplex");
     let body = body_json(&resp);
-    assert_eq!(body["code"], 0, "add pusher proxy failed: {body}");
-    let key = body["data"]["key"]
+    assert_eq!(body["code"], 0, "openRtpServerMultiplex failed: {body}");
+    assert!(body["port"].is_u64(), "port missing: {body}");
+
+    let session_id = body["session_id"]
         .as_str()
-        .expect("key in response")
+        .expect("session_id in response")
         .to_string();
 
-    let list = get("/api/listStreamPusherProxy", None);
-    let resp = service.handle(list).await.expect("list pusher proxy");
+    let pause = post("/api/pauseRtpCheck", json!({"session_id": &session_id}));
+    let resp = service.handle(pause).await.expect("pause rtp check");
     let body = body_json(&resp);
-    assert_eq!(body["data"].as_array().map(|a| a.len()).unwrap_or(0), 1);
+    assert_eq!(body["code"], 0, "pauseRtpCheck failed: {body}");
+    assert_eq!(body["check_paused"], true);
 
-    let get_info = get("/api/getProxyPusherInfo", Some(format!("key={key}")));
-    let resp = service.handle(get_info).await.expect("get pusher info");
+    let resume = post("/api/resumeRtpCheck", json!({"session_id": session_id}));
+    let resp = service.handle(resume).await.expect("resume rtp check");
     let body = body_json(&resp);
-    assert_eq!(body["data"]["key"], key);
+    assert_eq!(body["code"], 0, "resumeRtpCheck failed: {body}");
+    assert_eq!(body["check_paused"], false);
 
-    let del = post("/api/delStreamPusherProxy", json!({"key": key}));
-    let resp = service.handle(del).await.expect("del pusher proxy");
+    let update = post(
+        "/api/updateRtpServerSSRC",
+        json!({"session_id": session_id, "ssrc": 12345}),
+    );
+    let resp = service
+        .handle(update)
+        .await
+        .expect("updateRtpServerSSRC response");
     let body = body_json(&resp);
-    assert_eq!(body["code"], 0);
+    assert_eq!(
+        body["code"], -501,
+        "updateRtpServerSSRC should be unsupported: {body}"
+    );
 }

@@ -232,6 +232,8 @@ pub trait ProxyApi: Send + Sync {
         request: FfmpegProxyRequest,
     ) -> Result<ProxyInfo>;
 
+    async fn delete_ffmpeg_proxy(&self, ctx: &MediaRequestContext, id: &ProxyId) -> Result<()>;
+
     async fn get_ffmpeg_proxy(
         &self,
         _ctx: &MediaRequestContext,

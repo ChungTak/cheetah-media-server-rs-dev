@@ -1,15 +1,11 @@
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 use crate::adapter_config::{extract_zlm_config, load_zlm_config, ZlmAdapterConfig};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::audit::{AuditApi, AuditEvent, AuditResult};
-use cheetah_media_api::command::{
-    DeleteRecordRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    SessionQuery, StartRecordRequest, StopRecordRequest,
-};
-use cheetah_media_api::ids::{MediaKey, RecordFileId, SessionId};
-use cheetah_media_api::model::{CloseReason, RecordTaskState};
+use cheetah_media_api::ids::MediaKey;
 use cheetah_media_api::port::{
     ControlAuthApi, MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, SnapshotApi,
 };
@@ -23,11 +19,21 @@ use cheetah_sdk::{
 
 use crate::error::{zlm_error_response, AdapterError};
 
+mod admin;
 mod control;
+mod dto;
+mod login;
+mod media;
 mod proxy;
+mod record;
 mod routes;
 mod rtp;
+mod session;
+mod session_store;
 mod snapshot;
+
+pub(crate) use dto::zlm_response;
+pub(crate) use dto::*;
 
 const MODULE_ID: &str = "media-http-zlm";
 
@@ -60,6 +66,7 @@ pub struct ZlmMediaModule {
     state: ModuleState,
     ctx: Option<EngineContext>,
     config: Arc<RwLock<ZlmAdapterConfig>>,
+    session_store: Arc<session_store::SessionStore>,
 }
 
 impl ZlmMediaModule {
@@ -68,6 +75,7 @@ impl ZlmMediaModule {
             state: ModuleState::Created,
             ctx: None,
             config: Arc::new(RwLock::new(ZlmAdapterConfig::default())),
+            session_store: Arc::new(session_store::SessionStore::new()),
         }
     }
 }
@@ -117,6 +125,8 @@ impl Module for ZlmMediaModule {
         if previous.enabled != next.enabled || previous.path_prefix != next.path_prefix {
             return Ok(ConfigEffect::ModuleRestartRequired);
         }
+        let max_sessions = next.auth.session.as_ref().and_then(|s| s.max_sessions);
+        self.session_store.set_max_sessions(max_sessions);
         *self.config.write().unwrap() = next;
         Ok(ConfigEffect::Immediate)
     }
@@ -132,9 +142,14 @@ impl Module for ZlmMediaModule {
         if !self.config.read().unwrap().enabled {
             return None;
         }
+        if let Some(session_cfg) = self.config.read().unwrap().auth.session.as_ref() {
+            self.session_store
+                .set_max_sessions(session_cfg.max_sessions);
+        }
         Some(Arc::new(ZlmMediaHttpService {
             ctx: self.ctx.clone()?,
             config: self.config.clone(),
+            session_store: self.session_store.clone(),
         }))
     }
 
@@ -154,10 +169,11 @@ impl Module for ZlmMediaModule {
 pub(crate) struct ZlmMediaHttpService {
     ctx: EngineContext,
     config: Arc<RwLock<ZlmAdapterConfig>>,
+    session_store: Arc<session_store::SessionStore>,
 }
 
 impl ZlmMediaHttpService {
-    fn control(&self) -> Result<Arc<dyn MediaControlApi>, AdapterError> {
+    pub(crate) fn control(&self) -> Result<Arc<dyn MediaControlApi>, AdapterError> {
         self.ctx.media_services.control().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "media control not available",
@@ -228,6 +244,12 @@ impl ZlmMediaHttpService {
                         "zlm secret not configured",
                     ))
                 })?;
+                if expected.is_empty() {
+                    return Err(AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "zlm secret not configured",
+                    )));
+                }
                 use subtle::{Choice, ConstantTimeEq};
                 // Only accept the secret from headers; never from the URL query string
                 // to avoid exposure in access logs or Referer headers.
@@ -259,6 +281,30 @@ impl ZlmMediaHttpService {
                         MediaScope::FileDelete,
                         MediaScope::ServerAdmin,
                     ],
+                })
+            }
+            "session" => {
+                if req.path == "/api/login" {
+                    return Ok(Principal::anonymous());
+                }
+                let session_cfg = cfg.auth.session.as_ref().ok_or_else(|| {
+                    AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "session auth not configured",
+                    ))
+                })?;
+                let token = cookie_from_header(req, &session_cfg.cookie_name).ok_or_else(|| {
+                    AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "missing session cookie",
+                    ))
+                })?;
+                let now = Instant::now();
+                self.session_store.validate(&token, now).ok_or_else(|| {
+                    AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "invalid or expired session",
+                    ))
                 })
             }
             _ => {
@@ -344,14 +390,20 @@ impl ZlmMediaHttpService {
             (HttpMethod::Post, "/api/delStreamProxy") => Some("proxy.pull.delete"),
             (HttpMethod::Post, "/api/addStreamPusherProxy") => Some("proxy.push.create"),
             (HttpMethod::Post, "/api/delStreamPusherProxy") => Some("proxy.push.delete"),
+            (HttpMethod::Post, "/api/addFFmpegSource") => Some("proxy.ffmpeg.create"),
+            (HttpMethod::Post, "/api/delFFmpegSource") => Some("proxy.ffmpeg.delete"),
             (HttpMethod::Post, "/api/startRecord") | (HttpMethod::Post, "/api/startRecordTask") => {
                 Some("record.start")
             }
             (HttpMethod::Post, "/api/stopRecord") => Some("record.stop"),
             (HttpMethod::Post, "/api/deleteRecordDirectory") => Some("file.delete"),
             (HttpMethod::Post, "/api/openRtpServer") => Some("rtp.receiver.open"),
+            (HttpMethod::Post, "/api/openRtpServerMultiplex") => Some("rtp.receiver.open"),
             (HttpMethod::Post, "/api/connectRtpServer") => Some("rtp.receiver.connect"),
             (HttpMethod::Post, "/api/closeRtpServer") => Some("rtp.receiver.close"),
+            (HttpMethod::Post, "/api/updateRtpServerSSRC") => Some("rtp.receiver.update"),
+            (HttpMethod::Post, "/api/pauseRtpCheck") => Some("rtp.receiver.pause_check"),
+            (HttpMethod::Post, "/api/resumeRtpCheck") => Some("rtp.receiver.resume_check"),
             (HttpMethod::Post, "/api/startSendRtp")
             | (HttpMethod::Post, "/api/startSendRtpPassive")
             | (HttpMethod::Post, "/api/startSendRtpTalk") => Some("rtp.sender.open"),
@@ -443,373 +495,6 @@ impl ZlmMediaHttpService {
             .ok_or_else(|| AdapterError::InvalidRequest("stream is required".to_string()))?;
         MediaKey::new(vhost, app, stream, None).map_err(AdapterError::Media)
     }
-
-    async fn get_media_list(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let params = self.extract_params(&req)?;
-        let mut query = MediaQuery {
-            vhost: params["vhost"].as_str().map(String::from),
-            app: params["app"].as_str().map(String::from),
-            stream: params["stream"].as_str().map(String::from),
-            schema: params["schema"].as_str().map(String::from),
-            page: page_from_params(&params),
-            page_size: page_size_from_params(&params),
-            ..Default::default()
-        };
-        query.clamp_page_size();
-        let page = self.control()?.get_media_list(ctx, query).await?;
-        Ok(zlm_response(0, "success", page))
-    }
-
-    async fn is_media_online(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let online = self.control()?.is_media_online(ctx, &key).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({ "online": online == cheetah_media_api::model::OnlineState::Online }),
-        ))
-    }
-
-    async fn get_media_info(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let info = self.control()?.get_media(ctx, &key).await?;
-        Ok(zlm_response(0, "success", info))
-    }
-
-    async fn get_all_session(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let params = self.extract_params(&req)?;
-        let mut query = SessionQuery {
-            vhost: params["vhost"].as_str().map(String::from),
-            app: params["app"].as_str().map(String::from),
-            stream: params["stream"].as_str().map(String::from),
-            page: page_from_params(&params),
-            page_size: page_size_from_params(&params),
-            ..Default::default()
-        };
-        query.clamp_page_size();
-        let page = self.control()?.list_sessions(ctx, query).await?;
-        Ok(zlm_response(0, "success", page))
-    }
-
-    async fn close_stream(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let _ = self
-            .control()?
-            .kick_stream(ctx, &key, CloseReason::Kicked)
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn kick_session(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let params = self.extract_params(&req)?;
-        let id = params["id"]
-            .as_str()
-            .ok_or_else(|| AdapterError::InvalidRequest("id is required".to_string()))?;
-        self.control()?
-            .kick_session(ctx, &SessionId(id.to_string()), CloseReason::Kicked)
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn record_start(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let format = zlm_record_format(&params["type"])?;
-        let request = StartRecordRequest {
-            media_key: key,
-            format: format.clone(),
-            template: cheetah_media_api::model::RecordTemplate::Continuous,
-            segment_duration_ms: None,
-            max_segments: None,
-            storage_policy: cheetah_media_api::model::StoragePolicy::default(),
-            idempotency_key: ctx
-                .idempotency_key
-                .clone()
-                .map(cheetah_media_api::ids::IdempotencyKey),
-        };
-        let task = record_api.start_record(ctx, request).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true, "taskId": task.task_id.0}),
-        ))
-    }
-
-    async fn record_stop(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let format = zlm_record_format(&params["type"])?;
-        let mut query = RecordTaskQuery {
-            vhost: Some(key.vhost.0.clone()),
-            app: Some(key.app.0.clone()),
-            stream: Some(key.stream.0.clone()),
-            page_size: RecordTaskQuery::MAX_PAGE_SIZE,
-            ..Default::default()
-        };
-        query.clamp_page_size();
-        let page = record_api.query_record_tasks(ctx, query).await?;
-        let task = page
-            .items
-            .into_iter()
-            .find(|t| {
-                t.format == format
-                    && matches!(t.state, RecordTaskState::Running | RecordTaskState::Pending)
-            })
-            .ok_or_else(|| {
-                AdapterError::Media(cheetah_media_api::error::MediaError::not_found(
-                    "record task",
-                ))
-            })?;
-        record_api
-            .stop_record(
-                ctx,
-                StopRecordRequest {
-                    task_id: task.task_id,
-                },
-            )
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn is_recording(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let format = zlm_record_format(&params["type"])?;
-        let mut query = RecordTaskQuery {
-            vhost: Some(key.vhost.0.clone()),
-            app: Some(key.app.0.clone()),
-            stream: Some(key.stream.0.clone()),
-            page_size: RecordTaskQuery::MAX_PAGE_SIZE,
-            ..Default::default()
-        };
-        query.clamp_page_size();
-        let page = record_api.query_record_tasks(ctx, query).await?;
-        let recording = page.items.iter().any(|t| {
-            t.format == format
-                && matches!(t.state, RecordTaskState::Running | RecordTaskState::Pending)
-        });
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"status": recording}),
-        ))
-    }
-
-    async fn get_mp4_files(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let mut query = RecordFileQuery {
-            app: Some(key.app.0.clone()),
-            stream: Some(key.stream.0.clone()),
-            format: Some("mp4".to_string()),
-            page: page_from_params(&params),
-            page_size: page_size_from_params(&params),
-            ..Default::default()
-        };
-        query.clamp_page_size();
-        let page = record_api.query_record_files(ctx, query).await?;
-        let paths: Vec<String> = page.items.iter().map(|f| f.path_handle.0.clone()).collect();
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"paths": paths, "rootPath": ""}),
-        ))
-    }
-
-    async fn delete_record_directory(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let params = self.extract_params(&req)?;
-        let key = self.parse_media_key(&params)?;
-        let mut query = RecordFileQuery {
-            app: Some(key.app.0.clone()),
-            stream: Some(key.stream.0.clone()),
-            page_size: RecordFileQuery::MAX_PAGE_SIZE,
-            ..Default::default()
-        };
-        query.clamp_page_size();
-        let mut total_deleted = 0usize;
-        let mut total_failed = 0usize;
-        loop {
-            let page = record_api.query_record_files(ctx, query.clone()).await?;
-            if page.items.is_empty() {
-                break;
-            }
-            let mut page_deleted = 0usize;
-            for f in &page.items {
-                match record_api
-                    .delete_record_file(
-                        ctx,
-                        DeleteRecordRequest {
-                            file_id: f.file_id.clone(),
-                        },
-                    )
-                    .await
-                {
-                    Ok(()) => {
-                        page_deleted += 1;
-                        total_deleted += 1;
-                    }
-                    Err(_) => {
-                        total_failed += 1;
-                    }
-                }
-            }
-            if (page.items.len() as u64) < query.page_size || page_deleted == 0 {
-                break;
-            }
-        }
-        let result = total_failed == 0;
-        let data = serde_json::json!({
-            "result": result,
-            "deleted": total_deleted,
-            "failed": total_failed,
-        });
-        Ok(zlm_response(
-            0,
-            if result { "success" } else { "partial success" },
-            data,
-        ))
-    }
-
-    async fn set_record_speed(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let params = self.extract_params(&req)?;
-        let file_id = parse_zlm_file_id(&params)?;
-        let value = parse_zlm_playback_value(&params, &["speed", "scale", "value"])?;
-        record_api
-            .control_record_playback(
-                ctx,
-                &RecordFileId(file_id),
-                RecordPlaybackCommand::Scale { value },
-            )
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn seek_record_stamp(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let params = self.extract_params(&req)?;
-        let file_id = parse_zlm_file_id(&params)?;
-        let value = parse_zlm_playback_value(&params, &["stamp", "seek", "value"])?;
-        record_api
-            .control_record_playback(
-                ctx,
-                &RecordFileId(file_id),
-                RecordPlaybackCommand::Seek {
-                    value: value as i64,
-                },
-            )
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn control_record_play(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let record_api = self.record()?;
-        let params = self.extract_params(&req)?;
-        let file_id = parse_zlm_file_id(&params)?;
-        let command = parse_zlm_playback_command(&params)?;
-        record_api
-            .control_record_playback(ctx, &RecordFileId(file_id), command)
-            .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
-    }
-
-    async fn load_mp4_file(
-        &self,
-        _ctx: &MediaRequestContext,
-        _req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        Err(AdapterError::Media(
-            cheetah_media_api::error::MediaError::unsupported_capability("vod"),
-        ))
-    }
 }
 
 #[async_trait]
@@ -872,6 +557,15 @@ impl ModuleHttpService for ZlmMediaHttpService {
                 (HttpMethod::Get, "/api/getProxyPusherInfo") => {
                     self.get_proxy_pusher_info(&ctx, req).await
                 }
+                (HttpMethod::Post, "/api/addFFmpegSource") => {
+                    self.add_ffmpeg_source(&ctx, req).await
+                }
+                (HttpMethod::Post, "/api/delFFmpegSource") => {
+                    self.del_ffmpeg_source(&ctx, req).await
+                }
+                (HttpMethod::Get, "/api/listFFmpegSource") => {
+                    self.list_ffmpeg_source(&ctx, req).await
+                }
                 (HttpMethod::Post, "/api/startRecord") => self.record_start(&ctx, req).await,
                 (HttpMethod::Post, "/api/startRecordTask") => {
                     self.start_record_task(&ctx, req).await
@@ -883,10 +577,18 @@ impl ModuleHttpService for ZlmMediaHttpService {
                     self.delete_record_directory(&ctx, req).await
                 }
                 (HttpMethod::Post, "/api/openRtpServer") => self.open_rtp_server(&ctx, req).await,
+                (HttpMethod::Post, "/api/openRtpServerMultiplex") => {
+                    self.open_rtp_server_multiplex(&ctx, req).await
+                }
                 (HttpMethod::Post, "/api/connectRtpServer") => {
                     self.connect_rtp_server(&ctx, req).await
                 }
                 (HttpMethod::Post, "/api/closeRtpServer") => self.close_rtp_server(&ctx, req).await,
+                (HttpMethod::Post, "/api/updateRtpServerSSRC") => {
+                    self.update_rtp_server_ssrc(&ctx, req).await
+                }
+                (HttpMethod::Post, "/api/pauseRtpCheck") => self.pause_rtp_check(&ctx, req).await,
+                (HttpMethod::Post, "/api/resumeRtpCheck") => self.resume_rtp_check(&ctx, req).await,
                 (HttpMethod::Get, "/api/listRtpServer") => self.list_rtp_server(&ctx, req).await,
                 (HttpMethod::Post, "/api/startSendRtp") => self.start_send_rtp(&ctx, req).await,
                 (HttpMethod::Post, "/api/startSendRtpPassive") => {
@@ -911,6 +613,10 @@ impl ModuleHttpService for ZlmMediaHttpService {
                     self.delete_snap_directory(&ctx, req).await
                 }
                 (HttpMethod::Get, "/api/downloadFile") => self.download_file(&ctx, req).await,
+                (HttpMethod::Get, "/api/version") => self.version(&ctx, req).await,
+                (HttpMethod::Get, "/api/getApiList") => self.get_api_list(&ctx, req).await,
+                (HttpMethod::Post, "/api/login") => self.login(&ctx, req).await,
+                (HttpMethod::Post, "/api/logout") => self.logout(&ctx, req).await,
                 _ => {
                     if routes::is_zlm_catalog_route(req.method, req.path.as_str()) {
                         Err(AdapterError::Media(
@@ -986,79 +692,6 @@ fn parse_json_u64(value: &serde_json::Value) -> Option<u64> {
         .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
 }
 
-fn parse_json_f64(value: &serde_json::Value) -> Option<f64> {
-    value
-        .as_f64()
-        .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
-}
-
-fn parse_zlm_file_id(params: &serde_json::Value) -> Result<String, AdapterError> {
-    params["file_id"]
-        .as_str()
-        .or_else(|| params["fileId"].as_str())
-        .or_else(|| params["file_path"].as_str())
-        .map(String::from)
-        .ok_or_else(|| AdapterError::InvalidRequest("file_id is required".to_string()))
-}
-
-fn parse_zlm_playback_value(
-    params: &serde_json::Value,
-    aliases: &[&str],
-) -> Result<f64, AdapterError> {
-    for alias in aliases {
-        if let Some(v) = parse_json_f64(&params[*alias]) {
-            return Ok(v);
-        }
-    }
-    Err(AdapterError::InvalidRequest(
-        "playback value is required".to_string(),
-    ))
-}
-
-fn parse_zlm_playback_command(
-    params: &serde_json::Value,
-) -> Result<RecordPlaybackCommand, AdapterError> {
-    let command = params["command"]
-        .as_str()
-        .ok_or_else(|| AdapterError::InvalidRequest("command is required".to_string()))?
-        .to_lowercase();
-    match command.as_str() {
-        "pause" => Ok(RecordPlaybackCommand::Pause),
-        "resume" => Ok(RecordPlaybackCommand::Resume),
-        "scale" | "speed" => {
-            let value = parse_zlm_playback_value(params, &["value", "speed", "scale"])?;
-            Ok(RecordPlaybackCommand::Scale { value })
-        }
-        "seek" | "stamp" => {
-            let value = parse_zlm_playback_value(params, &["value", "stamp", "seek"])?;
-            Ok(RecordPlaybackCommand::Seek {
-                value: value as i64,
-            })
-        }
-        _ => Err(AdapterError::InvalidRequest(format!(
-            "unsupported playback command {command}"
-        ))),
-    }
-}
-
-pub(crate) fn zlm_response<T: serde::Serialize>(code: i32, msg: &str, data: T) -> HttpResponse {
-    HttpResponse {
-        status: 200,
-        headers: vec![HttpHeader {
-            name: "content-type".to_string(),
-            value: "application/json".to_string(),
-        }],
-        body: Bytes::from(
-            serde_json::to_vec(&serde_json::json!({
-                "code": code,
-                "msg": msg,
-                "data": data,
-            }))
-            .unwrap_or_default(),
-        ),
-    }
-}
-
 fn zlm_json_response(params: serde_json::Value) -> HttpResponse {
     HttpResponse {
         status: 200,
@@ -1098,6 +731,39 @@ fn secret_from_header(req: &HttpRequest) -> String {
         return stripped.unwrap_or(header).trim().to_string();
     }
     String::new()
+}
+
+/// Extract a cookie value by name from the `Cookie` header.
+///
+/// 从 `Cookie` 头按名称提取 cookie 值。
+fn cookie_from_header(req: &HttpRequest, name: &str) -> Option<String> {
+    let header = header_value(&req.headers, "cookie")?;
+    for pair in header.split(';') {
+        let mut kv = pair.splitn(2, '=');
+        let key = kv.next()?.trim();
+        if key.eq_ignore_ascii_case(name) {
+            return kv.next().map(|v| v.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Constant-time string equality.
+///
+/// 常量时间字符串比较。
+fn constant_time_eq_str(a: &str, b: &str) -> bool {
+    use subtle::{Choice, ConstantTimeEq};
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    let len_eq = (a.len() as u64).ct_eq(&(b.len() as u64));
+    let mut content_eq = Choice::from(1u8);
+    // Iterate over the provided value (`a`) rather than the configured secret
+    // (`b`) so the timing does not leak the secret's length.
+    for (i, ai) in a.iter().enumerate() {
+        let bi = b.get(i).copied().unwrap_or(0);
+        content_eq &= u8::ct_eq(ai, &bi);
+    }
+    bool::from(len_eq & content_eq)
 }
 
 pub(crate) fn page_from_params(params: &serde_json::Value) -> u64 {

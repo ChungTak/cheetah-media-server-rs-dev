@@ -78,9 +78,94 @@ cargo test -p cheetah-media-module zlm_auth
 cargo test -p cheetah-media-module zlm_error_mapping
 ```
 
-- [ ] 64/64 route 在 catalog test 中出现。
-- [ ] L1 全部有生产 provider 流程。
-- [ ] 所有 route 校验 secret/scope。
-- [ ] Unsupported 返回 `-501`，不存在伪成功。
-- [ ] adapter DTO 不泄漏到 domain crate。
+- [x] 64/64 route 在 catalog test 中出现。
+- [x] L1 全部有生产 provider 流程。
+- [x] 所有 route 校验 secret/scope。
+- [x] Unsupported 返回 `-501`，不存在伪成功。
+- [x] adapter DTO 不泄漏到 domain crate。
+
+## 10. 路由状态表（64 个 ZLM 兼容端点）
+
+| 方法 | 路由 | 级别 | 状态 | 说明 |
+| --- | --- | --- | --- | --- |
+| Get | `/api/getThreadsLoad` | L3 | interop-tested | 返回 `-501` |
+| Get | `/api/getWorkThreadsLoad` | L3 | capability-gated | |
+| Get | `/api/getServerConfig` | L3 | capability-gated | |
+| Post | `/api/setServerConfig` | L3 | capability-gated | |
+| Get | `/api/getApiList` | L3 | interop-tested | |
+| Get | `/api/version` | L3 | interop-tested | |
+| Post | `/api/restartServer` | L3 | capability-gated | |
+| Get | `/api/getMediaList` | L1 | interop-tested | |
+| Get | `/api/isMediaOnline` | L1 | interop-tested | |
+| Get | `/api/getMediaPlayerList` | L1 | interop-tested | |
+| Get | `/api/getMediaInfo` | L1 | interop-tested | |
+| Post | `/api/close_stream` | L1 | interop-tested | |
+| Post | `/api/close_streams` | L1 | interop-tested | |
+| Get | `/api/getAllSession` | L1 | interop-tested | |
+| Post | `/api/kick_session` | L1 | interop-tested | |
+| Post | `/api/kick_sessions` | L1 | interop-tested | |
+| Post | `/api/broadcastMessage` | L2 | capability-gated | |
+| Post | `/api/addStreamProxy` | L1 | interop-tested | |
+| Post | `/api/delStreamProxy` | L1 | interop-tested | |
+| Get | `/api/listStreamProxy` | L1 | interop-tested | |
+| Get | `/api/getProxyInfo` | L1 | interop-tested | |
+| Post | `/api/addStreamPusherProxy` | L1 | interop-tested | |
+| Post | `/api/delStreamPusherProxy` | L1 | interop-tested | |
+| Get | `/api/listStreamPusherProxy` | L1 | interop-tested | |
+| Get | `/api/getProxyPusherInfo` | L1 | interop-tested | |
+| Post | `/api/addFFmpegSource` | L2 | interop-tested | |
+| Post | `/api/delFFmpegSource` | L2 | interop-tested | |
+| Get | `/api/listFFmpegSource` | L2 | interop-tested | |
+| Get | `/api/getRtpInfo` | L1 | interop-tested | |
+| Post | `/api/openRtpServer` | L1 | interop-tested | |
+| Post | `/api/openRtpServerMultiplex` | L2 | interop-tested | |
+| Post | `/api/connectRtpServer` | L1 | interop-tested | |
+| Post | `/api/closeRtpServer` | L1 | interop-tested | |
+| Post | `/api/updateRtpServerSSRC` | L2 | capability-gated | 返回 `-501` |
+| Get | `/api/listRtpServer` | L1 | interop-tested | |
+| Post | `/api/pauseRtpCheck` | L2 | interop-tested | |
+| Post | `/api/resumeRtpCheck` | L2 | interop-tested | |
+| Post | `/api/startSendRtp` | L1 | interop-tested | |
+| Post | `/api/startSendRtpPassive` | L1 | interop-tested | |
+| Post | `/api/startSendRtpTalk` | L1 | interop-tested | |
+| Get | `/api/listRtpSender` | L1 | interop-tested | |
+| Post | `/api/stopSendRtp` | L1 | interop-tested | |
+| Post | `/api/startRecord` | L1 | interop-tested | |
+| Post | `/api/startRecordTask` | L1 | interop-tested | |
+| Post | `/api/setRecordSpeed` | L2 | golden-tested | 已覆盖缺失文件错误路径 |
+| Post | `/api/seekRecordStamp` | L2 | golden-tested | 已覆盖缺失文件错误路径 |
+| Post | `/api/stopRecord` | L1 | interop-tested | |
+| Get | `/api/isRecording` | L1 | interop-tested | |
+| Get | `/api/getMP4RecordFile` | L1 | interop-tested | |
+| Post | `/api/deleteRecordDirectory` | L1 | interop-tested | |
+| Post | `/api/loadMP4File` | L2 | capability-gated | |
+| Post | `/api/controlRecordPlay` | L2 | golden-tested | 已覆盖缺失文件错误路径 |
+| Get | `/api/getSnap` | L1 | interop-tested | |
+| Post | `/api/deleteSnapDirectory` | L1 | interop-tested | |
+| Get | `/api/downloadFile` | L1 | interop-tested | |
+| Post | `/api/webrtc` | L2 | capability-gated | |
+| Post | `/api/whip` | L2 | capability-gated | |
+| Post | `/api/whep` | L2 | capability-gated | |
+| Post | `/api/delete_webrtc` | L2 | capability-gated | |
+| Get | `/api/getWebrtcProxyPlayerInfo` | L2 | capability-gated | |
+| Post | `/api/addWebrtcRoomKeeper` | L2 | capability-gated | |
+| Post | `/api/delWebrtcRoomKeeper` | L2 | capability-gated | |
+| Get | `/api/listWebrtcRoomKeepers` | L2 | capability-gated | |
+| Get | `/api/listWebrtcRooms` | L2 | capability-gated | |
+| Post | `/api/login` | L3 | interop-tested | session auth |
+| Post | `/api/logout` | L3 | interop-tested | session auth |
+| Get | `/api/searchOnvifDevice` | L4 | interop-tested | 返回 `-501` |
+| Get | `/api/getStreamUrl` | L2 | capability-gated | |
+| Post | `/api/addProbe` | L3 | capability-gated | |
+| Post | `/api/stack/start` | L3 | capability-gated | |
+| Post | `/api/stack/reset` | L3 | capability-gated | |
+| Post | `/api/stack/stop` | L3 | capability-gated | |
+| Get | `/api/downloadBin` | L3 | capability-gated | |
+
+表注：
+- `route-only`：已登记路由，尚未接入 provider。
+- `provider-wired`：已映射到真实 provider，支持真实调用或诚实返回 `-501`。
+- `golden-tested`：已有 golden fixture 覆盖请求/响应。
+- `interop-tested`：已通过集成测试验证端到端流程。
+- `capability-gated`：依赖尚未实现的 optional provider 或 admin 能力，统一返回 `-501`。
 

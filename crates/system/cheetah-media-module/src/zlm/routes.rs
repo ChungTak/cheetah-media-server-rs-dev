@@ -72,7 +72,7 @@ const ZLM_ROUTES: &[ZlmRoute] = &[
     ZlmRoute {
         method: HttpMethod::Get,
         path: "/api/version",
-        scope: MediaScope::MediaRead,
+        scope: MediaScope::ServerAdmin,
         level: ZlmRouteLevel::L3,
         required: true,
     },
@@ -493,14 +493,14 @@ const ZLM_ROUTES: &[ZlmRoute] = &[
     ZlmRoute {
         method: HttpMethod::Post,
         path: "/api/login",
-        scope: MediaScope::ServerAdmin,
+        scope: MediaScope::MediaRead,
         level: ZlmRouteLevel::L3,
         required: false,
     },
     ZlmRoute {
         method: HttpMethod::Post,
         path: "/api/logout",
-        scope: MediaScope::ServerAdmin,
+        scope: MediaScope::MediaRead,
         level: ZlmRouteLevel::L3,
         required: false,
     },

@@ -388,6 +388,18 @@ impl ProxyApi for EngineMediaFacade {
         provider.create_ffmpeg_proxy(ctx, request).await
     }
 
+    async fn delete_ffmpeg_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &ProxyId,
+    ) -> MediaResult<()> {
+        let provider = self
+            .services
+            .proxy()
+            .ok_or_else(|| MediaError::unavailable("proxy"))?;
+        provider.delete_ffmpeg_proxy(ctx, id).await
+    }
+
     async fn get_ffmpeg_proxy(
         &self,
         ctx: &MediaRequestContext,

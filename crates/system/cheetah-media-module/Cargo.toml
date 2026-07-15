@@ -11,6 +11,7 @@ async-trait.workspace = true
 bytes.workspace = true
 cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
 cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
+getrandom.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true
@@ -22,5 +23,7 @@ tracing.workspace = true
 cheetah-config = { path = "../cheetah-config" }
 cheetah-engine = { path = "../cheetah-engine" }
 cheetah-proxy-module = { path = "../cheetah-proxy-module" }
+cheetah-record-module = { path = "../cheetah-record-module" }
 cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
+cheetah-rtp-module = { path = "../../protocols/rtp/module" }
 tokio = { workspace = true }

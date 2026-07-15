@@ -124,8 +124,12 @@ impl ConfigControlAuth {
         let header = header?;
         let header = header.trim();
         let prefix = "bearer ";
-        if header.len() > prefix.len() && header[..prefix.len()].eq_ignore_ascii_case(prefix) {
-            return Some(header[prefix.len()..].trim().to_string());
+        if header.len() > prefix.len() {
+            if let Some(candidate) = header.get(..prefix.len()) {
+                if candidate.eq_ignore_ascii_case(prefix) {
+                    return Some(header[prefix.len()..].trim().to_string());
+                }
+            }
         }
         None
     }

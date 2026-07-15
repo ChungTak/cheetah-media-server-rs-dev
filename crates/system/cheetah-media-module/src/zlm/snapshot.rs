@@ -6,7 +6,7 @@ use cheetah_media_api::command::{DeleteSnapshotRequest, SnapshotRequest};
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::{HttpRequest, HttpResponse};
 
-use super::{zlm_response, ZlmMediaHttpService};
+use super::{zlm_response, Data, ZlmMediaHttpService, ZlmResponse, ZlmResult};
 use crate::error::AdapterError;
 
 impl ZlmMediaHttpService {
@@ -32,7 +32,7 @@ impl ZlmMediaHttpService {
             capture_policy: Default::default(),
         };
         let handle = snapshot_api.take_snapshot(ctx, request).await?;
-        Ok(zlm_response(0, "success", handle))
+        Ok(zlm_response(ZlmResponse::ok(Data::new(handle))))
     }
 
     pub(crate) async fn delete_snap_directory(
@@ -49,11 +49,7 @@ impl ZlmMediaHttpService {
             retain_count: params["retain_count"].as_u64().map(|v| v as u32),
         };
         snapshot_api.delete_snapshot_directory(ctx, request).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
+        Ok(zlm_response(ZlmResponse::ok(ZlmResult { result: true })))
     }
 }
 
