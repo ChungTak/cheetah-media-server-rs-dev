@@ -21,6 +21,7 @@ use crate::error::{zlm_error_response, AdapterError};
 
 mod admin;
 mod control;
+mod dto;
 mod login;
 mod media;
 mod proxy;
@@ -30,6 +31,9 @@ mod rtp;
 mod session;
 mod session_store;
 mod snapshot;
+
+pub(crate) use dto::zlm_response;
+pub(crate) use dto::*;
 
 const MODULE_ID: &str = "media-http-zlm";
 
@@ -680,24 +684,6 @@ fn parse_json_u64(value: &serde_json::Value) -> Option<u64> {
     value
         .as_u64()
         .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
-}
-
-pub(crate) fn zlm_response<T: serde::Serialize>(code: i32, msg: &str, data: T) -> HttpResponse {
-    HttpResponse {
-        status: 200,
-        headers: vec![HttpHeader {
-            name: "content-type".to_string(),
-            value: "application/json".to_string(),
-        }],
-        body: Bytes::from(
-            serde_json::to_vec(&serde_json::json!({
-                "code": code,
-                "msg": msg,
-                "data": data,
-            }))
-            .unwrap_or_default(),
-        ),
-    }
 }
 
 fn zlm_json_response(params: serde_json::Value) -> HttpResponse {

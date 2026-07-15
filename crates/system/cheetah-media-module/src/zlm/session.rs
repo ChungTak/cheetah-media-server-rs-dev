@@ -10,7 +10,10 @@ use cheetah_sdk::{HttpRequest, HttpResponse};
 
 use crate::error::AdapterError;
 
-use super::{page_from_params, page_size_from_params, zlm_response, ZlmMediaHttpService};
+use super::{
+    page_from_params, page_size_from_params, zlm_response, Data, Empty, SessionItem,
+    ZlmCloseStreamResult, ZlmMediaHttpService, ZlmResponse,
+};
 
 impl ZlmMediaHttpService {
     pub(crate) async fn get_all_session(
@@ -29,7 +32,8 @@ impl ZlmMediaHttpService {
         };
         query.clamp_page_size();
         let page = self.control()?.list_sessions(ctx, query).await?;
-        Ok(zlm_response(0, "success", page))
+        let items: Vec<SessionItem> = page.items.into_iter().map(SessionItem::from).collect();
+        Ok(zlm_response(ZlmResponse::ok(Data::new(items))))
     }
 
     pub(crate) async fn close_stream(
@@ -43,11 +47,11 @@ impl ZlmMediaHttpService {
             .control()?
             .kick_stream(ctx, &key, CloseReason::Kicked)
             .await?;
-        Ok(zlm_response(
+        Ok(zlm_response(ZlmResponse::with_msg(
             0,
             "success",
-            serde_json::json!({"result": true}),
-        ))
+            ZlmCloseStreamResult { result: 0 },
+        )))
     }
 
     pub(crate) async fn kick_session(
@@ -62,10 +66,6 @@ impl ZlmMediaHttpService {
         self.control()?
             .kick_session(ctx, &SessionId(id.to_string()), CloseReason::Kicked)
             .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
+        Ok(zlm_response(ZlmResponse::with_msg(0, "success", Empty)))
     }
 }

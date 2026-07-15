@@ -74,8 +74,10 @@ async fn zlm_version_and_api_list_are_available() {
     let body = body_json(&resp);
     assert_eq!(body["code"], 0, "version failed: {body}");
     assert!(
-        body["data"]["version"].as_str().is_some(),
-        "version missing: {body}"
+        body["data"]["buildTime"].as_str().is_some()
+            || body["data"]["branchName"].as_str().is_some()
+            || body["data"]["commitHash"].as_str().is_some(),
+        "version data missing: {body}"
     );
 
     let resp = service
@@ -88,6 +90,10 @@ async fn zlm_version_and_api_list_are_available() {
     assert!(
         apis.iter().any(|v| v.as_str() == Some("/api/version")),
         "version route missing from api list: {body}"
+    );
+    assert!(
+        body["data"]["capabilities"].is_object(),
+        "capabilities missing: {body}"
     );
 }
 

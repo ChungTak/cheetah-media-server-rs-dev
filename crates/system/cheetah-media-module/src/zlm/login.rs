@@ -8,11 +8,13 @@ use std::time::Duration;
 
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::{HttpHeader, HttpRequest, HttpResponse};
-use serde_json::json;
 
 use crate::error::AdapterError;
 
-use super::{constant_time_eq_str, cookie_from_header, zlm_response, ZlmMediaHttpService};
+use super::{
+    constant_time_eq_str, cookie_from_header, zlm_response, Data, LoginSuccess,
+    ZlmMediaHttpService, ZlmResponse, ZlmResult,
+};
 
 impl ZlmMediaHttpService {
     pub(crate) async fn login(
@@ -83,13 +85,9 @@ impl ZlmMediaHttpService {
             "{}={}; Path=/; HttpOnly; Secure; SameSite=Strict",
             session_cfg.cookie_name, token
         );
-        let mut response = zlm_response(
-            0,
-            "success",
-            json!({
-                "cookie_name": session_cfg.cookie_name,
-            }),
-        );
+        let mut response = zlm_response(ZlmResponse::ok(Data::new(LoginSuccess {
+            cookie_name: &session_cfg.cookie_name,
+        })));
         response.headers.push(HttpHeader {
             name: "set-cookie".to_string(),
             value: cookie_value,
@@ -108,6 +106,6 @@ impl ZlmMediaHttpService {
                 self.session_store.remove(&token);
             }
         }
-        Ok(zlm_response(0, "success", json!({"result": true})))
+        Ok(zlm_response(ZlmResponse::ok(ZlmResult { result: true })))
     }
 }
