@@ -4,8 +4,9 @@
 //! Session state is kept inside the adapter module; cookies are not passed into
 //! the domain layer.
 
+use std::time::Duration;
+
 use cheetah_media_api::port::MediaRequestContext;
-use cheetah_media_api::{MediaScope, Principal};
 use cheetah_sdk::{HttpHeader, HttpRequest, HttpResponse};
 use serde_json::json;
 
@@ -37,6 +38,15 @@ impl ZlmMediaHttpService {
             .or_else(|| params["pass"].as_str())
             .ok_or_else(|| AdapterError::InvalidRequest("password is required".to_string()))?;
 
+        if self.session_store.record_failed_login(username) {
+            return Err(AdapterError::Media(
+                cheetah_media_api::error::MediaError::new(
+                    cheetah_media_api::error::MediaErrorCode::Unauthenticated,
+                    "too many failed login attempts",
+                ),
+            ));
+        }
+
         let user_ok = constant_time_eq_str(username, &session_cfg.username);
         let pass_ok = constant_time_eq_str(password, &session_cfg.password);
         let valid = user_ok & pass_ok;
@@ -49,28 +59,16 @@ impl ZlmMediaHttpService {
             ));
         }
 
+        // Successful login clears the failed-attempt counter for the user.
+        self.session_store.clear_failed_logins(username);
+
         let token = crate::util::generate_session_token();
-        let principal = Principal {
-            identity: session_cfg.username.clone(),
-            scopes: vec![
-                MediaScope::MediaRead,
-                MediaScope::MediaControl,
-                MediaScope::MediaPublish,
-                MediaScope::MediaConsume,
-                MediaScope::RecordManage,
-                MediaScope::FileRead,
-                MediaScope::FileDelete,
-                MediaScope::ServerAdmin,
-            ],
-        };
-        let expires_at =
-            std::time::Instant::now() + std::time::Duration::from_secs(session_cfg.session_ttl_sec);
-        self.sessions.write().unwrap().insert(
+        let principal =
+            super::session_store::SessionStore::admin_principal(session_cfg.username.clone());
+        self.session_store.insert(
             token.clone(),
-            super::SessionEntry {
-                principal,
-                expires_at,
-            },
+            principal,
+            Duration::from_secs(session_cfg.session_ttl_sec),
         );
 
         let cookie_value = format!(
@@ -100,7 +98,7 @@ impl ZlmMediaHttpService {
         let cfg = self.config.read().unwrap();
         if let Some(session_cfg) = cfg.auth.session.as_ref() {
             if let Some(token) = cookie_from_header(&req, &session_cfg.cookie_name) {
-                self.sessions.write().unwrap().remove(&token);
+                self.session_store.remove(&token);
             }
         }
         Ok(zlm_response(0, "success", json!({"result": true})))

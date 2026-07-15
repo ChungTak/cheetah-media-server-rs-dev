@@ -8,19 +8,30 @@ use cheetah_runtime_tokio::TokioRuntime;
 use cheetah_sdk::{HttpHeader, HttpMethod, HttpRequest};
 use serde_json::json;
 
-fn make_engine() -> Arc<cheetah_engine::Engine> {
+fn make_engine_with_max_sessions(max_sessions: Option<usize>) -> Arc<cheetah_engine::Engine> {
     let config = Arc::new(ConfigStore::new());
+    let session = if let Some(max) = max_sessions {
+        json!({
+            "username": "admin",
+            "password": "secret123",
+            "cookie_name": "zlm_session",
+            "session_ttl_sec": 3600,
+            "max_sessions": max,
+        })
+    } else {
+        json!({
+            "username": "admin",
+            "password": "secret123",
+            "cookie_name": "zlm_session",
+            "session_ttl_sec": 3600,
+        })
+    };
     config.set_global_default(json!({
         "media": {
             "zlm": {
                 "auth": {
                     "mode": "session",
-                    "session": {
-                        "username": "admin",
-                        "password": "secret123",
-                        "cookie_name": "zlm_session",
-                        "session_ttl_sec": 3600
-                    }
+                    "session": session
                 }
             }
         }
@@ -32,6 +43,10 @@ fn make_engine() -> Arc<cheetah_engine::Engine> {
         .build()
         .expect("engine build");
     Arc::new(engine)
+}
+
+fn make_engine() -> Arc<cheetah_engine::Engine> {
+    make_engine_with_max_sessions(None)
 }
 
 fn get(path: &str, headers: Vec<HttpHeader>) -> HttpRequest {
@@ -75,18 +90,21 @@ fn find_cookie_token(resp: &cheetah_sdk::HttpResponse, cookie_name: &str) -> Opt
     None
 }
 
-#[tokio::test(flavor = "current_thread")]
-async fn zlm_session_auth_flow() {
+async fn zlm_service() -> Arc<dyn cheetah_sdk::ModuleHttpService> {
     let engine = make_engine();
     engine.start().await.expect("engine start");
-
     let mount = engine
         .module_manager_api()
         .http_mounts()
         .into_iter()
         .find(|m| m.module_id.0 == "media-http-zlm")
         .expect("zlm mount");
-    let service = mount.service.clone();
+    mount.service.clone()
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn zlm_session_auth_flow() {
+    let service = zlm_service().await;
 
     // Protected route without session returns -100.
     let resp = service
@@ -166,4 +184,101 @@ async fn zlm_session_auth_flow() {
         body["code"], -100,
         "token should be invalid after logout: {body}"
     );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn zlm_session_rate_limit_blocks_brute_force() {
+    let service = zlm_service().await;
+    let body = json!({"username": "admin", "password": "wrong"});
+
+    for i in 0..5 {
+        let resp = service
+            .handle(post("/api/login", body.clone(), vec![]))
+            .await
+            .expect("login");
+        let body_json = body_json(&resp);
+        assert_eq!(
+            body_json["code"], -100,
+            "attempt {i} should fail: {body_json}"
+        );
+    }
+
+    let resp = service
+        .handle(post("/api/login", body, vec![]))
+        .await
+        .expect("login");
+    let body = body_json(&resp);
+    assert_eq!(
+        body["msg"], "too many failed login attempts",
+        "sixth attempt should be rate limited: {body}"
+    );
+    assert_eq!(
+        body["code"], -100,
+        "sixth attempt should be rate limited: {body}"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn zlm_session_store_evicts_oldest_at_capacity() {
+    // Set a tiny max_sessions so we can observe eviction of the oldest token.
+    let engine = make_engine_with_max_sessions(Some(2));
+    engine.start().await.expect("engine start");
+    let mount = engine
+        .module_manager_api()
+        .http_mounts()
+        .into_iter()
+        .find(|m| m.module_id.0 == "media-http-zlm")
+        .expect("zlm mount");
+    let service = mount.service.clone();
+
+    let mut tokens = Vec::new();
+    for _ in 0..3 {
+        let resp = service
+            .handle(post(
+                "/api/login",
+                json!({"username": "admin", "password": "secret123"}),
+                vec![],
+            ))
+            .await
+            .expect("login");
+        let body = body_json(&resp);
+        assert_eq!(body["code"], 0, "login failed: {body}");
+        tokens.push(find_cookie_token(&resp, "zlm_session").expect("cookie"));
+    }
+
+    // With max_sessions=2, the first token should have been evicted by the third login.
+    let resp = service
+        .handle(get(
+            "/api/version",
+            vec![HttpHeader {
+                name: "Cookie".to_string(),
+                value: format!("zlm_session={}", tokens[0]),
+            }],
+        ))
+        .await
+        .expect("version with oldest token");
+    assert_eq!(
+        body_json(&resp)["code"],
+        -100,
+        "oldest session should be evicted"
+    );
+
+    // The most recent two tokens should still be valid.
+    for token in &tokens[1..] {
+        let resp = service
+            .handle(get(
+                "/api/version",
+                vec![HttpHeader {
+                    name: "Cookie".to_string(),
+                    value: format!("zlm_session={token}"),
+                }],
+            ))
+            .await
+            .expect("version with active token");
+        assert_eq!(
+            body_json(&resp)["code"],
+            0,
+            "active session rejected: {token}"
+        );
+    }
 }

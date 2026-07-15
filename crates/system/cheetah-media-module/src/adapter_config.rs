@@ -26,6 +26,8 @@ pub struct SessionAuthConfig {
     pub cookie_name: String,
     #[serde(default = "default_session_ttl_sec")]
     pub session_ttl_sec: u64,
+    #[serde(default)]
+    pub max_sessions: Option<usize>,
 }
 
 fn default_cookie_name() -> String {

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -29,6 +28,7 @@ mod record;
 mod routes;
 mod rtp;
 mod session;
+mod session_store;
 mod snapshot;
 
 const MODULE_ID: &str = "media-http-zlm";
@@ -62,7 +62,7 @@ pub struct ZlmMediaModule {
     state: ModuleState,
     ctx: Option<EngineContext>,
     config: Arc<RwLock<ZlmAdapterConfig>>,
-    sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
+    session_store: Arc<session_store::SessionStore>,
 }
 
 impl ZlmMediaModule {
@@ -71,7 +71,7 @@ impl ZlmMediaModule {
             state: ModuleState::Created,
             ctx: None,
             config: Arc::new(RwLock::new(ZlmAdapterConfig::default())),
-            sessions: Arc::new(RwLock::new(HashMap::new())),
+            session_store: Arc::new(session_store::SessionStore::new()),
         }
     }
 }
@@ -136,10 +136,14 @@ impl Module for ZlmMediaModule {
         if !self.config.read().unwrap().enabled {
             return None;
         }
+        if let Some(session_cfg) = self.config.read().unwrap().auth.session.as_ref() {
+            self.session_store
+                .set_max_sessions(session_cfg.max_sessions);
+        }
         Some(Arc::new(ZlmMediaHttpService {
             ctx: self.ctx.clone()?,
             config: self.config.clone(),
-            sessions: self.sessions.clone(),
+            session_store: self.session_store.clone(),
         }))
     }
 
@@ -156,15 +160,10 @@ impl Module for ZlmMediaModule {
     }
 }
 
-struct SessionEntry {
-    principal: Principal,
-    expires_at: Instant,
-}
-
 pub(crate) struct ZlmMediaHttpService {
     ctx: EngineContext,
     config: Arc<RwLock<ZlmAdapterConfig>>,
-    sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
+    session_store: Arc<session_store::SessionStore>,
 }
 
 impl ZlmMediaHttpService {
@@ -289,22 +288,12 @@ impl ZlmMediaHttpService {
                     ))
                 })?;
                 let now = Instant::now();
-                let sessions = self.sessions.read().unwrap();
-                let entry = sessions.get(&token).ok_or_else(|| {
+                self.session_store.validate(&token, now).ok_or_else(|| {
                     AdapterError::Media(MediaError::new(
                         MediaErrorCode::Unauthenticated,
-                        "invalid session",
+                        "invalid or expired session",
                     ))
-                })?;
-                if now > entry.expires_at {
-                    drop(sessions);
-                    self.sessions.write().unwrap().remove(&token);
-                    return Err(AdapterError::Media(MediaError::new(
-                        MediaErrorCode::Unauthenticated,
-                        "expired session",
-                    )));
-                }
-                Ok(entry.principal.clone())
+                })
             }
             _ => {
                 let credentials = AuthCredentials {
@@ -774,9 +763,11 @@ fn constant_time_eq_str(a: &str, b: &str) -> bool {
     let b = b.as_bytes();
     let len_eq = (a.len() as u64).ct_eq(&(b.len() as u64));
     let mut content_eq = Choice::from(1u8);
-    for (i, bi) in b.iter().enumerate() {
-        let ai = a.get(i).copied().unwrap_or(0);
-        content_eq &= u8::ct_eq(&ai, bi);
+    // Iterate over the provided value (`a`) rather than the configured secret
+    // (`b`) so the timing does not leak the secret's length.
+    for (i, ai) in a.iter().enumerate() {
+        let bi = b.get(i).copied().unwrap_or(0);
+        content_eq &= u8::ct_eq(ai, &bi);
     }
     bool::from(len_eq & content_eq)
 }
