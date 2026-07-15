@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 
 use cheetah_media_api::command::{
     RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest,
+    UpdateRtpRequest,
 };
 use cheetah_media_api::ids::{MediaKey, RtpSessionId, StreamKeyBridge};
 use cheetah_media_api::model::{RtpSessionKind, RtpTcpMode};
@@ -39,6 +40,51 @@ impl ZlmMediaHttpService {
                 .or_else(|| params["payload_mode"].as_str())
                 .map(String::from),
             reuse_port: crate::util::parse_json_bool(&params["reuse_port"]).unwrap_or(false),
+            timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
+        };
+        let session = rtp_api.open_rtp_receiver(ctx, request).await?;
+        Ok(super::zlm_response(
+            0,
+            "success",
+            serde_json::json!({
+                "port": session.local_port,
+                "ssrc": session.ssrc,
+                "session_id": session.session_id.0,
+            }),
+        ))
+    }
+
+    pub(crate) async fn open_rtp_server_multiplex(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        self.open_rtp_server_internal(ctx, req, true).await
+    }
+
+    async fn open_rtp_server_internal(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+        reuse_port: bool,
+    ) -> Result<HttpResponse, AdapterError> {
+        let rtp_api = self.rtp()?;
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let tcp_mode = parse_zlm_rtp_tcp_mode(&params);
+        let request = RtpReceiverRequest {
+            media_key: key,
+            port: parse_zlm_u16(&params, "port")?,
+            ip: params["ip"].as_str().map(String::from),
+            ssrc: parse_zlm_u32(&params, "ssrc")?,
+            enable_rtcp: crate::util::parse_json_bool(&params["enable_rtcp"]).unwrap_or(false),
+            tcp_mode,
+            payload_type: parse_zlm_u8(&params, "payload_type")?,
+            codec_hint: params["codec_hint"]
+                .as_str()
+                .or_else(|| params["payload_mode"].as_str())
+                .map(String::from),
+            reuse_port,
             timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
         };
         let session = rtp_api.open_rtp_receiver(ctx, request).await?;
@@ -258,6 +304,82 @@ impl ZlmMediaHttpService {
             })
             .unwrap_or_else(|| serde_json::json!({"exists": false}));
         Ok(super::zlm_response(0, "success", data))
+    }
+
+    pub(crate) async fn update_rtp_server_ssrc(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let rtp_api = self.rtp()?;
+        let params = self.extract_params(&req)?;
+        let request = UpdateRtpRequest {
+            session_id: self.rtp_session_id_from_params(&params)?,
+            ssrc: parse_zlm_u32(&params, "ssrc")?,
+            payload_type: parse_zlm_u8(&params, "payload_type")?,
+            pause_check: None,
+        };
+        let session = rtp_api.update_rtp_session(ctx, request).await?;
+        Ok(super::zlm_response(
+            0,
+            "success",
+            serde_json::json!({"session_id": session.session_id.0, "ssrc": session.ssrc}),
+        ))
+    }
+
+    pub(crate) async fn pause_rtp_check(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        self.set_rtp_check(ctx, req, true).await
+    }
+
+    pub(crate) async fn resume_rtp_check(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        self.set_rtp_check(ctx, req, false).await
+    }
+
+    async fn set_rtp_check(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+        paused: bool,
+    ) -> Result<HttpResponse, AdapterError> {
+        let rtp_api = self.rtp()?;
+        let params = self.extract_params(&req)?;
+        let request = UpdateRtpRequest {
+            session_id: self.rtp_session_id_from_params(&params)?,
+            ssrc: None,
+            payload_type: None,
+            pause_check: Some(paused),
+        };
+        let session = rtp_api.update_rtp_session(ctx, request).await?;
+        Ok(super::zlm_response(
+            0,
+            "success",
+            serde_json::json!({
+                "session_id": session.session_id.0,
+                "check_paused": session.check_paused,
+            }),
+        ))
+    }
+
+    fn rtp_session_id_from_params(
+        &self,
+        params: &serde_json::Value,
+    ) -> Result<RtpSessionId, AdapterError> {
+        if let Some(id) = params["session_id"]
+            .as_str()
+            .or_else(|| params["stream_id"].as_str())
+        {
+            return Ok(RtpSessionId(id.to_string()));
+        }
+        let key = self.parse_media_key(params)?;
+        Ok(RtpSessionId(zlm_rtp_session_id(&key, "recv")))
     }
 }
 
