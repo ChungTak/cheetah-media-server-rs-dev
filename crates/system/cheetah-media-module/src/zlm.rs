@@ -311,9 +311,15 @@ impl ZlmMediaHttpService {
         req: &HttpRequest,
     ) -> Result<MediaRequestContext, AdapterError> {
         let ctx = self.request_context(req)?;
-        if let Some(scope) = self.required_scope(req.method, &req.path) {
-            self.require_scope(&ctx, &scope)?;
-        }
+        let Some(scope) = self.required_scope(req.method, &req.path) else {
+            return Err(AdapterError::Media(
+                cheetah_media_api::error::MediaError::new(
+                    cheetah_media_api::error::MediaErrorCode::PermissionDenied,
+                    "route is not authorized",
+                ),
+            ));
+        };
+        self.require_scope(&ctx, &scope)?;
         Ok(ctx)
     }
 
