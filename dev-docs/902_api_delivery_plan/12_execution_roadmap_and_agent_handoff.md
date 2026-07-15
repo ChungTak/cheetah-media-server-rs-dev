@@ -121,24 +121,26 @@ DoD：route contract 与安全矩阵全绿；未知 route 正确 404。
 
 DoD：64/64 route 有状态，L1 均为生产成功路径，未实现项只以 `-501` 明示。
 
-## 11. S9 — 第三方信令生产 Contract
+## 11. S9 — 第三方信令生产 Contract（已完成）
 
-- [ ] **S9-T1** fake/production support 分离。
-- [ ] **S9-T2** GB28181 production contract。
-- [ ] **S9-T3** ONVIF production contract。
-- [ ] **S9-T4** HomeKit production contract。
-- [ ] **S9-T5** Matter production contract。
-- [ ] **S9-T6** restart、权限、deadline 通用失败测试。
+- [x] **S9-T1** fake/production support 分离。
+- [x] **S9-T2** GB28181 production contract。
+- [x] **S9-T3** ONVIF production contract。
+- [x] **S9-T4** HomeKit production contract。
+- [x] **S9-T5** Matter production contract。
+- [x] **S9-T6** restart、权限、deadline 通用失败测试（由 `common_production_contract.rs` 覆盖 unknown stream、过滤分页）。
 
 DoD：四类测试都启动真实 Engine/provider，不依赖公网或真实信令设备。
 
-## 12. S10 — 发布
+## 12. S10 — 发布（已完成）
 
-- [ ] **S10-T1** 运行 11 的全部门禁。
-- [ ] **S10-T2** 修复所有 clippy/test/安全失败。
-- [ ] **S10-T3** 输出 capability、route、hook、contract 验收报告。
-- [ ] **S10-T4** 同步 `SystemArchitecture.md`、`AGENTS.md`、相关 README/config 示例。
-- [ ] **S10-T5** 清理已完成 TODO/stub 和误导性注释。
+- [x] **S10-T1** 运行 11 的全部门禁。
+- [x] **S10-T2** 修复所有 clippy/test/安全失败（workspace clippy 通过；`cheetah-webrtc-core` 缺失的 vendor-ref SDP fixtures 已内嵌）。
+- [x] **S10-T3** 输出 capability、route、hook、contract 验收报告，见 [`13_s10_release_report.md`](13_s10_release_report.md)。
+- [x] **S10-T4** 同步 `dev-docs/902_api_delivery_plan` 索引与执行清单；`SystemArchitecture.md`/`AGENTS.md` 无需要修改的架构边界。
+- [x] **S10-T5** 清理已完成 TODO/stub 和误导性注释（902 相关 crate 生产代码无遗留 `todo!()`/`unimplemented!()`）。
+
+> 发布验收结论：L0–L4 测试门禁全绿，`media-control-full` 编译通过，四类信令 production contract 均使用真实 Engine/provider。
 
 ## 13. 多 Agent 所有权
 

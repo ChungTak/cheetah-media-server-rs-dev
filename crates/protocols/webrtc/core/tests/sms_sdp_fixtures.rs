@@ -1,10 +1,10 @@
 //! Integration tests for SimpleMediaServer-shipped SDP fixtures.
 //!
 //! Counterpart of `zlm_sdp_fixtures.rs`: feeds the SMS reference offers
-//! (under `vendor-ref/simple-media-server/Src/Webrtc/SdpExample/`)
-//! through the SDP compatibility preprocessor and `WebRtcCore`'s
-//! `AcceptOffer` flow. Each fixture asserts the same end-to-end
-//! contract (no panic, valid answer, full lifecycle).
+//! (under `tests/fixtures/sms/`) through the SDP compatibility
+//! preprocessor and `WebRtcCore`'s `AcceptOffer` flow. Each fixture
+//! asserts the same end-to-end contract (no panic, valid answer, full
+//! lifecycle).
 //!
 //! Phase 05 §"互操作 fixture" called out that the SMS h265 / janus /
 //! offer-simulcast fixtures had been copied into the repo but were
@@ -18,23 +18,30 @@ use cheetah_webrtc_core::{
     WebRtcSessionId, WebRtcSessionLifecycle, WebRtcSessionRole,
 };
 
-const SMS_PUBLISH_OFFER: &str = include_str!(
-    "../../../../../vendor-ref/simple-media-server/Src/Webrtc/SdpExample/publish-offer-sms.sdp"
-);
-const SMS_PUBLISH_OFFER_VANILLA: &str = include_str!(
-    "../../../../../vendor-ref/simple-media-server/Src/Webrtc/SdpExample/publish-offer.sdp"
-);
-const SMS_OFFER: &str =
-    include_str!("../../../../../vendor-ref/simple-media-server/Src/Webrtc/SdpExample/offer.sdp");
-const SMS_OFFER_SIMULCAST: &str = include_str!(
-    "../../../../../vendor-ref/simple-media-server/Src/Webrtc/SdpExample/offer-simulcast.sdp"
-);
-const SMS_H265_OFFER: &str = include_str!(
-    "../../../../../vendor-ref/simple-media-server/Src/Webrtc/SdpExample/h265-offer.sdp"
-);
-const SMS_JANUS_OFFER: &str = include_str!(
-    "../../../../../vendor-ref/simple-media-server/Src/Webrtc/SdpExample/janus_offer.sdp"
-);
+const SMS_PUBLISH_OFFER: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/sms/publish-offer-sms.sdp"
+));
+const SMS_PUBLISH_OFFER_VANILLA: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/sms/publish-offer.sdp"
+));
+const SMS_OFFER: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/sms/offer.sdp"
+));
+const SMS_OFFER_SIMULCAST: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/sms/offer-simulcast.sdp"
+));
+const SMS_H265_OFFER: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/sms/h265-offer.sdp"
+));
+const SMS_JANUS_OFFER: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/fixtures/sms/janus_offer.sdp"
+));
 
 fn drain(core: &mut WebRtcCore) -> Vec<WebRtcCoreOutput> {
     let mut sink = Vec::new();

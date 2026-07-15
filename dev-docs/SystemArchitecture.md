@@ -994,10 +994,15 @@ pub struct EngineContext {
 ### 9.5 Cargo Feature 组织
 
 ```bash
-cargo build --release --features "rtmp,rtsp,webrtc,hls"
+# 完整能力组合（media-control-full 等价展开）
+cargo build --release -p cheetah-server --features media-control-full
+
+# 显式展开验证（避免 profile 漏依赖）
+cargo check -p cheetah-server --no-default-features \
+  --features 'rtmp,rtsp,http-flv,hls,ts,fmp4,mp4,rtp,gb28181,record,webrtc,srt,proxy'
 ```
 
-支持按模块维度启用编译，降低二进制大小与构建成本。
+支持按模块维度启用编译，降低二进制大小与构建成本。`media-control-full` 一键启用所有已交付的媒体控制模块。`cheetah-connector` 完整能力测试需显式 `--features full`。
 
 ---
 
