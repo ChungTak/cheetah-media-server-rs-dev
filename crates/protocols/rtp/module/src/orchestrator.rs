@@ -148,6 +148,7 @@ impl RtpSessionOrchestrator {
         reuse_port: bool,
         state: RtpSessionState,
     ) -> RtpSession {
+        let now = self.now_ms();
         RtpSession {
             session_id,
             kind,
@@ -160,7 +161,10 @@ impl RtpSessionOrchestrator {
             reuse_port,
             state,
             check_paused: false,
-            created_at: self.now_ms(),
+            generation: 1,
+            created_at: now,
+            updated_at: now,
+            last_error: None,
         }
     }
 
@@ -351,7 +355,11 @@ impl RtpSessionOrchestrator {
                 session.ssrc = request.ssrc;
             }
             session.remote_endpoint = Some(request.remote_endpoint.clone());
-            session.state = RtpSessionState::Created;
+            if session.state != RtpSessionState::Created {
+                session.state = RtpSessionState::Created;
+            }
+            session.generation += 1;
+            session.updated_at = self.now_ms();
             let ssrc = session.ssrc.unwrap_or(0);
             let payload_mode = Self::parse_payload_mode(&None, session.payload_type);
             (
@@ -410,7 +418,11 @@ impl RtpSessionOrchestrator {
         let session = sessions
             .get_mut(id)
             .ok_or_else(|| MediaError::not_found("rtp session"))?;
-        session.state = state;
+        if session.state != state {
+            session.state = state;
+            session.generation += 1;
+            session.updated_at = self.now_ms();
+        }
         Ok(session.clone())
     }
 
@@ -426,12 +438,19 @@ impl RtpSessionOrchestrator {
         let session = sessions
             .get_mut(id)
             .ok_or_else(|| MediaError::not_found("rtp session"))?;
-        session.remote_endpoint = Some(remote.to_string());
+        let new_remote = Some(remote.to_string());
+        let mut changed = session.remote_endpoint != new_remote;
+        session.remote_endpoint = new_remote;
         if matches!(
             session.state,
             RtpSessionState::Listening | RtpSessionState::Created
         ) {
             session.state = RtpSessionState::Connected;
+            changed = true;
+        }
+        if changed {
+            session.generation += 1;
+            session.updated_at = self.now_ms();
         }
         Ok(session.clone())
     }
@@ -520,6 +539,8 @@ impl RtpSessionOrchestrator {
 
             session.kind = RtpSessionKind::Talk;
             session.state = RtpSessionState::Connected;
+            session.generation += 1;
+            session.updated_at = self.now_ms();
             destination
         };
 
@@ -597,52 +618,58 @@ impl RtpSessionOrchestrator {
 
     /// Update an RTP session.
     ///
-    /// Currently supports `pause_check` (suspend/restore timeout monitoring) without
-    /// interrupting packet reception. SSRC/payload changes require a rebuild and are
-    /// not yet supported.
+    /// `expected_generation` is compared to the local snapshot before the core update is
+    /// attempted; the core compares it again atomically. A conflicting or failed update
+    /// leaves both the core and the snapshot unchanged.
     ///
     /// 更新 RTP 会话。
     pub async fn update_rtp_session(&self, request: UpdateRtpRequest) -> Result<RtpSession> {
-        if request.ssrc.is_some() || request.payload_type.is_some() {
-            return Err(MediaError::unsupported("rtp session ssrc/payload update"));
+        if request.ssrc.is_none() && request.payload_type.is_none() && request.pause_check.is_none()
+        {
+            return Err(MediaError::invalid_argument("empty patch"));
         }
 
-        // Validate the driver is available before mutating the directory so a failed
-        // send does not leave the local session record inconsistent with the core.
-        let driver = request
-            .pause_check
-            .is_some()
-            .then(|| self.driver())
-            .transpose()?;
-
-        let (session_key, paused) = {
-            let mut sessions = self.sessions.lock();
+        let driver = self.driver()?;
+        let (session_key, generation) = {
+            let sessions = self.sessions.lock();
             let session = sessions
-                .get_mut(&request.session_id)
+                .get(&request.session_id)
                 .ok_or_else(|| MediaError::not_found("rtp session"))?;
-
-            if let Some(paused) = request.pause_check {
-                session.check_paused = paused;
-                (session.session_id.0.clone(), Some(paused))
-            } else {
-                (session.session_id.0.clone(), None)
-            }
+            (session.session_id.0.clone(), session.generation)
         };
 
-        if let (Some(driver), Some(paused)) = (driver, paused) {
-            driver
-                .send_command(RtpDriverCommand::PauseCheck {
-                    session_key,
-                    paused,
-                })
-                .await;
+        if request.expected_generation != generation {
+            return Err(MediaError::conflict("generation mismatch"));
         }
 
-        let sessions = self.sessions.lock();
-        sessions
-            .get(&request.session_id)
-            .cloned()
-            .ok_or_else(|| MediaError::not_found("rtp session"))
+        let ack = driver
+            .update_session(
+                session_key,
+                request.expected_generation,
+                request.ssrc,
+                request.payload_type,
+                request.pause_check,
+            )
+            .await
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
+
+        let mut sessions = self.sessions.lock();
+        let session = sessions
+            .get_mut(&request.session_id)
+            .ok_or_else(|| MediaError::not_found("rtp session"))?;
+        if let Some(ssrc) = ack.ssrc {
+            session.ssrc = Some(ssrc);
+        }
+        if let Some(payload_type) = ack.payload_type {
+            session.payload_type = Some(payload_type);
+        }
+        if let Some(pause_check) = ack.pause_check {
+            session.check_paused = pause_check;
+        }
+        session.generation = ack.generation;
+        session.updated_at = self.now_ms();
+        session.last_error = None;
+        Ok(session.clone())
     }
 
     /// Retrieve a single RTP session.

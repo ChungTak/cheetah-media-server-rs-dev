@@ -60,6 +60,15 @@ struct RtpSession {
     /// dynamic learner so the driver can right-size send buffers and the module can flag
     /// pathological streams. Always bounded by the core's `max_rtp_len_cap`.
     max_rtp_len_observed: usize,
+
+    // Concurrency control
+    /// Monotonic generation updated whenever a mutable parameter actually changes.
+    /// Starts at 1 and is compared by `UpdateSession` for atomicity.
+    generation: u64,
+    /// Last time a mutable parameter changed, in milliseconds, from the most recent tick.
+    updated_at_ms: u64,
+    /// Optional human-readable reason for the last recorded failure.
+    last_error: Option<String>,
 }
 
 /// Sans-I/O state machine for one or more RTP/RTCP sessions.
@@ -307,6 +316,9 @@ impl RtpCore {
                                 last_rtcp_report_ms: 0,
                                 last_rr_received_ms: 0,
                                 max_rtp_len_observed: 0,
+                                generation: 1,
+                                updated_at_ms: 0,
+                                last_error: None,
                             };
                             self.sessions.insert(session_key.clone(), session);
                             self.ssrc_to_session.insert(ssrc, session_key.clone());
@@ -673,6 +685,9 @@ impl RtpCore {
                 last_rtcp_report_ms: 0,
                 last_rr_received_ms: 0,
                 max_rtp_len_observed: 0,
+                generation: 1,
+                updated_at_ms: 0,
+                last_error: None,
             };
 
             self.sessions.insert(key.clone(), session);
@@ -966,8 +981,100 @@ impl RtpCore {
         }
     }
 
-    /// Remove a session and emit lifecycle cleanup outputs.
+    /// Atomically update mutable session parameters and the SSRC index.
     ///
+    /// `expected_generation` must match the current generation. A conflicting SSRC (already
+    /// used by another session) or an empty patch leaves all state unchanged.
+    ///
+    /// 原子更新会话可变参数与 SSRC 索引。
+    fn handle_update_session(
+        &mut self,
+        session_key: RtpSessionKey,
+        expected_generation: u64,
+        ssrc: Option<u32>,
+        payload_type: Option<u8>,
+        pause_check: Option<bool>,
+        outputs: &mut Vec<RtpCoreOutput>,
+    ) {
+        let Some(mut session) = self.sessions.remove(&session_key) else {
+            outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SessionUpdateFailed {
+                session_key,
+                reason: "session not found".to_string(),
+            }));
+            return;
+        };
+
+        if ssrc.is_none() && payload_type.is_none() && pause_check.is_none() {
+            self.sessions.insert(session_key.clone(), session);
+            outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SessionUpdateFailed {
+                session_key,
+                reason: "empty patch".to_string(),
+            }));
+            return;
+        }
+
+        if session.generation != expected_generation {
+            self.sessions.insert(session_key.clone(), session);
+            outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SessionUpdateFailed {
+                session_key,
+                reason: "generation mismatch".to_string(),
+            }));
+            return;
+        }
+
+        let mut changed = false;
+        let mut result_ssrc: Option<u32> = None;
+        if let Some(new_ssrc) = ssrc {
+            if new_ssrc != session.ssrc {
+                if let Some(existing_key) = self.ssrc_to_session.get(&new_ssrc) {
+                    if existing_key != &session_key {
+                        self.sessions.insert(session_key.clone(), session);
+                        outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SessionUpdateFailed {
+                            session_key,
+                            reason: format!("ssrc {new_ssrc} already in use"),
+                        }));
+                        return;
+                    }
+                }
+                self.ssrc_to_session.remove(&session.ssrc);
+                self.ssrc_to_session.insert(new_ssrc, session_key.clone());
+                session.ssrc = new_ssrc;
+                session.peer_ssrc = new_ssrc;
+                changed = true;
+                result_ssrc = Some(new_ssrc);
+            }
+        }
+
+        let mut result_pause: Option<bool> = None;
+        if let Some(paused) = pause_check {
+            if session.check_paused != paused {
+                session.check_paused = paused;
+                changed = true;
+                result_pause = Some(paused);
+                if !paused {
+                    session.last_activity_ms = self.now_ms;
+                    session.last_rr_received_ms = self.now_ms;
+                }
+            }
+        }
+
+        if changed {
+            session.generation += 1;
+            session.updated_at_ms = self.now_ms;
+        }
+        session.last_error = None;
+
+        let current_generation = session.generation;
+        self.sessions.insert(session_key.clone(), session);
+        outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SessionUpdated {
+            session_key,
+            generation: current_generation,
+            ssrc: result_ssrc,
+            payload_type,
+            pause_check: result_pause,
+        }));
+    }
+
     /// Cleans up the session, SSRC, TCP connection, and Ehome decoder maps. Always emits
     /// `CloseSession` and `SessionClosed` so the driver can release sockets and the module can
     /// tear down higher-level state.
@@ -1039,6 +1146,9 @@ impl RtpCore {
                     last_rtcp_report_ms: 0,
                     last_rr_received_ms: 0,
                     max_rtp_len_observed: 0,
+                    generation: 1,
+                    updated_at_ms: 0,
+                    last_error: None,
                 };
                 self.sessions.insert(spec.session_key.clone(), session);
                 self.ssrc_to_session.insert(ssrc, spec.session_key.clone());
@@ -1099,6 +1209,9 @@ impl RtpCore {
                     last_rtcp_report_ms: 0,
                     last_rr_received_ms: 0,
                     max_rtp_len_observed: 0,
+                    generation: 1,
+                    updated_at_ms: 0,
+                    last_error: None,
                 };
                 self.sessions.insert(spec.session_key.clone(), session);
                 self.ssrc_to_session
@@ -1200,6 +1313,22 @@ impl RtpCore {
                     // Advance sequence by number of packets actually emitted.
                     session.next_seq = session.next_seq.wrapping_add(packet_count.max(1));
                 }
+            }
+            RtpCoreCommand::UpdateSession {
+                session_key,
+                expected_generation,
+                ssrc,
+                payload_type,
+                pause_check,
+            } => {
+                self.handle_update_session(
+                    session_key,
+                    expected_generation,
+                    ssrc,
+                    payload_type,
+                    pause_check,
+                    outputs,
+                );
             }
             RtpCoreCommand::StopSession(key) => {
                 self.close_session(key, "Stopped by command".to_string(), outputs);
@@ -1667,5 +1796,176 @@ mod tests {
         assert!(!outputs
             .iter()
             .any(|o| matches!(o, RtpCoreOutput::SendUdp(_))));
+    }
+
+    #[test]
+    fn test_update_session_advances_generation_and_ssrc_index() {
+        let mut core = RtpCore::new(10, 30_000);
+        let key = "recv/update".to_string();
+        let spec = RtpServerSpec {
+            session_key: key.clone(),
+            ssrc: Some(1000),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        };
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
+
+        // Update SSRC and pause with the correct expected generation.
+        let outputs = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::UpdateSession {
+            session_key: key.clone(),
+            expected_generation: 1,
+            ssrc: Some(2000),
+            payload_type: Some(96),
+            pause_check: Some(true),
+        }));
+
+        let mut updated = false;
+        for output in outputs {
+            if let RtpCoreOutput::Event(RtpCoreEvent::SessionUpdated {
+                session_key,
+                generation,
+                ssrc,
+                payload_type,
+                pause_check,
+            }) = output
+            {
+                assert_eq!(session_key, key);
+                assert_eq!(generation, 2);
+                assert_eq!(ssrc, Some(2000));
+                assert_eq!(payload_type, Some(96));
+                assert_eq!(pause_check, Some(true));
+                updated = true;
+            }
+        }
+        assert!(updated);
+
+        // The new SSRC must be routed to the same session.
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 1,
+                timestamp: 0,
+                ssrc: 2000,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0xAA]),
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:1".parse().unwrap(),
+            data: rtp.encode(),
+        };
+        let outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        assert!(!outputs
+            .iter()
+            .any(|o| matches!(o, RtpCoreOutput::Event(RtpCoreEvent::SessionCreated { .. }))));
+    }
+
+    #[test]
+    fn test_update_session_rejects_wrong_generation_and_conflict() {
+        let mut core = RtpCore::new(10, 30_000);
+        let spec_a = RtpServerSpec {
+            session_key: "a".to_string(),
+            ssrc: Some(1000),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        };
+        let spec_b = RtpServerSpec {
+            session_key: "b".to_string(),
+            ssrc: Some(2000),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        };
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec_a)));
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec_b)));
+
+        // Wrong expected generation.
+        let outputs = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::UpdateSession {
+            session_key: "a".to_string(),
+            expected_generation: 99,
+            ssrc: Some(3000),
+            payload_type: None,
+            pause_check: None,
+        }));
+        assert!(outputs.iter().any(|o| matches!(
+            o,
+            RtpCoreOutput::Event(RtpCoreEvent::SessionUpdateFailed {
+                session_key,
+                reason,
+            }) if session_key == "a" && reason == "generation mismatch"
+        )));
+
+        // Duplicate SSRC already used by session b.
+        let outputs = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::UpdateSession {
+            session_key: "a".to_string(),
+            expected_generation: 1,
+            ssrc: Some(2000),
+            payload_type: None,
+            pause_check: None,
+        }));
+        assert!(outputs.iter().any(|o| matches!(
+            o,
+            RtpCoreOutput::Event(RtpCoreEvent::SessionUpdateFailed {
+                session_key,
+                reason,
+            }) if session_key == "a" && reason.contains("already in use")
+        )));
+
+        // Session a must keep its original SSRC.
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 1,
+                timestamp: 0,
+                ssrc: 1000,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0xAA]),
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:1".parse().unwrap(),
+            data: rtp.encode(),
+        };
+        let outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        assert!(!outputs
+            .iter()
+            .any(|o| matches!(o, RtpCoreOutput::Event(RtpCoreEvent::SessionCreated { .. }))));
+    }
+
+    #[test]
+    fn test_update_session_no_change_keeps_generation() {
+        let mut core = RtpCore::new(10, 30_000);
+        let key = "recv/noop".to_string();
+        let spec = RtpServerSpec {
+            session_key: key.clone(),
+            ssrc: Some(1000),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        };
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
+
+        let outputs = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::UpdateSession {
+            session_key: key.clone(),
+            expected_generation: 1,
+            ssrc: Some(1000),
+            payload_type: None,
+            pause_check: None,
+        }));
+        let updated = outputs.iter().find_map(|o| match o {
+            RtpCoreOutput::Event(RtpCoreEvent::SessionUpdated { generation, .. }) => {
+                Some(*generation)
+            }
+            _ => None,
+        });
+        assert_eq!(updated, Some(1));
     }
 }

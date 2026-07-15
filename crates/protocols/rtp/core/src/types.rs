@@ -208,6 +208,23 @@ pub enum RtpCoreEvent {
         payload_mode: RtpPayloadMode,
         transport_mode: RtpTransportMode,
     },
+    /// A session was updated and the generation advanced.
+    ///
+    /// 会话已更新，generation 已递增。
+    SessionUpdated {
+        session_key: RtpSessionKey,
+        generation: u64,
+        ssrc: Option<u32>,
+        payload_type: Option<u8>,
+        pause_check: Option<bool>,
+    },
+    /// A session update was rejected; the session retains its previous values.
+    ///
+    /// 会话更新被拒绝；会话保留旧值。
+    SessionUpdateFailed {
+        session_key: RtpSessionKey,
+        reason: String,
+    },
     /// A session was closed (idle timeout, RR timeout, or explicit stop).
     ///
     /// 会话被关闭（空闲超时、RR 超时或显式停止）。
@@ -288,6 +305,16 @@ pub enum RtpCoreCommand {
     ///
     /// 按 key 停止并关闭会话。
     StopSession(RtpSessionKey),
+    /// Update mutable session parameters.
+    ///
+    /// 更新会话可变参数。
+    UpdateSession {
+        session_key: RtpSessionKey,
+        expected_generation: u64,
+        ssrc: Option<u32>,
+        payload_type: Option<u8>,
+        pause_check: Option<bool>,
+    },
     /// Pause or resume timeout health checks for a session.
     ///
     /// 暂停或恢复会话的超时健康检查。

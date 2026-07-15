@@ -321,7 +321,11 @@ pub struct RtpSession {
     pub reuse_port: bool,
     pub state: RtpSessionState,
     pub check_paused: bool,
+    pub generation: u64,
     pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<crate::error::MediaOperationError>,
 }
 
 /// RTP session kind.

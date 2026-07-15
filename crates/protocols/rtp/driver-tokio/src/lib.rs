@@ -98,6 +98,17 @@ pub enum RtpSocketReuse {
     Reuse,
 }
 
+/// Acknowledgement payload returned by a successful `UpdateSession`.
+///
+/// 成功 `UpdateSession` 后返回的确认负载。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RtpSessionUpdateAck {
+    pub generation: u64,
+    pub ssrc: Option<u32>,
+    pub payload_type: Option<u8>,
+    pub pause_check: Option<bool>,
+}
+
 /// Commands sent to the RTP driver loop.
 ///
 /// 发送给 RTP 驱动循环的命令。
@@ -111,6 +122,14 @@ pub enum RtpDriverCommand {
     CreateClient(RtpClientSpec),
     SendFrame(Box<RtpSendFrame>),
     StopSession(String),
+    UpdateSession {
+        session_key: String,
+        expected_generation: u64,
+        ssrc: Option<u32>,
+        payload_type: Option<u8>,
+        pause_check: Option<bool>,
+        ack: Option<oneshot::Sender<Result<RtpSessionUpdateAck, String>>>,
+    },
     PauseCheck {
         session_key: String,
         paused: bool,
@@ -134,6 +153,21 @@ impl std::fmt::Debug for RtpDriverCommand {
             Self::CreateClient(spec) => f.debug_tuple("CreateClient").field(spec).finish(),
             Self::SendFrame(frame) => f.debug_tuple("SendFrame").field(frame).finish(),
             Self::StopSession(key) => f.debug_tuple("StopSession").field(key).finish(),
+            Self::UpdateSession {
+                session_key,
+                expected_generation,
+                ssrc,
+                payload_type,
+                pause_check,
+                ..
+            } => f
+                .debug_struct("UpdateSession")
+                .field("session_key", session_key)
+                .field("expected_generation", expected_generation)
+                .field("ssrc", ssrc)
+                .field("payload_type", payload_type)
+                .field("pause_check", pause_check)
+                .finish(),
             Self::PauseCheck {
                 session_key,
                 paused,
@@ -195,6 +229,43 @@ impl RtpDriverHandle {
             }),
             Err(_) => Err(RtpDriverError {
                 message: "bind acknowledgement timed out".to_string(),
+            }),
+        }
+    }
+
+    /// Update a session and wait for the core to acknowledge the new generation.
+    ///
+    /// 更新会话并等待 core 返回新的 generation。
+    pub async fn update_session(
+        &self,
+        session_key: String,
+        expected_generation: u64,
+        ssrc: Option<u32>,
+        payload_type: Option<u8>,
+        pause_check: Option<bool>,
+    ) -> Result<RtpSessionUpdateAck, RtpDriverError> {
+        let (tx, rx) = oneshot::channel();
+        let cmd = RtpDriverCommand::UpdateSession {
+            session_key,
+            expected_generation,
+            ssrc,
+            payload_type,
+            pause_check,
+            ack: Some(tx),
+        };
+        if self.cmd_tx.send(cmd).await.is_err() {
+            return Err(RtpDriverError {
+                message: "driver command channel closed".to_string(),
+            });
+        }
+        match tokio::time::timeout(Duration::from_secs(5), rx).await {
+            Ok(Ok(Ok(ack))) => Ok(ack),
+            Ok(Ok(Err(reason))) => Err(RtpDriverError { message: reason }),
+            Ok(Err(_)) => Err(RtpDriverError {
+                message: "driver dropped update acknowledgement".to_string(),
+            }),
+            Err(_) => Err(RtpDriverError {
+                message: "update acknowledgement timed out".to_string(),
             }),
         }
     }
@@ -606,6 +677,10 @@ async fn run_driver_loop(
 
     loop {
         let mut inputs = Vec::new();
+        let mut pending_update_ack: Option<(
+            String,
+            oneshot::Sender<Result<RtpSessionUpdateAck, String>>,
+        )> = None;
 
         tokio::select! {
             _ = cancel.cancelled() => break,
@@ -884,6 +959,25 @@ async fn run_driver_loop(
                         .await;
                         inputs.push(RtpCoreInput::Command(RtpCoreCommand::StopSession(key)));
                     }
+                    RtpDriverCommand::UpdateSession {
+                        session_key,
+                        expected_generation,
+                        ssrc,
+                        payload_type,
+                        pause_check,
+                        ack,
+                    } => {
+                        if let Some(ack) = ack {
+                            pending_update_ack = Some((session_key.clone(), ack));
+                        }
+                        inputs.push(RtpCoreInput::Command(RtpCoreCommand::UpdateSession {
+                            session_key,
+                            expected_generation,
+                            ssrc,
+                            payload_type,
+                            pause_check,
+                        }));
+                    }
                     RtpDriverCommand::PauseCheck { session_key, paused } => {
                         inputs.push(RtpCoreInput::Command(RtpCoreCommand::PauseCheck {
                             session_key,
@@ -961,7 +1055,35 @@ async fn run_driver_loop(
                         }
                     }
                     RtpCoreOutput::Event(ev) => {
-                        let _ = event_tx.send(ev).await;
+                        if let Some((pending_key, ack)) = pending_update_ack.take() {
+                            match ev {
+                                RtpCoreEvent::SessionUpdated {
+                                    session_key,
+                                    generation,
+                                    ssrc,
+                                    payload_type,
+                                    pause_check,
+                                } if session_key == pending_key => {
+                                    let _ = ack.send(Ok(RtpSessionUpdateAck {
+                                        generation,
+                                        ssrc,
+                                        payload_type,
+                                        pause_check,
+                                    }));
+                                }
+                                RtpCoreEvent::SessionUpdateFailed {
+                                    session_key,
+                                    reason,
+                                } if session_key == pending_key => {
+                                    let _ = ack.send(Err(reason));
+                                }
+                                other => {
+                                    let _ = event_tx.send(other).await;
+                                }
+                            }
+                        } else {
+                            let _ = event_tx.send(ev).await;
+                        }
                     }
                     RtpCoreOutput::Diagnostic(diag) => {
                         debug!("RTP Diagnostic: {:?}", diag);
