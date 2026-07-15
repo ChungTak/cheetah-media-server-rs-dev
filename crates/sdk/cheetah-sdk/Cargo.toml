@@ -18,6 +18,7 @@ cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
 cheetah-sdk-macros = { path = "../cheetah-sdk-macros", optional = true }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

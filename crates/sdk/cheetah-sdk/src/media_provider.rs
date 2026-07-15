@@ -1,5 +1,6 @@
 use std::sync::{Arc, RwLock};
 
+use crate::idempotency::InMemoryIdempotencyRepository;
 use crate::output::OutputRegistryRegistration;
 use cheetah_media_api::capability::{MediaCapabilityDescriptor, MediaCapabilityReport};
 use cheetah_media_api::port::{
@@ -33,6 +34,7 @@ pub struct ProviderRegistration {
 #[derive(Clone)]
 pub struct MediaServices {
     inner: Arc<RwLock<MediaProviderRegistry>>,
+    idempotency: Arc<InMemoryIdempotencyRepository>,
 }
 
 impl MediaServices {
@@ -42,7 +44,15 @@ impl MediaServices {
     pub fn unavailable() -> Self {
         Self {
             inner: Arc::new(RwLock::new(MediaProviderRegistry::empty())),
+            idempotency: Arc::new(InMemoryIdempotencyRepository::new()),
         }
+    }
+
+    /// Return the shared idempotency repository.
+    ///
+    /// 返回共享的幂等仓库。
+    pub fn idempotency(&self) -> Arc<InMemoryIdempotencyRepository> {
+        self.idempotency.clone()
     }
 
     /// Register the output endpoint registry.

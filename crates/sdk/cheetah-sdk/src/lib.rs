@@ -21,6 +21,7 @@ pub mod config;
 pub mod deadline;
 pub mod error;
 pub mod event;
+pub mod idempotency;
 pub mod ids;
 pub mod media_data_plane;
 pub mod media_provider;
@@ -53,6 +54,10 @@ pub use error::SdkError;
 pub use event::{
     ConfigEvent, EventBus, EventSubscriber, ModuleEvent, ModuleEventKind, ProtocolEvent,
     StreamEvent, StreamEventKind, SystemEvent, SystemLifecycleEvent, TaskEvent, TaskEventKind,
+};
+pub use idempotency::{
+    canonical_hash, IdempotencyError, IdempotencyFingerprint, IdempotencyKey, IdempotencyOutcome,
+    InMemoryIdempotencyRepository,
 };
 pub use ids::{
     ModuleId, PublisherId, RoomId, SessionId, StreamId, StreamKey, SubscriberId, TaskId,
