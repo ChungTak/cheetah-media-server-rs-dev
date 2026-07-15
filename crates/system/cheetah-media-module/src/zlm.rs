@@ -804,14 +804,12 @@ impl ModuleHttpService for ZlmMediaHttpService {
         let result: Result<HttpResponse, AdapterError> = async {
             let ctx = self.request_context(&req)?;
             let Some(scope) = self.required_scope(req.method, &req.path) else {
-                let err = Err(AdapterError::Media(
+                return Err(AdapterError::Media(
                     cheetah_media_api::error::MediaError::new(
-                        cheetah_media_api::error::MediaErrorCode::PermissionDenied,
-                        "route is not authorized",
+                        cheetah_media_api::error::MediaErrorCode::NotFound,
+                        "not found",
                     ),
                 ));
-                self.record_audit(&ctx, &audit_req, &err).await;
-                return err;
             };
             if let Err(ref auth_err) = self.require_scope(&ctx, &scope) {
                 let err = Err(auth_err.clone());

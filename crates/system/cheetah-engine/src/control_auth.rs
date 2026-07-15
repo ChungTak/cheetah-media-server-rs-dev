@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use cheetah_media_api::auth::{AuthCredentials, MediaScope, Principal};
 use cheetah_media_api::error::{MediaError, MediaErrorCode, Result};
 use cheetah_media_api::port::ControlAuthApi;
@@ -55,8 +53,8 @@ impl ConfigControlAuth {
         Self { config }
     }
 
-    fn credential_map(&self, key: &str) -> HashMap<String, (String, Vec<MediaScope>)> {
-        let mut map = HashMap::new();
+    fn credential_list(&self, key: &str) -> Vec<(String, String, Vec<MediaScope>)> {
+        let mut list = Vec::new();
         let global = self.config.global();
         let Some(tokens) = global
             .get("media")
@@ -64,7 +62,7 @@ impl ConfigControlAuth {
             .and_then(|v| v.get(key))
             .and_then(|v| v.as_object())
         else {
-            return map;
+            return list;
         };
 
         for (token, value) in tokens {
@@ -85,17 +83,31 @@ impl ConfigControlAuth {
                         .collect()
                 })
                 .unwrap_or_default();
-            map.insert(token.clone(), (principal, scopes));
+            list.push((token.clone(), principal, scopes));
         }
-        map
+        list
     }
 
-    fn token_map(&self) -> HashMap<String, (String, Vec<MediaScope>)> {
-        self.credential_map("tokens")
+    fn token_list(&self) -> Vec<(String, String, Vec<MediaScope>)> {
+        self.credential_list("tokens")
     }
 
-    fn deployment_token_map(&self) -> HashMap<String, (String, Vec<MediaScope>)> {
-        self.credential_map("deployment_tokens")
+    fn deployment_token_list(&self) -> Vec<(String, String, Vec<MediaScope>)> {
+        self.credential_list("deployment_tokens")
+    }
+
+    fn find_credential(
+        &self,
+        list: &[(String, String, Vec<MediaScope>)],
+        token: &str,
+    ) -> Option<(String, Vec<MediaScope>)> {
+        let mut result = None;
+        for (candidate, identity, scopes) in list {
+            if constant_time_eq(candidate, token) {
+                result = Some((identity.clone(), scopes.clone()));
+            }
+        }
+        result
     }
 
     fn trust_mtls_identity(&self) -> bool {
@@ -119,6 +131,19 @@ impl ConfigControlAuth {
     }
 }
 
+/// Compare two UTF-8 strings in time dependent on the *longer* input length but
+/// not on the position of the first differing byte. This reduces the risk of
+/// timing attacks leaking token prefixes during credential verification.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    let mut diff = a.len() ^ b.len();
+    for (&x, &y) in a.iter().zip(b.iter()) {
+        diff |= (x ^ y) as usize;
+    }
+    diff == 0
+}
+
 impl ControlAuthApi for ConfigControlAuth {
     fn authenticate(&self, credentials: &AuthCredentials) -> Result<Principal> {
         // Bearer token from the Authorization header takes precedence.
@@ -127,12 +152,9 @@ impl ControlAuthApi for ConfigControlAuth {
             .as_deref()
             .and_then(|h| self.bearer_token(Some(h)))
         {
-            let map = self.token_map();
-            if let Some((identity, scopes)) = map.get(&token) {
-                return Ok(Principal {
-                    identity: identity.clone(),
-                    scopes: scopes.clone(),
-                });
+            let list = self.token_list();
+            if let Some((identity, scopes)) = self.find_credential(&list, &token) {
+                return Ok(Principal { identity, scopes });
             }
             return Err(MediaError::new(
                 MediaErrorCode::Unauthenticated,
@@ -142,12 +164,9 @@ impl ControlAuthApi for ConfigControlAuth {
 
         // Deployment token from the x-deployment-token header.
         if let Some(token) = credentials.deployment_token.as_deref() {
-            let map = self.deployment_token_map();
-            if let Some((identity, scopes)) = map.get(token) {
-                return Ok(Principal {
-                    identity: identity.clone(),
-                    scopes: scopes.clone(),
-                });
+            let list = self.deployment_token_list();
+            if let Some((identity, scopes)) = self.find_credential(&list, token) {
+                return Ok(Principal { identity, scopes });
             }
             return Err(MediaError::new(
                 MediaErrorCode::Unauthenticated,
