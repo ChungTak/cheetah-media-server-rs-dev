@@ -161,6 +161,17 @@ pub async fn open_rtmp_push(
     url: &str,
     options: ConnectorPushOptions,
 ) -> Result<PushHandle, ConnectorError> {
+    open_rtmp_push_with_runtime(engine.runtime_api(), url, options).await
+}
+
+/// Open an RTMP push using only a runtime handle (no full `Engine` required).
+///
+/// 仅使用 runtime 句柄打开 RTMP 推流（不需要完整 `Engine`）。
+pub async fn open_rtmp_push_with_runtime(
+    runtime_api: Arc<dyn cheetah_runtime_api::RuntimeApi>,
+    url: &str,
+    options: ConnectorPushOptions,
+) -> Result<PushHandle, ConnectorError> {
     let parsed_url = RtmpUrl::parse(url).map_err(|err| ConnectorError::InvalidUrl {
         protocol: Protocol::Rtmp,
         url: url.to_string(),
@@ -168,7 +179,6 @@ pub async fn open_rtmp_push(
     })?;
     let rtmp_url = parsed_url.to_string();
 
-    let runtime_api = engine.runtime_api();
     let cancel = options.cancel.clone().unwrap_or_default().child_token();
 
     let extras = match options.protocol {

@@ -25,6 +25,7 @@ cheetah-config = { path = "../../system/cheetah-config" }
 cheetah-engine = { path = "../../system/cheetah-engine" }
 cheetah-proxy-module = { path = "../../system/cheetah-proxy-module" }
 cheetah-record-module = { path = "../../system/cheetah-record-module" }
+cheetah-snapshot-module = { path = "../../system/cheetah-snapshot-module" }
 cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
 cheetah-rtp-module = { path = "../../protocols/rtp/module" }
 tokio = { workspace = true }

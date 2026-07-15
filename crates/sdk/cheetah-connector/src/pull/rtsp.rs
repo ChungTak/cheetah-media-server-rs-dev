@@ -17,6 +17,10 @@ use crate::protocol::Protocol;
 
 /// Open an RTSP pull subscriber for the given `url` and `options`.
 ///
+/// The target engine stream key is derived from the RTSP URI path when possible.
+/// Prefer [`open_rtsp_pull_to_stream`] when the destination stream is known
+/// explicitly (e.g. proxy destination `MediaKey`).
+///
 /// 为给定 URL 和选项打开 RTSP 拉流订阅者。
 pub async fn open_rtsp_pull(
     engine: Arc<Engine>,
@@ -29,7 +33,28 @@ pub async fn open_rtsp_pull(
             url: url.to_string(),
             reason: "could not derive stream key from rtsp url".to_string(),
         })?;
+    open_rtsp_pull_to_stream(
+        engine.runtime_api(),
+        engine.publisher_api(),
+        engine.stream_manager_api(),
+        url,
+        target_stream_key,
+        options,
+    )
+    .await
+}
 
+/// Open an RTSP pull that publishes into an explicit engine stream key.
+///
+/// 打开 RTSP 拉流并将媒体发布到指定的引擎流键。
+pub async fn open_rtsp_pull_to_stream(
+    runtime_api: Arc<dyn cheetah_runtime_api::RuntimeApi>,
+    publisher_api: Arc<dyn cheetah_sdk::PublisherApi>,
+    stream_manager_api: Arc<dyn cheetah_sdk::StreamManagerApi>,
+    url: &str,
+    target_stream_key: cheetah_sdk::StreamKey,
+    options: ConnectorPullOptions,
+) -> Result<PullHandle, ConnectorError> {
     parse_rtsp_source_peer(url).map_err(|reason| ConnectorError::InvalidUrl {
         protocol: Protocol::Rtsp,
         url: url.to_string(),
@@ -37,7 +62,6 @@ pub async fn open_rtsp_pull(
     })?;
 
     let mut rtsp_options = match &options.protocol {
-        #[cfg(feature = "rtsp")]
         ProtocolPullExtras::Rtsp(opts) => opts.clone(),
         _ => RtspPullOptions::default(),
     };
@@ -46,9 +70,9 @@ pub async fn open_rtsp_pull(
     let cancel = options.cancel.clone().unwrap_or_default().child_token();
 
     let subscriber = rtsp_open_pull(
-        engine.runtime_api(),
-        engine.publisher_api(),
-        engine.stream_manager_api(),
+        runtime_api,
+        publisher_api,
+        stream_manager_api,
         url,
         target_stream_key,
         cancel,

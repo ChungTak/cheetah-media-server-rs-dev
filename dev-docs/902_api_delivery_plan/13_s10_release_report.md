@@ -31,8 +31,8 @@
 | `Subscribe` | 可用 | 可用 | `MediaDataPlaneApi::open_subscriber` / `SubscriberApi::subscribe` |
 | `Record` | 无 | 可用 | `cheetah-record-module` 注册 `RecordApi` |
 | `Rtp` | 无 | 可用 | `cheetah-rtp-module` 注册 `RtpApi` |
-| `Snapshot` | 无 | 可用 | `cheetah-snapshot-module` 注册 `SnapshotApi`（S3-T4 已完成） |
-| `Proxy` | 无 | 可用 | `cheetah-proxy-module` 注册 `ProxyApi`（S4 已完成） |
+| `Snapshot` | 无 | 可用 | `cheetah-snapshot-module` 注册真实 `SnapshotApi`（订阅关键帧并写 FileHandle） |
+| `Proxy` | 无 | 可用 | `cheetah-proxy-module` 注册 `ProxyApi`；`media-control-full` 启用 `rtsp/http-flv/rtmp` 数据面 feature |
 | `Webhook` | 无 | 可用 | `cheetah-webhook-dispatcher` 注册 `WebhookApi`（S6 已完成） |
 
 > 默认 Engine 不声明未注册的能力；`media-control-full` 通过模块注册真实 provider，能力版本随注册/注销实时变化。
@@ -41,10 +41,10 @@
 
 ### 4.1 native `/api/v1`
 
-- 路由数量：**22** 条（`crates/system/cheetah-media-module/src/native_routes.rs`）。
-- 覆盖：media、sessions、record、snapshots、file store、proxies、RTP。
+- 路由数量：**35** 条（`crates/system/cheetah-media-module/src/native_routes.rs`）。
+- 覆盖：media（含 urls）、sessions、record、snapshots、file store、proxies pull/push/ffmpeg CRUD、RTP。
 - 已验证：每条路由均有 `native_routes::native_required_scope` 定义的 scope，未知路由返回 404。
-- 动态路径参数：`{vhost}`、`{app}`、`{stream}`、`{session_id}`、`{task_id}`、`{file_id}` 通过 `cheetah-control` path-template 匹配。
+- 动态路径参数：`{vhost}`、`{app}`、`{stream}`、`{session_id}`、`{task_id}`、`{file_id}`、`{proxy_id}` 通过 `cheetah-control` path-template 匹配。
 
 ### 4.2 ZLM 兼容 `/index/api`
 
@@ -73,8 +73,8 @@
 | GB28181 | `gb28181_can_open_receiver_and_sender_sessions` | 真实 `RtpModule`，UDP socket 实际收发 RTP |
 | ONVIF | `onvif_can_query_media_take_snapshot_and_record` | `is_media_online`、`get_media_list`、`request_keyframe`、`take_snapshot`、`start_record`、`stop_record`、`query_record_tasks` |
 | ONVIF | `onvif_proxy_rejects_internal_target_and_lists_empty` | 真实 `ProxyApi` SSRF 拒绝 `127.0.0.1` |
-| HomeKit | `homekit_can_subscribe_and_snapshot` | `SubscriberApi::subscribe` 接收 VP8 帧、`request_keyframe`、`take_snapshot` |
-| Matter | `matter_can_query_capabilities_and_subscribe` | 能力集合断言、订阅、快照、`subscribe_events` |
+| HomeKit | `homekit_can_subscribe_and_snapshot` | `SubscriberApi::subscribe` 接收 VP8 帧、`request_keyframe`、真实 `SnapshotModule` 抓取关键帧 |
+| Matter | `matter_can_query_capabilities_and_subscribe` | 能力集合断言、订阅、真实 snapshot、`subscribe_events` |
 | Common | `media_list_can_filter_and_paginate` / `unknown_stream_is_not_online` | 通用过滤、未知流离线 |
 
 结果：**13 passed / 0 failed**。所有测试启动真实 `Engine`，不依赖公网或真实设备。

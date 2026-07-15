@@ -22,6 +22,17 @@ pub async fn open_http_flv_pull(
     endpoint: &str,
     options: ConnectorPullOptions,
 ) -> Result<PullHandle, ConnectorError> {
+    open_http_flv_pull_with_runtime(engine.runtime_api(), endpoint, options).await
+}
+
+/// Open an HTTP-FLV pull using only a runtime handle (no full `Engine` required).
+///
+/// 仅使用 runtime 句柄打开 HTTP-FLV 拉流（不需要完整 `Engine`）。
+pub async fn open_http_flv_pull_with_runtime(
+    runtime_api: Arc<dyn cheetah_runtime_api::RuntimeApi>,
+    endpoint: &str,
+    options: ConnectorPullOptions,
+) -> Result<PullHandle, ConnectorError> {
     let (reconnect, read_limits, buffer_size) = match options.protocol {
         ProtocolPullExtras::HttpFlv {
             reconnect,
@@ -42,7 +53,6 @@ pub async fn open_http_flv_pull(
         reconnect,
     };
 
-    let runtime_api = engine.runtime_api();
     let endpoint = endpoint.to_string();
     let subscriber = open_http_flv_subscriber(runtime_api, &endpoint, http_flv_options).await?;
 

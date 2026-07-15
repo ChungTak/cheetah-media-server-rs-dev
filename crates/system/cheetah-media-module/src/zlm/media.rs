@@ -3,9 +3,11 @@
 //! ZLMediaKit 兼容的媒体列表/信息端点处理函数。
 
 use cheetah_media_api::command::MediaQuery;
+use cheetah_media_api::ids::MediaSchema;
 use cheetah_media_api::model::OnlineState;
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::{HttpRequest, HttpResponse};
+use serde::Serialize;
 
 use crate::error::AdapterError;
 
@@ -13,6 +15,17 @@ use super::{
     page_from_params, page_size_from_params, zlm_response, Data, MediaItem, OnlineResult,
     ZlmMediaHttpService, ZlmResponse,
 };
+
+/// Playable URL entry returned by `getStreamUrl`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StreamUrlItem {
+    schema: String,
+    url: String,
+    available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    expires_at: Option<i64>,
+}
 
 impl ZlmMediaHttpService {
     pub(crate) async fn get_media_list(
@@ -58,5 +71,40 @@ impl ZlmMediaHttpService {
         let key = self.parse_media_key(&params)?;
         let info = self.control()?.get_media(ctx, &key).await?;
         Ok(zlm_response(ZlmResponse::ok(MediaItem::from(info))))
+    }
+
+    /// Resolve playable output URLs for a stream (`/api/getStreamUrl`).
+    ///
+    /// Uses the engine-populated `StreamInfo.urls` from `MediaUrlResolverApi`.
+    /// Optional query `schema` filters to a single schema (e.g. `rtmp`, `rtsp`,
+    /// `http-flv`, `hls`, `webrtc`).
+    ///
+    /// 解析流的可播放输出 URL；可选 `schema` 过滤。
+    pub(crate) async fn get_stream_url(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let info = self.control()?.get_media(ctx, &key).await?;
+
+        let filter_schema = params["schema"]
+            .as_str()
+            .and_then(|s| MediaSchema::parse(s).ok());
+
+        let items: Vec<StreamUrlItem> = info
+            .urls
+            .into_iter()
+            .filter(|u| filter_schema.is_none_or(|s| s == u.schema))
+            .map(|u| StreamUrlItem {
+                schema: u.schema.to_string(),
+                url: u.url,
+                available: u.available,
+                expires_at: u.expires_at,
+            })
+            .collect();
+
+        Ok(zlm_response(ZlmResponse::ok(Data::new(items))))
     }
 }

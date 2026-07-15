@@ -15,7 +15,7 @@ use url::{Host, Url};
 
 use crate::config::ProxyModuleConfig;
 use crate::registry::{ProxyEntry, ProxyRegistry};
-use crate::task::spawn_proxy_task;
+use crate::task::{spawn_proxy_task, validate_ffmpeg_options, ProxySessionSpec};
 
 /// Bridge that exposes the proxy registry as a [`ProxyApi`] provider.
 ///
@@ -85,11 +85,14 @@ impl ProxyApi for ProxyMediaProvider {
         }
 
         let cancel = spawn_proxy_task(
-            self.ctx.runtime_api.clone(),
-            self.ctx.task_system_api.clone(),
+            self.ctx.clone(),
             self.registry.clone(),
             proxy_id.clone(),
             self.config.clone(),
+            ProxySessionSpec::Pull {
+                source_url: info.source.clone(),
+                destination: info.destination.clone(),
+            },
         )
         .map_err(|e| MediaError::internal(format!("failed to spawn proxy task: {e}")))?;
         self.registry.set_cancel(&proxy_id, cancel);
@@ -177,11 +180,15 @@ impl ProxyApi for ProxyMediaProvider {
         }
 
         let cancel = spawn_proxy_task(
-            self.ctx.runtime_api.clone(),
-            self.ctx.task_system_api.clone(),
+            self.ctx.clone(),
             self.registry.clone(),
             proxy_id.clone(),
             self.config.clone(),
+            ProxySessionSpec::Push {
+                source_media_key: info.destination.clone(),
+                destination_url: info.source.clone(),
+                protocol: request.protocol.clone(),
+            },
         )
         .map_err(|e| MediaError::internal(format!("failed to spawn proxy task: {e}")))?;
         self.registry.set_cancel(&proxy_id, cancel);
@@ -200,6 +207,8 @@ impl ProxyApi for ProxyMediaProvider {
         request: FfmpegProxyRequest,
     ) -> Result<ProxyInfo> {
         validate_url(&request.source_url)?;
+        validate_ffmpeg_options(&request.input_options, &request.output_options)
+            .map_err(MediaError::invalid_argument)?;
 
         let proxy_id = self.ensure_idempotency_or_create_id(
             ctx,
@@ -219,8 +228,8 @@ impl ProxyApi for ProxyMediaProvider {
         let info = build_proxy_info(
             proxy_id.clone(),
             ProxyKind::Ffmpeg,
-            request.source_url,
-            request.destination,
+            request.source_url.clone(),
+            request.destination.clone(),
         );
 
         let entry = ProxyEntry {
@@ -232,11 +241,24 @@ impl ProxyApi for ProxyMediaProvider {
             warn!(proxy_id = %proxy_id.0, "proxy id collision after idempotency check");
         }
 
-        // FFmpeg proxy is currently a metadata-only stub; no child process is
-        // spawned until the typed FfmpegJobSpec wiring is completed.
-        self.registry.update_state(&proxy_id, ProxyState::Connected);
+        let job_id = format!("ffmpeg-{}", proxy_id.0);
+        let cancel = spawn_proxy_task(
+            self.ctx.clone(),
+            self.registry.clone(),
+            proxy_id.clone(),
+            self.config.clone(),
+            ProxySessionSpec::Ffmpeg {
+                source_url: request.source_url,
+                destination: request.destination,
+                input_options: request.input_options,
+                output_options: request.output_options,
+                job_id,
+            },
+        )
+        .map_err(|e| MediaError::internal(format!("failed to spawn ffmpeg proxy task: {e}")))?;
+        self.registry.set_cancel(&proxy_id, cancel);
 
-        debug!(proxy_id = %info.proxy_id.0, "created ffmpeg proxy (stub)");
+        debug!(proxy_id = %info.proxy_id.0, "created ffmpeg proxy");
         Ok(info)
     }
 

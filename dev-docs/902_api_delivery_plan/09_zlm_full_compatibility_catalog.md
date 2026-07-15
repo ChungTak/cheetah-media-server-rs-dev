@@ -155,7 +155,7 @@ cargo test -p cheetah-media-module zlm_error_mapping
 | Post | `/api/login` | L3 | interop-tested | session auth |
 | Post | `/api/logout` | L3 | interop-tested | session auth |
 | Get | `/api/searchOnvifDevice` | L4 | interop-tested | 返回 `-501` |
-| Get | `/api/getStreamUrl` | L2 | capability-gated | |
+| Get | `/api/getStreamUrl` | L2 | provider-wired | Engine `MediaUrlResolverApi` via StreamInfo.urls |
 | Post | `/api/addProbe` | L3 | capability-gated | |
 | Post | `/api/stack/start` | L3 | capability-gated | |
 | Post | `/api/stack/reset` | L3 | capability-gated | |

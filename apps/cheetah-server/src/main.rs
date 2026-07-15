@@ -50,6 +50,8 @@ use cheetah_rtp_module::RtpModuleFactory;
 use cheetah_rtsp_module::RtspModuleFactory;
 use cheetah_runtime_tokio::TokioRuntime;
 use cheetah_sdk::{ConfigProvider, ConfigSchemaRegistry, ServiceDescriptor};
+#[cfg(feature = "snapshot")]
+use cheetah_snapshot_module::SnapshotModuleFactory;
 #[cfg(feature = "srt")]
 use cheetah_srt_module::SrtModuleFactory;
 #[cfg(feature = "ts")]
@@ -186,6 +188,11 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "proxy")]
     {
         builder = builder.register_module_factory(Arc::new(ProxyModuleFactory));
+    }
+
+    #[cfg(feature = "snapshot")]
+    {
+        builder = builder.register_module_factory(Arc::new(SnapshotModuleFactory));
     }
 
     #[cfg(feature = "webrtc")]

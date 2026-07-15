@@ -27,6 +27,10 @@ pub fn native_http_routes() -> Vec<HttpRouteDescriptor> {
             path: "/media/{vhost}/{app}/{stream}/online".to_string(),
         },
         HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/media/{vhost}/{app}/{stream}/urls".to_string(),
+        },
+        HttpRouteDescriptor {
             method: HttpMethod::Post,
             path: "/media/{vhost}/{app}/{stream}/close".to_string(),
         },
@@ -86,10 +90,54 @@ pub fn native_http_routes() -> Vec<HttpRouteDescriptor> {
             method: HttpMethod::Get,
             path: "/files/{file_id}/download".to_string(),
         },
-        // proxies
+        // proxies — pull / push / ffmpeg
         HttpRouteDescriptor {
             method: HttpMethod::Get,
             path: "/proxies/pull".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Post,
+            path: "/proxies/pull".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/proxies/pull/{proxy_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Delete,
+            path: "/proxies/pull/{proxy_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/proxies/push".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Post,
+            path: "/proxies/push".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/proxies/push/{proxy_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Delete,
+            path: "/proxies/push/{proxy_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/proxies/ffmpeg".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Post,
+            path: "/proxies/ffmpeg".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/proxies/ffmpeg/{proxy_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Delete,
+            path: "/proxies/ffmpeg/{proxy_id}".to_string(),
         },
         // rtp
         HttpRouteDescriptor {
@@ -119,6 +167,9 @@ pub fn native_required_scope(method: HttpMethod, path: &str) -> Option<MediaScop
         (HttpMethod::Get, "/media/capabilities") => Some(MediaScope::MediaRead),
         (HttpMethod::Get, "/media") => Some(MediaScope::MediaRead),
         (HttpMethod::Get, _) if path.starts_with("/media/") && path.ends_with("/online") => {
+            Some(MediaScope::MediaRead)
+        }
+        (HttpMethod::Get, _) if path.starts_with("/media/") && path.ends_with("/urls") => {
             Some(MediaScope::MediaRead)
         }
         (HttpMethod::Get, _) if path.starts_with("/media/") => Some(MediaScope::MediaRead),
@@ -152,7 +203,30 @@ pub fn native_required_scope(method: HttpMethod, path: &str) -> Option<MediaScop
         (HttpMethod::Get, _) if path.starts_with("/files/") && path.ends_with("/download") => {
             Some(MediaScope::FileRead)
         }
-        (HttpMethod::Get, "/proxies/pull") => Some(MediaScope::MediaPublish),
+        (HttpMethod::Get, "/proxies/pull") => Some(MediaScope::MediaRead),
+        (HttpMethod::Post, "/proxies/pull") => Some(MediaScope::MediaPublish),
+        (HttpMethod::Get, path) if path.starts_with("/proxies/pull/") => {
+            Some(MediaScope::MediaRead)
+        }
+        (HttpMethod::Delete, path) if path.starts_with("/proxies/pull/") => {
+            Some(MediaScope::MediaControl)
+        }
+        (HttpMethod::Get, "/proxies/push") => Some(MediaScope::MediaRead),
+        (HttpMethod::Post, "/proxies/push") => Some(MediaScope::MediaConsume),
+        (HttpMethod::Get, path) if path.starts_with("/proxies/push/") => {
+            Some(MediaScope::MediaRead)
+        }
+        (HttpMethod::Delete, path) if path.starts_with("/proxies/push/") => {
+            Some(MediaScope::MediaControl)
+        }
+        (HttpMethod::Get, "/proxies/ffmpeg") => Some(MediaScope::MediaRead),
+        (HttpMethod::Post, "/proxies/ffmpeg") => Some(MediaScope::MediaPublish),
+        (HttpMethod::Get, path) if path.starts_with("/proxies/ffmpeg/") => {
+            Some(MediaScope::MediaRead)
+        }
+        (HttpMethod::Delete, path) if path.starts_with("/proxies/ffmpeg/") => {
+            Some(MediaScope::MediaControl)
+        }
         (HttpMethod::Post, "/rtp/receivers") => Some(MediaScope::MediaPublish),
         (HttpMethod::Post, "/rtp/senders") => Some(MediaScope::MediaConsume),
         (HttpMethod::Get, "/rtp/sessions") => Some(MediaScope::MediaRead),
@@ -234,5 +308,36 @@ mod tests {
     #[test]
     fn unknown_routes_have_no_required_scope() {
         assert_eq!(native_required_scope(HttpMethod::Get, "/unknown"), None);
+    }
+
+    #[test]
+    fn proxy_routes_cover_pull_push_ffmpeg() {
+        assert_eq!(
+            native_required_scope(HttpMethod::Post, "/proxies/pull"),
+            Some(MediaScope::MediaPublish)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Post, "/proxies/push"),
+            Some(MediaScope::MediaConsume)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Delete, "/proxies/ffmpeg/id-1"),
+            Some(MediaScope::MediaControl)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Get, "/proxies/pull/id-1"),
+            Some(MediaScope::MediaRead)
+        );
+    }
+
+    #[test]
+    fn native_catalog_includes_proxy_crud_and_urls() {
+        let routes = native_http_routes();
+        let paths: Vec<_> = routes.iter().map(|r| (r.method, r.path.as_str())).collect();
+        assert!(paths.contains(&(HttpMethod::Get, "/media/{vhost}/{app}/{stream}/urls")));
+        assert!(paths.contains(&(HttpMethod::Post, "/proxies/pull")));
+        assert!(paths.contains(&(HttpMethod::Delete, "/proxies/push/{proxy_id}")));
+        assert!(paths.contains(&(HttpMethod::Post, "/proxies/ffmpeg")));
+        assert_eq!(routes.len(), 35);
     }
 }

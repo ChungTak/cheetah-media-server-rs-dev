@@ -33,24 +33,24 @@ rg -o '"/api/[A-Za-z0-9_/-]+"' crates/system/cheetah-media-module/src/zlm.rs | s
 | ID | 能力 | 当前状态 | 目标 | 优先级 |
 | --- | --- | --- | --- | --- |
 | GAP-CAP-01 | capability 查询 | 已完成：`MediaServices` 统一 registry，`EngineMediaFacade` 动态查询 | 单一事实来源、生命周期感知 | P0 |
-| GAP-STR-01 | media query | 已完成：`getMediaList`/`isMediaOnline` 返回真实 StreamInfo；输出 URL 由 `MediaUrlResolverApi` 提供 | 真实状态和输出 URL | P1 |
+| GAP-STR-01 | media query | 已完成：`getMediaList`/`isMediaOnline` 返回真实 StreamInfo；`EngineMediaUrlResolver` 填充 `urls`（配置 public_host，不信任 Host 头，可选签名） | 真实状态和输出 URL | P1 |
 | GAP-SES-01 | session list | 已完成：`SessionDirectory` 全局唯一，支持 list/kick/close | 全局唯一真实 session directory | P0 |
 | GAP-SES-02 | kick session | 已完成：native/ZLM `kick_session`/`close_stream` 精确关闭并返回结果 | 精确关闭并返回原因 | P0 |
 | GAP-DP-01 | acquire publisher | 已完成：`MediaDataPlaneApi::open_frame_publisher` 提供 engine publisher 租赁 | engine publisher lease | P0 |
 | GAP-DP-02 | open subscriber | 已完成：`SubscriberApi::subscribe` 提供真实 engine subscriber + `AVFrame` 数据面 | engine subscriber + Rust 数据面 | P0 |
 | GAP-REC-01 | record CRUD | 已完成：record 幂等、有界分页、删除、事件发布 | 幂等、事件、完整查询 | P0 |
 | GAP-REC-02 | record playback | 已完成：`RecordApi::control_record_playback` 支持 Pause/Resume/Scale/Seek 并校验状态 | VOD provider pause/resume/scale/seek | P1 |
-| GAP-SNAP-01 | snapshot | 已完成：`SnapshotApi` + `cheetah-snapshot-module` 真实截图并返回安全 `FileHandle` | 真实抓图和安全文件 handle | P0 |
+| GAP-SNAP-01 | snapshot | 已完成：`cheetah-snapshot-module` 订阅视频轨、等待 KEY/MJPEG 帧、原子写盘并注册 `FileHandle`（H.264→JPEG 编码器为后续增强） | 真实抓图和安全文件 handle | P0 |
 | GAP-FILE-01 | file download | 已完成：`MediaFileStoreApi` 注册公开文件，private 下载拒绝越权，支持 Range | 授权、过期、range、安全路径 | P0 |
-| GAP-PROXY-01 | pull/push proxy | 已完成：`cheetah-proxy-module` 提供真实 pull/push proxy，带 SSRF 校验和 cancel | connector-backed provider | P0 |
-| GAP-PROXY-02 | FFmpeg proxy | 已完成：typed `FFmpegJob` + 参数白名单/黑名单调度 | typed allowlist 调度 | P1 |
+| GAP-PROXY-01 | pull/push proxy | 已完成：`cheetah-proxy-module` 经 feature 调用 connector（RTSP pull→engine、HTTP-FLV 桥接、RTMP push），含 SSRF/重试/cancel | connector-backed provider | P0 |
+| GAP-PROXY-02 | FFmpeg proxy | 已完成：typed `FfmpegApi` 注册 + shell 元字符/`filter_complex`/`-i` 注入拒绝（进程执行仍为部署侧） | typed allowlist 调度 | P1 |
 | GAP-RTP-01 | receiver 端口 | 已完成：RtpSession 实际 UDP/TCP 端口绑定并返回 ack | 实际绑定/分配并回报结果 | P0 |
 | GAP-RTP-02 | active connect | 已完成：`connect_rtp_receiver` 主动 TCP/UDP connect | active TCP/UDP receiver | P1 |
 | GAP-RTP-03 | sender/talk | 已完成：RTP sender 从 subscriber 取帧并实际发包；talk 双向音频复用 socket | subscriber→packet→socket 闭环 | P0 |
 | GAP-RTP-04 | update/check | 已完成：`update_rtp_session` 支持 pause_check/timeout/SSRC 并发布事件 | SSRC/check/pause/resume | P1 |
 | GAP-EVT-01 | media event bus | 已完成：有界 `MediaEventBusApi` + per-subscriber queue + cancel handle | 有界、可取消、可观测 | P0 |
 | GAP-HOOK-01 | webhook | 已完成：`cheetah-webhook-dispatcher` 出站 dispatcher、ZLM 决策/通知 hook 映射、retry/熔断/SSRF | 全 hook 映射和策略 | P0 |
-| GAP-NAT-01 | native routes | 已完成：22 条 native `/api/v1` 路由，动态 path matching + scope 鉴权 | 全 domain 能力路由 | P0 |
+| GAP-NAT-01 | native routes | 已完成：35 条 native `/api/v1` 路由（含 media urls、proxy pull/push/ffmpeg CRUD），动态 path matching + scope 鉴权 | 全 domain 能力路由 | P0 |
 | GAP-SEC-01 | auth/RBAC | 已完成：`ControlAuthApi` + `MediaScope` + `Principal` + request context + audit logging | scope、审计、secret | P0 |
 | GAP-CFG-01 | adapter 配置 | 已完成：native/ZLM adapter 配置化 enabled/prefix，支持 live reload | 独立启停、prefix、重启语义 | P1 |
 | GAP-ZLM-01 | API 目录 | 已完成：64/64 ZLM `/index/api/*` 路由 catalog，L1–L4 分级 | 64/64 路由和状态 | P0 |

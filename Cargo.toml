@@ -62,6 +62,7 @@ members = [
   "crates/system/cheetah-media-module",
   "crates/system/cheetah-proxy-module",
   "crates/system/cheetah-record-module",
+  "crates/system/cheetah-snapshot-module",
   "crates/system/cheetah-webhook-dispatcher",
 ]
 

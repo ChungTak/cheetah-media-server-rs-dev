@@ -105,6 +105,19 @@ impl ProxyRegistry {
         }
     }
 
+    /// Increment the retry counter for a proxy.
+    ///
+    /// 递增代理的重试计数。
+    pub fn bump_retry(&self, id: &ProxyId) -> bool {
+        if let Some(mut entry) = self.entries.get_mut(&id.0) {
+            entry.info.retry_count = entry.info.retry_count.saturating_add(1);
+            entry.info.updated_at = now_unix_millis();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Store the cancellation handle for a proxy so that `delete` can stop the
     /// background task. Returns `true` if the entry existed.
     ///

@@ -1,15 +1,14 @@
 //! Production test support for external signal integration contracts.
 //!
 //! Provides a real `Engine` builder with `RtpModule`, `RecordModule`, `ProxyModule`,
-//! and a fixture module that publishes a VP8 stream and registers a snapshot file.
+//! `SnapshotModule`, and a fixture module that publishes a VP8 stream.
 //!
 //! 外部信令集成生产测试支持。
 //!
-//! 提供真实的 Engine 构建器，包含 RtpModule、RecordModule、ProxyModule
-//! 以及一个发布 VP8 视频流并注册快照文件的 fixture module。
+//! 提供真实的 Engine 构建器，包含 RtpModule、RecordModule、ProxyModule、
+//! SnapshotModule 以及一个发布 VP8 视频流的 fixture module。
 
 use std::fs;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -21,16 +20,12 @@ use cheetah_codec::{
 };
 use cheetah_config::ConfigStore;
 use cheetah_engine::{Engine, EngineBuilder, EngineMediaFacade};
-use cheetah_media_api::command::{
-    DeleteSnapshotRequest, PublishRequest, SnapshotQuery, SnapshotRequest,
-};
+use cheetah_media_api::command::PublishRequest;
 use cheetah_media_api::error::Result as MediaResult;
 use cheetah_media_api::event::{MediaEvent, MediaEventSender};
+use cheetah_media_api::ids::MediaKey;
 use cheetah_media_api::ids::StreamKeyBridge;
-use cheetah_media_api::ids::{FileHandle, MediaKey, SnapshotId};
-use cheetah_media_api::media_file_store::FileStoreEntry;
-use cheetah_media_api::model::{Page, SnapshotHandle, SnapshotInfo, SnapshotState};
-use cheetah_media_api::port::{MediaRequestContext, SnapshotApi};
+use cheetah_media_api::port::MediaRequestContext;
 use cheetah_proxy_module::ProxyModuleFactory;
 use cheetah_record_module::RecordModuleFactory;
 use cheetah_rtp_module::RtpModuleFactory;
@@ -38,12 +33,11 @@ use cheetah_runtime_tokio::TokioRuntime;
 use cheetah_sdk::{
     CancellationToken, ConfigApplyApi, ConfigEffect, EngineContext, MediaFramePublisher, Module,
     ModuleCapability, ModuleConfigChange, ModuleFactory, ModuleId, ModuleInfo, ModuleInitContext,
-    ModuleManifest, ModuleState, ProviderRegistration, SdkError, StreamKey,
+    ModuleManifest, ModuleState, SdkError, StreamKey,
 };
+use cheetah_snapshot_module::SnapshotModuleFactory;
 use serde_json::json;
 use tokio::time::sleep;
-
-static SNAPSHOT_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// Default golden stream key used by production contract tests.
 ///
@@ -102,12 +96,23 @@ pub async fn production_engine() -> Arc<Engine> {
         )
         .expect("apply rtp config");
 
+    let snap_dir = std::env::temp_dir().join(format!("cheetah_production_snap_{ts}"));
+    let _ = fs::create_dir_all(&snap_dir);
+    config
+        .apply_module_patch(
+            &ModuleId::new("snapshot"),
+            json!({ "root_path": snap_dir.to_string_lossy().to_string() }),
+            ConfigEffect::Immediate,
+        )
+        .expect("apply snapshot root path");
+
     let runtime = Arc::new(TokioRuntime::new());
     let engine = EngineBuilder::new(config.clone(), config.clone(), runtime)
         .with_config_schema_registry(config)
         .register_module_factory(Arc::new(ProductionFixtureModuleFactory))
         .register_module_factory(Arc::new(RecordModuleFactory))
         .register_module_factory(Arc::new(ProxyModuleFactory))
+        .register_module_factory(Arc::new(SnapshotModuleFactory))
         .register_module_factory(Arc::new(RtpModuleFactory))
         .build()
         .expect("engine build");
@@ -154,97 +159,10 @@ impl MediaEventSender for RecordingEventSender {
     }
 }
 
-pub struct FakeSnapshotApi {
-    file_handle: FileHandle,
-    media_key: MediaKey,
-    snapshot_info: SnapshotInfo,
-}
-
-impl FakeSnapshotApi {
-    pub fn new(file_handle: FileHandle, media_key: MediaKey, size_bytes: u64) -> Self {
-        let snapshot_id = SnapshotId(format!(
-            "snap-{}",
-            SNAPSHOT_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        let snapshot_info = SnapshotInfo {
-            snapshot_id: snapshot_id.clone(),
-            media_key: media_key.clone(),
-            state: SnapshotState::Completed,
-            path_handle: file_handle.clone(),
-            created_at: 0,
-            size_bytes: Some(size_bytes),
-            format: "jpg".to_string(),
-        };
-        Self {
-            file_handle,
-            media_key,
-            snapshot_info,
-        }
-    }
-}
-
-#[async_trait]
-impl SnapshotApi for FakeSnapshotApi {
-    async fn take_snapshot(
-        &self,
-        _ctx: &MediaRequestContext,
-        request: SnapshotRequest,
-    ) -> MediaResult<SnapshotHandle> {
-        Ok(SnapshotHandle {
-            snapshot_id: self.snapshot_info.snapshot_id.clone(),
-            media_key: request.media_key,
-            state: SnapshotState::Completed,
-            path_handle: self.file_handle.clone(),
-            download_url: None,
-            created_at: 0,
-        })
-    }
-
-    async fn query_snapshots(
-        &self,
-        _ctx: &MediaRequestContext,
-        query: SnapshotQuery,
-    ) -> MediaResult<Page<SnapshotInfo>> {
-        let mut items = Vec::new();
-        let matches = query
-            .vhost
-            .as_ref()
-            .is_none_or(|v| v == &self.media_key.vhost.0)
-            && query
-                .app
-                .as_ref()
-                .is_none_or(|a| a == &self.media_key.app.0)
-            && query
-                .stream
-                .as_ref()
-                .is_none_or(|s| s == &self.media_key.stream.0);
-        if matches {
-            items.push(self.snapshot_info.clone());
-        }
-        let total = items.len() as u64;
-        Ok(Page {
-            items,
-            page: 1,
-            page_size: 100,
-            total,
-            next_cursor: None,
-        })
-    }
-
-    async fn delete_snapshot_directory(
-        &self,
-        _ctx: &MediaRequestContext,
-        _request: DeleteSnapshotRequest,
-    ) -> MediaResult<()> {
-        Ok(())
-    }
-}
-
 pub struct ProductionFixtureModule {
     state: ModuleState,
     ctx: Option<EngineContext>,
     publisher: Option<Arc<Box<dyn MediaFramePublisher>>>,
-    snapshot_registration: Option<ProviderRegistration>,
 }
 
 impl ProductionFixtureModule {
@@ -253,7 +171,6 @@ impl ProductionFixtureModule {
             state: ModuleState::Created,
             ctx: None,
             publisher: None,
-            snapshot_registration: None,
         }
     }
 }
@@ -277,32 +194,7 @@ impl Module for ProductionFixtureModule {
         let engine_ctx = init_ctx.engine.clone();
         self.ctx = Some(engine_ctx.clone());
 
-        // Register a public snapshot file.
-        let file_path = std::env::temp_dir().join(format!(
-            "cheetah_production_snapshot_{}",
-            SNAPSHOT_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
-        let _ = fs::write(&file_path, b"fake snapshot");
-        let entry = FileStoreEntry {
-            media_key: golden_key(),
-            file_type: "snapshot".to_string(),
-            content_type: "image/jpeg".to_string(),
-            size_bytes: 13,
-            created_at_ms: 0,
-            expires_at_ms: None,
-            absolute_path: file_path.to_string_lossy().to_string(),
-            owner_principal: None,
-            allowed_principals: Vec::new(),
-        };
-        let file_handle = engine_ctx
-            .media_file_store
-            .register_file(&crate::production_support::ctx(), entry)
-            .map_err(|e| SdkError::Internal(e.to_string()))?;
-        let snapshot_api = Arc::new(FakeSnapshotApi::new(file_handle, golden_key(), 13));
-        self.snapshot_registration =
-            Some(engine_ctx.media_services.register_snapshot(snapshot_api));
-
-        // Open a VP8 publisher on the golden stream.
+        // Open a VP8 publisher on the golden stream for subscribe/snapshot tests.
         let mut track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::VP8, 90_000);
         track.width = Some(640);
         track.height = Some(480);
@@ -379,11 +271,7 @@ impl Module for ProductionFixtureModule {
 
     async fn stop(&mut self) -> Result<(), SdkError> {
         self.state = ModuleState::Stopped;
-        if let Some(ctx) = self.ctx.take() {
-            if let Some(reg) = self.snapshot_registration.take() {
-                ctx.media_services.unregister(&reg);
-            }
-        }
+        self.ctx = None;
         Ok(())
     }
 

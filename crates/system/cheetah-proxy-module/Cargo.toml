@@ -6,10 +6,14 @@ license.workspace = true
 
 [features]
 default = []
-rtmp = ["dep:cheetah-connector"]
-http-flv = ["dep:cheetah-connector"]
-rtsp = ["dep:cheetah-connector"]
-webrtc = ["dep:cheetah-connector"]
+# Enable real connector-backed data planes. Server profiles that enable the
+# corresponding protocol modules should also enable these features.
+rtmp = ["dep:cheetah-connector", "cheetah-connector/rtmp"]
+http-flv = ["dep:cheetah-connector", "cheetah-connector/http-flv"]
+rtsp = ["dep:cheetah-connector", "cheetah-connector/rtsp"]
+webrtc = ["dep:cheetah-connector", "cheetah-connector/webrtc"]
+# Convenience: enable the primary production proxy paths.
+full = ["rtmp", "http-flv", "rtsp"]
 
 [dependencies]
 async-trait.workspace = true
@@ -27,10 +31,8 @@ cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
 cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
 cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
 
-# Optional real connector data-plane integration. Disabled by default so the
-# module can compile and expose a registry-backed ProxyApi provider without
-# pulling in all protocol crates.
-cheetah-connector = { path = "../../sdk/cheetah-connector", optional = true }
+# Optional real connector data-plane integration.
+cheetah-connector = { path = "../../sdk/cheetah-connector", optional = true, default-features = false }
 
 [dev-dependencies]
 cheetah-config = { path = "../cheetah-config" }

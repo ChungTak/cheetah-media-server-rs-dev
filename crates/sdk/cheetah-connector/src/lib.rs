@@ -13,16 +13,12 @@
 //!
 //! | Protocol | Pull | Push |
 //! | --- | --- | --- |
-//! | RTSP | no (adapter pending) | no |
-//! | HTTP-FLV | yes | no |
-//! | RTMP | no | yes |
-//! | WebRTC | no | yes |
+//! | RTSP | yes (`rtsp` feature) | no |
+//! | HTTP-FLV | yes (`http-flv` feature) | no |
+//! | RTMP | no | yes (`rtmp` feature) |
+//! | WebRTC | no | yes (`webrtc` feature) |
 //!
 //! Unlisted protocol/direction pairs return [`ConnectorError::UnsupportedProtocol`].
-//!
-//! `rtsp` pull adapter is declared but not yet wired in this build; the `rtsp`
-//! feature enables the underlying module but `supports()` returns `false` for
-//! that pair until the connector adapter is completed.
 //!
 //! # Metadata contract
 //!
@@ -33,7 +29,7 @@
 //!
 //! # Feature flags
 //!
-//! - `rtsp` — enable the RTSP module (connector pull adapter pending).
+//! - `rtsp` — enable RTSP pull.
 //! - `http-flv` — enable HTTP-FLV pull.
 //! - `rtmp` — enable RTMP push.
 //! - `webrtc` — enable the WebRTC module, the in-process media loopback fixture
@@ -67,6 +63,15 @@ pub use options::{
     ProtocolPullExtras, ProtocolPushExtras,
 };
 pub use protocol::{Direction, Protocol};
+
+// Re-export protocol open helpers for in-process modules that hold EngineContext
+// APIs rather than a full `Engine` handle (e.g. cheetah-proxy-module).
+#[cfg(feature = "http-flv")]
+pub use pull::http_flv::open_http_flv_pull_with_runtime;
+#[cfg(feature = "rtsp")]
+pub use pull::rtsp::open_rtsp_pull_to_stream;
+#[cfg(feature = "rtmp")]
+pub use push::rtmp::open_rtmp_push_with_runtime;
 
 // Re-export the cancellation token that the public API already accepts.
 pub use cheetah_runtime_api::CancellationToken;

@@ -322,6 +322,30 @@ pub trait MediaFacade:
     ) -> Result<Box<dyn MediaEventSubscription>>;
 }
 
+/// Resolve playable output URLs for a media resource.
+///
+/// Implementations must use configured public host/port/TLS settings and must
+/// not trust unauthenticated request `Host` headers.
+///
+/// 为媒体资源解析可播放输出 URL。
+///
+/// 实现必须使用配置的 public host/端口/TLS，不得信任未认证请求的 `Host` 头。
+#[async_trait]
+pub trait MediaUrlResolverApi: Send + Sync {
+    /// Resolve URLs for the given media key and requested schemas.
+    ///
+    /// When `schemas` is empty, return all schemas the resolver currently
+    /// supports.
+    ///
+    /// 为给定媒体键和请求的 schema 解析 URL；`schemas` 为空时返回当前支持的全部 schema。
+    async fn resolve_urls(
+        &self,
+        ctx: &MediaRequestContext,
+        key: &MediaKey,
+        schemas: &[MediaSchema],
+    ) -> Result<Vec<MediaUrl>>;
+}
+
 /// Synchronous webhook decision hooks.
 ///
 /// 同步 webhook 决策钩子。

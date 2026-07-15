@@ -21,7 +21,13 @@ srt = ["dep:cheetah-srt-module"]
 # `dependencies` in `cheetah-gb28181-module`); enabling `gb28181` therefore implies `rtp`.
 gb28181 = ["dep:cheetah-gb28181-module", "rtp"]
 proxy = ["dep:cheetah-proxy-module"]
-media-control-full = ["rtmp", "rtsp", "http-flv", "hls", "ts", "fmp4", "mp4", "rtp", "gb28181", "record", "webrtc", "srt", "proxy"]
+# Wire protocol data planes into the proxy module when the corresponding
+# protocol modules are also enabled.
+proxy-rtsp = ["proxy", "cheetah-proxy-module/rtsp"]
+proxy-rtmp = ["proxy", "cheetah-proxy-module/rtmp"]
+proxy-http-flv = ["proxy", "cheetah-proxy-module/http-flv"]
+snapshot = ["dep:cheetah-snapshot-module"]
+media-control-full = ["rtmp", "rtsp", "http-flv", "hls", "ts", "fmp4", "mp4", "rtp", "gb28181", "record", "webrtc", "srt", "proxy", "proxy-rtsp", "proxy-rtmp", "proxy-http-flv", "snapshot"]
 tokio-console = ["dep:console-subscriber", "tokio/tracing"]
 
 [dependencies]
@@ -41,6 +47,7 @@ cheetah-ts-module = { path = "../../crates/protocols/ts/module", optional = true
 cheetah-rtp-module = { path = "../../crates/protocols/rtp/module", optional = true }
 cheetah-mp4-module = { path = "../../crates/protocols/mp4/module", optional = true }
 cheetah-proxy-module = { path = "../../crates/system/cheetah-proxy-module", optional = true }
+cheetah-snapshot-module = { path = "../../crates/system/cheetah-snapshot-module", optional = true }
 cheetah-record-module = { path = "../../crates/system/cheetah-record-module", optional = true }
 cheetah-webrtc-module = { path = "../../crates/protocols/webrtc/module", optional = true }
 cheetah-srt-module = { path = "../../crates/protocols/srt/module", optional = true }

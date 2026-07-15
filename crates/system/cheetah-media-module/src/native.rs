@@ -5,16 +5,17 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::audit::{AuditApi, AuditEvent, AuditResult};
 use cheetah_media_api::command::{
-    DeleteRecordRequest, DeleteSnapshotRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand,
-    RecordTaskQuery, RtpQuery, RtpReceiverRequest, RtpSenderRequest, SessionQuery, SnapshotQuery,
-    SnapshotRequest, StartRecordRequest, StopRecordRequest,
+    DeleteRecordRequest, DeleteSnapshotRequest, FfmpegProxyRequest, MediaQuery, ProxyQuery,
+    PullProxyRequest, PushProxyRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
+    RtpQuery, RtpReceiverRequest, RtpSenderRequest, SessionQuery, SnapshotQuery, SnapshotRequest,
+    StartRecordRequest, StopRecordRequest,
 };
 use cheetah_media_api::ids::{
-    FileHandle, MediaKey, RecordFileId, RecordTaskId, RtpSessionId, SessionId,
+    FileHandle, MediaKey, ProxyId, RecordFileId, RecordTaskId, RtpSessionId, SessionId,
 };
 use cheetah_media_api::model::CloseReason;
 use cheetah_media_api::port::{
-    ControlAuthApi, MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
+    ControlAuthApi, MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, SnapshotApi,
 };
 use cheetah_media_api::{AuthCredentials, FileRange, MediaFileStoreApi, MediaScope, Principal};
 use cheetah_sdk::{
@@ -190,6 +191,14 @@ impl NativeMediaHttpService {
         })
     }
 
+    fn proxy(&self) -> Result<Arc<dyn ProxyApi>, AdapterError> {
+        self.ctx.media_services.proxy().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "proxy not available",
+            ))
+        })
+    }
+
     fn file_store(&self) -> Arc<dyn MediaFileStoreApi> {
         self.ctx.media_file_store.clone()
     }
@@ -283,6 +292,18 @@ impl NativeMediaHttpService {
             }
             (HttpMethod::Post, "/snapshots") => Some("snapshot.create"),
             (HttpMethod::Delete, "/snapshots/directories") => Some("snapshot.directory.delete"),
+            (HttpMethod::Post, "/proxies/pull") => Some("proxy.pull.create"),
+            (HttpMethod::Delete, path) if path.starts_with("/proxies/pull/") => {
+                Some("proxy.pull.delete")
+            }
+            (HttpMethod::Post, "/proxies/push") => Some("proxy.push.create"),
+            (HttpMethod::Delete, path) if path.starts_with("/proxies/push/") => {
+                Some("proxy.push.delete")
+            }
+            (HttpMethod::Post, "/proxies/ffmpeg") => Some("proxy.ffmpeg.create"),
+            (HttpMethod::Delete, path) if path.starts_with("/proxies/ffmpeg/") => {
+                Some("proxy.ffmpeg.delete")
+            }
             (HttpMethod::Post, "/rtp/receivers") => Some("rtp.receiver.open"),
             (HttpMethod::Post, "/rtp/senders") => Some("rtp.sender.open"),
             (HttpMethod::Post, path)
@@ -411,6 +432,16 @@ impl NativeMediaHttpService {
         let key = self.parse_media_key(&req.path, "/media/")?;
         let online = self.control()?.is_media_online(ctx, &key).await?;
         Ok(json_response(&serde_json::json!({ "online": online })))
+    }
+
+    async fn media_urls(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let key = self.parse_media_key(&req.path, "/media/")?;
+        let info = self.control()?.get_media(ctx, &key).await?;
+        Ok(json_response(&serde_json::json!({ "urls": info.urls })))
     }
 
     async fn media_close(
@@ -656,14 +687,148 @@ impl NativeMediaHttpService {
         Ok(download_response(download))
     }
 
-    async fn proxies_pull(
+    async fn proxy_pull_list(
         &self,
-        _ctx: &MediaRequestContext,
-        _req: HttpRequest,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
-        Err(AdapterError::Media(
-            cheetah_media_api::error::MediaError::unsupported_capability("proxy"),
-        ))
+        let mut query: ProxyQuery = parse_query(&req)?;
+        query.clamp_page_size();
+        let page = self.proxy()?.list_pull_proxies(ctx, query).await?;
+        Ok(json_response(&page))
+    }
+
+    async fn proxy_pull_create(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let request: PullProxyRequest = parse_body(&req)?;
+        let info = self.proxy()?.create_pull_proxy(ctx, request).await?;
+        Ok(json_response(&info))
+    }
+
+    async fn proxy_pull_get(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let id = path_last_segment(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing pull proxy id".to_string()))?;
+        let info = self
+            .proxy()?
+            .get_pull_proxy(ctx, &ProxyId(id.to_string()))
+            .await?;
+        Ok(json_response(&info))
+    }
+
+    async fn proxy_pull_delete(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let id = path_last_segment(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing pull proxy id".to_string()))?;
+        self.proxy()?
+            .delete_pull_proxy(ctx, &ProxyId(id.to_string()))
+            .await?;
+        Ok(json_response(&serde_json::json!({ "deleted": true })))
+    }
+
+    async fn proxy_push_list(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let mut query: ProxyQuery = parse_query(&req)?;
+        query.clamp_page_size();
+        let page = self.proxy()?.list_push_proxies(ctx, query).await?;
+        Ok(json_response(&page))
+    }
+
+    async fn proxy_push_create(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let request: PushProxyRequest = parse_body(&req)?;
+        let info = self.proxy()?.create_push_proxy(ctx, request).await?;
+        Ok(json_response(&info))
+    }
+
+    async fn proxy_push_get(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let id = path_last_segment(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing push proxy id".to_string()))?;
+        let info = self
+            .proxy()?
+            .get_push_proxy(ctx, &ProxyId(id.to_string()))
+            .await?;
+        Ok(json_response(&info))
+    }
+
+    async fn proxy_push_delete(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let id = path_last_segment(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing push proxy id".to_string()))?;
+        self.proxy()?
+            .delete_push_proxy(ctx, &ProxyId(id.to_string()))
+            .await?;
+        Ok(json_response(&serde_json::json!({ "deleted": true })))
+    }
+
+    async fn proxy_ffmpeg_list(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let mut query: ProxyQuery = parse_query(&req)?;
+        query.clamp_page_size();
+        let page = self.proxy()?.list_ffmpeg_proxies(ctx, query).await?;
+        Ok(json_response(&page))
+    }
+
+    async fn proxy_ffmpeg_create(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let request: FfmpegProxyRequest = parse_body(&req)?;
+        let info = self.proxy()?.create_ffmpeg_proxy(ctx, request).await?;
+        Ok(json_response(&info))
+    }
+
+    async fn proxy_ffmpeg_get(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let id = path_last_segment(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing ffmpeg proxy id".to_string()))?;
+        let info = self
+            .proxy()?
+            .get_ffmpeg_proxy(ctx, &ProxyId(id.to_string()))
+            .await?;
+        Ok(json_response(&info))
+    }
+
+    async fn proxy_ffmpeg_delete(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let id = path_last_segment(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing ffmpeg proxy id".to_string()))?;
+        self.proxy()?
+            .delete_ffmpeg_proxy(ctx, &ProxyId(id.to_string()))
+            .await?;
+        Ok(json_response(&serde_json::json!({ "deleted": true })))
     }
 
     async fn capabilities(
@@ -713,6 +878,11 @@ impl ModuleHttpService for NativeMediaHttpService {
                     if path.starts_with("/media/") && path.ends_with("/online") =>
                 {
                     self.media_online(&ctx, req).await
+                }
+                (HttpMethod::Get, path)
+                    if path.starts_with("/media/") && path.ends_with("/urls") =>
+                {
+                    self.media_urls(&ctx, req).await
                 }
                 (HttpMethod::Get, path)
                     if path.starts_with("/media/") && path.ends_with("/close") =>
@@ -766,7 +936,30 @@ impl ModuleHttpService for NativeMediaHttpService {
                 {
                     self.file_download(&ctx, req).await
                 }
-                (HttpMethod::Get, "/proxies/pull") => self.proxies_pull(&ctx, req).await,
+                (HttpMethod::Get, "/proxies/pull") => self.proxy_pull_list(&ctx, req).await,
+                (HttpMethod::Post, "/proxies/pull") => self.proxy_pull_create(&ctx, req).await,
+                (HttpMethod::Get, path) if path.starts_with("/proxies/pull/") => {
+                    self.proxy_pull_get(&ctx, req).await
+                }
+                (HttpMethod::Delete, path) if path.starts_with("/proxies/pull/") => {
+                    self.proxy_pull_delete(&ctx, req).await
+                }
+                (HttpMethod::Get, "/proxies/push") => self.proxy_push_list(&ctx, req).await,
+                (HttpMethod::Post, "/proxies/push") => self.proxy_push_create(&ctx, req).await,
+                (HttpMethod::Get, path) if path.starts_with("/proxies/push/") => {
+                    self.proxy_push_get(&ctx, req).await
+                }
+                (HttpMethod::Delete, path) if path.starts_with("/proxies/push/") => {
+                    self.proxy_push_delete(&ctx, req).await
+                }
+                (HttpMethod::Get, "/proxies/ffmpeg") => self.proxy_ffmpeg_list(&ctx, req).await,
+                (HttpMethod::Post, "/proxies/ffmpeg") => self.proxy_ffmpeg_create(&ctx, req).await,
+                (HttpMethod::Get, path) if path.starts_with("/proxies/ffmpeg/") => {
+                    self.proxy_ffmpeg_get(&ctx, req).await
+                }
+                (HttpMethod::Delete, path) if path.starts_with("/proxies/ffmpeg/") => {
+                    self.proxy_ffmpeg_delete(&ctx, req).await
+                }
                 (HttpMethod::Post, "/rtp/receivers") => self.rtp_receivers(&ctx, req).await,
                 (HttpMethod::Post, "/rtp/senders") => self.rtp_senders(&ctx, req).await,
                 (HttpMethod::Post, path)
@@ -878,6 +1071,12 @@ fn rtp_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
 /// Parse a request body (JSON) or URL query string into the target query type.
 ///
 /// 将请求 body（JSON）或 URL query 字符串解析为目标查询类型。
+fn path_last_segment(path: &str) -> Option<&str> {
+    path.rsplit('/')
+        .find(|s| !s.is_empty())
+        .filter(|s| *s != "pull" && *s != "push" && *s != "ffmpeg")
+}
+
 fn parse_query<T: DeserializeOwned + Default>(req: &HttpRequest) -> Result<T, AdapterError> {
     if !req.body.is_empty() {
         return Ok(serde_json::from_slice(&req.body)?);

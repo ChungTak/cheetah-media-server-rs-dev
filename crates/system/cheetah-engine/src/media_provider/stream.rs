@@ -8,7 +8,9 @@ use cheetah_media_api::command::*;
 use cheetah_media_api::error::MediaError;
 use cheetah_media_api::ids::*;
 use cheetah_media_api::model::*;
-use cheetah_media_api::port::{MediaControlApi, MediaRequestContext, PublishSubscribeApi};
+use cheetah_media_api::port::{
+    MediaControlApi, MediaRequestContext, MediaUrlResolverApi, PublishSubscribeApi,
+};
 use cheetah_sdk::media_data_plane::{MediaDataPlaneApi, MediaFramePublisher, MediaFrameSubscriber};
 use cheetah_sdk::media_session::{MediaSessionDirectoryApi, SessionCloseHandle};
 use cheetah_sdk::{SdkError, StreamKey, StreamManagerApi};
@@ -31,6 +33,7 @@ pub struct StreamMediaProvider {
     stream_manager: Arc<dyn StreamManagerApi>,
     media_data_plane: Arc<dyn MediaDataPlaneApi>,
     session_directory: Arc<dyn MediaSessionDirectoryApi>,
+    url_resolver: Arc<dyn MediaUrlResolverApi>,
     publishers: Arc<PublisherMap>,
     subscribers: Arc<SubscriberMap>,
     next_id: Arc<AtomicU64>,
@@ -41,11 +44,13 @@ impl StreamMediaProvider {
         stream_manager: Arc<dyn StreamManagerApi>,
         media_data_plane: Arc<dyn MediaDataPlaneApi>,
         session_directory: Arc<dyn MediaSessionDirectoryApi>,
+        url_resolver: Arc<dyn MediaUrlResolverApi>,
     ) -> Self {
         Self {
             stream_manager,
             media_data_plane,
             session_directory,
+            url_resolver,
             publishers: Arc::new(PublisherMap::new()),
             subscribers: Arc::new(SubscriberMap::new()),
             next_id: Arc::new(AtomicU64::new(1)),
@@ -126,9 +131,9 @@ impl StreamMediaProvider {
         let mut info = Self::stream_info(snapshot, now_ms);
         let key = info.key.clone();
         let mut query = SessionQuery {
-            vhost: Some(key.vhost.0),
-            app: Some(key.app.0),
-            stream: Some(key.stream.0),
+            vhost: Some(key.vhost.0.clone()),
+            app: Some(key.app.0.clone()),
+            stream: Some(key.stream.0.clone()),
             page_size: SessionQuery::MAX_PAGE_SIZE,
             ..SessionQuery::default()
         };
@@ -166,6 +171,9 @@ impl StreamMediaProvider {
         }
         if let (Some(start), Some(end)) = (started_at, last_seen_at) {
             info.duration_ms = (end - start).max(0) as u64;
+        }
+        if let Ok(urls) = self.url_resolver.resolve_urls(ctx, &key, &[]).await {
+            info.urls = urls;
         }
         Ok(info)
     }
@@ -472,6 +480,19 @@ mod tests {
     use cheetah_media_api::model::{CloseReason, SessionKind};
     use cheetah_runtime_tokio::TokioRuntime;
 
+    struct EmptyConfig;
+    impl cheetah_sdk::ConfigProvider for EmptyConfig {
+        fn global(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn module(&self, _module_id: &cheetah_sdk::ModuleId) -> serde_json::Value {
+            serde_json::Value::Null
+        }
+        fn version(&self) -> u64 {
+            0
+        }
+    }
+
     fn test_provider() -> StreamMediaProvider {
         let runtime: Arc<dyn cheetah_sdk::RuntimeApi> = Arc::new(TokioRuntime::new());
         let manager = Arc::new(StreamManager::new(DispatcherMode::PerStream, 128, runtime));
@@ -481,7 +502,10 @@ mod tests {
             Arc::new(EngineMediaDataPlane::new(publisher_api, subscriber_api));
         let directory: Arc<dyn MediaSessionDirectoryApi> =
             Arc::new(EngineMediaSessionDirectory::new());
-        StreamMediaProvider::new(manager, data_plane, directory)
+        let url_resolver: Arc<dyn MediaUrlResolverApi> = Arc::new(
+            crate::media_provider::EngineMediaUrlResolver::new(Arc::new(EmptyConfig)),
+        );
+        StreamMediaProvider::new(manager, data_plane, directory, url_resolver)
     }
 
     fn publish_request(key: &MediaKey) -> PublishRequest {

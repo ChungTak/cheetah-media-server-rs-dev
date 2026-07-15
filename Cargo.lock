@@ -1140,6 +1140,7 @@ dependencies = [
  "cheetah-runtime-api",
  "cheetah-runtime-tokio",
  "cheetah-sdk-macros",
+ "cheetah-snapshot-module",
  "serde",
  "serde_json",
  "thiserror",
@@ -1176,6 +1177,7 @@ dependencies = [
  "cheetah-rtsp-module",
  "cheetah-runtime-tokio",
  "cheetah-sdk",
+ "cheetah-snapshot-module",
  "cheetah-srt-module",
  "cheetah-ts-module",
  "cheetah-webhook-dispatcher",
@@ -1186,6 +1188,29 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "cheetah-snapshot-module"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "cheetah-codec",
+ "cheetah-config",
+ "cheetah-engine",
+ "cheetah-media-api",
+ "cheetah-runtime-api",
+ "cheetah-runtime-tokio",
+ "cheetah-sdk",
+ "dashmap",
+ "futures",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

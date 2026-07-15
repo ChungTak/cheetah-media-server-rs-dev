@@ -534,6 +534,7 @@ impl ModuleHttpService for ZlmMediaHttpService {
                     self.get_media_player_list(&ctx, req).await
                 }
                 (HttpMethod::Get, "/api/getMediaInfo") => self.get_media_info(&ctx, req).await,
+                (HttpMethod::Get, "/api/getStreamUrl") => self.get_stream_url(&ctx, req).await,
                 (HttpMethod::Post, "/api/close_stream") => self.close_stream(&ctx, req).await,
                 (HttpMethod::Post, "/api/close_streams") => self.close_streams(&ctx, req).await,
                 (HttpMethod::Get, "/api/getAllSession") => self.get_all_session(&ctx, req).await,

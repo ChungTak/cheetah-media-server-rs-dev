@@ -165,10 +165,14 @@ impl EngineBuilder {
             publisher_api.clone(),
             subscriber_api.clone(),
         ));
+        let url_resolver: Arc<dyn cheetah_media_api::port::MediaUrlResolverApi> = Arc::new(
+            crate::media_provider::EngineMediaUrlResolver::new(self.config_provider.clone()),
+        );
         let stream_provider = StreamMediaProvider::new(
             stream_manager.clone(),
             media_data_plane.clone(),
             session_directory.clone(),
+            url_resolver,
         );
 
         let media_services = MediaServices::unavailable();

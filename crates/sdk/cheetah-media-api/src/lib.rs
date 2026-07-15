@@ -32,6 +32,6 @@ pub use media_file_store::{
 };
 pub use model::Decision;
 pub use port::{
-    ControlAuthApi, MediaControlApi, MediaFacade, MediaRequestContext, ProxyApi,
-    PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookApi,
+    ControlAuthApi, MediaControlApi, MediaFacade, MediaRequestContext, MediaUrlResolverApi,
+    ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookApi,
 };
