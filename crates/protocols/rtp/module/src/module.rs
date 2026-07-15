@@ -540,19 +540,20 @@ async fn run_ingress_worker(
                 reason,
             } => {
                 info!("RTP ingress session closed: key={session_key}, reason={reason}");
-                let timeout_session = if reason.contains("timeout") {
-                    orchestrator
-                        .sessions
-                        .lock()
-                        .get(&RtpSessionId(session_key.clone()))
-                        .cloned()
-                } else {
-                    None
+                let id = RtpSessionId(session_key.clone());
+                let timeout_session = {
+                    let mut guard = orchestrator.sessions.lock();
+                    let session = if reason.contains("timeout") {
+                        guard.get(&id).cloned()
+                    } else {
+                        None
+                    };
+                    guard.remove(&id);
+                    session
                 };
                 if let Some(session) = sessions.remove(&session_key) {
                     let _ = session.sink.close();
                 }
-                let _ = orchestrator.stop_session_by_key(&session_key).await;
 
                 let event_type = if reason.contains("timeout") {
                     "rtp_session_timeout"
