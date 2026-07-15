@@ -23,6 +23,7 @@ use cheetah_sdk::{
 
 use crate::error::{zlm_error_response, AdapterError};
 
+mod routes;
 mod rtp;
 mod snapshot;
 
@@ -122,102 +123,7 @@ impl Module for ZlmMediaModule {
         if !self.config.read().unwrap().enabled {
             return Vec::new();
         }
-        vec![
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getMediaList".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/isMediaOnline".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getMediaInfo".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getAllSession".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/close_stream".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/kick_session".to_string(),
-            },
-            // Record endpoints; detailed implementation in record module / future media provider.
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/startRecord".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/stopRecord".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/isRecording".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getMP4RecordFile".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/deleteRecordDirectory".to_string(),
-            },
-            // RTP endpoints
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/openRtpServer".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/closeRtpServer".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/startSendRtp".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/stopSendRtp".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getRtpInfo".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/setRecordSpeed".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/seekRecordStamp".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/controlRecordPlay".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/loadMP4File".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/getSnap".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/api/deleteSnapDirectory".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/api/downloadFile".to_string(),
-            },
-        ]
+        routes::zlm_http_routes()
     }
 
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
@@ -408,7 +314,7 @@ impl ZlmMediaHttpService {
     }
 
     fn required_scope(&self, method: HttpMethod, path: &str) -> Option<MediaScope> {
-        zlm_required_scope(method, path)
+        routes::zlm_required_scope(method, path)
     }
 
     fn audit(&self) -> Result<Arc<dyn AuditApi>, AdapterError> {
@@ -953,7 +859,18 @@ impl ModuleHttpService for ZlmMediaHttpService {
                     self.delete_snap_directory(&ctx, req).await
                 }
                 (HttpMethod::Get, "/api/downloadFile") => self.download_file(&ctx, req).await,
-                _ => Err(AdapterError::InvalidRequest("not found".to_string())),
+                _ => {
+                    if routes::is_zlm_catalog_route(req.method, req.path.as_str()) {
+                        Err(AdapterError::Media(
+                            cheetah_media_api::error::MediaError::unsupported_capability(&format!(
+                                "{:?} {}",
+                                req.method, req.path
+                            )),
+                        ))
+                    } else {
+                        Err(AdapterError::InvalidRequest("not found".to_string()))
+                    }
+                }
             };
 
             self.record_audit(&ctx, &audit_req, &response).await;
@@ -1069,35 +986,6 @@ fn parse_zlm_playback_command(
         _ => Err(AdapterError::InvalidRequest(format!(
             "unsupported playback command {command}"
         ))),
-    }
-}
-
-fn zlm_required_scope(method: HttpMethod, path: &str) -> Option<MediaScope> {
-    match (method, path) {
-        (HttpMethod::Get, "/api/getMediaList") => Some(MediaScope::MediaRead),
-        (HttpMethod::Get, "/api/isMediaOnline") => Some(MediaScope::MediaRead),
-        (HttpMethod::Get, "/api/getMediaInfo") => Some(MediaScope::MediaRead),
-        (HttpMethod::Get, "/api/getAllSession") => Some(MediaScope::MediaRead),
-        (HttpMethod::Get, "/api/isRecording") => Some(MediaScope::MediaRead),
-        (HttpMethod::Get, "/api/getMP4RecordFile") => Some(MediaScope::MediaRead),
-        (HttpMethod::Get, "/api/getRtpInfo") => Some(MediaScope::MediaRead),
-        (HttpMethod::Get, "/api/getSnap") => Some(MediaScope::MediaControl),
-        (HttpMethod::Get, "/api/downloadFile") => Some(MediaScope::FileRead),
-        (HttpMethod::Post, "/api/close_stream") => Some(MediaScope::MediaControl),
-        (HttpMethod::Post, "/api/kick_session") => Some(MediaScope::MediaControl),
-        (HttpMethod::Post, "/api/startRecord") => Some(MediaScope::RecordManage),
-        (HttpMethod::Post, "/api/stopRecord") => Some(MediaScope::RecordManage),
-        (HttpMethod::Post, "/api/deleteRecordDirectory") => Some(MediaScope::FileDelete),
-        (HttpMethod::Post, "/api/openRtpServer") => Some(MediaScope::MediaPublish),
-        (HttpMethod::Post, "/api/closeRtpServer") => Some(MediaScope::MediaControl),
-        (HttpMethod::Post, "/api/startSendRtp") => Some(MediaScope::MediaConsume),
-        (HttpMethod::Post, "/api/stopSendRtp") => Some(MediaScope::MediaControl),
-        (HttpMethod::Post, "/api/setRecordSpeed") => Some(MediaScope::RecordManage),
-        (HttpMethod::Post, "/api/seekRecordStamp") => Some(MediaScope::RecordManage),
-        (HttpMethod::Post, "/api/controlRecordPlay") => Some(MediaScope::RecordManage),
-        (HttpMethod::Post, "/api/loadMP4File") => Some(MediaScope::RecordManage),
-        (HttpMethod::Post, "/api/deleteSnapDirectory") => Some(MediaScope::FileDelete),
-        _ => None,
     }
 }
 
