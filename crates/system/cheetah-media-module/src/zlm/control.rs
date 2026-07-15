@@ -190,7 +190,26 @@ fn parse_range_header(headers: &[HttpHeader]) -> Option<FileRange> {
     let end: u64 = end.parse().ok()?;
     Some(FileRange {
         start,
-        end: Some(end.saturating_add(1)),
+        end: Some(end),
         is_suffix: false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use cheetah_sdk::HttpHeader;
+
+    use super::parse_range_header;
+
+    #[test]
+    fn parse_range_header_uses_inclusive_end() {
+        let headers = vec![HttpHeader {
+            name: "Range".to_string(),
+            value: "bytes=0-9".to_string(),
+        }];
+        let range = parse_range_header(&headers).expect("valid range");
+        assert_eq!(range.start, 0);
+        assert_eq!(range.end, Some(9));
+        assert!(!range.is_suffix);
+    }
 }

@@ -160,6 +160,53 @@ async fn get_missing_proxy_returns_not_found() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn internal_proxy_targets_are_rejected() {
+    let engine = make_engine();
+    engine.start().await.expect("engine start");
+
+    let facade = engine.media_facade();
+    let ctx = MediaRequestContext::default();
+    let forbidden = [
+        "http://127.0.0.1:8891/live.flv",
+        "http://localhost/live.flv",
+        "http://[::1]/live.flv",
+        "http://[::ffff:127.0.0.1]/live.flv",
+        "http://169.254.169.254/latest/meta-data",
+        "http://10.0.0.1/live.flv",
+        "http://192.168.1.1/live.flv",
+        "http://172.16.0.1/live.flv",
+    ];
+    for url in forbidden {
+        let mut req = pull_request(url);
+        req.source_url = url.to_string();
+        let result = facade.create_pull_proxy(&ctx, req).await;
+        assert!(
+            result.is_err(),
+            "should reject internal target {url}: {result:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn public_proxy_targets_are_accepted() {
+    let engine = make_engine();
+    engine.start().await.expect("engine start");
+
+    let facade = engine.media_facade();
+    let ctx = MediaRequestContext::default();
+    for url in [
+        "http://example.com/live.flv",
+        "rtmp://example.com/live/push",
+    ] {
+        let result = facade.create_pull_proxy(&ctx, pull_request(url)).await;
+        assert!(
+            result.is_ok(),
+            "should accept public target {url}: {result:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn unsupported_url_scheme_is_rejected() {
     let engine = make_engine();
     engine.start().await.expect("engine start");

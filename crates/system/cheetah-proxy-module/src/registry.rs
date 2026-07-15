@@ -105,6 +105,19 @@ impl ProxyRegistry {
         }
     }
 
+    /// Store the cancellation handle for a proxy so that `delete` can stop the
+    /// background task. Returns `true` if the entry existed.
+    ///
+    /// 保存代理的取消句柄，以便删除时停止后台任务。若条目存在则返回 `true`。
+    pub fn set_cancel(&self, id: &ProxyId, token: CancellationToken) -> bool {
+        if let Some(mut entry) = self.entries.get_mut(&id.0) {
+            entry.cancel = Some(token);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Cancel the background task for `id` if one exists, returning `true` if
     /// the entry was found.
     ///

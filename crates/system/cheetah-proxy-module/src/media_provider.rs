@@ -9,8 +9,9 @@ use cheetah_media_api::ids::{MediaKey, ProxyId};
 use cheetah_media_api::model::{Page, ProxyInfo, ProxyKind, ProxyState};
 use cheetah_media_api::port::{MediaRequestContext, ProxyApi};
 use cheetah_sdk::EngineContext;
+use std::net::IpAddr;
 use tracing::{debug, warn};
-use url::Url;
+use url::{Host, Url};
 
 use crate::config::ProxyModuleConfig;
 use crate::registry::{ProxyEntry, ProxyRegistry};
@@ -83,14 +84,15 @@ impl ProxyApi for ProxyMediaProvider {
             warn!(proxy_id = %proxy_id.0, "proxy id collision after idempotency check");
         }
 
-        spawn_proxy_task(
+        let cancel = spawn_proxy_task(
             self.ctx.runtime_api.clone(),
             self.ctx.task_system_api.clone(),
             self.registry.clone(),
-            proxy_id,
+            proxy_id.clone(),
             self.config.clone(),
         )
         .map_err(|e| MediaError::internal(format!("failed to spawn proxy task: {e}")))?;
+        self.registry.set_cancel(&proxy_id, cancel);
 
         debug!(proxy_id = %info.proxy_id.0, "created pull proxy");
         Ok(info)
@@ -174,14 +176,15 @@ impl ProxyApi for ProxyMediaProvider {
             warn!(proxy_id = %proxy_id.0, "proxy id collision after idempotency check");
         }
 
-        spawn_proxy_task(
+        let cancel = spawn_proxy_task(
             self.ctx.runtime_api.clone(),
             self.ctx.task_system_api.clone(),
             self.registry.clone(),
-            proxy_id,
+            proxy_id.clone(),
             self.config.clone(),
         )
         .map_err(|e| MediaError::internal(format!("failed to spawn proxy task: {e}")))?;
+        self.registry.set_cancel(&proxy_id, cancel);
 
         debug!(proxy_id = %info.proxy_id.0, "created push proxy");
         Ok(info)
@@ -343,14 +346,76 @@ fn now_unix_millis() -> i64 {
 }
 
 fn validate_url(url: &str) -> Result<()> {
-    match Url::parse(url) {
-        Ok(parsed) => match parsed.scheme() {
-            "http" | "https" | "rtmp" | "rtsp" | "srt" | "webrtc" | "rtp" => Ok(()),
-            _ => Err(MediaError::invalid_argument(format!(
+    let parsed =
+        Url::parse(url).map_err(|e| MediaError::invalid_argument(format!("invalid URL: {e}")))?;
+
+    match parsed.scheme() {
+        "http" | "https" | "rtmp" | "rtsp" | "srt" | "webrtc" | "rtp" => {}
+        _ => {
+            return Err(MediaError::invalid_argument(format!(
                 "unsupported URL scheme: {}",
                 parsed.scheme()
-            ))),
-        },
-        Err(e) => Err(MediaError::invalid_argument(format!("invalid URL: {e}"))),
+            )))
+        }
+    }
+
+    let host = parsed
+        .host()
+        .ok_or_else(|| MediaError::invalid_argument("URL missing host".to_string()))?;
+
+    match host {
+        Host::Domain(domain) => {
+            if is_forbidden_domain(domain) {
+                return Err(MediaError::invalid_argument(format!(
+                    "forbidden proxy target host: {domain}"
+                )));
+            }
+        }
+        Host::Ipv4(ip) => {
+            let addr = IpAddr::from(ip);
+            if is_internal_ip(&addr) {
+                return Err(MediaError::invalid_argument(format!(
+                    "forbidden proxy target address: {addr}"
+                )));
+            }
+        }
+        Host::Ipv6(ip) => {
+            let addr = IpAddr::from(ip);
+            if is_internal_ip(&addr) {
+                return Err(MediaError::invalid_argument(format!(
+                    "forbidden proxy target address: {addr}"
+                )));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn is_forbidden_domain(domain: &str) -> bool {
+    let lower = domain.to_lowercase();
+    lower == "localhost"
+        || lower == "localhost.localdomain"
+        || lower.ends_with(".localhost")
+        || lower.ends_with(".local")
+}
+
+fn is_internal_ip(addr: &IpAddr) -> bool {
+    match addr {
+        IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+        }
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_internal_ip(&IpAddr::V4(v4));
+            }
+            v6.is_loopback() || v6.is_unspecified() || v6.is_multicast()
+        }
     }
 }

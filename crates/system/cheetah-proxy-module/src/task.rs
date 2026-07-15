@@ -13,18 +13,23 @@ use tracing::{debug, error, trace};
 use crate::config::ProxyModuleConfig;
 use crate::registry::ProxyRegistry;
 
-/// Spawn a background proxy task and return its task id.
+/// Spawn a background proxy task and return its cancellation token.
 ///
-/// 派生后台代理任务并返回其任务 id。
+/// The caller must store the token in the proxy registry so that deletion can
+/// cancel the running task.
+///
+/// 派生后台代理任务并返回其取消 token。调用方必须将该 token 保存到代理注册表，
+/// 以便删除代理时能取消正在运行的任务。
 pub fn spawn_proxy_task(
     runtime_api: Arc<dyn RuntimeApi>,
     task_system_api: Arc<dyn TaskSystemApi>,
     registry: Arc<ProxyRegistry>,
     proxy_id: ProxyId,
     config: ProxyModuleConfig,
-) -> Result<TaskId, cheetah_sdk::SdkError> {
+) -> Result<CancellationToken, cheetah_sdk::SdkError> {
     let task_id = task_system_api.create_task(None, TaskKind::Task, "proxy", "proxy-session")?;
     let cancel = task_system_api.token(task_id)?;
+    let cancel_for_task = cancel.clone();
 
     let fut = Box::pin(proxy_session_loop(
         runtime_api.clone(),
@@ -32,12 +37,12 @@ pub fn spawn_proxy_task(
         registry,
         proxy_id,
         config,
-        cancel,
+        cancel_for_task,
         task_id,
     ));
 
     runtime_api.spawn(fut);
-    Ok(task_id)
+    Ok(cancel)
 }
 
 async fn proxy_session_loop(
