@@ -312,12 +312,18 @@ impl ZlmMediaHttpService {
                         "zlm secret not configured",
                     ))
                 })?;
-                use subtle::ConstantTimeEq;
+                use subtle::{Choice, ConstantTimeEq};
                 let provided = query_param(req, "secret").unwrap_or_default();
                 let provided_bytes = provided.as_bytes();
                 let expected_bytes = expected.as_bytes();
-                let valid = provided_bytes.len() == expected_bytes.len()
-                    && bool::from(provided_bytes.ct_eq(expected_bytes));
+                let len_eq =
+                    (provided_bytes.len() as u64).ct_eq(&(expected_bytes.len() as u64));
+                let mut content_eq = Choice::from(1u8);
+                for (i, e) in expected_bytes.iter().enumerate() {
+                    let p = provided_bytes.get(i).copied().unwrap_or(0);
+                    content_eq &= u8::ct_eq(&p, e);
+                }
+                let valid = bool::from(len_eq & content_eq);
                 if !valid {
                     return Err(AdapterError::Media(MediaError::new(
                         MediaErrorCode::Unauthenticated,
