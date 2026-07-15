@@ -24,6 +24,8 @@ enum SessionDemuxer {
 struct RtpSession {
     _session_key: RtpSessionKey,
     ssrc: u32,
+    /// Configured RTP payload type, if supplied by the caller.
+    payload_type: Option<u8>,
     /// Payload mode used to initialize the ingress demuxer.
     payload_mode: RtpPayloadMode,
     /// Payload mode used when packetizing outbound `SendFrame` frames.
@@ -295,6 +297,7 @@ impl RtpCore {
                             let session = RtpSession {
                                 _session_key: session_key.clone(),
                                 ssrc,
+                                payload_type: None,
                                 payload_mode: RtpPayloadMode::Ehome,
                                 egress_payload_mode: RtpPayloadMode::Ehome,
                                 transport_mode: RtpTransportMode::RecvOnly,
@@ -664,6 +667,7 @@ impl RtpCore {
             let session = RtpSession {
                 _session_key: key.clone(),
                 ssrc,
+                payload_type: None,
                 payload_mode: mode,
                 egress_payload_mode: mode,
                 transport_mode: RtpTransportMode::RecvOnly,
@@ -1045,6 +1049,20 @@ impl RtpCore {
             }
         }
 
+        if let Some(new_payload_type) = payload_type {
+            if session.payload_type != Some(new_payload_type) {
+                session.payload_type = Some(new_payload_type);
+                changed = true;
+            }
+            let new_mode = payload_mode_from_payload_type(new_payload_type);
+            if session.payload_mode != new_mode {
+                session.payload_mode = new_mode;
+                session.egress_payload_mode = new_mode;
+                session.demuxer = SessionDemuxer::Pending;
+                changed = true;
+            }
+        }
+
         let mut result_pause: Option<bool> = None;
         if let Some(paused) = pause_check {
             if session.check_paused != paused {
@@ -1125,6 +1143,7 @@ impl RtpCore {
                 let session = RtpSession {
                     _session_key: spec.session_key.clone(),
                     ssrc,
+                    payload_type: None,
                     payload_mode: spec.payload_mode,
                     egress_payload_mode: spec.payload_mode,
                     transport_mode: spec.transport_mode,
@@ -1188,6 +1207,7 @@ impl RtpCore {
                 let session = RtpSession {
                     _session_key: spec.session_key.clone(),
                     ssrc: spec.ssrc,
+                    payload_type: None,
                     payload_mode: spec.payload_mode,
                     egress_payload_mode: spec.payload_mode,
                     transport_mode: spec.transport_mode,
@@ -1355,6 +1375,19 @@ fn rand_ssrc() -> u32 {
     let mut b = [0u8; 4];
     let _ = getrandom::getrandom(&mut b);
     u32::from_be_bytes(b) & 0x7FFFFFFF
+}
+
+/// Derive an internal payload mode from an RTP payload type value.
+///
+/// Mirrors the heuristic used by the orchestrator so that `UpdateSession` can
+/// switch the demuxer/packetizer when the payload type actually changes.
+fn payload_mode_from_payload_type(payload_type: u8) -> RtpPayloadMode {
+    match payload_type {
+        0 | 8 => RtpPayloadMode::RawAudio,
+        33 => RtpPayloadMode::Ts,
+        96..=99 => RtpPayloadMode::Es,
+        _ => RtpPayloadMode::Ps,
+    }
 }
 
 /// Whether the configured track filter allows a given media kind through.
@@ -1928,6 +1961,70 @@ mod tests {
                 marker: false,
             },
             payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0xAA]),
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:1".parse().unwrap(),
+            data: rtp.encode(),
+        };
+        let outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        assert!(!outputs
+            .iter()
+            .any(|o| matches!(o, RtpCoreOutput::Event(RtpCoreEvent::SessionCreated { .. }))));
+    }
+
+    #[test]
+    fn test_update_session_payload_type_changes_mode_and_generation() {
+        let mut core = RtpCore::new(10, 30_000);
+        let key = "recv/pt".to_string();
+        let spec = RtpServerSpec {
+            session_key: key.clone(),
+            ssrc: Some(1000),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        };
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
+
+        let outputs = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::UpdateSession {
+            session_key: key.clone(),
+            expected_generation: 1,
+            ssrc: None,
+            payload_type: Some(96),
+            pause_check: None,
+        }));
+
+        let mut updated = false;
+        for output in outputs {
+            if let RtpCoreOutput::Event(RtpCoreEvent::SessionUpdated {
+                session_key,
+                generation,
+                ssrc,
+                payload_type,
+                pause_check,
+            }) = output
+            {
+                assert_eq!(session_key, key);
+                assert_eq!(generation, 2);
+                assert_eq!(ssrc, None);
+                assert_eq!(payload_type, Some(96));
+                assert_eq!(pause_check, None);
+                updated = true;
+            }
+        }
+        assert!(updated, "expected SessionUpdated event");
+
+        // A packet with the new PT should still be routed to the same session.
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 1,
+                timestamp: 0,
+                ssrc: 1000,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x01, 0x09]),
         };
         let dgram = RtpDatagram {
             source: "127.0.0.1:1".parse().unwrap(),
