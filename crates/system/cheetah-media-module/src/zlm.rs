@@ -62,6 +62,7 @@ pub struct ZlmMediaModule {
     state: ModuleState,
     ctx: Option<EngineContext>,
     config: Arc<RwLock<ZlmAdapterConfig>>,
+    sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
 }
 
 impl ZlmMediaModule {
@@ -70,6 +71,7 @@ impl ZlmMediaModule {
             state: ModuleState::Created,
             ctx: None,
             config: Arc::new(RwLock::new(ZlmAdapterConfig::default())),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -137,7 +139,7 @@ impl Module for ZlmMediaModule {
         Some(Arc::new(ZlmMediaHttpService {
             ctx: self.ctx.clone()?,
             config: self.config.clone(),
-            sessions: Arc::new(RwLock::new(HashMap::new())),
+            sessions: self.sessions.clone(),
         }))
     }
 

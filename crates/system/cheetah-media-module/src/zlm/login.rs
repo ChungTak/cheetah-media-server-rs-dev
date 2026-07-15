@@ -37,9 +37,10 @@ impl ZlmMediaHttpService {
             .or_else(|| params["pass"].as_str())
             .ok_or_else(|| AdapterError::InvalidRequest("password is required".to_string()))?;
 
-        if !constant_time_eq_str(username, &session_cfg.username)
-            || !constant_time_eq_str(password, &session_cfg.password)
-        {
+        let user_ok = constant_time_eq_str(username, &session_cfg.username);
+        let pass_ok = constant_time_eq_str(password, &session_cfg.password);
+        let valid = user_ok & pass_ok;
+        if !valid {
             return Err(AdapterError::Media(
                 cheetah_media_api::error::MediaError::new(
                     cheetah_media_api::error::MediaErrorCode::Unauthenticated,
@@ -73,7 +74,7 @@ impl ZlmMediaHttpService {
         );
 
         let cookie_value = format!(
-            "{}={}; Path=/; HttpOnly; SameSite=Strict",
+            "{}={}; Path=/; HttpOnly; Secure; SameSite=Strict",
             session_cfg.cookie_name, token
         );
         let mut response = zlm_response(
