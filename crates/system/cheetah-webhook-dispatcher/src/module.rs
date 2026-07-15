@@ -100,7 +100,7 @@ impl Module for WebhookModule {
         Ok(())
     }
 
-    async fn start(&mut self, cancel: cheetah_sdk::CancellationToken) -> Result<(), SdkError> {
+    async fn start(&mut self, _cancel: cheetah_sdk::CancellationToken) -> Result<(), SdkError> {
         let dispatcher = self
             .dispatcher
             .as_ref()
@@ -110,7 +110,9 @@ impl Module for WebhookModule {
             .map_err(|e| SdkError::Internal(e.to_string()))?;
         self.handle = Some(handle);
         self.state = ModuleState::Running;
-        cancel.cancelled().await;
+        // The dispatcher runs as a background task and is stopped from
+        // `WebhookModule::stop`. Returning immediately keeps the engine startup
+        // pipeline moving.
         Ok(())
     }
 

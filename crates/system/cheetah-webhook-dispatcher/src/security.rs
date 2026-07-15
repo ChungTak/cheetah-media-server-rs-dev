@@ -72,7 +72,7 @@ impl WebhookUrlPolicy {
         let parsed =
             url::Url::parse(url).map_err(|e| WebhookSecurityError::InvalidUrl(e.to_string()))?;
 
-        if parsed.scheme() != "http" {
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
             return Err(WebhookSecurityError::UnsupportedScheme(
                 parsed.scheme().to_string(),
             ));
@@ -159,10 +159,27 @@ mod tests {
     }
 
     #[test]
-    fn blocks_non_http_scheme() {
+    fn allows_https_scheme() {
         let policy = WebhookUrlPolicy::default();
         let verdict = policy.evaluate("https://example.com/hook");
-        assert!(matches!(verdict, Err(WebhookSecurityError::UnsupportedScheme(s)) if s == "https"));
+        assert!(verdict.is_ok(), "{verdict:?}");
+    }
+
+    #[test]
+    fn blocks_unknown_scheme() {
+        let policy = WebhookUrlPolicy::default();
+        let verdict = policy.evaluate("ftp://example.com/hook");
+        assert!(matches!(verdict, Err(WebhookSecurityError::UnsupportedScheme(s)) if s == "ftp"));
+    }
+
+    #[test]
+    fn blocks_ipv6_ula() {
+        let policy = WebhookUrlPolicy::default();
+        let verdict = policy.evaluate("http://[fd12::1]/hook");
+        assert!(matches!(
+            verdict,
+            Err(WebhookSecurityError::BlockedAddress(_))
+        ));
     }
 
     #[test]
@@ -201,7 +218,7 @@ fn is_metadata_service(ip: &IpAddr) -> bool {
 fn is_private_or_unspecified(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => v4.is_private() || v4.is_unspecified(),
-        IpAddr::V6(v6) => v6.is_unspecified(),
+        IpAddr::V6(v6) => v6.is_unspecified() || v6.is_unique_local(),
     }
 }
 

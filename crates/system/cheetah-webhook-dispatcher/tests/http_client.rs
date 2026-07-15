@@ -39,9 +39,11 @@ async fn runtime_http_client_posts_and_reads_response() {
         },
     );
 
+    let mut headers = HashMap::new();
+    headers.insert("Content-Type".to_string(), "application/json".to_string());
     let request = WebhookHttpRequest {
         verdict,
-        headers: HashMap::new(),
+        headers,
         body: br#"{"hello":"world"}"#.to_vec(),
         timeout: Duration::from_secs(5),
     };

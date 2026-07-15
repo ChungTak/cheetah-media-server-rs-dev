@@ -48,6 +48,8 @@ pub enum WebhookSendError {
     InvalidResponse,
     #[error("denied by policy: {0}")]
     Policy(String),
+    #[error("HTTPS/TLS is not yet supported")]
+    TlsNotSupported,
 }
 
 /// Runtime-backed HTTP/1.1 client.
@@ -72,6 +74,10 @@ impl WebhookSender for RuntimeHttpClient {
                 return Err(WebhookSendError::Policy(reason.clone()));
             }
         };
+
+        if parsed.scheme == "https" {
+            return Err(WebhookSendError::TlsNotSupported);
+        }
 
         let start = std::time::Instant::now();
         let deadline = self
@@ -140,9 +146,10 @@ impl WebhookSender for RuntimeHttpClient {
 fn build_request(parsed: &ParsedUrl, headers: &HashMap<String, String>, body: &[u8]) -> Vec<u8> {
     let mut req = Vec::new();
     req.extend_from_slice(format!("POST {} HTTP/1.1\r\n", parsed.path_and_query).as_bytes());
-    req.extend_from_slice(format!("Host: {}\r\n", parsed.host).as_bytes());
+    req.extend_from_slice(
+        format!("Host: {}\r\n", host_header(&parsed.host, parsed.port)).as_bytes(),
+    );
     req.extend_from_slice(b"Connection: close\r\n");
-    req.extend_from_slice(b"Content-Type: application/json\r\n");
     for (k, v) in headers {
         req.extend_from_slice(format!("{}: {}\r\n", k, v).as_bytes());
     }
@@ -150,6 +157,15 @@ fn build_request(parsed: &ParsedUrl, headers: &HashMap<String, String>, body: &[
     req.extend_from_slice(b"\r\n");
     req.extend_from_slice(body);
     req
+}
+
+fn host_header(host: &str, port: u16) -> String {
+    let default_port = if port == 443 { 443 } else { 80 };
+    if port == default_port {
+        host.to_string()
+    } else {
+        format!("{}:{}", host, port)
+    }
 }
 
 struct HttpParser {
