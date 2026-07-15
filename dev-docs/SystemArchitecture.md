@@ -881,21 +881,17 @@ pub trait Module: Send + Sync {
     fn info(&self) -> ModuleInfo;
     fn state(&self) -> ModuleState;
 
-    async fn init(
-        &mut self,
-        manager: std::sync::Arc<dyn StreamManagerApi>,
-        config: std::sync::Arc<dyn ConfigProvider>,
-    ) -> anyhow::Result<()>;
+    async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError>;
+    async fn start(&mut self, cancel: CancellationToken) -> Result<(), SdkError>;
+    async fn stop(&mut self) -> Result<(), SdkError>;
 
-    async fn start(
-        &mut self,
-        cancel: cheetah_runtime_api::CancellationToken,
-    ) -> anyhow::Result<()>;
+    async fn apply_config(&mut self, change: ModuleConfigChange) -> Result<ConfigEffect, SdkError>;
 
-    async fn stop(&mut self) -> anyhow::Result<()>;
-
-    fn set_engine_context(&mut self, ctx: EngineContext);
-    fn http_routes(&self) -> Vec<HttpRoute>;
+    fn http_routes(&self) -> Vec<HttpRouteDescriptor> { Vec::new() }
+    fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> { None }
+    fn http_mount_prefix(&self) -> Option<String> { None }
+    fn http_max_body_bytes(&self) -> usize { 8 * 1024 * 1024 }
+    fn http_request_timeout_ms(&self) -> Option<u64> { None }
 }
 ```
 

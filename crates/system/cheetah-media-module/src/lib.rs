@@ -20,12 +20,16 @@
 //!
 //! 两个 adapter 都通过 `EngineContext::media_services` 调用同一组 `cheetah_media_api` 端口。
 
+mod adapter_config;
 mod error;
 mod native;
 mod native_routes;
 mod util;
 mod zlm;
 
+pub use adapter_config::{
+    load_native_config, load_zlm_config, NativeAdapterConfig, ZlmAdapterConfig,
+};
 pub use native::{NativeMediaModule, NativeMediaModuleFactory};
 pub use zlm::{ZlmMediaModule, ZlmMediaModuleFactory};
 

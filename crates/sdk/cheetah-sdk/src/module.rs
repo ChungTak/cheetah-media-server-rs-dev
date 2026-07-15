@@ -133,6 +133,10 @@ pub struct HttpRouteMount {
     pub prefix: String,
     pub routes: Vec<HttpRouteDescriptor>,
     pub service: Arc<dyn ModuleHttpService>,
+    /// Maximum request body size accepted for this mount, in bytes.
+    pub max_body_bytes: usize,
+    /// Optional per-request timeout for this mount, in milliseconds.
+    pub request_timeout_ms: Option<u64>,
 }
 
 /// Runtime summary of a module.
@@ -264,6 +268,28 @@ pub trait Module: Send + Sync {
     ///
     /// 返回模块的 HTTP 服务处理器（如有）。
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
+        None
+    }
+
+    /// Optional dynamic HTTP mount prefix. When `Some`, overrides
+    /// `ModuleManifest::routes_prefix` for the HTTP route mount.
+    ///
+    /// 返回动态 HTTP 挂载前缀。返回 `Some` 时覆盖 `ModuleManifest::routes_prefix`。
+    fn http_mount_prefix(&self) -> Option<String> {
+        None
+    }
+
+    /// Maximum request body size for this module's HTTP mount.
+    ///
+    /// 返回模块 HTTP 挂载的最大请求体大小（字节）。
+    fn http_max_body_bytes(&self) -> usize {
+        8 * 1024 * 1024
+    }
+
+    /// Per-request timeout for this module's HTTP mount, in milliseconds.
+    ///
+    /// 返回模块 HTTP 挂载的每请求超时（毫秒）。
+    fn http_request_timeout_ms(&self) -> Option<u64> {
         None
     }
 }

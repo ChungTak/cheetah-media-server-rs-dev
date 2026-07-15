@@ -1,5 +1,6 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
+use crate::adapter_config::{extract_zlm_config, load_zlm_config, ZlmAdapterConfig};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::audit::{AuditApi, AuditEvent, AuditResult};
@@ -12,7 +13,7 @@ use cheetah_media_api::model::{CloseReason, RecordTaskState};
 use cheetah_media_api::port::{
     ControlAuthApi, MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
 };
-use cheetah_media_api::{AuthCredentials, MediaScope};
+use cheetah_media_api::{AuthCredentials, MediaScope, Principal};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -55,6 +56,7 @@ impl ModuleFactory for ZlmMediaModuleFactory {
 pub struct ZlmMediaModule {
     state: ModuleState,
     ctx: Option<EngineContext>,
+    config: Arc<RwLock<ZlmAdapterConfig>>,
 }
 
 impl ZlmMediaModule {
@@ -62,6 +64,7 @@ impl ZlmMediaModule {
         Self {
             state: ModuleState::Created,
             ctx: None,
+            config: Arc::new(RwLock::new(ZlmAdapterConfig::default())),
         }
     }
 }
@@ -87,6 +90,8 @@ impl Module for ZlmMediaModule {
     }
 
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
+        let cfg = load_zlm_config(&ctx.engine.config_provider.global());
+        *self.config.write().unwrap() = cfg;
         self.ctx = Some(ctx.engine);
         self.state = ModuleState::Initialized;
         Ok(())
@@ -102,14 +107,21 @@ impl Module for ZlmMediaModule {
         Ok(())
     }
 
-    async fn apply_config(
-        &mut self,
-        _change: ModuleConfigChange,
-    ) -> Result<ConfigEffect, SdkError> {
+    async fn apply_config(&mut self, change: ModuleConfigChange) -> Result<ConfigEffect, SdkError> {
+        let next = change.next_global.as_ref().unwrap_or(&change.next);
+        let next = extract_zlm_config(next);
+        let previous = self.config.read().unwrap().clone();
+        if previous.enabled != next.enabled || previous.path_prefix != next.path_prefix {
+            return Ok(ConfigEffect::ModuleRestartRequired);
+        }
+        *self.config.write().unwrap() = next;
         Ok(ConfigEffect::Immediate)
     }
 
     fn http_routes(&self) -> Vec<HttpRouteDescriptor> {
+        if !self.config.read().unwrap().enabled {
+            return Vec::new();
+        }
         vec![
             HttpRouteDescriptor {
                 method: HttpMethod::Get,
@@ -209,14 +221,31 @@ impl Module for ZlmMediaModule {
     }
 
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
+        if !self.config.read().unwrap().enabled {
+            return None;
+        }
         Some(Arc::new(ZlmMediaHttpService {
             ctx: self.ctx.clone()?,
+            config: self.config.clone(),
         }))
+    }
+
+    fn http_mount_prefix(&self) -> Option<String> {
+        Some(self.config.read().unwrap().path_prefix.clone())
+    }
+
+    fn http_max_body_bytes(&self) -> usize {
+        self.config.read().unwrap().max_body_bytes
+    }
+
+    fn http_request_timeout_ms(&self) -> Option<u64> {
+        Some(self.config.read().unwrap().request_timeout_ms)
     }
 }
 
 pub(crate) struct ZlmMediaHttpService {
     ctx: EngineContext,
+    config: Arc<RwLock<ZlmAdapterConfig>>,
 }
 
 impl ZlmMediaHttpService {
@@ -256,6 +285,70 @@ impl ZlmMediaHttpService {
         Ok(self.ctx.control_auth_api.clone())
     }
 
+    fn authenticate(
+        &self,
+        req: &HttpRequest,
+        cfg: &ZlmAdapterConfig,
+    ) -> Result<Principal, AdapterError> {
+        use cheetah_media_api::error::{MediaError, MediaErrorCode};
+        match cfg.auth.mode.as_str() {
+            "none" => Ok(Principal {
+                identity: "anonymous".to_string(),
+                scopes: vec![
+                    MediaScope::MediaRead,
+                    MediaScope::MediaControl,
+                    MediaScope::MediaPublish,
+                    MediaScope::MediaConsume,
+                    MediaScope::RecordManage,
+                    MediaScope::FileRead,
+                    MediaScope::FileDelete,
+                    MediaScope::ServerAdmin,
+                ],
+            }),
+            "secret" => {
+                let expected = cfg.secret.as_deref().ok_or_else(|| {
+                    AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "zlm secret not configured",
+                    ))
+                })?;
+                let provided = query_param(req, "secret");
+                if provided.as_deref() != Some(expected) {
+                    return Err(AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "invalid zlm secret",
+                    )));
+                }
+                Ok(Principal {
+                    identity: "zlm".to_string(),
+                    scopes: vec![
+                        MediaScope::MediaRead,
+                        MediaScope::MediaControl,
+                        MediaScope::MediaPublish,
+                        MediaScope::MediaConsume,
+                        MediaScope::RecordManage,
+                        MediaScope::FileRead,
+                        MediaScope::FileDelete,
+                        MediaScope::ServerAdmin,
+                    ],
+                })
+            }
+            _ => {
+                let credentials = AuthCredentials {
+                    authorization_header: header_value(&req.headers, "authorization")
+                        .map(|s| s.to_string()),
+                    mtls_identity: header_value(&req.headers, "x-mtls-identity")
+                        .map(|s| s.to_string()),
+                    deployment_token: header_value(&req.headers, "x-deployment-token")
+                        .map(|s| s.to_string()),
+                };
+                self.auth()?
+                    .authenticate(&credentials)
+                    .map_err(AdapterError::Media)
+            }
+        }
+    }
+
     pub(crate) fn request_context(
         &self,
         req: &HttpRequest,
@@ -268,14 +361,9 @@ impl ZlmMediaHttpService {
         let client_deadline =
             header_value(&req.headers, "x-deadline").and_then(|v| v.parse::<i64>().ok());
         let deadline = crate::util::request_deadline(client_deadline, 60_000);
-        let credentials = AuthCredentials {
-            authorization_header: header_value(&req.headers, "authorization")
-                .map(|s| s.to_string()),
-            mtls_identity: header_value(&req.headers, "x-mtls-identity").map(|s| s.to_string()),
-            deployment_token: header_value(&req.headers, "x-deployment-token")
-                .map(|s| s.to_string()),
-        };
-        let principal = Some(self.auth()?.authenticate(&credentials)?);
+        let cfg = self.config.read().unwrap();
+        let principal = Some(self.authenticate(req, &cfg)?);
+        drop(cfg);
         Ok(MediaRequestContext {
             request_id,
             correlation_id: header_value(&req.headers, "x-correlation-id").map(|s| s.to_string()),
@@ -795,6 +883,12 @@ impl ZlmMediaHttpService {
 #[async_trait]
 impl ModuleHttpService for ZlmMediaHttpService {
     async fn handle(&self, mut req: HttpRequest) -> Result<HttpResponse, SdkError> {
+        let max_body_bytes = self.config.read().unwrap().max_body_bytes;
+        if req.body.len() > max_body_bytes {
+            return Err(SdkError::InvalidArgument(
+                "request body too large".to_string(),
+            ));
+        }
         let audit_req = req.clone();
         let request_id = header_value(&req.headers, "x-request-id")
             .map(|v| v.to_string())
@@ -1030,6 +1124,21 @@ fn header_value<'a>(headers: &'a [HttpHeader], name: &str) -> Option<&'a str> {
         .iter()
         .find(|h| h.name.eq_ignore_ascii_case(name))
         .map(|h| h.value.as_str())
+}
+
+fn query_param(req: &HttpRequest, name: &str) -> Option<String> {
+    let qs = req.query.as_deref()?;
+    let qs = qs.strip_prefix('?').unwrap_or(qs);
+    for pair in qs.split('&') {
+        if let Some((k, v)) = pair.split_once('=') {
+            if k == name {
+                return Some(v.to_string());
+            }
+        } else if pair == name {
+            return Some(String::new());
+        }
+    }
+    None
 }
 
 fn page_from_params(params: &serde_json::Value) -> u64 {

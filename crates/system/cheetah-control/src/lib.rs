@@ -503,11 +503,11 @@ async fn handle_module_http(
         })
         .collect::<Vec<_>>();
 
-    let body = match to_bytes(req.into_body(), 8 * 1024 * 1024).await {
+    let body = match to_bytes(req.into_body(), mount.max_body_bytes).await {
         Ok(v) => v,
         Err(err) => {
             return (
-                StatusCode::BAD_REQUEST,
+                StatusCode::PAYLOAD_TOO_LARGE,
                 format!("read request body failed: {err}"),
             )
                 .into_response();
@@ -521,7 +521,24 @@ async fn handle_module_http(
         headers,
         body,
     };
-    let module_resp = match mount.service.handle(module_req).await {
+
+    let handle_fut = mount.service.handle(module_req);
+    let module_resp = if let Some(ms) = mount.request_timeout_ms {
+        match tokio::time::timeout(tokio::time::Duration::from_millis(ms), handle_fut).await {
+            Ok(resp) => resp,
+            Err(_) => {
+                return (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    Json(json!({"error": "request timeout"})),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        handle_fut.await
+    };
+
+    let module_resp = match module_resp {
         Ok(v) => v,
         Err(err) => {
             return (
@@ -760,6 +777,8 @@ mod tests {
                 path: "/status".to_string(),
             }],
             service: Arc::new(DummyHttpService),
+            max_body_bytes: 8 * 1024 * 1024,
+            request_timeout_ms: None,
         };
 
         assert_eq!(
@@ -816,6 +835,8 @@ mod tests {
                 },
             ],
             service: Arc::new(DummyHttpService),
+            max_body_bytes: 8 * 1024 * 1024,
+            request_timeout_ms: None,
         };
 
         assert_eq!(
@@ -858,6 +879,8 @@ mod tests {
                 path: "//rtc/v1/whep".to_string(),
             }],
             service: Arc::new(DummyHttpService),
+            max_body_bytes: 8 * 1024 * 1024,
+            request_timeout_ms: None,
         };
 
         assert_eq!(
