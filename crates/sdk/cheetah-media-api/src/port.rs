@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::auth::{AuthCredentials, Principal};
 use crate::command::*;
-use crate::error::Result;
+use crate::error::{MediaError, Result};
 use crate::event::{MediaEvent, MediaEventSender, MediaEventSubscription};
 use crate::ids::*;
 use crate::model::*;
@@ -202,6 +202,22 @@ pub trait ProxyApi: Send + Sync {
         query: ProxyQuery,
     ) -> Result<Page<ProxyInfo>>;
 
+    async fn get_pull_proxy(&self, _ctx: &MediaRequestContext, _id: &ProxyId) -> Result<ProxyInfo> {
+        Err(MediaError::unsupported_capability("get_pull_proxy"))
+    }
+
+    async fn list_push_proxies(
+        &self,
+        _ctx: &MediaRequestContext,
+        _query: ProxyQuery,
+    ) -> Result<Page<ProxyInfo>> {
+        Err(MediaError::unsupported_capability("list_push_proxies"))
+    }
+
+    async fn get_push_proxy(&self, _ctx: &MediaRequestContext, _id: &ProxyId) -> Result<ProxyInfo> {
+        Err(MediaError::unsupported_capability("get_push_proxy"))
+    }
+
     async fn create_push_proxy(
         &self,
         ctx: &MediaRequestContext,
@@ -215,6 +231,22 @@ pub trait ProxyApi: Send + Sync {
         ctx: &MediaRequestContext,
         request: FfmpegProxyRequest,
     ) -> Result<ProxyInfo>;
+
+    async fn get_ffmpeg_proxy(
+        &self,
+        _ctx: &MediaRequestContext,
+        _id: &ProxyId,
+    ) -> Result<ProxyInfo> {
+        Err(MediaError::unsupported_capability("get_ffmpeg_proxy"))
+    }
+
+    async fn list_ffmpeg_proxies(
+        &self,
+        _ctx: &MediaRequestContext,
+        _query: ProxyQuery,
+    ) -> Result<Page<ProxyInfo>> {
+        Err(MediaError::unsupported_capability("list_ffmpeg_proxies"))
+    }
 }
 
 /// RTP operations.

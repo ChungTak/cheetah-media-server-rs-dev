@@ -11,7 +11,7 @@ use cheetah_media_api::command::{
 use cheetah_media_api::ids::{MediaKey, RecordFileId, SessionId};
 use cheetah_media_api::model::{CloseReason, RecordTaskState};
 use cheetah_media_api::port::{
-    ControlAuthApi, MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
+    ControlAuthApi, MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, SnapshotApi,
 };
 use cheetah_media_api::{AuthCredentials, MediaScope, Principal};
 use cheetah_sdk::{
@@ -23,6 +23,8 @@ use cheetah_sdk::{
 
 use crate::error::{zlm_error_response, AdapterError};
 
+mod control;
+mod proxy;
 mod routes;
 mod rtp;
 mod snapshot;
@@ -187,6 +189,14 @@ impl ZlmMediaHttpService {
         })
     }
 
+    pub(crate) fn proxy(&self) -> Result<Arc<dyn ProxyApi>, AdapterError> {
+        self.ctx.media_services.proxy().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "proxy not available",
+            ))
+        })
+    }
+
     fn auth(&self) -> Result<Arc<dyn ControlAuthApi>, AdapterError> {
         Ok(self.ctx.control_auth_api.clone())
     }
@@ -219,8 +229,9 @@ impl ZlmMediaHttpService {
                     ))
                 })?;
                 use subtle::{Choice, ConstantTimeEq};
-                // Prefer header over query parameter to avoid secret ending up in access logs.
-                let provided = secret_from_header_or_query(req);
+                // Only accept the secret from headers; never from the URL query string
+                // to avoid exposure in access logs or Referer headers.
+                let provided = secret_from_header(req);
                 let provided_bytes = provided.as_bytes();
                 let expected_bytes = expected.as_bytes();
                 let len_eq = (provided_bytes.len() as u64).ct_eq(&(expected_bytes.len() as u64));
@@ -323,14 +334,27 @@ impl ZlmMediaHttpService {
 
     fn audit_operation(&self, method: HttpMethod, path: &str) -> Option<&'static str> {
         match (method, path) {
-            (HttpMethod::Post, "/api/close_stream") => Some("media.close"),
-            (HttpMethod::Post, "/api/kick_session") => Some("session.kick"),
-            (HttpMethod::Post, "/api/startRecord") => Some("record.start"),
+            (HttpMethod::Post, "/api/close_stream") | (HttpMethod::Post, "/api/close_streams") => {
+                Some("media.close")
+            }
+            (HttpMethod::Post, "/api/kick_session") | (HttpMethod::Post, "/api/kick_sessions") => {
+                Some("session.kick")
+            }
+            (HttpMethod::Post, "/api/addStreamProxy") => Some("proxy.pull.create"),
+            (HttpMethod::Post, "/api/delStreamProxy") => Some("proxy.pull.delete"),
+            (HttpMethod::Post, "/api/addStreamPusherProxy") => Some("proxy.push.create"),
+            (HttpMethod::Post, "/api/delStreamPusherProxy") => Some("proxy.push.delete"),
+            (HttpMethod::Post, "/api/startRecord") | (HttpMethod::Post, "/api/startRecordTask") => {
+                Some("record.start")
+            }
             (HttpMethod::Post, "/api/stopRecord") => Some("record.stop"),
             (HttpMethod::Post, "/api/deleteRecordDirectory") => Some("file.delete"),
             (HttpMethod::Post, "/api/openRtpServer") => Some("rtp.receiver.open"),
+            (HttpMethod::Post, "/api/connectRtpServer") => Some("rtp.receiver.connect"),
             (HttpMethod::Post, "/api/closeRtpServer") => Some("rtp.receiver.close"),
-            (HttpMethod::Post, "/api/startSendRtp") => Some("rtp.sender.open"),
+            (HttpMethod::Post, "/api/startSendRtp")
+            | (HttpMethod::Post, "/api/startSendRtpPassive")
+            | (HttpMethod::Post, "/api/startSendRtpTalk") => Some("rtp.sender.open"),
             (HttpMethod::Post, "/api/stopSendRtp") => Some("rtp.sender.close"),
             (HttpMethod::Post, "/api/setRecordSpeed")
             | (HttpMethod::Post, "/api/seekRecordStamp")
@@ -338,6 +362,7 @@ impl ZlmMediaHttpService {
             | (HttpMethod::Post, "/api/loadMP4File") => Some("record.playback_control"),
             (HttpMethod::Get, "/api/getSnap") => Some("snapshot.create"),
             (HttpMethod::Post, "/api/deleteSnapDirectory") => Some("snapshot.directory.delete"),
+            (HttpMethod::Get, "/api/downloadFile") => Some("file.download"),
             _ => None,
         }
     }
@@ -785,16 +810,6 @@ impl ZlmMediaHttpService {
             cheetah_media_api::error::MediaError::unsupported_capability("vod"),
         ))
     }
-
-    async fn download_file(
-        &self,
-        _ctx: &MediaRequestContext,
-        _req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        Err(AdapterError::Media(
-            cheetah_media_api::error::MediaError::unsupported_capability("file download"),
-        ))
-    }
 }
 
 #[async_trait]
@@ -830,11 +845,37 @@ impl ModuleHttpService for ZlmMediaHttpService {
             let response = match (req.method, req.path.as_str()) {
                 (HttpMethod::Get, "/api/getMediaList") => self.get_media_list(&ctx, req).await,
                 (HttpMethod::Get, "/api/isMediaOnline") => self.is_media_online(&ctx, req).await,
+                (HttpMethod::Get, "/api/getMediaPlayerList") => {
+                    self.get_media_player_list(&ctx, req).await
+                }
                 (HttpMethod::Get, "/api/getMediaInfo") => self.get_media_info(&ctx, req).await,
-                (HttpMethod::Get, "/api/getAllSession") => self.get_all_session(&ctx, req).await,
                 (HttpMethod::Post, "/api/close_stream") => self.close_stream(&ctx, req).await,
+                (HttpMethod::Post, "/api/close_streams") => self.close_streams(&ctx, req).await,
+                (HttpMethod::Get, "/api/getAllSession") => self.get_all_session(&ctx, req).await,
                 (HttpMethod::Post, "/api/kick_session") => self.kick_session(&ctx, req).await,
+                (HttpMethod::Post, "/api/kick_sessions") => self.kick_sessions(&ctx, req).await,
+                (HttpMethod::Post, "/api/addStreamProxy") => self.add_stream_proxy(&ctx, req).await,
+                (HttpMethod::Post, "/api/delStreamProxy") => self.del_stream_proxy(&ctx, req).await,
+                (HttpMethod::Get, "/api/listStreamProxy") => {
+                    self.list_stream_proxy(&ctx, req).await
+                }
+                (HttpMethod::Get, "/api/getProxyInfo") => self.get_proxy_info(&ctx, req).await,
+                (HttpMethod::Post, "/api/addStreamPusherProxy") => {
+                    self.add_stream_pusher_proxy(&ctx, req).await
+                }
+                (HttpMethod::Post, "/api/delStreamPusherProxy") => {
+                    self.del_stream_pusher_proxy(&ctx, req).await
+                }
+                (HttpMethod::Get, "/api/listStreamPusherProxy") => {
+                    self.list_stream_pusher_proxy(&ctx, req).await
+                }
+                (HttpMethod::Get, "/api/getProxyPusherInfo") => {
+                    self.get_proxy_pusher_info(&ctx, req).await
+                }
                 (HttpMethod::Post, "/api/startRecord") => self.record_start(&ctx, req).await,
+                (HttpMethod::Post, "/api/startRecordTask") => {
+                    self.start_record_task(&ctx, req).await
+                }
                 (HttpMethod::Post, "/api/stopRecord") => self.record_stop(&ctx, req).await,
                 (HttpMethod::Get, "/api/isRecording") => self.is_recording(&ctx, req).await,
                 (HttpMethod::Get, "/api/getMP4RecordFile") => self.get_mp4_files(&ctx, req).await,
@@ -842,9 +883,20 @@ impl ModuleHttpService for ZlmMediaHttpService {
                     self.delete_record_directory(&ctx, req).await
                 }
                 (HttpMethod::Post, "/api/openRtpServer") => self.open_rtp_server(&ctx, req).await,
+                (HttpMethod::Post, "/api/connectRtpServer") => {
+                    self.connect_rtp_server(&ctx, req).await
+                }
                 (HttpMethod::Post, "/api/closeRtpServer") => self.close_rtp_server(&ctx, req).await,
+                (HttpMethod::Get, "/api/listRtpServer") => self.list_rtp_server(&ctx, req).await,
                 (HttpMethod::Post, "/api/startSendRtp") => self.start_send_rtp(&ctx, req).await,
+                (HttpMethod::Post, "/api/startSendRtpPassive") => {
+                    self.start_send_rtp_passive(&ctx, req).await
+                }
+                (HttpMethod::Post, "/api/startSendRtpTalk") => {
+                    self.start_send_rtp_talk(&ctx, req).await
+                }
                 (HttpMethod::Post, "/api/stopSendRtp") => self.stop_send_rtp(&ctx, req).await,
+                (HttpMethod::Get, "/api/listRtpSender") => self.list_rtp_sender(&ctx, req).await,
                 (HttpMethod::Get, "/api/getRtpInfo") => self.get_rtp_info(&ctx, req).await,
                 (HttpMethod::Post, "/api/setRecordSpeed") => self.set_record_speed(&ctx, req).await,
                 (HttpMethod::Post, "/api/seekRecordStamp") => {
@@ -901,7 +953,7 @@ impl ModuleHttpService for ZlmMediaHttpService {
     }
 }
 
-fn zlm_record_format(value: &serde_json::Value) -> Result<String, AdapterError> {
+pub(crate) fn zlm_record_format(value: &serde_json::Value) -> Result<String, AdapterError> {
     if value.is_null() {
         return Ok("mp4".to_string());
     }
@@ -1025,25 +1077,15 @@ fn header_value<'a>(headers: &'a [HttpHeader], name: &str) -> Option<&'a str> {
         .map(|h| h.value.as_str())
 }
 
-fn query_param(req: &HttpRequest, name: &str) -> Option<String> {
-    let qs = req.query.as_deref()?;
-    let qs = qs.strip_prefix('?').unwrap_or(qs);
-    for pair in qs.split('&') {
-        if let Some((k, v)) = pair.split_once('=') {
-            if k == name {
-                return Some(v.to_string());
-            }
-        } else if pair == name {
-            return Some(String::new());
-        }
-    }
-    None
-}
-
-/// Extract the ZLM shared secret from a header (preferred) or the URL query string.
+/// Extract the ZLM shared secret from a header.
 ///
-/// 优先从 HTTP 头读取 ZLM 共享密钥，避免密钥出现在 access log 的 URL 中。
-fn secret_from_header_or_query(req: &HttpRequest) -> String {
+/// Only `x-zlm-secret` and `Authorization: Bearer ...` are accepted; the URL
+/// query string is intentionally ignored so the secret does not appear in access
+/// logs or Referer headers.
+///
+/// 仅从 HTTP 头读取 ZLM 共享密钥，URL query string 被忽略，避免密钥泄露到
+/// access log 或 Referer 头中。
+fn secret_from_header(req: &HttpRequest) -> String {
     if let Some(header) = header_value(&req.headers, "x-zlm-secret") {
         return header.to_string();
     }
@@ -1055,14 +1097,14 @@ fn secret_from_header_or_query(req: &HttpRequest) -> String {
             .or_else(|| header.strip_prefix("BEARER "));
         return stripped.unwrap_or(header).trim().to_string();
     }
-    query_param(req, "secret").unwrap_or_default()
+    String::new()
 }
 
-fn page_from_params(params: &serde_json::Value) -> u64 {
+pub(crate) fn page_from_params(params: &serde_json::Value) -> u64 {
     params["page"].as_u64().unwrap_or(0)
 }
 
-fn page_size_from_params(params: &serde_json::Value) -> u64 {
+pub(crate) fn page_size_from_params(params: &serde_json::Value) -> u64 {
     params["pageSize"]
         .as_u64()
         .or_else(|| params["page_size"].as_u64())

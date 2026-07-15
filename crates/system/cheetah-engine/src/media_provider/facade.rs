@@ -319,6 +319,43 @@ impl ProxyApi for EngineMediaFacade {
         provider.list_pull_proxies(ctx, query).await
     }
 
+    async fn get_pull_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &ProxyId,
+    ) -> MediaResult<ProxyInfo> {
+        let provider = self
+            .services
+            .proxy()
+            .ok_or_else(|| MediaError::unavailable("proxy"))?;
+        provider.get_pull_proxy(ctx, id).await
+    }
+
+    async fn list_push_proxies(
+        &self,
+        ctx: &MediaRequestContext,
+        mut query: ProxyQuery,
+    ) -> MediaResult<Page<ProxyInfo>> {
+        query.clamp_page_size();
+        let provider = self
+            .services
+            .proxy()
+            .ok_or_else(|| MediaError::unavailable("proxy"))?;
+        provider.list_push_proxies(ctx, query).await
+    }
+
+    async fn get_push_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &ProxyId,
+    ) -> MediaResult<ProxyInfo> {
+        let provider = self
+            .services
+            .proxy()
+            .ok_or_else(|| MediaError::unavailable("proxy"))?;
+        provider.get_push_proxy(ctx, id).await
+    }
+
     async fn create_push_proxy(
         &self,
         ctx: &MediaRequestContext,
@@ -349,6 +386,31 @@ impl ProxyApi for EngineMediaFacade {
             .proxy()
             .ok_or_else(|| MediaError::unavailable("proxy"))?;
         provider.create_ffmpeg_proxy(ctx, request).await
+    }
+
+    async fn get_ffmpeg_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &ProxyId,
+    ) -> MediaResult<ProxyInfo> {
+        let provider = self
+            .services
+            .proxy()
+            .ok_or_else(|| MediaError::unavailable("proxy"))?;
+        provider.get_ffmpeg_proxy(ctx, id).await
+    }
+
+    async fn list_ffmpeg_proxies(
+        &self,
+        ctx: &MediaRequestContext,
+        mut query: ProxyQuery,
+    ) -> MediaResult<Page<ProxyInfo>> {
+        query.clamp_page_size();
+        let provider = self
+            .services
+            .proxy()
+            .ok_or_else(|| MediaError::unavailable("proxy"))?;
+        provider.list_ffmpeg_proxies(ctx, query).await
     }
 }
 
