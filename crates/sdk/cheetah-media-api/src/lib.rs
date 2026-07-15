@@ -10,6 +10,7 @@
 //! 本 crate 刻意保持运行时无关：不依赖 Tokio、Axum、任何具体协议 module 或 `cheetah-sdk`。
 //! 它提供稳定的类型化契约，供 adapter 和 provider 实现。
 
+pub mod auth;
 pub mod capability;
 pub mod command;
 pub mod error;
@@ -19,6 +20,7 @@ pub mod media_file_store;
 pub mod model;
 pub mod port;
 
+pub use auth::{AuthCredentials, MediaScope, Principal};
 pub use capability::{MediaCapability, MediaCapabilitySet};
 pub use error::{MediaError, MediaErrorCode};
 pub use event::MediaEvent;
@@ -29,6 +31,6 @@ pub use media_file_store::{
 };
 pub use model::Decision;
 pub use port::{
-    MediaControlApi, MediaFacade, MediaRequestContext, ProxyApi, PublishSubscribeApi, RecordApi,
-    RtpApi, SnapshotApi, WebhookApi,
+    ControlAuthApi, MediaControlApi, MediaFacade, MediaRequestContext, ProxyApi,
+    PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookApi,
 };

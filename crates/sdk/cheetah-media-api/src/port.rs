@@ -1,5 +1,6 @@
 use async_trait::async_trait;
 
+use crate::auth::{AuthCredentials, Principal};
 use crate::command::*;
 use crate::error::Result;
 use crate::event::{MediaEvent, MediaEventSender, MediaEventSubscription};
@@ -13,7 +14,7 @@ use crate::model::*;
 pub struct MediaRequestContext {
     pub request_id: RequestId,
     pub correlation_id: Option<String>,
-    pub principal: Option<String>,
+    pub principal: Option<Principal>,
     pub source_adapter: String,
     pub trace_context: Option<String>,
     pub deadline: Option<i64>,
@@ -30,6 +31,18 @@ impl Default for MediaRequestContext {
             deadline: None,
         }
     }
+}
+
+/// Framework-neutral authentication and authorization API for control-plane
+/// requests.
+///
+/// 控制面请求的框架无关认证与授权 API。
+pub trait ControlAuthApi: Send + Sync {
+    /// Authenticate the request credentials and return a principal with scopes.
+    ///
+    /// Returning `Ok` with an anonymous principal is allowed; callers must still
+    /// enforce scope checks before performing high-risk operations.
+    fn authenticate(&self, credentials: &AuthCredentials) -> Result<Principal>;
 }
 
 /// Core media control and query operations.

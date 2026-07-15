@@ -3,6 +3,7 @@
 //! 内存引擎实现：服务注册表、流分发、模块生命周期和任务系统。
 
 mod cluster;
+mod control_auth;
 mod core_adapters;
 mod database;
 mod engine;

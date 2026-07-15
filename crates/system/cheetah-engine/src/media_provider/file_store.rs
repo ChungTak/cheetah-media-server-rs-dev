@@ -55,15 +55,16 @@ impl EngineMediaFileStore {
         if entry.owner_principal.is_none() && entry.allowed_principals.is_empty() {
             return true;
         }
-        match &ctx.principal {
+        let identity = ctx.principal.as_ref().map(|p| p.identity.as_str());
+        match identity {
             None => false,
-            Some(principal) => {
+            Some(identity) => {
                 if let Some(owner) = &entry.owner_principal {
-                    if owner == principal {
+                    if owner == identity {
                         return true;
                     }
                 }
-                entry.allowed_principals.iter().any(|p| p == principal)
+                entry.allowed_principals.iter().any(|p| p == identity)
             }
         }
     }
@@ -156,7 +157,9 @@ impl MediaFileStoreApi for EngineMediaFileStore {
         }
         let handle = Self::generate_handle()?;
         let file_entry = FileStoreEntry {
-            owner_principal: entry.owner_principal.or_else(|| ctx.principal.clone()),
+            owner_principal: entry
+                .owner_principal
+                .or_else(|| ctx.principal.as_ref().map(|p| p.identity.clone())),
             ..entry
         };
         self.files.write().insert(handle.clone(), file_entry);
@@ -441,7 +444,10 @@ mod tests {
         let path = write_temp_file(b"public");
         let store = EngineMediaFileStore::new();
         let ctx = MediaRequestContext {
-            principal: Some("alice".to_string()),
+            principal: Some(cheetah_media_api::Principal {
+                identity: "alice".to_string(),
+                scopes: vec![cheetah_media_api::MediaScope::FileRead],
+            }),
             ..Default::default()
         };
         let handle = store.register_file(&ctx, make_entry(&path)).unwrap();
