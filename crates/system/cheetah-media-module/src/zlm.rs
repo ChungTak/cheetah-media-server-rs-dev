@@ -818,43 +818,50 @@ impl ModuleHttpService for ZlmMediaHttpService {
             .unwrap_or_else(crate::util::generate_request_id);
         crate::util::set_request_id_header(&mut req, &request_id);
 
-        let ctx = self.authorize_request(&req)?;
-        let response = match (req.method, req.path.as_str()) {
-            (HttpMethod::Get, "/api/getMediaList") => self.get_media_list(&ctx, req).await,
-            (HttpMethod::Get, "/api/isMediaOnline") => self.is_media_online(&ctx, req).await,
-            (HttpMethod::Get, "/api/getMediaInfo") => self.get_media_info(&ctx, req).await,
-            (HttpMethod::Get, "/api/getAllSession") => self.get_all_session(&ctx, req).await,
-            (HttpMethod::Post, "/api/close_stream") => self.close_stream(&ctx, req).await,
-            (HttpMethod::Post, "/api/kick_session") => self.kick_session(&ctx, req).await,
-            (HttpMethod::Post, "/api/startRecord") => self.record_start(&ctx, req).await,
-            (HttpMethod::Post, "/api/stopRecord") => self.record_stop(&ctx, req).await,
-            (HttpMethod::Get, "/api/isRecording") => self.is_recording(&ctx, req).await,
-            (HttpMethod::Get, "/api/getMP4RecordFile") => self.get_mp4_files(&ctx, req).await,
-            (HttpMethod::Post, "/api/deleteRecordDirectory") => {
-                self.delete_record_directory(&ctx, req).await
-            }
-            (HttpMethod::Post, "/api/openRtpServer") => self.open_rtp_server(&ctx, req).await,
-            (HttpMethod::Post, "/api/closeRtpServer") => self.close_rtp_server(&ctx, req).await,
-            (HttpMethod::Post, "/api/startSendRtp") => self.start_send_rtp(&ctx, req).await,
-            (HttpMethod::Post, "/api/stopSendRtp") => self.stop_send_rtp(&ctx, req).await,
-            (HttpMethod::Get, "/api/getRtpInfo") => self.get_rtp_info(&ctx, req).await,
-            (HttpMethod::Post, "/api/setRecordSpeed") => self.set_record_speed(&ctx, req).await,
-            (HttpMethod::Post, "/api/seekRecordStamp") => self.seek_record_stamp(&ctx, req).await,
-            (HttpMethod::Post, "/api/controlRecordPlay") => {
-                self.control_record_play(&ctx, req).await
-            }
-            (HttpMethod::Post, "/api/loadMP4File") => self.load_mp4_file(&ctx, req).await,
-            (HttpMethod::Get, "/api/getSnap") => self.get_snap(&ctx, req).await,
-            (HttpMethod::Post, "/api/deleteSnapDirectory") => {
-                self.delete_snap_directory(&ctx, req).await
-            }
-            (HttpMethod::Get, "/api/downloadFile") => self.download_file(&ctx, req).await,
-            _ => Err(AdapterError::InvalidRequest("not found".to_string())),
-        };
+        let result: Result<HttpResponse, AdapterError> = async {
+            let ctx = self.authorize_request(&req)?;
+            let response = match (req.method, req.path.as_str()) {
+                (HttpMethod::Get, "/api/getMediaList") => self.get_media_list(&ctx, req).await,
+                (HttpMethod::Get, "/api/isMediaOnline") => self.is_media_online(&ctx, req).await,
+                (HttpMethod::Get, "/api/getMediaInfo") => self.get_media_info(&ctx, req).await,
+                (HttpMethod::Get, "/api/getAllSession") => self.get_all_session(&ctx, req).await,
+                (HttpMethod::Post, "/api/close_stream") => self.close_stream(&ctx, req).await,
+                (HttpMethod::Post, "/api/kick_session") => self.kick_session(&ctx, req).await,
+                (HttpMethod::Post, "/api/startRecord") => self.record_start(&ctx, req).await,
+                (HttpMethod::Post, "/api/stopRecord") => self.record_stop(&ctx, req).await,
+                (HttpMethod::Get, "/api/isRecording") => self.is_recording(&ctx, req).await,
+                (HttpMethod::Get, "/api/getMP4RecordFile") => self.get_mp4_files(&ctx, req).await,
+                (HttpMethod::Post, "/api/deleteRecordDirectory") => {
+                    self.delete_record_directory(&ctx, req).await
+                }
+                (HttpMethod::Post, "/api/openRtpServer") => self.open_rtp_server(&ctx, req).await,
+                (HttpMethod::Post, "/api/closeRtpServer") => self.close_rtp_server(&ctx, req).await,
+                (HttpMethod::Post, "/api/startSendRtp") => self.start_send_rtp(&ctx, req).await,
+                (HttpMethod::Post, "/api/stopSendRtp") => self.stop_send_rtp(&ctx, req).await,
+                (HttpMethod::Get, "/api/getRtpInfo") => self.get_rtp_info(&ctx, req).await,
+                (HttpMethod::Post, "/api/setRecordSpeed") => self.set_record_speed(&ctx, req).await,
+                (HttpMethod::Post, "/api/seekRecordStamp") => {
+                    self.seek_record_stamp(&ctx, req).await
+                }
+                (HttpMethod::Post, "/api/controlRecordPlay") => {
+                    self.control_record_play(&ctx, req).await
+                }
+                (HttpMethod::Post, "/api/loadMP4File") => self.load_mp4_file(&ctx, req).await,
+                (HttpMethod::Get, "/api/getSnap") => self.get_snap(&ctx, req).await,
+                (HttpMethod::Post, "/api/deleteSnapDirectory") => {
+                    self.delete_snap_directory(&ctx, req).await
+                }
+                (HttpMethod::Get, "/api/downloadFile") => self.download_file(&ctx, req).await,
+                _ => Err(AdapterError::InvalidRequest("not found".to_string())),
+            };
 
-        self.record_audit(&ctx, &audit_req, &response).await;
+            self.record_audit(&ctx, &audit_req, &response).await;
 
-        let mut response = match response {
+            response
+        }
+        .await;
+
+        let mut response = match result {
             Ok(resp) => resp,
             Err(AdapterError::Media(err)) => {
                 let body = zlm_error_response(&err);
