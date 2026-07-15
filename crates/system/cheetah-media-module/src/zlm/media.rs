@@ -3,12 +3,16 @@
 //! ZLMediaKit 兼容的媒体列表/信息端点处理函数。
 
 use cheetah_media_api::command::MediaQuery;
+use cheetah_media_api::model::OnlineState;
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::{HttpRequest, HttpResponse};
 
 use crate::error::AdapterError;
 
-use super::{page_from_params, page_size_from_params, zlm_response, ZlmMediaHttpService};
+use super::{
+    page_from_params, page_size_from_params, zlm_response, Data, MediaItem, OnlineResult,
+    ZlmMediaHttpService, ZlmResponse,
+};
 
 impl ZlmMediaHttpService {
     pub(crate) async fn get_media_list(
@@ -28,7 +32,8 @@ impl ZlmMediaHttpService {
         };
         query.clamp_page_size();
         let page = self.control()?.get_media_list(ctx, query).await?;
-        Ok(zlm_response(0, "success", page))
+        let items: Vec<MediaItem> = page.items.into_iter().map(MediaItem::from).collect();
+        Ok(zlm_response(ZlmResponse::ok(Data::new(items))))
     }
 
     pub(crate) async fn is_media_online(
@@ -39,11 +44,9 @@ impl ZlmMediaHttpService {
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let online = self.control()?.is_media_online(ctx, &key).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({ "online": online == cheetah_media_api::model::OnlineState::Online }),
-        ))
+        Ok(zlm_response(ZlmResponse::ok(OnlineResult {
+            online: online == OnlineState::Online,
+        })))
     }
 
     pub(crate) async fn get_media_info(
@@ -54,6 +57,6 @@ impl ZlmMediaHttpService {
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let info = self.control()?.get_media(ctx, &key).await?;
-        Ok(zlm_response(0, "success", info))
+        Ok(zlm_response(ZlmResponse::ok(MediaItem::from(info))))
     }
 }

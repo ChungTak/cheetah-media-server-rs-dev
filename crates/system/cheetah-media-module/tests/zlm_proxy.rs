@@ -85,7 +85,7 @@ async fn zlm_proxy_l1_lifecycle() {
     let list = get("/api/listStreamProxy", None);
     let resp = service.handle(list).await.expect("list stream proxy");
     let body = body_json(&resp);
-    assert_eq!(body["data"]["total"], 1);
+    assert_eq!(body["data"].as_array().map(|a| a.len()).unwrap_or(0), 1);
 
     let get_info = get("/api/getProxyInfo", Some(format!("key={key}")));
     let resp = service.handle(get_info).await.expect("get proxy info");
@@ -100,7 +100,7 @@ async fn zlm_proxy_l1_lifecycle() {
     let list = get("/api/listStreamProxy", None);
     let resp = service.handle(list).await.expect("list after delete");
     let body = body_json(&resp);
-    assert_eq!(body["data"]["total"], 0);
+    assert_eq!(body["data"].as_array().map(|a| a.len()).unwrap_or(0), 0);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -136,7 +136,7 @@ async fn zlm_pusher_proxy_l1_lifecycle() {
     let list = get("/api/listStreamPusherProxy", None);
     let resp = service.handle(list).await.expect("list pusher proxy");
     let body = body_json(&resp);
-    assert_eq!(body["data"]["total"], 1);
+    assert_eq!(body["data"].as_array().map(|a| a.len()).unwrap_or(0), 1);
 
     let get_info = get("/api/getProxyPusherInfo", Some(format!("key={key}")));
     let resp = service.handle(get_info).await.expect("get pusher info");

@@ -14,7 +14,9 @@ use cheetah_sdk::{HttpRequest, HttpResponse};
 use crate::error::AdapterError;
 
 use super::{
-    page_from_params, page_size_from_params, zlm_record_format, zlm_response, ZlmMediaHttpService,
+    page_from_params, page_size_from_params, zlm_record_format, zlm_response, Data,
+    DeleteRecordDirectoryResult, Mp4FilesData, StatusResult, ZlmMediaHttpService, ZlmResponse,
+    ZlmResult,
 };
 
 impl ZlmMediaHttpService {
@@ -39,12 +41,8 @@ impl ZlmMediaHttpService {
                 .clone()
                 .map(cheetah_media_api::ids::IdempotencyKey),
         };
-        let task = record_api.start_record(ctx, request).await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true, "taskId": task.task_id.0}),
-        ))
+        let _task = record_api.start_record(ctx, request).await?;
+        Ok(zlm_response(ZlmResponse::ok(ZlmResult { result: true })))
     }
 
     pub(crate) async fn record_stop(
@@ -85,11 +83,7 @@ impl ZlmMediaHttpService {
                 },
             )
             .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
+        Ok(zlm_response(ZlmResponse::ok(ZlmResult { result: true })))
     }
 
     pub(crate) async fn is_recording(
@@ -114,11 +108,9 @@ impl ZlmMediaHttpService {
             t.format == format
                 && matches!(t.state, RecordTaskState::Running | RecordTaskState::Pending)
         });
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"status": recording}),
-        ))
+        Ok(zlm_response(ZlmResponse::ok(StatusResult {
+            status: recording,
+        })))
     }
 
     pub(crate) async fn get_mp4_files(
@@ -140,11 +132,10 @@ impl ZlmMediaHttpService {
         query.clamp_page_size();
         let page = record_api.query_record_files(ctx, query).await?;
         let paths: Vec<String> = page.items.iter().map(|f| f.path_handle.0.clone()).collect();
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"paths": paths, "rootPath": ""}),
-        ))
+        Ok(zlm_response(ZlmResponse::ok(Data::new(Mp4FilesData {
+            paths,
+            root_path: String::new(),
+        }))))
     }
 
     pub(crate) async fn delete_record_directory(
@@ -194,16 +185,15 @@ impl ZlmMediaHttpService {
             }
         }
         let result = total_failed == 0;
-        let data = serde_json::json!({
-            "result": result,
-            "deleted": total_deleted,
-            "failed": total_failed,
-        });
-        Ok(zlm_response(
+        Ok(zlm_response(ZlmResponse::with_msg(
             0,
             if result { "success" } else { "partial success" },
-            data,
-        ))
+            DeleteRecordDirectoryResult {
+                result,
+                deleted: total_deleted,
+                failed: total_failed,
+            },
+        )))
     }
 
     pub(crate) async fn set_record_speed(
@@ -222,11 +212,7 @@ impl ZlmMediaHttpService {
                 RecordPlaybackCommand::Scale { value },
             )
             .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
+        Ok(zlm_response(ZlmResponse::ok(ZlmResult { result: true })))
     }
 
     pub(crate) async fn seek_record_stamp(
@@ -247,11 +233,7 @@ impl ZlmMediaHttpService {
                 },
             )
             .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
+        Ok(zlm_response(ZlmResponse::ok(ZlmResult { result: true })))
     }
 
     pub(crate) async fn control_record_play(
@@ -266,11 +248,7 @@ impl ZlmMediaHttpService {
         record_api
             .control_record_playback(ctx, &RecordFileId(file_id), command)
             .await?;
-        Ok(zlm_response(
-            0,
-            "success",
-            serde_json::json!({"result": true}),
-        ))
+        Ok(zlm_response(ZlmResponse::ok(ZlmResult { result: true })))
     }
 
     pub(crate) async fn load_mp4_file(

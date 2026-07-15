@@ -91,7 +91,7 @@ async fn zlm_ffmpeg_source_l2_lifecycle() {
     let list = get("/api/listFFmpegSource", None);
     let resp = service.handle(list).await.expect("list ffmpeg source");
     let body = body_json(&resp);
-    assert_eq!(body["data"]["total"], 1);
+    assert_eq!(body["data"].as_array().map(|a| a.len()).unwrap_or(0), 1);
 
     let del = post("/api/delFFmpegSource", json!({"key": key}));
     let resp = service.handle(del).await.expect("del ffmpeg source");
@@ -101,7 +101,7 @@ async fn zlm_ffmpeg_source_l2_lifecycle() {
     let list = get("/api/listFFmpegSource", None);
     let resp = service.handle(list).await.expect("list after delete");
     let body = body_json(&resp);
-    assert_eq!(body["data"]["total"], 0);
+    assert_eq!(body["data"].as_array().map(|a| a.len()).unwrap_or(0), 0);
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -131,22 +131,21 @@ async fn zlm_rtp_multiplex_and_check_control() {
         .expect("open rtp server multiplex");
     let body = body_json(&resp);
     assert_eq!(body["code"], 0, "openRtpServerMultiplex failed: {body}");
-    let session_id = body["data"]["session_id"]
-        .as_str()
-        .expect("session_id")
-        .to_string();
+    assert!(body["port"].is_u64(), "port missing: {body}");
+
+    let session_id = "recv/live/rtp-multiplex";
 
     let pause = post("/api/pauseRtpCheck", json!({"session_id": session_id}));
     let resp = service.handle(pause).await.expect("pause rtp check");
     let body = body_json(&resp);
     assert_eq!(body["code"], 0, "pauseRtpCheck failed: {body}");
-    assert_eq!(body["data"]["check_paused"], true);
+    assert_eq!(body["check_paused"], true);
 
     let resume = post("/api/resumeRtpCheck", json!({"session_id": session_id}));
     let resp = service.handle(resume).await.expect("resume rtp check");
     let body = body_json(&resp);
     assert_eq!(body["code"], 0, "resumeRtpCheck failed: {body}");
-    assert_eq!(body["data"]["check_paused"], false);
+    assert_eq!(body["check_paused"], false);
 
     let update = post(
         "/api/updateRtpServerSSRC",
