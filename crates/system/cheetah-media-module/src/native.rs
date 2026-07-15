@@ -193,6 +193,14 @@ impl NativeMediaHttpService {
         crate::native_routes::native_required_scope(method, path)
     }
 
+    fn authorize_request(&self, req: &HttpRequest) -> Result<MediaRequestContext, AdapterError> {
+        let ctx = self.request_context(req)?;
+        if let Some(scope) = self.required_scope(req.method, &req.path) {
+            self.require_scope(&ctx, &scope)?;
+        }
+        Ok(ctx)
+    }
+
     fn request_context(&self, req: &HttpRequest) -> Result<MediaRequestContext, AdapterError> {
         let request_id = header_value(&req.headers, "x-request-id")
             .map(|v| cheetah_media_api::ids::RequestId(v.to_string()))
@@ -231,7 +239,7 @@ impl NativeMediaHttpService {
     }
 
     async fn media_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let mut query: MediaQuery = parse_query(&req)?;
         query.clamp_page_size();
         let page = self.control()?.get_media_list(&ctx, query).await?;
@@ -239,21 +247,21 @@ impl NativeMediaHttpService {
     }
 
     async fn media_detail(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let key = self.parse_media_key(&req.path, "/media/")?;
         let info = self.control()?.get_media(&ctx, &key).await?;
         Ok(json_response(&info))
     }
 
     async fn media_online(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let key = self.parse_media_key(&req.path, "/media/")?;
         let online = self.control()?.is_media_online(&ctx, &key).await?;
         Ok(json_response(&serde_json::json!({ "online": online })))
     }
 
     async fn media_close(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let key = self.parse_media_key(&req.path, "/media/")?;
         let report = self
             .control()?
@@ -263,14 +271,14 @@ impl NativeMediaHttpService {
     }
 
     async fn media_keyframe(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let key = self.parse_media_key(&req.path, "/media/")?;
         self.control()?.request_keyframe(&ctx, &key).await?;
         Ok(json_response(&serde_json::json!({ "requested": true })))
     }
 
     async fn session_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let mut query: SessionQuery = parse_query(&req)?;
         query.clamp_page_size();
         let page = self.control()?.list_sessions(&ctx, query).await?;
@@ -278,7 +286,7 @@ impl NativeMediaHttpService {
     }
 
     async fn session_kick(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let parts: Vec<&str> = req.path.split('/').filter(|s| !s.is_empty()).collect();
         let session_id = parts
             .get(parts.len().saturating_sub(2))
@@ -295,7 +303,7 @@ impl NativeMediaHttpService {
     }
 
     async fn record_tasks(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let record_api = self.record()?;
         let mut query: RecordTaskQuery = parse_query(&req)?;
         query.clamp_page_size();
@@ -304,7 +312,7 @@ impl NativeMediaHttpService {
     }
 
     async fn record_files(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let record_api = self.record()?;
         let mut query: RecordFileQuery = parse_query(&req)?;
         query.clamp_page_size();
@@ -313,7 +321,7 @@ impl NativeMediaHttpService {
     }
 
     async fn record_start(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let record_api = self.record()?;
         let request: StartRecordRequest = parse_body(&req)?;
         let task = record_api.start_record(&ctx, request).await?;
@@ -321,7 +329,7 @@ impl NativeMediaHttpService {
     }
 
     async fn record_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let record_api = self.record()?;
         let id = record_id_from_path(&req.path, "/record/tasks/", "/stop")
             .ok_or_else(|| AdapterError::InvalidRequest("missing task_id".to_string()))?;
@@ -333,7 +341,7 @@ impl NativeMediaHttpService {
     }
 
     async fn record_file_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let record_api = self.record()?;
         let id = record_id_from_path(&req.path, "/record/files/", "")
             .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
@@ -352,7 +360,7 @@ impl NativeMediaHttpService {
         &self,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let record_api = self.record()?;
         let file_id = record_id_from_path(&req.path, "/record/playback/", "/control")
             .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
@@ -364,7 +372,7 @@ impl NativeMediaHttpService {
     }
 
     async fn rtp_receivers(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let rtp_api = self.rtp()?;
         let request: RtpReceiverRequest = parse_body(&req)?;
         let session = rtp_api.open_rtp_receiver(&ctx, request).await?;
@@ -372,7 +380,7 @@ impl NativeMediaHttpService {
     }
 
     async fn rtp_senders(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let rtp_api = self.rtp()?;
         let request: RtpSenderRequest = parse_body(&req)?;
         let session = rtp_api.open_rtp_sender(&ctx, request).await?;
@@ -380,7 +388,7 @@ impl NativeMediaHttpService {
     }
 
     async fn rtp_session_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let rtp_api = self.rtp()?;
         let id = rtp_id_from_path(&req.path, "/rtp/sessions/", "/stop")
             .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
@@ -389,7 +397,7 @@ impl NativeMediaHttpService {
     }
 
     async fn rtp_sessions(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let rtp_api = self.rtp()?;
         let mut query: RtpQuery = parse_query(&req)?;
         query.clamp_page_size();
@@ -398,7 +406,7 @@ impl NativeMediaHttpService {
     }
 
     async fn snapshot_create(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let snapshot_api = self.snapshot()?;
         let request: SnapshotRequest = parse_body(&req)?;
         let handle = snapshot_api.take_snapshot(&ctx, request).await?;
@@ -406,7 +414,7 @@ impl NativeMediaHttpService {
     }
 
     async fn snapshot_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let snapshot_api = self.snapshot()?;
         let mut query: SnapshotQuery = parse_query(&req)?;
         query.clamp_page_size();
@@ -418,7 +426,7 @@ impl NativeMediaHttpService {
         &self,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let snapshot_api = self.snapshot()?;
         let request: DeleteSnapshotRequest = parse_body(&req)?;
         snapshot_api
@@ -428,7 +436,7 @@ impl NativeMediaHttpService {
     }
 
     async fn file_download(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let handle = file_id_from_download_path(&req.path).ok_or_else(|| {
             AdapterError::InvalidRequest("invalid file download path".to_string())
         })?;
@@ -463,10 +471,6 @@ impl NativeMediaHttpService {
 impl ModuleHttpService for NativeMediaHttpService {
     async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
         let result: Result<HttpResponse, AdapterError> = async {
-            let ctx = self.request_context(&req)?;
-            if let Some(scope) = self.required_scope(req.method, &req.path) {
-                self.require_scope(&ctx, &scope)?;
-            }
             match (req.method, req.path.as_str()) {
                 (HttpMethod::Get, "/media/capabilities") => self.capabilities(req).await,
                 (HttpMethod::Get, "/media") => self.media_list(req).await,

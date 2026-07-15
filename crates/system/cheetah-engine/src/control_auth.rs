@@ -25,6 +25,11 @@ use cheetah_sdk::ConfigProvider;
 /// Requests without credentials are authenticated as `anonymous` with only
 /// `media.read` scope, so anonymous callers can query but cannot perform
 /// high-risk operations.
+///
+/// mTLS identity is only trusted when `media.native.trust_mtls_identity` is
+/// `true`. This should only be enabled when a reverse proxy terminates TLS and
+/// strips client-provided `x-mtls-identity` headers before setting the value from
+/// the validated peer certificate.
 pub struct ConfigControlAuth {
     config: std::sync::Arc<dyn ConfigProvider>,
 }
@@ -69,11 +74,21 @@ impl ConfigControlAuth {
         map
     }
 
+    fn trust_mtls_identity(&self) -> bool {
+        self.config
+            .global()
+            .get("media")
+            .and_then(|v| v.get("native"))
+            .and_then(|v| v.get("trust_mtls_identity"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    }
+
     fn bearer_token(&self, header: Option<&str>) -> Option<String> {
         let header = header?;
         let header = header.trim();
-        let prefix = "Bearer ";
-        if header.len() > prefix.len() && header.starts_with(prefix) {
+        let prefix = "bearer ";
+        if header.len() > prefix.len() && header[..prefix.len()].eq_ignore_ascii_case(prefix) {
             return Some(header[prefix.len()..].trim().to_string());
         }
         None
@@ -101,13 +116,17 @@ impl ControlAuthApi for ConfigControlAuth {
             ));
         }
 
-        // mTLS identity is treated as a principal with media.read by default;
-        // additional scopes must be configured explicitly.
-        if let Some(identity) = credentials.mtls_identity.as_deref() {
-            return Ok(Principal {
-                identity: identity.to_string(),
-                scopes: vec![MediaScope::MediaRead],
-            });
+        // mTLS identity is only trusted when the deployment explicitly enables
+        // media.native.trust_mtls_identity, e.g. when a reverse proxy terminates
+        // TLS and strips any client-provided x-mtls-identity header before setting
+        // it from the peer certificate. Otherwise a client could spoof the header.
+        if self.trust_mtls_identity() {
+            if let Some(identity) = credentials.mtls_identity.as_deref() {
+                return Ok(Principal {
+                    identity: identity.to_string(),
+                    scopes: vec![MediaScope::MediaRead],
+                });
+            }
         }
 
         // Anonymous callers get read-only access by default. High-risk operations
@@ -170,6 +189,63 @@ mod tests {
         assert_eq!(p.identity, "admin");
         assert!(p.has_scope(&MediaScope::MediaControl));
         assert!(p.has_scope(&MediaScope::RecordManage));
+    }
+
+    #[test]
+    fn bearer_token_scheme_is_case_insensitive() {
+        let config = TestConfig(json!({
+            "media": {
+                "native": {
+                    "tokens": {
+                        "secret": { "principal": "admin", "scopes": ["media.read"] }
+                    }
+                }
+            }
+        }));
+        let auth = ConfigControlAuth::new(std::sync::Arc::new(config));
+        for scheme in ["Bearer secret", "bearer secret", "BEARER secret"] {
+            let p = auth
+                .authenticate(&AuthCredentials {
+                    authorization_header: Some(scheme.to_string()),
+                    ..Default::default()
+                })
+                .unwrap();
+            assert_eq!(p.identity, "admin", "failed for {scheme}");
+        }
+    }
+
+    #[test]
+    fn mtls_identity_is_ignored_by_default() {
+        let config = TestConfig(json!({ "media": { "native": {} } }));
+        let auth = ConfigControlAuth::new(std::sync::Arc::new(config));
+        let p = auth
+            .authenticate(&AuthCredentials {
+                mtls_identity: Some("alice".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(p.identity, "anonymous");
+        assert!(p.has_scope(&MediaScope::MediaRead));
+    }
+
+    #[test]
+    fn mtls_identity_is_trusted_when_enabled() {
+        let config = TestConfig(json!({
+            "media": {
+                "native": {
+                    "trust_mtls_identity": true
+                }
+            }
+        }));
+        let auth = ConfigControlAuth::new(std::sync::Arc::new(config));
+        let p = auth
+            .authenticate(&AuthCredentials {
+                mtls_identity: Some("alice".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(p.identity, "alice");
+        assert!(p.has_scope(&MediaScope::MediaRead));
     }
 
     #[test]
