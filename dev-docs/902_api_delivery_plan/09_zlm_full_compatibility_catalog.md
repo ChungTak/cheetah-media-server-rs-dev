@@ -88,12 +88,12 @@ cargo test -p cheetah-media-module zlm_error_mapping
 
 | 方法 | 路由 | 级别 | 状态 | 说明 |
 | --- | --- | --- | --- | --- |
-| Get | `/api/getThreadsLoad` | L3 | capability-gated | |
+| Get | `/api/getThreadsLoad` | L3 | interop-tested | 返回 `-501`（未启用 metrics/admin provider） |
 | Get | `/api/getWorkThreadsLoad` | L3 | capability-gated | |
 | Get | `/api/getServerConfig` | L3 | capability-gated | |
 | Post | `/api/setServerConfig` | L3 | capability-gated | |
-| Get | `/api/getApiList` | L3 | capability-gated | |
-| Get | `/api/version` | L3 | capability-gated | |
+| Get | `/api/getApiList` | L3 | interop-tested | 从 catalog/capability registry 生成 |
+| Get | `/api/version` | L3 | interop-tested | 返回 `CARGO_PKG_VERSION` |
 | Post | `/api/restartServer` | L3 | capability-gated | |
 | Get | `/api/getMediaList` | L1 | provider-wired | |
 | Get | `/api/isMediaOnline` | L1 | provider-wired | |
@@ -121,7 +121,7 @@ cargo test -p cheetah-media-module zlm_error_mapping
 | Post | `/api/openRtpServerMultiplex` | L2 | interop-tested | |
 | Post | `/api/connectRtpServer` | L1 | provider-wired | |
 | Post | `/api/closeRtpServer` | L1 | provider-wired | |
-| Post | `/api/updateRtpServerSSRC` | L2 | provider-wired | |
+| Post | `/api/updateRtpServerSSRC` | L2 | provider-wired | 诚实返回 `-501` |
 | Get | `/api/listRtpServer` | L1 | provider-wired | |
 | Post | `/api/pauseRtpCheck` | L2 | interop-tested | |
 | Post | `/api/resumeRtpCheck` | L2 | interop-tested | |
@@ -152,6 +152,15 @@ cargo test -p cheetah-media-module zlm_error_mapping
 | Post | `/api/delWebrtcRoomKeeper` | L2 | capability-gated | |
 | Get | `/api/listWebrtcRoomKeepers` | L2 | capability-gated | |
 | Get | `/api/listWebrtcRooms` | L2 | capability-gated | |
+| Post | `/api/login` | L3 | capability-gated | 启用 compatibility session auth 后实现 |
+| Post | `/api/logout` | L3 | capability-gated | |
+| Get | `/api/searchOnvifDevice` | L4 | interop-tested | 返回 `-501` |
+| Get | `/api/getStreamUrl` | L2 | capability-gated | |
+| Post | `/api/addProbe` | L3 | capability-gated | |
+| Post | `/api/stack/start` | L3 | capability-gated | |
+| Post | `/api/stack/reset` | L3 | capability-gated | |
+| Post | `/api/stack/stop` | L3 | capability-gated | |
+| Get | `/api/downloadBin` | L3 | capability-gated | |
 
 表注：
 - `route-only`：已登记路由，尚未接入 provider。

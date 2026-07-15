@@ -18,6 +18,7 @@ use cheetah_sdk::{
 
 use crate::error::{zlm_error_response, AdapterError};
 
+mod admin;
 mod control;
 mod media;
 mod proxy;
@@ -565,6 +566,8 @@ impl ModuleHttpService for ZlmMediaHttpService {
                     self.delete_snap_directory(&ctx, req).await
                 }
                 (HttpMethod::Get, "/api/downloadFile") => self.download_file(&ctx, req).await,
+                (HttpMethod::Get, "/api/version") => self.version(&ctx, req).await,
+                (HttpMethod::Get, "/api/getApiList") => self.get_api_list(&ctx, req).await,
                 _ => {
                     if routes::is_zlm_catalog_route(req.method, req.path.as_str()) {
                         Err(AdapterError::Media(
