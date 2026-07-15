@@ -164,6 +164,16 @@ impl ZlmMediaHttpService {
             },
         ];
         if let Some(range) = download.range {
+            if download.body.is_empty() {
+                return Ok(HttpResponse {
+                    status: 416,
+                    headers: vec![HttpHeader {
+                        name: "content-range".to_string(),
+                        value: format!("bytes */{}", download.total_size),
+                    }],
+                    body: bytes::Bytes::new(),
+                });
+            }
             let last = range.start + download.body.len() as u64 - 1;
             headers.push(HttpHeader {
                 name: "content-range".to_string(),
