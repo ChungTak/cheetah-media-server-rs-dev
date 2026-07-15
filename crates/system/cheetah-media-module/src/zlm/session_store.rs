@@ -38,9 +38,8 @@ impl SessionStore {
     }
 
     pub(crate) fn set_max_sessions(&self, max: Option<usize>) {
-        if let Some(max) = max {
-            self.max_sessions.store(max.max(1), Ordering::Relaxed);
-        }
+        let value = max.map(|m| m.max(1)).unwrap_or(DEFAULT_MAX_SESSIONS);
+        self.max_sessions.store(value, Ordering::Relaxed);
     }
 
     /// Validate a session token and return the associated principal if it is
@@ -113,15 +112,20 @@ impl SessionStore {
     pub(crate) fn record_failed_attempt(&self, username: &str) -> bool {
         let window = Duration::from_secs(FAILED_ATTEMPT_WINDOW_SECS);
         let now = Instant::now();
+        let cutoff = now - window;
         let mut attempts = self.failed_attempts.write().unwrap();
-        // Keep the username map bounded: drop stale empty entries and refuse to
-        // create new keys once the distinct-username cap is reached.
-        attempts.retain(|_, v| !v.is_empty());
+        // Keep the username map bounded: drop expired/stale timestamps and remove
+        // entries that become empty, then refuse to create new keys once the
+        // distinct-username cap is reached.
+        attempts.retain(|_, v| {
+            v.retain(|t| *t > cutoff);
+            !v.is_empty()
+        });
         if attempts.len() >= MAX_FAILED_USERNAMES && !attempts.contains_key(username) {
             return false;
         }
         let entry = attempts.entry(username.to_string()).or_default();
-        entry.retain(|t| now.duration_since(*t) < window);
+        entry.retain(|t| *t > cutoff);
         entry.push(now);
         entry.len() >= MAX_FAILED_ATTEMPTS
     }

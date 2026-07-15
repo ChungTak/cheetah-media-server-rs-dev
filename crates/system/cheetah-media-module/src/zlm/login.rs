@@ -88,7 +88,6 @@ impl ZlmMediaHttpService {
             "success",
             json!({
                 "cookie_name": session_cfg.cookie_name,
-                "cookie": token,
             }),
         );
         response.headers.push(HttpHeader {
