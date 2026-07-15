@@ -75,18 +75,19 @@ impl UrlSigner {
         let key = self.keys.first()?;
         let exp = now_secs() + ttl_secs as i64;
 
-        let url = url::Url::parse(base).ok()?;
+        let mut url = url::Url::parse(base).ok()?;
         let canonical = canonical_string(&url, exp, &key.id);
         let sig = hmac_signature(&key.secret, &canonical);
         let sig_b64 = URL_SAFE_NO_PAD.encode(&sig);
 
-        let sep = if url.query().is_some() { '&' } else { '?' };
-        let signed = format!(
-            "{base}{sep}kid={kid}&exp={exp}&sign={sig}",
-            kid = key.id,
-            sig = sig_b64
-        );
-        Some((signed, exp))
+        {
+            let mut query = url.query_pairs_mut();
+            query.append_pair("kid", &key.id);
+            query.append_pair("exp", &exp.to_string());
+            query.append_pair("sign", &sig_b64);
+        }
+
+        Some((url.to_string(), exp))
     }
 
     /// Verifies a signed URL. Returns `true` only if the signature is valid,
@@ -258,6 +259,21 @@ mod tests {
             .sign("rtmp://cdn.example:1935/live/cam1", 60)
             .unwrap();
         assert!(signer.verify(&old_url));
+    }
+
+    #[test]
+    fn key_id_with_special_chars_is_encoded_and_verifies() {
+        let signer = UrlSigner::from_config(&json!({
+            "url_sign_keys": [
+                {"id": "key&x=y", "secret": "secret"}
+            ]
+        }))
+        .unwrap();
+        let (url, _exp) = signer
+            .sign("rtmp://cdn.example:1935/live/cam1", 60)
+            .unwrap();
+        assert!(url.contains("kid=key%26x%3Dy"));
+        assert!(signer.verify(&url));
     }
 
     #[test]
