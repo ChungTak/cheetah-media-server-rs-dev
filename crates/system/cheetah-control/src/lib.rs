@@ -230,21 +230,37 @@ async fn get_services(Extension(state): Extension<Arc<ControlState>>) -> impl In
     Json(json!({ "services": services }))
 }
 
+fn is_sensitive_key(key: &str) -> bool {
+    let lower = key.to_lowercase();
+    const EXACT: &[&str] = &[
+        "tokens",
+        "deployment_tokens",
+        "secret",
+        "password",
+        "api_key",
+        "api_secret",
+    ];
+    if EXACT.iter().any(|&s| lower == s) {
+        return true;
+    }
+    if lower.ends_with("_token") || lower.ends_with("_secret") {
+        return true;
+    }
+    // Cover camelCase / PascalCase variants such as apiKey, apiSecret,
+    // deploymentTokens, accessToken.
+    lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("password")
+        || lower.contains("apikey")
+        || lower.contains("apisecret")
+}
+
 fn sanitize_config(value: &serde_json::Value) -> serde_json::Value {
     match value {
         serde_json::Value::Object(map) => {
             let mut out = serde_json::Map::with_capacity(map.len());
             for (k, v) in map {
-                let redacted = matches!(
-                    k.as_str(),
-                    "tokens"
-                        | "deployment_tokens"
-                        | "secret"
-                        | "password"
-                        | "api_key"
-                        | "api_secret"
-                ) || k.ends_with("_token")
-                    || k.ends_with("_secret");
+                let redacted = is_sensitive_key(k);
                 if redacted {
                     if v.is_object() {
                         out.insert(k.clone(), serde_json::Value::Object(serde_json::Map::new()));
@@ -1265,6 +1281,29 @@ mod tests {
         assert_eq!(out["nested"]["deployment_tokens"], "***");
         assert_eq!(out["nested"]["plain"], "visible");
         assert_eq!(out["tokens"], "***");
+        assert_eq!(out["normal"], 42);
+    }
+
+    #[test]
+    fn sanitize_config_redacts_camel_case_sensitive_keys() {
+        let input = json!({
+            "apiKey": "super-secret",
+            "apiSecret": "super-secret",
+            "deploymentTokens": ["tok1"],
+            "accessToken": "tok2",
+            "nested": {
+                "somePassword": "hunter2",
+                "plain": "visible"
+            },
+            "normal": 42
+        });
+        let out = sanitize_config(&input);
+        assert_eq!(out["apiKey"], "***");
+        assert_eq!(out["apiSecret"], "***");
+        assert_eq!(out["deploymentTokens"], "***");
+        assert_eq!(out["accessToken"], "***");
+        assert_eq!(out["nested"]["somePassword"], "***");
+        assert_eq!(out["nested"]["plain"], "visible");
         assert_eq!(out["normal"], 42);
     }
 }

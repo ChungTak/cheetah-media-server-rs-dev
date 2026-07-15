@@ -225,9 +225,9 @@ impl ZlmMediaHttpService {
                 let expected_bytes = expected.as_bytes();
                 let len_eq = (provided_bytes.len() as u64).ct_eq(&(expected_bytes.len() as u64));
                 let mut content_eq = Choice::from(1u8);
-                for (i, e) in expected_bytes.iter().enumerate() {
-                    let p = provided_bytes.get(i).copied().unwrap_or(0);
-                    content_eq &= u8::ct_eq(&p, e);
+                for (i, p) in provided_bytes.iter().enumerate() {
+                    let e = expected_bytes.get(i).copied().unwrap_or(0);
+                    content_eq &= u8::ct_eq(p, &e);
                 }
                 let valid = bool::from(len_eq & content_eq);
                 if !valid {
