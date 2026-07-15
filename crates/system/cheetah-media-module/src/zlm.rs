@@ -121,6 +121,8 @@ impl Module for ZlmMediaModule {
         if previous.enabled != next.enabled || previous.path_prefix != next.path_prefix {
             return Ok(ConfigEffect::ModuleRestartRequired);
         }
+        let max_sessions = next.auth.session.as_ref().and_then(|s| s.max_sessions);
+        self.session_store.set_max_sessions(max_sessions);
         *self.config.write().unwrap() = next;
         Ok(ConfigEffect::Immediate)
     }
