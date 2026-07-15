@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
+use cheetah_media_api::auth::MediaScope;
 use cheetah_media_api::command::*;
 use cheetah_media_api::error::MediaError;
 use cheetah_media_api::ids::*;
@@ -65,6 +66,13 @@ impl StreamMediaProvider {
             SdkError::Conflict(msg) => MediaError::conflict(msg),
             SdkError::Unavailable(msg) => MediaError::unavailable(msg),
             SdkError::Internal(msg) => MediaError::internal(msg),
+        }
+    }
+
+    fn authorized(ctx: &MediaRequestContext, scope: &MediaScope, key: Option<&MediaKey>) -> bool {
+        match &ctx.principal {
+            None => true,
+            Some(p) => p.authorizes(scope, key),
         }
     }
 
@@ -226,6 +234,9 @@ impl MediaControlApi for StreamMediaProvider {
                     continue;
                 }
             }
+            if !Self::authorized(ctx, &MediaScope::MediaRead, Some(&key)) {
+                continue;
+            }
             let info = self.enrich_stream_info(ctx, &s, now).await?;
             items.push(info);
         }
@@ -252,6 +263,9 @@ impl MediaControlApi for StreamMediaProvider {
         ctx: &MediaRequestContext,
         key: &MediaKey,
     ) -> cheetah_media_api::error::Result<StreamInfo> {
+        if !Self::authorized(ctx, &MediaScope::MediaRead, Some(key)) {
+            return Err(MediaError::not_found(format!("stream {key}")));
+        }
         let stream_key = Self::media_key_to_stream_key(key);
         let snapshot = self
             .stream_manager
@@ -264,9 +278,12 @@ impl MediaControlApi for StreamMediaProvider {
 
     async fn is_media_online(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         key: &MediaKey,
     ) -> cheetah_media_api::error::Result<OnlineState> {
+        if !Self::authorized(ctx, &MediaScope::MediaRead, Some(key)) {
+            return Ok(OnlineState::Unknown);
+        }
         let stream_key = Self::media_key_to_stream_key(key);
         let snapshot = self
             .stream_manager
@@ -314,9 +331,12 @@ impl MediaControlApi for StreamMediaProvider {
 
     async fn request_keyframe(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         key: &MediaKey,
     ) -> cheetah_media_api::error::Result<()> {
+        if !Self::authorized(ctx, &MediaScope::MediaControl, Some(key)) {
+            return Err(MediaError::not_found(format!("stream {key}")));
+        }
         let stream_key = Self::media_key_to_stream_key(key);
         self.stream_manager
             .request_keyframe(&stream_key)
@@ -603,6 +623,46 @@ mod tests {
         let page = provider.list_sessions(&ctx, query).await.unwrap();
         assert_eq!(page.total, 1);
         assert_eq!(page.items[0].kind, SessionKind::Player);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn get_media_list_filters_by_resource_grant() {
+        let provider = test_provider();
+        let allowed = MediaKey::with_default_vhost("live", "grant-allowed", None).unwrap();
+        let denied = MediaKey::with_default_vhost("live", "grant-denied", None).unwrap();
+        let setup_ctx = MediaRequestContext::default();
+        provider
+            .acquire_publisher(&setup_ctx, publish_request(&allowed))
+            .await
+            .unwrap();
+        provider
+            .acquire_publisher(&setup_ctx, publish_request(&denied))
+            .await
+            .unwrap();
+
+        let grant = cheetah_media_api::auth::MediaResourceGrant {
+            selector: cheetah_media_api::auth::MediaResourceSelector {
+                vhost: cheetah_media_api::auth::Pattern::Exact("__defaultVhost__".to_string()),
+                app: cheetah_media_api::auth::Pattern::Exact("live".to_string()),
+                stream: cheetah_media_api::auth::Pattern::Exact("grant-allowed".to_string()),
+            },
+            scopes: vec![cheetah_media_api::auth::MediaScope::MediaRead],
+        };
+        let restricted = cheetah_media_api::auth::Principal {
+            identity: "tenant".to_string(),
+            scopes: vec![],
+            resource_grants: vec![grant],
+        };
+        let ctx = MediaRequestContext {
+            principal: Some(restricted),
+            ..Default::default()
+        };
+        let page = provider
+            .get_media_list(&ctx, MediaQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(page.total, 1);
+        assert_eq!(page.items[0].key, allowed);
     }
 
     #[tokio::test(flavor = "current_thread")]

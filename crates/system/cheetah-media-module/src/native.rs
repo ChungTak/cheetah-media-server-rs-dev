@@ -225,6 +225,7 @@ impl NativeMediaHttpService {
                     MediaScope::FileDelete,
                     MediaScope::ServerAdmin,
                 ],
+                resource_grants: Vec::new(),
             });
         }
         let credentials = AuthCredentials {

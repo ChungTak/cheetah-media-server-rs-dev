@@ -148,6 +148,7 @@ impl SessionStore {
                 MediaScope::FileDelete,
                 MediaScope::ServerAdmin,
             ],
+            resource_grants: Vec::new(),
         }
     }
 }

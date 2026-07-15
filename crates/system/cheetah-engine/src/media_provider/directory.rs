@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use async_trait::async_trait;
+use cheetah_media_api::auth::MediaScope;
 use cheetah_media_api::command::SessionQuery;
 use cheetah_media_api::error::{MediaError, Result as MediaResult};
 use cheetah_media_api::event::{MediaEvent, MediaEventBusApi, SessionClosed, SessionOpened};
@@ -115,6 +116,13 @@ impl EngineMediaSessionDirectory {
     }
 }
 
+fn authorized(ctx: &MediaRequestContext, scope: &MediaScope, key: Option<&MediaKey>) -> bool {
+    match &ctx.principal {
+        None => true,
+        Some(p) => p.authorizes(scope, key),
+    }
+}
+
 impl Default for EngineMediaSessionDirectory {
     fn default() -> Self {
         Self::new()
@@ -193,15 +201,21 @@ impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
 
     async fn get_session(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         id: &SessionId,
     ) -> MediaResult<Option<SessionInfo>> {
-        Ok(self.inner.sessions.get(id).map(|e| e.info.clone()))
+        let record = self.inner.sessions.get(id);
+        if let Some(ref r) = record {
+            if !authorized(ctx, &MediaScope::MediaRead, Some(&r.info.media_key)) {
+                return Ok(None);
+            }
+        }
+        Ok(record.map(|e| e.info.clone()))
     }
 
     async fn list_sessions(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         mut query: SessionQuery,
     ) -> MediaResult<Page<SessionInfo>> {
         query.clamp_page_size();
@@ -210,7 +224,10 @@ impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
             .sessions
             .iter()
             .map(|e| e.value().info.clone())
-            .filter(|info| Self::matches(info, &query))
+            .filter(|info| {
+                Self::matches(info, &query)
+                    && authorized(ctx, &MediaScope::MediaRead, Some(&info.media_key))
+            })
             .collect();
         let total = items.len() as u64;
         let page = query.page.max(1);
@@ -231,10 +248,20 @@ impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
 
     async fn close_session(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         id: &SessionId,
         reason: CloseReason,
     ) -> MediaResult<CloseReport> {
+        let key = self
+            .inner
+            .sessions
+            .get(id)
+            .map(|r| r.info.media_key.clone());
+        if let Some(ref key) = key {
+            if !authorized(ctx, &MediaScope::MediaControl, Some(key)) {
+                return Err(MediaError::not_found(format!("session {id}")));
+            }
+        }
         let record = self.inner.sessions.remove(id).map(|(_, r)| r);
         match record {
             Some(Record { info, close_handle }) => {
@@ -253,10 +280,13 @@ impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
 
     async fn close_sessions_for_key(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         key: &MediaKey,
         reason: CloseReason,
     ) -> MediaResult<CloseReport> {
+        if !authorized(ctx, &MediaScope::MediaControl, Some(key)) {
+            return Err(MediaError::not_found(format!("stream {key}")));
+        }
         let mut closed = Vec::new();
         let mut handles: Vec<(SessionId, SessionInfo, Box<dyn SessionCloseHandle>)> = Vec::new();
         {

@@ -1,4 +1,6 @@
-use cheetah_media_api::auth::{AuthCredentials, MediaScope, Principal};
+use cheetah_media_api::auth::{
+    AuthCredentials, MediaResourceGrant, MediaResourceSelector, MediaScope, Pattern, Principal,
+};
 use cheetah_media_api::error::{MediaError, MediaErrorCode, Result};
 use cheetah_media_api::port::ControlAuthApi;
 use cheetah_sdk::ConfigProvider;
@@ -53,7 +55,10 @@ impl ConfigControlAuth {
         Self { config }
     }
 
-    fn credential_list(&self, key: &str) -> Vec<(String, String, Vec<MediaScope>)> {
+    fn credential_list(
+        &self,
+        key: &str,
+    ) -> Vec<(String, String, Vec<MediaScope>, Vec<MediaResourceGrant>)> {
         let mut list = Vec::new();
         let global = self.config.global();
         let Some(tokens) = global
@@ -83,28 +88,31 @@ impl ConfigControlAuth {
                         .collect()
                 })
                 .unwrap_or_default();
-            list.push((token.clone(), principal, scopes));
+            let resource_grants = parse_resource_grants(obj.get("resource_grants"));
+            list.push((token.clone(), principal, scopes, resource_grants));
         }
         list
     }
 
-    fn token_list(&self) -> Vec<(String, String, Vec<MediaScope>)> {
+    fn token_list(&self) -> Vec<(String, String, Vec<MediaScope>, Vec<MediaResourceGrant>)> {
         self.credential_list("tokens")
     }
 
-    fn deployment_token_list(&self) -> Vec<(String, String, Vec<MediaScope>)> {
+    fn deployment_token_list(
+        &self,
+    ) -> Vec<(String, String, Vec<MediaScope>, Vec<MediaResourceGrant>)> {
         self.credential_list("deployment_tokens")
     }
 
     fn find_credential(
         &self,
-        list: &[(String, String, Vec<MediaScope>)],
+        list: &[(String, String, Vec<MediaScope>, Vec<MediaResourceGrant>)],
         token: &str,
-    ) -> Option<(String, Vec<MediaScope>)> {
+    ) -> Option<(String, Vec<MediaScope>, Vec<MediaResourceGrant>)> {
         let mut result = None;
-        for (candidate, identity, scopes) in list {
+        for (candidate, identity, scopes, grants) in list {
             if constant_time_eq(candidate, token) {
-                result = Some((identity.clone(), scopes.clone()));
+                result = Some((identity.clone(), scopes.clone(), grants.clone()));
             }
         }
         result
@@ -135,6 +143,39 @@ impl ConfigControlAuth {
     }
 }
 
+fn parse_pattern(value: Option<&serde_json::Value>) -> Pattern {
+    value
+        .and_then(|v| v.as_str())
+        .map(Pattern::parse)
+        .unwrap_or(Pattern::Wildcard)
+}
+
+fn parse_resource_grants(value: Option<&serde_json::Value>) -> Vec<MediaResourceGrant> {
+    let Some(list) = value.and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|item| {
+            let obj = item.as_object()?;
+            let selector = MediaResourceSelector {
+                vhost: parse_pattern(obj.get("vhost")),
+                app: parse_pattern(obj.get("app")),
+                stream: parse_pattern(obj.get("stream")),
+            };
+            let scopes = obj
+                .get("scopes")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().and_then(|s| s.parse::<MediaScope>().ok()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(MediaResourceGrant { selector, scopes })
+        })
+        .collect()
+}
+
 /// Constant-time string equality used when comparing bearer/deployment tokens.
 /// Compares length and content without short-circuiting on length mismatch.
 fn constant_time_eq(a: &str, b: &str) -> bool {
@@ -161,8 +202,12 @@ impl ControlAuthApi for ConfigControlAuth {
                 ));
             };
             let list = self.token_list();
-            if let Some((identity, scopes)) = self.find_credential(&list, &token) {
-                return Ok(Principal { identity, scopes });
+            if let Some((identity, scopes, resource_grants)) = self.find_credential(&list, &token) {
+                return Ok(Principal {
+                    identity,
+                    scopes,
+                    resource_grants,
+                });
             }
             return Err(MediaError::new(
                 MediaErrorCode::Unauthenticated,
@@ -173,8 +218,12 @@ impl ControlAuthApi for ConfigControlAuth {
         // Deployment token from the x-deployment-token header.
         if let Some(token) = credentials.deployment_token.as_deref() {
             let list = self.deployment_token_list();
-            if let Some((identity, scopes)) = self.find_credential(&list, token) {
-                return Ok(Principal { identity, scopes });
+            if let Some((identity, scopes, resource_grants)) = self.find_credential(&list, token) {
+                return Ok(Principal {
+                    identity,
+                    scopes,
+                    resource_grants,
+                });
             }
             return Err(MediaError::new(
                 MediaErrorCode::Unauthenticated,
@@ -191,6 +240,7 @@ impl ControlAuthApi for ConfigControlAuth {
                 return Ok(Principal {
                     identity: identity.to_string(),
                     scopes: vec![MediaScope::MediaRead],
+                    resource_grants: Vec::new(),
                 });
             }
         }
@@ -346,6 +396,51 @@ mod tests {
             })
             .unwrap_err();
         assert_eq!(err.code, MediaErrorCode::Unauthenticated);
+    }
+
+    #[test]
+    fn resource_grants_are_parsed_and_authorize_by_key() {
+        use cheetah_media_api::auth::Pattern;
+        use cheetah_media_api::ids::MediaKey;
+
+        let config = TestConfig(json!({
+            "media": {
+                "native": {
+                    "tokens": {
+                        "secret": {
+                            "principal": "tenant-a",
+                            "scopes": [],
+                            "resource_grants": [
+                                { "vhost": "__defaultVhost__", "app": "live", "stream": "*", "scopes": ["media.read", "media.control"] }
+                            ]
+                        }
+                    }
+                }
+            }
+        }));
+        let auth = ConfigControlAuth::new(std::sync::Arc::new(config));
+        let p = auth
+            .authenticate(&AuthCredentials {
+                authorization_header: Some("Bearer secret".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+
+        let allowed = MediaKey::new("__defaultVhost__", "live", "cam1", None).unwrap();
+        let denied = MediaKey::new("__defaultVhost__", "sports", "cam1", None).unwrap();
+
+        assert!(p.authorizes(&MediaScope::MediaRead, Some(&allowed)));
+        assert!(p.authorizes(&MediaScope::MediaControl, Some(&allowed)));
+        assert!(!p.authorizes(&MediaScope::MediaRead, Some(&denied)));
+        assert!(!p.authorizes(&MediaScope::MediaControl, Some(&denied)));
+
+        let grant = p.resource_grants.first().unwrap();
+        assert_eq!(
+            grant.selector.vhost,
+            Pattern::Exact("__defaultVhost__".to_string())
+        );
+        assert_eq!(grant.selector.app, Pattern::Exact("live".to_string()));
+        assert_eq!(grant.selector.stream, Pattern::Wildcard);
     }
 
     #[test]

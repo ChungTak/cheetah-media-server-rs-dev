@@ -236,6 +236,7 @@ impl ZlmMediaHttpService {
                     MediaScope::FileDelete,
                     MediaScope::ServerAdmin,
                 ],
+                resource_grants: Vec::new(),
             }),
             "secret" => {
                 let expected = cfg.secret.as_deref().ok_or_else(|| {
@@ -281,6 +282,7 @@ impl ZlmMediaHttpService {
                         MediaScope::FileDelete,
                         MediaScope::ServerAdmin,
                     ],
+                    resource_grants: Vec::new(),
                 })
             }
             "session" => {

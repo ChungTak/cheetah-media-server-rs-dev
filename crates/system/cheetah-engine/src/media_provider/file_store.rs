@@ -447,6 +447,7 @@ mod tests {
             principal: Some(cheetah_media_api::Principal {
                 identity: "alice".to_string(),
                 scopes: vec![cheetah_media_api::MediaScope::FileRead],
+                resource_grants: Vec::new(),
             }),
             ..Default::default()
         };
