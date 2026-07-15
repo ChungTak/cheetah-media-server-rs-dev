@@ -259,10 +259,14 @@ impl ZlmMediaHttpService {
         &self,
         req: &HttpRequest,
     ) -> Result<MediaRequestContext, AdapterError> {
-        let request_id = header_value(&req.headers, "x-request-id")
-            .map(|v| cheetah_media_api::ids::RequestId(v.to_string()))
-            .unwrap_or_else(|| cheetah_media_api::ids::RequestId("".to_string()));
-        let deadline = header_value(&req.headers, "x-deadline").and_then(|v| v.parse::<i64>().ok());
+        let request_id = cheetah_media_api::ids::RequestId(
+            header_value(&req.headers, "x-request-id")
+                .map(|v| v.to_string())
+                .unwrap_or_else(crate::util::generate_request_id),
+        );
+        let client_deadline =
+            header_value(&req.headers, "x-deadline").and_then(|v| v.parse::<i64>().ok());
+        let deadline = crate::util::request_deadline(client_deadline, 60_000);
         let credentials = AuthCredentials {
             authorization_header: header_value(&req.headers, "authorization")
                 .map(|s| s.to_string()),
@@ -278,6 +282,7 @@ impl ZlmMediaHttpService {
             source_adapter: "zlm".to_string(),
             trace_context: header_value(&req.headers, "x-trace-context").map(|s| s.to_string()),
             deadline,
+            idempotency_key: header_value(&req.headers, "idempotency-key").map(|s| s.to_string()),
         })
     }
 
@@ -446,7 +451,10 @@ impl ZlmMediaHttpService {
             segment_duration_ms: None,
             max_segments: None,
             storage_policy: cheetah_media_api::model::StoragePolicy::default(),
-            idempotency_key: None,
+            idempotency_key: ctx
+                .idempotency_key
+                .clone()
+                .map(cheetah_media_api::ids::IdempotencyKey),
         };
         let task = record_api.start_record(&ctx, request).await?;
         Ok(zlm_response(
@@ -679,7 +687,12 @@ impl ZlmMediaHttpService {
 
 #[async_trait]
 impl ModuleHttpService for ZlmMediaHttpService {
-    async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
+    async fn handle(&self, mut req: HttpRequest) -> Result<HttpResponse, SdkError> {
+        let request_id = header_value(&req.headers, "x-request-id")
+            .map(|v| v.to_string())
+            .unwrap_or_else(crate::util::generate_request_id);
+        crate::util::set_request_id_header(&mut req, &request_id);
+
         let result = match (req.method, req.path.as_str()) {
             (HttpMethod::Get, "/api/getMediaList") => self.get_media_list(req).await,
             (HttpMethod::Get, "/api/isMediaOnline") => self.is_media_online(req).await,
@@ -709,23 +722,25 @@ impl ModuleHttpService for ZlmMediaHttpService {
             _ => Err(AdapterError::InvalidRequest("not found".to_string())),
         };
 
-        match result {
-            Ok(resp) => Ok(resp),
+        let mut response = match result {
+            Ok(resp) => resp,
             Err(AdapterError::Media(err)) => {
                 let body = zlm_error_response(&err);
-                Ok(zlm_json_response(body))
+                zlm_json_response(body)
             }
             Err(AdapterError::InvalidRequest(msg)) => {
                 let body = zlm_error_response(
                     &cheetah_media_api::error::MediaError::invalid_argument(msg),
                 );
-                Ok(zlm_json_response(body))
+                zlm_json_response(body)
             }
             Err(AdapterError::Serialization(msg)) => {
                 let body = zlm_error_response(&cheetah_media_api::error::MediaError::internal(msg));
-                Ok(zlm_json_response(body))
+                zlm_json_response(body)
             }
-        }
+        };
+        crate::util::set_response_request_id_header(&mut response, &request_id);
+        Ok(response)
     }
 }
 
