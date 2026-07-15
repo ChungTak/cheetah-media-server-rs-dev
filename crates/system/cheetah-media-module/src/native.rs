@@ -461,7 +461,8 @@ impl NativeMediaHttpService {
         ))
     }
 
-    async fn capabilities(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+    async fn capabilities(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+        let _ctx = self.authorize_request(&req)?;
         let caps = self.ctx.media_services.capabilities();
         Ok(json_response(&caps))
     }

@@ -1,8 +1,7 @@
 /// Authorization scope for control-plane operations.
 ///
 /// 控制面操作的授权 scope。
-#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum MediaScope {
     MediaRead,
     MediaControl,
@@ -51,6 +50,19 @@ impl std::str::FromStr for MediaScope {
             "server.admin" => Ok(MediaScope::ServerAdmin),
             _ => Err(format!("unknown scope: {s}")),
         }
+    }
+}
+
+impl serde::Serialize for MediaScope {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for MediaScope {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<MediaScope>().map_err(serde::de::Error::custom)
     }
 }
 

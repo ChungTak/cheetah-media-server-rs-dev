@@ -19,7 +19,7 @@ impl ZlmMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let tcp_mode = parse_zlm_rtp_tcp_mode(&params);
@@ -55,7 +55,7 @@ impl ZlmMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let session_id = zlm_rtp_session_id(&key, "recv");
@@ -74,7 +74,7 @@ impl ZlmMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let destination = parse_zlm_destination(&params)?;
@@ -128,7 +128,7 @@ impl ZlmMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let session_id = zlm_rtp_session_id(&key, "send");
@@ -147,7 +147,7 @@ impl ZlmMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let mut info = None;

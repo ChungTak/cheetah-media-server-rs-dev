@@ -11,7 +11,7 @@ use cheetah_media_api::model::{CloseReason, RecordTaskState};
 use cheetah_media_api::port::{
     ControlAuthApi, MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
 };
-use cheetah_media_api::AuthCredentials;
+use cheetah_media_api::{AuthCredentials, MediaScope};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -281,6 +281,42 @@ impl ZlmMediaHttpService {
         })
     }
 
+    fn require_scope(
+        &self,
+        ctx: &MediaRequestContext,
+        scope: &MediaScope,
+    ) -> Result<(), AdapterError> {
+        let has = ctx
+            .principal
+            .as_ref()
+            .map(|p| p.has_scope(scope))
+            .unwrap_or(false);
+        if !has {
+            return Err(AdapterError::Media(
+                cheetah_media_api::error::MediaError::new(
+                    cheetah_media_api::error::MediaErrorCode::PermissionDenied,
+                    format!("missing scope: {scope}"),
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    fn required_scope(&self, method: HttpMethod, path: &str) -> Option<MediaScope> {
+        zlm_required_scope(method, path)
+    }
+
+    pub(crate) fn authorize_request(
+        &self,
+        req: &HttpRequest,
+    ) -> Result<MediaRequestContext, AdapterError> {
+        let ctx = self.request_context(req)?;
+        if let Some(scope) = self.required_scope(req.method, &req.path) {
+            self.require_scope(&ctx, &scope)?;
+        }
+        Ok(ctx)
+    }
+
     pub(crate) fn extract_params(
         &self,
         req: &HttpRequest,
@@ -308,7 +344,7 @@ impl ZlmMediaHttpService {
     }
 
     async fn get_media_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let mut query = MediaQuery {
             vhost: params["vhost"].as_str().map(String::from),
@@ -325,7 +361,7 @@ impl ZlmMediaHttpService {
     }
 
     async fn is_media_online(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let online = self.control()?.is_media_online(&ctx, &key).await?;
@@ -337,7 +373,7 @@ impl ZlmMediaHttpService {
     }
 
     async fn get_media_info(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let info = self.control()?.get_media(&ctx, &key).await?;
@@ -345,7 +381,7 @@ impl ZlmMediaHttpService {
     }
 
     async fn get_all_session(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let mut query = SessionQuery {
             vhost: params["vhost"].as_str().map(String::from),
@@ -361,7 +397,7 @@ impl ZlmMediaHttpService {
     }
 
     async fn close_stream(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let _ = self
@@ -376,7 +412,7 @@ impl ZlmMediaHttpService {
     }
 
     async fn kick_session(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let id = params["id"]
             .as_str()
@@ -393,7 +429,7 @@ impl ZlmMediaHttpService {
 
     async fn record_start(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = zlm_record_format(&params["type"])?;
@@ -416,7 +452,7 @@ impl ZlmMediaHttpService {
 
     async fn record_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = zlm_record_format(&params["type"])?;
@@ -458,7 +494,7 @@ impl ZlmMediaHttpService {
 
     async fn is_recording(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = zlm_record_format(&params["type"])?;
@@ -484,7 +520,7 @@ impl ZlmMediaHttpService {
 
     async fn get_mp4_files(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let mut query = RecordFileQuery {
@@ -510,7 +546,7 @@ impl ZlmMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let mut query = RecordFileQuery {
@@ -566,7 +602,7 @@ impl ZlmMediaHttpService {
 
     async fn set_record_speed(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let file_id = parse_zlm_file_id(&params)?;
         let value = parse_zlm_playback_value(&params, &["speed", "scale", "value"])?;
@@ -586,7 +622,7 @@ impl ZlmMediaHttpService {
 
     async fn seek_record_stamp(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let file_id = parse_zlm_file_id(&params)?;
         let value = parse_zlm_playback_value(&params, &["stamp", "seek", "value"])?;
@@ -608,7 +644,7 @@ impl ZlmMediaHttpService {
 
     async fn control_record_play(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req)?;
+        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let file_id = parse_zlm_file_id(&params)?;
         let command = parse_zlm_playback_command(&params)?;
@@ -772,6 +808,35 @@ fn parse_zlm_playback_command(
         _ => Err(AdapterError::InvalidRequest(format!(
             "unsupported playback command {command}"
         ))),
+    }
+}
+
+fn zlm_required_scope(method: HttpMethod, path: &str) -> Option<MediaScope> {
+    match (method, path) {
+        (HttpMethod::Get, "/api/getMediaList") => Some(MediaScope::MediaRead),
+        (HttpMethod::Get, "/api/isMediaOnline") => Some(MediaScope::MediaRead),
+        (HttpMethod::Get, "/api/getMediaInfo") => Some(MediaScope::MediaRead),
+        (HttpMethod::Get, "/api/getAllSession") => Some(MediaScope::MediaRead),
+        (HttpMethod::Get, "/api/isRecording") => Some(MediaScope::MediaRead),
+        (HttpMethod::Get, "/api/getMP4RecordFile") => Some(MediaScope::MediaRead),
+        (HttpMethod::Get, "/api/getRtpInfo") => Some(MediaScope::MediaRead),
+        (HttpMethod::Get, "/api/getSnap") => Some(MediaScope::MediaControl),
+        (HttpMethod::Get, "/api/downloadFile") => Some(MediaScope::FileRead),
+        (HttpMethod::Post, "/api/close_stream") => Some(MediaScope::MediaControl),
+        (HttpMethod::Post, "/api/kick_session") => Some(MediaScope::MediaControl),
+        (HttpMethod::Post, "/api/startRecord") => Some(MediaScope::RecordManage),
+        (HttpMethod::Post, "/api/stopRecord") => Some(MediaScope::RecordManage),
+        (HttpMethod::Post, "/api/deleteRecordDirectory") => Some(MediaScope::FileDelete),
+        (HttpMethod::Post, "/api/openRtpServer") => Some(MediaScope::MediaPublish),
+        (HttpMethod::Post, "/api/closeRtpServer") => Some(MediaScope::MediaControl),
+        (HttpMethod::Post, "/api/startSendRtp") => Some(MediaScope::MediaConsume),
+        (HttpMethod::Post, "/api/stopSendRtp") => Some(MediaScope::MediaControl),
+        (HttpMethod::Post, "/api/setRecordSpeed") => Some(MediaScope::RecordManage),
+        (HttpMethod::Post, "/api/seekRecordStamp") => Some(MediaScope::RecordManage),
+        (HttpMethod::Post, "/api/controlRecordPlay") => Some(MediaScope::RecordManage),
+        (HttpMethod::Post, "/api/loadMP4File") => Some(MediaScope::RecordManage),
+        (HttpMethod::Post, "/api/deleteSnapDirectory") => Some(MediaScope::FileDelete),
+        _ => None,
     }
 }
 
