@@ -12,8 +12,8 @@ use cheetah_sdk::{HttpRequest, HttpResponse};
 
 use crate::error::AdapterError;
 use crate::zlm::{
-    page_from_params, page_size_from_params, zlm_response, Data, FlagData, KeyData, ProxyItem,
-    ZlmMediaHttpService, ZlmResponse,
+    page_from_params, page_size_from_params, zlm_response, Data, KeyData, ProxyItem,
+    ZlmMediaHttpService, ZlmResponse, ZlmResult,
 };
 
 impl ZlmMediaHttpService {
@@ -56,8 +56,8 @@ impl ZlmMediaHttpService {
         let params = self.extract_params(&req)?;
         let id = proxy_id_from_params(&params)?;
         proxy_api.delete_pull_proxy(ctx, &id).await?;
-        Ok(zlm_response(ZlmResponse::ok(Data::new(FlagData {
-            flag: true,
+        Ok(zlm_response(ZlmResponse::ok(Data::new(ZlmResult {
+            result: true,
         }))))
     }
 
@@ -137,8 +137,8 @@ impl ZlmMediaHttpService {
         let params = self.extract_params(&req)?;
         let id = proxy_id_from_params(&params)?;
         proxy_api.delete_push_proxy(ctx, &id).await?;
-        Ok(zlm_response(ZlmResponse::ok(Data::new(FlagData {
-            flag: true,
+        Ok(zlm_response(ZlmResponse::ok(Data::new(ZlmResult {
+            result: true,
         }))))
     }
 
@@ -220,8 +220,8 @@ impl ZlmMediaHttpService {
         let params = self.extract_params(&req)?;
         let id = proxy_id_from_params(&params)?;
         proxy_api.delete_ffmpeg_proxy(ctx, &id).await?;
-        Ok(zlm_response(ZlmResponse::ok(Data::new(FlagData {
-            flag: true,
+        Ok(zlm_response(ZlmResponse::ok(Data::new(ZlmResult {
+            result: true,
         }))))
     }
 

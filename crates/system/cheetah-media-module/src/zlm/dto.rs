@@ -128,12 +128,6 @@ pub(crate) struct KeyData {
     pub key: String,
 }
 
-/// `{flag: bool}` wrapped in `data`.
-#[derive(Serialize)]
-pub(crate) struct FlagData {
-    pub flag: bool,
-}
-
 /// `{paths, rootPath}` wrapped in `data` for `getMP4RecordFile`.
 #[derive(Serialize)]
 pub(crate) struct Mp4FilesData {
