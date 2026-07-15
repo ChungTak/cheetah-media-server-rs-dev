@@ -138,7 +138,10 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     let a = a.as_bytes();
     let b = b.as_bytes();
     let mut diff = a.len() ^ b.len();
-    for (&x, &y) in a.iter().zip(b.iter()) {
+    let max = a.len().max(b.len());
+    for i in 0..max {
+        let x = a.get(i).copied().unwrap_or(0);
+        let y = b.get(i).copied().unwrap_or(0);
         diff |= (x ^ y) as usize;
     }
     diff == 0
