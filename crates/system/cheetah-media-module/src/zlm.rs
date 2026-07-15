@@ -244,6 +244,12 @@ impl ZlmMediaHttpService {
                         "zlm secret not configured",
                     ))
                 })?;
+                if expected.is_empty() {
+                    return Err(AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "zlm secret not configured",
+                    )));
+                }
                 use subtle::{Choice, ConstantTimeEq};
                 // Only accept the secret from headers; never from the URL query string
                 // to avoid exposure in access logs or Referer headers.

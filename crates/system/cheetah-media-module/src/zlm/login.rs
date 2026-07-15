@@ -82,8 +82,8 @@ impl ZlmMediaHttpService {
         );
 
         let cookie_value = format!(
-            "{}={}; Path=/; HttpOnly; Secure; SameSite=Strict",
-            session_cfg.cookie_name, token
+            "{}={}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age={}",
+            session_cfg.cookie_name, token, session_cfg.session_ttl_sec
         );
         let mut response = zlm_response(ZlmResponse::ok(Data::new(LoginSuccess {
             cookie_name: &session_cfg.cookie_name,
