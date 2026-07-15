@@ -15,7 +15,8 @@ use cheetah_rtp_core::{
 };
 use cheetah_rtp_driver_tokio::{start_driver, RtpDriverCommand, RtpDriverConfig, RtpDriverHandle};
 use cheetah_sdk::media_api::error::MediaError;
-use cheetah_sdk::media_api::ids::MediaKey;
+use cheetah_sdk::media_api::event::{EventHeader, MediaEvent, RtpSessionTimeout};
+use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId};
 use cheetah_sdk::media_api::model::{RtpSessionState, RtpTcpMode};
 use cheetah_sdk::{
     CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest, HttpResponse,
@@ -539,6 +540,15 @@ async fn run_ingress_worker(
                 reason,
             } => {
                 info!("RTP ingress session closed: key={session_key}, reason={reason}");
+                let timeout_session = if reason.contains("timeout") {
+                    orchestrator
+                        .sessions
+                        .lock()
+                        .get(&RtpSessionId(session_key.clone()))
+                        .cloned()
+                } else {
+                    None
+                };
                 if let Some(session) = sessions.remove(&session_key) {
                     let _ = session.sink.close();
                 }
@@ -557,6 +567,27 @@ async fn run_ingress_worker(
                         "reason": reason,
                     }),
                 }));
+
+                if let Some(rtp_session) = timeout_session {
+                    let now_ms = (ctx.runtime_api.now().as_micros() / 1000) as i64;
+                    let _ = ctx.media_event_bus.publish(MediaEvent::RtpSessionTimeout(
+                        RtpSessionTimeout {
+                            header: EventHeader {
+                                event_id: format!("rtp-timeout-{session_key}-{now_ms}"),
+                                occurred_at: now_ms,
+                                sequence: None,
+                                media_key: Some(rtp_session.media_key),
+                                source: "rtp-module".to_string(),
+                                correlation_id: Some(session_key),
+                            },
+                            session_id: rtp_session.session_id,
+                            local_port: rtp_session.local_port,
+                            tcp_mode: rtp_session.tcp_mode,
+                            reuse_port: rtp_session.reuse_port,
+                            ssrc: rtp_session.ssrc,
+                        },
+                    ));
+                }
             }
         }
     }

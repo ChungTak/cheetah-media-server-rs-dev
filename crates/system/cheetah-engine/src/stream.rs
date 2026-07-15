@@ -5,6 +5,11 @@ use std::sync::Arc;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use async_trait::async_trait;
 use cheetah_codec::{AVFrame, FrameFlags, TrackInfo};
+use cheetah_media_api::event::{
+    MediaEvent, MediaEventBusApi, StreamOnlineChanged, StreamPublished, StreamUnpublished,
+};
+use cheetah_media_api::ids::{MediaKey, MediaSchema, SessionId, StreamKeyBridge};
+use cheetah_media_api::model::{CloseReason, OnlineState};
 use cheetah_sdk::{
     BackpressurePolicy, BootstrapMode, BootstrapPolicy, DispatchResult, EventBus, MediaFilter,
     PublishLease, PublisherApi, PublisherOptions, PublisherSink, RuntimeApi, SdkError, StreamEvent,
@@ -650,6 +655,14 @@ struct StreamEntry {
     /// Timestamp (micros since epoch) when subscriber count last dropped to zero.
     /// 0 means there are currently subscribers or no subscriber has ever joined.
     last_no_subscriber_micros: AtomicU64,
+    /// Protocol identifier reported with stream events.
+    protocol: Mutex<String>,
+    /// Optional remote endpoint reported with stream events.
+    remote_endpoint: Mutex<Option<String>>,
+    /// Whether `StreamPublished` has already been emitted for this entry.
+    published: AtomicBool,
+    /// Current online state, used to avoid duplicate `StreamOnlineChanged` events.
+    online: AtomicBool,
 }
 
 impl StreamEntry {
@@ -666,6 +679,10 @@ impl StreamEntry {
             active_lease: AtomicU64::new(0),
             keyframe_requests: AtomicU64::new(0),
             last_no_subscriber_micros: AtomicU64::new(0),
+            protocol: Mutex::new(String::new()),
+            remote_endpoint: Mutex::new(None),
+            published: AtomicBool::new(false),
+            online: AtomicBool::new(false),
         }
     }
 }
@@ -681,6 +698,7 @@ struct StreamManagerInner {
     next_lease_id: AtomicU64,
     streams: DashMap<StreamKey, Arc<StreamEntry>>,
     event_bus: RwLock<Option<Arc<dyn EventBus>>>,
+    media_event_bus: RwLock<Option<Arc<dyn MediaEventBusApi>>>,
 }
 
 impl StreamManagerInner {
@@ -704,6 +722,105 @@ impl StreamManagerInner {
                 subscriber_id: subscriber_id.map(|id| id.0),
                 dispatch_result,
                 message,
+            }));
+        }
+    }
+
+    /// Publish a typed `MediaEvent` if a media event bus is configured.
+    ///
+    /// 若已配置媒体事件总线，则发布类型化 `MediaEvent`。
+    fn publish_media_event(&self, event: MediaEvent) {
+        if let Some(bus) = self.media_event_bus.read().as_ref() {
+            let _ = bus.publish(event);
+        }
+    }
+
+    /// Convert a `StreamKey` to a `MediaKey` for event headers.
+    fn media_key_for(stream_key: &StreamKey) -> MediaKey {
+        StreamKeyBridge::from_namespace_path(&stream_key.namespace, &stream_key.path)
+            .unwrap_or_else(|_| {
+                MediaKey::new(
+                    "__fallback__",
+                    &stream_key.namespace,
+                    &stream_key.path,
+                    None,
+                )
+                .unwrap_or(MediaKey::with_default_vhost("unknown", "unknown", None).unwrap())
+            })
+    }
+
+    /// Pick a `MediaSchema` from the entry metadata for `StreamOnlineChanged`.
+    fn schema_for(entry: &StreamEntry, media_key: &MediaKey) -> Option<MediaSchema> {
+        if let Some(schema) = media_key.schema {
+            return Some(schema);
+        }
+        let protocol = entry.protocol.lock();
+        MediaSchema::parse(&protocol).ok()
+    }
+
+    /// Emit `StreamPublished` and `StreamOnlineChanged(Online)` once per entry.
+    fn publish_stream_published(&self, stream_key: &StreamKey, entry: &StreamEntry) {
+        if entry.published.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let media_key = Self::media_key_for(stream_key);
+        let protocol = entry.protocol.lock().clone();
+        let remote_endpoint = entry.remote_endpoint.lock().clone();
+        let session_id = SessionId(entry.stream_id.0.to_string());
+        let mut header =
+            crate::media_provider::util::event_header("stream-manager", Some(&media_key), None);
+        header.correlation_id = Some(session_id.0.clone());
+        self.publish_media_event(MediaEvent::StreamPublished(StreamPublished {
+            header,
+            protocol,
+            remote_endpoint,
+            session_id,
+        }));
+        if entry.online.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let schema = Self::schema_for(entry, &media_key);
+        self.publish_media_event(MediaEvent::StreamOnlineChanged(StreamOnlineChanged {
+            header: crate::media_provider::util::event_header(
+                "stream-manager",
+                Some(&media_key),
+                None,
+            ),
+            online: OnlineState::Online,
+            schema,
+        }));
+    }
+
+    /// Emit `StreamUnpublished` and `StreamOnlineChanged(Offline)` if the stream was published.
+    fn publish_stream_unpublished(
+        &self,
+        stream_key: &StreamKey,
+        entry: &StreamEntry,
+        reason: CloseReason,
+    ) {
+        let media_key = Self::media_key_for(stream_key);
+        let session_id = SessionId(entry.stream_id.0.to_string());
+        let was_published = entry.published.swap(false, Ordering::AcqRel);
+        if was_published {
+            let mut header =
+                crate::media_provider::util::event_header("stream-manager", Some(&media_key), None);
+            header.correlation_id = Some(session_id.0.clone());
+            self.publish_media_event(MediaEvent::StreamUnpublished(StreamUnpublished {
+                header,
+                session_id,
+                reason,
+            }));
+        }
+        if entry.online.swap(false, Ordering::AcqRel) {
+            let schema = Self::schema_for(entry, &media_key);
+            self.publish_media_event(MediaEvent::StreamOnlineChanged(StreamOnlineChanged {
+                header: crate::media_provider::util::event_header(
+                    "stream-manager",
+                    Some(&media_key),
+                    None,
+                ),
+                online: OnlineState::Offline,
+                schema,
             }));
         }
     }
@@ -808,6 +925,7 @@ impl StreamManagerInner {
 
         entry.active_lease.store(0, Ordering::Release);
         entry.dispatcher.clear_subscribers();
+        self.publish_stream_unpublished(stream_key, &entry, CloseReason::Normal);
         self.streams.remove(stream_key);
         self.publish_stream_event(
             stream_key,
@@ -858,6 +976,7 @@ impl StreamManager {
                 next_lease_id: AtomicU64::new(0),
                 streams: DashMap::new(),
                 event_bus: RwLock::new(None),
+                media_event_bus: RwLock::new(None),
             }),
         }
     }
@@ -867,6 +986,13 @@ impl StreamManager {
     /// 附加用于流生命周期事件的事件总线。
     pub fn set_event_bus(&self, event_bus: Arc<dyn EventBus>) {
         *self.inner.event_bus.write() = Some(event_bus);
+    }
+
+    /// Attach the typed media event bus used for `MediaEvent` publish/subscribe.
+    ///
+    /// 附加用于 `MediaEvent` 发布/订阅的类型化媒体事件总线。
+    pub fn set_media_event_bus(&self, media_event_bus: Arc<dyn MediaEventBusApi>) {
+        *self.inner.media_event_bus.write() = Some(media_event_bus);
     }
 }
 
@@ -902,7 +1028,11 @@ impl PublisherSink for PublisherHandle {
                 self.stream_key
             )));
         }
-        *self.entry.tracks.write() = tracks;
+        *self.entry.tracks.write() = tracks.clone();
+        if !tracks.is_empty() {
+            self.inner
+                .publish_stream_published(&self.stream_key, &self.entry);
+        }
         Ok(())
     }
 
@@ -1025,7 +1155,7 @@ impl PublisherApi for StreamManager {
     async fn acquire_publisher(
         &self,
         stream_key: StreamKey,
-        _options: PublisherOptions,
+        options: PublisherOptions,
     ) -> Result<(PublishLease, Box<dyn PublisherSink>), SdkError> {
         let entry = self.inner.get_or_create_stream(stream_key.clone());
         let lease_id = self.inner.next_lease_id.fetch_add(1, Ordering::Relaxed) + 1;
@@ -1039,6 +1169,8 @@ impl PublisherApi for StreamManager {
                 stream_key
             )));
         }
+        *entry.protocol.lock() = options.protocol;
+        *entry.remote_endpoint.lock() = options.remote_endpoint;
         self.inner.publish_stream_event(
             &stream_key,
             StreamEventKind::PublisherOpened,
@@ -1047,6 +1179,19 @@ impl PublisherApi for StreamManager {
             None,
             None,
         );
+        if !entry.online.swap(true, Ordering::AcqRel) {
+            let media_key = StreamManagerInner::media_key_for(&stream_key);
+            self.inner
+                .publish_media_event(MediaEvent::StreamOnlineChanged(StreamOnlineChanged {
+                    header: crate::media_provider::util::event_header(
+                        "stream-manager",
+                        Some(&media_key),
+                        None,
+                    ),
+                    online: OnlineState::Online,
+                    schema: None,
+                }));
+        }
         let lease = PublishLease {
             stream_id: entry.stream_id,
             stream_key: stream_key.clone(),
@@ -1223,8 +1368,12 @@ mod tests {
     use super::*;
     use bytes::Bytes;
     use cheetah_codec::{CodecId, FrameFormat, MediaKind, Timebase, TrackId, TrackInfo};
+    use cheetah_media_api::event::{MediaEvent, MediaEventBusApi, MediaEventSender};
     use cheetah_runtime_tokio::TokioRuntime;
+    use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
     use tokio::time::{timeout, Duration};
+
+    use crate::media_provider::LocalMediaEventBus;
 
     fn make_frame(payload: &'static [u8], key: bool) -> Arc<AVFrame> {
         make_frame_at(payload, key, 0)
@@ -1991,5 +2140,80 @@ mod tests {
                 .all(|frame| frame.payload == Bytes::from_static(b"new")),
             "bootstrap frames must not include pre-discontinuity backlog"
         );
+    }
+
+    struct CollectingMediaEventSender(UnboundedSender<MediaEvent>);
+
+    impl MediaEventSender for CollectingMediaEventSender {
+        fn send(&self, event: MediaEvent) -> cheetah_media_api::error::Result<()> {
+            let _ = self.0.send(event);
+            Ok(())
+        }
+
+        fn lagged(&self, _dropped: u64) -> cheetah_media_api::error::Result<()> {
+            Ok(())
+        }
+    }
+
+    async fn recv_event(
+        rx: &mut UnboundedReceiver<MediaEvent>,
+        deadline: Duration,
+    ) -> Option<MediaEvent> {
+        timeout(deadline, rx.recv()).await.ok().flatten()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn media_event_stream_lifecycle() {
+        let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
+        let bus = Arc::new(LocalMediaEventBus::new(runtime.clone()));
+        let (tx, mut rx) = unbounded_channel();
+        let _sub = bus
+            .subscribe(Box::new(CollectingMediaEventSender(tx)), 64)
+            .unwrap();
+
+        let manager = StreamManager::new(DispatcherMode::PerStream, 128, runtime);
+        manager.set_media_event_bus(bus);
+
+        let key = StreamKey::new("live", "media-event");
+        let options = PublisherOptions {
+            announce_tracks: true,
+            protocol: "rtmp".to_string(),
+            remote_endpoint: Some("1.2.3.4:1935".to_string()),
+        };
+        let (_lease, sink) = manager
+            .acquire_publisher(key.clone(), options)
+            .await
+            .expect("publisher");
+
+        let first = recv_event(&mut rx, Duration::from_millis(100))
+            .await
+            .expect("online event after acquire");
+        assert!(matches!(first, MediaEvent::StreamOnlineChanged(_)));
+
+        let track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90000);
+        sink.update_tracks(vec![track]).unwrap();
+
+        let second = recv_event(&mut rx, Duration::from_millis(100))
+            .await
+            .expect("published event after tracks");
+        match second {
+            MediaEvent::StreamPublished(p) => {
+                assert_eq!(p.protocol, "rtmp");
+                assert_eq!(p.remote_endpoint.as_deref(), Some("1.2.3.4:1935"));
+            }
+            _ => panic!("expected StreamPublished, got {second:?}"),
+        }
+
+        sink.close().unwrap();
+
+        let third = recv_event(&mut rx, Duration::from_millis(100))
+            .await
+            .expect("unpublished event after close");
+        assert!(matches!(third, MediaEvent::StreamUnpublished(_)));
+
+        let fourth = recv_event(&mut rx, Duration::from_millis(100))
+            .await
+            .expect("offline event after close");
+        assert!(matches!(fourth, MediaEvent::StreamOnlineChanged(_)));
     }
 }

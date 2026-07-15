@@ -1,5 +1,8 @@
 use std::sync::Arc;
 
+use cheetah_media_api::event::{
+    EventHeader, MediaEvent, MediaEventBusApi, ServerLifecycle, ServerLifecycleKind,
+};
 use cheetah_sdk::{
     CancellationToken, ClusterApi, ConfigApplyApi, ConfigProvider, ConfigSchemaRegistry,
     CoreAdaptersApi, DatabaseApi, EngineContext, EventBus, FfmpegApi, HealthApi, MediaDataPlaneApi,
@@ -155,8 +158,8 @@ impl EngineBuilder {
 
         let publisher_api: Arc<dyn PublisherApi> = stream_manager.clone();
         let subscriber_api: Arc<dyn SubscriberApi> = stream_manager.clone();
-        let session_directory: Arc<dyn MediaSessionDirectoryApi> =
-            Arc::new(EngineMediaSessionDirectory::new());
+        let session_directory_impl = Arc::new(EngineMediaSessionDirectory::new());
+        let session_directory: Arc<dyn MediaSessionDirectoryApi> = session_directory_impl.clone();
         let media_data_plane: Arc<dyn MediaDataPlaneApi> = Arc::new(EngineMediaDataPlane::new(
             publisher_api.clone(),
             subscriber_api.clone(),
@@ -178,6 +181,8 @@ impl EngineBuilder {
         let media_event_bus = Arc::new(crate::media_provider::LocalMediaEventBus::new(
             self.runtime_api.clone(),
         ));
+        stream_manager.set_media_event_bus(media_event_bus.clone());
+        session_directory_impl.set_media_event_bus(media_event_bus.clone());
         let media_facade = Arc::new(EngineMediaFacade::new(
             media_services.clone(),
             media_event_bus.clone() as Arc<dyn cheetah_media_api::event::MediaEventBusApi>,
@@ -280,6 +285,26 @@ impl Engine {
         }
     }
 
+    fn publish_server_lifecycle(&self, kind: ServerLifecycleKind, status: &str) {
+        let now_ms = (self.runtime_api.now().as_micros() / 1000) as i64;
+        let _ = self
+            .media_event_bus
+            .publish(MediaEvent::ServerLifecycle(ServerLifecycle {
+                header: EventHeader {
+                    event_id: format!("server-lifecycle-{kind:?}-{now_ms}"),
+                    occurred_at: now_ms,
+                    sequence: None,
+                    media_key: None,
+                    source: "engine".to_string(),
+                    correlation_id: None,
+                },
+                kind,
+                server_id: "cheetah-engine".to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+                status: status.to_string(),
+            }));
+    }
+
     /// Initialize and start all registered modules.
     ///
     /// Marks the engine live, initializes modules in topological order, creates a child
@@ -340,6 +365,7 @@ impl Engine {
                 phase: "started".to_string(),
                 message: None,
             }));
+        self.publish_server_lifecycle(ServerLifecycleKind::Started, "ok");
 
         Ok(())
     }
@@ -362,6 +388,7 @@ impl Engine {
                 phase: "stopped".to_string(),
                 message: None,
             }));
+        self.publish_server_lifecycle(ServerLifecycleKind::Exited, "ok");
     }
 
     pub fn stream_manager_api(&self) -> Arc<dyn StreamManagerApi> {
@@ -449,13 +476,16 @@ mod tests {
 
     use async_trait::async_trait;
     use cheetah_config::ConfigStore;
+    use cheetah_media_api::event::{MediaEvent, MediaEventSender};
     use cheetah_runtime_tokio::TokioRuntime;
     use cheetah_sdk::{
         CancellationToken, ConfigEffect, HealthApi, Module, ModuleCapability, ModuleConfigChange,
         ModuleFactory, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState,
-        SdkError,
+        RuntimeApi, SdkError,
     };
     use serde_json::json;
+    use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+    use tokio::time::{timeout, Duration};
 
     use super::EngineBuilder;
 
@@ -1050,5 +1080,52 @@ mod tests {
         );
 
         engine.stop().await;
+    }
+
+    struct CollectingMediaEventSender(UnboundedSender<MediaEvent>);
+
+    impl MediaEventSender for CollectingMediaEventSender {
+        fn send(&self, event: MediaEvent) -> cheetah_media_api::error::Result<()> {
+            let _ = self.0.send(event);
+            Ok(())
+        }
+
+        fn lagged(&self, _dropped: u64) -> cheetah_media_api::error::Result<()> {
+            Ok(())
+        }
+    }
+
+    async fn recv_event(
+        rx: &mut UnboundedReceiver<MediaEvent>,
+        deadline: Duration,
+    ) -> Option<MediaEvent> {
+        timeout(deadline, rx.recv()).await.ok().flatten()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn media_event_server_lifecycle() {
+        let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
+        let config = Arc::new(ConfigStore::new());
+        let engine = EngineBuilder::new(config.clone(), config, runtime)
+            .build()
+            .expect("engine build");
+
+        let bus = engine.context().media_event_bus.clone();
+        let (tx, mut rx) = unbounded_channel();
+        let _sub = bus
+            .subscribe(Box::new(CollectingMediaEventSender(tx)), 8)
+            .unwrap();
+
+        engine.start().await.expect("engine start");
+        let started = recv_event(&mut rx, Duration::from_millis(50))
+            .await
+            .expect("ServerLifecycle(Started)");
+        assert!(matches!(started, MediaEvent::ServerLifecycle(_)));
+
+        engine.stop().await;
+        let exited = recv_event(&mut rx, Duration::from_millis(50))
+            .await
+            .expect("ServerLifecycle(Exited)");
+        assert!(matches!(exited, MediaEvent::ServerLifecycle(_)));
     }
 }

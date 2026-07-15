@@ -168,7 +168,11 @@ impl Module for RecordModule {
         ));
         let executor_dyn: Arc<dyn TaskExecutor> = executor.clone();
         self.executor = Some(executor);
-        let record_api = Arc::new(RecordApi::new(self.registry.clone(), executor_dyn));
+        let record_api = Arc::new(RecordApi::new(
+            self.registry.clone(),
+            executor_dyn,
+            ctx.engine.media_event_bus.clone(),
+        ));
         self.api = Some(record_api.clone());
         let record_capabilities = {
             let mut set = cheetah_media_api::MediaCapabilitySet::empty();

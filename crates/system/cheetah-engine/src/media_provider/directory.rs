@@ -6,13 +6,15 @@ use std::sync::{
 use async_trait::async_trait;
 use cheetah_media_api::command::SessionQuery;
 use cheetah_media_api::error::{MediaError, Result as MediaResult};
+use cheetah_media_api::event::{MediaEvent, MediaEventBusApi, SessionClosed, SessionOpened};
 use cheetah_media_api::ids::{MediaKey, SessionId};
 use cheetah_media_api::model::{CloseReason, CloseReport, Page, SessionInfo, SessionState};
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::media_session::{MediaSessionDirectoryApi, SessionCloseHandle};
 use dashmap::DashMap;
+use parking_lot::RwLock;
 
-use super::util::now_ms;
+use super::util::{event_header, now_ms};
 
 struct Record {
     info: SessionInfo,
@@ -30,6 +32,7 @@ pub struct EngineMediaSessionDirectory {
 struct Inner {
     sessions: DashMap<SessionId, Record>,
     next_id: AtomicU64,
+    media_event_bus: RwLock<Option<Arc<dyn MediaEventBusApi>>>,
 }
 
 impl EngineMediaSessionDirectory {
@@ -38,13 +41,48 @@ impl EngineMediaSessionDirectory {
             inner: Arc::new(Inner {
                 sessions: DashMap::new(),
                 next_id: AtomicU64::new(1),
+                media_event_bus: RwLock::new(None),
             }),
         }
+    }
+
+    /// Attach the typed media event bus so directory changes are published.
+    pub fn set_media_event_bus(&self, bus: Arc<dyn MediaEventBusApi>) {
+        *self.inner.media_event_bus.write() = Some(bus);
     }
 
     fn new_id(&self) -> SessionId {
         let id = self.inner.next_id.fetch_add(1, Ordering::Relaxed);
         SessionId(format!("sess-{id:016x}"))
+    }
+
+    fn publish(&self, event: MediaEvent) {
+        if let Some(bus) = self.inner.media_event_bus.read().as_ref() {
+            let _ = bus.publish(event);
+        }
+    }
+
+    fn emit_session_opened(&self, record: &SessionInfo) {
+        let mut header = event_header("session-directory", Some(&record.media_key), None);
+        header.correlation_id = Some(record.session_id.0.clone());
+        self.publish(MediaEvent::SessionOpened(SessionOpened {
+            header,
+            kind: record.kind,
+            session_id: record.session_id.clone(),
+            remote_endpoint: record.remote_endpoint.clone(),
+            protocol: record.protocol.clone(),
+        }));
+    }
+
+    fn emit_session_closed(&self, record: &SessionInfo, reason: CloseReason) {
+        let mut header = event_header("session-directory", Some(&record.media_key), None);
+        header.correlation_id = Some(record.session_id.0.clone());
+        self.publish(MediaEvent::SessionClosed(SessionClosed {
+            header,
+            kind: record.kind,
+            session_id: record.session_id.clone(),
+            reason,
+        }));
     }
 
     fn matches(record: &SessionInfo, query: &SessionQuery) -> bool {
@@ -108,6 +146,7 @@ impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
                 Err(MediaError::already_exists(format!("session {id}")))
             }
             dashmap::mapref::entry::Entry::Vacant(e) => {
+                self.emit_session_opened(&record);
                 e.insert(Record {
                     info: record,
                     close_handle,
@@ -122,7 +161,9 @@ impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
         _ctx: &MediaRequestContext,
         id: &SessionId,
     ) -> MediaResult<()> {
-        self.inner.sessions.remove(id);
+        if let Some((_, record)) = self.inner.sessions.remove(id) {
+            self.emit_session_closed(&record.info, CloseReason::Normal);
+        }
         Ok(())
     }
 
@@ -199,6 +240,7 @@ impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
             Some(Record { info, close_handle }) => {
                 let key = info.media_key.clone();
                 let closed_id = close_handle.close(reason.clone()).await?;
+                self.emit_session_closed(&info, reason.clone());
                 Ok(CloseReport {
                     media_key: key,
                     closed_sessions: vec![closed_id],
@@ -216,7 +258,7 @@ impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
         reason: CloseReason,
     ) -> MediaResult<CloseReport> {
         let mut closed = Vec::new();
-        let mut handles: Vec<(SessionId, Box<dyn SessionCloseHandle>)> = Vec::new();
+        let mut handles: Vec<(SessionId, SessionInfo, Box<dyn SessionCloseHandle>)> = Vec::new();
         {
             let keys_to_remove: Vec<SessionId> = self
                 .inner
@@ -227,13 +269,16 @@ impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
                 .collect();
             for id in keys_to_remove {
                 if let Some((_, record)) = self.inner.sessions.remove(&id) {
-                    handles.push((id, record.close_handle));
+                    handles.push((id, record.info, record.close_handle));
                 }
             }
         }
-        for (id, handle) in handles {
+        for (id, info, handle) in handles {
             match handle.close(reason.clone()).await {
-                Ok(closed_id) => closed.push(closed_id),
+                Ok(closed_id) => {
+                    self.emit_session_closed(&info, reason.clone());
+                    closed.push(closed_id);
+                }
                 Err(_) => closed.push(id),
             }
         }
@@ -248,8 +293,14 @@ impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::media_provider::LocalMediaEventBus;
+    use cheetah_media_api::event::{MediaEvent, MediaEventBusApi, MediaEventSender};
     use cheetah_media_api::model::SessionKind;
+    use cheetah_runtime_tokio::TokioRuntime;
     use cheetah_sdk::media_session::MediaSessionDirectoryApi;
+    use cheetah_sdk::RuntimeApi;
+    use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
+    use tokio::time::{timeout, Duration};
 
     fn dummy_record() -> SessionInfo {
         SessionInfo {
@@ -321,5 +372,69 @@ mod tests {
             .await
             .unwrap()
             .is_none());
+    }
+
+    struct CollectingMediaEventSender(UnboundedSender<MediaEvent>);
+
+    impl MediaEventSender for CollectingMediaEventSender {
+        fn send(&self, event: MediaEvent) -> cheetah_media_api::error::Result<()> {
+            let _ = self.0.send(event);
+            Ok(())
+        }
+
+        fn lagged(&self, _dropped: u64) -> cheetah_media_api::error::Result<()> {
+            Ok(())
+        }
+    }
+
+    async fn recv_event(
+        rx: &mut UnboundedReceiver<MediaEvent>,
+        deadline: Duration,
+    ) -> Option<MediaEvent> {
+        timeout(deadline, rx.recv()).await.ok().flatten()
+    }
+
+    #[tokio::test]
+    async fn media_event_session_lifecycle() {
+        let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
+        let bus = Arc::new(LocalMediaEventBus::new(runtime));
+        let (tx, mut rx) = unbounded_channel();
+        let _sub = bus
+            .subscribe(Box::new(CollectingMediaEventSender(tx)), 8)
+            .unwrap();
+
+        let dir = EngineMediaSessionDirectory::new();
+        dir.set_media_event_bus(bus);
+
+        let mut record = dummy_record();
+        record.media_key =
+            MediaKey::new("__defaultVhost__", "live", "session-event", None).unwrap();
+        record.remote_endpoint = Some("5.6.7.8:10000".to_string());
+        record.protocol = "rtp".to_string();
+
+        let id = dir
+            .register_session(
+                &MediaRequestContext::default(),
+                record,
+                Box::new(DummyCloseHandle),
+            )
+            .await
+            .unwrap();
+
+        let opened = recv_event(&mut rx, Duration::from_millis(100))
+            .await
+            .expect("SessionOpened event");
+        assert!(matches!(opened, MediaEvent::SessionOpened(_)));
+
+        let report = dir
+            .close_session(&MediaRequestContext::default(), &id, CloseReason::Kicked)
+            .await
+            .unwrap();
+        assert!(!report.closed_sessions.is_empty());
+
+        let closed = recv_event(&mut rx, Duration::from_millis(100))
+            .await
+            .expect("SessionClosed event");
+        assert!(matches!(closed, MediaEvent::SessionClosed(_)));
     }
 }

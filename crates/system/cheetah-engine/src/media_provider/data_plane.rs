@@ -56,9 +56,14 @@ impl MediaDataPlaneApi for EngineMediaDataPlane {
         request: PublishRequest,
     ) -> MediaResult<Box<dyn MediaFramePublisher>> {
         let stream_key = Self::media_key_to_stream_key(&request.media_key);
+        let options = PublisherOptions {
+            announce_tracks: true,
+            protocol: request.protocol.clone(),
+            remote_endpoint: request.remote_endpoint.clone(),
+        };
         let (_, sink) = self
             .publisher_api
-            .acquire_publisher(stream_key, PublisherOptions::default())
+            .acquire_publisher(stream_key, options)
             .await
             .map_err(Self::map_sdk_error)?;
         Ok(Box::new(FramePublisher {
