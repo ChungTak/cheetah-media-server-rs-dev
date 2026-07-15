@@ -12,6 +12,7 @@ use cheetah_media_api::{MediaScope, Principal};
 
 const DEFAULT_MAX_SESSIONS: usize = 10_000;
 const MAX_FAILED_ATTEMPTS: usize = 5;
+const MAX_FAILED_USERNAMES: usize = 10_000;
 const FAILED_ATTEMPT_WINDOW_SECS: u64 = 15 * 60;
 
 pub(crate) struct SessionEntry {
@@ -90,12 +91,35 @@ impl SessionStore {
         self.sessions.write().unwrap().remove(token);
     }
 
+    /// Check whether a username is currently rate limited, without recording a
+    /// new attempt.
+    pub(crate) fn is_rate_limited(&self, username: &str) -> bool {
+        let window = Duration::from_secs(FAILED_ATTEMPT_WINDOW_SECS);
+        let now = Instant::now();
+        let attempts = self.failed_attempts.read().unwrap();
+        if let Some(entry) = attempts.get(username) {
+            let recent = entry
+                .iter()
+                .filter(|t| now.duration_since(**t) < window)
+                .count();
+            recent >= MAX_FAILED_ATTEMPTS
+        } else {
+            false
+        }
+    }
+
     /// Record a failed login attempt and return `true` if the username is now
     /// rate limited.
-    pub(crate) fn record_failed_login(&self, username: &str) -> bool {
+    pub(crate) fn record_failed_attempt(&self, username: &str) -> bool {
         let window = Duration::from_secs(FAILED_ATTEMPT_WINDOW_SECS);
         let now = Instant::now();
         let mut attempts = self.failed_attempts.write().unwrap();
+        // Keep the username map bounded: drop stale empty entries and refuse to
+        // create new keys once the distinct-username cap is reached.
+        attempts.retain(|_, v| !v.is_empty());
+        if attempts.len() >= MAX_FAILED_USERNAMES && !attempts.contains_key(username) {
+            return false;
+        }
         let entry = attempts.entry(username.to_string()).or_default();
         entry.retain(|t| now.duration_since(*t) < window);
         entry.push(now);

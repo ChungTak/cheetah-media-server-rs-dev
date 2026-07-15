@@ -219,6 +219,38 @@ async fn zlm_session_rate_limit_blocks_brute_force() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn zlm_session_rate_limit_resets_on_success() {
+    let service = zlm_service().await;
+
+    for _ in 0..4 {
+        let resp = service
+            .handle(post(
+                "/api/login",
+                json!({"username": "admin", "password": "wrong"}),
+                vec![],
+            ))
+            .await
+            .expect("login");
+        assert_eq!(body_json(&resp)["code"], -100, "failed attempt");
+    }
+
+    // A valid login should succeed and reset the failure counter.
+    let resp = service
+        .handle(post(
+            "/api/login",
+            json!({"username": "admin", "password": "secret123"}),
+            vec![],
+        ))
+        .await
+        .expect("login");
+    assert_eq!(
+        body_json(&resp)["code"],
+        0,
+        "valid login after failures failed"
+    );
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn zlm_session_store_evicts_oldest_at_capacity() {
     // Set a tiny max_sessions so we can observe eviction of the oldest token.
     let engine = make_engine_with_max_sessions(Some(2));

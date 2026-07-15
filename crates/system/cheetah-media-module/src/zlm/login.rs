@@ -38,7 +38,7 @@ impl ZlmMediaHttpService {
             .or_else(|| params["pass"].as_str())
             .ok_or_else(|| AdapterError::InvalidRequest("password is required".to_string()))?;
 
-        if self.session_store.record_failed_login(username) {
+        if self.session_store.is_rate_limited(username) {
             return Err(AdapterError::Media(
                 cheetah_media_api::error::MediaError::new(
                     cheetah_media_api::error::MediaErrorCode::Unauthenticated,
@@ -51,6 +51,14 @@ impl ZlmMediaHttpService {
         let pass_ok = constant_time_eq_str(password, &session_cfg.password);
         let valid = user_ok & pass_ok;
         if !valid {
+            if self.session_store.record_failed_attempt(username) {
+                return Err(AdapterError::Media(
+                    cheetah_media_api::error::MediaError::new(
+                        cheetah_media_api::error::MediaErrorCode::Unauthenticated,
+                        "too many failed login attempts",
+                    ),
+                ));
+            }
             return Err(AdapterError::Media(
                 cheetah_media_api::error::MediaError::new(
                     cheetah_media_api::error::MediaErrorCode::Unauthenticated,
