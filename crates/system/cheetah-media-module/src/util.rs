@@ -2,7 +2,12 @@
 //!
 //! HTTP adapter 的共享辅助工具。
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use serde_json::Map;
+
+static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Percent-decode a string, preserving encoded slashes (`%2F` / `%2f`) so that
 /// `%2F` does not accidentally become a path separator and fail downstream
@@ -128,4 +133,117 @@ mod tests {
         assert_eq!(parse_json_bool(&serde_json::json!("yes")), Some(true));
         assert_eq!(parse_json_bool(&serde_json::json!("off")), Some(false));
     }
+
+    #[test]
+    fn generate_request_id_is_unique_per_call() {
+        let a = generate_request_id();
+        let b = generate_request_id();
+        assert_ne!(a, b);
+        assert!(!a.is_empty());
+    }
+
+    #[test]
+    fn request_deadline_caps_client_value() {
+        let before = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let far_future = before + 600_000; // 10 minutes
+        let d = request_deadline(Some(far_future), 30_000).unwrap();
+        assert!(d <= before + 30_000 && d >= before);
+        let d2 = request_deadline(None, 30_000).unwrap();
+        let after = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        assert!(d2 <= after + 30_000 && d2 >= before);
+    }
+
+    #[test]
+    fn set_request_id_header_replaces_existing() {
+        use cheetah_sdk::{HttpHeader, HttpMethod, HttpRequest};
+        let mut req = HttpRequest {
+            method: HttpMethod::Get,
+            path: "/test".to_string(),
+            query: None,
+            headers: vec![HttpHeader {
+                name: "x-request-id".to_string(),
+                value: "old".to_string(),
+            }],
+            body: bytes::Bytes::new(),
+        };
+        set_request_id_header(&mut req, "new");
+        assert_eq!(req.headers.len(), 1);
+        assert_eq!(req.headers[0].value, "new");
+    }
+
+    #[test]
+    fn set_response_request_id_header_replaces_existing() {
+        use cheetah_sdk::{HttpHeader, HttpResponse};
+        let mut resp = HttpResponse {
+            status: 200,
+            headers: vec![HttpHeader {
+                name: "x-request-id".to_string(),
+                value: "old".to_string(),
+            }],
+            body: bytes::Bytes::new(),
+        };
+        set_response_request_id_header(&mut resp, "new");
+        assert_eq!(resp.headers.len(), 1);
+        assert_eq!(resp.headers[0].value, "new");
+    }
+}
+
+/// Generate a process-unique request ID.
+///
+/// 生成进程内唯一的 request ID。
+pub fn generate_request_id() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let n = REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{now:016x}-{n:08x}")
+}
+
+/// Compute a request deadline from an optional client deadline header.
+///
+/// 根据可选的客户端 deadline 头计算请求 deadline。
+///
+/// The client value is clamped to `now + default_timeout_ms` so callers cannot
+/// request unbounded server-side wait times. When no header is present the
+/// route-default deadline is returned.
+pub fn request_deadline(client_deadline_ms: Option<i64>, default_timeout_ms: i64) -> Option<i64> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let max_deadline = now + default_timeout_ms;
+    Some(
+        client_deadline_ms
+            .map(|d| d.min(max_deadline))
+            .unwrap_or(max_deadline),
+    )
+}
+
+/// Set or overwrite the `x-request-id` header on an incoming request.
+pub fn set_request_id_header(req: &mut cheetah_sdk::HttpRequest, request_id: &str) {
+    use cheetah_sdk::HttpHeader;
+    req.headers
+        .retain(|h| !h.name.eq_ignore_ascii_case("x-request-id"));
+    req.headers.push(HttpHeader {
+        name: "x-request-id".to_string(),
+        value: request_id.to_string(),
+    });
+}
+
+/// Set or overwrite the `x-request-id` header on an outgoing response.
+pub fn set_response_request_id_header(resp: &mut cheetah_sdk::HttpResponse, request_id: &str) {
+    use cheetah_sdk::HttpHeader;
+    resp.headers
+        .retain(|h| !h.name.eq_ignore_ascii_case("x-request-id"));
+    resp.headers.push(HttpHeader {
+        name: "x-request-id".to_string(),
+        value: request_id.to_string(),
+    });
 }

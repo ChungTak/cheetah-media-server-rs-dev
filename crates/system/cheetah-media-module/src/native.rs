@@ -208,10 +208,14 @@ impl NativeMediaHttpService {
     }
 
     fn request_context(&self, req: &HttpRequest) -> Result<MediaRequestContext, AdapterError> {
-        let request_id = header_value(&req.headers, "x-request-id")
-            .map(|v| cheetah_media_api::ids::RequestId(v.to_string()))
-            .unwrap_or_else(|| cheetah_media_api::ids::RequestId("".to_string()));
-        let deadline = header_value(&req.headers, "x-deadline").and_then(|v| v.parse::<i64>().ok());
+        let request_id = cheetah_media_api::ids::RequestId(
+            header_value(&req.headers, "x-request-id")
+                .map(|v| v.to_string())
+                .unwrap_or_else(crate::util::generate_request_id),
+        );
+        let client_deadline =
+            header_value(&req.headers, "x-deadline").and_then(|v| v.parse::<i64>().ok());
+        let deadline = crate::util::request_deadline(client_deadline, 60_000);
         let credentials = AuthCredentials {
             authorization_header: header_value(&req.headers, "authorization")
                 .map(|s| s.to_string()),
@@ -227,6 +231,7 @@ impl NativeMediaHttpService {
             source_adapter: "native".to_string(),
             trace_context: header_value(&req.headers, "x-trace-context").map(|s| s.to_string()),
             deadline,
+            idempotency_key: header_value(&req.headers, "idempotency-key").map(|s| s.to_string()),
         })
     }
 
@@ -329,7 +334,13 @@ impl NativeMediaHttpService {
     async fn record_start(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let ctx = self.authorize_request(&req)?;
         let record_api = self.record()?;
-        let request: StartRecordRequest = parse_body(&req)?;
+        let mut request: StartRecordRequest = parse_body(&req)?;
+        if request.idempotency_key.is_none() {
+            request.idempotency_key = ctx
+                .idempotency_key
+                .clone()
+                .map(cheetah_media_api::ids::IdempotencyKey);
+        }
         let task = record_api.start_record(&ctx, request).await?;
         Ok(json_response(&task))
     }
@@ -476,7 +487,12 @@ impl NativeMediaHttpService {
 
 #[async_trait]
 impl ModuleHttpService for NativeMediaHttpService {
-    async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
+    async fn handle(&self, mut req: HttpRequest) -> Result<HttpResponse, SdkError> {
+        let request_id = header_value(&req.headers, "x-request-id")
+            .map(|v| v.to_string())
+            .unwrap_or_else(crate::util::generate_request_id);
+        crate::util::set_request_id_header(&mut req, &request_id);
+
         let result: Result<HttpResponse, AdapterError> = async {
             match (req.method, req.path.as_str()) {
                 (HttpMethod::Get, "/media/capabilities") => self.capabilities(req).await,
@@ -552,21 +568,21 @@ impl ModuleHttpService for NativeMediaHttpService {
         }
         .await;
 
-        match result {
-            Ok(resp) => Ok(resp),
+        let mut response = match result {
+            Ok(resp) => resp,
             Err(AdapterError::Media(err)) => {
-                let request_id = err.request_id.clone();
-                let (status, body) = native_error_response(&err, request_id.as_deref());
-                Ok(HttpResponse {
+                let err_request_id = err.request_id.clone();
+                let (status, body) = native_error_response(&err, err_request_id.as_deref());
+                HttpResponse {
                     status,
                     headers: vec![HttpHeader {
                         name: "content-type".to_string(),
                         value: "application/json".to_string(),
                     }],
                     body: Bytes::from(serde_json::to_vec(&body).unwrap_or_default()),
-                })
+                }
             }
-            Err(AdapterError::InvalidRequest(msg)) => Ok(HttpResponse {
+            Err(AdapterError::InvalidRequest(msg)) => HttpResponse {
                 status: 400,
                 headers: vec![HttpHeader {
                     name: "content-type".to_string(),
@@ -578,8 +594,8 @@ impl ModuleHttpService for NativeMediaHttpService {
                     }))
                     .unwrap_or_default(),
                 ),
-            }),
-            Err(AdapterError::Serialization(msg)) => Ok(HttpResponse {
+            },
+            Err(AdapterError::Serialization(msg)) => HttpResponse {
                 status: 500,
                 headers: vec![HttpHeader {
                     name: "content-type".to_string(),
@@ -591,8 +607,10 @@ impl ModuleHttpService for NativeMediaHttpService {
                     }))
                     .unwrap_or_default(),
                 ),
-            }),
-        }
+            },
+        };
+        crate::util::set_response_request_id_header(&mut response, &request_id);
+        Ok(response)
     }
 }
 

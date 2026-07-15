@@ -18,6 +18,9 @@ pub struct MediaRequestContext {
     pub source_adapter: String,
     pub trace_context: Option<String>,
     pub deadline: Option<i64>,
+    /// Idempotency key supplied by the client for create operations.
+    /// Only used by routes that start tasks, sessions, proxies, etc.
+    pub idempotency_key: Option<String>,
 }
 
 impl Default for MediaRequestContext {
@@ -29,6 +32,7 @@ impl Default for MediaRequestContext {
             source_adapter: "unknown".to_string(),
             trace_context: None,
             deadline: None,
+            idempotency_key: None,
         }
     }
 }
