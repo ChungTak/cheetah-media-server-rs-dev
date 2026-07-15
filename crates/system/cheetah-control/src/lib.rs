@@ -675,10 +675,10 @@ fn root_route_match(
             continue;
         }
         let route_path = normalize_root_route(&route.path);
-        if route_path == absolute {
+        if path_template_match(&route_path, &absolute) {
             matched_path = true;
             if route.method == method {
-                return (true, true, route_path);
+                return (true, true, absolute);
             }
         }
     }
@@ -896,6 +896,34 @@ mod tests {
         assert_eq!(
             root_route_match(&mount, HttpMethod::Options, "/rtc/v1/whep"),
             (true, false, "/rtc/v1/whep".to_string())
+        );
+    }
+
+    #[test]
+    fn root_route_match_allows_path_templates() {
+        let mount = HttpRouteMount {
+            module_id: cheetah_sdk::ModuleId::new("noop"),
+            prefix: "/api/v1/noop".to_string(),
+            routes: vec![HttpRouteDescriptor {
+                method: HttpMethod::Get,
+                path: "//callbacks/{id}/notify".to_string(),
+            }],
+            service: Arc::new(DummyHttpService),
+            max_body_bytes: 8 * 1024 * 1024,
+            request_timeout_ms: None,
+        };
+
+        assert_eq!(
+            root_route_match(&mount, HttpMethod::Get, "/callbacks/abc123/notify"),
+            (true, true, "/callbacks/abc123/notify".to_string())
+        );
+        assert_eq!(
+            root_route_match(&mount, HttpMethod::Get, "/callbacks/abc123/extra"),
+            (false, false, "/callbacks/abc123/extra".to_string())
+        );
+        assert_eq!(
+            root_route_match(&mount, HttpMethod::Post, "/callbacks/abc123/notify"),
+            (true, false, "/callbacks/abc123/notify".to_string())
         );
     }
 

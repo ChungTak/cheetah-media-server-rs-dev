@@ -313,11 +313,11 @@ impl ZlmMediaHttpService {
                     ))
                 })?;
                 use subtle::{Choice, ConstantTimeEq};
-                let provided = query_param(req, "secret").unwrap_or_default();
+                // Prefer header over query parameter to avoid secret ending up in access logs.
+                let provided = secret_from_header_or_query(req);
                 let provided_bytes = provided.as_bytes();
                 let expected_bytes = expected.as_bytes();
-                let len_eq =
-                    (provided_bytes.len() as u64).ct_eq(&(expected_bytes.len() as u64));
+                let len_eq = (provided_bytes.len() as u64).ct_eq(&(expected_bytes.len() as u64));
                 let mut content_eq = Choice::from(1u8);
                 for (i, e) in expected_bytes.iter().enumerate() {
                     let p = provided_bytes.get(i).copied().unwrap_or(0);
@@ -1150,6 +1150,24 @@ fn query_param(req: &HttpRequest, name: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Extract the ZLM shared secret from a header (preferred) or the URL query string.
+///
+/// 优先从 HTTP 头读取 ZLM 共享密钥，避免密钥出现在 access log 的 URL 中。
+fn secret_from_header_or_query(req: &HttpRequest) -> String {
+    if let Some(header) = header_value(&req.headers, "x-zlm-secret") {
+        return header.to_string();
+    }
+    if let Some(header) = header_value(&req.headers, "authorization") {
+        let header = header.trim();
+        let stripped = header
+            .strip_prefix("Bearer ")
+            .or_else(|| header.strip_prefix("bearer "))
+            .or_else(|| header.strip_prefix("BEARER "));
+        return stripped.unwrap_or(header).trim().to_string();
+    }
+    query_param(req, "secret").unwrap_or_default()
 }
 
 fn page_from_params(params: &serde_json::Value) -> u64 {
