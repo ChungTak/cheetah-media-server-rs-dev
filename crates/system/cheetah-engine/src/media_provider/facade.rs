@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use cheetah_media_api::command::*;
 use cheetah_media_api::error::{MediaError, Result as MediaResult};
+use cheetah_media_api::event::{MediaEventBusApi, MediaEventSender, MediaEventSubscription};
 use cheetah_media_api::ids::{MediaKey, ProxyId, RecordFileId, RtpSessionId, SessionId};
 use cheetah_media_api::model::{
     CloseReason, CloseReport, OnlineState, Page, ProxyInfo, PublisherHandle, RecordFile,
@@ -13,6 +14,7 @@ use cheetah_media_api::port::{
 };
 use cheetah_media_api::MediaCapabilitySet;
 use cheetah_sdk::MediaServices;
+use std::sync::Arc;
 
 /// Engine media facade backed by the runtime `MediaServices` registry.
 ///
@@ -20,14 +22,18 @@ use cheetah_sdk::MediaServices;
 #[derive(Clone)]
 pub struct EngineMediaFacade {
     services: MediaServices,
+    media_event_bus: Arc<dyn MediaEventBusApi>,
 }
 
 impl EngineMediaFacade {
-    /// Build a facade backed by a `MediaServices` registry.
+    /// Build a facade backed by a `MediaServices` registry and a media event bus.
     ///
-    /// 使用 `MediaServices` 注册表构建 facade。
-    pub fn new(services: MediaServices) -> Self {
-        Self { services }
+    /// 使用 `MediaServices` 注册表和媒体事件总线构建 facade。
+    pub fn new(services: MediaServices, media_event_bus: Arc<dyn MediaEventBusApi>) -> Self {
+        Self {
+            services,
+            media_event_bus,
+        }
     }
 }
 
@@ -441,8 +447,8 @@ impl MediaFacade for EngineMediaFacade {
 
     fn subscribe_events(
         &self,
-        _sender: Box<dyn cheetah_media_api::event::MediaEventSender>,
-    ) -> MediaResult<()> {
-        Ok(())
+        sender: Box<dyn MediaEventSender>,
+    ) -> MediaResult<Box<dyn MediaEventSubscription>> {
+        self.media_event_bus.subscribe(sender, 256)
     }
 }
