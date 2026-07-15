@@ -20,6 +20,7 @@ srt = ["dep:cheetah-srt-module"]
 # GB28181 needs the RTP module at runtime for media delivery (matches the manifest declared
 # `dependencies` in `cheetah-gb28181-module`); enabling `gb28181` therefore implies `rtp`.
 gb28181 = ["dep:cheetah-gb28181-module", "rtp"]
+media-control-full = ["rtmp", "rtsp", "http-flv", "hls", "ts", "fmp4", "mp4", "rtp", "gb28181", "record", "webrtc", "srt"]
 tokio-console = ["dep:console-subscriber", "tokio/tracing"]
 
 [dependencies]
