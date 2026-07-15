@@ -12,9 +12,9 @@ use cheetah_media_api::ids::{
 };
 use cheetah_media_api::model::CloseReason;
 use cheetah_media_api::port::{
-    MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
+    ControlAuthApi, MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
 };
-use cheetah_media_api::{FileRange, MediaFileStoreApi};
+use cheetah_media_api::{AuthCredentials, FileRange, MediaFileStoreApi, MediaScope};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -164,21 +164,56 @@ impl NativeMediaHttpService {
         self.ctx.media_file_store.clone()
     }
 
-    fn request_context(&self, req: &HttpRequest) -> MediaRequestContext {
+    fn auth(&self) -> Result<Arc<dyn ControlAuthApi>, AdapterError> {
+        Ok(self.ctx.control_auth_api.clone())
+    }
+
+    fn require_scope(
+        &self,
+        ctx: &MediaRequestContext,
+        scope: &MediaScope,
+    ) -> Result<(), AdapterError> {
+        let has = ctx
+            .principal
+            .as_ref()
+            .map(|p| p.has_scope(scope))
+            .unwrap_or(false);
+        if !has {
+            return Err(AdapterError::Media(
+                cheetah_media_api::error::MediaError::new(
+                    cheetah_media_api::error::MediaErrorCode::PermissionDenied,
+                    format!("missing scope: {scope}"),
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    fn required_scope(&self, method: HttpMethod, path: &str) -> Option<MediaScope> {
+        crate::native_routes::native_required_scope(method, path)
+    }
+
+    fn request_context(&self, req: &HttpRequest) -> Result<MediaRequestContext, AdapterError> {
         let request_id = header_value(&req.headers, "x-request-id")
             .map(|v| cheetah_media_api::ids::RequestId(v.to_string()))
             .unwrap_or_else(|| cheetah_media_api::ids::RequestId("".to_string()));
         let deadline = header_value(&req.headers, "x-deadline").and_then(|v| v.parse::<i64>().ok());
-        MediaRequestContext {
+        let credentials = AuthCredentials {
+            authorization_header: header_value(&req.headers, "authorization")
+                .map(|s| s.to_string()),
+            mtls_identity: header_value(&req.headers, "x-mtls-identity").map(|s| s.to_string()),
+            deployment_token: header_value(&req.headers, "x-deployment-token")
+                .map(|s| s.to_string()),
+        };
+        let principal = Some(self.auth()?.authenticate(&credentials)?);
+        Ok(MediaRequestContext {
             request_id,
             correlation_id: header_value(&req.headers, "x-correlation-id").map(|s| s.to_string()),
-            principal: header_value(&req.headers, "x-principal")
-                .or_else(|| header_value(&req.headers, "x-user-id"))
-                .map(|s| s.to_string()),
+            principal,
             source_adapter: "native".to_string(),
             trace_context: header_value(&req.headers, "x-trace-context").map(|s| s.to_string()),
             deadline,
-        }
+        })
     }
 
     fn parse_media_key(&self, path: &str, prefix: &str) -> Result<MediaKey, AdapterError> {
@@ -196,7 +231,7 @@ impl NativeMediaHttpService {
     }
 
     async fn media_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let mut query: MediaQuery = parse_query(&req)?;
         query.clamp_page_size();
         let page = self.control()?.get_media_list(&ctx, query).await?;
@@ -204,21 +239,21 @@ impl NativeMediaHttpService {
     }
 
     async fn media_detail(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let key = self.parse_media_key(&req.path, "/media/")?;
         let info = self.control()?.get_media(&ctx, &key).await?;
         Ok(json_response(&info))
     }
 
     async fn media_online(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let key = self.parse_media_key(&req.path, "/media/")?;
         let online = self.control()?.is_media_online(&ctx, &key).await?;
         Ok(json_response(&serde_json::json!({ "online": online })))
     }
 
     async fn media_close(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let key = self.parse_media_key(&req.path, "/media/")?;
         let report = self
             .control()?
@@ -228,14 +263,14 @@ impl NativeMediaHttpService {
     }
 
     async fn media_keyframe(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let key = self.parse_media_key(&req.path, "/media/")?;
         self.control()?.request_keyframe(&ctx, &key).await?;
         Ok(json_response(&serde_json::json!({ "requested": true })))
     }
 
     async fn session_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let mut query: SessionQuery = parse_query(&req)?;
         query.clamp_page_size();
         let page = self.control()?.list_sessions(&ctx, query).await?;
@@ -243,7 +278,7 @@ impl NativeMediaHttpService {
     }
 
     async fn session_kick(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let parts: Vec<&str> = req.path.split('/').filter(|s| !s.is_empty()).collect();
         let session_id = parts
             .get(parts.len().saturating_sub(2))
@@ -260,7 +295,7 @@ impl NativeMediaHttpService {
     }
 
     async fn record_tasks(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let record_api = self.record()?;
         let mut query: RecordTaskQuery = parse_query(&req)?;
         query.clamp_page_size();
@@ -269,7 +304,7 @@ impl NativeMediaHttpService {
     }
 
     async fn record_files(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let record_api = self.record()?;
         let mut query: RecordFileQuery = parse_query(&req)?;
         query.clamp_page_size();
@@ -278,7 +313,7 @@ impl NativeMediaHttpService {
     }
 
     async fn record_start(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let record_api = self.record()?;
         let request: StartRecordRequest = parse_body(&req)?;
         let task = record_api.start_record(&ctx, request).await?;
@@ -286,7 +321,7 @@ impl NativeMediaHttpService {
     }
 
     async fn record_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let record_api = self.record()?;
         let id = record_id_from_path(&req.path, "/record/tasks/", "/stop")
             .ok_or_else(|| AdapterError::InvalidRequest("missing task_id".to_string()))?;
@@ -298,7 +333,7 @@ impl NativeMediaHttpService {
     }
 
     async fn record_file_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let record_api = self.record()?;
         let id = record_id_from_path(&req.path, "/record/files/", "")
             .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
@@ -317,7 +352,7 @@ impl NativeMediaHttpService {
         &self,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let record_api = self.record()?;
         let file_id = record_id_from_path(&req.path, "/record/playback/", "/control")
             .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
@@ -329,7 +364,7 @@ impl NativeMediaHttpService {
     }
 
     async fn rtp_receivers(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let rtp_api = self.rtp()?;
         let request: RtpReceiverRequest = parse_body(&req)?;
         let session = rtp_api.open_rtp_receiver(&ctx, request).await?;
@@ -337,7 +372,7 @@ impl NativeMediaHttpService {
     }
 
     async fn rtp_senders(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let rtp_api = self.rtp()?;
         let request: RtpSenderRequest = parse_body(&req)?;
         let session = rtp_api.open_rtp_sender(&ctx, request).await?;
@@ -345,7 +380,7 @@ impl NativeMediaHttpService {
     }
 
     async fn rtp_session_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let rtp_api = self.rtp()?;
         let id = rtp_id_from_path(&req.path, "/rtp/sessions/", "/stop")
             .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
@@ -354,7 +389,7 @@ impl NativeMediaHttpService {
     }
 
     async fn rtp_sessions(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let rtp_api = self.rtp()?;
         let mut query: RtpQuery = parse_query(&req)?;
         query.clamp_page_size();
@@ -363,7 +398,7 @@ impl NativeMediaHttpService {
     }
 
     async fn snapshot_create(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let snapshot_api = self.snapshot()?;
         let request: SnapshotRequest = parse_body(&req)?;
         let handle = snapshot_api.take_snapshot(&ctx, request).await?;
@@ -371,7 +406,7 @@ impl NativeMediaHttpService {
     }
 
     async fn snapshot_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let snapshot_api = self.snapshot()?;
         let mut query: SnapshotQuery = parse_query(&req)?;
         query.clamp_page_size();
@@ -383,7 +418,7 @@ impl NativeMediaHttpService {
         &self,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let snapshot_api = self.snapshot()?;
         let request: DeleteSnapshotRequest = parse_body(&req)?;
         snapshot_api
@@ -393,7 +428,7 @@ impl NativeMediaHttpService {
     }
 
     async fn file_download(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let handle = file_id_from_download_path(&req.path).ok_or_else(|| {
             AdapterError::InvalidRequest("invalid file download path".to_string())
         })?;
@@ -427,69 +462,84 @@ impl NativeMediaHttpService {
 #[async_trait]
 impl ModuleHttpService for NativeMediaHttpService {
     async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
-        let result = match (req.method, req.path.as_str()) {
-            (HttpMethod::Get, "/media/capabilities") => self.capabilities(req).await,
-            (HttpMethod::Get, "/media") => self.media_list(req).await,
-            (HttpMethod::Get, path) if path.starts_with("/media/") && path.ends_with("/online") => {
-                self.media_online(req).await
+        let result: Result<HttpResponse, AdapterError> = async {
+            let ctx = self.request_context(&req)?;
+            if let Some(scope) = self.required_scope(req.method, &req.path) {
+                self.require_scope(&ctx, &scope)?;
             }
-            (HttpMethod::Get, path) if path.starts_with("/media/") && path.ends_with("/close") => {
-                Err(AdapterError::InvalidRequest(
-                    "use POST for close".to_string(),
-                ))
+            match (req.method, req.path.as_str()) {
+                (HttpMethod::Get, "/media/capabilities") => self.capabilities(req).await,
+                (HttpMethod::Get, "/media") => self.media_list(req).await,
+                (HttpMethod::Get, path)
+                    if path.starts_with("/media/") && path.ends_with("/online") =>
+                {
+                    self.media_online(req).await
+                }
+                (HttpMethod::Get, path)
+                    if path.starts_with("/media/") && path.ends_with("/close") =>
+                {
+                    Err(AdapterError::InvalidRequest(
+                        "use POST for close".to_string(),
+                    ))
+                }
+                (HttpMethod::Post, path)
+                    if path.starts_with("/media/") && path.ends_with("/close") =>
+                {
+                    self.media_close(req).await
+                }
+                (HttpMethod::Post, path)
+                    if path.starts_with("/media/") && path.ends_with("/keyframe") =>
+                {
+                    self.media_keyframe(req).await
+                }
+                (HttpMethod::Get, path) if path.starts_with("/media/") => {
+                    self.media_detail(req).await
+                }
+                (HttpMethod::Get, "/sessions") => self.session_list(req).await,
+                (HttpMethod::Post, path)
+                    if path.starts_with("/sessions/") && path.ends_with("/kick") =>
+                {
+                    self.session_kick(req).await
+                }
+                (HttpMethod::Post, "/record/tasks") => self.record_start(req).await,
+                (HttpMethod::Post, path)
+                    if path.starts_with("/record/tasks/") && path.ends_with("/stop") =>
+                {
+                    self.record_stop(req).await
+                }
+                (HttpMethod::Get, "/record/tasks") => self.record_tasks(req).await,
+                (HttpMethod::Get, "/record/files") => self.record_files(req).await,
+                (HttpMethod::Delete, path) if path.starts_with("/record/files/") => {
+                    self.record_file_delete(req).await
+                }
+                (HttpMethod::Post, path)
+                    if path.starts_with("/record/playback/") && path.ends_with("/control") =>
+                {
+                    self.record_playback_control(req).await
+                }
+                (HttpMethod::Post, "/snapshots") => self.snapshot_create(req).await,
+                (HttpMethod::Get, "/snapshots") => self.snapshot_list(req).await,
+                (HttpMethod::Delete, "/snapshots/directories") => {
+                    self.snapshot_delete_directory(req).await
+                }
+                (HttpMethod::Get, path)
+                    if path.starts_with("/files/") && path.ends_with("/download") =>
+                {
+                    self.file_download(req).await
+                }
+                (HttpMethod::Get, "/proxies/pull") => self.proxies_pull(req).await,
+                (HttpMethod::Post, "/rtp/receivers") => self.rtp_receivers(req).await,
+                (HttpMethod::Post, "/rtp/senders") => self.rtp_senders(req).await,
+                (HttpMethod::Post, path)
+                    if path.starts_with("/rtp/sessions/") && path.ends_with("/stop") =>
+                {
+                    self.rtp_session_stop(req).await
+                }
+                (HttpMethod::Get, "/rtp/sessions") => self.rtp_sessions(req).await,
+                _ => Err(AdapterError::InvalidRequest("not found".to_string())),
             }
-            (HttpMethod::Post, path) if path.starts_with("/media/") && path.ends_with("/close") => {
-                self.media_close(req).await
-            }
-            (HttpMethod::Post, path)
-                if path.starts_with("/media/") && path.ends_with("/keyframe") =>
-            {
-                self.media_keyframe(req).await
-            }
-            (HttpMethod::Get, path) if path.starts_with("/media/") => self.media_detail(req).await,
-            (HttpMethod::Get, "/sessions") => self.session_list(req).await,
-            (HttpMethod::Post, path)
-                if path.starts_with("/sessions/") && path.ends_with("/kick") =>
-            {
-                self.session_kick(req).await
-            }
-            (HttpMethod::Post, "/record/tasks") => self.record_start(req).await,
-            (HttpMethod::Post, path)
-                if path.starts_with("/record/tasks/") && path.ends_with("/stop") =>
-            {
-                self.record_stop(req).await
-            }
-            (HttpMethod::Get, "/record/tasks") => self.record_tasks(req).await,
-            (HttpMethod::Get, "/record/files") => self.record_files(req).await,
-            (HttpMethod::Delete, path) if path.starts_with("/record/files/") => {
-                self.record_file_delete(req).await
-            }
-            (HttpMethod::Post, path)
-                if path.starts_with("/record/playback/") && path.ends_with("/control") =>
-            {
-                self.record_playback_control(req).await
-            }
-            (HttpMethod::Post, "/snapshots") => self.snapshot_create(req).await,
-            (HttpMethod::Get, "/snapshots") => self.snapshot_list(req).await,
-            (HttpMethod::Delete, "/snapshots/directories") => {
-                self.snapshot_delete_directory(req).await
-            }
-            (HttpMethod::Get, path)
-                if path.starts_with("/files/") && path.ends_with("/download") =>
-            {
-                self.file_download(req).await
-            }
-            (HttpMethod::Get, "/proxies/pull") => self.proxies_pull(req).await,
-            (HttpMethod::Post, "/rtp/receivers") => self.rtp_receivers(req).await,
-            (HttpMethod::Post, "/rtp/senders") => self.rtp_senders(req).await,
-            (HttpMethod::Post, path)
-                if path.starts_with("/rtp/sessions/") && path.ends_with("/stop") =>
-            {
-                self.rtp_session_stop(req).await
-            }
-            (HttpMethod::Get, "/rtp/sessions") => self.rtp_sessions(req).await,
-            _ => Err(AdapterError::InvalidRequest("not found".to_string())),
-        };
+        }
+        .await;
 
         match result {
             Ok(resp) => Ok(resp),

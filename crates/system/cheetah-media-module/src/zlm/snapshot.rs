@@ -11,7 +11,7 @@ use crate::error::AdapterError;
 impl ZlmMediaHttpService {
     pub(crate) async fn get_snap(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let snapshot_api = self.snapshot()?;
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let timeout_ms = parse_zlm_timeout_ms(&params);
@@ -36,7 +36,7 @@ impl ZlmMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let snapshot_api = self.snapshot()?;
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let request = DeleteSnapshotRequest {

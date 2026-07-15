@@ -9,8 +9,9 @@ use cheetah_media_api::command::{
 use cheetah_media_api::ids::{MediaKey, RecordFileId, SessionId};
 use cheetah_media_api::model::{CloseReason, RecordTaskState};
 use cheetah_media_api::port::{
-    MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
+    ControlAuthApi, MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
 };
+use cheetah_media_api::AuthCredentials;
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -250,21 +251,34 @@ impl ZlmMediaHttpService {
         })
     }
 
-    pub(crate) fn request_context(&self, req: &HttpRequest) -> MediaRequestContext {
+    fn auth(&self) -> Result<Arc<dyn ControlAuthApi>, AdapterError> {
+        Ok(self.ctx.control_auth_api.clone())
+    }
+
+    pub(crate) fn request_context(
+        &self,
+        req: &HttpRequest,
+    ) -> Result<MediaRequestContext, AdapterError> {
         let request_id = header_value(&req.headers, "x-request-id")
             .map(|v| cheetah_media_api::ids::RequestId(v.to_string()))
             .unwrap_or_else(|| cheetah_media_api::ids::RequestId("".to_string()));
         let deadline = header_value(&req.headers, "x-deadline").and_then(|v| v.parse::<i64>().ok());
-        MediaRequestContext {
+        let credentials = AuthCredentials {
+            authorization_header: header_value(&req.headers, "authorization")
+                .map(|s| s.to_string()),
+            mtls_identity: header_value(&req.headers, "x-mtls-identity").map(|s| s.to_string()),
+            deployment_token: header_value(&req.headers, "x-deployment-token")
+                .map(|s| s.to_string()),
+        };
+        let principal = Some(self.auth()?.authenticate(&credentials)?);
+        Ok(MediaRequestContext {
             request_id,
             correlation_id: header_value(&req.headers, "x-correlation-id").map(|s| s.to_string()),
-            principal: header_value(&req.headers, "x-principal")
-                .or_else(|| header_value(&req.headers, "x-user-id"))
-                .map(|s| s.to_string()),
+            principal,
             source_adapter: "zlm".to_string(),
             trace_context: header_value(&req.headers, "x-trace-context").map(|s| s.to_string()),
             deadline,
-        }
+        })
     }
 
     pub(crate) fn extract_params(
@@ -294,7 +308,7 @@ impl ZlmMediaHttpService {
     }
 
     async fn get_media_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let mut query = MediaQuery {
             vhost: params["vhost"].as_str().map(String::from),
@@ -311,7 +325,7 @@ impl ZlmMediaHttpService {
     }
 
     async fn is_media_online(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let online = self.control()?.is_media_online(&ctx, &key).await?;
@@ -323,7 +337,7 @@ impl ZlmMediaHttpService {
     }
 
     async fn get_media_info(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let info = self.control()?.get_media(&ctx, &key).await?;
@@ -331,7 +345,7 @@ impl ZlmMediaHttpService {
     }
 
     async fn get_all_session(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let mut query = SessionQuery {
             vhost: params["vhost"].as_str().map(String::from),
@@ -347,7 +361,7 @@ impl ZlmMediaHttpService {
     }
 
     async fn close_stream(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let _ = self
@@ -362,7 +376,7 @@ impl ZlmMediaHttpService {
     }
 
     async fn kick_session(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let id = params["id"]
             .as_str()
@@ -379,7 +393,7 @@ impl ZlmMediaHttpService {
 
     async fn record_start(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = zlm_record_format(&params["type"])?;
@@ -402,7 +416,7 @@ impl ZlmMediaHttpService {
 
     async fn record_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = zlm_record_format(&params["type"])?;
@@ -444,7 +458,7 @@ impl ZlmMediaHttpService {
 
     async fn is_recording(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = zlm_record_format(&params["type"])?;
@@ -470,7 +484,7 @@ impl ZlmMediaHttpService {
 
     async fn get_mp4_files(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let mut query = RecordFileQuery {
@@ -496,7 +510,7 @@ impl ZlmMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let mut query = RecordFileQuery {
@@ -552,7 +566,7 @@ impl ZlmMediaHttpService {
 
     async fn set_record_speed(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let file_id = parse_zlm_file_id(&params)?;
         let value = parse_zlm_playback_value(&params, &["speed", "scale", "value"])?;
@@ -572,7 +586,7 @@ impl ZlmMediaHttpService {
 
     async fn seek_record_stamp(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let file_id = parse_zlm_file_id(&params)?;
         let value = parse_zlm_playback_value(&params, &["stamp", "seek", "value"])?;
@@ -594,7 +608,7 @@ impl ZlmMediaHttpService {
 
     async fn control_record_play(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.request_context(&req);
+        let ctx = self.request_context(&req)?;
         let params = self.extract_params(&req)?;
         let file_id = parse_zlm_file_id(&params)?;
         let command = parse_zlm_playback_command(&params)?;

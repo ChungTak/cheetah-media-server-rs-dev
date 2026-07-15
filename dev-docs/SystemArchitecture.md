@@ -911,13 +911,30 @@ pub trait Module: Send + Sync {
 
 ```rust
 pub struct EngineContext {
-    pub publisher_api: Option<std::sync::Arc<dyn PublisherApi>>,
-    pub subscriber_api: Option<std::sync::Arc<dyn SubscriberApi>>,
-    pub stream_manager_api: Option<std::sync::Arc<dyn StreamManagerApi>>,
-    pub service_registry: Option<std::sync::Arc<dyn ServiceRegistry>>,
-    pub database_api: Option<std::sync::Arc<dyn DatabaseApi>>,
-    pub proxy_manager: Option<std::sync::Arc<dyn ProxyManager>>,
-    // ... 其他能力按需注入
+    pub runtime_api: std::sync::Arc<dyn RuntimeApi>,
+    pub publisher_api: std::sync::Arc<dyn PublisherApi>,
+    pub subscriber_api: std::sync::Arc<dyn SubscriberApi>,
+    pub core_adapters_api: std::sync::Arc<dyn CoreAdaptersApi>,
+    pub stream_manager_api: std::sync::Arc<dyn StreamManagerApi>,
+    pub task_system_api: std::sync::Arc<dyn TaskSystemApi>,
+    pub event_bus: std::sync::Arc<dyn EventBus>,
+    pub config_provider: std::sync::Arc<dyn ConfigProvider>,
+    pub config_apply_api: std::sync::Arc<dyn ConfigApplyApi>,
+    pub module_manager_api: std::sync::Weak<dyn ModuleManagerApi>,
+    pub room_service_api: std::sync::Arc<dyn RoomServiceApi>,
+    pub metrics_api: std::sync::Arc<dyn MetricsApi>,
+    pub health_api: std::sync::Arc<dyn HealthApi>,
+    pub service_registry: std::sync::Arc<dyn ServiceRegistry>,
+    pub database_api: std::sync::Arc<dyn DatabaseApi>,
+    pub proxy_manager: std::sync::Arc<dyn ProxyManager>,
+    pub cluster_api: std::sync::Arc<dyn ClusterApi>,
+    pub ffmpeg_api: std::sync::Arc<dyn FfmpegApi>,
+    pub media_services: MediaServices,
+    pub media_session_directory: std::sync::Arc<dyn MediaSessionDirectoryApi>,
+    pub media_data_plane: std::sync::Arc<dyn MediaDataPlaneApi>,
+    pub media_file_store: std::sync::Arc<dyn MediaFileStoreApi>,
+    pub media_event_bus: std::sync::Arc<dyn MediaEventBusApi>,
+    pub control_auth_api: std::sync::Arc<dyn ControlAuthApi>,
 }
 ```
 
@@ -1479,6 +1496,7 @@ cheetah 不只是一个流媒体引擎，还包括完整的交付面：
   - 包含 `runtime_api`、`publisher_api`、`subscriber_api`、`core_adapters_api`
   - 包含 `config_provider` 与 `config_apply_api`
   - 包含 `service_registry`、`database_api`、`proxy_manager`、`cluster_api`、`ffmpeg_api`
+  - 包含 `media_services`、`media_session_directory`、`media_data_plane`、`media_file_store`、`media_event_bus`、`control_auth_api`
 - `control` 必须形成闭环：
   - `PATCH /api/v1/config` 与 `PATCH /api/v1/config/modules/:module_id` 在写入配置后，触发模块配置应用
   - 对外返回模块配置应用报告（effect 列表）

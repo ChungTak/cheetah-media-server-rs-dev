@@ -178,6 +178,9 @@ impl EngineBuilder {
             Arc::new(stream_provider) as Arc<dyn cheetah_media_api::port::PublishSubscribeApi>
         );
         let media_file_store: Arc<dyn MediaFileStoreApi> = Arc::new(EngineMediaFileStore::new());
+        let control_auth: Arc<dyn cheetah_media_api::port::ControlAuthApi> = Arc::new(
+            crate::control_auth::ConfigControlAuth::new(self.config_provider.clone()),
+        );
         let media_event_bus = Arc::new(crate::media_provider::LocalMediaEventBus::new(
             self.runtime_api.clone(),
         ));
@@ -211,6 +214,7 @@ impl EngineBuilder {
             media_data_plane,
             media_file_store,
             media_event_bus,
+            control_auth,
             root_cancel: RwLock::new(CancellationToken::new()),
         })
     }
@@ -249,6 +253,7 @@ pub struct Engine {
     media_data_plane: Arc<dyn MediaDataPlaneApi>,
     media_file_store: Arc<dyn MediaFileStoreApi>,
     media_event_bus: Arc<crate::media_provider::LocalMediaEventBus>,
+    control_auth: Arc<dyn cheetah_media_api::port::ControlAuthApi>,
     root_cancel: RwLock<CancellationToken>,
 }
 
@@ -282,6 +287,7 @@ impl Engine {
             media_data_plane: self.media_data_plane.clone(),
             media_file_store: self.media_file_store.clone(),
             media_event_bus: self.media_event_bus.clone(),
+            control_auth_api: self.control_auth.clone(),
         }
     }
 
