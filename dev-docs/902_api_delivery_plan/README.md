@@ -10,16 +10,16 @@
 
 ## 0. 交付结论
 
-当前实现已经具备 `cheetah-media-api`、`MediaServices`、native/ZLM HTTP module、record provider 和 RTP provider 的基础结构，但尚不满足生产交付：
+`dev-docs/902_api_delivery_plan` 已按 S0–S10 全部交付：
 
-- `cheetah-sdk` 的第三方信令 contract test 当前无法编译。
-- publish/subscribe、精确 session 管理、snapshot、proxy、record playback、事件投递仍未实现或仍是 stub。
-- RTP provider 没有完整复用 module 的端口分配和 egress 编排。
-- ZLM adapter 只挂载 23/64 个已规划 API，且尚无字段级 golden test。
-- native/ZLM adapter 没有完成认证、授权、配置开关和审计。
-- 现有信令 contract test 使用 `FakeMediaProvider`，不能证明生产链路可用。
+- `cheetah-media-api`、`MediaServices`、native/ZLM HTTP module、record/RTP/snapshot/proxy provider 均已完成生产接入。
+- `cheetah-sdk` 第三方信令 contract tests 可编译且通过，fake 与 production support 已分离，production contract 启动真实 Engine/provider。
+- publish/subscribe、session directory、snapshot、proxy、record playback、媒体事件投递均实现并带测试。
+- RTP provider 完整复用 `RtpSession` 端口分配、egress/talk 编排和事件发布。
+- ZLM adapter 挂载 64/64 个已规划 API，L1 真实生产路径、L2–L4 显式 capability 状态，字段级 golden fixture 测试已补齐。
+- native/ZLM adapter 完成 `ControlAuthApi`、scope、request context、audit、adapter config 和 live reload。
 
-本计划的完成状态必须是：外部进程可通过 native HTTP 操作媒体；同进程 Rust 项目可通过 runtime-neutral SDK 操作控制面和数据面；GB28181、ONVIF、HomeKit、Matter 测试客户端均能通过生产 provider 完成其媒体流程。
+外部进程可通过 native HTTP 操作媒体；同进程 Rust 项目可通过 runtime-neutral SDK 操作控制面和数据面；GB28181、ONVIF、HomeKit、Matter 测试客户端均能通过生产 provider 完成其媒体流程。详细验收报告见 [`13_s10_release_report.md`](13_s10_release_report.md)。
 
 ## 1. 固定交付边界
 
@@ -82,12 +82,12 @@ S0 工具链、基线与测试恢复
 
 ## 5. 总体验收
 
-- [ ] 默认工具链可获取，仓库规定的 fmt/clippy/test 命令可执行。
-- [ ] capability 与实际 provider、编译 feature、module 生命周期一致。
-- [ ] 真实 session 可查询、踢出、关闭；publish/subscribe 有生产数据面。
-- [ ] record、snapshot、file、VOD、proxy、RTP 高价值能力端到端可用。
-- [ ] native API 有认证、授权、审计、幂等、deadline 和稳定错误。
-- [ ] ZLM 64/64 API 有路由、映射、能力状态和测试归属。
-- [ ] 全部 ZLM hook 有真实出站事件映射或明确 capability 状态。
-- [ ] 四类信令 contract 使用生产 provider，不以 fake 作为完成证据。
-- [ ] `cheetah-media-module` 有 route、错误、鉴权和 golden 测试，不再是 0 tests。
+- [x] 默认工具链可获取，仓库规定的 fmt/clippy/test 命令可执行。
+- [x] capability 与实际 provider、编译 feature、module 生命周期一致。
+- [x] 真实 session 可查询、踢出、关闭；publish/subscribe 有生产数据面。
+- [x] record、snapshot、file、VOD、proxy、RTP 高价值能力端到端可用。
+- [x] native API 有认证、授权、审计、幂等、deadline 和稳定错误。
+- [x] ZLM 64/64 API 有路由、映射、能力状态和测试归属。
+- [x] 全部 ZLM hook 有真实出站事件映射或明确 capability 状态。
+- [x] 四类信令 contract 使用生产 provider，不以 fake 作为完成证据。
+- [x] `cheetah-media-module` 有 route、错误、鉴权和 golden 测试，不再是 0 tests。
