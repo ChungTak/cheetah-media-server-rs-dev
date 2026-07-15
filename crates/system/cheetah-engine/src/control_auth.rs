@@ -131,20 +131,11 @@ impl ConfigControlAuth {
     }
 }
 
-/// Compare two UTF-8 strings in time dependent on the *longer* input length but
-/// not on the position of the first differing byte. This reduces the risk of
-/// timing attacks leaking token prefixes during credential verification.
+/// Constant-time string equality used when comparing bearer/deployment tokens.
+/// Delegates to `subtle` rather than a hand-rolled comparison.
 fn constant_time_eq(a: &str, b: &str) -> bool {
-    let a = a.as_bytes();
-    let b = b.as_bytes();
-    let mut diff = a.len() ^ b.len();
-    let max = a.len().max(b.len());
-    for i in 0..max {
-        let x = a.get(i).copied().unwrap_or(0);
-        let y = b.get(i).copied().unwrap_or(0);
-        diff |= (x ^ y) as usize;
-    }
-    diff == 0
+    use subtle::ConstantTimeEq;
+    bool::from(a.as_bytes().ct_eq(b.as_bytes()))
 }
 
 impl ControlAuthApi for ConfigControlAuth {

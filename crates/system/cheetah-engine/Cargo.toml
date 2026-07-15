@@ -12,6 +12,7 @@ bytes.workspace = true
 dashmap.workspace = true
 getrandom.workspace = true
 parking_lot.workspace = true
+subtle = "2.6"
 cheetah-codec = { path = "../../foundation/cheetah-codec" }
 cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
 cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
