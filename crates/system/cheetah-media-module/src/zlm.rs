@@ -1,4 +1,6 @@
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 use crate::adapter_config::{extract_zlm_config, load_zlm_config, ZlmAdapterConfig};
 use async_trait::async_trait;
@@ -20,6 +22,7 @@ use crate::error::{zlm_error_response, AdapterError};
 
 mod admin;
 mod control;
+mod login;
 mod media;
 mod proxy;
 mod record;
@@ -134,6 +137,7 @@ impl Module for ZlmMediaModule {
         Some(Arc::new(ZlmMediaHttpService {
             ctx: self.ctx.clone()?,
             config: self.config.clone(),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
         }))
     }
 
@@ -150,9 +154,15 @@ impl Module for ZlmMediaModule {
     }
 }
 
+struct SessionEntry {
+    principal: Principal,
+    expires_at: Instant,
+}
+
 pub(crate) struct ZlmMediaHttpService {
     ctx: EngineContext,
     config: Arc<RwLock<ZlmAdapterConfig>>,
+    sessions: Arc<RwLock<HashMap<String, SessionEntry>>>,
 }
 
 impl ZlmMediaHttpService {
@@ -259,6 +269,40 @@ impl ZlmMediaHttpService {
                         MediaScope::ServerAdmin,
                     ],
                 })
+            }
+            "session" => {
+                if req.path == "/api/login" {
+                    return Ok(Principal::anonymous());
+                }
+                let session_cfg = cfg.auth.session.as_ref().ok_or_else(|| {
+                    AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "session auth not configured",
+                    ))
+                })?;
+                let token = cookie_from_header(req, &session_cfg.cookie_name).ok_or_else(|| {
+                    AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "missing session cookie",
+                    ))
+                })?;
+                let now = Instant::now();
+                let sessions = self.sessions.read().unwrap();
+                let entry = sessions.get(&token).ok_or_else(|| {
+                    AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "invalid session",
+                    ))
+                })?;
+                if now > entry.expires_at {
+                    drop(sessions);
+                    self.sessions.write().unwrap().remove(&token);
+                    return Err(AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "expired session",
+                    )));
+                }
+                Ok(entry.principal.clone())
             }
             _ => {
                 let credentials = AuthCredentials {
@@ -568,6 +612,8 @@ impl ModuleHttpService for ZlmMediaHttpService {
                 (HttpMethod::Get, "/api/downloadFile") => self.download_file(&ctx, req).await,
                 (HttpMethod::Get, "/api/version") => self.version(&ctx, req).await,
                 (HttpMethod::Get, "/api/getApiList") => self.get_api_list(&ctx, req).await,
+                (HttpMethod::Post, "/api/login") => self.login(&ctx, req).await,
+                (HttpMethod::Post, "/api/logout") => self.logout(&ctx, req).await,
                 _ => {
                     if routes::is_zlm_catalog_route(req.method, req.path.as_str()) {
                         Err(AdapterError::Media(
@@ -700,6 +746,37 @@ fn secret_from_header(req: &HttpRequest) -> String {
         return stripped.unwrap_or(header).trim().to_string();
     }
     String::new()
+}
+
+/// Extract a cookie value by name from the `Cookie` header.
+///
+/// 从 `Cookie` 头按名称提取 cookie 值。
+fn cookie_from_header(req: &HttpRequest, name: &str) -> Option<String> {
+    let header = header_value(&req.headers, "cookie")?;
+    for pair in header.split(';') {
+        let mut kv = pair.splitn(2, '=');
+        let key = kv.next()?.trim();
+        if key.eq_ignore_ascii_case(name) {
+            return kv.next().map(|v| v.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Constant-time string equality.
+///
+/// 常量时间字符串比较。
+fn constant_time_eq_str(a: &str, b: &str) -> bool {
+    use subtle::{Choice, ConstantTimeEq};
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    let len_eq = (a.len() as u64).ct_eq(&(b.len() as u64));
+    let mut content_eq = Choice::from(1u8);
+    for (i, bi) in b.iter().enumerate() {
+        let ai = a.get(i).copied().unwrap_or(0);
+        content_eq &= u8::ct_eq(&ai, bi);
+    }
+    bool::from(len_eq & content_eq)
 }
 
 pub(crate) fn page_from_params(params: &serde_json::Value) -> u64 {

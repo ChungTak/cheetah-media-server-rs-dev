@@ -5,14 +5,35 @@ use std::collections::HashMap;
 pub struct AuthConfig {
     #[serde(default = "default_auth_mode")]
     pub mode: String,
+    #[serde(default)]
+    pub session: Option<SessionAuthConfig>,
 }
 
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
             mode: default_auth_mode(),
+            session: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+pub struct SessionAuthConfig {
+    pub username: String,
+    pub password: String,
+    #[serde(default = "default_cookie_name")]
+    pub cookie_name: String,
+    #[serde(default = "default_session_ttl_sec")]
+    pub session_ttl_sec: u64,
+}
+
+fn default_cookie_name() -> String {
+    "zlm_session".to_string()
+}
+
+fn default_session_ttl_sec() -> u64 {
+    3600
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
