@@ -1,5 +1,6 @@
 use std::sync::{Arc, RwLock};
 
+use cheetah_media_api::capability::{MediaCapabilityDescriptor, MediaCapabilityReport};
 use cheetah_media_api::port::{
     MediaControlApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookApi,
 };
@@ -60,10 +61,13 @@ impl MediaServices {
         let mut registry = self.inner.write().expect("media services lock");
         registry.generation += 1;
         let generation = registry.generation;
+        let provider_id = format!("control:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
         registry.control = Some(ProviderEntry {
             provider: control,
             generation,
             capabilities,
+            descriptors,
         });
         ProviderRegistration {
             capability: MediaCapability::Query,
@@ -108,10 +112,13 @@ impl MediaServices {
         let mut registry = self.inner.write().expect("media services lock");
         registry.generation += 1;
         let generation = registry.generation;
+        let provider_id = format!("publish_subscribe:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
         registry.publish_subscribe = Some(ProviderEntry {
             provider: publish_subscribe,
             generation,
             capabilities,
+            descriptors,
         });
         ProviderRegistration {
             capability: MediaCapability::Publish,
@@ -150,10 +157,13 @@ impl MediaServices {
         let mut registry = self.inner.write().expect("media services lock");
         registry.generation += 1;
         let generation = registry.generation;
+        let provider_id = format!("record:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
         registry.record = Some(ProviderEntry {
             provider: record,
             generation,
             capabilities,
+            descriptors,
         });
         ProviderRegistration {
             capability: MediaCapability::Record,
@@ -192,10 +202,13 @@ impl MediaServices {
         let mut registry = self.inner.write().expect("media services lock");
         registry.generation += 1;
         let generation = registry.generation;
+        let provider_id = format!("snapshot:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
         registry.snapshot = Some(ProviderEntry {
             provider: snapshot,
             generation,
             capabilities,
+            descriptors,
         });
         ProviderRegistration {
             capability: MediaCapability::Snapshot,
@@ -234,10 +247,13 @@ impl MediaServices {
         let mut registry = self.inner.write().expect("media services lock");
         registry.generation += 1;
         let generation = registry.generation;
+        let provider_id = format!("proxy:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
         registry.proxy = Some(ProviderEntry {
             provider: proxy,
             generation,
             capabilities,
+            descriptors,
         });
         ProviderRegistration {
             capability: MediaCapability::Proxy,
@@ -276,10 +292,13 @@ impl MediaServices {
         let mut registry = self.inner.write().expect("media services lock");
         registry.generation += 1;
         let generation = registry.generation;
+        let provider_id = format!("rtp:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
         registry.rtp = Some(ProviderEntry {
             provider: rtp,
             generation,
             capabilities,
+            descriptors,
         });
         ProviderRegistration {
             capability: MediaCapability::Rtp,
@@ -307,10 +326,14 @@ impl MediaServices {
         let mut registry = self.inner.write().expect("media services lock");
         registry.generation += 1;
         let generation = registry.generation;
+        let capabilities = webhook_default_capabilities();
+        let provider_id = format!("webhook:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
         registry.webhook = Some(ProviderEntry {
             provider: webhook,
             generation,
-            capabilities: webhook_default_capabilities(),
+            capabilities,
+            descriptors,
         });
         ProviderRegistration {
             capability: MediaCapability::Webhook,
@@ -345,6 +368,7 @@ impl MediaServices {
             return false;
         }
         slot.take();
+        registry.generation += 1;
         true
     }
 
@@ -378,6 +402,44 @@ impl MediaServices {
         }
         set
     }
+
+    /// Return an aggregate capability report with per-provider descriptors.
+    ///
+    /// 返回带每个 provider 描述符的聚合能力报告。
+    pub fn capability_report(&self) -> MediaCapabilityReport {
+        let registry = self.inner.read().expect("media services lock");
+        let mut descriptors = Vec::new();
+        if let Some(entry) = &registry.control {
+            descriptors.extend(entry.descriptors.clone());
+        }
+        if let Some(entry) = &registry.publish_subscribe {
+            descriptors.extend(entry.descriptors.clone());
+        }
+        if let Some(entry) = &registry.record {
+            descriptors.extend(entry.descriptors.clone());
+        }
+        if let Some(entry) = &registry.snapshot {
+            descriptors.extend(entry.descriptors.clone());
+        }
+        if let Some(entry) = &registry.proxy {
+            descriptors.extend(entry.descriptors.clone());
+        }
+        if let Some(entry) = &registry.rtp {
+            descriptors.extend(entry.descriptors.clone());
+        }
+        if let Some(entry) = &registry.webhook {
+            descriptors.extend(entry.descriptors.clone());
+        }
+        descriptors.sort_by(|a, b| {
+            a.capability
+                .cmp(&b.capability)
+                .then_with(|| a.provider_id.cmp(&b.provider_id))
+        });
+        MediaCapabilityReport {
+            generation: registry.generation,
+            descriptors,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -396,6 +458,7 @@ struct ProviderEntry<P> {
     provider: P,
     generation: u64,
     capabilities: MediaCapabilitySet,
+    descriptors: Vec<MediaCapabilityDescriptor>,
 }
 
 enum ProviderSlot<'a> {
@@ -458,6 +521,13 @@ impl MediaProviderRegistry {
     }
 }
 
+fn descriptors_from_set(
+    set: &MediaCapabilitySet,
+    provider_id: impl Into<String>,
+) -> Vec<MediaCapabilityDescriptor> {
+    MediaCapabilityReport::from_capability_set(set, provider_id).descriptors
+}
+
 fn control_default_capabilities() -> MediaCapabilitySet {
     let mut set = MediaCapabilitySet::empty();
     set.add(MediaCapability::Query, 1);
@@ -505,6 +575,67 @@ fn webhook_default_capabilities() -> MediaCapabilitySet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cheetah_media_api::capability::CapabilityState;
+
+    struct NullControl;
+    #[async_trait::async_trait]
+    impl MediaControlApi for NullControl {
+        async fn get_media_list(
+            &self,
+            _ctx: &cheetah_media_api::port::MediaRequestContext,
+            _query: cheetah_media_api::command::MediaQuery,
+        ) -> cheetah_media_api::error::Result<
+            cheetah_media_api::model::Page<cheetah_media_api::model::StreamInfo>,
+        > {
+            unimplemented!()
+        }
+        async fn get_media(
+            &self,
+            _ctx: &cheetah_media_api::port::MediaRequestContext,
+            _key: &cheetah_media_api::ids::MediaKey,
+        ) -> cheetah_media_api::error::Result<cheetah_media_api::model::StreamInfo> {
+            unimplemented!()
+        }
+        async fn is_media_online(
+            &self,
+            _ctx: &cheetah_media_api::port::MediaRequestContext,
+            _key: &cheetah_media_api::ids::MediaKey,
+        ) -> cheetah_media_api::error::Result<cheetah_media_api::model::OnlineState> {
+            unimplemented!()
+        }
+        async fn list_sessions(
+            &self,
+            _ctx: &cheetah_media_api::port::MediaRequestContext,
+            _query: cheetah_media_api::command::SessionQuery,
+        ) -> cheetah_media_api::error::Result<
+            cheetah_media_api::model::Page<cheetah_media_api::model::SessionInfo>,
+        > {
+            unimplemented!()
+        }
+        async fn kick_session(
+            &self,
+            _ctx: &cheetah_media_api::port::MediaRequestContext,
+            _id: &cheetah_media_api::ids::SessionId,
+            _reason: cheetah_media_api::model::CloseReason,
+        ) -> cheetah_media_api::error::Result<()> {
+            unimplemented!()
+        }
+        async fn kick_stream(
+            &self,
+            _ctx: &cheetah_media_api::port::MediaRequestContext,
+            _key: &cheetah_media_api::ids::MediaKey,
+            _reason: cheetah_media_api::model::CloseReason,
+        ) -> cheetah_media_api::error::Result<cheetah_media_api::model::CloseReport> {
+            unimplemented!()
+        }
+        async fn request_keyframe(
+            &self,
+            _ctx: &cheetah_media_api::port::MediaRequestContext,
+            _key: &cheetah_media_api::ids::MediaKey,
+        ) -> cheetah_media_api::error::Result<()> {
+            unimplemented!()
+        }
+    }
 
     #[test]
     fn default_capabilities_are_empty() {
@@ -730,5 +861,59 @@ mod tests {
         assert!(services.unregister(&reg));
         assert!(services.control().is_none());
         assert!(!services.capabilities().has(MediaCapability::Query));
+    }
+
+    #[test]
+    fn capability_report_contains_provider_id_and_default_operations() {
+        let services = MediaServices::unavailable();
+        let mut caps = MediaCapabilitySet::empty();
+        caps.add(MediaCapability::Query, 2);
+        services.register_control_with_capabilities(Arc::new(NullControl), caps);
+        let report = services.capability_report();
+        assert!(report.generation > 0);
+        let query = report
+            .descriptors
+            .iter()
+            .find(|d| d.capability == MediaCapability::Query)
+            .expect("query descriptor");
+        assert!(query.provider_id.starts_with("control:"));
+        assert_eq!(query.version, 2);
+        assert_eq!(query.state, CapabilityState::Available);
+        assert!(!query.operations.is_empty());
+    }
+
+    #[test]
+    fn capability_report_generation_advances_on_register_and_unregister() {
+        let services = MediaServices::unavailable();
+        let gen0 = services.capability_report().generation;
+        let reg = services.register_control(Arc::new(NullControl));
+        let gen1 = services.capability_report().generation;
+        assert!(gen1 > gen0);
+        let reg2 = services.register_control(Arc::new(NullControl));
+        let gen2 = services.capability_report().generation;
+        assert!(gen2 > gen1);
+        services.unregister(&reg2);
+        let gen3 = services.capability_report().generation;
+        assert!(gen3 > gen2);
+        // A stale registration must not remove a newer provider or bump the generation again.
+        assert!(!services.unregister(&reg));
+    }
+
+    #[test]
+    fn capability_report_descriptors_sorted_by_capability_then_provider_id() {
+        let services = MediaServices::unavailable();
+        let mut caps = MediaCapabilitySet::empty();
+        caps.add(MediaCapability::SessionControl, 1);
+        caps.add(MediaCapability::Query, 1);
+        services.register_control_with_capabilities(Arc::new(NullControl), caps);
+        let report = services.capability_report();
+        let keys: Vec<_> = report
+            .descriptors
+            .iter()
+            .map(|d| (d.capability, d.provider_id.clone()))
+            .collect();
+        let mut sorted = keys.clone();
+        sorted.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        assert_eq!(keys, sorted);
     }
 }

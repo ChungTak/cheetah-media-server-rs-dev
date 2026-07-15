@@ -22,7 +22,9 @@ pub mod model;
 pub mod port;
 
 pub use auth::{AuthCredentials, MediaScope, Principal};
-pub use capability::{MediaCapability, MediaCapabilitySet};
+pub use capability::{
+    MediaCapability, MediaCapabilityDescriptor, MediaCapabilityReport, MediaCapabilitySet,
+};
 pub use error::{MediaError, MediaErrorCode};
 pub use event::MediaEvent;
 pub use ids::{AppName, MediaKey, MediaSchema, StreamName, VhostName};
