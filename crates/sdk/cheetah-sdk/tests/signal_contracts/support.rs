@@ -413,6 +413,14 @@ impl ProxyApi for FakeMediaProvider {
             output_urls: Vec::new(),
         })
     }
+
+    async fn delete_ffmpeg_proxy(
+        &self,
+        _ctx: &MediaRequestContext,
+        _id: &ProxyId,
+    ) -> MediaResult<()> {
+        Ok(())
+    }
 }
 
 #[async_trait]

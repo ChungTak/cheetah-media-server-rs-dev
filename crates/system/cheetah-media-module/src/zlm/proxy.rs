@@ -2,7 +2,9 @@
 //!
 //! ZLMediaKit 兼容的代理端点处理函数。
 
-use cheetah_media_api::command::{ProxyQuery, PullProxyRequest, PushProxyRequest, RetryPolicy};
+use cheetah_media_api::command::{
+    FfmpegProxyRequest, ProxyQuery, PullProxyRequest, PushProxyRequest, RetryPolicy,
+};
 use cheetah_media_api::ids::ProxyId;
 use cheetah_media_api::model::{OutputPolicy, ProxyKind, ProxyState, TranscodePolicy};
 use cheetah_media_api::port::MediaRequestContext;
@@ -166,6 +168,72 @@ impl ZlmMediaHttpService {
         let id = proxy_id_from_params(&params)?;
         let info = proxy_api.get_push_proxy(ctx, &id).await?;
         Ok(zlm_response(0, "success", proxy_info_to_json(info)))
+    }
+
+    pub(crate) async fn add_ffmpeg_source(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let src_url = params["src_url"]
+            .as_str()
+            .or_else(|| params["url"].as_str())
+            .ok_or_else(|| AdapterError::InvalidRequest("src_url is required".to_string()))?;
+        let mut ctx = ctx.clone();
+        ctx.idempotency_key = params["key"].as_str().map(|s| s.to_string());
+
+        let request = FfmpegProxyRequest {
+            source_url: src_url.to_string(),
+            destination: key,
+            input_options: Vec::new(),
+            output_options: Vec::new(),
+            transcode_policy: TranscodePolicy::default(),
+            output_policy: OutputPolicy::default(),
+        };
+        let info = proxy_api.create_ffmpeg_proxy(&ctx, request).await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            json!({ "key": info.proxy_id.0 }),
+        ))
+    }
+
+    pub(crate) async fn del_ffmpeg_source(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let params = self.extract_params(&req)?;
+        let id = proxy_id_from_params(&params)?;
+        proxy_api.delete_ffmpeg_proxy(ctx, &id).await?;
+        Ok(zlm_response(0, "success", json!({"result": true})))
+    }
+
+    pub(crate) async fn list_ffmpeg_source(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let params = self.extract_params(&req)?;
+        let mut query = ProxyQuery {
+            kind: Some(ProxyKind::Ffmpeg),
+            page: page_from_params(&params),
+            page_size: page_size_from_params(&params),
+            ..Default::default()
+        };
+        query.clamp_page_size();
+        let page = proxy_api.list_ffmpeg_proxies(ctx, query).await?;
+        let items: Vec<_> = page.items.into_iter().map(proxy_info_to_json).collect();
+        Ok(zlm_response(
+            0,
+            "success",
+            json!({"total": page.total, "data": items}),
+        ))
     }
 }
 

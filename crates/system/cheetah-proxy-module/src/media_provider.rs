@@ -240,6 +240,21 @@ impl ProxyApi for ProxyMediaProvider {
         Ok(info)
     }
 
+    async fn delete_ffmpeg_proxy(&self, _ctx: &MediaRequestContext, id: &ProxyId) -> Result<()> {
+        if self
+            .registry
+            .get(id)
+            .filter(|e| e.info.kind == ProxyKind::Ffmpeg)
+            .is_none()
+        {
+            return Err(MediaError::not_found(format!(
+                "ffmpeg proxy not found: {}",
+                id.0
+            )));
+        }
+        delete_proxy(&self.registry, id)
+    }
+
     async fn get_ffmpeg_proxy(
         &self,
         _ctx: &MediaRequestContext,
