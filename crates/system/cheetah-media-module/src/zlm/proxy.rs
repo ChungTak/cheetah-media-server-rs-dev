@@ -1,0 +1,198 @@
+//! ZLMediaKit-compatible proxy endpoint handlers.
+//!
+//! ZLMediaKit 兼容的代理端点处理函数。
+
+use cheetah_media_api::command::{ProxyQuery, PullProxyRequest, PushProxyRequest, RetryPolicy};
+use cheetah_media_api::ids::ProxyId;
+use cheetah_media_api::model::{OutputPolicy, ProxyKind, ProxyState, TranscodePolicy};
+use cheetah_media_api::port::MediaRequestContext;
+use cheetah_sdk::{HttpRequest, HttpResponse};
+use serde_json::json;
+
+use crate::error::AdapterError;
+use crate::zlm::{page_from_params, page_size_from_params, zlm_response, ZlmMediaHttpService};
+
+impl ZlmMediaHttpService {
+    pub(crate) async fn add_stream_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let url = params["url"]
+            .as_str()
+            .ok_or_else(|| AdapterError::InvalidRequest("url is required".to_string()))?;
+        let mut ctx = ctx.clone();
+        ctx.idempotency_key = params["key"].as_str().map(|s| s.to_string());
+
+        let request = PullProxyRequest {
+            source_url: url.to_string(),
+            destination: key,
+            retry_policy: RetryPolicy::default(),
+            heartbeat_ms: None,
+            timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
+            transcode_policy: TranscodePolicy::default(),
+            output_policy: OutputPolicy::default(),
+            record_policy: None,
+        };
+        let info = proxy_api.create_pull_proxy(&ctx, request).await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            json!({ "key": info.proxy_id.0 }),
+        ))
+    }
+
+    pub(crate) async fn del_stream_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let params = self.extract_params(&req)?;
+        let id = proxy_id_from_params(&params)?;
+        proxy_api.delete_pull_proxy(ctx, &id).await?;
+        Ok(zlm_response(0, "success", json!({"result": true})))
+    }
+
+    pub(crate) async fn list_stream_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let params = self.extract_params(&req)?;
+        let mut query = ProxyQuery {
+            kind: Some(ProxyKind::Pull),
+            page: page_from_params(&params),
+            page_size: page_size_from_params(&params),
+            ..Default::default()
+        };
+        query.clamp_page_size();
+        let page = proxy_api.list_pull_proxies(ctx, query).await?;
+        let items: Vec<_> = page.items.into_iter().map(proxy_info_to_json).collect();
+        Ok(zlm_response(
+            0,
+            "success",
+            json!({"total": page.total, "data": items}),
+        ))
+    }
+
+    pub(crate) async fn get_proxy_info(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let params = self.extract_params(&req)?;
+        let id = proxy_id_from_params(&params)?;
+        let info = proxy_api.get_pull_proxy(ctx, &id).await?;
+        Ok(zlm_response(0, "success", proxy_info_to_json(info)))
+    }
+
+    pub(crate) async fn add_stream_pusher_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let dst_url = params["dst_url"]
+            .as_str()
+            .ok_or_else(|| AdapterError::InvalidRequest("dst_url is required".to_string()))?;
+        let mut ctx = ctx.clone();
+        ctx.idempotency_key = params["key"].as_str().map(|s| s.to_string());
+
+        let request = PushProxyRequest {
+            source_media_key: key,
+            destination_url: dst_url.to_string(),
+            protocol: params["schema"].as_str().unwrap_or("rtmp").to_string(),
+            retry_policy: RetryPolicy::default(),
+            protocol_options: Default::default(),
+        };
+        let info = proxy_api.create_push_proxy(&ctx, request).await?;
+        Ok(zlm_response(
+            0,
+            "success",
+            json!({ "key": info.proxy_id.0 }),
+        ))
+    }
+
+    pub(crate) async fn del_stream_pusher_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let params = self.extract_params(&req)?;
+        let id = proxy_id_from_params(&params)?;
+        proxy_api.delete_push_proxy(ctx, &id).await?;
+        Ok(zlm_response(0, "success", json!({"result": true})))
+    }
+
+    pub(crate) async fn list_stream_pusher_proxy(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let params = self.extract_params(&req)?;
+        let mut query = ProxyQuery {
+            kind: Some(ProxyKind::Push),
+            page: page_from_params(&params),
+            page_size: page_size_from_params(&params),
+            ..Default::default()
+        };
+        query.clamp_page_size();
+        let page = proxy_api.list_push_proxies(ctx, query).await?;
+        let items: Vec<_> = page.items.into_iter().map(proxy_info_to_json).collect();
+        Ok(zlm_response(
+            0,
+            "success",
+            json!({"total": page.total, "data": items}),
+        ))
+    }
+
+    pub(crate) async fn get_proxy_pusher_info(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let proxy_api = self.proxy()?;
+        let params = self.extract_params(&req)?;
+        let id = proxy_id_from_params(&params)?;
+        let info = proxy_api.get_push_proxy(ctx, &id).await?;
+        Ok(zlm_response(0, "success", proxy_info_to_json(info)))
+    }
+}
+
+fn proxy_id_from_params(params: &serde_json::Value) -> Result<ProxyId, AdapterError> {
+    params["key"]
+        .as_str()
+        .map(|s| ProxyId(s.to_string()))
+        .ok_or_else(|| AdapterError::InvalidRequest("key is required".to_string()))
+}
+
+fn proxy_info_to_json(info: cheetah_media_api::model::ProxyInfo) -> serde_json::Value {
+    let destination = json!({
+        "vhost": info.destination.vhost.0,
+        "app": info.destination.app.0,
+        "stream": info.destination.stream.0,
+    });
+    let online = info.state == ProxyState::Connected;
+    json!({
+        "key": info.proxy_id.0,
+        "url": info.source,
+        "dst": destination,
+        "vhost": info.destination.vhost.0,
+        "app": info.destination.app.0,
+        "stream": info.destination.stream.0,
+        "state": info.state,
+        "online": online,
+        "retry_count": info.retry_count,
+        "created_at": info.created_at,
+    })
+}

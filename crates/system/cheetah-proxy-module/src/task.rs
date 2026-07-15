@@ -53,9 +53,8 @@ async fn proxy_session_loop(
 
     registry.update_state(&proxy_id, ProxyState::Connecting);
 
-    let connect_deadline = MonoTime::from_micros(
-        runtime_api.now().as_micros() + config.connect_timeout_ms * 1_000,
-    );
+    let connect_deadline =
+        MonoTime::from_micros(runtime_api.now().as_micros() + config.connect_timeout_ms * 1_000);
 
     let mut timer = runtime_api.sleep_until(connect_deadline);
     match wait_first(timer.wait(), Box::pin(cancel.cancelled())).await {

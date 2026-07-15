@@ -97,6 +97,56 @@ pub fn parse_json_bool(value: &serde_json::Value) -> Option<bool> {
     })
 }
 
+/// Generate a process-unique request ID.
+///
+/// 生成进程内唯一的 request ID。
+pub fn generate_request_id() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let n = REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{now:016x}-{n:08x}")
+}
+
+/// Compute a request deadline from an optional client deadline header.
+///
+/// 根据可选的客户端 deadline 头计算请求 deadline。
+///
+/// When a client deadline is provided it is clamped to `now + default_timeout_ms`
+/// so callers cannot request unbounded server-side wait times. When no header is
+/// present `None` is returned and the route-level timeout is used instead.
+pub fn request_deadline(client_deadline_ms: Option<i64>, default_timeout_ms: i64) -> Option<i64> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let max_deadline = now + default_timeout_ms;
+    client_deadline_ms.map(|d| d.min(max_deadline))
+}
+
+/// Set or overwrite the `x-request-id` header on an incoming request.
+pub fn set_request_id_header(req: &mut cheetah_sdk::HttpRequest, request_id: &str) {
+    use cheetah_sdk::HttpHeader;
+    req.headers
+        .retain(|h| !h.name.eq_ignore_ascii_case("x-request-id"));
+    req.headers.push(HttpHeader {
+        name: "x-request-id".to_string(),
+        value: request_id.to_string(),
+    });
+}
+
+/// Set or overwrite the `x-request-id` header on an outgoing response.
+pub fn set_response_request_id_header(resp: &mut cheetah_sdk::HttpResponse, request_id: &str) {
+    use cheetah_sdk::HttpHeader;
+    resp.headers
+        .retain(|h| !h.name.eq_ignore_ascii_case("x-request-id"));
+    resp.headers.push(HttpHeader {
+        name: "x-request-id".to_string(),
+        value: request_id.to_string(),
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,54 +237,4 @@ mod tests {
         assert_eq!(resp.headers.len(), 1);
         assert_eq!(resp.headers[0].value, "new");
     }
-}
-
-/// Generate a process-unique request ID.
-///
-/// 生成进程内唯一的 request ID。
-pub fn generate_request_id() -> String {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
-    let n = REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{now:016x}-{n:08x}")
-}
-
-/// Compute a request deadline from an optional client deadline header.
-///
-/// 根据可选的客户端 deadline 头计算请求 deadline。
-///
-/// When a client deadline is provided it is clamped to `now + default_timeout_ms`
-/// so callers cannot request unbounded server-side wait times. When no header is
-/// present `None` is returned and the route-level timeout is used instead.
-pub fn request_deadline(client_deadline_ms: Option<i64>, default_timeout_ms: i64) -> Option<i64> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64;
-    let max_deadline = now + default_timeout_ms;
-    client_deadline_ms.map(|d| d.min(max_deadline))
-}
-
-/// Set or overwrite the `x-request-id` header on an incoming request.
-pub fn set_request_id_header(req: &mut cheetah_sdk::HttpRequest, request_id: &str) {
-    use cheetah_sdk::HttpHeader;
-    req.headers
-        .retain(|h| !h.name.eq_ignore_ascii_case("x-request-id"));
-    req.headers.push(HttpHeader {
-        name: "x-request-id".to_string(),
-        value: request_id.to_string(),
-    });
-}
-
-/// Set or overwrite the `x-request-id` header on an outgoing response.
-pub fn set_response_request_id_header(resp: &mut cheetah_sdk::HttpResponse, request_id: &str) {
-    use cheetah_sdk::HttpHeader;
-    resp.headers
-        .retain(|h| !h.name.eq_ignore_ascii_case("x-request-id"));
-    resp.headers.push(HttpHeader {
-        name: "x-request-id".to_string(),
-        value: request_id.to_string(),
-    });
 }

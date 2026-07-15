@@ -19,4 +19,8 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+cheetah-config = { path = "../cheetah-config" }
+cheetah-engine = { path = "../cheetah-engine" }
+cheetah-proxy-module = { path = "../cheetah-proxy-module" }
+cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
 tokio = { workspace = true }

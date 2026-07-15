@@ -153,7 +153,9 @@ async fn get_missing_proxy_returns_not_found() {
 
     let facade = engine.media_facade();
     let ctx = MediaRequestContext::default();
-    let result = facade.get_pull_proxy(&ctx, &ProxyId("no-such-proxy".to_string())).await;
+    let result = facade
+        .get_pull_proxy(&ctx, &ProxyId("no-such-proxy".to_string()))
+        .await;
     assert!(result.is_err());
 }
 
