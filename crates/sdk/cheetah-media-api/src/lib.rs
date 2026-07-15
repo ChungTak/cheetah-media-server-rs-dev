@@ -19,6 +19,7 @@ pub mod event;
 pub mod ids;
 pub mod media_file_store;
 pub mod model;
+pub mod output;
 pub mod port;
 
 pub use auth::{AuthCredentials, MediaScope, Principal};
@@ -33,7 +34,8 @@ pub use media_file_store::{
     MediaFileStoreApi,
 };
 pub use model::Decision;
+pub use output::{EndpointState, MediaOutputEndpoint};
 pub use port::{
-    ControlAuthApi, MediaControlApi, MediaFacade, MediaRequestContext, MediaUrlResolverApi,
-    ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookApi,
+    ControlAuthApi, MediaControlApi, MediaFacade, MediaOutputRegistryApi, MediaRequestContext,
+    MediaUrlResolverApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookApi,
 };

@@ -346,6 +346,32 @@ pub trait MediaUrlResolverApi: Send + Sync {
     ) -> Result<Vec<MediaUrl>>;
 }
 
+/// Registry of active public output endpoints.
+///
+/// Protocol modules register their public listener endpoints after `start`
+/// succeeds and unregister them in `stop` (or when the module is dropped).
+/// URL resolvers consume the snapshot to build accurate, runtime-driven URLs.
+///
+/// 活跃公网输出端点注册表。
+///
+/// 协议 module 在 `start` 成功后注册其公网监听端点，在 `stop`（或 module 被 drop）时注销。
+/// URL resolver 消费 snapshot 来构建基于运行时的准确 URL。
+#[async_trait]
+pub trait MediaOutputRegistryApi: Send + Sync {
+    /// Register a new endpoint and return a unique registration id.
+    async fn register_endpoint(
+        &self,
+        endpoint: crate::output::MediaOutputEndpoint,
+    ) -> Result<String>;
+
+    /// Unregister the endpoint with the given id. Returns `NotFound` when the
+    /// id does not match a live registration.
+    async fn unregister_endpoint(&self, registration_id: &str) -> Result<()>;
+
+    /// Return a snapshot of all currently registered endpoints.
+    async fn snapshot(&self) -> Result<Vec<crate::output::MediaOutputEndpoint>>;
+}
+
 /// Synchronous webhook decision hooks.
 ///
 /// 同步 webhook 决策钩子。

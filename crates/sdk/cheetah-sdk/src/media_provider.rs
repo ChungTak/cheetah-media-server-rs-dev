@@ -1,8 +1,10 @@
 use std::sync::{Arc, RwLock};
 
+use crate::output::OutputRegistryRegistration;
 use cheetah_media_api::capability::{MediaCapabilityDescriptor, MediaCapabilityReport};
 use cheetah_media_api::port::{
-    MediaControlApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookApi,
+    MediaControlApi, MediaOutputRegistryApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi,
+    SnapshotApi, WebhookApi,
 };
 use cheetah_media_api::{MediaCapability, MediaCapabilitySet};
 
@@ -40,6 +42,58 @@ impl MediaServices {
     pub fn unavailable() -> Self {
         Self {
             inner: Arc::new(RwLock::new(MediaProviderRegistry::empty())),
+        }
+    }
+
+    /// Register the output endpoint registry.
+    ///
+    /// 注册输出端点注册表。
+    pub fn register_output_registry(
+        &self,
+        registry: Arc<dyn MediaOutputRegistryApi>,
+    ) -> OutputRegistryRegistration {
+        let mut inner = self.inner.write().expect("media services lock");
+        inner.generation += 1;
+        let generation = inner.generation;
+        let provider_id = format!("output_registry:{generation}");
+        inner.output_registry = Some(OutputRegistrySlot {
+            registry,
+            generation,
+        });
+        OutputRegistryRegistration {
+            provider_id,
+            generation,
+        }
+    }
+
+    /// Return the current output registry, if any.
+    ///
+    /// 返回当前输出注册表（如有）。
+    pub fn output_registry(&self) -> Option<Arc<dyn MediaOutputRegistryApi>> {
+        self.inner
+            .read()
+            .expect("media services lock")
+            .output_registry
+            .as_ref()
+            .map(|s| s.registry.clone())
+    }
+
+    /// Unregister the output registry using a previously returned registration.
+    ///
+    /// 使用之前返回的注册句柄注销输出注册表。
+    pub fn unregister_output_registry(&self, registration: &OutputRegistryRegistration) -> bool {
+        let mut inner = self.inner.write().expect("media services lock");
+        if inner
+            .output_registry
+            .as_ref()
+            .map(|s| s.generation)
+            .is_some_and(|g| g == registration.generation)
+        {
+            inner.output_registry = None;
+            inner.generation += 1;
+            true
+        } else {
+            false
         }
     }
 
@@ -452,6 +506,12 @@ struct MediaProviderRegistry {
     proxy: Option<ProviderEntry<Arc<dyn ProxyApi>>>,
     rtp: Option<ProviderEntry<Arc<dyn RtpApi>>>,
     webhook: Option<ProviderEntry<Arc<dyn WebhookApi>>>,
+    output_registry: Option<OutputRegistrySlot>,
+}
+
+struct OutputRegistrySlot {
+    registry: Arc<dyn MediaOutputRegistryApi>,
+    generation: u64,
 }
 
 struct ProviderEntry<P> {

@@ -176,6 +176,10 @@ impl EngineBuilder {
         );
 
         let media_services = MediaServices::unavailable();
+        media_services.register_output_registry(Arc::new(
+            cheetah_sdk::output::InMemoryMediaOutputRegistry::new(),
+        )
+            as Arc<dyn cheetah_media_api::port::MediaOutputRegistryApi>);
         media_services
             .register_control(Arc::new(stream_provider.clone())
                 as Arc<dyn cheetah_media_api::port::MediaControlApi>);

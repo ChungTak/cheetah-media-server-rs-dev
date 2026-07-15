@@ -25,6 +25,7 @@ pub mod media_data_plane;
 pub mod media_provider;
 pub mod media_session;
 pub mod module;
+pub mod output;
 pub mod service;
 pub mod stream;
 pub mod task;
@@ -63,6 +64,7 @@ pub use module::{
     HttpRouteMount, MediaServices, Module, ModuleCapability, ModuleFactory, ModuleHttpService,
     ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState, ProviderRegistration,
 };
+pub use output::{InMemoryMediaOutputRegistry, MediaOutputEndpoint, OutputRegistryRegistration};
 pub use service::{
     ClusterApi, ClusterNode, DatabaseApi, FfmpegApi, FfmpegJob, HealthApi, MetricsApi,
     ModuleConfigApplyReport, ModuleManagerApi, ProxyManager, ProxyRoute, RoomParticipant,

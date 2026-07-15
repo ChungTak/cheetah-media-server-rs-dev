@@ -13,6 +13,8 @@ use cheetah_rtmp_driver_tokio::{
     RtmpClientMode, RtmpConnectionId, RtmpCoreCommand, RtmpCoreCommandSender, RtmpEvent,
     RtmpMediaType, RtmpServerHandle, RtmpTlsClientConfig, RtmpTlsConfig,
 };
+use cheetah_sdk::media_api::ids::MediaSchema;
+use cheetah_sdk::media_api::output::MediaOutputEndpoint;
 use cheetah_sdk::{
     BootstrapPolicy, CancellationToken, ConfigEffect, EngineContext, Module, ModuleCapability,
     ModuleConfigChange, ModuleFactory, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
@@ -136,6 +138,7 @@ pub struct RtmpModule {
     config: RtmpModuleConfig,
     runtime_cancel: Option<CancellationToken>,
     runtime_loops: Vec<OneShotReceiver>,
+    output_endpoint_ids: Vec<String>,
 }
 
 impl RtmpModule {
@@ -154,6 +157,7 @@ impl RtmpModule {
             config: RtmpModuleConfig::default(),
             runtime_cancel: None,
             runtime_loops: Vec::new(),
+            output_endpoint_ids: Vec::new(),
         }
     }
 }
@@ -227,6 +231,33 @@ impl Module for RtmpModule {
             )));
         }
 
+        if let Some(registry) = engine.media_services.output_registry() {
+            let local = driver.local_addr();
+            let host = if local.ip().is_unspecified() {
+                "127.0.0.1".to_string()
+            } else {
+                local.ip().to_string()
+            };
+            let endpoint = MediaOutputEndpoint::new(
+                MODULE_ID,
+                MediaSchema::Rtmp,
+                host,
+                local.port(),
+                false,
+                "{app}/{stream}",
+            );
+            match registry.register_endpoint(endpoint).await {
+                Ok(id) => self.output_endpoint_ids.push(id),
+                Err(err) => {
+                    driver.shutdown();
+                    let _ = driver.wait().await;
+                    return Err(SdkError::Internal(format!(
+                        "register rtmp output endpoint failed: {err}"
+                    )));
+                }
+            }
+        }
+
         // Start RTMPS (TLS) server if configured
         let tls_driver = if self.config.tls.enabled {
             let tls_listen: SocketAddr = self.config.tls.listen.parse().map_err(|err| {
@@ -256,6 +287,27 @@ impl Module for RtmpModule {
                 endpoint: format!("rtmps://{}", tls_handle.local_addr()),
                 metadata: Default::default(),
             });
+
+            if let Some(registry) = engine.media_services.output_registry() {
+                let local = tls_handle.local_addr();
+                let host = if local.ip().is_unspecified() {
+                    "127.0.0.1".to_string()
+                } else {
+                    local.ip().to_string()
+                };
+                let endpoint = MediaOutputEndpoint::new(
+                    "rtmp-tls",
+                    MediaSchema::Rtmp,
+                    host,
+                    local.port(),
+                    true,
+                    "{app}/{stream}",
+                );
+                if let Ok(id) = registry.register_endpoint(endpoint).await {
+                    self.output_endpoint_ids.push(id);
+                }
+            }
+
             Some(tls_handle)
         } else {
             None
@@ -304,6 +356,13 @@ impl Module for RtmpModule {
         // Drop join handles — tasks will finish asynchronously after cancellation.
         self.runtime_loops.clear();
         if let Some(engine) = self.engine.as_ref() {
+            if let Some(registry) = engine.media_services.output_registry() {
+                for id in self.output_endpoint_ids.drain(..) {
+                    let _ = registry.unregister_endpoint(&id).await;
+                }
+            } else {
+                self.output_endpoint_ids.clear();
+            }
             let _ = engine.service_registry.unregister(MODULE_ID);
         }
         self.state = ModuleState::Stopped;

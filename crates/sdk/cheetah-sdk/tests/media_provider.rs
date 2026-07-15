@@ -4,12 +4,14 @@ use async_trait::async_trait;
 use cheetah_sdk::media_api::capability::{CapabilityState, MediaCapability, MediaCapabilitySet};
 use cheetah_sdk::media_api::command::{MediaQuery, SessionQuery};
 use cheetah_sdk::media_api::error::Result as MediaResult;
-use cheetah_sdk::media_api::ids::{MediaKey, SessionId};
+use cheetah_sdk::media_api::ids::{MediaKey, MediaSchema, SessionId};
 use cheetah_sdk::media_api::model::{
     CloseReason, CloseReport, OnlineState, Page, SessionInfo, StreamInfo,
 };
+use cheetah_sdk::media_api::output::MediaOutputEndpoint;
 use cheetah_sdk::media_api::port::{MediaControlApi, MediaRequestContext};
 use cheetah_sdk::module::MediaServices;
+use cheetah_sdk::output::InMemoryMediaOutputRegistry;
 
 struct DummyControl;
 
@@ -162,4 +164,36 @@ fn capability_report_descriptors_sorted_by_capability_then_provider_id() {
     let mut sorted = keys.clone();
     sorted.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
     assert_eq!(keys, sorted);
+}
+
+#[test]
+fn output_registry_is_none_until_registered() {
+    let services = MediaServices::unavailable();
+    assert!(services.output_registry().is_none());
+}
+
+#[tokio::test]
+async fn output_registry_register_and_unregister_lifecycle() {
+    let services = MediaServices::unavailable();
+    let registry = Arc::new(InMemoryMediaOutputRegistry::new());
+    let reg = services.register_output_registry(registry.clone());
+    assert!(services.output_registry().is_some());
+
+    let out = services.output_registry().unwrap();
+    let id = out
+        .register_endpoint(MediaOutputEndpoint::new(
+            "rtmp",
+            MediaSchema::Rtmp,
+            "127.0.0.1",
+            1935,
+            false,
+            "{app}/{stream}",
+        ))
+        .await
+        .unwrap();
+    assert!(!id.is_empty());
+
+    assert!(services.unregister_output_registry(&reg));
+    assert!(services.output_registry().is_none());
+    assert!(!services.unregister_output_registry(&reg));
 }
