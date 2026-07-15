@@ -52,6 +52,7 @@ use cheetah_sdk::{ConfigProvider, ConfigSchemaRegistry, ServiceDescriptor};
 use cheetah_srt_module::SrtModuleFactory;
 #[cfg(feature = "ts")]
 use cheetah_ts_module::TsModuleFactory;
+use cheetah_webhook_dispatcher::WebhookModuleFactory;
 #[cfg(feature = "webrtc")]
 use cheetah_webrtc_module::WebRtcModuleFactory;
 use serde_json::Value;
@@ -188,6 +189,7 @@ async fn main() -> anyhow::Result<()> {
     {
         builder = builder.register_module_factory(Arc::new(NativeMediaModuleFactory));
         builder = builder.register_module_factory(Arc::new(ZlmMediaModuleFactory));
+        builder = builder.register_module_factory(Arc::new(WebhookModuleFactory));
     }
 
     // Build the engine and wire the config store to the event bus.
