@@ -500,6 +500,7 @@ impl RtpQuery {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UpdateRtpRequest {
     pub session_id: RtpSessionId,
+    pub expected_generation: u64,
     #[serde(default)]
     pub ssrc: Option<u32>,
     #[serde(default)]

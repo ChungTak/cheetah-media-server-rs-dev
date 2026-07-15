@@ -2,6 +2,18 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+/// An error attached to a media operation outcome (e.g., the last failure recorded
+/// on a session). Keeps the same stable code as `MediaError` but is intentionally
+/// serializable and public.
+///
+/// 附加在媒体操作结果上的错误（如会话记录的最后失败）。使用与 `MediaError` 相同的稳定码，
+/// 但可被序列化并公开。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MediaOperationError {
+    pub code: MediaErrorCode,
+    pub message: String,
+}
+
 /// Boxed string to keep `MediaError` small enough for `Result<T, MediaError>`.
 ///
 /// 将字符串装箱，使 `MediaError` 保持足够小。

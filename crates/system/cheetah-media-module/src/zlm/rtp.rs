@@ -295,8 +295,15 @@ impl ZlmMediaHttpService {
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
         let params = self.extract_params(&req)?;
+        let session_id = self.rtp_session_id_from_params(&params)?;
+        let expected_generation = rtp_api
+            .get_rtp_session(ctx, &session_id)
+            .await
+            .map(|s| s.generation)
+            .unwrap_or(0);
         let request = UpdateRtpRequest {
-            session_id: self.rtp_session_id_from_params(&params)?,
+            session_id,
+            expected_generation,
             ssrc: parse_zlm_u32(&params, "ssrc")?,
             payload_type: parse_zlm_u8(&params, "payload_type")?,
             pause_check: None,
@@ -332,8 +339,15 @@ impl ZlmMediaHttpService {
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
         let params = self.extract_params(&req)?;
+        let session_id = self.rtp_session_id_from_params(&params)?;
+        let expected_generation = rtp_api
+            .get_rtp_session(ctx, &session_id)
+            .await
+            .map(|s| s.generation)
+            .unwrap_or(0);
         let request = UpdateRtpRequest {
-            session_id: self.rtp_session_id_from_params(&params)?,
+            session_id,
+            expected_generation,
             ssrc: None,
             payload_type: None,
             pause_check: Some(paused),

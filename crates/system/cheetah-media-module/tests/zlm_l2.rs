@@ -159,8 +159,7 @@ async fn zlm_rtp_multiplex_and_check_control() {
         .await
         .expect("updateRtpServerSSRC response");
     let body = body_json(&resp);
-    assert_eq!(
-        body["code"], -501,
-        "updateRtpServerSSRC should be unsupported: {body}"
-    );
+    assert_eq!(body["code"], 0, "updateRtpServerSSRC failed: {body}");
+    assert_eq!(body["session_id"], session_id);
+    assert_eq!(body["ssrc"], 12345);
 }

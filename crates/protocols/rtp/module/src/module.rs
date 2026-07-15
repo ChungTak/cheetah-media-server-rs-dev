@@ -28,7 +28,7 @@ use cheetah_sdk::{
 use futures::{pin_mut, select_biased, FutureExt};
 use parking_lot::Mutex;
 use serde_json::Value;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use crate::config::{RtpClientJobConfig, RtpModuleConfig};
 use crate::egress::{run_egress_session, sleep_or_cancel, EgressCleanup};
@@ -534,6 +534,16 @@ async fn run_ingress_worker(
                         session.pending_frames.push_back(frame_arc);
                     }
                 }
+            }
+            RtpCoreEvent::SessionUpdated { .. } => {
+                // Update acknowledgements are consumed by the driver loop; the module
+                // learns about successful updates through the orchestrator snapshot.
+            }
+            RtpCoreEvent::SessionUpdateFailed {
+                session_key,
+                reason,
+            } => {
+                warn!("RTP session update failed: key={session_key}, reason={reason}");
             }
             RtpCoreEvent::SessionClosed {
                 session_key,
