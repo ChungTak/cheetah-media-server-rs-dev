@@ -18,9 +18,7 @@ jobs:
           fetch-depth: 0
 
       - name: Install Rust from rust-toolchain.toml
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt,clippy
+        uses: dtolnay/rust-toolchain@master
 
       - name: S0 - Print toolchain and lockfile hash
         run: |
