@@ -55,16 +55,15 @@ impl ZlmMediaHttpService {
         query.clamp_page_size();
         let page = control.list_sessions(ctx, query).await?;
         let count_hit = page.items.len() as u64;
-        let mut count_closed = 0u64;
-        for session in &page.items {
-            if control
-                .kick_session(ctx, &session.session_id, CloseReason::Kicked)
-                .await
-                .is_ok()
-            {
-                count_closed += 1;
-            }
-        }
+        let count_closed = if control
+            .kick_stream(ctx, &key, CloseReason::Kicked)
+            .await
+            .is_ok()
+        {
+            count_hit
+        } else {
+            0
+        };
         Ok(zlm_response(ZlmResponse::ok(CloseStreamsResult {
             count_hit,
             count_closed,
