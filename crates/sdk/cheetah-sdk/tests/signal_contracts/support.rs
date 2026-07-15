@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use cheetah_media_api::command::*;
 use cheetah_media_api::error::{MediaError, Result as MediaResult};
-use cheetah_media_api::event::{MediaEvent, MediaEventSender};
+use cheetah_media_api::event::{MediaEvent, MediaEventSender, MediaEventSubscription};
 use cheetah_media_api::ids::*;
 use cheetah_media_api::model::*;
 use cheetah_media_api::port::{
@@ -74,6 +74,22 @@ impl MediaEventSender for FakeEventSender {
     }
 
     fn lagged(&self, _dropped: u64) -> MediaResult<()> {
+        Ok(())
+    }
+}
+
+/// No-op subscription handle for tests.
+///
+/// 测试用的无操作订阅句柄。
+#[derive(Debug, Default)]
+pub struct FakeSubscription;
+
+impl MediaEventSubscription for FakeSubscription {
+    fn id(&self) -> String {
+        "fake-subscription".to_string()
+    }
+
+    fn unsubscribe(&self) -> MediaResult<()> {
         Ok(())
     }
 }
@@ -546,7 +562,10 @@ impl MediaFacade for FakeMediaProvider {
         set
     }
 
-    fn subscribe_events(&self, _sender: Box<dyn MediaEventSender>) -> MediaResult<()> {
-        Ok(())
+    fn subscribe_events(
+        &self,
+        _sender: Box<dyn MediaEventSender>,
+    ) -> MediaResult<Box<dyn MediaEventSubscription>> {
+        Ok(Box::new(FakeSubscription))
     }
 }

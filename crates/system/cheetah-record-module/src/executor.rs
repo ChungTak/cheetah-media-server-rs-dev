@@ -19,6 +19,8 @@ use cheetah_codec::record::{
     RecordWriteEvent,
 };
 use cheetah_codec::TrackInfo;
+use cheetah_media_api::event::{EventHeader, MediaEvent, RecordCompleted};
+use cheetah_media_api::ids::RecordTaskId;
 use cheetah_media_api::{FileStoreEntry, MediaKey};
 use cheetah_sdk::{
     BootstrapPolicy, CancellationToken, EngineContext, JoinHandle, StreamKey, SubscriberOptions,
@@ -401,7 +403,7 @@ async fn run_record_task(
             .expect("media key must be valid")
     });
     let file_entry = FileStoreEntry {
-        media_key,
+        media_key: media_key.clone(),
         file_type: "record".to_string(),
         content_type: format_content_type(format),
         size_bytes: bytes_written,
@@ -443,6 +445,32 @@ async fn run_record_task(
     if let Err(err) = registry.insert_file(file_meta) {
         warn!(%task_id, %err, "record: insert_file failed");
     }
+
+    let completed_at = wall_clock_ms();
+    let folder = path
+        .parent()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let _ = engine
+        .media_event_bus
+        .publish(MediaEvent::RecordCompleted(RecordCompleted {
+            header: EventHeader {
+                event_id: format!("{task_id}-completed-{completed_at}"),
+                occurred_at: completed_at,
+                sequence: None,
+                media_key: Some(media_key.clone()),
+                source: "record-executor".to_string(),
+                correlation_id: Some(task_id.clone()),
+            },
+            task_id: RecordTaskId(task_id.clone()),
+            format: format!("{format:?}").to_lowercase(),
+            file_path: path.to_string_lossy().to_string(),
+            file_size: bytes_written,
+            time_len_ms: end_ms.saturating_sub(start_ms) as u64,
+            folder,
+            url: None,
+        }));
+
     info!(%task_id, ?path, %bytes_written, %frames_written, "record: task finished");
     mark_stopped(&registry, &task_id);
 }

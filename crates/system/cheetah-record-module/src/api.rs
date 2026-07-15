@@ -14,6 +14,8 @@
 use std::sync::Arc;
 
 use cheetah_codec::RecordFormat;
+use cheetah_media_api::event::{EventHeader, MediaEvent, MediaEventBusApi, RecordStarted};
+use cheetah_media_api::ids::{MediaKey, RecordTaskId};
 use serde::{Deserialize, Serialize};
 
 use crate::metadata::{RecordFileQuery, RecordFormatStr, RecordTaskState};
@@ -228,14 +230,23 @@ pub struct FileDeleteRequest {
 pub struct RecordApi {
     registry: Arc<RecordRegistry>,
     executor: Arc<dyn TaskExecutor>,
+    media_event_bus: Arc<dyn MediaEventBusApi>,
 }
 
 impl RecordApi {
-    /// Construct a new API handle around the registry and executor.
+    /// Construct a new API handle around the registry, executor, and event bus.
     ///
-    /// 基于注册表和执行器构造新的 API 句柄。
-    pub fn new(registry: Arc<RecordRegistry>, executor: Arc<dyn TaskExecutor>) -> Self {
-        Self { registry, executor }
+    /// 基于注册表、执行器和事件总线构造新的 API 句柄。
+    pub fn new(
+        registry: Arc<RecordRegistry>,
+        executor: Arc<dyn TaskExecutor>,
+        media_event_bus: Arc<dyn MediaEventBusApi>,
+    ) -> Self {
+        Self {
+            registry,
+            executor,
+            media_event_bus,
+        }
     }
 
     /// Return a clone of the registry handle.
@@ -310,6 +321,25 @@ impl RecordApi {
             .await?;
         self.registry
             .update_task_state(&task_id, RecordTaskState::Running)?;
+
+        let media_key = MediaKey::new(&vhost, &req.app, &req.stream, None)
+            .unwrap_or_else(|_| MediaKey::with_default_vhost(&req.app, &req.stream, None).unwrap());
+        let started_at = now_ms();
+        let _ = self
+            .media_event_bus
+            .publish(MediaEvent::RecordStarted(RecordStarted {
+                header: EventHeader {
+                    event_id: format!("{task_id}-start-{started_at}"),
+                    occurred_at: started_at,
+                    sequence: None,
+                    media_key: Some(media_key),
+                    source: "record-api".to_string(),
+                    correlation_id: Some(task_id.clone()),
+                },
+                task_id: RecordTaskId(task_id.clone()),
+                format: format!("{format:?}").to_lowercase(),
+            }));
+
         Ok(StartRecordResponse {
             code: 200,
             msg: "success".to_string(),
@@ -471,8 +501,45 @@ fn source_stream_key(vhost: &str, app: &str, stream: &str) -> String {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use cheetah_media_api::event::MediaEventSubscription;
+    use parking_lot::Mutex;
 
     struct MockExecutor;
+
+    struct MockSubscription;
+
+    impl MediaEventSubscription for MockSubscription {
+        fn id(&self) -> String {
+            "mock-sub".to_string()
+        }
+
+        fn unsubscribe(&self) -> cheetah_media_api::error::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct MockBus {
+        events: Mutex<Vec<MediaEvent>>,
+    }
+
+    impl MediaEventBusApi for MockBus {
+        fn publish(&self, event: MediaEvent) -> cheetah_media_api::error::Result<()> {
+            self.events.lock().push(event);
+            Ok(())
+        }
+
+        fn subscribe(
+            &self,
+            _sender: Box<dyn cheetah_media_api::event::MediaEventSender>,
+            _capacity: usize,
+        ) -> cheetah_media_api::error::Result<Box<dyn MediaEventSubscription>> {
+            Ok(Box::new(MockSubscription))
+        }
+
+        fn unsubscribe(&self, _id: &str) -> cheetah_media_api::error::Result<()> {
+            Ok(())
+        }
+    }
 
     #[async_trait]
     impl TaskExecutor for MockExecutor {
@@ -486,7 +553,14 @@ mod tests {
 
     #[tokio::test]
     async fn start_and_list_tasks() {
-        let api = RecordApi::new(Arc::new(RecordRegistry::new(8)), Arc::new(MockExecutor));
+        let bus = Arc::new(MockBus {
+            events: Mutex::new(Vec::new()),
+        });
+        let api = RecordApi::new(
+            Arc::new(RecordRegistry::new(8)),
+            Arc::new(MockExecutor),
+            bus,
+        );
         let resp = api
             .start(StartRecordRequest {
                 format: "mp4".to_string(),
@@ -508,7 +582,14 @@ mod tests {
 
     #[tokio::test]
     async fn unsupported_format_rejected() {
-        let api = RecordApi::new(Arc::new(RecordRegistry::new(8)), Arc::new(MockExecutor));
+        let bus = Arc::new(MockBus {
+            events: Mutex::new(Vec::new()),
+        });
+        let api = RecordApi::new(
+            Arc::new(RecordRegistry::new(8)),
+            Arc::new(MockExecutor),
+            bus,
+        );
         let err = api
             .start(StartRecordRequest {
                 format: "asf".to_string(),
@@ -526,12 +607,47 @@ mod tests {
 
     #[tokio::test]
     async fn delete_file_rejects_traversal() {
-        let api = RecordApi::new(Arc::new(RecordRegistry::new(8)), Arc::new(MockExecutor));
+        let bus = Arc::new(MockBus {
+            events: Mutex::new(Vec::new()),
+        });
+        let api = RecordApi::new(
+            Arc::new(RecordRegistry::new(8)),
+            Arc::new(MockExecutor),
+            bus,
+        );
         let err = api
             .delete_file(FileDeleteRequest {
                 file_id: "../etc/passwd".to_string(),
             })
             .unwrap_err();
         assert!(matches!(err, RecordApiError::InvalidRequest(_)));
+    }
+
+    #[tokio::test]
+    async fn media_event_record_started_published() {
+        let bus = Arc::new(MockBus {
+            events: Mutex::new(Vec::new()),
+        });
+        let api = RecordApi::new(
+            Arc::new(RecordRegistry::new(8)),
+            Arc::new(MockExecutor),
+            bus.clone(),
+        );
+        let _ = api
+            .start(StartRecordRequest {
+                format: "mp4".to_string(),
+                vhost: cheetah_media_api::ids::DEFAULT_VHOST.to_string(),
+                app: "live".to_string(),
+                stream: "test".to_string(),
+                uri: None,
+                task_id: None,
+                record_template: None,
+            })
+            .await
+            .unwrap();
+
+        let events = bus.events.lock();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], MediaEvent::RecordStarted(_)));
     }
 }

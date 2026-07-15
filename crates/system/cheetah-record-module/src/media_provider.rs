@@ -417,11 +417,49 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use cheetah_media_api::command::{RecordFileQuery, RecordTaskQuery, StartRecordRequest};
+    use cheetah_media_api::event::{
+        MediaEvent, MediaEventBusApi, MediaEventSender, MediaEventSubscription,
+    };
     use cheetah_media_api::ids::{IdempotencyKey, MediaKey};
     use cheetah_media_api::model::StoragePolicy;
+    use parking_lot::Mutex;
 
     struct MockExecutor;
     struct MockFileStore;
+    struct MockSubscription;
+
+    impl MediaEventSubscription for MockSubscription {
+        fn id(&self) -> String {
+            "mock-sub".to_string()
+        }
+
+        fn unsubscribe(&self) -> cheetah_media_api::error::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct MockBus {
+        events: Mutex<Vec<MediaEvent>>,
+    }
+
+    impl MediaEventBusApi for MockBus {
+        fn publish(&self, event: MediaEvent) -> cheetah_media_api::error::Result<()> {
+            self.events.lock().push(event);
+            Ok(())
+        }
+
+        fn subscribe(
+            &self,
+            _sender: Box<dyn MediaEventSender>,
+            _capacity: usize,
+        ) -> cheetah_media_api::error::Result<Box<dyn MediaEventSubscription>> {
+            Ok(Box::new(MockSubscription))
+        }
+
+        fn unsubscribe(&self, _id: &str) -> cheetah_media_api::error::Result<()> {
+            Ok(())
+        }
+    }
 
     impl cheetah_media_api::MediaFileStoreApi for MockFileStore {
         fn register_file(
@@ -490,10 +528,14 @@ mod tests {
     }
 
     fn provider() -> RecordMediaProvider {
+        let bus = Arc::new(MockBus {
+            events: Mutex::new(Vec::new()),
+        });
         RecordMediaProvider::new(
             Arc::new(crate::api::RecordApi::new(
                 Arc::new(crate::registry::RecordRegistry::new(16)),
                 Arc::new(MockExecutor),
+                bus,
             )),
             Arc::new(MockFileStore),
         )

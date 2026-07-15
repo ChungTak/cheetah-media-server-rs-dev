@@ -1,6 +1,8 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cheetah_codec::{CodecId, MediaKind, TrackReadiness as CodecTrackReadiness};
+use cheetah_media_api::event::EventHeader;
+use cheetah_media_api::ids::MediaKey;
 use cheetah_media_api::model::{CodecKind, MediaType, TrackReadiness};
 
 /// Current time in milliseconds since the Unix epoch.
@@ -44,5 +46,34 @@ pub fn readiness_to_api(r: CodecTrackReadiness) -> TrackReadiness {
         CodecTrackReadiness::NotReady => TrackReadiness::Pending,
         CodecTrackReadiness::PendingConfig => TrackReadiness::Pending,
         CodecTrackReadiness::Ready => TrackReadiness::Ready,
+    }
+}
+
+/// Generate a short random event id hex string.
+fn make_event_id() -> String {
+    let mut buf = [0u8; 16];
+    if getrandom::getrandom(&mut buf).is_err() {
+        // Fall back to a counter-based id if the OS RNG is unavailable.
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        buf[..8].copy_from_slice(&n.to_le_bytes());
+    }
+    buf.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Build a domain `EventHeader` for the given source and optional resource key.
+pub fn event_header(
+    source: &str,
+    media_key: Option<&MediaKey>,
+    correlation_id: Option<&str>,
+) -> EventHeader {
+    EventHeader {
+        event_id: make_event_id(),
+        occurred_at: now_ms(),
+        sequence: None,
+        media_key: media_key.cloned(),
+        source: source.to_string(),
+        correlation_id: correlation_id.map(|s| s.to_string()),
     }
 }

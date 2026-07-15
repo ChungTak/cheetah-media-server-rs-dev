@@ -103,12 +103,18 @@ impl Default for BootstrapPolicy {
 #[derive(Debug, Clone)]
 pub struct PublisherOptions {
     pub announce_tracks: bool,
+    /// Protocol identifier reported on stream-published events (e.g. "rtmp", "rtp").
+    pub protocol: String,
+    /// Optional remote endpoint of the publisher, for event metadata.
+    pub remote_endpoint: Option<String>,
 }
 
 impl Default for PublisherOptions {
     fn default() -> Self {
         Self {
             announce_tracks: true,
+            protocol: String::new(),
+            remote_endpoint: None,
         }
     }
 }
