@@ -100,14 +100,8 @@ async fn dispatcher_translates_and_sends_event_to_matching_profile() {
             name: "zlm".to_string(),
             url: "http://127.0.0.1/hook".to_string(),
             events: vec!["on_stream_changed".to_string()],
-            secret: None,
-            timeout_ms: 5000,
-            max_body_bytes: 64 * 1024,
-            max_retries: 0,
-            retry_interval_ms: 100,
-            circuit_failure_threshold: 5,
-            circuit_open_ms: 30000,
             allowed_cidrs: vec!["127.0.0.1/32".to_string()],
+            ..Default::default()
         }],
     };
 
@@ -175,14 +169,8 @@ async fn dispatcher_skips_event_not_in_profile() {
             name: "zlm".to_string(),
             url: "http://127.0.0.1/hook".to_string(),
             events: vec!["on_publish".to_string()],
-            secret: None,
-            timeout_ms: 5000,
-            max_body_bytes: 64 * 1024,
-            max_retries: 0,
-            retry_interval_ms: 100,
-            circuit_failure_threshold: 5,
-            circuit_open_ms: 30000,
             allowed_cidrs: vec!["127.0.0.1/32".to_string()],
+            ..Default::default()
         }],
     };
 

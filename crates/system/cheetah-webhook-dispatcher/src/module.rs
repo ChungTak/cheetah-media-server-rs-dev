@@ -1,13 +1,15 @@
 use cheetah_sdk::{
     ConfigEffect, EngineContext, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
-    ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState, SdkError,
+    ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState, ProviderRegistration,
+    SdkError,
 };
 use std::sync::Arc;
 
 use crate::config::WebhookDispatcherConfig;
+use crate::decision::WebhookDecisionClient;
 use crate::dispatcher::WebhookDispatcher;
 use crate::security::WebhookUrlPolicy;
-use crate::sender::RuntimeHttpClient;
+use crate::sender::{RuntimeHttpClient, WebhookSender};
 use crate::translator::ZlmWebhookTranslator;
 
 const MODULE_ID: &str = "webhook-dispatcher";
@@ -42,6 +44,8 @@ pub struct WebhookModule {
     state: ModuleState,
     ctx: Option<EngineContext>,
     dispatcher: Option<WebhookDispatcher>,
+    decision_client: Option<WebhookDecisionClient>,
+    media_services_registration: Option<ProviderRegistration>,
     handle: Option<crate::dispatcher::WebhookDispatcherHandle>,
 }
 
@@ -51,6 +55,8 @@ impl WebhookModule {
             state: ModuleState::Created,
             ctx: None,
             dispatcher: None,
+            decision_client: None,
+            media_services_registration: None,
             handle: None,
         }
     }
@@ -60,10 +66,26 @@ impl WebhookModule {
             config,
             ctx.media_event_bus.clone(),
             ctx.runtime_api.clone(),
-            Arc::new(RuntimeHttpClient::new(ctx.runtime_api.clone())),
+            Self::sender(ctx),
             Arc::new(ZlmWebhookTranslator),
             WebhookUrlPolicy::default(),
         )
+    }
+
+    fn build_decision_client(
+        config: WebhookDispatcherConfig,
+        ctx: &EngineContext,
+    ) -> WebhookDecisionClient {
+        WebhookDecisionClient::new(
+            config,
+            Self::sender(ctx),
+            Arc::new(ZlmWebhookTranslator),
+            WebhookUrlPolicy::default(),
+        )
+    }
+
+    fn sender(ctx: &EngineContext) -> Arc<dyn WebhookSender> {
+        Arc::new(RuntimeHttpClient::new(ctx.runtime_api.clone()))
     }
 }
 
@@ -94,7 +116,14 @@ impl Module for WebhookModule {
             serde_json::from_value(ctx.initial_config)
                 .map_err(|e| SdkError::InvalidArgument(e.to_string()))?
         };
+        let decision_client = Self::build_decision_client(config.clone(), &ctx.engine);
+        self.media_services_registration = Some(
+            ctx.engine
+                .media_services
+                .register_webhook(Arc::new(decision_client.clone())),
+        );
         self.dispatcher = Some(Self::build_dispatcher(config, &ctx.engine));
+        self.decision_client = Some(decision_client);
         self.ctx = Some(ctx.engine);
         self.state = ModuleState::Initialized;
         Ok(())
@@ -120,6 +149,11 @@ impl Module for WebhookModule {
         if let Some(handle) = self.handle.take() {
             handle.stop();
         }
+        if let Some(reg) = self.media_services_registration.take() {
+            if let Some(ctx) = self.ctx.as_ref() {
+                ctx.media_services.unregister(&reg);
+            }
+        }
         self.state = ModuleState::Stopped;
         Ok(())
     }
@@ -128,7 +162,10 @@ impl Module for WebhookModule {
         let new_config: WebhookDispatcherConfig = serde_json::from_value(change.next)
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
         if let Some(dispatcher) = self.dispatcher.as_ref() {
-            dispatcher.set_config(new_config);
+            dispatcher.set_config(new_config.clone());
+        }
+        if let Some(client) = self.decision_client.as_ref() {
+            client.set_config(new_config);
         }
         Ok(ConfigEffect::Immediate)
     }

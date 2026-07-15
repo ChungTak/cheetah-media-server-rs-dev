@@ -349,8 +349,8 @@ mod tests {
     use super::*;
     use cheetah_codec::MonoTime;
     use cheetah_sdk::{
-        AsyncTcpListener, AsyncTcpStream, AsyncTimer, JoinHandle, SpawnError, TaskJoinError,
-        UdpRecvMeta,
+        AsyncTcpListener, AsyncTcpStream, AsyncTimer, ConnectTcpFuture, ConnectTlsFuture,
+        JoinHandle, SpawnError, TaskJoinError, UdpRecvMeta,
     };
     use std::future::Future;
     use std::io;
@@ -491,6 +491,28 @@ mod tests {
             unimplemented!("not used by multicast registry tests")
         }
 
+        fn connect_tcp_async<'a>(&'a self, _addr: SocketAddr) -> ConnectTcpFuture<'a> {
+            Box::pin(async move {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "TCP not used by multicast registry tests",
+                ))
+            })
+        }
+
+        fn connect_tls<'a>(
+            &'a self,
+            _addr: SocketAddr,
+            _server_name: &str,
+        ) -> ConnectTlsFuture<'a> {
+            Box::pin(async move {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "TLS not used by multicast registry tests",
+                ))
+            })
+        }
+
         fn bind_tcp(&self, _addr: SocketAddr) -> io::Result<Box<dyn AsyncTcpListener>> {
             unimplemented!("not used by multicast registry tests")
         }
@@ -566,6 +588,28 @@ mod tests {
 
         fn connect_tcp(&self, _addr: SocketAddr) -> io::Result<Box<dyn AsyncTcpStream>> {
             unimplemented!("not used by multicast registry tests")
+        }
+
+        fn connect_tcp_async<'a>(&'a self, _addr: SocketAddr) -> ConnectTcpFuture<'a> {
+            Box::pin(async move {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "TCP not used by multicast registry tests",
+                ))
+            })
+        }
+
+        fn connect_tls<'a>(
+            &'a self,
+            _addr: SocketAddr,
+            _server_name: &str,
+        ) -> ConnectTlsFuture<'a> {
+            Box::pin(async move {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "TLS not used by multicast registry tests",
+                ))
+            })
         }
 
         fn bind_tcp(&self, _addr: SocketAddr) -> io::Result<Box<dyn AsyncTcpListener>> {

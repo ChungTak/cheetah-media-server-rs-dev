@@ -5,17 +5,33 @@ use std::net::{
     UdpSocket as StdUdpSocket,
 };
 use std::pin::Pin;
+use std::sync::{Arc, LazyLock};
 use std::time::Instant;
 
 use async_trait::async_trait;
 use cheetah_codec::MonoTime;
 use cheetah_runtime_api::{
-    oneshot_channel, AsyncTcpListener, AsyncTcpStream, AsyncTimer, AsyncUdpSocket, JoinHandle,
-    OneShotReceiver, OneShotSender, Runtime, RuntimeApi, SpawnError, TaskJoinError, UdpRecvMeta,
+    oneshot_channel, AsyncTcpListener, AsyncTcpStream, AsyncTimer, AsyncUdpSocket,
+    ConnectTcpFuture, ConnectTlsFuture, JoinHandle, OneShotReceiver, OneShotSender, Runtime,
+    RuntimeApi, SpawnError, TaskJoinError, UdpRecvMeta,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::time::{sleep_until, Duration, Instant as TokioInstant, Sleep};
+use tokio_rustls::TlsConnector;
+
+static TLS_CONFIG: LazyLock<Arc<rustls::ClientConfig>> = LazyLock::new(|| {
+    // Installing the default crypto provider is idempotent; ignore failures from
+    // multiple installs across test/runtime instantiations.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let mut root_store = rustls::RootCertStore::empty();
+    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    Arc::new(
+        rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth(),
+    )
+});
 
 /// Apply low-latency TCP socket options for streaming protocols.
 ///
@@ -70,6 +86,37 @@ impl TokioRuntime {
     /// 将 `MonoTime` 截止时间转换为 Tokio `Instant`。
     fn deadline_to_instant(&self, deadline: MonoTime) -> TokioInstant {
         self.start_tokio + Duration::from_micros(deadline.as_micros())
+    }
+
+    /// Asynchronously connect to `addr` over plain TCP.
+    ///
+    /// 异步连接到 `addr` 的普通 TCP 连接。
+    pub async fn connect_tcp_async(&self, addr: SocketAddr) -> io::Result<TokioTcpStream> {
+        let stream = TcpStream::connect(addr).await?;
+        apply_low_latency_tcp_options(&stream);
+        Ok(TokioTcpStream { stream })
+    }
+
+    /// Asynchronously connect to `addr` and perform a TLS handshake using `server_name` as SNI.
+    ///
+    /// 异步连接到 `addr` 并使用 `server_name` 作为 SNI 完成 TLS 握手。
+    pub async fn connect_tls(
+        &self,
+        addr: SocketAddr,
+        server_name: &str,
+    ) -> io::Result<TokioTlsTcpStream> {
+        let tcp = TcpStream::connect(addr).await?;
+        apply_low_latency_tcp_options(&tcp);
+        let server_name = rustls::pki_types::ServerName::try_from(server_name.to_string())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))?;
+        let connector = TlsConnector::from(TLS_CONFIG.clone());
+        let stream = connector
+            .connect(server_name, tcp)
+            .await
+            .map_err(|e| io::Error::other(e.to_string()))?;
+        Ok(TokioTlsTcpStream {
+            stream: tokio_rustls::TlsStream::Client(stream),
+        })
     }
 }
 
@@ -191,6 +238,33 @@ impl AsyncTcpStream for TokioTcpStream {
 
     fn peer_addr(&self) -> io::Result<SocketAddr> {
         self.stream.peer_addr()
+    }
+}
+
+/// Tokio TLS-wrapped TCP stream.
+///
+/// 基于 Tokio Rustls 的 TLS TCP 流包装。
+#[derive(Debug)]
+pub struct TokioTlsTcpStream {
+    stream: tokio_rustls::TlsStream<TcpStream>,
+}
+
+#[async_trait]
+impl AsyncTcpStream for TokioTlsTcpStream {
+    async fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.stream.read(buf).await
+    }
+
+    async fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+        self.stream.write_all(buf).await
+    }
+
+    async fn shutdown(&mut self) -> io::Result<()> {
+        self.stream.shutdown().await
+    }
+
+    fn peer_addr(&self) -> io::Result<SocketAddr> {
+        self.stream.get_ref().0.peer_addr()
     }
 }
 
@@ -342,6 +416,21 @@ impl RuntimeApi for TokioRuntime {
 
     fn connect_tcp(&self, addr: SocketAddr) -> io::Result<Box<dyn AsyncTcpStream>> {
         Ok(Box::new(<Self as Runtime>::connect_tcp(self, addr)?))
+    }
+
+    fn connect_tcp_async<'a>(&'a self, addr: SocketAddr) -> ConnectTcpFuture<'a> {
+        Box::pin(async move {
+            let stream = TokioRuntime::connect_tcp_async(self, addr).await?;
+            Ok(Box::new(stream) as Box<dyn AsyncTcpStream>)
+        })
+    }
+
+    fn connect_tls<'a>(&'a self, addr: SocketAddr, server_name: &str) -> ConnectTlsFuture<'a> {
+        let server_name = server_name.to_string();
+        Box::pin(async move {
+            let stream = TokioRuntime::connect_tls(self, addr, &server_name).await?;
+            Ok(Box::new(stream) as Box<dyn AsyncTcpStream>)
+        })
     }
 
     fn bind_tcp(&self, addr: SocketAddr) -> io::Result<Box<dyn AsyncTcpListener>> {

@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 
 use cheetah_media_api::port::{
-    MediaControlApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi,
+    MediaControlApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookApi,
 };
 use cheetah_media_api::{MediaCapability, MediaCapabilitySet};
 
@@ -300,6 +300,37 @@ impl MediaServices {
             .map(|e| e.provider.clone())
     }
 
+    /// Register the webhook provider.
+    ///
+    /// 注册 webhook provider。
+    pub fn register_webhook(&self, webhook: Arc<dyn WebhookApi>) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        registry.webhook = Some(ProviderEntry {
+            provider: webhook,
+            generation,
+            capabilities: webhook_default_capabilities(),
+        });
+        ProviderRegistration {
+            capability: MediaCapability::Webhook,
+            provider_id: format!("webhook:{generation}"),
+            generation,
+        }
+    }
+
+    /// Return the current webhook provider, if any.
+    ///
+    /// 返回当前 webhook provider（如有）。
+    pub fn webhook(&self) -> Option<Arc<dyn WebhookApi>> {
+        self.inner
+            .read()
+            .expect("media services lock")
+            .webhook
+            .as_ref()
+            .map(|e| e.provider.clone())
+    }
+
     /// Unregister a provider using a previously returned `ProviderRegistration`.
     /// Returns `true` if the registration matched and the provider was removed.
     ///
@@ -342,6 +373,9 @@ impl MediaServices {
         if let Some(entry) = &registry.rtp {
             set.merge(&entry.capabilities);
         }
+        if let Some(entry) = &registry.webhook {
+            set.merge(&entry.capabilities);
+        }
         set
     }
 }
@@ -355,6 +389,7 @@ struct MediaProviderRegistry {
     snapshot: Option<ProviderEntry<Arc<dyn SnapshotApi>>>,
     proxy: Option<ProviderEntry<Arc<dyn ProxyApi>>>,
     rtp: Option<ProviderEntry<Arc<dyn RtpApi>>>,
+    webhook: Option<ProviderEntry<Arc<dyn WebhookApi>>>,
 }
 
 struct ProviderEntry<P> {
@@ -370,6 +405,7 @@ enum ProviderSlot<'a> {
     Snapshot(&'a mut Option<ProviderEntry<Arc<dyn SnapshotApi>>>),
     Proxy(&'a mut Option<ProviderEntry<Arc<dyn ProxyApi>>>),
     Rtp(&'a mut Option<ProviderEntry<Arc<dyn RtpApi>>>),
+    Webhook(&'a mut Option<ProviderEntry<Arc<dyn WebhookApi>>>),
 }
 
 impl<'a> ProviderSlot<'a> {
@@ -381,6 +417,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::Snapshot(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Proxy(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Rtp(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::Webhook(opt) => opt.as_ref().map(|e| e.generation),
         }
     }
 
@@ -392,6 +429,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::Snapshot(opt) => **opt = None,
             ProviderSlot::Proxy(opt) => **opt = None,
             ProviderSlot::Rtp(opt) => **opt = None,
+            ProviderSlot::Webhook(opt) => **opt = None,
         }
     }
 }
@@ -415,7 +453,7 @@ impl MediaProviderRegistry {
             MediaCapability::Snapshot => Some(ProviderSlot::Snapshot(&mut self.snapshot)),
             MediaCapability::Proxy => Some(ProviderSlot::Proxy(&mut self.proxy)),
             MediaCapability::Rtp => Some(ProviderSlot::Rtp(&mut self.rtp)),
-            MediaCapability::Webhook => None,
+            MediaCapability::Webhook => Some(ProviderSlot::Webhook(&mut self.webhook)),
         }
     }
 }
@@ -455,6 +493,12 @@ fn proxy_default_capabilities() -> MediaCapabilitySet {
 fn rtp_default_capabilities() -> MediaCapabilitySet {
     let mut set = MediaCapabilitySet::empty();
     set.add(MediaCapability::Rtp, 1);
+    set
+}
+
+fn webhook_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::Webhook, 1);
     set
 }
 

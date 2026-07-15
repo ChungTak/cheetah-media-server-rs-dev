@@ -48,8 +48,6 @@ pub enum WebhookSendError {
     InvalidResponse,
     #[error("denied by policy: {0}")]
     Policy(String),
-    #[error("HTTPS/TLS is not yet supported")]
-    TlsNotSupported,
 }
 
 /// Runtime-backed HTTP/1.1 client.
@@ -75,10 +73,6 @@ impl WebhookSender for RuntimeHttpClient {
             }
         };
 
-        if parsed.scheme == "https" {
-            return Err(WebhookSendError::TlsNotSupported);
-        }
-
         let start = std::time::Instant::now();
         let deadline = self
             .runtime_api
@@ -86,7 +80,11 @@ impl WebhookSender for RuntimeHttpClient {
             .as_micros()
             .saturating_add(request.timeout.as_micros() as u64);
 
-        let mut stream = self.runtime_api.connect_tcp(addr)?;
+        let mut stream = if parsed.scheme == "https" {
+            self.runtime_api.connect_tls(addr, &parsed.host).await?
+        } else {
+            self.runtime_api.connect_tcp_async(addr).await?
+        };
 
         let req = build_request(&parsed, &request.headers, &request.body);
 
@@ -147,7 +145,11 @@ fn build_request(parsed: &ParsedUrl, headers: &HashMap<String, String>, body: &[
     let mut req = Vec::new();
     req.extend_from_slice(format!("POST {} HTTP/1.1\r\n", parsed.path_and_query).as_bytes());
     req.extend_from_slice(
-        format!("Host: {}\r\n", host_header(&parsed.host, parsed.port)).as_bytes(),
+        format!(
+            "Host: {}\r\n",
+            host_header(&parsed.host, parsed.port, &parsed.scheme)
+        )
+        .as_bytes(),
     );
     req.extend_from_slice(b"Connection: close\r\n");
     for (k, v) in headers {
@@ -159,8 +161,8 @@ fn build_request(parsed: &ParsedUrl, headers: &HashMap<String, String>, body: &[
     req
 }
 
-fn host_header(host: &str, port: u16) -> String {
-    let default_port = if port == 443 { 443 } else { 80 };
+fn host_header(host: &str, port: u16, scheme: &str) -> String {
+    let default_port = if scheme == "https" { 443 } else { 80 };
     if port == default_port {
         host.to_string()
     } else {

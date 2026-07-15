@@ -117,6 +117,7 @@ impl WebhookUrlPolicy {
     }
 
     fn is_allowed(&self, ip: IpAddr) -> bool {
+        let ip = canonicalize_ip(ip);
         if self.allowed_cidrs.iter().any(|net| net.contains(&ip)) {
             return true;
         }
@@ -197,6 +198,46 @@ mod tests {
             verdict,
             Err(WebhookSecurityError::BlockedAddress(_))
         ));
+    }
+
+    #[test]
+    fn blocks_ipv6_mapped_loopback() {
+        let policy = WebhookUrlPolicy::default();
+        let verdict = policy.evaluate("http://[::ffff:127.0.0.1]/hook");
+        assert!(matches!(
+            verdict,
+            Err(WebhookSecurityError::BlockedAddress(_))
+        ));
+    }
+
+    #[test]
+    fn blocks_ipv6_mapped_metadata() {
+        let policy = WebhookUrlPolicy::default();
+        let verdict = policy.evaluate("http://[::ffff:169.254.169.254]/latest/meta-data");
+        assert!(matches!(
+            verdict,
+            Err(WebhookSecurityError::BlockedAddress(_))
+        ));
+    }
+
+    #[test]
+    fn allows_ipv6_mapped_public() {
+        let policy = WebhookUrlPolicy::default();
+        let verdict = policy.evaluate("http://[::ffff:8.8.8.8]/hook");
+        assert!(verdict.is_ok(), "{verdict:?}");
+    }
+}
+
+fn canonicalize_ip(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                IpAddr::V4(v4)
+            } else {
+                IpAddr::V6(v6)
+            }
+        }
+        other => other,
     }
 }
 

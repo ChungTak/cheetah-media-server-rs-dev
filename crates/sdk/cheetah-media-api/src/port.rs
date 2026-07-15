@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::command::*;
 use crate::error::Result;
-use crate::event::{MediaEventSender, MediaEventSubscription};
+use crate::event::{MediaEvent, MediaEventSender, MediaEventSubscription};
 use crate::ids::*;
 use crate::model::*;
 
@@ -267,4 +267,22 @@ pub trait MediaFacade:
         &self,
         sender: Box<dyn MediaEventSender>,
     ) -> Result<Box<dyn MediaEventSubscription>>;
+}
+
+/// Synchronous webhook decision hooks.
+///
+/// 同步 webhook 决策钩子。
+#[async_trait]
+pub trait WebhookApi: Send + Sync {
+    /// Ask configured webhook targets whether an action should be allowed.
+    ///
+    /// The event is translated to a ZLM-compatible hook name and payload,
+    /// sent with a short deadline, and the response is parsed into an
+    /// `Allow`/`Deny` decision. Targets that time out or fail apply their
+    /// configured failure policy.
+    ///
+    /// 向配置的 webhook 目标询问是否允许某个动作。事件会被翻译成兼容 ZLM 的 hook
+    /// 名称与负载，短 deadline 发送，响应被解析成 `Allow`/`Deny` 决策；超时或失败
+    /// 时应用对应失败策略。
+    async fn request_decision(&self, event: MediaEvent) -> Result<Decision>;
 }

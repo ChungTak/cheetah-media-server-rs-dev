@@ -1179,19 +1179,6 @@ impl PublisherApi for StreamManager {
             None,
             None,
         );
-        if !entry.online.swap(true, Ordering::AcqRel) {
-            let media_key = StreamManagerInner::media_key_for(&stream_key);
-            self.inner
-                .publish_media_event(MediaEvent::StreamOnlineChanged(StreamOnlineChanged {
-                    header: crate::media_provider::util::event_header(
-                        "stream-manager",
-                        Some(&media_key),
-                        None,
-                    ),
-                    online: OnlineState::Online,
-                    schema: None,
-                }));
-        }
         let lease = PublishLease {
             stream_id: entry.stream_id,
             stream_key: stream_key.clone(),
@@ -2185,24 +2172,24 @@ mod tests {
             .await
             .expect("publisher");
 
-        let first = recv_event(&mut rx, Duration::from_millis(100))
-            .await
-            .expect("online event after acquire");
-        assert!(matches!(first, MediaEvent::StreamOnlineChanged(_)));
-
         let track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90000);
         sink.update_tracks(vec![track]).unwrap();
 
-        let second = recv_event(&mut rx, Duration::from_millis(100))
+        let first = recv_event(&mut rx, Duration::from_millis(100))
             .await
             .expect("published event after tracks");
-        match second {
+        match first {
             MediaEvent::StreamPublished(p) => {
                 assert_eq!(p.protocol, "rtmp");
                 assert_eq!(p.remote_endpoint.as_deref(), Some("1.2.3.4:1935"));
             }
-            _ => panic!("expected StreamPublished, got {second:?}"),
+            _ => panic!("expected StreamPublished, got {first:?}"),
         }
+
+        let second = recv_event(&mut rx, Duration::from_millis(100))
+            .await
+            .expect("online event after tracks");
+        assert!(matches!(second, MediaEvent::StreamOnlineChanged(_)));
 
         sink.close().unwrap();
 

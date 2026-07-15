@@ -1083,7 +1083,10 @@ dependencies = [
  "cheetah-codec",
  "cheetah-runtime-api",
  "libc",
+ "rustls",
  "tokio",
+ "tokio-rustls",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]

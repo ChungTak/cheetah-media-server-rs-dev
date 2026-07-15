@@ -5,14 +5,17 @@
 
 pub mod circuit;
 pub mod config;
+pub mod decision;
 pub mod dispatcher;
 pub mod module;
 pub mod security;
 pub mod sender;
 pub mod translator;
+pub mod util;
 
 pub use circuit::{CircuitBreaker, CircuitState};
-pub use config::{WebhookDispatcherConfig, WebhookProfile};
+pub use config::{FailurePolicy, WebhookDispatcherConfig, WebhookProfile};
+pub use decision::WebhookDecisionClient;
 pub use dispatcher::{WebhookDispatcher, WebhookDispatcherHandle, WebhookJob};
 pub use module::{WebhookModule, WebhookModuleFactory};
 pub use security::{WebhookUrlPolicy, WebhookUrlVerdict};
