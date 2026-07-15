@@ -112,20 +112,19 @@ impl SessionStore {
     pub(crate) fn record_failed_attempt(&self, username: &str) -> bool {
         let window = Duration::from_secs(FAILED_ATTEMPT_WINDOW_SECS);
         let now = Instant::now();
-        let cutoff = now.checked_sub(window).unwrap_or(now);
         let mut attempts = self.failed_attempts.write().unwrap();
         // Keep the username map bounded: drop expired/stale timestamps and remove
         // entries that become empty, then refuse to create new keys once the
         // distinct-username cap is reached.
         attempts.retain(|_, v| {
-            v.retain(|t| *t > cutoff);
+            v.retain(|t| now.duration_since(*t) < window);
             !v.is_empty()
         });
         if attempts.len() >= MAX_FAILED_USERNAMES && !attempts.contains_key(username) {
             return false;
         }
         let entry = attempts.entry(username.to_string()).or_default();
-        entry.retain(|t| *t > cutoff);
+        entry.retain(|t| now.duration_since(*t) < window);
         entry.push(now);
         entry.len() >= MAX_FAILED_ATTEMPTS
     }
