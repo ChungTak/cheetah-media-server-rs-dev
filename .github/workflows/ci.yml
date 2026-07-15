@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  s0-toolchain:
+    name: S0 - Toolchain, fmt and dependency boundary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust from rust-toolchain.toml
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt,clippy
+
+      - name: S0 - Print toolchain and lockfile hash
+        run: |
+          set -euo pipefail
+          rustc --version --verbose
+          cargo --version
+          echo "lockfile_sha256=$(sha256sum Cargo.lock | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "lockfile hash: $(sha256sum Cargo.lock | cut -d' ' -f1)"
+
+      - name: S0 - Format check
+        run: cargo fmt --check
+
+      - name: S0 - Dependency boundary check
+        run: |
+          set -euo pipefail
+          cargo check -p cheetah-media-api
+          cargo check -p cheetah-sdk
+          cargo clippy -p cheetah-media-api -- -D warnings
+          cargo clippy -p cheetah-sdk -- -D warnings
+
+      - name: S0 - L0 domain unit tests
+        run: cargo test -p cheetah-media-api
