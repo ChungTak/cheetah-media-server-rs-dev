@@ -86,10 +86,14 @@ async fn zlm_version_and_api_list_are_available() {
         .expect("api list");
     let body = body_json(&resp);
     assert_eq!(body["code"], 0, "api list failed: {body}");
-    let apis = body["data"].as_array().expect("apis array");
+    let apis = body["data"]["apis"].as_array().expect("apis array");
     assert!(
         apis.iter().any(|v| v.as_str() == Some("/api/version")),
         "version route missing from api list: {body}"
+    );
+    assert!(
+        body["data"]["capabilities"].is_object(),
+        "capabilities missing: {body}"
     );
 }
 

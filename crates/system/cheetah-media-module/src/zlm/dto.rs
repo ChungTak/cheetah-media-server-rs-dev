@@ -167,6 +167,13 @@ pub(crate) struct RtpPauseResult {
     pub check_paused: bool,
 }
 
+/// `{apis, capabilities}` returned by `getApiList`.
+#[derive(Serialize)]
+pub(crate) struct ApiListData {
+    pub apis: Vec<String>,
+    pub capabilities: cheetah_media_api::capability::MediaCapabilitySet,
+}
+
 /// `data` wrapper.
 #[derive(Serialize)]
 pub(crate) struct Data<T> {
@@ -471,7 +478,7 @@ pub(crate) struct ProxyItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     pub url: String,
-    pub src: ProxySrc,
+    pub dst: ProxyDst,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vhost: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -489,7 +496,7 @@ pub(crate) struct ProxyItem {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ProxySrc {
+pub(crate) struct ProxyDst {
     pub vhost: String,
     pub app: String,
     pub stream: String,
@@ -502,7 +509,7 @@ impl ProxyItem {
         Self {
             key,
             url: info.source.clone(),
-            src: ProxySrc {
+            dst: ProxyDst {
                 vhost: info.destination.vhost.0.clone(),
                 app: info.destination.app.0.clone(),
                 stream: info.destination.stream.0.clone(),
