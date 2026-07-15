@@ -176,6 +176,41 @@ impl Entry {
     }
 }
 
+struct InProgressGuard {
+    inner: Option<Arc<Mutex<HashMap<IdempotencyKey, Entry>>>>,
+    key: Option<IdempotencyKey>,
+}
+
+impl InProgressGuard {
+    fn new(inner: Arc<Mutex<HashMap<IdempotencyKey, Entry>>>, key: IdempotencyKey) -> Self {
+        Self {
+            inner: Some(inner),
+            key: Some(key),
+        }
+    }
+
+    fn defuse(&mut self) {
+        self.inner = None;
+        self.key = None;
+    }
+}
+
+impl Drop for InProgressGuard {
+    fn drop(&mut self) {
+        let (inner, key) = match (self.inner.take(), self.key.take()) {
+            (Some(i), Some(k)) => (i, k),
+            _ => return,
+        };
+        let mut map = inner.lock().unwrap();
+        if let Some(Entry::InProgress { waiters, .. }) = map.remove(&key) {
+            drop(map);
+            for w in waiters {
+                let _ = w.send();
+            }
+        }
+    }
+}
+
 /// In-memory idempotency repository.
 ///
 /// 内存中的幂等仓库。
@@ -303,8 +338,16 @@ impl InMemoryIdempotencyRepository {
             }
         }
 
+        // Install a guard that removes the in-progress entry if the executor is
+        // cancelled before completing.
+        let mut guard = InProgressGuard::new(self.inner.clone(), key.clone());
+
         // Run the actual operation outside of the lock.
         let result = f().await;
+
+        // The operation has finished (success or error). Defuse the guard: we
+        // will now commit a terminal outcome ourselves.
+        guard.defuse();
 
         // Commit the terminal outcome, wake waiters and return.
         let waiters = {
@@ -331,7 +374,10 @@ impl InMemoryIdempotencyRepository {
                 }
                 (Err(e), Some(Entry::InProgress { waiters, .. })) => {
                     let waiters = std::mem::take(waiters);
-                    let message = e.to_string();
+                    let message = match e {
+                        IdempotencyError::OperationFailed(msg) => msg.clone(),
+                        ref other => other.to_string(),
+                    };
                     let expiry = Self::now_ms() + ttl_ms;
                     map.insert(
                         key,
@@ -490,7 +536,7 @@ mod tests {
                 })
                 .await
                 .unwrap_err();
-            assert!(err.to_string().contains("boom"));
+            assert_eq!(err.to_string(), "idempotency operation failed: boom");
         }
         assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
@@ -521,5 +567,41 @@ mod tests {
         .unwrap();
 
         assert_eq!(counter.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cancelled_operation_is_cleaned_up_and_retried() {
+        let repo = InMemoryIdempotencyRepository::new();
+        let key = IdempotencyKey::new("alice", "create_stream", "k1");
+        let fp = canonical_hash(b"req1");
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        let repo2 = repo.clone();
+        let key2 = key.clone();
+        let c = counter.clone();
+        let handle = tokio::spawn(async move {
+            repo2
+                .execute(key2, fp, 60_000, move || async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
+                    c.fetch_add(1, Ordering::SeqCst);
+                    Ok(("never".to_string(), None))
+                })
+                .await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        handle.abort();
+        let _ = handle.await;
+
+        let c = counter.clone();
+        let result = repo
+            .execute(key, fp, 60_000, move || async move {
+                c.fetch_add(1, Ordering::SeqCst);
+                Ok(("ok".to_string(), Some("r".to_string())))
+            })
+            .await
+            .unwrap();
+        assert_eq!(result, "ok");
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
 }
