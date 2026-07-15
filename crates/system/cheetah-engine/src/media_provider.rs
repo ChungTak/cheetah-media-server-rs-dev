@@ -5,6 +5,7 @@ pub mod facade;
 pub mod file_store;
 pub mod stream;
 pub mod url_resolver;
+pub mod url_signer;
 pub(crate) mod util;
 
 pub use data_plane::EngineMediaDataPlane;

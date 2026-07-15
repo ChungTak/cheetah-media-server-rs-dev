@@ -3,7 +3,6 @@
 //! 基于输出端点注册表的运行时驱动可播放 URL 解析器。
 
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use cheetah_media_api::error::{MediaError, Result};
@@ -13,6 +12,8 @@ use cheetah_media_api::output::EndpointState;
 use cheetah_media_api::port::{MediaRequestContext, MediaUrlResolverApi};
 use cheetah_sdk::{ConfigProvider, MediaServices};
 use serde_json::Value;
+
+use super::url_signer::UrlSigner;
 
 /// Public URL resolver driven by the output endpoint registry.
 ///
@@ -142,17 +143,18 @@ impl EngineMediaUrlResolver {
 
         let available = online == Some(OnlineState::Online);
 
-        let secret = Self::string_field(&media, "url_sign_secret", "");
-        let (url, expires_at) = if secret.is_empty() {
-            (base_url, None)
-        } else {
+        let (url, expires_at) = if let Some(signer) = UrlSigner::from_config(&media) {
             let ttl = media
                 .get("url_ttl_secs")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(3600)
                 .max(1);
-            let exp = now_secs() + ttl as i64;
-            (sign_url(&base_url, exp, &secret), Some(exp * 1000))
+            signer
+                .sign(&base_url, ttl)
+                .map(|(u, exp)| (u, Some(exp * 1000)))
+                .ok_or_else(|| MediaError::internal("failed to sign media url"))?
+        } else {
+            (base_url, None)
         };
 
         Ok(MediaUrl {
@@ -220,28 +222,6 @@ impl MediaUrlResolverApi for EngineMediaUrlResolver {
         }
         Ok(out)
     }
-}
-
-fn now_secs() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
-/// Lightweight non-cryptographic token for short-lived URL markers.
-/// Production deployments should replace this with HMAC via a secrets service.
-///
-/// 短时 URL 标记的轻量 token；生产环境应由密钥服务的 HMAC 替换。
-fn sign_url(base: &str, exp: i64, secret: &str) -> String {
-    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in secret.bytes().chain(base.bytes()).chain(exp.to_le_bytes()) {
-        hash ^= u64::from(b);
-        hash = hash.wrapping_mul(0x1000_0000_01b3);
-    }
-    let sig = format!("{hash:016x}");
-    let sep = if base.contains('?') { '&' } else { '?' };
-    format!("{base}{sep}exp={exp}&sign={sig}")
 }
 
 #[cfg(test)]
