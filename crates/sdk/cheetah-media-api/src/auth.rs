@@ -185,6 +185,20 @@ impl Principal {
             .any(|s| s == scope || *s == MediaScope::ServerAdmin)
     }
 
+    /// Returns true if the scope is held globally or in any resource grant.
+    ///
+    /// This is intended for HTTP middleware gating: it does not check whether
+    /// the eventual request key matches a grant; that finer check happens in the
+    /// provider layer.
+    pub fn has_scope_or_grant(&self, scope: &MediaScope) -> bool {
+        if self.has_scope(scope) {
+            return true;
+        }
+        self.resource_grants
+            .iter()
+            .any(|g| g.scopes.contains(scope))
+    }
+
     /// Returns true if the principal has the requested scope, either globally
     /// or through a resource grant matching `key`.
     ///

@@ -359,7 +359,7 @@ impl ZlmMediaHttpService {
         let has = ctx
             .principal
             .as_ref()
-            .map(|p| p.has_scope(scope))
+            .map(|p| p.has_scope_or_grant(scope))
             .unwrap_or(false);
         if !has {
             return Err(AdapterError::Media(

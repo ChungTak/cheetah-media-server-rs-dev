@@ -116,6 +116,9 @@ impl EngineMediaSessionDirectory {
     }
 }
 
+// A missing principal is treated as authorized so that internal callers and
+// unit tests that do not set an explicit principal are not blocked. HTTP
+// adapters always populate a principal before requests reach the provider.
 fn authorized(ctx: &MediaRequestContext, scope: &MediaScope, key: Option<&MediaKey>) -> bool {
     match &ctx.principal {
         None => true,
