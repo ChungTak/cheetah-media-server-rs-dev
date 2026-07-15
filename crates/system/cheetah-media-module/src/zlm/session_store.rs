@@ -112,7 +112,7 @@ impl SessionStore {
     pub(crate) fn record_failed_attempt(&self, username: &str) -> bool {
         let window = Duration::from_secs(FAILED_ATTEMPT_WINDOW_SECS);
         let now = Instant::now();
-        let cutoff = now - window;
+        let cutoff = now.checked_sub(window).unwrap_or(now);
         let mut attempts = self.failed_attempts.write().unwrap();
         // Keep the username map bounded: drop expired/stale timestamps and remove
         // entries that become empty, then refuse to create new keys once the
