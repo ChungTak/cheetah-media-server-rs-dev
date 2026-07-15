@@ -72,7 +72,7 @@ const ZLM_ROUTES: &[ZlmRoute] = &[
     ZlmRoute {
         method: HttpMethod::Get,
         path: "/api/version",
-        scope: MediaScope::MediaRead,
+        scope: MediaScope::ServerAdmin,
         level: ZlmRouteLevel::L3,
         required: true,
     },

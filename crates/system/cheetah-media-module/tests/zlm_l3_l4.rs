@@ -149,4 +149,14 @@ async fn zlm_l3_requires_admin_scope() {
         body["code"], -100,
         "L3 route should require admin scope: {body}"
     );
+
+    let resp = service
+        .handle(bearer_get("/api/version", "user-token"))
+        .await
+        .expect("version with read token");
+    let body = body_json(&resp);
+    assert_eq!(
+        body["code"], -100,
+        "version should require admin scope: {body}"
+    );
 }
