@@ -82,7 +82,7 @@ impl StreamMediaProvider {
     fn check_deadline(ctx: &MediaRequestContext) -> cheetah_media_api::error::Result<()> {
         Deadline::from_context(ctx)
             .check()
-            .map_err(|e| MediaError::unavailable(e.to_string()))
+            .map_err(Self::map_sdk_error)
     }
 
     fn stream_key_to_media_key(key: &StreamKey) -> MediaKey {

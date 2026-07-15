@@ -142,7 +142,11 @@ impl MediaSessionDirectoryApi for EngineMediaSessionDirectory {
         close_handle: Box<dyn SessionCloseHandle>,
     ) -> MediaResult<SessionId> {
         if let Err(e) = Deadline::from_context(ctx).check() {
-            return Err(MediaError::unavailable(e.to_string()));
+            let msg = match e {
+                cheetah_sdk::SdkError::Unavailable(msg) => msg,
+                other => other.to_string(),
+            };
+            return Err(MediaError::unavailable(msg));
         }
         let id = if record.session_id.0.is_empty() {
             self.new_id()
