@@ -43,4 +43,7 @@ jobs:
           cargo clippy -p cheetah-sdk -- -D warnings
 
       - name: S0 - L0 domain unit tests
-        run: cargo test -p cheetah-media-api
+        run: |
+          set -euo pipefail
+          cargo test -p cheetah-media-api
+          cargo test -p cheetah-sdk
