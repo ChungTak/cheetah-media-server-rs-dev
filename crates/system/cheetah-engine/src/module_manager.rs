@@ -269,6 +269,8 @@ impl ModuleManager {
                 request_timeout_ms: module.http_request_timeout_ms(),
             };
             self.http_mounts.write().insert(module_id.clone(), mount);
+        } else {
+            self.http_mounts.write().remove(module_id);
         }
     }
 
