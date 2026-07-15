@@ -175,6 +175,9 @@ async fn internal_proxy_targets_are_rejected() {
         "http://10.0.0.1/live.flv",
         "http://192.168.1.1/live.flv",
         "http://172.16.0.1/live.flv",
+        "http://[fd00::1]:8080/live.flv",
+        "http://[fe80::1]/live.flv",
+        "http://[::1]/live.flv",
     ];
     for url in forbidden {
         let mut req = pull_request(url);

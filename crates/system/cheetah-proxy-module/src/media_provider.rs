@@ -9,7 +9,7 @@ use cheetah_media_api::ids::{MediaKey, ProxyId};
 use cheetah_media_api::model::{Page, ProxyInfo, ProxyKind, ProxyState};
 use cheetah_media_api::port::{MediaRequestContext, ProxyApi};
 use cheetah_sdk::EngineContext;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 use tracing::{debug, warn};
 use url::{Host, Url};
 
@@ -415,7 +415,21 @@ fn is_internal_ip(addr: &IpAddr) -> bool {
             if let Some(v4) = v6.to_ipv4_mapped() {
                 return is_internal_ip(&IpAddr::V4(v4));
             }
-            v6.is_loopback() || v6.is_unspecified() || v6.is_multicast()
+            is_ipv6_unique_local(v6)
+                || is_ipv6_link_local(v6)
+                || v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
         }
     }
+}
+
+fn is_ipv6_unique_local(v6: &Ipv6Addr) -> bool {
+    // fc00::/7
+    v6.segments()[0] & 0xfe00 == 0xfc00
+}
+
+fn is_ipv6_link_local(v6: &Ipv6Addr) -> bool {
+    // fe80::/10
+    v6.segments()[0] & 0xffc0 == 0xfe80
 }

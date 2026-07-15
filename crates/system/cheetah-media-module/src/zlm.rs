@@ -229,8 +229,9 @@ impl ZlmMediaHttpService {
                     ))
                 })?;
                 use subtle::{Choice, ConstantTimeEq};
-                // Prefer header over query parameter to avoid secret ending up in access logs.
-                let provided = secret_from_header_or_query(req);
+                // Only accept the secret from headers; never from the URL query string
+                // to avoid exposure in access logs or Referer headers.
+                let provided = secret_from_header(req);
                 let provided_bytes = provided.as_bytes();
                 let expected_bytes = expected.as_bytes();
                 let len_eq = (provided_bytes.len() as u64).ct_eq(&(expected_bytes.len() as u64));
@@ -1076,25 +1077,15 @@ fn header_value<'a>(headers: &'a [HttpHeader], name: &str) -> Option<&'a str> {
         .map(|h| h.value.as_str())
 }
 
-fn query_param(req: &HttpRequest, name: &str) -> Option<String> {
-    let qs = req.query.as_deref()?;
-    let qs = qs.strip_prefix('?').unwrap_or(qs);
-    for pair in qs.split('&') {
-        if let Some((k, v)) = pair.split_once('=') {
-            if k == name {
-                return Some(v.to_string());
-            }
-        } else if pair == name {
-            return Some(String::new());
-        }
-    }
-    None
-}
-
-/// Extract the ZLM shared secret from a header (preferred) or the URL query string.
+/// Extract the ZLM shared secret from a header.
 ///
-/// 优先从 HTTP 头读取 ZLM 共享密钥，避免密钥出现在 access log 的 URL 中。
-fn secret_from_header_or_query(req: &HttpRequest) -> String {
+/// Only `x-zlm-secret` and `Authorization: Bearer ...` are accepted; the URL
+/// query string is intentionally ignored so the secret does not appear in access
+/// logs or Referer headers.
+///
+/// 仅从 HTTP 头读取 ZLM 共享密钥，URL query string 被忽略，避免密钥泄露到
+/// access log 或 Referer 头中。
+fn secret_from_header(req: &HttpRequest) -> String {
     if let Some(header) = header_value(&req.headers, "x-zlm-secret") {
         return header.to_string();
     }
@@ -1106,7 +1097,7 @@ fn secret_from_header_or_query(req: &HttpRequest) -> String {
             .or_else(|| header.strip_prefix("BEARER "));
         return stripped.unwrap_or(header).trim().to_string();
     }
-    query_param(req, "secret").unwrap_or_default()
+    String::new()
 }
 
 pub(crate) fn page_from_params(params: &serde_json::Value) -> u64 {
