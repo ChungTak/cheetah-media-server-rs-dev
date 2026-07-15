@@ -22,6 +22,7 @@
 
 mod error;
 mod native;
+mod native_routes;
 mod util;
 mod zlm;
 
@@ -47,13 +48,14 @@ mod tests {
     }
 
     #[test]
-    fn native_module_has_empty_routes_for_fuzzy_prefix_matching() {
+    fn native_module_exposes_full_route_catalog() {
         let module = NativeMediaModule::new();
         let routes = module.http_routes();
-        assert!(
-            routes.is_empty(),
-            "native module delegates routing to handle()"
-        );
+        assert!(!routes.is_empty(), "native module must expose routes");
+        let paths: std::collections::HashSet<_> = routes.into_iter().map(|r| r.path).collect();
+        assert!(paths.contains("/media/{vhost}/{app}/{stream}"));
+        assert!(paths.contains("/record/tasks/{task_id}/stop"));
+        assert!(paths.contains("/rtp/sessions/{session_id}/stop"));
     }
 
     #[test]
