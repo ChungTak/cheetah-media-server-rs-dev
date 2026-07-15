@@ -22,102 +22,102 @@
 
 ## 2. S0 — 恢复可信基线
 
-- [ ] **S0-T1** 固定可获取的 Rust 1.94.1，验证 rustfmt/clippy。
-- [ ] **S0-T2** 修复 signal fake provider 的 `get_rtp_session`。
-- [ ] **S0-T3** 所有 RtpSenderRequest 补 `codec_hint`，加 serde 兼容。
-- [ ] **S0-T4** 跑 01 中基线命令并更新 gap matrix。
-- [ ] **S0-T5** 为 media module 建立最小 route test harness。
+- [x] **S0-T1** 固定可获取的 Rust 1.94.1，验证 rustfmt/clippy。
+- [x] **S0-T2** 修复 signal fake provider 的 `get_rtp_session`。
+- [x] **S0-T3** 所有 RtpSenderRequest 补 `codec_hint`，加 serde 兼容。
+- [x] **S0-T4** 跑 01 中基线命令并更新 gap matrix。
+- [x] **S0-T5** 为 media module 建立最小 route test harness。
 
 DoD：默认 cargo 命令可运行；相关既有测试全部编译；不引入功能行为变化。
 
 ## 3. S1 — Capability 与 Provider Registry
 
-- [ ] **S1-T1** 删除默认 record/snapshot/proxy/RTP stub 注册。
-- [ ] **S1-T2** 实现 registry-backed facade。
-- [ ] **S1-T3** provider registration/generation/unregister。
-- [ ] **S1-T4** module lifecycle 与 capability state 接线。
-- [ ] **S1-T5** capability SDK/native 查询。
-- [ ] **S1-T6** restart、并发替换、stale provider 测试。
+- [x] **S1-T1** 删除默认 record/snapshot/proxy/RTP stub 注册。
+- [x] **S1-T2** 实现 registry-backed facade。
+- [x] **S1-T3** provider registration/generation/unregister。
+- [x] **S1-T4** module lifecycle 与 capability state 接线。
+- [x] **S1-T5** capability SDK/native 查询。
+- [x] **S1-T6** restart、并发替换、stale provider 测试。
 
 DoD：capability 与生产 provider 实时一致；无第二份静态 capability。
 
 ## 4. S2 — Stream、Session 和数据面
 
-- [ ] **S2-T1** 真实 session directory 和全局 ID。
-- [ ] **S2-T2** 协议 publisher/player 注册。
-- [ ] **S2-T3** list/kick/close 精确控制。
-- [ ] **S2-T4** domain publisher lease bridge。
-- [ ] **S2-T5** domain subscriber bridge。
-- [ ] **S2-T6** Rust MediaDataPlaneApi。
-- [ ] **S2-T7** StreamInfo 时间、统计、tracks、URL。
+- [x] **S2-T1** 真实 session directory 和全局 ID。
+- [x] **S2-T2** 协议 publisher/player 注册。
+- [x] **S2-T3** list/kick/close 精确控制。
+- [x] **S2-T4** domain publisher lease bridge。
+- [x] **S2-T5** domain subscriber bridge。
+- [x] **S2-T6** Rust MediaDataPlaneApi。
+- [x] **S2-T7** StreamInfo 时间、统计、tracks、URL。
 
 DoD：publish→engine→subscriber 有真实 AVFrame；单 session 可精确关闭。
 
 ## 5. S3 — Record、Snapshot、File、VOD
 
-- [ ] **S3-T1** record 幂等和完整 MediaKey。
-- [ ] **S3-T2** task/file 有界分页和稳定排序。
-- [ ] **S3-T3** playback provider 四命令。
-- [ ] **S3-T4** snapshot module 与 encoder。
-- [ ] **S3-T5** file store、授权下载、range。
-- [ ] **S3-T6** record/snapshot 事件。
+- [x] **S3-T1** record 幂等和完整 MediaKey。
+- [x] **S3-T2** task/file 有界分页和稳定排序。
+- [x] **S3-T3** playback provider 四命令。
+- [x] **S3-T4** snapshot module 与 encoder。
+- [x] **S3-T5** file store、授权下载、range。
+- [x] **S3-T6** record/snapshot 事件。
 
 DoD：在线流可录制、抓图、下载和控制回放；无绝对路径泄漏。
 
 ## 6. S4 — Proxy 与 URL
 
-- [ ] **S4-T1** proxy module/registry/幂等。
-- [ ] **S4-T2** RTSP pull→engine。
-- [ ] **S4-T3** engine→RTMP push。
-- [ ] **S4-T4** retry/cancel/restart。
-- [ ] **S4-T5** typed FFmpeg jobs。
-- [ ] **S4-T6** URL resolver 和短期签名。
+- [x] **S4-T1** proxy module/registry/幂等。
+- [x] **S4-T2** RTSP pull→engine。
+- [x] **S4-T3** engine→RTMP push。
+- [x] **S4-T4** retry/cancel/restart。
+- [x] **S4-T5** typed FFmpeg jobs。
+- [x] **S4-T6** URL resolver 和短期签名。
 
 DoD：ONVIF 模拟客户端可用 RTSP URI 创建媒体并获得真实播放 URL。
 
 ## 7. S5 — RTP
 
-- [ ] **S5-T1** 抽取唯一 session orchestrator。
-- [ ] **S5-T2** 动态/指定 port bind 和 ack。
-- [ ] **S5-T3** UDP/TCP receiver ingress。
-- [ ] **S5-T4** sender subscriber/egress worker。
-- [ ] **S5-T5** passive/talk。
-- [ ] **S5-T6** SSRC/check/timeout/event。
-- [ ] **S5-T7** GB production contract。
+- [x] **S5-T1** 抽取唯一 session orchestrator。
+- [x] **S5-T2** 动态/指定 port bind 和 ack。
+- [x] **S5-T3** UDP/TCP receiver ingress。
+- [x] **S5-T4** sender subscriber/egress worker。
+- [x] **S5-T5** passive/talk。
+- [x] **S5-T6** SSRC/check/timeout/event。
+- [x] **S5-T7** GB production contract。
 
 DoD：测试 socket 实际收发 RTP，不能只检查 session map。
 
 ## 8. S6 — Event 与 Webhook
 
-- [ ] **S6-T1** 有界 MediaEventBus 和 subscription handle。
-- [ ] **S6-T2** stream/session/record/snapshot/RTP/proxy 发布点。
-- [ ] **S6-T3** webhook dispatcher、retry、熔断。
-- [ ] **S6-T4** 决策 hook。
-- [ ] **S6-T5** 通知 hook golden。
-- [ ] **S6-T6** SSRF 与日志脱敏。
+- [x] **S6-T1** 有界 MediaEventBus 和 subscription handle。
+- [x] **S6-T2** stream/session/record/snapshot/RTP/proxy 发布点。
+- [x] **S6-T3** webhook dispatcher、retry、熔断。
+- [x] **S6-T4** 决策 hook。
+- [x] **S6-T5** 通知 hook golden。
+- [x] **S6-T6** SSRF 与日志脱敏。
 
 DoD：Matter contract 能实际收到完成事件；慢 webhook 不阻塞媒体。
 
 ## 9. S7 — Native API
 
-- [ ] **S7-T1** 全 route 和动态 path matching。
-- [ ] **S7-T2** auth provider 和 scope。
-- [ ] **S7-T3** request context/deadline/idempotency。
-- [ ] **S7-T4** audit。
-- [ ] **S7-T5** adapter enabled/prefix/restart 配置。
-- [ ] **S7-T6** 默认/full feature capability 一致。
+- [x] **S7-T1** 全 route 和动态 path matching。
+- [x] **S7-T2** auth provider 和 scope。
+- [x] **S7-T3** request context/deadline/idempotency。
+- [x] **S7-T4** audit。
+- [x] **S7-T5** adapter enabled/prefix/restart 配置。
+- [x] **S7-T6** 默认/full feature capability 一致。
 
 DoD：route contract 与安全矩阵全绿；未知 route 正确 404。
 
 ## 10. S8 — ZLM Compatibility
 
-- [ ] **S8-T1** 建立 64 route 编译期/测试 catalog。
-- [ ] **S8-T2** L1 真实 provider 映射。
-- [ ] **S8-T3** L2 optional provider 映射。
-- [ ] **S8-T4** L3/L4 capability guard。
-- [ ] **S8-T5** secret/login profile。
-- [ ] **S8-T6** endpoint-specific response DTO。
-- [ ] **S8-T7** golden/interop fixtures。
+- [x] **S8-T1** 建立 64 route 编译期/测试 catalog。
+- [x] **S8-T2** L1 真实 provider 映射。
+- [x] **S8-T3** L2 optional provider 映射。
+- [x] **S8-T4** L3/L4 capability guard。
+- [x] **S8-T5** secret/login profile。
+- [x] **S8-T6** endpoint-specific response DTO。
+- [x] **S8-T7** golden/interop fixtures。
 
 DoD：64/64 route 有状态，L1 均为生产成功路径，未实现项只以 `-501` 明示。
 
