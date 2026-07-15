@@ -23,6 +23,7 @@ tracing.workspace = true
 cheetah-config = { path = "../cheetah-config" }
 cheetah-engine = { path = "../cheetah-engine" }
 cheetah-proxy-module = { path = "../cheetah-proxy-module" }
+cheetah-record-module = { path = "../cheetah-record-module" }
 cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
 cheetah-rtp-module = { path = "../../protocols/rtp/module" }
 tokio = { workspace = true }
