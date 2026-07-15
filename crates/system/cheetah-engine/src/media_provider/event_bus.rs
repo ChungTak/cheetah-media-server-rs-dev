@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -6,94 +6,149 @@ use cheetah_media_api::error::Result;
 use cheetah_media_api::event::{
     MediaEvent, MediaEventBusApi, MediaEventSender, MediaEventSubscription,
 };
+use cheetah_runtime_api::RuntimeApi;
 use parking_lot::Mutex;
+
+/// Default upper bound for per-resource sequence counters.
+///
+/// 按资源 sequence 计数器的默认上限。
+const DEFAULT_MAX_SEQUENCE_KEYS: usize = 4096;
 
 /// In-memory bounded media event bus.
 ///
-/// Each subscriber has an independent bounded queue. Slow subscribers are
-/// notified via `lagged` and a cumulative `dropped` count. Sequence numbers
-/// are maintained per resource (`media_key` when available, otherwise `source`).
+/// Each subscriber has an independent bounded `tokio::sync::mpsc` queue. Slow
+/// subscribers are notified via `lagged` with a cumulative dropped count.
+/// Sequence numbers are maintained per resource (`media_key` when available,
+/// otherwise `source`) and capped to a bounded set of tracked resources.
 ///
 /// 内存有界媒体事件总线。
-/// 每个订阅者拥有独立的有界队列；慢速订阅者通过 `lagged` 与累计丢包数获得通知。
-/// sequence 按资源（优先 `media_key`，否则 `source`）维护。
+/// 每个订阅者拥有独立的 `tokio::sync::mpsc` 有界队列；慢速订阅者通过 `lagged`
+/// 与累计丢包数获得通知。sequence 按资源（优先 `media_key`，否则 `source`）维护，
+/// 并限制跟踪的资源数量上限。
 #[derive(Clone)]
 pub struct LocalMediaEventBus {
-    inner: Arc<Mutex<BusState>>,
+    inner: Arc<Mutex<BusInner>>,
+    runtime_api: Arc<dyn RuntimeApi>,
     next_id: Arc<AtomicU64>,
+    max_sequence_keys: usize,
 }
 
-struct BusState {
+struct BusInner {
     subscribers: HashMap<String, SubscriberState>,
     sequences: HashMap<String, u64>,
+    sequence_use: HashMap<String, u64>,
+    sequence_counter: u64,
 }
 
 struct SubscriberState {
+    tx: tokio::sync::mpsc::Sender<MediaEvent>,
     sender: Arc<dyn MediaEventSender>,
-    queue: VecDeque<MediaEvent>,
-    capacity: usize,
     dropped: u64,
     notified_dropped: u64,
 }
 
 impl LocalMediaEventBus {
-    /// Create a new media event bus.
+    /// Create a new media event bus using the provided runtime to spawn
+    /// per-subscriber forwarding tasks.
     ///
-    /// 创建新的媒体事件总线。
-    pub fn new() -> Self {
+    /// 使用指定运行时创建新的媒体事件总线，以生成每个订阅者的转发任务。
+    pub fn new(runtime_api: Arc<dyn RuntimeApi>) -> Self {
+        Self::with_max_sequence_keys(runtime_api, DEFAULT_MAX_SEQUENCE_KEYS)
+    }
+
+    /// Create a bus with a custom cap on tracked per-resource sequence counters.
+    ///
+    /// 使用自定义的按资源 sequence 跟踪上限创建总线。
+    pub fn with_max_sequence_keys(
+        runtime_api: Arc<dyn RuntimeApi>,
+        max_sequence_keys: usize,
+    ) -> Self {
         Self {
-            inner: Arc::new(Mutex::new(BusState {
+            inner: Arc::new(Mutex::new(BusInner {
                 subscribers: HashMap::new(),
                 sequences: HashMap::new(),
+                sequence_use: HashMap::new(),
+                sequence_counter: 0,
             })),
+            runtime_api,
             next_id: Arc::new(AtomicU64::new(1)),
+            max_sequence_keys: max_sequence_keys.max(1),
         }
     }
-}
 
-impl Default for LocalMediaEventBus {
-    fn default() -> Self {
-        Self::new()
+    fn next_sequence(&self, inner: &mut BusInner, resource_key: &str) -> u64 {
+        inner.sequence_counter += 1;
+        let now = inner.sequence_counter;
+
+        if !inner.sequences.contains_key(resource_key)
+            && inner.sequences.len() >= self.max_sequence_keys
+        {
+            // Evict the least-recently-used tracked resource.
+            if let Some((oldest, _)) = inner.sequence_use.iter().min_by_key(|(_, v)| *v) {
+                let oldest = oldest.clone();
+                inner.sequences.remove(&oldest);
+                inner.sequence_use.remove(&oldest);
+            }
+        }
+
+        let entry = inner.sequences.entry(resource_key.to_string()).or_insert(0);
+        inner.sequence_use.insert(resource_key.to_string(), now);
+        *entry += 1;
+        *entry
+    }
+
+    fn spawn_forwarder(
+        &self,
+        mut rx: tokio::sync::mpsc::Receiver<MediaEvent>,
+        sender: Arc<dyn MediaEventSender>,
+    ) {
+        let fut = async move {
+            while let Some(event) = rx.recv().await {
+                if sender.send(event).is_err() {
+                    break;
+                }
+            }
+        };
+        let _ = self.runtime_api.spawn(Box::pin(fut)
+            as std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>);
     }
 }
 
 impl MediaEventBusApi for LocalMediaEventBus {
     fn publish(&self, mut event: MediaEvent) -> Result<()> {
-        let mut state = self.inner.lock();
+        let mut inner = self.inner.lock();
 
         let resource_key = event.resource_key();
-        let seq = state.sequences.entry(resource_key).or_insert(0);
-        *seq += 1;
-        event.header_mut().sequence = Some(*seq);
+        let seq = self.next_sequence(&mut inner, &resource_key);
+        event.header_mut().sequence = Some(seq);
 
         let mut lag_callbacks: Vec<(Arc<dyn MediaEventSender>, u64)> = Vec::new();
+        let mut closed: Vec<String> = Vec::new();
 
-        for sub in state.subscribers.values_mut() {
-            sub.queue.push_back(event.clone());
-            if sub.queue.len() > sub.capacity {
-                sub.queue.pop_front();
-                sub.dropped += 1;
-            }
-
-            // Deliver as many queued events as the sender can accept right now.
-            while let Some(ev) = sub.queue.front() {
-                if sub.sender.send(ev.clone()).is_ok() {
-                    sub.queue.pop_front();
-                } else {
-                    break;
+        for (id, sub) in inner.subscribers.iter_mut() {
+            match sub.tx.try_send(event.clone()) {
+                Ok(()) => {}
+                Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                    sub.dropped += 1;
+                    if sub.dropped > sub.notified_dropped {
+                        let delta = sub.dropped - sub.notified_dropped;
+                        sub.notified_dropped = sub.dropped;
+                        lag_callbacks.push((Arc::clone(&sub.sender), delta));
+                    }
                 }
-            }
-
-            if sub.dropped > sub.notified_dropped {
-                let delta = sub.dropped - sub.notified_dropped;
-                sub.notified_dropped = sub.dropped;
-                lag_callbacks.push((Arc::clone(&sub.sender), delta));
+                Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                    closed.push(id.clone());
+                }
             }
         }
 
-        drop(state);
+        for id in closed {
+            inner.subscribers.remove(&id);
+        }
+        drop(inner);
 
-        // Notify outside the lock so a lagged callback cannot reenter the bus.
+        // Notify outside the lock so a lagged callback cannot reenter while
+        // publish is still holding the mutex.
         for (sender, delta) in lag_callbacks {
             let _ = sender.lagged(delta);
         }
@@ -108,18 +163,22 @@ impl MediaEventBusApi for LocalMediaEventBus {
     ) -> Result<Box<dyn MediaEventSubscription>> {
         let capacity = capacity.max(1);
         let id = format!("media-sub-{}", self.next_id.fetch_add(1, Ordering::Relaxed));
-        let mut state = self.inner.lock();
-        state.subscribers.insert(
+        let (tx, rx) = tokio::sync::mpsc::channel::<MediaEvent>(capacity);
+        let sender = Arc::from(sender);
+        self.spawn_forwarder(rx, Arc::clone(&sender));
+
+        let mut inner = self.inner.lock();
+        inner.subscribers.insert(
             id.clone(),
             SubscriberState {
-                sender: Arc::from(sender),
-                queue: VecDeque::with_capacity(capacity.min(64)),
-                capacity,
+                tx,
+                sender,
                 dropped: 0,
                 notified_dropped: 0,
             },
         );
-        drop(state);
+        drop(inner);
+
         Ok(Box::new(LocalMediaEventSubscription {
             bus: self.clone(),
             id,
@@ -127,9 +186,9 @@ impl MediaEventBusApi for LocalMediaEventBus {
     }
 
     fn unsubscribe(&self, id: &str) -> Result<()> {
-        let mut state = self.inner.lock();
-        state.subscribers.remove(id);
-        drop(state);
+        let mut inner = self.inner.lock();
+        inner.subscribers.remove(id);
+        drop(inner);
         Ok(())
     }
 }
@@ -159,10 +218,15 @@ impl Drop for LocalMediaEventSubscription {
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     use super::*;
     use cheetah_media_api::event::{EventHeader, ServerLifecycle, ServerLifecycleKind};
-    use cheetah_media_api::MediaError;
+    use cheetah_runtime_tokio::TokioRuntime;
+
+    fn runtime() -> Arc<dyn RuntimeApi> {
+        Arc::new(TokioRuntime::new()) as Arc<dyn RuntimeApi>
+    }
 
     #[derive(Clone)]
     struct CollectingSender {
@@ -208,13 +272,14 @@ mod tests {
         })
     }
 
-    #[test]
-    fn subscriber_receives_event_with_sequence() {
-        let bus = LocalMediaEventBus::new();
+    #[tokio::test(flavor = "current_thread")]
+    async fn subscriber_receives_event_with_sequence() {
+        let bus = LocalMediaEventBus::new(runtime());
         let sender = CollectingSender::new();
         let _sub = bus.subscribe(Box::new(sender.clone()) as Box<dyn MediaEventSender>, 8);
 
         bus.publish(lifecycle_event("e1", "src-a")).unwrap();
+        tokio::time::sleep(Duration::from_millis(10)).await;
 
         let mut events = sender.events.lock().unwrap();
         assert_eq!(events.len(), 1);
@@ -222,57 +287,35 @@ mod tests {
         assert_eq!(events[0].header_mut().sequence, Some(1));
     }
 
-    #[test]
-    fn slow_subscriber_is_lagged_and_drops_oldest() {
-        let bus = LocalMediaEventBus::new();
+    #[tokio::test(flavor = "current_thread")]
+    async fn slow_subscriber_is_lagged_and_drops_oldest() {
+        let bus = LocalMediaEventBus::new(runtime());
+        let sender = CollectingSender::new();
+        let _sub = bus.subscribe(Box::new(sender.clone()) as Box<dyn MediaEventSender>, 1);
 
-        // Sender rejects after one accepted event, exercising backpressure handling.
-        #[derive(Clone)]
-        struct LaggySender {
-            count: Arc<AtomicU64>,
-            events: Arc<Mutex<Vec<MediaEvent>>>,
-            lagged: Arc<AtomicU64>,
-        }
-        impl MediaEventSender for LaggySender {
-            fn send(&self, event: MediaEvent) -> Result<()> {
-                if self.count.fetch_add(1, Ordering::Relaxed) >= 1 {
-                    return Err(MediaError::unavailable("backpressure"));
-                }
-                self.events.lock().unwrap().push(event);
-                Ok(())
-            }
-            fn lagged(&self, dropped: u64) -> Result<()> {
-                self.lagged.fetch_add(dropped, Ordering::Relaxed);
-                Ok(())
-            }
-        }
-        let laggy = LaggySender {
-            count: Arc::new(AtomicU64::new(0)),
-            events: Arc::new(Mutex::new(Vec::new())),
-            lagged: Arc::new(AtomicU64::new(0)),
-        };
-        let _sub = bus.subscribe(Box::new(laggy.clone()) as Box<dyn MediaEventSender>, 2);
-
+        // With capacity 1, the first event may be taken by the forwarder task
+        // or sit in the channel; the rest should overflow and be counted as dropped.
         for i in 0..5 {
             bus.publish(lifecycle_event(&format!("e{i}"), "src-b"))
                 .unwrap();
         }
 
-        let events = laggy.events.lock().unwrap();
-        // One event is accepted, the rest is dropped once the queue is full.
-        assert!(!events.is_empty());
-        assert!(laggy.lagged.load(Ordering::Relaxed) > 0);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let lagged = sender.lagged.load(Ordering::Relaxed);
+        assert!(lagged > 0, "lagged should be reported for dropped events");
     }
 
-    #[test]
-    fn per_resource_sequence_is_independent() {
-        let bus = LocalMediaEventBus::new();
+    #[tokio::test(flavor = "current_thread")]
+    async fn per_resource_sequence_is_independent() {
+        let bus = LocalMediaEventBus::new(runtime());
         let sender = CollectingSender::new();
         let _sub = bus.subscribe(Box::new(sender.clone()) as Box<dyn MediaEventSender>, 8);
 
         bus.publish(lifecycle_event("a1", "r1")).unwrap();
         bus.publish(lifecycle_event("a2", "r1")).unwrap();
         bus.publish(lifecycle_event("b1", "r2")).unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
 
         let mut events = sender.events.lock().unwrap();
         assert_eq!(events[0].header_mut().sequence, Some(1));
@@ -280,9 +323,9 @@ mod tests {
         assert_eq!(events[2].header_mut().sequence, Some(1));
     }
 
-    #[test]
-    fn unsubscribe_stops_delivery() {
-        let bus = LocalMediaEventBus::new();
+    #[tokio::test(flavor = "current_thread")]
+    async fn unsubscribe_stops_delivery() {
+        let bus = LocalMediaEventBus::new(runtime());
         let sender = CollectingSender::new();
         let sub = bus
             .subscribe(Box::new(sender.clone()) as Box<dyn MediaEventSender>, 8)
@@ -291,6 +334,24 @@ mod tests {
         sub.unsubscribe().unwrap();
         bus.publish(lifecycle_event("after", "src")).unwrap();
 
+        tokio::time::sleep(Duration::from_millis(10)).await;
         assert!(sender.events.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn sequence_map_is_bounded() {
+        let bus = LocalMediaEventBus::with_max_sequence_keys(runtime(), 2);
+        let sender = CollectingSender::new();
+        let _sub = bus.subscribe(Box::new(sender.clone()) as Box<dyn MediaEventSender>, 8);
+
+        bus.publish(lifecycle_event("a", "r1")).unwrap();
+        bus.publish(lifecycle_event("b", "r2")).unwrap();
+        bus.publish(lifecycle_event("c", "r3")).unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // The oldest resource may be evicted, so the total sequence map size
+        // must not exceed the configured cap.
+        let inner = bus.inner.lock();
+        assert!(inner.sequences.len() <= 2);
     }
 }

@@ -175,7 +175,9 @@ impl EngineBuilder {
             Arc::new(stream_provider) as Arc<dyn cheetah_media_api::port::PublishSubscribeApi>
         );
         let media_file_store: Arc<dyn MediaFileStoreApi> = Arc::new(EngineMediaFileStore::new());
-        let media_event_bus = Arc::new(crate::media_provider::LocalMediaEventBus::new());
+        let media_event_bus = Arc::new(crate::media_provider::LocalMediaEventBus::new(
+            self.runtime_api.clone(),
+        ));
         let media_facade = Arc::new(EngineMediaFacade::new(
             media_services.clone(),
             media_event_bus.clone() as Arc<dyn cheetah_media_api::event::MediaEventBusApi>,
