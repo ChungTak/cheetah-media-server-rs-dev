@@ -1,4 +1,5 @@
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 use crate::adapter_config::{extract_zlm_config, load_zlm_config, ZlmAdapterConfig};
 use async_trait::async_trait;
@@ -20,12 +21,14 @@ use crate::error::{zlm_error_response, AdapterError};
 
 mod admin;
 mod control;
+mod login;
 mod media;
 mod proxy;
 mod record;
 mod routes;
 mod rtp;
 mod session;
+mod session_store;
 mod snapshot;
 
 const MODULE_ID: &str = "media-http-zlm";
@@ -59,6 +62,7 @@ pub struct ZlmMediaModule {
     state: ModuleState,
     ctx: Option<EngineContext>,
     config: Arc<RwLock<ZlmAdapterConfig>>,
+    session_store: Arc<session_store::SessionStore>,
 }
 
 impl ZlmMediaModule {
@@ -67,6 +71,7 @@ impl ZlmMediaModule {
             state: ModuleState::Created,
             ctx: None,
             config: Arc::new(RwLock::new(ZlmAdapterConfig::default())),
+            session_store: Arc::new(session_store::SessionStore::new()),
         }
     }
 }
@@ -116,6 +121,8 @@ impl Module for ZlmMediaModule {
         if previous.enabled != next.enabled || previous.path_prefix != next.path_prefix {
             return Ok(ConfigEffect::ModuleRestartRequired);
         }
+        let max_sessions = next.auth.session.as_ref().and_then(|s| s.max_sessions);
+        self.session_store.set_max_sessions(max_sessions);
         *self.config.write().unwrap() = next;
         Ok(ConfigEffect::Immediate)
     }
@@ -131,9 +138,14 @@ impl Module for ZlmMediaModule {
         if !self.config.read().unwrap().enabled {
             return None;
         }
+        if let Some(session_cfg) = self.config.read().unwrap().auth.session.as_ref() {
+            self.session_store
+                .set_max_sessions(session_cfg.max_sessions);
+        }
         Some(Arc::new(ZlmMediaHttpService {
             ctx: self.ctx.clone()?,
             config: self.config.clone(),
+            session_store: self.session_store.clone(),
         }))
     }
 
@@ -153,6 +165,7 @@ impl Module for ZlmMediaModule {
 pub(crate) struct ZlmMediaHttpService {
     ctx: EngineContext,
     config: Arc<RwLock<ZlmAdapterConfig>>,
+    session_store: Arc<session_store::SessionStore>,
 }
 
 impl ZlmMediaHttpService {
@@ -258,6 +271,30 @@ impl ZlmMediaHttpService {
                         MediaScope::FileDelete,
                         MediaScope::ServerAdmin,
                     ],
+                })
+            }
+            "session" => {
+                if req.path == "/api/login" {
+                    return Ok(Principal::anonymous());
+                }
+                let session_cfg = cfg.auth.session.as_ref().ok_or_else(|| {
+                    AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "session auth not configured",
+                    ))
+                })?;
+                let token = cookie_from_header(req, &session_cfg.cookie_name).ok_or_else(|| {
+                    AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "missing session cookie",
+                    ))
+                })?;
+                let now = Instant::now();
+                self.session_store.validate(&token, now).ok_or_else(|| {
+                    AdapterError::Media(MediaError::new(
+                        MediaErrorCode::Unauthenticated,
+                        "invalid or expired session",
+                    ))
                 })
             }
             _ => {
@@ -568,6 +605,8 @@ impl ModuleHttpService for ZlmMediaHttpService {
                 (HttpMethod::Get, "/api/downloadFile") => self.download_file(&ctx, req).await,
                 (HttpMethod::Get, "/api/version") => self.version(&ctx, req).await,
                 (HttpMethod::Get, "/api/getApiList") => self.get_api_list(&ctx, req).await,
+                (HttpMethod::Post, "/api/login") => self.login(&ctx, req).await,
+                (HttpMethod::Post, "/api/logout") => self.logout(&ctx, req).await,
                 _ => {
                     if routes::is_zlm_catalog_route(req.method, req.path.as_str()) {
                         Err(AdapterError::Media(
@@ -700,6 +739,39 @@ fn secret_from_header(req: &HttpRequest) -> String {
         return stripped.unwrap_or(header).trim().to_string();
     }
     String::new()
+}
+
+/// Extract a cookie value by name from the `Cookie` header.
+///
+/// 从 `Cookie` 头按名称提取 cookie 值。
+fn cookie_from_header(req: &HttpRequest, name: &str) -> Option<String> {
+    let header = header_value(&req.headers, "cookie")?;
+    for pair in header.split(';') {
+        let mut kv = pair.splitn(2, '=');
+        let key = kv.next()?.trim();
+        if key.eq_ignore_ascii_case(name) {
+            return kv.next().map(|v| v.trim().to_string());
+        }
+    }
+    None
+}
+
+/// Constant-time string equality.
+///
+/// 常量时间字符串比较。
+fn constant_time_eq_str(a: &str, b: &str) -> bool {
+    use subtle::{Choice, ConstantTimeEq};
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    let len_eq = (a.len() as u64).ct_eq(&(b.len() as u64));
+    let mut content_eq = Choice::from(1u8);
+    // Iterate over the provided value (`a`) rather than the configured secret
+    // (`b`) so the timing does not leak the secret's length.
+    for (i, ai) in a.iter().enumerate() {
+        let bi = b.get(i).copied().unwrap_or(0);
+        content_eq &= u8::ct_eq(ai, &bi);
+    }
+    bool::from(len_eq & content_eq)
 }
 
 pub(crate) fn page_from_params(params: &serde_json::Value) -> u64 {

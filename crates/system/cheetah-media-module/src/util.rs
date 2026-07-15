@@ -109,6 +109,21 @@ pub fn generate_request_id() -> String {
     format!("{now:016x}-{n:08x}")
 }
 
+/// Generate a random session token for cookie-based authentication.
+///
+/// 为基于 cookie 的认证生成随机 session token。
+pub fn generate_session_token() -> String {
+    let mut buf = [0u8; 32];
+    getrandom::getrandom(&mut buf).expect("session token random source");
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(64);
+    for b in buf {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0xf) as usize] as char);
+    }
+    out
+}
+
 /// Compute a request deadline from an optional client deadline header.
 ///
 /// 根据可选的客户端 deadline 头计算请求 deadline。

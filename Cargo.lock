@@ -783,6 +783,7 @@ dependencies = [
  "cheetah-rtp-module",
  "cheetah-runtime-tokio",
  "cheetah-sdk",
+ "getrandom 0.2.17",
  "serde",
  "serde_json",
  "serde_urlencoded",

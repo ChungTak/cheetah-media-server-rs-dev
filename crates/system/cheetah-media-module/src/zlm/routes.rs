@@ -493,14 +493,14 @@ const ZLM_ROUTES: &[ZlmRoute] = &[
     ZlmRoute {
         method: HttpMethod::Post,
         path: "/api/login",
-        scope: MediaScope::ServerAdmin,
+        scope: MediaScope::MediaRead,
         level: ZlmRouteLevel::L3,
         required: false,
     },
     ZlmRoute {
         method: HttpMethod::Post,
         path: "/api/logout",
-        scope: MediaScope::ServerAdmin,
+        scope: MediaScope::MediaRead,
         level: ZlmRouteLevel::L3,
         required: false,
     },
