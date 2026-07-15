@@ -312,7 +312,7 @@ impl From<TrackSummary> for MediaTrackItem {
                 fps: None,
                 ..base
             },
-            _ => base,
+            MediaType::Data => base,
         }
     }
 }
@@ -329,6 +329,7 @@ fn zlm_codec_id(codec: &CodecKind) -> i32 {
         CodecKind::Vp9 => 7,
         CodecKind::Av1 => 8,
         CodecKind::H266 => 9,
+        CodecKind::Mp3 | CodecKind::Pcm | CodecKind::Unknown => -1,
         _ => -1,
     }
 }
@@ -345,6 +346,7 @@ fn zlm_codec_id_name(codec: &CodecKind) -> String {
         CodecKind::Vp9 => "CodecVP9".to_string(),
         CodecKind::Av1 => "CodecAV1".to_string(),
         CodecKind::H266 => "CodecH266".to_string(),
+        CodecKind::Mp3 | CodecKind::Pcm | CodecKind::Unknown => format!("Codec{codec:?}"),
         _ => format!("Codec{codec:?}"),
     }
 }
