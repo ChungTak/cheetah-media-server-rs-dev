@@ -99,7 +99,7 @@ impl ProxyApi for ProxyMediaProvider {
     }
 
     async fn delete_pull_proxy(&self, _ctx: &MediaRequestContext, id: &ProxyId) -> Result<()> {
-        delete_proxy(&self.registry, id)
+        delete_proxy_of_kind(&self.registry, id, ProxyKind::Pull)
     }
 
     async fn list_pull_proxies(
@@ -191,7 +191,7 @@ impl ProxyApi for ProxyMediaProvider {
     }
 
     async fn delete_push_proxy(&self, _ctx: &MediaRequestContext, id: &ProxyId) -> Result<()> {
-        delete_proxy(&self.registry, id)
+        delete_proxy_of_kind(&self.registry, id, ProxyKind::Push)
     }
 
     async fn create_ffmpeg_proxy(
@@ -241,18 +241,7 @@ impl ProxyApi for ProxyMediaProvider {
     }
 
     async fn delete_ffmpeg_proxy(&self, _ctx: &MediaRequestContext, id: &ProxyId) -> Result<()> {
-        if self
-            .registry
-            .get(id)
-            .filter(|e| e.info.kind == ProxyKind::Ffmpeg)
-            .is_none()
-        {
-            return Err(MediaError::not_found(format!(
-                "ffmpeg proxy not found: {}",
-                id.0
-            )));
-        }
-        delete_proxy(&self.registry, id)
+        delete_proxy_of_kind(&self.registry, id, ProxyKind::Ffmpeg)
     }
 
     async fn get_ffmpeg_proxy(
@@ -330,6 +319,16 @@ fn delete_proxy(registry: &ProxyRegistry, id: &ProxyId) -> Result<()> {
     registry.remove(id);
     debug!(proxy_id = %id.0, "deleted proxy");
     Ok(())
+}
+
+fn delete_proxy_of_kind(registry: &ProxyRegistry, id: &ProxyId, kind: ProxyKind) -> Result<()> {
+    if registry.get(id).filter(|e| e.info.kind == kind).is_none() {
+        return Err(MediaError::not_found(format!(
+            "{kind:?} proxy not found: {}",
+            id.0
+        )));
+    }
+    delete_proxy(registry, id)
 }
 
 fn build_proxy_info(

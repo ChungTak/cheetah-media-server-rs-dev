@@ -493,7 +493,7 @@ mod tests {
             .iter()
             .filter(|e| matches!(e, TsDemuxEvent::TrackFound { .. }))
             .collect();
-        assert!(track_events.len() >= 1, "should find at least 1 track");
+        assert!(!track_events.is_empty(), "should find at least 1 track");
 
         // Should produce at least one frame
         let frame_events: Vec<_> = events

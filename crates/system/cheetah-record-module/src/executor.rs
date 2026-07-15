@@ -784,8 +784,10 @@ mod tests {
 
     #[test]
     fn subscriber_options_keeps_headroom_above_bootstrap_window() {
-        let mut cfg = RecordModuleConfig::default();
-        cfg.queue_capacity = 256;
+        let cfg = RecordModuleConfig {
+            queue_capacity: 256,
+            ..Default::default()
+        };
         let opts = subscriber_options(&cfg);
         // Bootstrap window respects `queue_capacity`.
         assert_eq!(opts.bootstrap_policy.max_bootstrap_frames, 256);

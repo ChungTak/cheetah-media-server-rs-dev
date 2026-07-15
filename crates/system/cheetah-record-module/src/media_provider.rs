@@ -592,7 +592,7 @@ mod tests {
         let ctx = MediaRequestContext::default();
         for i in 0..6 {
             let key =
-                MediaKey::new("__defaultVhost__", "live", &format!("stream-{i}"), None).unwrap();
+                MediaKey::new("__defaultVhost__", "live", format!("stream-{i}"), None).unwrap();
             let req = StartRecordRequest {
                 media_key: key,
                 format: "mp4".to_string(),
