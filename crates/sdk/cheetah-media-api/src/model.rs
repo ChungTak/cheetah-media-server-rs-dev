@@ -457,6 +457,15 @@ pub enum RecordTemplate {
     Event,
 }
 
+/// Decision returned by a synchronous webhook hook.
+///
+/// 同步 webhook 钩子返回的决策。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Decision {
+    Allow,
+    Deny(String),
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,20 +482,6 @@ mod tests {
         let json = serde_json::to_string(&page).unwrap();
         assert!(json.contains("\"items\":"));
     }
-}
-
-/// Decision returned by a synchronous webhook hook.
-///
-/// 同步 webhook 钩子返回的决策。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Decision {
-    Allow,
-    Deny(String),
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
 
     #[test]
     fn decision_round_trips() {
