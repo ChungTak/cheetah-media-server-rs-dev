@@ -697,3 +697,315 @@ fn parse_payload_mode_str(s: &str) -> RtpPayloadMode {
         _ => RtpPayloadMode::Ps,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    use super::*;
+    use cheetah_rtp_driver_tokio::{start_driver, RtpDriverConfig};
+    use cheetah_runtime_api::CancellationToken;
+    use cheetah_sdk::media_api::command::{
+        RtpConnectRequest, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, UpdateRtpRequest,
+    };
+    use cheetah_sdk::media_api::error::MediaErrorCode;
+    use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId};
+    use cheetah_sdk::media_api::model::{RtpSessionKind, RtpSessionState, RtpTcpMode};
+
+    fn test_driver_config() -> RtpDriverConfig {
+        RtpDriverConfig {
+            listen_udp: "127.0.0.1:0".parse().unwrap(),
+            listen_tcp: "127.0.0.1:0".parse().unwrap(),
+            listen_rtcp_udp: None,
+            write_queue_capacity: 256,
+            read_buffer_size: 4096,
+            session_idle_timeout_ms: 5000,
+            max_sessions: 10,
+            tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
+            max_rtp_len_cap: 65536,
+        }
+    }
+
+    fn make_orchestrator() -> (RtpSessionOrchestrator, CancellationToken) {
+        let config = test_driver_config();
+        let cancel = CancellationToken::new();
+        let handle = Arc::new(start_driver(config, cancel.clone()));
+        let driver_slot: Arc<Mutex<Option<Arc<RtpDriverHandle>>>> =
+            Arc::new(Mutex::new(Some(handle)));
+        let default_bind: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let orchestrator = RtpSessionOrchestrator::new(driver_slot, default_bind);
+        (orchestrator, cancel)
+    }
+
+    fn receiver_request(media_key: MediaKey) -> RtpReceiverRequest {
+        RtpReceiverRequest {
+            media_key,
+            port: None,
+            ip: None,
+            ssrc: Some(1000),
+            enable_rtcp: false,
+            tcp_mode: None,
+            payload_type: Some(96),
+            codec_hint: Some("ps".to_string()),
+            reuse_port: false,
+            timeout_ms: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn open_rtp_receiver_creates_session_with_generation_one_and_listening_state() {
+        let (orchestrator, cancel) = make_orchestrator();
+
+        let media_key = MediaKey::with_default_vhost("test", "ch1", None).unwrap();
+        let session = orchestrator
+            .open_rtp_receiver(receiver_request(media_key.clone()))
+            .await
+            .expect("open receiver");
+
+        assert_eq!(
+            session.session_id,
+            RtpSessionId("recv/test/ch1".to_string())
+        );
+        assert_eq!(session.kind, RtpSessionKind::Receiver);
+        assert_eq!(session.state, RtpSessionState::Listening);
+        assert_eq!(session.generation, 1);
+        assert!(session.local_port.is_some());
+        assert!(session.last_error.is_none());
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn connect_rtp_receiver_bumps_generation_and_sets_remote_endpoint() {
+        let (orchestrator, cancel) = make_orchestrator();
+
+        let media_key = MediaKey::with_default_vhost("test", "ch2", None).unwrap();
+        let mut req = receiver_request(media_key.clone());
+        req.tcp_mode = Some(RtpTcpMode::Active);
+        let session = orchestrator
+            .open_rtp_receiver(req)
+            .await
+            .expect("open receiver");
+        assert_eq!(session.state, RtpSessionState::Created);
+
+        let session_id = session.session_id.clone();
+        let connected = orchestrator
+            .connect_rtp_receiver(RtpConnectRequest {
+                session_id,
+                remote_endpoint: "127.0.0.1:54321".to_string(),
+                ssrc: Some(2000),
+            })
+            .await
+            .expect("connect receiver");
+
+        assert_eq!(connected.generation, 2);
+        assert_eq!(
+            connected.remote_endpoint,
+            Some("127.0.0.1:54321".to_string())
+        );
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn set_session_state_bumps_generation() {
+        let (orchestrator, cancel) = make_orchestrator();
+
+        let media_key = MediaKey::with_default_vhost("test", "ch3", None).unwrap();
+        let session = orchestrator
+            .open_rtp_receiver(receiver_request(media_key))
+            .await
+            .expect("open receiver");
+
+        let updated = orchestrator
+            .set_session_state(&session.session_id, RtpSessionState::Connected)
+            .expect("set state");
+
+        assert_eq!(updated.state, RtpSessionState::Connected);
+        assert_eq!(updated.generation, 2);
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn set_session_remote_endpoint_transitions_to_connected_and_bumps_generation() {
+        let (orchestrator, cancel) = make_orchestrator();
+
+        let media_key = MediaKey::with_default_vhost("test", "ch4", None).unwrap();
+        let session = orchestrator
+            .open_rtp_receiver(receiver_request(media_key))
+            .await
+            .expect("open receiver");
+
+        let addr: SocketAddr = "127.0.0.1:16666".parse().unwrap();
+        let updated = orchestrator
+            .set_session_remote_endpoint(&session.session_id, addr)
+            .expect("set remote endpoint");
+
+        assert_eq!(updated.remote_endpoint, Some("127.0.0.1:16666".to_string()));
+        assert_eq!(updated.state, RtpSessionState::Connected);
+        assert_eq!(updated.generation, 2);
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn update_rtp_session_with_expected_generation_updates_snapshot() {
+        let (orchestrator, cancel) = make_orchestrator();
+
+        let media_key = MediaKey::with_default_vhost("test", "ch5", None).unwrap();
+        let session = orchestrator
+            .open_rtp_receiver(receiver_request(media_key))
+            .await
+            .expect("open receiver");
+
+        let updated = orchestrator
+            .update_rtp_session(UpdateRtpRequest {
+                session_id: session.session_id,
+                expected_generation: 1,
+                ssrc: Some(3000),
+                payload_type: Some(97),
+                pause_check: None,
+            })
+            .await
+            .expect("update session");
+
+        assert_eq!(updated.generation, 2);
+        assert_eq!(updated.ssrc, Some(3000));
+        assert_eq!(updated.payload_type, Some(97));
+        assert!(updated.last_error.is_none());
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn update_rtp_session_rejects_stale_generation() {
+        let (orchestrator, cancel) = make_orchestrator();
+
+        let media_key = MediaKey::with_default_vhost("test", "ch6", None).unwrap();
+        let session = orchestrator
+            .open_rtp_receiver(receiver_request(media_key))
+            .await
+            .expect("open receiver");
+
+        let err = orchestrator
+            .update_rtp_session(UpdateRtpRequest {
+                session_id: session.session_id,
+                expected_generation: 99,
+                ssrc: Some(4000),
+                payload_type: None,
+                pause_check: None,
+            })
+            .await
+            .expect_err("stale generation should fail");
+
+        assert_eq!(err.code, MediaErrorCode::Conflict);
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn open_rtp_talk_upgrades_receiver_to_talk_and_bumps_generation() {
+        let (orchestrator, cancel) = make_orchestrator();
+
+        let media_key = MediaKey::with_default_vhost("test", "ch_talk", None).unwrap();
+        let session = orchestrator
+            .open_rtp_receiver(receiver_request(media_key.clone()))
+            .await
+            .expect("open receiver");
+
+        let addr: SocketAddr = "127.0.0.1:16666".parse().unwrap();
+        let _ = orchestrator
+            .set_session_remote_endpoint(&session.session_id, addr)
+            .expect("set remote endpoint");
+
+        let talk = orchestrator
+            .open_rtp_talk(RtpSenderRequest {
+                media_key,
+                destination_endpoint: addr.to_string(),
+                ssrc: Some(2000),
+                payload_type: Some(8),
+                codec_hint: Some("raw_audio".to_string()),
+                mode: RtpSenderMode::Talk,
+                transport_options: HashMap::new(),
+            })
+            .await
+            .expect("open talk");
+
+        assert_eq!(talk.kind, RtpSessionKind::Talk);
+        assert_eq!(talk.state, RtpSessionState::Connected);
+        assert_eq!(talk.generation, 3);
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn stop_rtp_session_removes_session() {
+        let (orchestrator, cancel) = make_orchestrator();
+
+        let media_key = MediaKey::with_default_vhost("test", "ch_stop", None).unwrap();
+        let session = orchestrator
+            .open_rtp_receiver(receiver_request(media_key))
+            .await
+            .expect("open receiver");
+
+        orchestrator
+            .stop_rtp_session(&session.session_id)
+            .await
+            .expect("stop session");
+
+        assert!(orchestrator.get_rtp_session(&session.session_id).is_err());
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn list_rtp_sessions_filters_by_kind_and_state() {
+        let (orchestrator, cancel) = make_orchestrator();
+
+        let recv_key = MediaKey::with_default_vhost("list", "recv", None).unwrap();
+        let send_key = MediaKey::with_default_vhost("list", "send", None).unwrap();
+
+        let recv = orchestrator
+            .open_rtp_receiver(receiver_request(recv_key))
+            .await
+            .expect("open receiver");
+        let _sender = orchestrator
+            .open_rtp_sender(RtpSenderRequest {
+                media_key: send_key,
+                destination_endpoint: "127.0.0.1:16666".to_string(),
+                ssrc: Some(5000),
+                payload_type: Some(96),
+                codec_hint: Some("ps".to_string()),
+                mode: RtpSenderMode::Active,
+                transport_options: HashMap::new(),
+            })
+            .await
+            .expect("open sender");
+
+        let all = orchestrator
+            .list_rtp_sessions(cheetah_sdk::media_api::command::RtpQuery {
+                kind: None,
+                state: None,
+                page: 1,
+                page_size: 10,
+            })
+            .expect("list all");
+        assert_eq!(all.total, 2);
+
+        let receivers = orchestrator
+            .list_rtp_sessions(cheetah_sdk::media_api::command::RtpQuery {
+                kind: Some(RtpSessionKind::Receiver),
+                state: None,
+                page: 1,
+                page_size: 10,
+            })
+            .expect("list receivers");
+        assert_eq!(receivers.total, 1);
+        assert_eq!(receivers.items[0].session_id, recv.session_id);
+
+        cancel.cancel();
+    }
+}
