@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use cheetah_media_api::audit::{AuditApi, AuditEvent, AuditResult};
 use cheetah_media_api::command::{
     DeleteRecordRequest, DeleteSnapshotRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand,
     RecordTaskQuery, RtpQuery, RtpReceiverRequest, RtpSenderRequest, SessionQuery, SnapshotQuery,
@@ -193,18 +194,94 @@ impl NativeMediaHttpService {
         crate::native_routes::native_required_scope(method, path)
     }
 
-    fn authorize_request(&self, req: &HttpRequest) -> Result<MediaRequestContext, AdapterError> {
-        let ctx = self.request_context(req)?;
-        let Some(scope) = self.required_scope(req.method, &req.path) else {
-            return Err(AdapterError::Media(
-                cheetah_media_api::error::MediaError::new(
-                    cheetah_media_api::error::MediaErrorCode::PermissionDenied,
-                    "route is not authorized",
-                ),
-            ));
+    fn audit(&self) -> Result<Arc<dyn AuditApi>, AdapterError> {
+        Ok(self.ctx.audit_api.clone())
+    }
+
+    fn audit_operation(&self, method: HttpMethod, path: &str) -> Option<&'static str> {
+        match (method, path) {
+            (HttpMethod::Post, path) if path.starts_with("/media/") && path.ends_with("/close") => {
+                Some("media.close")
+            }
+            (HttpMethod::Post, path)
+                if path.starts_with("/sessions/") && path.ends_with("/kick") =>
+            {
+                Some("session.kick")
+            }
+            (HttpMethod::Post, "/record/tasks") => Some("record.start"),
+            (HttpMethod::Post, path)
+                if path.starts_with("/record/tasks/") && path.ends_with("/stop") =>
+            {
+                Some("record.stop")
+            }
+            (HttpMethod::Delete, path) if path.starts_with("/record/files/") => Some("file.delete"),
+            (HttpMethod::Post, path)
+                if path.starts_with("/record/playback/") && path.ends_with("/control") =>
+            {
+                Some("record.playback_control")
+            }
+            (HttpMethod::Post, "/snapshots") => Some("snapshot.create"),
+            (HttpMethod::Delete, "/snapshots/directories") => Some("snapshot.directory.delete"),
+            (HttpMethod::Post, "/rtp/receivers") => Some("rtp.receiver.open"),
+            (HttpMethod::Post, "/rtp/senders") => Some("rtp.sender.open"),
+            (HttpMethod::Post, path)
+                if path.starts_with("/rtp/sessions/") && path.ends_with("/stop") =>
+            {
+                Some("rtp.session.stop")
+            }
+            _ => None,
+        }
+    }
+
+    async fn record_audit(
+        &self,
+        ctx: &MediaRequestContext,
+        req: &HttpRequest,
+        result: &Result<HttpResponse, AdapterError>,
+    ) {
+        let Some(operation) = self.audit_operation(req.method, &req.path) else {
+            return;
         };
-        self.require_scope(&ctx, &scope)?;
-        Ok(ctx)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let (audit_result, summary) = match result {
+            Ok(_) => (AuditResult::Success, "ok".to_string()),
+            Err(AdapterError::Media(err)) => (
+                AuditResult::Failure {
+                    code: err.code.to_string(),
+                    message: err.message.to_string(),
+                },
+                "failed".to_string(),
+            ),
+            Err(AdapterError::InvalidRequest(msg)) => (
+                AuditResult::Denied {
+                    reason: msg.clone(),
+                },
+                "invalid".to_string(),
+            ),
+            Err(AdapterError::Serialization(msg)) => (
+                AuditResult::Failure {
+                    code: "serialization".to_string(),
+                    message: msg.clone(),
+                },
+                "serialization failed".to_string(),
+            ),
+        };
+        let event = AuditEvent {
+            timestamp_ms: now,
+            request_id: ctx.request_id.0.clone(),
+            correlation_id: ctx.correlation_id.clone(),
+            principal: ctx.principal.as_ref().map(|p| p.identity.clone()),
+            operation: operation.to_string(),
+            resource: req.path.clone(),
+            result: audit_result,
+            summary,
+        };
+        if let Ok(api) = self.audit() {
+            api.record(ctx, event).await;
+        }
     }
 
     fn request_context(&self, req: &HttpRequest) -> Result<MediaRequestContext, AdapterError> {
@@ -249,90 +326,116 @@ impl NativeMediaHttpService {
         MediaKey::new(vhost, app, stream, None).map_err(AdapterError::Media)
     }
 
-    async fn media_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn media_list(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let mut query: MediaQuery = parse_query(&req)?;
         query.clamp_page_size();
-        let page = self.control()?.get_media_list(&ctx, query).await?;
+        let page = self.control()?.get_media_list(ctx, query).await?;
         Ok(json_response(&page))
     }
 
-    async fn media_detail(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn media_detail(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let key = self.parse_media_key(&req.path, "/media/")?;
-        let info = self.control()?.get_media(&ctx, &key).await?;
+        let info = self.control()?.get_media(ctx, &key).await?;
         Ok(json_response(&info))
     }
 
-    async fn media_online(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn media_online(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let key = self.parse_media_key(&req.path, "/media/")?;
-        let online = self.control()?.is_media_online(&ctx, &key).await?;
+        let online = self.control()?.is_media_online(ctx, &key).await?;
         Ok(json_response(&serde_json::json!({ "online": online })))
     }
 
-    async fn media_close(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn media_close(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let key = self.parse_media_key(&req.path, "/media/")?;
         let report = self
             .control()?
-            .kick_stream(&ctx, &key, CloseReason::Kicked)
+            .kick_stream(ctx, &key, CloseReason::Kicked)
             .await?;
         Ok(json_response(&report))
     }
 
-    async fn media_keyframe(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn media_keyframe(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let key = self.parse_media_key(&req.path, "/media/")?;
-        self.control()?.request_keyframe(&ctx, &key).await?;
+        self.control()?.request_keyframe(ctx, &key).await?;
         Ok(json_response(&serde_json::json!({ "requested": true })))
     }
 
-    async fn session_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn session_list(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let mut query: SessionQuery = parse_query(&req)?;
         query.clamp_page_size();
-        let page = self.control()?.list_sessions(&ctx, query).await?;
+        let page = self.control()?.list_sessions(ctx, query).await?;
         Ok(json_response(&page))
     }
 
-    async fn session_kick(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn session_kick(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let parts: Vec<&str> = req.path.split('/').filter(|s| !s.is_empty()).collect();
         let session_id = parts
             .get(parts.len().saturating_sub(2))
             .filter(|s| !s.is_empty())
             .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
         self.control()?
-            .kick_session(
-                &ctx,
-                &SessionId(session_id.to_string()),
-                CloseReason::Kicked,
-            )
+            .kick_session(ctx, &SessionId(session_id.to_string()), CloseReason::Kicked)
             .await?;
         Ok(json_response(&serde_json::json!({ "kicked": true })))
     }
 
-    async fn record_tasks(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn record_tasks(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
         let mut query: RecordTaskQuery = parse_query(&req)?;
         query.clamp_page_size();
-        let page = record_api.query_record_tasks(&ctx, query).await?;
+        let page = record_api.query_record_tasks(ctx, query).await?;
         Ok(json_response(&page))
     }
 
-    async fn record_files(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn record_files(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
         let mut query: RecordFileQuery = parse_query(&req)?;
         query.clamp_page_size();
-        let page = record_api.query_record_files(&ctx, query).await?;
+        let page = record_api.query_record_files(ctx, query).await?;
         Ok(json_response(&page))
     }
 
-    async fn record_start(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn record_start(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
         let mut request: StartRecordRequest = parse_body(&req)?;
         if request.idempotency_key.is_none() {
@@ -341,30 +444,36 @@ impl NativeMediaHttpService {
                 .clone()
                 .map(cheetah_media_api::ids::IdempotencyKey);
         }
-        let task = record_api.start_record(&ctx, request).await?;
+        let task = record_api.start_record(ctx, request).await?;
         Ok(json_response(&task))
     }
 
-    async fn record_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn record_stop(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
         let id = record_id_from_path(&req.path, "/record/tasks/", "/stop")
             .ok_or_else(|| AdapterError::InvalidRequest("missing task_id".to_string()))?;
         let request = StopRecordRequest {
             task_id: RecordTaskId(id),
         };
-        let task = record_api.stop_record(&ctx, request).await?;
+        let task = record_api.stop_record(ctx, request).await?;
         Ok(json_response(&task))
     }
 
-    async fn record_file_delete(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn record_file_delete(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
         let id = record_id_from_path(&req.path, "/record/files/", "")
             .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
         record_api
             .delete_record_file(
-                &ctx,
+                ctx,
                 DeleteRecordRequest {
                     file_id: RecordFileId(id),
                 },
@@ -375,85 +484,104 @@ impl NativeMediaHttpService {
 
     async fn record_playback_control(
         &self,
+        ctx: &MediaRequestContext,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
         let record_api = self.record()?;
         let file_id = record_id_from_path(&req.path, "/record/playback/", "/control")
             .ok_or_else(|| AdapterError::InvalidRequest("missing file_id".to_string()))?;
         let command: RecordPlaybackCommand = parse_body(&req)?;
         record_api
-            .control_record_playback(&ctx, &RecordFileId(file_id), command)
+            .control_record_playback(ctx, &RecordFileId(file_id), command)
             .await?;
         Ok(json_response(&serde_json::json!({ "controlled": true })))
     }
 
-    async fn rtp_receivers(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn rtp_receivers(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
         let request: RtpReceiverRequest = parse_body(&req)?;
-        let session = rtp_api.open_rtp_receiver(&ctx, request).await?;
+        let session = rtp_api.open_rtp_receiver(ctx, request).await?;
         Ok(json_response(&session))
     }
 
-    async fn rtp_senders(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn rtp_senders(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
         let request: RtpSenderRequest = parse_body(&req)?;
-        let session = rtp_api.open_rtp_sender(&ctx, request).await?;
+        let session = rtp_api.open_rtp_sender(ctx, request).await?;
         Ok(json_response(&session))
     }
 
-    async fn rtp_session_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn rtp_session_stop(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
         let id = rtp_id_from_path(&req.path, "/rtp/sessions/", "/stop")
             .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
-        rtp_api.stop_rtp_session(&ctx, &RtpSessionId(id)).await?;
+        rtp_api.stop_rtp_session(ctx, &RtpSessionId(id)).await?;
         Ok(json_response(&serde_json::json!({ "stopped": true })))
     }
 
-    async fn rtp_sessions(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn rtp_sessions(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
         let mut query: RtpQuery = parse_query(&req)?;
         query.clamp_page_size();
-        let page = rtp_api.list_rtp_sessions(&ctx, query).await?;
+        let page = rtp_api.list_rtp_sessions(ctx, query).await?;
         Ok(json_response(&page))
     }
 
-    async fn snapshot_create(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn snapshot_create(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let snapshot_api = self.snapshot()?;
         let request: SnapshotRequest = parse_body(&req)?;
-        let handle = snapshot_api.take_snapshot(&ctx, request).await?;
+        let handle = snapshot_api.take_snapshot(ctx, request).await?;
         Ok(json_response(&handle))
     }
 
-    async fn snapshot_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn snapshot_list(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let snapshot_api = self.snapshot()?;
         let mut query: SnapshotQuery = parse_query(&req)?;
         query.clamp_page_size();
-        let page = snapshot_api.query_snapshots(&ctx, query).await?;
+        let page = snapshot_api.query_snapshots(ctx, query).await?;
         Ok(json_response(&page))
     }
 
     async fn snapshot_delete_directory(
         &self,
+        ctx: &MediaRequestContext,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
         let snapshot_api = self.snapshot()?;
         let request: DeleteSnapshotRequest = parse_body(&req)?;
-        snapshot_api
-            .delete_snapshot_directory(&ctx, request)
-            .await?;
+        snapshot_api.delete_snapshot_directory(ctx, request).await?;
         Ok(json_response(&serde_json::json!({ "deleted": true })))
     }
 
-    async fn file_download(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn file_download(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let handle = file_id_from_download_path(&req.path).ok_or_else(|| {
             AdapterError::InvalidRequest("invalid file download path".to_string())
         })?;
@@ -466,20 +594,27 @@ impl NativeMediaHttpService {
 
         let download = self
             .file_store()
-            .resolve_download(&ctx, &FileHandle(handle), range, filename, now_ms)
+            .resolve_download(ctx, &FileHandle(handle), range, filename, now_ms)
             .map_err(AdapterError::Media)?;
 
         Ok(download_response(download))
     }
 
-    async fn proxies_pull(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+    async fn proxies_pull(
+        &self,
+        _ctx: &MediaRequestContext,
+        _req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         Err(AdapterError::Media(
             cheetah_media_api::error::MediaError::unsupported_capability("proxy"),
         ))
     }
 
-    async fn capabilities(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let _ctx = self.authorize_request(&req)?;
+    async fn capabilities(
+        &self,
+        _ctx: &MediaRequestContext,
+        _req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let caps = self.ctx.media_services.capabilities();
         Ok(json_response(&caps))
     }
@@ -488,19 +623,34 @@ impl NativeMediaHttpService {
 #[async_trait]
 impl ModuleHttpService for NativeMediaHttpService {
     async fn handle(&self, mut req: HttpRequest) -> Result<HttpResponse, SdkError> {
+        let audit_req = req.clone();
         let request_id = header_value(&req.headers, "x-request-id")
             .map(|v| v.to_string())
             .unwrap_or_else(crate::util::generate_request_id);
         crate::util::set_request_id_header(&mut req, &request_id);
 
         let result: Result<HttpResponse, AdapterError> = async {
-            match (req.method, req.path.as_str()) {
-                (HttpMethod::Get, "/media/capabilities") => self.capabilities(req).await,
-                (HttpMethod::Get, "/media") => self.media_list(req).await,
+            let ctx = self.request_context(&req)?;
+            let Some(scope) = self.required_scope(req.method, &req.path) else {
+                return Err(AdapterError::Media(
+                    cheetah_media_api::error::MediaError::new(
+                        cheetah_media_api::error::MediaErrorCode::NotFound,
+                        "not found",
+                    ),
+                ));
+            };
+            if let Err(ref auth_err) = self.require_scope(&ctx, &scope) {
+                let err = Err(auth_err.clone());
+                self.record_audit(&ctx, &audit_req, &err).await;
+                return err;
+            }
+            let response = match (req.method, req.path.as_str()) {
+                (HttpMethod::Get, "/media/capabilities") => self.capabilities(&ctx, req).await,
+                (HttpMethod::Get, "/media") => self.media_list(&ctx, req).await,
                 (HttpMethod::Get, path)
                     if path.starts_with("/media/") && path.ends_with("/online") =>
                 {
-                    self.media_online(req).await
+                    self.media_online(&ctx, req).await
                 }
                 (HttpMethod::Get, path)
                     if path.starts_with("/media/") && path.ends_with("/close") =>
@@ -512,59 +662,63 @@ impl ModuleHttpService for NativeMediaHttpService {
                 (HttpMethod::Post, path)
                     if path.starts_with("/media/") && path.ends_with("/close") =>
                 {
-                    self.media_close(req).await
+                    self.media_close(&ctx, req).await
                 }
                 (HttpMethod::Post, path)
                     if path.starts_with("/media/") && path.ends_with("/keyframe") =>
                 {
-                    self.media_keyframe(req).await
+                    self.media_keyframe(&ctx, req).await
                 }
                 (HttpMethod::Get, path) if path.starts_with("/media/") => {
-                    self.media_detail(req).await
+                    self.media_detail(&ctx, req).await
                 }
-                (HttpMethod::Get, "/sessions") => self.session_list(req).await,
+                (HttpMethod::Get, "/sessions") => self.session_list(&ctx, req).await,
                 (HttpMethod::Post, path)
                     if path.starts_with("/sessions/") && path.ends_with("/kick") =>
                 {
-                    self.session_kick(req).await
+                    self.session_kick(&ctx, req).await
                 }
-                (HttpMethod::Post, "/record/tasks") => self.record_start(req).await,
+                (HttpMethod::Post, "/record/tasks") => self.record_start(&ctx, req).await,
                 (HttpMethod::Post, path)
                     if path.starts_with("/record/tasks/") && path.ends_with("/stop") =>
                 {
-                    self.record_stop(req).await
+                    self.record_stop(&ctx, req).await
                 }
-                (HttpMethod::Get, "/record/tasks") => self.record_tasks(req).await,
-                (HttpMethod::Get, "/record/files") => self.record_files(req).await,
+                (HttpMethod::Get, "/record/tasks") => self.record_tasks(&ctx, req).await,
+                (HttpMethod::Get, "/record/files") => self.record_files(&ctx, req).await,
                 (HttpMethod::Delete, path) if path.starts_with("/record/files/") => {
-                    self.record_file_delete(req).await
+                    self.record_file_delete(&ctx, req).await
                 }
                 (HttpMethod::Post, path)
                     if path.starts_with("/record/playback/") && path.ends_with("/control") =>
                 {
-                    self.record_playback_control(req).await
+                    self.record_playback_control(&ctx, req).await
                 }
-                (HttpMethod::Post, "/snapshots") => self.snapshot_create(req).await,
-                (HttpMethod::Get, "/snapshots") => self.snapshot_list(req).await,
+                (HttpMethod::Post, "/snapshots") => self.snapshot_create(&ctx, req).await,
+                (HttpMethod::Get, "/snapshots") => self.snapshot_list(&ctx, req).await,
                 (HttpMethod::Delete, "/snapshots/directories") => {
-                    self.snapshot_delete_directory(req).await
+                    self.snapshot_delete_directory(&ctx, req).await
                 }
                 (HttpMethod::Get, path)
                     if path.starts_with("/files/") && path.ends_with("/download") =>
                 {
-                    self.file_download(req).await
+                    self.file_download(&ctx, req).await
                 }
-                (HttpMethod::Get, "/proxies/pull") => self.proxies_pull(req).await,
-                (HttpMethod::Post, "/rtp/receivers") => self.rtp_receivers(req).await,
-                (HttpMethod::Post, "/rtp/senders") => self.rtp_senders(req).await,
+                (HttpMethod::Get, "/proxies/pull") => self.proxies_pull(&ctx, req).await,
+                (HttpMethod::Post, "/rtp/receivers") => self.rtp_receivers(&ctx, req).await,
+                (HttpMethod::Post, "/rtp/senders") => self.rtp_senders(&ctx, req).await,
                 (HttpMethod::Post, path)
                     if path.starts_with("/rtp/sessions/") && path.ends_with("/stop") =>
                 {
-                    self.rtp_session_stop(req).await
+                    self.rtp_session_stop(&ctx, req).await
                 }
-                (HttpMethod::Get, "/rtp/sessions") => self.rtp_sessions(req).await,
+                (HttpMethod::Get, "/rtp/sessions") => self.rtp_sessions(&ctx, req).await,
                 _ => Err(AdapterError::InvalidRequest("not found".to_string())),
-            }
+            };
+
+            self.record_audit(&ctx, &audit_req, &response).await;
+
+            response
         }
         .await;
 

@@ -230,13 +230,46 @@ async fn get_services(Extension(state): Extension<Arc<ControlState>>) -> impl In
     Json(json!({ "services": services }))
 }
 
-/// Return the current config version and global effective value.
+fn sanitize_config(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (k, v) in map {
+                let redacted = matches!(
+                    k.as_str(),
+                    "tokens"
+                        | "deployment_tokens"
+                        | "secret"
+                        | "password"
+                        | "api_key"
+                        | "api_secret"
+                ) || k.ends_with("_token")
+                    || k.ends_with("_secret");
+                if redacted && v.is_object() {
+                    out.insert(k.clone(), serde_json::Value::Object(serde_json::Map::new()));
+                } else if redacted && (v.is_string() || v.is_number() || v.is_array()) {
+                    out.insert(k.clone(), serde_json::Value::String("***".to_string()));
+                } else {
+                    out.insert(k.clone(), sanitize_config(v));
+                }
+            }
+            serde_json::Value::Object(out)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(sanitize_config).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+/// Return the current config version and a sanitized global effective value.
 ///
-/// 返回当前配置版本与全局有效值。
+/// 返回当前配置版本与经过脱敏处理的全局有效值。
 async fn get_config(Extension(state): Extension<Arc<ControlState>>) -> impl IntoResponse {
+    let global = sanitize_config(&state.config.global());
     Json(json!({
         "version": state.config.version(),
-        "global": state.config.global(),
+        "global": global,
     }))
 }
 

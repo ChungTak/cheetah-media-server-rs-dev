@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use cheetah_media_api::audit::{AuditApi, AuditEvent, AuditResult};
 use cheetah_media_api::command::{
     DeleteRecordRequest, MediaQuery, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
     SessionQuery, StartRecordRequest, StopRecordRequest,
@@ -311,21 +312,80 @@ impl ZlmMediaHttpService {
         zlm_required_scope(method, path)
     }
 
-    pub(crate) fn authorize_request(
+    fn audit(&self) -> Result<Arc<dyn AuditApi>, AdapterError> {
+        Ok(self.ctx.audit_api.clone())
+    }
+
+    fn audit_operation(&self, method: HttpMethod, path: &str) -> Option<&'static str> {
+        match (method, path) {
+            (HttpMethod::Post, "/api/close_stream") => Some("media.close"),
+            (HttpMethod::Post, "/api/kick_session") => Some("session.kick"),
+            (HttpMethod::Post, "/api/startRecord") => Some("record.start"),
+            (HttpMethod::Post, "/api/stopRecord") => Some("record.stop"),
+            (HttpMethod::Post, "/api/deleteRecordDirectory") => Some("file.delete"),
+            (HttpMethod::Post, "/api/openRtpServer") => Some("rtp.receiver.open"),
+            (HttpMethod::Post, "/api/closeRtpServer") => Some("rtp.receiver.close"),
+            (HttpMethod::Post, "/api/startSendRtp") => Some("rtp.sender.open"),
+            (HttpMethod::Post, "/api/stopSendRtp") => Some("rtp.sender.close"),
+            (HttpMethod::Post, "/api/setRecordSpeed")
+            | (HttpMethod::Post, "/api/seekRecordStamp")
+            | (HttpMethod::Post, "/api/controlRecordPlay")
+            | (HttpMethod::Post, "/api/loadMP4File") => Some("record.playback_control"),
+            (HttpMethod::Get, "/api/getSnap") => Some("snapshot.create"),
+            (HttpMethod::Post, "/api/deleteSnapDirectory") => Some("snapshot.directory.delete"),
+            _ => None,
+        }
+    }
+
+    async fn record_audit(
         &self,
+        ctx: &MediaRequestContext,
         req: &HttpRequest,
-    ) -> Result<MediaRequestContext, AdapterError> {
-        let ctx = self.request_context(req)?;
-        let Some(scope) = self.required_scope(req.method, &req.path) else {
-            return Err(AdapterError::Media(
-                cheetah_media_api::error::MediaError::new(
-                    cheetah_media_api::error::MediaErrorCode::PermissionDenied,
-                    "route is not authorized",
-                ),
-            ));
+        result: &Result<HttpResponse, AdapterError>,
+    ) {
+        let Some(operation) = self.audit_operation(req.method, &req.path) else {
+            return;
         };
-        self.require_scope(&ctx, &scope)?;
-        Ok(ctx)
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let (audit_result, summary) = match result {
+            Ok(_) => (AuditResult::Success, "ok".to_string()),
+            Err(AdapterError::Media(err)) => (
+                AuditResult::Failure {
+                    code: err.code.to_string(),
+                    message: err.message.to_string(),
+                },
+                "failed".to_string(),
+            ),
+            Err(AdapterError::InvalidRequest(msg)) => (
+                AuditResult::Denied {
+                    reason: msg.clone(),
+                },
+                "invalid".to_string(),
+            ),
+            Err(AdapterError::Serialization(msg)) => (
+                AuditResult::Failure {
+                    code: "serialization".to_string(),
+                    message: msg.clone(),
+                },
+                "serialization failed".to_string(),
+            ),
+        };
+        let event = AuditEvent {
+            timestamp_ms: now,
+            request_id: ctx.request_id.0.clone(),
+            correlation_id: ctx.correlation_id.clone(),
+            principal: ctx.principal.as_ref().map(|p| p.identity.clone()),
+            operation: operation.to_string(),
+            resource: req.path.clone(),
+            result: audit_result,
+            summary,
+        };
+        if let Ok(api) = self.audit() {
+            api.record(ctx, event).await;
+        }
     }
 
     pub(crate) fn extract_params(
@@ -354,8 +414,11 @@ impl ZlmMediaHttpService {
         MediaKey::new(vhost, app, stream, None).map_err(AdapterError::Media)
     }
 
-    async fn get_media_list(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn get_media_list(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let params = self.extract_params(&req)?;
         let mut query = MediaQuery {
             vhost: params["vhost"].as_str().map(String::from),
@@ -367,15 +430,18 @@ impl ZlmMediaHttpService {
             ..Default::default()
         };
         query.clamp_page_size();
-        let page = self.control()?.get_media_list(&ctx, query).await?;
+        let page = self.control()?.get_media_list(ctx, query).await?;
         Ok(zlm_response(0, "success", page))
     }
 
-    async fn is_media_online(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn is_media_online(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let online = self.control()?.is_media_online(&ctx, &key).await?;
+        let online = self.control()?.is_media_online(ctx, &key).await?;
         Ok(zlm_response(
             0,
             "success",
@@ -383,16 +449,22 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn get_media_info(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn get_media_info(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
-        let info = self.control()?.get_media(&ctx, &key).await?;
+        let info = self.control()?.get_media(ctx, &key).await?;
         Ok(zlm_response(0, "success", info))
     }
 
-    async fn get_all_session(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn get_all_session(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let params = self.extract_params(&req)?;
         let mut query = SessionQuery {
             vhost: params["vhost"].as_str().map(String::from),
@@ -403,17 +475,20 @@ impl ZlmMediaHttpService {
             ..Default::default()
         };
         query.clamp_page_size();
-        let page = self.control()?.list_sessions(&ctx, query).await?;
+        let page = self.control()?.list_sessions(ctx, query).await?;
         Ok(zlm_response(0, "success", page))
     }
 
-    async fn close_stream(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn close_stream(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let _ = self
             .control()?
-            .kick_stream(&ctx, &key, CloseReason::Kicked)
+            .kick_stream(ctx, &key, CloseReason::Kicked)
             .await?;
         Ok(zlm_response(
             0,
@@ -422,14 +497,17 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn kick_session(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
-        let ctx = self.authorize_request(&req)?;
+    async fn kick_session(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let params = self.extract_params(&req)?;
         let id = params["id"]
             .as_str()
             .ok_or_else(|| AdapterError::InvalidRequest("id is required".to_string()))?;
         self.control()?
-            .kick_session(&ctx, &SessionId(id.to_string()), CloseReason::Kicked)
+            .kick_session(ctx, &SessionId(id.to_string()), CloseReason::Kicked)
             .await?;
         Ok(zlm_response(
             0,
@@ -438,9 +516,12 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn record_start(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+    async fn record_start(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = zlm_record_format(&params["type"])?;
@@ -456,7 +537,7 @@ impl ZlmMediaHttpService {
                 .clone()
                 .map(cheetah_media_api::ids::IdempotencyKey),
         };
-        let task = record_api.start_record(&ctx, request).await?;
+        let task = record_api.start_record(ctx, request).await?;
         Ok(zlm_response(
             0,
             "success",
@@ -464,9 +545,12 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn record_stop(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+    async fn record_stop(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = zlm_record_format(&params["type"])?;
@@ -478,7 +562,7 @@ impl ZlmMediaHttpService {
             ..Default::default()
         };
         query.clamp_page_size();
-        let page = record_api.query_record_tasks(&ctx, query).await?;
+        let page = record_api.query_record_tasks(ctx, query).await?;
         let task = page
             .items
             .into_iter()
@@ -493,7 +577,7 @@ impl ZlmMediaHttpService {
             })?;
         record_api
             .stop_record(
-                &ctx,
+                ctx,
                 StopRecordRequest {
                     task_id: task.task_id,
                 },
@@ -506,9 +590,12 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn is_recording(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+    async fn is_recording(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let format = zlm_record_format(&params["type"])?;
@@ -520,7 +607,7 @@ impl ZlmMediaHttpService {
             ..Default::default()
         };
         query.clamp_page_size();
-        let page = record_api.query_record_tasks(&ctx, query).await?;
+        let page = record_api.query_record_tasks(ctx, query).await?;
         let recording = page.items.iter().any(|t| {
             t.format == format
                 && matches!(t.state, RecordTaskState::Running | RecordTaskState::Pending)
@@ -532,9 +619,12 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn get_mp4_files(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+    async fn get_mp4_files(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let mut query = RecordFileQuery {
@@ -546,7 +636,7 @@ impl ZlmMediaHttpService {
             ..Default::default()
         };
         query.clamp_page_size();
-        let page = record_api.query_record_files(&ctx, query).await?;
+        let page = record_api.query_record_files(ctx, query).await?;
         let paths: Vec<String> = page.items.iter().map(|f| f.path_handle.0.clone()).collect();
         Ok(zlm_response(
             0,
@@ -557,10 +647,10 @@ impl ZlmMediaHttpService {
 
     async fn delete_record_directory(
         &self,
+        ctx: &MediaRequestContext,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let mut query = RecordFileQuery {
@@ -573,7 +663,7 @@ impl ZlmMediaHttpService {
         let mut total_deleted = 0usize;
         let mut total_failed = 0usize;
         loop {
-            let page = record_api.query_record_files(&ctx, query.clone()).await?;
+            let page = record_api.query_record_files(ctx, query.clone()).await?;
             if page.items.is_empty() {
                 break;
             }
@@ -581,7 +671,7 @@ impl ZlmMediaHttpService {
             for f in &page.items {
                 match record_api
                     .delete_record_file(
-                        &ctx,
+                        ctx,
                         DeleteRecordRequest {
                             file_id: f.file_id.clone(),
                         },
@@ -614,15 +704,18 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn set_record_speed(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+    async fn set_record_speed(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let file_id = parse_zlm_file_id(&params)?;
         let value = parse_zlm_playback_value(&params, &["speed", "scale", "value"])?;
         record_api
             .control_record_playback(
-                &ctx,
+                ctx,
                 &RecordFileId(file_id),
                 RecordPlaybackCommand::Scale { value },
             )
@@ -634,15 +727,18 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn seek_record_stamp(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+    async fn seek_record_stamp(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let file_id = parse_zlm_file_id(&params)?;
         let value = parse_zlm_playback_value(&params, &["stamp", "seek", "value"])?;
         record_api
             .control_record_playback(
-                &ctx,
+                ctx,
                 &RecordFileId(file_id),
                 RecordPlaybackCommand::Seek {
                     value: value as i64,
@@ -656,14 +752,17 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn control_record_play(&self, req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+    async fn control_record_play(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         let record_api = self.record()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let file_id = parse_zlm_file_id(&params)?;
         let command = parse_zlm_playback_command(&params)?;
         record_api
-            .control_record_playback(&ctx, &RecordFileId(file_id), command)
+            .control_record_playback(ctx, &RecordFileId(file_id), command)
             .await?;
         Ok(zlm_response(
             0,
@@ -672,13 +771,21 @@ impl ZlmMediaHttpService {
         ))
     }
 
-    async fn load_mp4_file(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+    async fn load_mp4_file(
+        &self,
+        _ctx: &MediaRequestContext,
+        _req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         Err(AdapterError::Media(
             cheetah_media_api::error::MediaError::unsupported_capability("vod"),
         ))
     }
 
-    async fn download_file(&self, _req: HttpRequest) -> Result<HttpResponse, AdapterError> {
+    async fn download_file(
+        &self,
+        _ctx: &MediaRequestContext,
+        _req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
         Err(AdapterError::Media(
             cheetah_media_api::error::MediaError::unsupported_capability("file download"),
         ))
@@ -688,39 +795,67 @@ impl ZlmMediaHttpService {
 #[async_trait]
 impl ModuleHttpService for ZlmMediaHttpService {
     async fn handle(&self, mut req: HttpRequest) -> Result<HttpResponse, SdkError> {
+        let audit_req = req.clone();
         let request_id = header_value(&req.headers, "x-request-id")
             .map(|v| v.to_string())
             .unwrap_or_else(crate::util::generate_request_id);
         crate::util::set_request_id_header(&mut req, &request_id);
 
-        let result = match (req.method, req.path.as_str()) {
-            (HttpMethod::Get, "/api/getMediaList") => self.get_media_list(req).await,
-            (HttpMethod::Get, "/api/isMediaOnline") => self.is_media_online(req).await,
-            (HttpMethod::Get, "/api/getMediaInfo") => self.get_media_info(req).await,
-            (HttpMethod::Get, "/api/getAllSession") => self.get_all_session(req).await,
-            (HttpMethod::Post, "/api/close_stream") => self.close_stream(req).await,
-            (HttpMethod::Post, "/api/kick_session") => self.kick_session(req).await,
-            (HttpMethod::Post, "/api/startRecord") => self.record_start(req).await,
-            (HttpMethod::Post, "/api/stopRecord") => self.record_stop(req).await,
-            (HttpMethod::Get, "/api/isRecording") => self.is_recording(req).await,
-            (HttpMethod::Get, "/api/getMP4RecordFile") => self.get_mp4_files(req).await,
-            (HttpMethod::Post, "/api/deleteRecordDirectory") => {
-                self.delete_record_directory(req).await
+        let result: Result<HttpResponse, AdapterError> = async {
+            let ctx = self.request_context(&req)?;
+            let Some(scope) = self.required_scope(req.method, &req.path) else {
+                return Err(AdapterError::Media(
+                    cheetah_media_api::error::MediaError::new(
+                        cheetah_media_api::error::MediaErrorCode::NotFound,
+                        "not found",
+                    ),
+                ));
+            };
+            if let Err(ref auth_err) = self.require_scope(&ctx, &scope) {
+                let err = Err(auth_err.clone());
+                self.record_audit(&ctx, &audit_req, &err).await;
+                return err;
             }
-            (HttpMethod::Post, "/api/openRtpServer") => self.open_rtp_server(req).await,
-            (HttpMethod::Post, "/api/closeRtpServer") => self.close_rtp_server(req).await,
-            (HttpMethod::Post, "/api/startSendRtp") => self.start_send_rtp(req).await,
-            (HttpMethod::Post, "/api/stopSendRtp") => self.stop_send_rtp(req).await,
-            (HttpMethod::Get, "/api/getRtpInfo") => self.get_rtp_info(req).await,
-            (HttpMethod::Post, "/api/setRecordSpeed") => self.set_record_speed(req).await,
-            (HttpMethod::Post, "/api/seekRecordStamp") => self.seek_record_stamp(req).await,
-            (HttpMethod::Post, "/api/controlRecordPlay") => self.control_record_play(req).await,
-            (HttpMethod::Post, "/api/loadMP4File") => self.load_mp4_file(req).await,
-            (HttpMethod::Get, "/api/getSnap") => self.get_snap(req).await,
-            (HttpMethod::Post, "/api/deleteSnapDirectory") => self.delete_snap_directory(req).await,
-            (HttpMethod::Get, "/api/downloadFile") => self.download_file(req).await,
-            _ => Err(AdapterError::InvalidRequest("not found".to_string())),
-        };
+            let response = match (req.method, req.path.as_str()) {
+                (HttpMethod::Get, "/api/getMediaList") => self.get_media_list(&ctx, req).await,
+                (HttpMethod::Get, "/api/isMediaOnline") => self.is_media_online(&ctx, req).await,
+                (HttpMethod::Get, "/api/getMediaInfo") => self.get_media_info(&ctx, req).await,
+                (HttpMethod::Get, "/api/getAllSession") => self.get_all_session(&ctx, req).await,
+                (HttpMethod::Post, "/api/close_stream") => self.close_stream(&ctx, req).await,
+                (HttpMethod::Post, "/api/kick_session") => self.kick_session(&ctx, req).await,
+                (HttpMethod::Post, "/api/startRecord") => self.record_start(&ctx, req).await,
+                (HttpMethod::Post, "/api/stopRecord") => self.record_stop(&ctx, req).await,
+                (HttpMethod::Get, "/api/isRecording") => self.is_recording(&ctx, req).await,
+                (HttpMethod::Get, "/api/getMP4RecordFile") => self.get_mp4_files(&ctx, req).await,
+                (HttpMethod::Post, "/api/deleteRecordDirectory") => {
+                    self.delete_record_directory(&ctx, req).await
+                }
+                (HttpMethod::Post, "/api/openRtpServer") => self.open_rtp_server(&ctx, req).await,
+                (HttpMethod::Post, "/api/closeRtpServer") => self.close_rtp_server(&ctx, req).await,
+                (HttpMethod::Post, "/api/startSendRtp") => self.start_send_rtp(&ctx, req).await,
+                (HttpMethod::Post, "/api/stopSendRtp") => self.stop_send_rtp(&ctx, req).await,
+                (HttpMethod::Get, "/api/getRtpInfo") => self.get_rtp_info(&ctx, req).await,
+                (HttpMethod::Post, "/api/setRecordSpeed") => self.set_record_speed(&ctx, req).await,
+                (HttpMethod::Post, "/api/seekRecordStamp") => {
+                    self.seek_record_stamp(&ctx, req).await
+                }
+                (HttpMethod::Post, "/api/controlRecordPlay") => {
+                    self.control_record_play(&ctx, req).await
+                }
+                (HttpMethod::Post, "/api/loadMP4File") => self.load_mp4_file(&ctx, req).await,
+                (HttpMethod::Get, "/api/getSnap") => self.get_snap(&ctx, req).await,
+                (HttpMethod::Post, "/api/deleteSnapDirectory") => {
+                    self.delete_snap_directory(&ctx, req).await
+                }
+                (HttpMethod::Get, "/api/downloadFile") => self.download_file(&ctx, req).await,
+                _ => Err(AdapterError::InvalidRequest("not found".to_string())),
+            };
+
+            self.record_audit(&ctx, &audit_req, &response).await;
+
+            response
+        }
+        .await;
 
         let mut response = match result {
             Ok(resp) => resp,

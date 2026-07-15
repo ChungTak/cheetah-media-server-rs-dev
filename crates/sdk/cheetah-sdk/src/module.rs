@@ -19,6 +19,7 @@ use crate::stream::{CoreAdaptersApi, PublisherApi, StreamManagerApi, SubscriberA
 use crate::task::{CancellationToken, TaskSystemApi};
 use crate::EventBus;
 use crate::MediaFileStoreApi;
+use cheetah_media_api::audit::AuditApi;
 use cheetah_media_api::event::MediaEventBusApi;
 use cheetah_media_api::ControlAuthApi;
 use cheetah_runtime_api::RuntimeApi;
@@ -205,6 +206,7 @@ pub struct EngineContext {
     pub media_file_store: Arc<dyn MediaFileStoreApi>,
     pub media_event_bus: Arc<dyn MediaEventBusApi>,
     pub control_auth_api: Arc<dyn ControlAuthApi>,
+    pub audit_api: Arc<dyn AuditApi>,
 }
 
 /// Context used to initialize a module: manifest, engine APIs, and initial config.

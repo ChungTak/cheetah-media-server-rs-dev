@@ -10,6 +10,7 @@
 //! 本 crate 刻意保持运行时无关：不依赖 Tokio、Axum、任何具体协议 module 或 `cheetah-sdk`。
 //! 它提供稳定的类型化契约，供 adapter 和 provider 实现。
 
+pub mod audit;
 pub mod auth;
 pub mod capability;
 pub mod command;

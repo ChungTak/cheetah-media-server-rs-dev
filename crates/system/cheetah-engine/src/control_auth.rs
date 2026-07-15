@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use cheetah_media_api::auth::{AuthCredentials, MediaScope, Principal};
 use cheetah_media_api::error::{MediaError, MediaErrorCode, Result};
 use cheetah_media_api::port::ControlAuthApi;
@@ -16,6 +14,22 @@ use cheetah_sdk::ConfigProvider;
 ///     "native": {
 ///       "tokens": {
 ///         "admin-secret": { "principal": "admin", "scopes": ["server.admin"] }
+///       }
+///     }
+///   }
+/// }
+/// ```
+///
+/// Deployment tokens are read from `media.native.deployment_tokens` and are
+/// intended for service-to-service or infrastructure callers that cannot use
+/// bearer authorization headers:
+///
+/// ```json
+/// {
+///   "media": {
+///     "native": {
+///       "deployment_tokens": {
+///         "deploy-secret": { "principal": "deploy", "scopes": ["media.control"] }
 ///       }
 ///     }
 ///   }
@@ -39,16 +53,16 @@ impl ConfigControlAuth {
         Self { config }
     }
 
-    fn token_map(&self) -> HashMap<String, (String, Vec<MediaScope>)> {
-        let mut map = HashMap::new();
+    fn credential_list(&self, key: &str) -> Vec<(String, String, Vec<MediaScope>)> {
+        let mut list = Vec::new();
         let global = self.config.global();
         let Some(tokens) = global
             .get("media")
             .and_then(|v| v.get("native"))
-            .and_then(|v| v.get("tokens"))
+            .and_then(|v| v.get(key))
             .and_then(|v| v.as_object())
         else {
-            return map;
+            return list;
         };
 
         for (token, value) in tokens {
@@ -69,9 +83,31 @@ impl ConfigControlAuth {
                         .collect()
                 })
                 .unwrap_or_default();
-            map.insert(token.clone(), (principal, scopes));
+            list.push((token.clone(), principal, scopes));
         }
-        map
+        list
+    }
+
+    fn token_list(&self) -> Vec<(String, String, Vec<MediaScope>)> {
+        self.credential_list("tokens")
+    }
+
+    fn deployment_token_list(&self) -> Vec<(String, String, Vec<MediaScope>)> {
+        self.credential_list("deployment_tokens")
+    }
+
+    fn find_credential(
+        &self,
+        list: &[(String, String, Vec<MediaScope>)],
+        token: &str,
+    ) -> Option<(String, Vec<MediaScope>)> {
+        let mut result = None;
+        for (candidate, identity, scopes) in list {
+            if constant_time_eq(candidate, token) {
+                result = Some((identity.clone(), scopes.clone()));
+            }
+        }
+        result
     }
 
     fn trust_mtls_identity(&self) -> bool {
@@ -95,24 +131,42 @@ impl ConfigControlAuth {
     }
 }
 
+/// Constant-time string equality used when comparing bearer/deployment tokens.
+/// Delegates to `subtle` rather than a hand-rolled comparison.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    use subtle::ConstantTimeEq;
+    bool::from(a.as_bytes().ct_eq(b.as_bytes()))
+}
+
 impl ControlAuthApi for ConfigControlAuth {
     fn authenticate(&self, credentials: &AuthCredentials) -> Result<Principal> {
         // Bearer token from the Authorization header takes precedence.
-        if let Some(token) = credentials
-            .authorization_header
-            .as_deref()
-            .and_then(|h| self.bearer_token(Some(h)))
-        {
-            let map = self.token_map();
-            if let Some((identity, scopes)) = map.get(&token) {
-                return Ok(Principal {
-                    identity: identity.clone(),
-                    scopes: scopes.clone(),
-                });
+        if let Some(header) = credentials.authorization_header.as_deref() {
+            let Some(token) = self.bearer_token(Some(header)) else {
+                return Err(MediaError::new(
+                    MediaErrorCode::Unauthenticated,
+                    "unsupported authorization scheme",
+                ));
+            };
+            let list = self.token_list();
+            if let Some((identity, scopes)) = self.find_credential(&list, &token) {
+                return Ok(Principal { identity, scopes });
             }
             return Err(MediaError::new(
                 MediaErrorCode::Unauthenticated,
                 "invalid bearer token",
+            ));
+        }
+
+        // Deployment token from the x-deployment-token header.
+        if let Some(token) = credentials.deployment_token.as_deref() {
+            let list = self.deployment_token_list();
+            if let Some((identity, scopes)) = self.find_credential(&list, token) {
+                return Ok(Principal { identity, scopes });
+            }
+            return Err(MediaError::new(
+                MediaErrorCode::Unauthenticated,
+                "invalid deployment token",
             ));
         }
 
@@ -243,6 +297,43 @@ mod tests {
             .unwrap();
         assert_eq!(p.identity, "alice");
         assert!(p.has_scope(&MediaScope::MediaRead));
+    }
+
+    #[test]
+    fn deployment_token_maps_to_configured_principal() {
+        let config = TestConfig(json!({
+            "media": {
+                "native": {
+                    "deployment_tokens": {
+                        "deploy-secret": { "principal": "deploy", "scopes": ["media.control"] }
+                    }
+                }
+            }
+        }));
+        let auth = ConfigControlAuth::new(std::sync::Arc::new(config));
+        let p = auth
+            .authenticate(&AuthCredentials {
+                deployment_token: Some("deploy-secret".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(p.identity, "deploy");
+        assert!(p.has_scope(&MediaScope::MediaControl));
+    }
+
+    #[test]
+    fn invalid_deployment_token_is_unauthenticated() {
+        let config = TestConfig(json!({
+            "media": { "native": { "deployment_tokens": {} } }
+        }));
+        let auth = ConfigControlAuth::new(std::sync::Arc::new(config));
+        let err = auth
+            .authenticate(&AuthCredentials {
+                deployment_token: Some("wrong".to_string()),
+                ..Default::default()
+            })
+            .unwrap_err();
+        assert_eq!(err.code, MediaErrorCode::Unauthenticated);
     }
 
     #[test]

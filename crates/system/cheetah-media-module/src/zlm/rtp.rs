@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use cheetah_media_api::command::{RtpReceiverRequest, RtpSenderMode, RtpSenderRequest};
 use cheetah_media_api::ids::{MediaKey, RtpSessionId, StreamKeyBridge};
 use cheetah_media_api::model::RtpTcpMode;
+use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::{HttpRequest, HttpResponse};
 
 use crate::error::AdapterError;
@@ -16,10 +17,10 @@ use crate::zlm::ZlmMediaHttpService;
 impl ZlmMediaHttpService {
     pub(crate) async fn open_rtp_server(
         &self,
+        ctx: &MediaRequestContext,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let tcp_mode = parse_zlm_rtp_tcp_mode(&params);
@@ -38,7 +39,7 @@ impl ZlmMediaHttpService {
             reuse_port: crate::util::parse_json_bool(&params["reuse_port"]).unwrap_or(false),
             timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
         };
-        let session = rtp_api.open_rtp_receiver(&ctx, request).await?;
+        let session = rtp_api.open_rtp_receiver(ctx, request).await?;
         Ok(super::zlm_response(
             0,
             "success",
@@ -52,15 +53,15 @@ impl ZlmMediaHttpService {
 
     pub(crate) async fn close_rtp_server(
         &self,
+        ctx: &MediaRequestContext,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let session_id = zlm_rtp_session_id(&key, "recv");
         rtp_api
-            .stop_rtp_session(&ctx, &RtpSessionId(session_id))
+            .stop_rtp_session(ctx, &RtpSessionId(session_id))
             .await?;
         Ok(super::zlm_response(
             0,
@@ -71,10 +72,10 @@ impl ZlmMediaHttpService {
 
     pub(crate) async fn start_send_rtp(
         &self,
+        ctx: &MediaRequestContext,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let destination = parse_zlm_destination(&params)?;
@@ -112,7 +113,7 @@ impl ZlmMediaHttpService {
             mode,
             transport_options,
         };
-        let session = rtp_api.open_rtp_sender(&ctx, request).await?;
+        let session = rtp_api.open_rtp_sender(ctx, request).await?;
         Ok(super::zlm_response(
             0,
             "success",
@@ -125,15 +126,15 @@ impl ZlmMediaHttpService {
 
     pub(crate) async fn stop_send_rtp(
         &self,
+        ctx: &MediaRequestContext,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let session_id = zlm_rtp_session_id(&key, "send");
         rtp_api
-            .stop_rtp_session(&ctx, &RtpSessionId(session_id))
+            .stop_rtp_session(ctx, &RtpSessionId(session_id))
             .await?;
         Ok(super::zlm_response(
             0,
@@ -144,16 +145,16 @@ impl ZlmMediaHttpService {
 
     pub(crate) async fn get_rtp_info(
         &self,
+        ctx: &MediaRequestContext,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
-        let ctx = self.authorize_request(&req)?;
         let params = self.extract_params(&req)?;
         let key = self.parse_media_key(&params)?;
         let mut info = None;
         for kind in ["recv", "send"] {
             let id = zlm_rtp_session_id(&key, kind);
-            if let Ok(session) = rtp_api.get_rtp_session(&ctx, &RtpSessionId(id)).await {
+            if let Ok(session) = rtp_api.get_rtp_session(ctx, &RtpSessionId(id)).await {
                 info = Some(session);
                 break;
             }
