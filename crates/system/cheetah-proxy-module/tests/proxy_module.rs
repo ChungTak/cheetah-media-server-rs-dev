@@ -128,6 +128,28 @@ async fn delete_proxy_removes_it_from_list() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn delete_wrong_kind_returns_not_found() {
+    let engine = make_engine();
+    engine.start().await.expect("engine start");
+
+    let facade = engine.media_facade();
+    let ctx = MediaRequestContext::default();
+    let info = facade
+        .create_pull_proxy(&ctx, pull_request("http://example.com/live.flv"))
+        .await
+        .expect("create pull proxy");
+
+    let result = facade.delete_push_proxy(&ctx, &info.proxy_id).await;
+    assert!(result.is_err(), "deleting a pull proxy as push should fail");
+
+    let page = facade
+        .list_pull_proxies(&ctx, ProxyQuery::default())
+        .await
+        .expect("list");
+    assert_eq!(page.total, 1, "pull proxy should still exist");
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn get_proxy_by_id() {
     let engine = make_engine();
     engine.start().await.expect("engine start");
