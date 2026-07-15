@@ -557,6 +557,33 @@ fn relative_path(prefix: &str, absolute_path: &str) -> Option<String> {
         })
 }
 
+/// Match a path template against an actual path.
+///
+/// A template segment wrapped in braces, e.g. `{id}`, matches any non-empty
+/// single segment. All other segments must match literally.
+///
+/// 将路径模板与实际路径匹配。`{id}` 形式匹配任意非空单一段落，其它段落必须字面相等。
+fn path_template_match(template: &str, path: &str) -> bool {
+    let template_segments: Vec<&str> = template.split('/').filter(|s| !s.is_empty()).collect();
+    let path_segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if template_segments.len() != path_segments.len() {
+        return false;
+    }
+    for (t, p) in template_segments.iter().zip(path_segments.iter()) {
+        if t.starts_with('{') && t.ends_with('}') {
+            let name = &t[1..t.len() - 1];
+            if name.is_empty() || p.is_empty() {
+                return false;
+            }
+            continue;
+        }
+        if t != p {
+            return false;
+        }
+    }
+    true
+}
+
 /// Check if a route matches the relative path and method, returning `(matched, allowed)`.
 ///
 /// 检查路由是否匹配相对路径与方法，返回 `(匹配, 允许)`。
@@ -571,7 +598,7 @@ fn route_match(mount: &HttpRouteMount, method: HttpMethod, relative_path: &str) 
             continue;
         }
         let route_path = normalize_path(&route.path);
-        if route_path == relative {
+        if path_template_match(&route_path, &relative) {
             matched_path = true;
             if route.method == method {
                 return (true, true);
@@ -666,8 +693,8 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        patch_global_config, relative_path, root_route_match, route_match, ControlState,
-        PatchRequest,
+        patch_global_config, path_template_match, relative_path, root_route_match, route_match,
+        ControlState, PatchRequest,
     };
 
     struct DummyHttpService;
@@ -712,6 +739,78 @@ mod tests {
         );
         assert_eq!(
             route_match(&mount, HttpMethod::Get, "/missing"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn path_template_matches_single_segment_parameters() {
+        assert!(path_template_match(
+            "/media/{vhost}/{app}/{stream}",
+            "/media/__defaultVhost__/live/obs"
+        ));
+        assert!(path_template_match(
+            "/media/{vhost}/{app}/{stream}/online",
+            "/media/__defaultVhost__/live/obs/online"
+        ));
+        assert!(!path_template_match(
+            "/media/{vhost}/{app}/{stream}",
+            "/media/__defaultVhost__/live"
+        ));
+        assert!(!path_template_match(
+            "/media/{vhost}/{app}/{stream}",
+            "/media/__defaultVhost__/live/obs/extra"
+        ));
+        assert!(!path_template_match(
+            "/media/{vhost}/{app}/{stream}",
+            "/other/__defaultVhost__/live/obs"
+        ));
+    }
+
+    #[test]
+    fn route_match_allows_path_templates() {
+        let mount = HttpRouteMount {
+            module_id: cheetah_sdk::ModuleId::new("noop"),
+            prefix: "/api/v1".to_string(),
+            routes: vec![
+                HttpRouteDescriptor {
+                    method: HttpMethod::Get,
+                    path: "/media/{vhost}/{app}/{stream}".to_string(),
+                },
+                HttpRouteDescriptor {
+                    method: HttpMethod::Post,
+                    path: "/media/{vhost}/{app}/{stream}/close".to_string(),
+                },
+            ],
+            service: Arc::new(DummyHttpService),
+        };
+
+        assert_eq!(
+            route_match(&mount, HttpMethod::Get, "/media/__defaultVhost__/live/obs"),
+            (true, true)
+        );
+        assert_eq!(
+            route_match(
+                &mount,
+                HttpMethod::Post,
+                "/media/__defaultVhost__/live/obs/close"
+            ),
+            (true, true)
+        );
+        assert_eq!(
+            route_match(&mount, HttpMethod::Post, "/media/__defaultVhost__/live/obs"),
+            (true, false)
+        );
+        assert_eq!(
+            route_match(
+                &mount,
+                HttpMethod::Get,
+                "/media/__defaultVhost__/live/obs/close"
+            ),
+            (true, false)
+        );
+        assert_eq!(
+            route_match(&mount, HttpMethod::Get, "/sessions/foo/kick"),
             (false, false)
         );
     }

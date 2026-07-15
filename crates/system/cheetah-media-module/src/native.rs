@@ -110,12 +110,10 @@ impl Module for NativeMediaModule {
     }
 
     fn http_routes(&self) -> Vec<HttpRouteDescriptor> {
-        // The control-plane dispatcher (`cheetah-control/src/lib.rs`) only does
-        // exact path comparison, so parameterized routes like `/media/:vhost/:app/:stream`
-        // can never match. Returning an empty route list makes `route_match` treat
-        // every request under `/api/v1` as a match, and the `handle` method below
-        // performs its own prefix/suffix routing based on the actual path.
-        Vec::new()
+        // `cheetah-control` now supports `{name}` path templates, so the native
+        // module declares its full route catalog. Unknown paths are rejected with
+        // 404 and wrong-method requests with 405 by the control-plane dispatcher.
+        crate::native_routes::native_http_routes()
     }
 
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
