@@ -22,6 +22,22 @@ use cheetah_sdk::ConfigProvider;
 /// }
 /// ```
 ///
+/// Deployment tokens are read from `media.native.deployment_tokens` and are
+/// intended for service-to-service or infrastructure callers that cannot use
+/// bearer authorization headers:
+///
+/// ```json
+/// {
+///   "media": {
+///     "native": {
+///       "deployment_tokens": {
+///         "deploy-secret": { "principal": "deploy", "scopes": ["media.control"] }
+///       }
+///     }
+///   }
+/// }
+/// ```
+///
 /// Requests without credentials are authenticated as `anonymous` with only
 /// `media.read` scope, so anonymous callers can query but cannot perform
 /// high-risk operations.
@@ -39,13 +55,13 @@ impl ConfigControlAuth {
         Self { config }
     }
 
-    fn token_map(&self) -> HashMap<String, (String, Vec<MediaScope>)> {
+    fn credential_map(&self, key: &str) -> HashMap<String, (String, Vec<MediaScope>)> {
         let mut map = HashMap::new();
         let global = self.config.global();
         let Some(tokens) = global
             .get("media")
             .and_then(|v| v.get("native"))
-            .and_then(|v| v.get("tokens"))
+            .and_then(|v| v.get(key))
             .and_then(|v| v.as_object())
         else {
             return map;
@@ -72,6 +88,14 @@ impl ConfigControlAuth {
             map.insert(token.clone(), (principal, scopes));
         }
         map
+    }
+
+    fn token_map(&self) -> HashMap<String, (String, Vec<MediaScope>)> {
+        self.credential_map("tokens")
+    }
+
+    fn deployment_token_map(&self) -> HashMap<String, (String, Vec<MediaScope>)> {
+        self.credential_map("deployment_tokens")
     }
 
     fn trust_mtls_identity(&self) -> bool {
@@ -113,6 +137,21 @@ impl ControlAuthApi for ConfigControlAuth {
             return Err(MediaError::new(
                 MediaErrorCode::Unauthenticated,
                 "invalid bearer token",
+            ));
+        }
+
+        // Deployment token from the x-deployment-token header.
+        if let Some(token) = credentials.deployment_token.as_deref() {
+            let map = self.deployment_token_map();
+            if let Some((identity, scopes)) = map.get(token) {
+                return Ok(Principal {
+                    identity: identity.clone(),
+                    scopes: scopes.clone(),
+                });
+            }
+            return Err(MediaError::new(
+                MediaErrorCode::Unauthenticated,
+                "invalid deployment token",
             ));
         }
 
@@ -243,6 +282,43 @@ mod tests {
             .unwrap();
         assert_eq!(p.identity, "alice");
         assert!(p.has_scope(&MediaScope::MediaRead));
+    }
+
+    #[test]
+    fn deployment_token_maps_to_configured_principal() {
+        let config = TestConfig(json!({
+            "media": {
+                "native": {
+                    "deployment_tokens": {
+                        "deploy-secret": { "principal": "deploy", "scopes": ["media.control"] }
+                    }
+                }
+            }
+        }));
+        let auth = ConfigControlAuth::new(std::sync::Arc::new(config));
+        let p = auth
+            .authenticate(&AuthCredentials {
+                deployment_token: Some("deploy-secret".to_string()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(p.identity, "deploy");
+        assert!(p.has_scope(&MediaScope::MediaControl));
+    }
+
+    #[test]
+    fn invalid_deployment_token_is_unauthenticated() {
+        let config = TestConfig(json!({
+            "media": { "native": { "deployment_tokens": {} } }
+        }));
+        let auth = ConfigControlAuth::new(std::sync::Arc::new(config));
+        let err = auth
+            .authenticate(&AuthCredentials {
+                deployment_token: Some("wrong".to_string()),
+                ..Default::default()
+            })
+            .unwrap_err();
+        assert_eq!(err.code, MediaErrorCode::Unauthenticated);
     }
 
     #[test]

@@ -312,23 +312,6 @@ impl ZlmMediaHttpService {
         zlm_required_scope(method, path)
     }
 
-    pub(crate) fn authorize_request(
-        &self,
-        req: &HttpRequest,
-    ) -> Result<MediaRequestContext, AdapterError> {
-        let ctx = self.request_context(req)?;
-        let Some(scope) = self.required_scope(req.method, &req.path) else {
-            return Err(AdapterError::Media(
-                cheetah_media_api::error::MediaError::new(
-                    cheetah_media_api::error::MediaErrorCode::PermissionDenied,
-                    "route is not authorized",
-                ),
-            ));
-        };
-        self.require_scope(&ctx, &scope)?;
-        Ok(ctx)
-    }
-
     fn audit(&self) -> Result<Arc<dyn AuditApi>, AdapterError> {
         Ok(self.ctx.audit_api.clone())
     }
@@ -819,7 +802,22 @@ impl ModuleHttpService for ZlmMediaHttpService {
         crate::util::set_request_id_header(&mut req, &request_id);
 
         let result: Result<HttpResponse, AdapterError> = async {
-            let ctx = self.authorize_request(&req)?;
+            let ctx = self.request_context(&req)?;
+            let Some(scope) = self.required_scope(req.method, &req.path) else {
+                let err = Err(AdapterError::Media(
+                    cheetah_media_api::error::MediaError::new(
+                        cheetah_media_api::error::MediaErrorCode::PermissionDenied,
+                        "route is not authorized",
+                    ),
+                ));
+                self.record_audit(&ctx, &audit_req, &err).await;
+                return err;
+            };
+            if let Err(ref auth_err) = self.require_scope(&ctx, &scope) {
+                let err = Err(auth_err.clone());
+                self.record_audit(&ctx, &audit_req, &err).await;
+                return err;
+            }
             let response = match (req.method, req.path.as_str()) {
                 (HttpMethod::Get, "/api/getMediaList") => self.get_media_list(&ctx, req).await,
                 (HttpMethod::Get, "/api/isMediaOnline") => self.is_media_online(&ctx, req).await,
