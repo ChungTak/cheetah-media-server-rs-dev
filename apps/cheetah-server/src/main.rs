@@ -48,6 +48,7 @@ use cheetah_rtp_module::RtpModuleFactory;
 use cheetah_rtsp_module::RtspModuleFactory;
 use cheetah_runtime_tokio::TokioRuntime;
 use cheetah_sdk::{ConfigProvider, ConfigSchemaRegistry, ServiceDescriptor};
+use cheetah_webhook_dispatcher::WebhookModuleFactory;
 #[cfg(feature = "srt")]
 use cheetah_srt_module::SrtModuleFactory;
 #[cfg(feature = "ts")]
@@ -188,6 +189,7 @@ async fn main() -> anyhow::Result<()> {
     {
         builder = builder.register_module_factory(Arc::new(NativeMediaModuleFactory));
         builder = builder.register_module_factory(Arc::new(ZlmMediaModuleFactory));
+        builder = builder.register_module_factory(Arc::new(WebhookModuleFactory));
     }
 
     // Build the engine and wire the config store to the event bus.

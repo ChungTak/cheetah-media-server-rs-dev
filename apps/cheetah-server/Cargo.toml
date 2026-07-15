@@ -28,6 +28,7 @@ cheetah-config = { path = "../../crates/system/cheetah-config" }
 cheetah-control = { path = "../../crates/system/cheetah-control" }
 cheetah-engine = { path = "../../crates/system/cheetah-engine" }
 cheetah-media-module = { path = "../../crates/system/cheetah-media-module" }
+cheetah-webhook-dispatcher = { path = "../../crates/system/cheetah-webhook-dispatcher" }
 cheetah-fmp4-module = { path = "../../crates/protocols/fmp4/module", optional = true }
 cheetah-gb28181-module = { path = "../../crates/protocols/gb28181/module", optional = true }
 cheetah-http-flv-module = { path = "../../crates/protocols/http-flv/module", optional = true }
