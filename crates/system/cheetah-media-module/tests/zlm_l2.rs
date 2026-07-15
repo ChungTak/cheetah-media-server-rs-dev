@@ -133,9 +133,12 @@ async fn zlm_rtp_multiplex_and_check_control() {
     assert_eq!(body["code"], 0, "openRtpServerMultiplex failed: {body}");
     assert!(body["port"].is_u64(), "port missing: {body}");
 
-    let session_id = "recv/live/rtp-multiplex";
+    let session_id = body["session_id"]
+        .as_str()
+        .expect("session_id in response")
+        .to_string();
 
-    let pause = post("/api/pauseRtpCheck", json!({"session_id": session_id}));
+    let pause = post("/api/pauseRtpCheck", json!({"session_id": &session_id}));
     let resp = service.handle(pause).await.expect("pause rtp check");
     let body = body_json(&resp);
     assert_eq!(body["code"], 0, "pauseRtpCheck failed: {body}");

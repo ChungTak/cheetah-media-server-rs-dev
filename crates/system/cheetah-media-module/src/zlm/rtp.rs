@@ -16,8 +16,8 @@ use cheetah_sdk::{HttpRequest, HttpResponse};
 
 use crate::error::AdapterError;
 use crate::zlm::{
-    zlm_response, Data, Empty, HitResult, LocalPortResult, PortResult, RtpInfo, RtpPauseResult,
-    RtpServerItem, RtpSessionPortResult, RtpUpdateResult, ZlmMediaHttpService, ZlmResponse,
+    zlm_response, Data, Empty, HitResult, OpenRtpServerResult, RtpInfo, RtpPauseResult,
+    RtpServerItem, RtpUpdateResult, StartSendRtpResult, ZlmMediaHttpService, ZlmResponse,
 };
 
 impl ZlmMediaHttpService {
@@ -46,8 +46,10 @@ impl ZlmMediaHttpService {
             timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
         };
         let session = rtp_api.open_rtp_receiver(ctx, request).await?;
-        Ok(zlm_response(ZlmResponse::ok(PortResult {
+        Ok(zlm_response(ZlmResponse::ok(OpenRtpServerResult {
             port: session.local_port.unwrap_or(0),
+            ssrc: session.ssrc,
+            session_id: session.session_id.0,
         })))
     }
 
@@ -85,8 +87,10 @@ impl ZlmMediaHttpService {
             timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
         };
         let session = rtp_api.open_rtp_receiver(ctx, request).await?;
-        Ok(zlm_response(ZlmResponse::ok(PortResult {
+        Ok(zlm_response(ZlmResponse::ok(OpenRtpServerResult {
             port: session.local_port.unwrap_or(0),
+            ssrc: session.ssrc,
+            session_id: session.session_id.0,
         })))
     }
 
@@ -125,10 +129,10 @@ impl ZlmMediaHttpService {
             ssrc: parse_zlm_u32(&params, "ssrc")?,
         };
         let session = rtp_api.connect_rtp_receiver(ctx, request).await?;
-        Ok(zlm_response(ZlmResponse::ok(RtpSessionPortResult {
-            session_id: session.session_id.0,
+        Ok(zlm_response(ZlmResponse::ok(OpenRtpServerResult {
             port: session.local_port.unwrap_or(0),
             ssrc: session.ssrc,
+            session_id: session.session_id.0,
         })))
     }
 
@@ -213,8 +217,10 @@ impl ZlmMediaHttpService {
             transport_options,
         };
         let session = rtp_api.open_rtp_sender(ctx, request).await?;
-        Ok(zlm_response(ZlmResponse::ok(LocalPortResult {
+        Ok(zlm_response(ZlmResponse::ok(StartSendRtpResult {
             local_port: session.local_port.unwrap_or(0),
+            ssrc: session.ssrc,
+            session_id: session.session_id.0,
         })))
     }
 

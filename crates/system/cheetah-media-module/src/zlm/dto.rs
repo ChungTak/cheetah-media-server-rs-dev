@@ -98,16 +98,22 @@ pub(crate) struct OnlineResult {
     pub online: bool,
 }
 
-/// `{port: u16}` returned by `openRtpServer`.
+/// `{port, ssrc, session_id}` returned by `openRtpServer`.
 #[derive(Serialize)]
-pub(crate) struct PortResult {
+pub(crate) struct OpenRtpServerResult {
     pub port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssrc: Option<u32>,
+    pub session_id: String,
 }
 
-/// `{local_port: u16}` returned by `startSendRtp`.
+/// `{local_port, ssrc, session_id}` returned by `startSendRtp`.
 #[derive(Serialize)]
-pub(crate) struct LocalPortResult {
+pub(crate) struct StartSendRtpResult {
     pub local_port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssrc: Option<u32>,
+    pub session_id: String,
 }
 
 /// `{hit: u32}` returned by `closeRtpServer`.
@@ -159,15 +165,6 @@ pub(crate) struct RtpPauseResult {
     pub check_paused: bool,
 }
 
-/// `{session_id, port, ssrc}` returned by `connectRtpServer`.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RtpSessionPortResult {
-    pub session_id: String,
-    pub port: u16,
-    pub ssrc: Option<u32>,
-}
-
 /// `data` wrapper.
 #[derive(Serialize)]
 pub(crate) struct Data<T> {
@@ -192,9 +189,9 @@ pub(crate) struct VersionInfo {
 impl Default for VersionInfo {
     fn default() -> Self {
         Self {
-            branch_name: "main",
-            build_time: env!("CARGO_PKG_VERSION"),
-            commit_hash: env!("CARGO_PKG_VERSION"),
+            branch_name: env!("ZLM_BRANCH"),
+            build_time: env!("ZLM_BUILD_TIME"),
+            commit_hash: env!("ZLM_COMMIT"),
         }
     }
 }
