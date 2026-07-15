@@ -38,8 +38,8 @@ pub use cheetah_media_api::media_file_store::{
 };
 pub use cheetah_runtime_api::{
     AsyncTcpListener, AsyncTcpStream, AsyncTimer, AsyncUdpSocket, CancellationToken,
-    ConnectTlsFuture, JoinHandle, OneShotReceiver, OneShotRecvError, OneShotSendError,
-    OneShotSender, Runtime, RuntimeApi, SpawnError, TaskJoinError, UdpRecvMeta,
+    ConnectTcpFuture, ConnectTlsFuture, JoinHandle, OneShotReceiver, OneShotRecvError,
+    OneShotSendError, OneShotSender, Runtime, RuntimeApi, SpawnError, TaskJoinError, UdpRecvMeta,
 };
 pub use config::{
     ConfigAdminApi, ConfigApplyApi, ConfigApplyOutcome, ConfigApplyResult, ConfigEffect,

@@ -501,6 +501,8 @@ pub trait Runtime: Send + Sync + 'static {
 pub type ConnectTlsFuture<'a> =
     Pin<Box<dyn Future<Output = io::Result<Box<dyn AsyncTcpStream>>> + Send + 'a>>;
 
+pub type ConnectTcpFuture<'a> = ConnectTlsFuture<'a>;
+
 pub trait RuntimeApi: Send + Sync + 'static {
     fn now(&self) -> MonoTime;
     fn spawn(&self, fut: Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
@@ -511,6 +513,7 @@ pub trait RuntimeApi: Send + Sync + 'static {
     ) -> Result<Box<dyn JoinHandle>, SpawnError>;
     fn bind_udp(&self, addr: SocketAddr) -> io::Result<Box<dyn AsyncUdpSocket>>;
     fn connect_tcp(&self, addr: SocketAddr) -> io::Result<Box<dyn AsyncTcpStream>>;
+    fn connect_tcp_async<'a>(&'a self, addr: SocketAddr) -> ConnectTcpFuture<'a>;
     fn connect_tls<'a>(&'a self, addr: SocketAddr, server_name: &str) -> ConnectTlsFuture<'a>;
     fn bind_tcp(&self, addr: SocketAddr) -> io::Result<Box<dyn AsyncTcpListener>>;
     fn wrap_udp_socket(&self, socket: StdUdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>>;

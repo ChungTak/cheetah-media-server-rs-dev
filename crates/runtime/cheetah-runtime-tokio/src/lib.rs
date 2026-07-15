@@ -12,8 +12,8 @@ use async_trait::async_trait;
 use cheetah_codec::MonoTime;
 use cheetah_runtime_api::{
     oneshot_channel, AsyncTcpListener, AsyncTcpStream, AsyncTimer, AsyncUdpSocket,
-    ConnectTlsFuture, JoinHandle, OneShotReceiver, OneShotSender, Runtime, RuntimeApi, SpawnError,
-    TaskJoinError, UdpRecvMeta,
+    ConnectTcpFuture, ConnectTlsFuture, JoinHandle, OneShotReceiver, OneShotSender, Runtime,
+    RuntimeApi, SpawnError, TaskJoinError, UdpRecvMeta,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
@@ -86,6 +86,15 @@ impl TokioRuntime {
     /// 将 `MonoTime` 截止时间转换为 Tokio `Instant`。
     fn deadline_to_instant(&self, deadline: MonoTime) -> TokioInstant {
         self.start_tokio + Duration::from_micros(deadline.as_micros())
+    }
+
+    /// Asynchronously connect to `addr` over plain TCP.
+    ///
+    /// 异步连接到 `addr` 的普通 TCP 连接。
+    pub async fn connect_tcp_async(&self, addr: SocketAddr) -> io::Result<TokioTcpStream> {
+        let stream = TcpStream::connect(addr).await?;
+        apply_low_latency_tcp_options(&stream);
+        Ok(TokioTcpStream { stream })
     }
 
     /// Asynchronously connect to `addr` and perform a TLS handshake using `server_name` as SNI.
@@ -407,6 +416,13 @@ impl RuntimeApi for TokioRuntime {
 
     fn connect_tcp(&self, addr: SocketAddr) -> io::Result<Box<dyn AsyncTcpStream>> {
         Ok(Box::new(<Self as Runtime>::connect_tcp(self, addr)?))
+    }
+
+    fn connect_tcp_async<'a>(&'a self, addr: SocketAddr) -> ConnectTcpFuture<'a> {
+        Box::pin(async move {
+            let stream = TokioRuntime::connect_tcp_async(self, addr).await?;
+            Ok(Box::new(stream) as Box<dyn AsyncTcpStream>)
+        })
     }
 
     fn connect_tls<'a>(&'a self, addr: SocketAddr, server_name: &str) -> ConnectTlsFuture<'a> {

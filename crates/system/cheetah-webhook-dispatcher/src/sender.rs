@@ -83,7 +83,7 @@ impl WebhookSender for RuntimeHttpClient {
         let mut stream = if parsed.scheme == "https" {
             self.runtime_api.connect_tls(addr, &parsed.host).await?
         } else {
-            self.runtime_api.connect_tcp(addr)?
+            self.runtime_api.connect_tcp_async(addr).await?
         };
 
         let req = build_request(&parsed, &request.headers, &request.body);
