@@ -502,9 +502,16 @@ mod tests {
             Arc::new(EngineMediaDataPlane::new(publisher_api, subscriber_api));
         let directory: Arc<dyn MediaSessionDirectoryApi> =
             Arc::new(EngineMediaSessionDirectory::new());
-        let url_resolver: Arc<dyn MediaUrlResolverApi> = Arc::new(
-            crate::media_provider::EngineMediaUrlResolver::new(Arc::new(EmptyConfig)),
-        );
+        let media_services = cheetah_sdk::MediaServices::unavailable();
+        media_services.register_output_registry(Arc::new(
+            cheetah_sdk::output::InMemoryMediaOutputRegistry::new(),
+        )
+            as Arc<dyn cheetah_media_api::port::MediaOutputRegistryApi>);
+        let url_resolver: Arc<dyn MediaUrlResolverApi> =
+            Arc::new(crate::media_provider::EngineMediaUrlResolver::new(
+                media_services,
+                Arc::new(EmptyConfig),
+            ));
         StreamMediaProvider::new(manager, data_plane, directory, url_resolver)
     }
 

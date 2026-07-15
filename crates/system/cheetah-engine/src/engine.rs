@@ -165,9 +165,17 @@ impl EngineBuilder {
             publisher_api.clone(),
             subscriber_api.clone(),
         ));
-        let url_resolver: Arc<dyn cheetah_media_api::port::MediaUrlResolverApi> = Arc::new(
-            crate::media_provider::EngineMediaUrlResolver::new(self.config_provider.clone()),
-        );
+        let media_services = MediaServices::unavailable();
+        media_services.register_output_registry(Arc::new(
+            cheetah_sdk::output::InMemoryMediaOutputRegistry::new(),
+        )
+            as Arc<dyn cheetah_media_api::port::MediaOutputRegistryApi>);
+
+        let url_resolver: Arc<dyn cheetah_media_api::port::MediaUrlResolverApi> =
+            Arc::new(crate::media_provider::EngineMediaUrlResolver::new(
+                media_services.clone(),
+                self.config_provider.clone(),
+            ));
         let stream_provider = StreamMediaProvider::new(
             stream_manager.clone(),
             media_data_plane.clone(),
@@ -175,11 +183,6 @@ impl EngineBuilder {
             url_resolver,
         );
 
-        let media_services = MediaServices::unavailable();
-        media_services.register_output_registry(Arc::new(
-            cheetah_sdk::output::InMemoryMediaOutputRegistry::new(),
-        )
-            as Arc<dyn cheetah_media_api::port::MediaOutputRegistryApi>);
         media_services
             .register_control(Arc::new(stream_provider.clone())
                 as Arc<dyn cheetah_media_api::port::MediaControlApi>);
