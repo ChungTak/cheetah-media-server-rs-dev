@@ -20,4 +20,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 cheetah-runtime-tokio = { path = "../../../runtime/cheetah-runtime-tokio" }
-tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
+cheetah-engine = { path = "../../../system/cheetah-engine" }
+cheetah-config = { path = "../../../system/cheetah-config" }
+cheetah-record-module = { path = "../../../system/cheetah-record-module" }
+tokio = { workspace = true, features = ["net", "rt", "sync", "time", "macros", "rt-multi-thread"] }

@@ -10,7 +10,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cheetah_codec::TrackInfo;
 use cheetah_rtp_core::{
-    RtpClientSpec, RtpConnectionType, RtpCoreEvent, RtpPayloadMode, RtpSendFrame, RtpTrackFilter,
+    RtpClientSpec, RtpConnectionType, RtpCoreEvent, RtpPayloadMode, RtpTrackFilter,
     RtpTransportMode,
 };
 use cheetah_rtp_driver_tokio::{start_driver, RtpDriverCommand, RtpDriverConfig, RtpDriverHandle};
@@ -18,18 +18,19 @@ use cheetah_sdk::media_api::error::MediaError;
 use cheetah_sdk::media_api::ids::MediaKey;
 use cheetah_sdk::media_api::model::{RtpSessionState, RtpTcpMode};
 use cheetah_sdk::{
-    BootstrapPolicy, CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest,
-    HttpResponse, HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
+    CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest, HttpResponse,
+    HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
     ModuleHttpService, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
-    ModuleSchemaRegistration, ModuleState, ProviderRegistration, PublishLease, PublisherOptions,
-    PublisherSink, SdkError, StreamKey, SubscriberOptions,
+    ModuleSchemaRegistration, ModuleState, ProtocolEvent, ProviderRegistration, PublishLease,
+    PublisherOptions, PublisherSink, SdkError, StreamKey, SystemEvent,
 };
 use futures::{pin_mut, select_biased, FutureExt};
 use parking_lot::Mutex;
 use serde_json::Value;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::config::{RtpClientJobConfig, RtpModuleConfig};
+use crate::egress::{run_egress_session, sleep_or_cancel, EgressCleanup};
 use crate::media_provider::RtpMediaProvider;
 use crate::orchestrator::RtpSessionOrchestrator;
 
@@ -147,18 +148,25 @@ impl Module for RtpModule {
         let engine = ctx.engine.clone();
         self.ctx = Some(ctx.engine);
 
-        let listen_port = self
+        // Allocate the module-scoped cancellation token first so it can be shared with
+        // the media-domain provider and the HTTP service.
+        let module_cancel = CancellationToken::new();
+        self.cancel_token = Some(module_cancel.clone());
+
+        let default_bind_addr = self
             .config
             .listen_udp
             .as_deref()
             .unwrap_or("0.0.0.0:20000")
             .parse::<SocketAddr>()
-            .map_err(|e| SdkError::InvalidArgument(format!("invalid listen_udp: {e}")))?
-            .port();
+            .map_err(|e| SdkError::InvalidArgument(format!("invalid listen_udp: {e}")))?;
 
         // Shared driver handle slot. Populated in `start()` once the Tokio driver is bound.
         let driver_handle: Arc<Mutex<Option<Arc<RtpDriverHandle>>>> = Arc::new(Mutex::new(None));
-        let orchestrator = Arc::new(RtpSessionOrchestrator::new(driver_handle, listen_port));
+        let orchestrator = Arc::new(RtpSessionOrchestrator::new(
+            driver_handle,
+            default_bind_addr,
+        ));
         self.orchestrator = Some(orchestrator.clone());
 
         // Register the media-domain RtpApi provider so native/ZLM adapters can
@@ -170,16 +178,13 @@ impl Module for RtpModule {
         };
         self.media_services_registration =
             Some(engine.media_services.register_rtp_with_capabilities(
-                Arc::new(RtpMediaProvider::new(orchestrator)),
+                Arc::new(RtpMediaProvider::new(
+                    orchestrator,
+                    engine.clone(),
+                    module_cancel,
+                )),
                 rtp_capabilities,
             ));
-
-        // Allocate the module-scoped cancellation token now so that callers of
-        // `http_service()` (invoked by the engine right after `init`) get a token that will
-        // be triggered by `RtpModule::stop()`. Previously this happened only in `start()`,
-        // leaving HTTP-spawned egress sessions wired to an orphan default token that never
-        // fired on stop.
-        self.cancel_token = Some(CancellationToken::new());
         self.state = ModuleState::Initialized;
         Ok(())
     }
@@ -288,9 +293,17 @@ impl Module for RtpModule {
             let runtime_api = ctx.runtime_api.clone();
             let handle = driver.clone();
             let cancel = cancel.clone();
+            let orchestrator_for_ingress = orchestrator.clone();
             let publish_frame_cache = config.publish_frame_cache_frames;
             runtime_api.spawn(Box::pin(async move {
-                run_ingress_worker(ctx, handle, cancel, publish_frame_cache).await;
+                run_ingress_worker(
+                    ctx,
+                    handle,
+                    orchestrator_for_ingress,
+                    cancel,
+                    publish_frame_cache,
+                )
+                .await;
             }));
         }
 
@@ -309,7 +322,9 @@ impl Module for RtpModule {
             }));
         }
 
-        cancel.cancelled().await;
+        // Background driver/ingress/egress loops are already spawned; return so the
+        // engine startup pipeline can complete. The spawned tasks observe `cancel` and
+        // are stopped from `RtpModule::stop`.
         Ok(())
     }
 
@@ -395,6 +410,10 @@ struct ActiveIngressSession {
     _lease: PublishLease,
     sink: Box<dyn PublisherSink>,
     _tracks: Vec<TrackInfo>,
+    /// Stream key used to publish into the engine.
+    stream_key: StreamKey,
+    /// Whether the media-online event has already been emitted for this session.
+    online_reported: bool,
     /// Bounded cache of frames that arrived before the publisher was ready / authenticated.
     /// ZLM-style behaviour: see `vendor-ref/ZLMediaKit/src/Rtp/RtpProcess.cpp` `_cached_func`.
     pending_frames: std::collections::VecDeque<Arc<cheetah_codec::AVFrame>>,
@@ -408,6 +427,7 @@ struct ActiveIngressSession {
 async fn run_ingress_worker(
     ctx: EngineContext,
     handle: Arc<RtpDriverHandle>,
+    orchestrator: Arc<RtpSessionOrchestrator>,
     cancel: CancellationToken,
     publish_frame_cache_capacity: usize,
 ) {
@@ -447,6 +467,8 @@ async fn run_ingress_worker(
                                 _lease: lease,
                                 sink,
                                 _tracks: Vec::new(),
+                                stream_key: sk.clone(),
+                                online_reported: false,
                                 pending_frames: std::collections::VecDeque::new(),
                                 pending_frames_capacity: publish_frame_cache_capacity,
                                 publisher_ready: true,
@@ -468,7 +490,11 @@ async fn run_ingress_worker(
                     session._tracks = tracks;
                 }
             }
-            RtpCoreEvent::Frame { session_key, frame } => {
+            RtpCoreEvent::Frame {
+                session_key,
+                frame,
+                source_addr,
+            } => {
                 if let Some(session) = sessions.get_mut(&session_key) {
                     let frame_arc = Arc::new(frame);
                     if session.publisher_ready {
@@ -477,6 +503,29 @@ async fn run_ingress_worker(
                             let _ = session.sink.push_frame(buffered);
                         }
                         let _ = session.sink.push_frame(frame_arc);
+
+                        if !session.online_reported {
+                            session.online_reported = true;
+                            let session_id =
+                                cheetah_sdk::media_api::ids::RtpSessionId(session_key.clone());
+                            if let Some(addr) = source_addr {
+                                let _ = orchestrator.set_session_remote_endpoint(&session_id, addr);
+                            } else {
+                                let _ = orchestrator
+                                    .set_session_state(&session_id, RtpSessionState::Connected);
+                            }
+                            ctx.event_bus.publish(SystemEvent::Protocol(ProtocolEvent {
+                                protocol: "rtp".to_string(),
+                                event_type: "media_online".to_string(),
+                                payload: serde_json::json!({
+                                    "session_key": session_key,
+                                    "stream_key": {
+                                        "namespace": session.stream_key.namespace,
+                                        "path": session.stream_key.path,
+                                    },
+                                }),
+                            }));
+                        }
                     } else if session.pending_frames_capacity > 0 {
                         if session.pending_frames.len() >= session.pending_frames_capacity {
                             session.pending_frames.pop_front();
@@ -493,6 +542,21 @@ async fn run_ingress_worker(
                 if let Some(session) = sessions.remove(&session_key) {
                     let _ = session.sink.close();
                 }
+                let _ = orchestrator.stop_session_by_key(&session_key).await;
+
+                let event_type = if reason.contains("timeout") {
+                    "rtp_session_timeout"
+                } else {
+                    "rtp_session_closed"
+                };
+                ctx.event_bus.publish(SystemEvent::Protocol(ProtocolEvent {
+                    protocol: "rtp".to_string(),
+                    event_type: event_type.to_string(),
+                    payload: serde_json::json!({
+                        "session_key": session_key,
+                        "reason": reason,
+                    }),
+                }));
             }
         }
     }
@@ -502,15 +566,21 @@ async fn run_ingress_worker(
     }
 }
 
-/// Parse `session_key` into a `StreamKey` (namespace/path), defaulting to `live`.
+/// Parse `session_key` into a `StreamKey`.
 ///
-/// 将 `session_key` 解析为 `StreamKey`（命名空间/路径），默认命名空间为 `live`。
+/// The key may be a 2-segment `{namespace}/{path}` (HTTP endpoints) or a
+/// 3-segment `{kind}/{namespace}/{path}` (SDK/orchestrator paths).
+///
+/// 将 `session_key` 解析为 `StreamKey`。
+/// 键可以是 2 段 `{namespace}/{path}`（HTTP 端点）或 3 段
+/// `{kind}/{namespace}/{path}`（SDK/编排器路径）。
 fn parse_session_key(key: &str) -> StreamKey {
-    if let Some(pos) = key.find('/') {
-        let (ns, path) = key.split_at(pos);
-        StreamKey::new(ns, &path[1..])
-    } else {
-        StreamKey::new("live", key)
+    let mut it = key.splitn(3, '/');
+    match (it.next(), it.next(), it.next()) {
+        (Some(ns), Some(path), None) => StreamKey::new(ns, path),
+        (Some(_kind), Some(ns), Some(path)) => StreamKey::new(ns, path),
+        (Some(path), None, None) => StreamKey::new("live", path),
+        _ => StreamKey::new("live", key),
     }
 }
 
@@ -611,10 +681,12 @@ impl ModuleHttpService for RtpHttpService {
                 let body: Value = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid json body: {e}")))?;
 
-                // SMS-compatible: `port` is OPTIONAL. When omitted the module returns the
-                // already-listening RTP port from configuration; this matches the SMS pattern of
-                // pre-allocating a shared receive port and binding `app/stream/ssrc` to it.
-                let _port = body.get("port").and_then(|v| v.as_u64()).map(|v| v as u16);
+                // SMS-compatible: `port` is OPTIONAL. When omitted the module reuses the
+                // already-bound driver UDP socket; when provided the driver binds a dedicated
+                // socket on the default interface and confirms the actual bound port.
+                let port = body.get("port").and_then(|v| v.as_u64()).map(|v| v as u16);
+                let bind_addr =
+                    port.map(|p| SocketAddr::new(self.orchestrator.default_bind_addr().ip(), p));
 
                 // Accept SMS `socketType` (string `tcp`/`udp`/`both` or numeric 1/2/3) but
                 // record it for diagnostic purposes only — the active driver listens on whatever
@@ -690,6 +762,7 @@ impl ModuleHttpService for RtpHttpService {
                         connection_type,
                         track_filter,
                         tcp_mode,
+                        bind_addr,
                         false,
                         RtpSessionState::Listening,
                     )
@@ -949,6 +1022,9 @@ impl ModuleHttpService for RtpHttpService {
                     // return if so.
                     let driver_cmd_tx = self.driver()?;
                     let cancel_clone = cancel_token.clone();
+                    let orchestrator = self.orchestrator.clone();
+                    let cleanup =
+                        EgressCleanup::new(self.active_egress.clone(), session_key.clone());
 
                     runtime_api.spawn(Box::pin(async move {
                         run_egress_session(
@@ -957,6 +1033,8 @@ impl ModuleHttpService for RtpHttpService {
                             driver_sessions,
                             stream_key,
                             cancel_clone,
+                            Some(orchestrator),
+                            Some(cleanup),
                         )
                         .await;
                     }));
@@ -1224,124 +1302,6 @@ fn media_error_to_sdk_error(err: MediaError) -> SdkError {
         cheetah_sdk::media_api::error::MediaErrorCode::Unavailable => SdkError::Unavailable(msg),
         _ => SdkError::Internal(msg),
     }
-}
-
-#[allow(dead_code)]
-fn _parse_payload_mode_replaced_marker_to_avoid_dup() {}
-
-/// Wait for a stream to appear in the engine, respecting timeout and cancellation.
-///
-/// 等待引擎中的流出现，遵守超时与取消。
-async fn wait_for_stream(
-    ctx: &EngineContext,
-    stream_key: &StreamKey,
-    cancel: &CancellationToken,
-    timeout: Duration,
-) -> Option<cheetah_sdk::StreamSnapshot> {
-    let start = ctx.runtime_api.now().as_micros();
-    let timeout_us = timeout.as_micros() as u64;
-
-    loop {
-        if cancel.is_cancelled() {
-            return None;
-        }
-        if let Ok(Some(snapshot)) = ctx.stream_manager_api.get_stream(stream_key).await {
-            return Some(snapshot);
-        }
-        let elapsed = ctx.runtime_api.now().as_micros().saturating_sub(start);
-        if elapsed >= timeout_us {
-            return None;
-        }
-        if sleep_or_cancel(ctx.runtime_api.as_ref(), cancel, Duration::from_millis(100)).await {
-            return None;
-        }
-    }
-}
-
-/// Sleep until `duration` or cancellation, returning true if cancelled.
-///
-/// 睡眠直到 `duration` 或取消，若被取消返回 true。
-async fn sleep_or_cancel(
-    runtime_api: &dyn cheetah_runtime_api::RuntimeApi,
-    cancel: &CancellationToken,
-    duration: Duration,
-) -> bool {
-    let now = runtime_api.now().as_micros();
-    let delta = duration.as_micros() as u64;
-    let deadline = cheetah_codec::MonoTime::from_micros(now.saturating_add(delta));
-    let mut timer = runtime_api.sleep_until(deadline);
-    let cancel_fut = cancel.cancelled().fuse();
-    let wait_fut = timer.wait().fuse();
-    pin_mut!(cancel_fut, wait_fut);
-    select_biased! {
-        _ = cancel_fut => true,
-        _ = wait_fut => false,
-    }
-}
-
-/// Subscribe to an engine stream and fan out frames to one or more RTP target sessions.
-///
-/// 订阅引擎流并将每帧扇出到一个或多个 RTP 目标会话。
-async fn run_egress_session(
-    engine: EngineContext,
-    driver_handle: Arc<RtpDriverHandle>,
-    session_keys: Vec<String>,
-    stream_key: StreamKey,
-    cancel: CancellationToken,
-) {
-    if session_keys.is_empty() {
-        return;
-    }
-    let Some(_snapshot) =
-        wait_for_stream(&engine, &stream_key, &cancel, Duration::from_millis(5000)).await
-    else {
-        debug!("Egress session wait stream timeout: {}", stream_key);
-        return;
-    };
-
-    let mut subscriber = match engine
-        .subscriber_api
-        .subscribe(
-            stream_key.clone(),
-            SubscriberOptions {
-                queue_capacity: 256,
-                bootstrap_policy: BootstrapPolicy::live_tail(150, None),
-                ..Default::default()
-            },
-        )
-        .await
-    {
-        Ok(s) => s,
-        Err(e) => {
-            warn!("Egress session subscribe failed: {e}");
-            return;
-        }
-    };
-
-    loop {
-        let cancel_fut = cancel.cancelled().fuse();
-        let frame_fut = subscriber.recv().fuse();
-        pin_mut!(cancel_fut, frame_fut);
-
-        let frame = select_biased! {
-            _ = cancel_fut => break,
-            res = frame_fut => match res {
-                Ok(Some(f)) => f,
-                Ok(None) | Err(_) => break,
-            }
-        };
-
-        // Fan out the same frame to every configured target session.
-        for sk in &session_keys {
-            let cmd = RtpDriverCommand::SendFrame(Box::new(RtpSendFrame {
-                session_key: sk.clone(),
-                frame: (*frame).clone(),
-            }));
-            driver_handle.send_command(cmd).await;
-        }
-    }
-
-    let _ = subscriber.close().await;
 }
 
 #[cfg(test)]

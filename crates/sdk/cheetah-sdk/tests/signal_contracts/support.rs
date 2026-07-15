@@ -417,6 +417,7 @@ impl RtpApi for FakeMediaProvider {
             tcp_mode: request.tcp_mode,
             reuse_port: request.reuse_port,
             state: RtpSessionState::Listening,
+            check_paused: false,
             created_at: 0,
         })
     }
@@ -437,6 +438,7 @@ impl RtpApi for FakeMediaProvider {
             tcp_mode: None,
             reuse_port: false,
             state: RtpSessionState::Connected,
+            check_paused: false,
             created_at: 0,
         })
     }
@@ -464,6 +466,7 @@ impl RtpApi for FakeMediaProvider {
             tcp_mode: None,
             reuse_port: false,
             state: RtpSessionState::Created,
+            check_paused: false,
             created_at: 0,
         })
     }
@@ -492,6 +495,7 @@ impl RtpApi for FakeMediaProvider {
             tcp_mode: None,
             reuse_port: false,
             state: RtpSessionState::Created,
+            check_paused: false,
             created_at: 0,
         })
     }
@@ -520,6 +524,7 @@ impl RtpApi for FakeMediaProvider {
             tcp_mode: None,
             reuse_port: false,
             state: RtpSessionState::Connected,
+            check_paused: false,
             created_at: 0,
         })
     }

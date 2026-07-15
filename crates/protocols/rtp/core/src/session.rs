@@ -9,8 +9,9 @@ use cheetah_codec::{
 
 use crate::error::RtpCoreDiagnostic;
 use crate::types::{
-    RtcpSend, RtpCoreCommand, RtpCoreEvent, RtpCoreInput, RtpCoreOutput, RtpDatagram,
-    RtpSessionKey, RtpTcpChunk, RtpTcpSend, RtpTrackFilter, RtpTransportMode, RtpUdpSend,
+    RtcpSend, RtpConnectionType, RtpCoreCommand, RtpCoreEvent, RtpCoreInput, RtpCoreOutput,
+    RtpDatagram, RtpSessionKey, RtpTcpChunk, RtpTcpSend, RtpTrackFilter, RtpTransportMode,
+    RtpUdpSend,
 };
 
 enum SessionDemuxer {
@@ -23,9 +24,15 @@ enum SessionDemuxer {
 struct RtpSession {
     _session_key: RtpSessionKey,
     ssrc: u32,
+    /// Payload mode used to initialize the ingress demuxer.
     payload_mode: RtpPayloadMode,
+    /// Payload mode used when packetizing outbound `SendFrame` frames.
+    egress_payload_mode: RtpPayloadMode,
     transport_mode: RtpTransportMode,
+    /// Filter applied to demuxed frames before they leave the core.
     track_filter: RtpTrackFilter,
+    /// Filter applied to frames fed to `SendFrame`.
+    egress_track_filter: RtpTrackFilter,
 
     // Ingress state
     demuxer: SessionDemuxer,
@@ -47,6 +54,8 @@ struct RtpSession {
     last_rtcp_report_ms: u64,
     /// Last time an RTCP RR was observed for this sender; used by RR-timeout sender shutdown.
     last_rr_received_ms: u64,
+    /// When true, idle/RR timeout checks are skipped but the session keeps receiving.
+    check_paused: bool,
     /// Largest RTP payload observed on this session in bytes. Mirrors ABL's `nMaxRtpLength`
     /// dynamic learner so the driver can right-size send buffers and the module can flag
     /// pathological streams. Always bounded by the core's `max_rtp_len_cap`.
@@ -278,8 +287,11 @@ impl RtpCore {
                                 _session_key: session_key.clone(),
                                 ssrc,
                                 payload_mode: RtpPayloadMode::Ehome,
+                                egress_payload_mode: RtpPayloadMode::Ehome,
                                 transport_mode: RtpTransportMode::RecvOnly,
                                 track_filter: RtpTrackFilter::All,
+                                egress_track_filter: RtpTrackFilter::All,
+                                check_paused: false,
                                 demuxer: SessionDemuxer::Pending,
                                 last_seq: None,
                                 source_addr: None,
@@ -415,6 +427,7 @@ impl RtpCore {
                                                         RtpCoreEvent::Frame {
                                                             session_key: session_key.clone(),
                                                             frame: *frame,
+                                                            source_addr: session.source_addr,
                                                         },
                                                     ));
                                                 }
@@ -490,6 +503,7 @@ impl RtpCore {
                                                 RtpCoreEvent::Frame {
                                                     session_key: session_key.clone(),
                                                     frame,
+                                                    source_addr: session.source_addr,
                                                 },
                                             ));
                                         }
@@ -639,8 +653,11 @@ impl RtpCore {
                 _session_key: key.clone(),
                 ssrc,
                 payload_mode: mode,
+                egress_payload_mode: mode,
                 transport_mode: RtpTransportMode::RecvOnly,
                 track_filter: RtpTrackFilter::All,
+                egress_track_filter: RtpTrackFilter::All,
+                check_paused: false,
                 demuxer: SessionDemuxer::Pending,
                 last_seq: None,
                 source_addr,
@@ -757,6 +774,7 @@ impl RtpCore {
 
         // Feed to demuxers
         let track_filter = session.track_filter;
+        let source_addr = session.source_addr;
         match &mut session.demuxer {
             SessionDemuxer::Ts(demuxer) => {
                 let demux_events = demuxer.push(&rtp.payload);
@@ -777,6 +795,7 @@ impl RtpCore {
                             outputs.push(RtpCoreOutput::Event(RtpCoreEvent::Frame {
                                 session_key: session_key.clone(),
                                 frame,
+                                source_addr,
                             }));
                         }
                         _ => {}
@@ -806,6 +825,7 @@ impl RtpCore {
                             outputs.push(RtpCoreOutput::Event(RtpCoreEvent::Frame {
                                 session_key: session_key.clone(),
                                 frame: *frame,
+                                source_addr,
                             }));
                         }
                         _ => {}
@@ -834,43 +854,49 @@ impl RtpCore {
         let mut to_remove = Vec::with_capacity(1);
 
         for (key, session) in &mut self.sessions {
-            // Idle timeout only applies to sessions that can receive traffic. Pure senders are
-            // supervised by RR-timeout instead. This mirrors ZLM's `RtpProcess` vs `RtpSender`
-            // lifecycle split.
-            let is_receiver = matches!(
-                session.transport_mode,
-                RtpTransportMode::RecvOnly | RtpTransportMode::SendRecv
-            );
-            if is_receiver
-                && session.last_activity_ms != 0
-                && now_ms.saturating_sub(session.last_activity_ms) > self.session_idle_timeout_ms
-            {
-                to_remove.push((key.clone(), "Idle timeout".to_string()));
-                continue;
-            }
-
-            if session.last_activity_ms == 0 {
-                session.last_activity_ms = now_ms;
-            }
-
-            // RR-timeout sender shutdown (ZLM-style):
-            //   - Only senders care about RR feedback.
-            //   - We baseline `last_rr_received_ms` to the first tick after creation, then
-            //     consider the sender dead if no RR has arrived within `session_idle_timeout_ms`
-            //     after that baseline.
-            //   - Pure recv sessions are covered by the idle path above.
-            let is_sender = matches!(
-                session.transport_mode,
-                RtpTransportMode::SendOnly | RtpTransportMode::SendRecv
-            );
-            if is_sender {
-                if session.last_rr_received_ms == 0 {
-                    session.last_rr_received_ms = now_ms;
-                } else if now_ms.saturating_sub(session.last_rr_received_ms)
-                    > self.session_idle_timeout_ms
+            // Pause check suspends idle/RR timeout monitoring without stopping packet processing.
+            if !session.check_paused {
+                // Idle timeout only applies to sessions that can receive traffic. Pure senders are
+                // supervised by RR-timeout instead. This mirrors ZLM's `RtpProcess` vs `RtpSender`
+                // lifecycle split.
+                let is_receiver = matches!(
+                    session.transport_mode,
+                    RtpTransportMode::RecvOnly | RtpTransportMode::SendRecv
+                );
+                if is_receiver
+                    && session.last_activity_ms != 0
+                    && now_ms.saturating_sub(session.last_activity_ms)
+                        > self.session_idle_timeout_ms
                 {
-                    to_remove.push((key.clone(), "RR timeout".to_string()));
+                    to_remove.push((key.clone(), "Idle timeout".to_string()));
                     continue;
+                }
+
+                // Baseline activity on the first non-paused tick so a freshly created or
+                // resumed session is not immediately closed.
+                if session.last_activity_ms == 0 {
+                    session.last_activity_ms = now_ms;
+                }
+
+                // RR-timeout sender shutdown (ZLM-style):
+                //   - Only senders care about RR feedback.
+                //   - We baseline `last_rr_received_ms` to the first tick after creation, then
+                //     consider the sender dead if no RR has arrived within `session_idle_timeout_ms`
+                //     after that baseline.
+                //   - Pure recv sessions are covered by the idle path above.
+                let is_sender = matches!(
+                    session.transport_mode,
+                    RtpTransportMode::SendOnly | RtpTransportMode::SendRecv
+                );
+                if is_sender {
+                    if session.last_rr_received_ms == 0 {
+                        session.last_rr_received_ms = now_ms;
+                    } else if now_ms.saturating_sub(session.last_rr_received_ms)
+                        > self.session_idle_timeout_ms
+                    {
+                        to_remove.push((key.clone(), "RR timeout".to_string()));
+                        continue;
+                    }
                 }
             }
 
@@ -902,6 +928,7 @@ impl RtpCore {
 
                         if let Some(dest) = session.destination.or(session.source_addr) {
                             outputs.push(RtpCoreOutput::SendRtcp(RtcpSend {
+                                session_key: session._session_key.clone(),
                                 destination: dest,
                                 conn_id: session.tcp_conn_id,
                                 data: Bytes::from(rr),
@@ -923,6 +950,7 @@ impl RtpCore {
 
                         if let Some(dest) = session.destination {
                             outputs.push(RtpCoreOutput::SendRtcp(RtcpSend {
+                                session_key: session._session_key.clone(),
                                 destination: dest,
                                 conn_id: session.tcp_conn_id,
                                 data: Bytes::from(sr),
@@ -991,8 +1019,11 @@ impl RtpCore {
                     _session_key: spec.session_key.clone(),
                     ssrc,
                     payload_mode: spec.payload_mode,
+                    egress_payload_mode: spec.payload_mode,
                     transport_mode: spec.transport_mode,
                     track_filter,
+                    egress_track_filter: spec.track_filter,
+                    check_paused: false,
                     demuxer: SessionDemuxer::Pending,
                     last_seq: None,
                     source_addr: None,
@@ -1019,7 +1050,28 @@ impl RtpCore {
                 }));
             }
             RtpCoreCommand::CreateClient(spec) => {
-                if self.sessions.contains_key(&spec.session_key) {
+                if let Some(session) = self.sessions.get_mut(&spec.session_key) {
+                    // Active TCP connect for an existing server/receiver session: attach the new
+                    // TCP connection id and destination so ingress can flow on it.
+                    if let Some(conn_id) = spec.tcp_conn_id {
+                        if let Some(old) = session.tcp_conn_id {
+                            self.tcp_conn_to_session.remove(&old);
+                        }
+                        session.tcp_conn_id = Some(conn_id);
+                        self.tcp_conn_to_session
+                            .insert(conn_id, spec.session_key.clone());
+                    }
+                    if session.destination.is_none() {
+                        session.destination = Some(spec.destination);
+                    }
+                    // VoiceTalk upgrades an existing inbound session to SendRecv and locks
+                    // egress to audio so the same socket can push talkback audio back.
+                    if spec.connection_type == Some(RtpConnectionType::VoiceTalk) {
+                        session.transport_mode = spec.transport_mode;
+                        session.egress_track_filter = spec.track_filter;
+                        session.egress_payload_mode = spec.payload_mode;
+                        session.destination = Some(spec.destination);
+                    }
                     return;
                 }
                 let track_filter = spec.track_filter;
@@ -1027,8 +1079,11 @@ impl RtpCore {
                     _session_key: spec.session_key.clone(),
                     ssrc: spec.ssrc,
                     payload_mode: spec.payload_mode,
+                    egress_payload_mode: spec.payload_mode,
                     transport_mode: spec.transport_mode,
                     track_filter,
+                    egress_track_filter: spec.track_filter,
+                    check_paused: false,
                     demuxer: SessionDemuxer::Pending,
                     last_seq: None,
                     source_addr: None,
@@ -1064,6 +1119,12 @@ impl RtpCore {
                     if session.transport_mode == RtpTransportMode::RecvOnly {
                         return;
                     }
+                    if !track_filter_allows_track(
+                        session.egress_track_filter,
+                        send_frame.frame.media_kind,
+                    ) {
+                        return;
+                    }
 
                     // Mux frame data or directly packetize if it is raw payload bytes
                     let payload = &send_frame.frame.payload;
@@ -1087,22 +1148,23 @@ impl RtpCore {
                     let rtp_clock = cheetah_codec::RtpClock { rate: clock_rate };
                     let timestamp = rtp_clock.micros_to_ticks(send_frame.frame.pts_us);
 
-                    let payload_type = match (session.payload_mode, send_frame.frame.media_kind) {
-                        (RtpPayloadMode::Ps, _) => 96,
-                        (RtpPayloadMode::Ts, _) => 33,
-                        // Audio in raw / ES mode: prefer the canonical static PTs for codecs
-                        // that have well-known assignments (RFC 3551). Falls back to a
-                        // dynamic PT when the codec has no static assignment.
-                        (_, cheetah_codec::MediaKind::Audio) => match send_frame.frame.codec {
-                            cheetah_codec::CodecId::G711U => 0,
-                            cheetah_codec::CodecId::G711A => 8,
-                            cheetah_codec::CodecId::MP3 => 14,
+                    let payload_type =
+                        match (session.egress_payload_mode, send_frame.frame.media_kind) {
+                            (RtpPayloadMode::Ps, _) => 96,
+                            (RtpPayloadMode::Ts, _) => 33,
+                            // Audio in raw / ES mode: prefer the canonical static PTs for codecs
+                            // that have well-known assignments (RFC 3551). Falls back to a
+                            // dynamic PT when the codec has no static assignment.
+                            (_, cheetah_codec::MediaKind::Audio) => match send_frame.frame.codec {
+                                cheetah_codec::CodecId::G711U => 0,
+                                cheetah_codec::CodecId::G711A => 8,
+                                cheetah_codec::CodecId::MP3 => 14,
+                                _ => 97,
+                            },
+                            // Video in raw / ES mode uses dynamic PT 96.
+                            (_, cheetah_codec::MediaKind::Video) => 96,
                             _ => 97,
-                        },
-                        // Video in raw / ES mode uses dynamic PT 96.
-                        (_, cheetah_codec::MediaKind::Video) => 96,
-                        _ => 97,
-                    };
+                        };
 
                     let rtp_header = RtpHeader {
                         version: 2,
@@ -1128,6 +1190,7 @@ impl RtpCore {
                             }));
                         } else if let Some(dest) = session.destination {
                             outputs.push(RtpCoreOutput::SendUdp(RtpUdpSend {
+                                session_key: session._session_key.clone(),
                                 destination: dest,
                                 data: encoded,
                             }));
@@ -1140,6 +1203,20 @@ impl RtpCore {
             }
             RtpCoreCommand::StopSession(key) => {
                 self.close_session(key, "Stopped by command".to_string(), outputs);
+            }
+            RtpCoreCommand::PauseCheck {
+                session_key,
+                paused,
+            } => {
+                if let Some(session) = self.sessions.get_mut(&session_key) {
+                    session.check_paused = paused;
+                    // Reset activity baseline on resume so the next tick does not immediately
+                    // fire an idle timeout that accrued while checks were paused.
+                    if !paused {
+                        session.last_activity_ms = self.now_ms;
+                        session.last_rr_received_ms = self.now_ms;
+                    }
+                }
             }
         }
     }
@@ -1163,8 +1240,12 @@ fn track_filter_allows_track(filter: RtpTrackFilter, kind: cheetah_codec::MediaK
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::RtpServerSpec;
-    use cheetah_codec::{RtpHeader, RtpPacket};
+    use crate::types::{
+        RtpClientSpec, RtpConnectionType, RtpDatagram, RtpSendFrame, RtpServerSpec,
+    };
+    use cheetah_codec::{
+        AVFrame, CodecId, FrameFormat, MediaKind, RtpHeader, RtpPacket, Timebase, TrackId,
+    };
     use std::net::SocketAddr;
 
     #[test]
@@ -1246,6 +1327,49 @@ mod tests {
             }
         }
         assert!(has_closed);
+    }
+
+    #[test]
+    fn test_rtp_core_pause_check_delays_timeout() {
+        let mut core = RtpCore::new(10, 1000); // 1000ms timeout
+
+        let spec = RtpServerSpec {
+            session_key: "paused_session".to_string(),
+            ssrc: Some(12345),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        };
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
+
+        // Pause timeout checks while the session receives no traffic.
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::PauseCheck {
+            session_key: "paused_session".to_string(),
+            paused: true,
+        }));
+
+        // Tick well past the idle timeout while paused: session must stay alive.
+        let outputs = core.handle_input(RtpCoreInput::Tick { now_ms: 5000 });
+        assert!(!outputs
+            .iter()
+            .any(|o| matches!(o, RtpCoreOutput::Event(RtpCoreEvent::SessionClosed { .. }))));
+
+        // Resume checks; the next tick should baseline activity, not immediately close.
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::PauseCheck {
+            session_key: "paused_session".to_string(),
+            paused: false,
+        }));
+        let outputs = core.handle_input(RtpCoreInput::Tick { now_ms: 5500 });
+        assert!(!outputs
+            .iter()
+            .any(|o| matches!(o, RtpCoreOutput::Event(RtpCoreEvent::SessionClosed { .. }))));
+
+        // Only after the timeout window passes again does the session close.
+        let outputs = core.handle_input(RtpCoreInput::Tick { now_ms: 6600 });
+        assert!(outputs
+            .iter()
+            .any(|o| matches!(o, RtpCoreOutput::Event(RtpCoreEvent::SessionClosed { .. }))));
     }
 
     #[test]
@@ -1452,5 +1576,96 @@ mod tests {
                 cap: 1500,
             })
         )));
+    }
+
+    #[test]
+    fn test_voice_talk_upgrades_session_and_sends_audio() {
+        // An inbound session can be upgraded to VoiceTalk, reusing the same socket
+        // (same session_key) to push audio back to the peer.
+        let mut core = RtpCore::new(10, 30_000);
+        let session_key = "recv/talk/cam".to_string();
+        let ssrc = 7777u32;
+
+        let server_spec = RtpServerSpec {
+            session_key: session_key.clone(),
+            ssrc: Some(ssrc),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        };
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(
+            server_spec,
+        )));
+
+        // The peer address would normally be learned from the first ingress frame.
+        let peer = "127.0.0.1:15060".parse::<SocketAddr>().unwrap();
+
+        // Upgrade the same session to VoiceTalk / SendRecv with audio-only egress.
+        let client_spec = RtpClientSpec {
+            session_key: session_key.clone(),
+            destination: peer,
+            ssrc,
+            payload_mode: RtpPayloadMode::RawAudio,
+            transport_mode: RtpTransportMode::SendRecv,
+            tcp_conn_id: None,
+            connection_type: Some(RtpConnectionType::VoiceTalk),
+            track_filter: RtpTrackFilter::OnlyAudio,
+        };
+        let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateClient(
+            client_spec,
+        )));
+
+        // Audio frame should be emitted as UDP with static PT 0 (G.711 u-law).
+        let audio = AVFrame::new(
+            TrackId(1),
+            MediaKind::Audio,
+            CodecId::G711U,
+            FrameFormat::G711Packet,
+            0,
+            0,
+            Timebase::new(1, 8000),
+            Bytes::from(vec![0xD5; 160]),
+        );
+        let outputs = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::SendFrame(
+            RtpSendFrame {
+                session_key: session_key.clone(),
+                frame: audio,
+            },
+        )));
+
+        let mut sent = false;
+        for output in outputs {
+            if let RtpCoreOutput::SendUdp(udp) = output {
+                assert_eq!(udp.destination, peer);
+                assert_eq!(udp.session_key, session_key);
+                let parsed = RtpPacket::parse(&udp.data).unwrap();
+                assert_eq!(parsed.header.ssrc, ssrc);
+                assert_eq!(parsed.header.payload_type, 0);
+                sent = true;
+            }
+        }
+        assert!(sent, "expected SendUdp output for voice talk audio");
+
+        // Video frame should be dropped by the OnlyAudio track filter.
+        let video = AVFrame::new(
+            TrackId(2),
+            MediaKind::Video,
+            CodecId::H264,
+            FrameFormat::CanonicalH26x,
+            0,
+            0,
+            Timebase::new(1, 90_000),
+            Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x09]),
+        );
+        let outputs = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::SendFrame(
+            RtpSendFrame {
+                session_key,
+                frame: video,
+            },
+        )));
+        assert!(!outputs
+            .iter()
+            .any(|o| matches!(o, RtpCoreOutput::SendUdp(_))));
     }
 }
