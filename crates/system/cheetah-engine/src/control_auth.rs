@@ -132,10 +132,18 @@ impl ConfigControlAuth {
 }
 
 /// Constant-time string equality used when comparing bearer/deployment tokens.
-/// Delegates to `subtle` rather than a hand-rolled comparison.
+/// Compares length and content without short-circuiting on length mismatch.
 fn constant_time_eq(a: &str, b: &str) -> bool {
-    use subtle::ConstantTimeEq;
-    bool::from(a.as_bytes().ct_eq(b.as_bytes()))
+    use subtle::{Choice, ConstantTimeEq};
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    let len_eq = (a.len() as u64).ct_eq(&(b.len() as u64));
+    let mut content_eq = Choice::from(1u8);
+    for (i, bi) in b.iter().enumerate() {
+        let ai = a.get(i).copied().unwrap_or(0);
+        content_eq &= u8::ct_eq(&ai, bi);
+    }
+    bool::from(len_eq & content_eq)
 }
 
 impl ControlAuthApi for ConfigControlAuth {

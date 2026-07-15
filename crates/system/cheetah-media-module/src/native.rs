@@ -1,5 +1,6 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
+use crate::adapter_config::{extract_native_config, load_native_config, NativeAdapterConfig};
 use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::audit::{AuditApi, AuditEvent, AuditResult};
@@ -15,7 +16,7 @@ use cheetah_media_api::model::CloseReason;
 use cheetah_media_api::port::{
     ControlAuthApi, MediaControlApi, MediaRequestContext, RecordApi, RtpApi, SnapshotApi,
 };
-use cheetah_media_api::{AuthCredentials, FileRange, MediaFileStoreApi, MediaScope};
+use cheetah_media_api::{AuthCredentials, FileRange, MediaFileStoreApi, MediaScope, Principal};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -56,6 +57,7 @@ impl ModuleFactory for NativeMediaModuleFactory {
 pub struct NativeMediaModule {
     state: ModuleState,
     ctx: Option<EngineContext>,
+    config: Arc<RwLock<NativeAdapterConfig>>,
 }
 
 impl NativeMediaModule {
@@ -63,6 +65,7 @@ impl NativeMediaModule {
         Self {
             state: ModuleState::Created,
             ctx: None,
+            config: Arc::new(RwLock::new(NativeAdapterConfig::default())),
         }
     }
 }
@@ -88,6 +91,8 @@ impl Module for NativeMediaModule {
     }
 
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
+        let cfg = load_native_config(&ctx.engine.config_provider.global());
+        *self.config.write().unwrap() = cfg;
         self.ctx = Some(ctx.engine);
         self.state = ModuleState::Initialized;
         Ok(())
@@ -103,14 +108,21 @@ impl Module for NativeMediaModule {
         Ok(())
     }
 
-    async fn apply_config(
-        &mut self,
-        _change: ModuleConfigChange,
-    ) -> Result<ConfigEffect, SdkError> {
+    async fn apply_config(&mut self, change: ModuleConfigChange) -> Result<ConfigEffect, SdkError> {
+        let next = change.next_global.as_ref().unwrap_or(&change.next);
+        let next = extract_native_config(next);
+        let previous = self.config.read().unwrap().clone();
+        if previous.enabled != next.enabled || previous.path_prefix != next.path_prefix {
+            return Ok(ConfigEffect::ModuleRestartRequired);
+        }
+        *self.config.write().unwrap() = next;
         Ok(ConfigEffect::Immediate)
     }
 
     fn http_routes(&self) -> Vec<HttpRouteDescriptor> {
+        if !self.config.read().unwrap().enabled {
+            return Vec::new();
+        }
         // `cheetah-control` now supports `{name}` path templates, so the native
         // module declares its full route catalog. Unknown paths are rejected with
         // 404 and wrong-method requests with 405 by the control-plane dispatcher.
@@ -118,14 +130,31 @@ impl Module for NativeMediaModule {
     }
 
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
+        if !self.config.read().unwrap().enabled {
+            return None;
+        }
         Some(Arc::new(NativeMediaHttpService {
             ctx: self.ctx.clone()?,
+            config: self.config.clone(),
         }))
+    }
+
+    fn http_mount_prefix(&self) -> Option<String> {
+        Some(self.config.read().unwrap().path_prefix.clone())
+    }
+
+    fn http_max_body_bytes(&self) -> usize {
+        self.config.read().unwrap().max_body_bytes
+    }
+
+    fn http_request_timeout_ms(&self) -> Option<u64> {
+        Some(self.config.read().unwrap().request_timeout_ms)
     }
 }
 
 struct NativeMediaHttpService {
     ctx: EngineContext,
+    config: Arc<RwLock<NativeAdapterConfig>>,
 }
 
 impl NativeMediaHttpService {
@@ -167,6 +196,38 @@ impl NativeMediaHttpService {
 
     fn auth(&self) -> Result<Arc<dyn ControlAuthApi>, AdapterError> {
         Ok(self.ctx.control_auth_api.clone())
+    }
+
+    fn authenticate(
+        &self,
+        req: &HttpRequest,
+        cfg: &NativeAdapterConfig,
+    ) -> Result<Principal, AdapterError> {
+        if cfg.auth.mode == "none" {
+            return Ok(Principal {
+                identity: "anonymous".to_string(),
+                scopes: vec![
+                    MediaScope::MediaRead,
+                    MediaScope::MediaControl,
+                    MediaScope::MediaPublish,
+                    MediaScope::MediaConsume,
+                    MediaScope::RecordManage,
+                    MediaScope::FileRead,
+                    MediaScope::FileDelete,
+                    MediaScope::ServerAdmin,
+                ],
+            });
+        }
+        let credentials = AuthCredentials {
+            authorization_header: header_value(&req.headers, "authorization")
+                .map(|s| s.to_string()),
+            mtls_identity: header_value(&req.headers, "x-mtls-identity").map(|s| s.to_string()),
+            deployment_token: header_value(&req.headers, "x-deployment-token")
+                .map(|s| s.to_string()),
+        };
+        self.auth()?
+            .authenticate(&credentials)
+            .map_err(AdapterError::Media)
     }
 
     fn require_scope(
@@ -293,14 +354,9 @@ impl NativeMediaHttpService {
         let client_deadline =
             header_value(&req.headers, "x-deadline").and_then(|v| v.parse::<i64>().ok());
         let deadline = crate::util::request_deadline(client_deadline, 60_000);
-        let credentials = AuthCredentials {
-            authorization_header: header_value(&req.headers, "authorization")
-                .map(|s| s.to_string()),
-            mtls_identity: header_value(&req.headers, "x-mtls-identity").map(|s| s.to_string()),
-            deployment_token: header_value(&req.headers, "x-deployment-token")
-                .map(|s| s.to_string()),
-        };
-        let principal = Some(self.auth()?.authenticate(&credentials)?);
+        let cfg = self.config.read().unwrap();
+        let principal = Some(self.authenticate(req, &cfg)?);
+        drop(cfg);
         Ok(MediaRequestContext {
             request_id,
             correlation_id: header_value(&req.headers, "x-correlation-id").map(|s| s.to_string()),
@@ -623,6 +679,12 @@ impl NativeMediaHttpService {
 #[async_trait]
 impl ModuleHttpService for NativeMediaHttpService {
     async fn handle(&self, mut req: HttpRequest) -> Result<HttpResponse, SdkError> {
+        let max_body_bytes = self.config.read().unwrap().max_body_bytes;
+        if req.body.len() > max_body_bytes {
+            return Err(SdkError::InvalidArgument(
+                "request body too large".to_string(),
+            ));
+        }
         let audit_req = req.clone();
         let request_id = header_value(&req.headers, "x-request-id")
             .map(|v| v.to_string())

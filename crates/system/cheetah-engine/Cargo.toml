@@ -22,5 +22,6 @@ tracing.workspace = true
 
 [dev-dependencies]
 cheetah-config = { path = "../cheetah-config" }
+cheetah-media-module = { path = "../cheetah-media-module" }
 cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
 serde_json.workspace = true

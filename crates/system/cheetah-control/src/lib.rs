@@ -245,10 +245,12 @@ fn sanitize_config(value: &serde_json::Value) -> serde_json::Value {
                         | "api_secret"
                 ) || k.ends_with("_token")
                     || k.ends_with("_secret");
-                if redacted && v.is_object() {
-                    out.insert(k.clone(), serde_json::Value::Object(serde_json::Map::new()));
-                } else if redacted && (v.is_string() || v.is_number() || v.is_array()) {
-                    out.insert(k.clone(), serde_json::Value::String("***".to_string()));
+                if redacted {
+                    if v.is_object() {
+                        out.insert(k.clone(), serde_json::Value::Object(serde_json::Map::new()));
+                    } else {
+                        out.insert(k.clone(), serde_json::Value::String("***".to_string()));
+                    }
                 } else {
                     out.insert(k.clone(), sanitize_config(v));
                 }
@@ -503,11 +505,11 @@ async fn handle_module_http(
         })
         .collect::<Vec<_>>();
 
-    let body = match to_bytes(req.into_body(), 8 * 1024 * 1024).await {
+    let body = match to_bytes(req.into_body(), mount.max_body_bytes).await {
         Ok(v) => v,
         Err(err) => {
             return (
-                StatusCode::BAD_REQUEST,
+                StatusCode::PAYLOAD_TOO_LARGE,
                 format!("read request body failed: {err}"),
             )
                 .into_response();
@@ -521,7 +523,24 @@ async fn handle_module_http(
         headers,
         body,
     };
-    let module_resp = match mount.service.handle(module_req).await {
+
+    let handle_fut = mount.service.handle(module_req);
+    let module_resp = if let Some(ms) = mount.request_timeout_ms {
+        match tokio::time::timeout(tokio::time::Duration::from_millis(ms), handle_fut).await {
+            Ok(resp) => resp,
+            Err(_) => {
+                return (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    Json(json!({"error": "request timeout"})),
+                )
+                    .into_response();
+            }
+        }
+    } else {
+        handle_fut.await
+    };
+
+    let module_resp = match module_resp {
         Ok(v) => v,
         Err(err) => {
             return (
@@ -656,10 +675,10 @@ fn root_route_match(
             continue;
         }
         let route_path = normalize_root_route(&route.path);
-        if route_path == absolute {
+        if path_template_match(&route_path, &absolute) {
             matched_path = true;
             if route.method == method {
-                return (true, true, route_path);
+                return (true, true, absolute);
             }
         }
     }
@@ -727,7 +746,7 @@ mod tests {
 
     use super::{
         patch_global_config, path_template_match, relative_path, root_route_match, route_match,
-        ControlState, PatchRequest,
+        sanitize_config, ControlState, PatchRequest,
     };
 
     struct DummyHttpService;
@@ -760,6 +779,8 @@ mod tests {
                 path: "/status".to_string(),
             }],
             service: Arc::new(DummyHttpService),
+            max_body_bytes: 8 * 1024 * 1024,
+            request_timeout_ms: None,
         };
 
         assert_eq!(
@@ -816,6 +837,8 @@ mod tests {
                 },
             ],
             service: Arc::new(DummyHttpService),
+            max_body_bytes: 8 * 1024 * 1024,
+            request_timeout_ms: None,
         };
 
         assert_eq!(
@@ -858,6 +881,8 @@ mod tests {
                 path: "//rtc/v1/whep".to_string(),
             }],
             service: Arc::new(DummyHttpService),
+            max_body_bytes: 8 * 1024 * 1024,
+            request_timeout_ms: None,
         };
 
         assert_eq!(
@@ -871,6 +896,34 @@ mod tests {
         assert_eq!(
             root_route_match(&mount, HttpMethod::Options, "/rtc/v1/whep"),
             (true, false, "/rtc/v1/whep".to_string())
+        );
+    }
+
+    #[test]
+    fn root_route_match_allows_path_templates() {
+        let mount = HttpRouteMount {
+            module_id: cheetah_sdk::ModuleId::new("noop"),
+            prefix: "/api/v1/noop".to_string(),
+            routes: vec![HttpRouteDescriptor {
+                method: HttpMethod::Get,
+                path: "//callbacks/{id}/notify".to_string(),
+            }],
+            service: Arc::new(DummyHttpService),
+            max_body_bytes: 8 * 1024 * 1024,
+            request_timeout_ms: None,
+        };
+
+        assert_eq!(
+            root_route_match(&mount, HttpMethod::Get, "/callbacks/abc123/notify"),
+            (true, true, "/callbacks/abc123/notify".to_string())
+        );
+        assert_eq!(
+            root_route_match(&mount, HttpMethod::Get, "/callbacks/abc123/extra"),
+            (false, false, "/callbacks/abc123/extra".to_string())
+        );
+        assert_eq!(
+            root_route_match(&mount, HttpMethod::Post, "/callbacks/abc123/notify"),
+            (true, false, "/callbacks/abc123/notify".to_string())
         );
     }
 
@@ -1192,5 +1245,26 @@ mod tests {
             *config.rollback_called.lock().expect("rollback lock"),
             "rollback must be called when module apply fails"
         );
+    }
+
+    #[test]
+    fn sanitize_config_redacts_booleans_and_nulls() {
+        let input = json!({
+            "secret": true,
+            "api_key": null,
+            "nested": {
+                "deployment_tokens": false,
+                "plain": "visible"
+            },
+            "tokens": [1, 2, 3],
+            "normal": 42
+        });
+        let out = sanitize_config(&input);
+        assert_eq!(out["secret"], "***");
+        assert_eq!(out["api_key"], "***");
+        assert_eq!(out["nested"]["deployment_tokens"], "***");
+        assert_eq!(out["nested"]["plain"], "visible");
+        assert_eq!(out["tokens"], "***");
+        assert_eq!(out["normal"], 42);
     }
 }

@@ -251,16 +251,24 @@ impl ModuleManager {
         manifest: &ModuleManifest,
         module: &dyn cheetah_sdk::Module,
     ) {
+        let routes = module.http_routes();
+        if routes.is_empty() && module.http_service().is_none() {
+            self.http_mounts.write().remove(module_id);
+            return;
+        }
         if let Some(service) = module.http_service() {
+            let prefix = module
+                .http_mount_prefix()
+                .unwrap_or_else(|| manifest.routes_prefix.clone());
             let mount = HttpRouteMount {
                 module_id: module_id.clone(),
-                prefix: manifest.routes_prefix.clone(),
-                routes: module.http_routes(),
+                prefix,
+                routes,
                 service,
+                max_body_bytes: module.http_max_body_bytes(),
+                request_timeout_ms: module.http_request_timeout_ms(),
             };
             self.http_mounts.write().insert(module_id.clone(), mount);
-        } else {
-            self.http_mounts.write().remove(module_id);
         }
     }
 
@@ -647,17 +655,28 @@ impl ModuleManagerApi for ModuleManager {
         let module_id = change.module_id.clone();
         let mut record = self.take_record(&module_id).await?;
         let apply = record.module.apply_config(change).await;
-        self.put_record(module_id.clone(), record).await;
 
         let effect = match apply {
             Ok(v) => v,
             Err(err) => {
+                self.put_record(module_id.clone(), record).await;
                 if let Some(runtime) = self.runtime.read().as_ref() {
                     self.publish_failed(&runtime.context, &module_id, "apply_config", &err);
                 }
                 return Err(err);
             }
         };
+
+        if matches!(
+            effect,
+            ConfigEffect::Immediate | ConfigEffect::NewSessionsOnly
+        ) {
+            if let Some(manifest) = self.manifest_of(&module_id) {
+                self.update_http_mount(&module_id, &manifest, record.module.as_ref());
+            }
+        }
+
+        self.put_record(module_id.clone(), record).await;
 
         if effect == ConfigEffect::ModuleRestartRequired {
             let state = self.state_of(&module_id)?;
