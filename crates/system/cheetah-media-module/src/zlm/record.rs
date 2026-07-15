@@ -15,8 +15,8 @@ use crate::error::AdapterError;
 
 use super::{
     page_from_params, page_size_from_params, zlm_record_format, zlm_response, Data,
-    DeleteRecordDirectoryResult, Mp4FilesData, StatusResult, ZlmMediaHttpService, ZlmResponse,
-    ZlmResult,
+    DeleteRecordDirectoryResult, Mp4FilesData, StartRecordResult, StatusResult,
+    ZlmMediaHttpService, ZlmResponse, ZlmResult,
 };
 
 impl ZlmMediaHttpService {
@@ -41,8 +41,11 @@ impl ZlmMediaHttpService {
                 .clone()
                 .map(cheetah_media_api::ids::IdempotencyKey),
         };
-        let _task = record_api.start_record(ctx, request).await?;
-        Ok(zlm_response(ZlmResponse::ok(ZlmResult { result: true })))
+        let task = record_api.start_record(ctx, request).await?;
+        Ok(zlm_response(ZlmResponse::ok(StartRecordResult {
+            result: true,
+            task_id: task.task_id.0,
+        })))
     }
 
     pub(crate) async fn record_stop(

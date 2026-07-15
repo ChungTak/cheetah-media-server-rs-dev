@@ -67,6 +67,14 @@ pub(crate) struct ZlmResult {
     pub result: bool,
 }
 
+/// `{result, taskId}` returned by `startRecord`.
+#[derive(Serialize)]
+pub(crate) struct StartRecordResult {
+    pub result: bool,
+    #[serde(rename = "taskId")]
+    pub task_id: String,
+}
+
 /// Top-level `result` as an integer (0 success, -1 fail, -2 not found).
 #[derive(Serialize)]
 pub(crate) struct ZlmCloseStreamResult {

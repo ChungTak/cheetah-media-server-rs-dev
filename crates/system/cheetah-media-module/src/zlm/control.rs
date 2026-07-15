@@ -12,7 +12,8 @@ use cheetah_sdk::{HttpHeader, HttpRequest, HttpResponse};
 use crate::error::AdapterError;
 use crate::zlm::{
     page_from_params, page_size_from_params, zlm_record_format, zlm_response, CloseStreamsResult,
-    Data, Empty, KickSessionsResult, SessionItem, ZlmMediaHttpService, ZlmResponse, ZlmResult,
+    Data, Empty, KickSessionsResult, SessionItem, StartRecordResult, ZlmMediaHttpService,
+    ZlmResponse,
 };
 
 impl ZlmMediaHttpService {
@@ -135,8 +136,11 @@ impl ZlmMediaHttpService {
                 .clone()
                 .map(cheetah_media_api::ids::IdempotencyKey),
         };
-        let _task = record_api.start_record(&ctx, request).await?;
-        Ok(zlm_response(ZlmResponse::ok(ZlmResult { result: true })))
+        let task = record_api.start_record(&ctx, request).await?;
+        Ok(zlm_response(ZlmResponse::ok(StartRecordResult {
+            result: true,
+            task_id: task.task_id.0,
+        })))
     }
 
     pub(crate) async fn download_file(
