@@ -1,0 +1,39 @@
+[package]
+name = "cheetah-proxy-module"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+rtmp = ["dep:cheetah-connector"]
+http-flv = ["dep:cheetah-connector"]
+rtsp = ["dep:cheetah-connector"]
+webrtc = ["dep:cheetah-connector"]
+
+[dependencies]
+async-trait.workspace = true
+dashmap.workspace = true
+futures.workspace = true
+parking_lot.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+cheetah-codec = { path = "../../foundation/cheetah-codec" }
+cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
+cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
+cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
+
+# Optional real connector data-plane integration. Disabled by default so the
+# module can compile and expose a registry-backed ProxyApi provider without
+# pulling in all protocol crates.
+cheetah-connector = { path = "../../sdk/cheetah-connector", optional = true }
+
+[dev-dependencies]
+cheetah-config = { path = "../cheetah-config" }
+cheetah-engine = { path = "../cheetah-engine" }
+cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

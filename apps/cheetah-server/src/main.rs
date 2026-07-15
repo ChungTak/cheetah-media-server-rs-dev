@@ -38,6 +38,8 @@ use cheetah_http_flv_module::HttpFlvModuleFactory;
 use cheetah_media_module::{NativeMediaModuleFactory, ZlmMediaModuleFactory};
 #[cfg(feature = "mp4")]
 use cheetah_mp4_module::Mp4ModuleFactory;
+#[cfg(feature = "proxy")]
+use cheetah_proxy_module::ProxyModuleFactory;
 #[cfg(feature = "record")]
 use cheetah_record_module::RecordModuleFactory;
 #[cfg(feature = "rtmp")]
@@ -179,6 +181,11 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "record")]
     {
         builder = builder.register_module_factory(Arc::new(RecordModuleFactory));
+    }
+
+    #[cfg(feature = "proxy")]
+    {
+        builder = builder.register_module_factory(Arc::new(ProxyModuleFactory));
     }
 
     #[cfg(feature = "webrtc")]
