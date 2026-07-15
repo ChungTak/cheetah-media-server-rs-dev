@@ -303,12 +303,10 @@ impl TargetWorker {
             return;
         }
 
-        let mut headers = std::collections::HashMap::new();
-        headers.insert("Content-Type".to_string(), "application/json".to_string());
-        headers.insert("X-Event-Id".to_string(), job.event_id.clone());
+        let mut headers = crate::util::webhook_headers(&job.event_id);
 
         if let Some(secret) = &job.profile.secret {
-            match sign_body(&body, secret) {
+            match crate::util::sign_body(&body, secret) {
                 Ok(sig) => {
                     headers.insert("X-Webhook-Signature".to_string(), sig);
                 }
@@ -338,7 +336,7 @@ impl TargetWorker {
             attempts += 1;
             match self.sender.send(request.clone()).await {
                 Ok(response) => {
-                    if is_success(response.status) {
+                    if crate::util::is_success(response.status) {
                         succeeded = true;
                         info!(
                             target = %self.profile_name,
@@ -348,7 +346,7 @@ impl TargetWorker {
                         );
                         break;
                     }
-                    if is_client_error(response.status) {
+                    if crate::util::is_client_error(response.status) {
                         warn!(
                             target = %self.profile_name,
                             event_id = %job.event_id,
@@ -409,24 +407,4 @@ impl TargetWorker {
             self.circuit.record_failure();
         }
     }
-}
-
-fn sign_body(body: &[u8], secret: &str) -> Result<String, hmac::digest::InvalidLength> {
-    use base64::Engine;
-    use hmac::Mac;
-    use sha2::Sha256;
-
-    type HmacSha256 = hmac::Hmac<Sha256>;
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())?;
-    mac.update(body);
-    let result = mac.finalize().into_bytes();
-    Ok(base64::engine::general_purpose::STANDARD.encode(result))
-}
-
-fn is_success(status: u16) -> bool {
-    (200..300).contains(&status)
-}
-
-fn is_client_error(status: u16) -> bool {
-    (400..500).contains(&status)
 }

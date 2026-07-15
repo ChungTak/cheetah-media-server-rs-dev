@@ -1,6 +1,18 @@
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
+/// Failure policy for synchronous decision hooks when the target does not
+/// respond in time or returns a malformed response.
+///
+/// 同步决策 webhook 超时或响应异常时的失败策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FailurePolicy {
+    #[default]
+    Deny,
+    Allow,
+}
+
 /// Top-level configuration for the webhook dispatcher.
 ///
 /// 分发器顶层配置。
@@ -43,6 +55,16 @@ pub struct WebhookProfile {
     /// Network CIDRs that are explicitly allowed (e.g. ["127.0.0.1/8"]).
     #[serde(default)]
     pub allowed_cidrs: Vec<String>,
+    /// Hook names that should be treated as synchronous decision hooks for
+    /// this target (e.g. ["on_publish", "on_play"]).
+    #[serde(default)]
+    pub decision_events: Vec<String>,
+    /// Short per-request timeout for synchronous decision hooks.
+    #[serde(default = "default_decision_timeout_ms")]
+    pub decision_timeout_ms: u64,
+    /// Failure policy for synchronous decision hooks (default deny).
+    #[serde(default = "default_decision_failure_policy")]
+    pub decision_failure_policy: FailurePolicy,
 }
 
 impl WebhookProfile {
@@ -56,6 +78,35 @@ impl WebhookProfile {
 
     pub fn wants_event(&self, hook_name: &str) -> bool {
         self.events.is_empty() || self.events.iter().any(|e| e == hook_name)
+    }
+
+    pub fn wants_decision(&self, hook_name: &str) -> bool {
+        self.decision_events.iter().any(|e| e == hook_name)
+    }
+
+    pub fn decision_timeout(&self) -> Duration {
+        Duration::from_millis(self.decision_timeout_ms)
+    }
+}
+
+impl Default for WebhookProfile {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            url: String::new(),
+            events: Vec::new(),
+            secret: None,
+            timeout_ms: default_timeout_ms(),
+            max_body_bytes: default_max_body_bytes(),
+            max_retries: default_max_retries(),
+            retry_interval_ms: default_retry_interval_ms(),
+            circuit_failure_threshold: default_circuit_failure_threshold(),
+            circuit_open_ms: default_circuit_open_ms(),
+            allowed_cidrs: Vec::new(),
+            decision_events: Vec::new(),
+            decision_timeout_ms: default_decision_timeout_ms(),
+            decision_failure_policy: default_decision_failure_policy(),
+        }
     }
 }
 
@@ -81,4 +132,12 @@ fn default_circuit_failure_threshold() -> u32 {
 
 fn default_circuit_open_ms() -> u64 {
     30_000
+}
+
+fn default_decision_timeout_ms() -> u64 {
+    2000
+}
+
+fn default_decision_failure_policy() -> FailurePolicy {
+    FailurePolicy::Deny
 }
