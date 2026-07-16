@@ -8,9 +8,11 @@
 //! 默认拒绝回环、链路本地、私有、组播和未指定地址，可通过 CIDR 白名单显式放行。
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::sync::Arc;
 
 use cheetah_media_api::error::{MediaError, Result};
-use tracing::warn;
+use cheetah_runtime_api::RuntimeApi;
+use tracing::{info, warn};
 use url::{Host, Url};
 
 /// An IPv4 or IPv6 network with a prefix length.
@@ -118,27 +120,22 @@ pub fn parse_allowlist(cidrs: &[String]) -> Result<Vec<IpNetwork>> {
     cidrs.iter().map(|s| parse_cidr(s)).collect()
 }
 
-/// Validate a URL against SSRF policy.
+/// Validate a URL against SSRF policy without performing DNS resolution.
 ///
 /// - Rejects unsupported schemes.
-/// - Rejects hostnames such as `localhost`.
-/// - Rejects private/loopback/link-local/multicast/unspecified IPs unless they
-///   are contained in `allowlist`.
+/// - Rejects private/loopback/link-local/multicast/unspecified IP literals unless
+///   they are contained in `allowlist`.
+/// - Allows domain names (they must be resolved and re-validated by
+///   [`resolve_and_validate_url`] before any connection is made).
 ///
-/// 按 SSRF 策略校验 URL。
+/// 按 SSRF 策略静态校验 URL（不执行 DNS 解析）。  
+/// 主要用于测试和 IP 字面量预检；生产连接应使用 [`resolve_and_validate_url`]。  
+#[allow(dead_code)]
 pub fn validate_url(url: &str, allowlist: &[IpNetwork]) -> Result<()> {
     let parsed =
         Url::parse(url).map_err(|e| MediaError::invalid_argument(format!("invalid URL: {e}")))?;
 
-    match parsed.scheme() {
-        "http" | "https" | "rtmp" | "rtsp" | "srt" | "webrtc" | "rtp" => {}
-        _ => {
-            return Err(MediaError::invalid_argument(format!(
-                "unsupported URL scheme: {}",
-                parsed.scheme()
-            )))
-        }
-    }
+    validate_scheme(&parsed)?;
 
     let host = parsed
         .host()
@@ -146,46 +143,127 @@ pub fn validate_url(url: &str, allowlist: &[IpNetwork]) -> Result<()> {
 
     match host {
         Host::Domain(domain) => {
-            if is_forbidden_domain(domain) {
-                return Err(MediaError::invalid_argument(format!(
-                    "forbidden proxy target host: {domain}"
-                )));
-            }
             // Non-special URL schemes (rtsp, rtmp, srt, etc.) are parsed as
             // domains even when the host is an IPv4 literal. Treat it as an IP
             // address if it parses, then apply the same SSRF checks.
             if let Ok(addr) = domain.parse::<IpAddr>() {
-                let addr = normalize_ip(addr);
-                if is_internal_ip(&addr) && !allowlist.iter().any(|net| net.contains(&addr)) {
-                    return Err(MediaError::invalid_argument(format!(
-                        "forbidden proxy target address: {addr}"
-                    )));
-                }
+                check_ip_addr(addr, allowlist)?;
             } else {
-                warn!(domain = %domain, "proxy URL uses a domain name; DNS/rebinding validation not yet enforced");
+                warn!(domain = %domain, "proxy URL uses a domain name; DNS validation not yet performed");
             }
         }
-        Host::Ipv4(ip) => {
-            let addr = IpAddr::from(ip);
-            let addr = normalize_ip(addr);
-            if is_internal_ip(&addr) && !allowlist.iter().any(|net| net.contains(&addr)) {
-                return Err(MediaError::invalid_argument(format!(
-                    "forbidden proxy target address: {addr}"
-                )));
-            }
-        }
-        Host::Ipv6(ip) => {
-            let addr = IpAddr::from(ip);
-            let addr = normalize_ip(addr);
-            if is_internal_ip(&addr) && !allowlist.iter().any(|net| net.contains(&addr)) {
-                return Err(MediaError::invalid_argument(format!(
-                    "forbidden proxy target address: {addr}"
-                )));
-            }
-        }
+        Host::Ipv4(ip) => check_ip_addr(IpAddr::from(ip), allowlist)?,
+        Host::Ipv6(ip) => check_ip_addr(IpAddr::from(ip), allowlist)?,
     }
 
     Ok(())
+}
+
+/// Resolve the URL hostname, validate all A/AAAA records, and return a URL
+/// whose host has been rewritten to the first allowed resolved IP address.
+///
+/// This prevents DNS rebinding attacks: the validated IP is used for the
+/// connection and is not re-resolved by the protocol driver on reconnect.
+/// Any redirect target should be passed through the same validation.
+///
+/// 解析 URL 主机名并校验所有 A/AAAA 记录，返回已将主机替换为首个合规 IP 的 URL。  
+/// 通过使用已校验的 IP 地址，避免 DNS 重绑定；重定向目标应再次经过同样校验。  
+pub async fn resolve_and_validate_url(
+    url: &str,
+    allowlist: &[IpNetwork],
+    runtime_api: &Arc<dyn RuntimeApi>,
+) -> Result<String> {
+    let parsed =
+        Url::parse(url).map_err(|e| MediaError::invalid_argument(format!("invalid URL: {e}")))?;
+
+    validate_scheme(&parsed)?;
+
+    let host = parsed
+        .host()
+        .ok_or_else(|| MediaError::invalid_argument("URL missing host".to_string()))?;
+
+    let resolved_ip = match host {
+        Host::Domain(domain) => {
+            if let Ok(addr) = domain.parse::<IpAddr>() {
+                check_ip_addr(addr, allowlist)?;
+                return Ok(url.to_string());
+            }
+            resolve_domain(domain, allowlist, runtime_api).await?
+        }
+        Host::Ipv4(ip) => {
+            check_ip_addr(IpAddr::from(ip), allowlist)?;
+            return Ok(url.to_string());
+        }
+        Host::Ipv6(ip) => {
+            check_ip_addr(IpAddr::from(ip), allowlist)?;
+            return Ok(url.to_string());
+        }
+    };
+
+    let mut rewritten = parsed.clone();
+    let host_str = if resolved_ip.is_ipv6() {
+        format!("[{resolved_ip}]")
+    } else {
+        resolved_ip.to_string()
+    };
+    rewritten
+        .set_host(Some(&host_str))
+        .map_err(|e| MediaError::invalid_argument(format!("failed to rewrite URL host: {e}")))?;
+
+    info!(
+        original = %url,
+        resolved = %resolved_ip,
+        rewritten = %rewritten,
+        "proxy URL resolved and validated"
+    );
+
+    Ok(rewritten.to_string())
+}
+
+fn validate_scheme(parsed: &Url) -> Result<()> {
+    match parsed.scheme() {
+        "http" | "https" | "rtmp" | "rtsp" | "srt" | "webrtc" | "rtp" => Ok(()),
+        _ => Err(MediaError::invalid_argument(format!(
+            "unsupported URL scheme: {}",
+            parsed.scheme()
+        ))),
+    }
+}
+
+fn check_ip_addr(addr: IpAddr, allowlist: &[IpNetwork]) -> Result<()> {
+    let addr = normalize_ip(addr);
+    if is_internal_ip(&addr) && !allowlist.iter().any(|net| net.contains(&addr)) {
+        return Err(MediaError::invalid_argument(format!(
+            "forbidden proxy target address: {addr}"
+        )));
+    }
+    Ok(())
+}
+
+async fn resolve_domain(
+    domain: &str,
+    allowlist: &[IpNetwork],
+    runtime_api: &Arc<dyn RuntimeApi>,
+) -> Result<IpAddr> {
+    let addrs = runtime_api.resolve_host(domain).await.map_err(|e| {
+        MediaError::invalid_argument(format!("DNS resolve failed for {domain}: {e}"))
+    })?;
+
+    if addrs.is_empty() {
+        return Err(MediaError::invalid_argument(format!(
+            "DNS resolve returned no addresses for {domain}"
+        )));
+    }
+
+    for addr in &addrs {
+        if is_internal_ip(addr) && !allowlist.iter().any(|net| net.contains(addr)) {
+            return Err(MediaError::invalid_argument(format!(
+                "forbidden proxy target address: {addr}"
+            )));
+        }
+    }
+
+    Ok(addrs[0])
 }
 
 fn normalize_ip(addr: IpAddr) -> IpAddr {
@@ -199,14 +277,6 @@ fn normalize_ip(addr: IpAddr) -> IpAddr {
         }
         other => other,
     }
-}
-
-fn is_forbidden_domain(domain: &str) -> bool {
-    let lower = domain.to_lowercase();
-    lower == "localhost"
-        || lower == "localhost.localdomain"
-        || lower.ends_with(".localhost")
-        || lower.ends_with(".local")
 }
 
 fn is_internal_ip(addr: &IpAddr) -> bool {
@@ -246,11 +316,11 @@ fn is_ipv6_link_local(v6: &Ipv6Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cheetah_runtime_api::RuntimeApi;
 
     #[test]
-    fn localhost_and_private_rejected() {
+    fn localhost_and_private_ip_literals_rejected() {
         let allowlist = [];
-        assert!(validate_url("http://localhost/x", &allowlist).is_err());
         assert!(validate_url("http://127.0.0.1/x", &allowlist).is_err());
         assert!(validate_url("http://10.0.0.1/x", &allowlist).is_err());
         assert!(validate_url("http://[::1]/x", &allowlist).is_err());
@@ -290,5 +360,36 @@ mod tests {
     fn unsupported_schemes_rejected() {
         let allowlist = [];
         assert!(validate_url("ftp://example.com/x", &allowlist).is_err());
+    }
+
+    fn tokio_runtime() -> Arc<dyn RuntimeApi> {
+        Arc::new(cheetah_runtime_tokio::TokioRuntime::new())
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn localhost_resolved_with_loopback_allowlist() {
+        let runtime = tokio_runtime();
+        let allowlist = [
+            parse_cidr("127.0.0.0/8").unwrap(),
+            parse_cidr("::1/128").unwrap(),
+        ];
+        let resolved = resolve_and_validate_url("http://localhost/x", &allowlist, &runtime)
+            .await
+            .expect("localhost should resolve to loopback with loopback allowlist");
+        assert!(
+            resolved.contains("127.") || resolved.contains("[::1]"),
+            "resolved URL should contain a loopback IP: {resolved}"
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn localhost_rejected_without_allowlist() {
+        let runtime = tokio_runtime();
+        let allowlist = [];
+        assert!(
+            resolve_and_validate_url("http://localhost/x", &allowlist, &runtime)
+                .await
+                .is_err()
+        );
     }
 }
