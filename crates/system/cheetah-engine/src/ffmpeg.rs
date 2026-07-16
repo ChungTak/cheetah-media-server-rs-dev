@@ -312,12 +312,6 @@ async fn run_ffmpeg_job(
     cmd.args(&spec.output_options);
     cmd.arg(&output_url);
 
-    let started_at = now_ms();
-    status.send_modify(|s| {
-        s.state = FfmpegJobState::Running;
-        s.started_at = Some(started_at);
-    });
-
     let mut child = match cmd.spawn() {
         Ok(child) => child,
         Err(err) => {
@@ -327,8 +321,13 @@ async fn run_ffmpeg_job(
         }
     };
 
+    let started_at = now_ms();
     let pid = child.id();
-    status.send_modify(|s| s.pid = pid);
+    status.send_modify(|s| {
+        s.state = FfmpegJobState::Running;
+        s.started_at = Some(started_at);
+        s.pid = pid;
+    });
 
     let stderr = match child.stderr.take() {
         Some(stderr) => stderr,
