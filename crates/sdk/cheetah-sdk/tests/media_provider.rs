@@ -2,14 +2,17 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cheetah_sdk::media_api::capability::{CapabilityState, MediaCapability, MediaCapabilitySet};
-use cheetah_sdk::media_api::command::{MediaQuery, SessionQuery};
+use cheetah_sdk::media_api::command::{
+    MediaQuery, OpenPlaybackRequest, PlaybackControl, PlaybackQuery, SessionQuery,
+};
 use cheetah_sdk::media_api::error::Result as MediaResult;
-use cheetah_sdk::media_api::ids::{MediaKey, MediaSchema, SessionId};
+use cheetah_sdk::media_api::ids::{MediaKey, MediaSchema, PlaybackSessionId, SessionId};
 use cheetah_sdk::media_api::model::{
-    CloseReason, CloseReport, OnlineState, Page, SessionInfo, StreamInfo,
+    CloseReason, CloseReport, OnlineState, Page, PlaybackSession, PlaybackSessionState,
+    SessionInfo, StreamInfo,
 };
 use cheetah_sdk::media_api::output::MediaOutputEndpoint;
-use cheetah_sdk::media_api::port::{MediaAdmissionApi, MediaControlApi, MediaRequestContext};
+use cheetah_sdk::media_api::port::{MediaAdmissionApi, MediaControlApi, MediaRequestContext, PlaybackApi};
 use cheetah_sdk::media_api::{AdmissionRequest, Decision};
 use cheetah_sdk::module::MediaServices;
 use cheetah_sdk::output::InMemoryMediaOutputRegistry;
@@ -90,6 +93,65 @@ impl MediaAdmissionApi for DummyAdmission {
     }
 }
 
+struct DummyPlayback;
+
+#[async_trait]
+impl PlaybackApi for DummyPlayback {
+    async fn open_playback(
+        &self,
+        _ctx: &MediaRequestContext,
+        request: OpenPlaybackRequest,
+    ) -> MediaResult<PlaybackSession> {
+        Ok(PlaybackSession {
+            session_id: PlaybackSessionId("pb-1".to_string()),
+            media_key: request.media_key,
+            file_handle: request.file_handle,
+            state: PlaybackSessionState::Pending,
+            duration_ms: 0,
+            position_ms: request.start_position_ms,
+            scale: request.scale,
+            generation: 1,
+            output_key: None,
+            last_error: None,
+            created_at: 0,
+            updated_at: 0,
+        })
+    }
+
+    async fn get_playback(
+        &self,
+        _ctx: &MediaRequestContext,
+        _id: &PlaybackSessionId,
+    ) -> MediaResult<PlaybackSession> {
+        unimplemented!()
+    }
+
+    async fn list_playbacks(
+        &self,
+        _ctx: &MediaRequestContext,
+        _query: PlaybackQuery,
+    ) -> MediaResult<Page<PlaybackSession>> {
+        unimplemented!()
+    }
+
+    async fn control_playback(
+        &self,
+        _ctx: &MediaRequestContext,
+        _id: &PlaybackSessionId,
+        _command: PlaybackControl,
+    ) -> MediaResult<PlaybackSession> {
+        unimplemented!()
+    }
+
+    async fn stop_playback(
+        &self,
+        _ctx: &MediaRequestContext,
+        _id: &PlaybackSessionId,
+    ) -> MediaResult<()> {
+        unimplemented!()
+    }
+}
+
 #[test]
 fn default_capabilities_are_empty() {
     let services = MediaServices::unavailable();
@@ -104,6 +166,15 @@ fn register_control_updates_capabilities() {
     let caps = services.capabilities();
     assert!(caps.has(MediaCapability::Query));
     assert!(caps.has(MediaCapability::SessionControl));
+}
+
+#[test]
+fn register_playback_updates_capabilities() {
+    let services = MediaServices::unavailable();
+    services.register_playback(Arc::new(DummyPlayback));
+    let caps = services.capabilities();
+    assert!(caps.has(MediaCapability::Playback));
+    assert!(services.playback().is_some());
 }
 
 #[test]

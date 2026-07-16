@@ -8,8 +8,8 @@ use cheetah_media_api::ids::*;
 use cheetah_media_api::media_file_store::DeleteBatchResult;
 use cheetah_media_api::model::*;
 use cheetah_media_api::port::{
-    MediaControlApi, MediaFacade, MediaRequestContext, ProxyApi, PublishSubscribeApi, RecordApi,
-    RtpApi, SnapshotApi,
+    MediaControlApi, MediaFacade, MediaRequestContext, PlaybackApi, ProxyApi, PublishSubscribeApi,
+    RecordApi, RtpApi, SnapshotApi,
 };
 use cheetah_media_api::{MediaCapability, MediaCapabilitySet};
 
@@ -334,6 +334,83 @@ impl SnapshotApi for FakeMediaProvider {
             failed: 0,
             failures: Vec::new(),
         })
+    }
+}
+
+#[async_trait]
+impl PlaybackApi for FakeMediaProvider {
+    async fn open_playback(
+        &self,
+        _ctx: &MediaRequestContext,
+        request: OpenPlaybackRequest,
+    ) -> MediaResult<PlaybackSession> {
+        Ok(PlaybackSession {
+            session_id: PlaybackSessionId("pb-1".to_string()),
+            media_key: request.media_key,
+            file_handle: request.file_handle,
+            state: PlaybackSessionState::Playing,
+            duration_ms: 0,
+            position_ms: request.start_position_ms,
+            scale: request.scale,
+            generation: 1,
+            output_key: None,
+            last_error: None,
+            created_at: 0,
+            updated_at: 0,
+        })
+    }
+
+    async fn get_playback(
+        &self,
+        _ctx: &MediaRequestContext,
+        _id: &PlaybackSessionId,
+    ) -> MediaResult<PlaybackSession> {
+        Err(MediaError::not_found("playback session"))
+    }
+
+    async fn list_playbacks(
+        &self,
+        _ctx: &MediaRequestContext,
+        query: PlaybackQuery,
+    ) -> MediaResult<Page<PlaybackSession>> {
+        Ok(empty_page(query.page, query.page_size))
+    }
+
+    async fn control_playback(
+        &self,
+        _ctx: &MediaRequestContext,
+        _id: &PlaybackSessionId,
+        command: PlaybackControl,
+    ) -> MediaResult<PlaybackSession> {
+        let mut session = PlaybackSession {
+            session_id: PlaybackSessionId("pb-1".to_string()),
+            media_key: key(),
+            file_handle: FileHandle("pb.mp4".to_string()),
+            state: PlaybackSessionState::Playing,
+            duration_ms: 0,
+            position_ms: 0,
+            scale: 1.0,
+            generation: 1,
+            output_key: None,
+            last_error: None,
+            created_at: 0,
+            updated_at: 0,
+        };
+        match command {
+            PlaybackControl::Pause => session.state = PlaybackSessionState::Paused,
+            PlaybackControl::Resume => session.state = PlaybackSessionState::Playing,
+            PlaybackControl::Seek { position_ms } => session.position_ms = position_ms,
+            PlaybackControl::SetScale { scale } => session.scale = scale,
+        }
+        Ok(session)
+    }
+
+    async fn stop_playback(
+        &self,
+        _ctx: &MediaRequestContext,
+        _id: &PlaybackSessionId,
+    ) -> MediaResult<()> {
+        Ok(())
     }
 }
 

@@ -25,6 +25,7 @@ id_wrapper!(RecordFileId, String);
 id_wrapper!(SnapshotId, String);
 id_wrapper!(ProxyId, String);
 id_wrapper!(RtpSessionId, String);
+id_wrapper!(PlaybackSessionId, String);
 id_wrapper!(FileHandle, String);
 id_wrapper!(IdempotencyKey, String);
 id_wrapper!(RequestId, String);
@@ -34,6 +35,14 @@ impl Default for RtpSessionId {
     /// will replace this before calling the provider.
     ///
     /// 默认为空会话 id；从 URL path 提取 id 的 adapter 会在调用 provider 前替换它。
+    fn default() -> Self {
+        Self(String::new())
+    }
+}
+
+impl Default for PlaybackSessionId {
+    /// Default to an empty session id; adapters that extract the id from the URL path
+    /// will replace this before calling the provider.
     fn default() -> Self {
         Self(String::new())
     }

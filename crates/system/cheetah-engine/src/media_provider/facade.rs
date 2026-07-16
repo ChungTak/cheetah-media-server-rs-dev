@@ -5,17 +5,19 @@ use async_trait::async_trait;
 use cheetah_media_api::command::*;
 use cheetah_media_api::error::{MediaError, Result as MediaResult};
 use cheetah_media_api::event::{MediaEventBusApi, MediaEventSender, MediaEventSubscription};
-use cheetah_media_api::ids::{MediaKey, ProxyId, RecordFileId, RtpSessionId, SessionId};
+use cheetah_media_api::ids::{
+    MediaKey, PlaybackSessionId, ProxyId, RecordFileId, RtpSessionId, SessionId,
+};
 use cheetah_media_api::image::{ImageArtifact, ImageEncodeApi, ImageEncodeRequest};
 use cheetah_media_api::media_file_store::DeleteBatchResult;
 use cheetah_media_api::model::{
     AdmissionAction, AdmissionRequest, CloseReason, CloseReport, Decision, OnlineState, Page,
-    ProxyInfo, PublisherHandle, RecordFile, RecordTask, RtpSession, SessionInfo, SnapshotHandle,
-    SnapshotInfo, StreamInfo, SubscriberHandle,
+    PlaybackSession, ProxyInfo, PublisherHandle, RecordFile, RecordTask, RtpSession, SessionInfo,
+    SnapshotHandle, SnapshotInfo, StreamInfo, SubscriberHandle,
 };
 use cheetah_media_api::port::{
-    MediaControlApi, MediaFacade, MediaRequestContext, ProxyApi, PublishSubscribeApi, RecordApi,
-    RtpApi, SnapshotApi,
+    MediaAdmissionApi, MediaControlApi, MediaFacade, MediaRequestContext, PlaybackApi, ProxyApi,
+    PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi,
 };
 use cheetah_media_api::MediaCapabilitySet;
 use cheetah_sdk::MediaServices;
@@ -339,6 +341,71 @@ impl SnapshotApi for EngineMediaFacade {
             .snapshot()
             .ok_or_else(|| MediaError::unavailable("snapshot"))?;
         provider.delete_snapshots(ctx, request).await
+    }
+}
+
+#[async_trait]
+impl PlaybackApi for EngineMediaFacade {
+    async fn open_playback(
+        &self,
+        ctx: &MediaRequestContext,
+        request: OpenPlaybackRequest,
+    ) -> MediaResult<PlaybackSession> {
+        let provider = self
+            .services
+            .playback()
+            .ok_or_else(|| MediaError::unavailable("playback"))?;
+        provider.open_playback(ctx, request).await
+    }
+
+    async fn get_playback(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &PlaybackSessionId,
+    ) -> MediaResult<PlaybackSession> {
+        let provider = self
+            .services
+            .playback()
+            .ok_or_else(|| MediaError::unavailable("playback"))?;
+        provider.get_playback(ctx, id).await
+    }
+
+    async fn list_playbacks(
+        &self,
+        ctx: &MediaRequestContext,
+        mut query: PlaybackQuery,
+    ) -> MediaResult<Page<PlaybackSession>> {
+        query.clamp_page_size();
+        let provider = self
+            .services
+            .playback()
+            .ok_or_else(|| MediaError::unavailable("playback"))?;
+        provider.list_playbacks(ctx, query).await
+    }
+
+    async fn control_playback(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &PlaybackSessionId,
+        command: PlaybackControl,
+    ) -> MediaResult<PlaybackSession> {
+        let provider = self
+            .services
+            .playback()
+            .ok_or_else(|| MediaError::unavailable("playback"))?;
+        provider.control_playback(ctx, id, command).await
+    }
+
+    async fn stop_playback(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &PlaybackSessionId,
+    ) -> MediaResult<()> {
+        let provider = self
+            .services
+            .playback()
+            .ok_or_else(|| MediaError::unavailable("playback"))?;
+        provider.stop_playback(ctx, id).await
     }
 }
 
