@@ -20,7 +20,9 @@ thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+axum = { workspace = true }
 cheetah-config = { path = "../cheetah-config" }
+cheetah-control = { path = "../cheetah-control" }
 cheetah-engine = { path = "../cheetah-engine" }
 cheetah-proxy-module = { path = "../cheetah-proxy-module" }
 cheetah-record-module = { path = "../cheetah-record-module" }

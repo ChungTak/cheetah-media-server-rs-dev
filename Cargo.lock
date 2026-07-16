@@ -792,8 +792,10 @@ name = "cheetah-media-module"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "axum",
  "bytes",
  "cheetah-config",
+ "cheetah-control",
  "cheetah-engine",
  "cheetah-media-api",
  "cheetah-proxy-module",
