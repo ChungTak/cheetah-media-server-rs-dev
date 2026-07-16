@@ -92,12 +92,19 @@ impl RecordMediaProvider {
         drop(sessions);
 
         let session = playback.open_playback(ctx, open_req).await?;
-        let id = session.session_id;
+        let new_id = session.session_id;
 
         let mut sessions = self.playback_sessions.lock().await;
-        // A concurrent caller may have inserted while we awaited; keep that one.
-        let entry = sessions.entry(file_id.0.clone()).or_insert(id);
-        Ok(entry.clone())
+        // A concurrent caller may have inserted while we awaited.  Stop the
+        // just-opened session we no longer need so it does not leak.
+        if let Some(existing) = sessions.get(&file_id.0) {
+            let existing = existing.clone();
+            drop(sessions);
+            let _ = playback.stop_playback(ctx, &new_id).await;
+            return Ok(existing);
+        }
+        sessions.insert(file_id.0.clone(), new_id.clone());
+        Ok(new_id)
     }
 }
 
