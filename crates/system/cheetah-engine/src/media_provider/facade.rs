@@ -361,10 +361,9 @@ impl ProxyApi for EngineMediaFacade {
     ) -> MediaResult<ProxyInfo> {
         let protocol = request
             .source_url
-            .split("://")
-            .next()
-            .unwrap_or("http")
-            .to_string();
+            .split_once("://")
+            .map(|(scheme, _)| scheme.to_string())
+            .unwrap_or_else(|| "http".to_string());
         self.check_admission(
             ctx,
             AdmissionAction::CreatePullProxy,
@@ -475,10 +474,9 @@ impl ProxyApi for EngineMediaFacade {
     ) -> MediaResult<ProxyInfo> {
         let protocol = request
             .source_url
-            .split("://")
-            .next()
-            .unwrap_or("http")
-            .to_string();
+            .split_once("://")
+            .map(|(scheme, _)| scheme.to_string())
+            .unwrap_or_else(|| "http".to_string());
         self.check_admission(
             ctx,
             AdmissionAction::CreateFfmpegProxy,
