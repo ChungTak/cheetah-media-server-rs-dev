@@ -35,9 +35,10 @@ pub use media_file_store::{
     sanitize_filename, DeleteBatchResult, FileDownload, FileRange, FileStoreEntry, FileStoreQuery,
     MediaFileStoreApi,
 };
-pub use model::Decision;
+pub use model::{AdmissionAction, AdmissionRequest, Decision};
 pub use output::{EndpointState, MediaOutputEndpoint};
 pub use port::{
-    ControlAuthApi, MediaControlApi, MediaFacade, MediaOutputRegistryApi, MediaRequestContext,
-    MediaUrlResolverApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookApi,
+    ControlAuthApi, MediaAdmissionApi, MediaControlApi, MediaFacade, MediaOutputRegistryApi,
+    MediaRequestContext, MediaUrlResolverApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi,
+    SnapshotApi, WebhookApi,
 };

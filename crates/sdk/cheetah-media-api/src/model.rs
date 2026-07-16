@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::MediaErrorCode;
 use crate::ids::*;
 
 /// Codec kind for a track.
@@ -465,13 +466,46 @@ pub enum RecordTemplate {
     Event,
 }
 
-/// Decision returned by a synchronous webhook hook.
+/// Decision returned by a synchronous admission hook.
 ///
-/// 同步 webhook 钩子返回的决策。
+/// 同步准入钩子返回的决策。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Decision {
     Allow,
-    Deny(String),
+    Deny {
+        /// Stable machine-readable code describing the denial.
+        code: MediaErrorCode,
+        /// Human-readable reason for the denial.
+        reason: String,
+    },
+}
+
+/// Action that an admission request asks to authorize.
+///
+/// 准入请求希望授权执行的动作。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AdmissionAction {
+    Publish,
+    Play,
+    CreatePullProxy,
+    CreatePushProxy,
+    OpenRtpReceiver,
+    OpenRtpSender,
+}
+
+/// Request for a synchronous admission decision before a side-effecting media
+/// operation is allowed to proceed.
+///
+/// 副作用媒体操作执行前请求同步准入决策。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdmissionRequest {
+    pub action: AdmissionAction,
+    pub principal: Option<crate::auth::Principal>,
+    pub resource: MediaKey,
+    pub protocol: String,
+    pub source_address: Option<String>,
+    pub params: HashMap<String, String>,
 }
 
 #[cfg(test)]
@@ -493,7 +527,10 @@ mod tests {
 
     #[test]
     fn decision_round_trips() {
-        let d = Decision::Deny("forbidden".to_string());
+        let d = Decision::Deny {
+            code: MediaErrorCode::PermissionDenied,
+            reason: "forbidden".to_string(),
+        };
         let json = serde_json::to_string(&d).unwrap();
         assert!(json.contains("Deny"));
         let de: Decision = serde_json::from_str(&json).unwrap();
@@ -506,5 +543,14 @@ mod tests {
         let json = serde_json::to_string(&reason).unwrap();
         let de: CloseReason = serde_json::from_str(&json).unwrap();
         assert_eq!(de, reason);
+    }
+
+    #[test]
+    fn admission_action_round_trips() {
+        let action = AdmissionAction::CreatePullProxy;
+        let json = serde_json::to_string(&action).unwrap();
+        assert!(json.contains("create_pull_proxy"));
+        let de: AdmissionAction = serde_json::from_str(&json).unwrap();
+        assert_eq!(de, action);
     }
 }
