@@ -117,13 +117,17 @@ impl Module for WebhookModule {
                 .map_err(|e| SdkError::InvalidArgument(e.to_string()))?
         };
         let decision_client = Self::build_decision_client(config.clone(), &ctx.engine);
+        let decision_client = Arc::new(decision_client);
         self.media_services_registration = Some(
             ctx.engine
                 .media_services
-                .register_webhook(Arc::new(decision_client.clone())),
+                .register_webhook(decision_client.clone()),
         );
+        ctx.engine
+            .media_services
+            .register_admission(decision_client.clone());
         self.dispatcher = Some(Self::build_dispatcher(config, &ctx.engine));
-        self.decision_client = Some(decision_client);
+        self.decision_client = Some((*decision_client).clone());
         self.ctx = Some(ctx.engine);
         self.state = ModuleState::Initialized;
         Ok(())

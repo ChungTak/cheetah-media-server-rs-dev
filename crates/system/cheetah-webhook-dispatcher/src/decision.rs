@@ -1,8 +1,14 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use cheetah_media_api::error::MediaErrorCode;
 use cheetah_media_api::error::Result;
+use cheetah_media_api::event::{EventHeader, SessionOpened, StreamPublished};
+use cheetah_media_api::ids::SessionId;
+use cheetah_media_api::model::{AdmissionAction, AdmissionRequest, SessionKind};
+use cheetah_media_api::port::{MediaAdmissionApi, MediaRequestContext};
 use cheetah_media_api::{Decision, MediaEvent, WebhookApi};
 use parking_lot::RwLock;
 use serde::Deserialize;
@@ -24,6 +30,7 @@ pub struct WebhookDecisionClient {
     sender: Arc<dyn WebhookSender>,
     translator: Arc<dyn WebhookTranslator>,
     url_policy: WebhookUrlPolicy,
+    seq: Arc<AtomicU64>,
 }
 
 impl WebhookDecisionClient {
@@ -38,6 +45,7 @@ impl WebhookDecisionClient {
             sender,
             translator,
             url_policy,
+            seq: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -196,6 +204,98 @@ impl WebhookApi for WebhookDecisionClient {
     }
 }
 
+#[async_trait]
+impl MediaAdmissionApi for WebhookDecisionClient {
+    async fn authorize(
+        &self,
+        ctx: &MediaRequestContext,
+        request: AdmissionRequest,
+    ) -> Result<Decision> {
+        match request.action {
+            AdmissionAction::Publish => {
+                let event = MediaEvent::StreamPublished(build_stream_published(
+                    self.next_seq(),
+                    ctx,
+                    &request,
+                ));
+                self.request_decision(event).await
+            }
+            AdmissionAction::Play => {
+                let event = MediaEvent::SessionOpened(build_session_opened(
+                    self.next_seq(),
+                    ctx,
+                    &request,
+                    SessionKind::Player,
+                ));
+                self.request_decision(event).await
+            }
+            _ => {
+                debug!(
+                    action = ?request.action,
+                    "admission action not yet supported by webhook translator; default allow"
+                );
+                Ok(Decision::Allow)
+            }
+        }
+    }
+}
+
+impl WebhookDecisionClient {
+    fn next_seq(&self) -> u64 {
+        self.seq.fetch_add(1, Ordering::Relaxed)
+    }
+}
+
+fn build_stream_published(
+    seq: u64,
+    ctx: &MediaRequestContext,
+    request: &AdmissionRequest,
+) -> StreamPublished {
+    StreamPublished {
+        header: admission_header(seq, ctx, request),
+        protocol: request.protocol.clone(),
+        remote_endpoint: request.source_address.clone(),
+        session_id: admission_session_id(seq),
+    }
+}
+
+fn build_session_opened(
+    seq: u64,
+    ctx: &MediaRequestContext,
+    request: &AdmissionRequest,
+    kind: SessionKind,
+) -> SessionOpened {
+    SessionOpened {
+        header: admission_header(seq, ctx, request),
+        kind,
+        session_id: admission_session_id(seq),
+        remote_endpoint: request.source_address.clone(),
+        protocol: request.protocol.clone(),
+    }
+}
+
+fn admission_header(
+    seq: u64,
+    ctx: &MediaRequestContext,
+    request: &AdmissionRequest,
+) -> EventHeader {
+    EventHeader {
+        event_id: format!("adm-{seq}"),
+        occurred_at: SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64,
+        sequence: None,
+        media_key: Some(request.resource.clone()),
+        source: ctx.source_adapter.clone(),
+        correlation_id: ctx.correlation_id.clone(),
+    }
+}
+
+fn admission_session_id(seq: u64) -> SessionId {
+    SessionId(format!("adm-session-{seq}"))
+}
+
 fn event_id(event: &MediaEvent) -> Result<String> {
     let mut ev = event.clone();
     Ok(ev.header_mut().event_id.clone())
@@ -251,7 +351,9 @@ mod tests {
     use crate::translator::ZlmWebhookTranslator;
     use cheetah_media_api::event::{EventHeader, MediaEvent, SessionOpened};
     use cheetah_media_api::ids::{MediaKey, SessionId};
-    use cheetah_media_api::model::SessionKind;
+    use cheetah_media_api::model::{AdmissionAction, AdmissionRequest, SessionKind};
+    use cheetah_media_api::port::MediaAdmissionApi;
+    use std::collections::HashMap;
     use std::sync::Mutex;
 
     struct FakeSender {
@@ -388,5 +490,88 @@ mod tests {
         // This test just verifies the success response path still yields Allow.
         let decision = client.request_decision(play_event()).await.unwrap();
         assert_eq!(decision, Decision::Allow);
+    }
+
+    fn play_admission_request() -> AdmissionRequest {
+        AdmissionRequest {
+            action: AdmissionAction::Play,
+            principal: None,
+            resource: MediaKey::new("__defaultVhost__", "live", "test", None).unwrap(),
+            protocol: "rtmp".to_string(),
+            source_address: Some("10.0.0.1:1935".to_string()),
+            params: HashMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn authorize_translates_play_to_on_play_and_allows() {
+        let profile = WebhookProfile {
+            name: "hook".to_string(),
+            url: "http://127.0.0.1:9999/on_play".to_string(),
+            decision_events: vec!["on_play".to_string()],
+            allowed_cidrs: vec!["127.0.0.1/32".to_string()],
+            decision_failure_policy: FailurePolicy::Deny,
+            ..Default::default()
+        };
+
+        let sender = Arc::new(FakeSender {
+            responses: Mutex::new(vec![WebhookResponse {
+                status: 200,
+                body: r#"{"code":0,"msg":"success"}"#.to_string(),
+                duration_ms: 1,
+            }]),
+        });
+
+        let client = WebhookDecisionClient::new(
+            WebhookDispatcherConfig {
+                profiles: vec![profile],
+            },
+            sender,
+            Arc::new(ZlmWebhookTranslator),
+            WebhookUrlPolicy::default(),
+        );
+
+        let ctx = MediaRequestContext::default();
+        let decision = client
+            .authorize(&ctx, play_admission_request())
+            .await
+            .unwrap();
+        assert_eq!(decision, Decision::Allow);
+    }
+
+    #[tokio::test]
+    async fn authorize_translates_play_to_on_play_and_denies() {
+        let profile = WebhookProfile {
+            name: "hook".to_string(),
+            url: "http://127.0.0.1:9999/on_play".to_string(),
+            decision_events: vec!["on_play".to_string()],
+            allowed_cidrs: vec!["127.0.0.1/32".to_string()],
+            decision_failure_policy: FailurePolicy::Deny,
+            ..Default::default()
+        };
+
+        let sender = Arc::new(FakeSender {
+            responses: Mutex::new(vec![WebhookResponse {
+                status: 200,
+                body: r#"{"code":-1,"msg":"forbidden"}"#.to_string(),
+                duration_ms: 1,
+            }]),
+        });
+
+        let client = WebhookDecisionClient::new(
+            WebhookDispatcherConfig {
+                profiles: vec![profile],
+            },
+            sender,
+            Arc::new(ZlmWebhookTranslator),
+            WebhookUrlPolicy::default(),
+        );
+
+        let ctx = MediaRequestContext::default();
+        let decision = client
+            .authorize(&ctx, play_admission_request())
+            .await
+            .unwrap();
+        assert!(matches!(decision, Decision::Deny { .. }));
     }
 }
