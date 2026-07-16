@@ -5,7 +5,7 @@ use crate::command::*;
 use crate::error::{MediaError, Result};
 use crate::event::{MediaEvent, MediaEventSender, MediaEventSubscription};
 use crate::ids::*;
-use crate::model::*;
+use crate::model::{AdmissionRequest, Decision, *};
 
 /// Request context passed to media API operations.
 ///
@@ -451,4 +451,22 @@ pub trait WebhookApi: Send + Sync {
     /// 名称与负载，短 deadline 发送，响应被解析成 `Allow`/`Deny` 决策；超时或失败
     /// 时应用对应失败策略。
     async fn request_decision(&self, event: MediaEvent) -> Result<Decision>;
+}
+
+/// Synchronous admission decision before a side-effecting media operation.
+///
+/// 副作用媒体操作前的同步准入决策。
+#[async_trait]
+pub trait MediaAdmissionApi: Send + Sync {
+    /// Ask configured admission targets whether the requested action should be
+    /// allowed. A missing provider, timeout, or failure returns a `Deny`
+    /// decision with an appropriate stable `MediaErrorCode`.
+    ///
+    /// 向配置的准入目标询问是否允许请求动作。provider 缺失、超时或失败时返回
+    /// 带有稳定 `MediaErrorCode` 的 `Deny`。
+    async fn authorize(
+        &self,
+        ctx: &MediaRequestContext,
+        request: AdmissionRequest,
+    ) -> Result<Decision>;
 }

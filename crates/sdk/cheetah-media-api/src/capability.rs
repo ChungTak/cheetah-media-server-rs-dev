@@ -19,6 +19,7 @@ pub enum MediaCapability {
     Rtp,
     Webhook,
     Playback,
+    Admission,
 }
 
 /// Runtime state of a capability advertised by a provider.
@@ -198,6 +199,7 @@ pub fn default_operations(capability: MediaCapability) -> Vec<String> {
             "control".to_string(),
             "stop".to_string(),
         ],
+        MediaCapability::Admission => vec!["authorize".to_string()],
     }
     .into_iter()
     .collect()

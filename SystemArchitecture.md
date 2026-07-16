@@ -355,6 +355,16 @@ Proxy capability wiring:
   - rejects `create_ffmpeg_proxy` with `unavailable` when the executor is missing.
 - `MediaCapabilitySet` now carries optional per-capability operation overrides so providers can advertise exactly the operations backed by their runtime dependencies.
 
+## 3.11 Admission API
+
+Synchronous admission decisions gate side-effecting media operations before they allocate resources.
+
+- `cheetah-media-api` exposes `MediaAdmissionApi::authorize(ctx, AdmissionRequest) -> Decision`.
+- `AdmissionAction` is one of `Publish`, `Play`, `CreatePullProxy`, `CreatePushProxy`, `OpenRtpReceiver`, `OpenRtpSender`.
+- `Decision` is `Allow` or `Deny { code: MediaErrorCode, reason: String }`.
+- `MediaServices` has a dedicated `Admission` slot with `register_admission` / `admission` / `unregister`.
+- The existing `WebhookApi` decision path is kept for ZLM-compatible webhook hooks but now also uses the stable `Decision` shape.
+
 ## 4. Media Model and Unification
 
 All protocol ingest into engine should converge to:

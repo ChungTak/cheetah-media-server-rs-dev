@@ -5,8 +5,8 @@ use crate::output::OutputRegistryRegistration;
 use cheetah_media_api::capability::{MediaCapabilityDescriptor, MediaCapabilityReport};
 use cheetah_media_api::image::ImageEncodeApi;
 use cheetah_media_api::port::{
-    MediaControlApi, MediaOutputRegistryApi, PlaybackApi, ProxyApi, PublishSubscribeApi, RecordApi,
-    RtpApi, SnapshotApi, WebhookApi,
+    MediaAdmissionApi, MediaControlApi, MediaOutputRegistryApi, PlaybackApi, ProxyApi,
+    PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookApi,
 };
 use cheetah_media_api::{MediaCapability, MediaCapabilitySet};
 
@@ -502,6 +502,54 @@ impl MediaServices {
             .map(|e| e.provider.clone())
     }
 
+    /// Register the admission provider.
+    ///
+    /// 注册 admission provider。
+    pub fn register_admission(
+        &self,
+        admission: Arc<dyn MediaAdmissionApi>,
+    ) -> ProviderRegistration {
+        self.register_admission_with_capabilities(admission, admission_default_capabilities())
+    }
+
+    /// Register the admission provider with explicit capabilities.
+    ///
+    /// 注册带显式能力声明的 admission provider。
+    pub fn register_admission_with_capabilities(
+        &self,
+        admission: Arc<dyn MediaAdmissionApi>,
+        capabilities: MediaCapabilitySet,
+    ) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        let provider_id = format!("admission:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
+        registry.admission = Some(ProviderEntry {
+            provider: admission,
+            generation,
+            capabilities,
+            descriptors,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::Admission,
+            provider_id: format!("admission:{generation}"),
+            generation,
+        }
+    }
+
+    /// Return the current admission provider, if any.
+    ///
+    /// 返回当前 admission provider（如有）。
+    pub fn admission(&self) -> Option<Arc<dyn MediaAdmissionApi>> {
+        self.inner
+            .read()
+            .expect("media services lock")
+            .admission
+            .as_ref()
+            .map(|e| e.provider.clone())
+    }
+
     /// Unregister a provider using a previously returned `ProviderRegistration`.
     /// Returns `true` if the registration matched and the provider was removed.
     ///
@@ -554,6 +602,9 @@ impl MediaServices {
         if let Some(entry) = &registry.webhook {
             set.merge(&entry.capabilities);
         }
+        if let Some(entry) = &registry.admission {
+            set.merge(&entry.capabilities);
+        }
         set
     }
 
@@ -590,6 +641,9 @@ impl MediaServices {
         if let Some(entry) = &registry.webhook {
             descriptors.extend(entry.descriptors.clone());
         }
+        if let Some(entry) = &registry.admission {
+            descriptors.extend(entry.descriptors.clone());
+        }
         descriptors.sort_by(|a, b| {
             a.capability
                 .cmp(&b.capability)
@@ -614,6 +668,7 @@ struct MediaProviderRegistry {
     proxy: Option<ProviderEntry<Arc<dyn ProxyApi>>>,
     rtp: Option<ProviderEntry<Arc<dyn RtpApi>>>,
     webhook: Option<ProviderEntry<Arc<dyn WebhookApi>>>,
+    admission: Option<ProviderEntry<Arc<dyn MediaAdmissionApi>>>,
     output_registry: Option<OutputRegistrySlot>,
 }
 
@@ -639,6 +694,7 @@ enum ProviderSlot<'a> {
     Proxy(&'a mut Option<ProviderEntry<Arc<dyn ProxyApi>>>),
     Rtp(&'a mut Option<ProviderEntry<Arc<dyn RtpApi>>>),
     Webhook(&'a mut Option<ProviderEntry<Arc<dyn WebhookApi>>>),
+    Admission(&'a mut Option<ProviderEntry<Arc<dyn MediaAdmissionApi>>>),
 }
 
 impl<'a> ProviderSlot<'a> {
@@ -653,6 +709,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::Proxy(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Rtp(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Webhook(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::Admission(opt) => opt.as_ref().map(|e| e.generation),
         }
     }
 
@@ -667,6 +724,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::Proxy(opt) => **opt = None,
             ProviderSlot::Rtp(opt) => **opt = None,
             ProviderSlot::Webhook(opt) => **opt = None,
+            ProviderSlot::Admission(opt) => **opt = None,
         }
     }
 }
@@ -691,6 +749,7 @@ impl MediaProviderRegistry {
             MediaCapability::Proxy => Some(ProviderSlot::Proxy(&mut self.proxy)),
             MediaCapability::Rtp => Some(ProviderSlot::Rtp(&mut self.rtp)),
             MediaCapability::Webhook => Some(ProviderSlot::Webhook(&mut self.webhook)),
+            MediaCapability::Admission => Some(ProviderSlot::Admission(&mut self.admission)),
         }
     }
 }
@@ -755,5 +814,11 @@ fn rtp_default_capabilities() -> MediaCapabilitySet {
 fn webhook_default_capabilities() -> MediaCapabilitySet {
     let mut set = MediaCapabilitySet::empty();
     set.add(MediaCapability::Webhook, 1);
+    set
+}
+
+fn admission_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::Admission, 1);
     set
 }
