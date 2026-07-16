@@ -111,7 +111,11 @@ impl RecordMediaProvider {
                 return Ok(id.clone());
             }
             OpenPlaybackRequest {
-                file_handle: FileHandle(file_id.0.clone()),
+                file_handle: FileHandle(
+                    file.file_handle
+                        .clone()
+                        .unwrap_or_else(|| file_id.0.clone()),
+                ),
                 media_key: Self::media_key_for_file(file),
                 start_position_ms: 0,
                 scale: 1.0,
