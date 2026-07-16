@@ -355,7 +355,7 @@ impl TargetWorker {
                 }
                 let delay_ms = backoff_ms(
                     job.profile.retry_interval_ms,
-                    attempts,
+                    attempts.saturating_sub(1),
                     job.profile.max_retry_duration_ms - elapsed_ms,
                 );
                 let deadline = self
