@@ -6,6 +6,10 @@ use crate::error::{MediaError, Result};
 use crate::event::{MediaEvent, MediaEventSender, MediaEventSubscription};
 use crate::ids::*;
 use crate::model::{AdmissionRequest, Decision, *};
+use crate::webhook::{
+    CreateWebhookProfileRequest, UpdateWebhookProfileRequest, WebhookProfile, WebhookProfileId,
+    WebhookTestReport,
+};
 
 /// Request context passed to media API operations.
 ///
@@ -469,4 +473,45 @@ pub trait MediaAdmissionApi: Send + Sync {
         ctx: &MediaRequestContext,
         request: AdmissionRequest,
     ) -> Result<Decision>;
+}
+
+/// Administrative management of webhook profiles.
+///
+/// 外部投递配置的管理入口。
+#[async_trait]
+pub trait WebhookAdminApi: Send + Sync {
+    /// Create a new profile. Returns the stored profile with its generation.
+    async fn create_profile(
+        &self,
+        ctx: &MediaRequestContext,
+        request: CreateWebhookProfileRequest,
+    ) -> Result<WebhookProfile>;
+
+    /// Return the profile with the given id, including its current secret.
+    async fn get_profile(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &WebhookProfileId,
+    ) -> Result<WebhookProfile>;
+
+    /// List all stored profiles.
+    async fn list_profiles(&self, ctx: &MediaRequestContext) -> Result<Vec<WebhookProfile>>;
+
+    /// Update an existing profile using expected-generation concurrency control.
+    async fn update_profile(
+        &self,
+        ctx: &MediaRequestContext,
+        request: UpdateWebhookProfileRequest,
+    ) -> Result<WebhookProfile>;
+
+    /// Delete a profile by id.
+    async fn delete_profile(&self, ctx: &MediaRequestContext, id: &WebhookProfileId) -> Result<()>;
+
+    /// Send a synthetic `WebhookTest` envelope to the profile target and return
+    /// a security summary with DNS, connect, HTTP, signature and latency.
+    async fn test_profile(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &WebhookProfileId,
+    ) -> Result<WebhookTestReport>;
 }
