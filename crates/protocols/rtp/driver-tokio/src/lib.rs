@@ -1108,8 +1108,15 @@ async fn run_driver_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cheetah_codec::{RtpHeader, RtpPacket};
-    use cheetah_rtp_core::{RtpPayloadMode, RtpTrackFilter, RtpTransportMode};
+    use bytes::Bytes;
+    use cheetah_codec::{
+        AVFrame, CodecId, FrameFormat, MediaKind, RtpHeader, RtpPacket, Timebase, TrackId,
+    };
+    use cheetah_rtp_core::{
+        RtpClientSpec, RtpConnectionType, RtpPayloadMode, RtpSendFrame, RtpServerSpec,
+        RtpTrackFilter, RtpTransportMode,
+    };
+    use std::time::Duration;
 
     #[tokio::test]
     async fn test_rtp_driver_udp_and_tcp_ingress() {
@@ -1296,6 +1303,340 @@ mod tests {
             }
             _ => panic!("Expected SessionCreated event"),
         }
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_update_session_acknowledges_generation_and_payload_type() {
+        let cancel = CancellationToken::new();
+
+        let temp_udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let udp_addr = temp_udp.local_addr().unwrap();
+        drop(temp_udp);
+
+        let temp_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let tcp_addr = temp_tcp.local_addr().unwrap();
+        drop(temp_tcp);
+
+        let config = RtpDriverConfig {
+            listen_udp: udp_addr,
+            listen_tcp: tcp_addr,
+            listen_rtcp_udp: None,
+            write_queue_capacity: 10,
+            read_buffer_size: 4096,
+            session_idle_timeout_ms: 5000,
+            max_sessions: 5,
+            tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
+            max_rtp_len_cap: 65536,
+        };
+
+        let handle = start_driver(config, cancel.clone());
+
+        let spec = RtpServerSpec {
+            session_key: "ack/1".to_string(),
+            ssrc: Some(1111),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        };
+
+        let addr = handle
+            .create_server(
+                spec,
+                Some("127.0.0.1:0".parse().unwrap()),
+                RtpSocketReuse::Exclusive,
+            )
+            .await
+            .expect("create_server should bind");
+        assert_ne!(addr.port(), 0);
+
+        // Drain the SessionCreated event so the event channel does not fill.
+        let event = tokio::time::timeout(Duration::from_secs(5), handle.recv_event())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(event, RtpCoreEvent::SessionCreated { .. }));
+
+        let ack = handle
+            .update_session("ack/1".to_string(), 1, None, Some(96), None)
+            .await
+            .expect("update should be acknowledged");
+        assert_eq!(ack.generation, 2);
+        assert_eq!(ack.ssrc, None);
+        assert_eq!(ack.payload_type, Some(96));
+
+        // Second update with the correct new generation advances again.
+        let ack2 = handle
+            .update_session("ack/1".to_string(), 2, Some(2222), None, None)
+            .await
+            .expect("second update should be acknowledged");
+        assert_eq!(ack2.generation, 3);
+        assert_eq!(ack2.ssrc, Some(2222));
+
+        // A stale generation must be rejected by the core and returned as an error.
+        let err = handle
+            .update_session("ack/1".to_string(), 1, None, Some(97), None)
+            .await;
+        assert!(err.is_err(), "stale expected_generation should be rejected");
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_rtp_driver_tcp_active_connect_and_ingress() {
+        let cancel = CancellationToken::new();
+
+        let temp_udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let udp_addr = temp_udp.local_addr().unwrap();
+        drop(temp_udp);
+
+        let temp_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let tcp_addr = temp_tcp.local_addr().unwrap();
+        drop(temp_tcp);
+
+        let fake_server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_addr = fake_server.local_addr().unwrap();
+
+        let config = RtpDriverConfig {
+            listen_udp: udp_addr,
+            listen_tcp: tcp_addr,
+            listen_rtcp_udp: None,
+            write_queue_capacity: 10,
+            read_buffer_size: 4096,
+            session_idle_timeout_ms: 5000,
+            max_sessions: 5,
+            tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
+            max_rtp_len_cap: 65536,
+        };
+
+        let handle = start_driver(config, cancel.clone());
+
+        let spec = RtpClientSpec {
+            session_key: "active/5555".to_string(),
+            destination: server_addr,
+            ssrc: 5555,
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            tcp_conn_id: None,
+            connection_type: Some(RtpConnectionType::TcpActive),
+            track_filter: RtpTrackFilter::All,
+        };
+
+        handle
+            .send_command(RtpDriverCommand::CreateClient(spec))
+            .await;
+
+        // The driver must initiate the TCP connection towards our fake server.
+        let (mut server_stream, _) =
+            tokio::time::timeout(Duration::from_secs(5), fake_server.accept())
+                .await
+                .unwrap()
+                .unwrap();
+
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 1,
+                timestamp: 100,
+                ssrc: 5555,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0x01, 0x02, 0x03]),
+        };
+        let framed = cheetah_codec::encode_tcp_rtp_frame(&rtp);
+        server_stream.write_all(&framed).await.unwrap();
+
+        let event = tokio::time::timeout(Duration::from_secs(5), handle.recv_event())
+            .await
+            .unwrap()
+            .unwrap();
+
+        match event {
+            RtpCoreEvent::SessionCreated {
+                session_key,
+                ssrc,
+                payload_mode,
+                ..
+            } => {
+                assert_eq!(session_key, "active/5555");
+                assert_eq!(ssrc, 5555);
+                assert_eq!(payload_mode, RtpPayloadMode::Ps);
+            }
+            _ => panic!("Expected SessionCreated event for active TCP client"),
+        }
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_rtp_driver_cancellation_releases_sockets() {
+        let cancel = CancellationToken::new();
+
+        let temp_udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let udp_addr = temp_udp.local_addr().unwrap();
+        drop(temp_udp);
+
+        let temp_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let tcp_addr = temp_tcp.local_addr().unwrap();
+        drop(temp_tcp);
+
+        let config = RtpDriverConfig {
+            listen_udp: udp_addr,
+            listen_tcp: tcp_addr,
+            listen_rtcp_udp: None,
+            write_queue_capacity: 10,
+            read_buffer_size: 4096,
+            session_idle_timeout_ms: 5000,
+            max_sessions: 5,
+            tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
+            max_rtp_len_cap: 65536,
+        };
+
+        let handle = start_driver(config, cancel.clone());
+
+        let spec = RtpServerSpec {
+            session_key: "release/1".to_string(),
+            ssrc: Some(1000),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        };
+
+        let actual_addr = handle
+            .create_server(
+                spec,
+                Some("127.0.0.1:0".parse().unwrap()),
+                RtpSocketReuse::Exclusive,
+            )
+            .await
+            .expect("create_server should bind");
+
+        // Drain the SessionCreated event so the event channel is clean.
+        let _ = tokio::time::timeout(Duration::from_secs(5), handle.recv_event())
+            .await
+            .unwrap();
+
+        cancel.cancel();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // After cancellation the driver must drop its sockets, allowing the OS to
+        // release the ports for immediate reuse.
+        assert!(
+            tokio::net::UdpSocket::bind(actual_addr).await.is_ok(),
+            "UDP socket should be released after cancellation"
+        );
+        assert!(
+            tokio::net::TcpListener::bind(tcp_addr).await.is_ok(),
+            "TCP listener should be released after cancellation"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rtp_driver_tcp_active_backpressure_does_not_block_command_path() {
+        let cancel = CancellationToken::new();
+
+        let temp_udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let udp_addr = temp_udp.local_addr().unwrap();
+        drop(temp_udp);
+
+        let temp_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let tcp_addr = temp_tcp.local_addr().unwrap();
+        drop(temp_tcp);
+
+        // Accept but never read, so the kernel / writer buffers fill up.
+        let fake_server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let server_addr = fake_server.local_addr().unwrap();
+
+        // Use a very small write queue so the backpressure limit is reached quickly.
+        let config = RtpDriverConfig {
+            listen_udp: udp_addr,
+            listen_tcp: tcp_addr,
+            listen_rtcp_udp: None,
+            write_queue_capacity: 2,
+            read_buffer_size: 4096,
+            session_idle_timeout_ms: 5000,
+            max_sessions: 5,
+            tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
+            max_rtp_len_cap: 65536,
+        };
+
+        let handle = start_driver(config, cancel.clone());
+
+        let spec = RtpClientSpec {
+            session_key: "backpressure/1".to_string(),
+            destination: server_addr,
+            ssrc: 2000,
+            payload_mode: RtpPayloadMode::Es,
+            transport_mode: RtpTransportMode::SendOnly,
+            tcp_conn_id: None,
+            connection_type: Some(RtpConnectionType::TcpActive),
+            track_filter: RtpTrackFilter::All,
+        };
+
+        handle
+            .send_command(RtpDriverCommand::CreateClient(spec))
+            .await;
+
+        let (_server_stream, _) =
+            tokio::time::timeout(Duration::from_secs(5), fake_server.accept())
+                .await
+                .unwrap()
+                .unwrap();
+
+        // Drain SessionCreated so the channel is empty.
+        let _ = tokio::time::timeout(Duration::from_secs(5), handle.recv_event())
+            .await
+            .unwrap();
+
+        let frame = AVFrame::new(
+            TrackId(1),
+            MediaKind::Video,
+            CodecId::H264,
+            FrameFormat::CanonicalH26x,
+            0,
+            0,
+            Timebase::new(1, 90_000),
+            Bytes::from(vec![0u8; 1024]),
+        );
+
+        for _ in 0..10 {
+            let send = RtpSendFrame {
+                session_key: "backpressure/1".to_string(),
+                frame: frame.clone(),
+            };
+            handle
+                .send_command(RtpDriverCommand::SendFrame(Box::new(send)))
+                .await;
+        }
+
+        // Even though the TCP writer path is saturated, the driver loop must remain
+        // responsive to new commands.
+        let spec2 = RtpServerSpec {
+            session_key: "backpressure/server".to_string(),
+            ssrc: Some(3000),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        };
+
+        let actual_addr = tokio::time::timeout(
+            Duration::from_millis(500),
+            handle.create_server(
+                spec2,
+                Some("127.0.0.1:0".parse().unwrap()),
+                RtpSocketReuse::Exclusive,
+            ),
+        )
+        .await
+        .expect("driver command path should not be blocked by a slow TCP consumer")
+        .expect("create_server should bind");
+
+        assert_ne!(actual_addr.port(), 0);
 
         cancel.cancel();
     }
