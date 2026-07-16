@@ -224,6 +224,10 @@ impl ProxyApi for ProxyMediaProvider {
         ctx: &MediaRequestContext,
         request: FfmpegProxyRequest,
     ) -> Result<ProxyInfo> {
+        if !self.ctx.ffmpeg_api.is_available() {
+            return Err(MediaError::unavailable("ffmpeg executor not available"));
+        }
+
         let resolved_source = resolve_and_validate_url(
             &request.source_url,
             &self.ssrf_allowlist,

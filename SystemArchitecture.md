@@ -346,6 +346,15 @@ Current FFmpeg crates:
 - Limits concurrent jobs via a `tokio::sync::Semaphore` sized at service construction.
 - Cancel terminates the process; `wait` reaps exit status; failed spawn never reaches `Running`.
 
+Proxy capability wiring:
+
+- `FfmpegApi::is_available()` reports whether an executor/provider is actually configured.
+- `cheetah-proxy-module` builds its `MediaCapability::Proxy` operation list from `FfmpegApi::is_available()`:
+  - always advertises `create_pull`, `delete_pull`, `list_pull`, `create_push`, `delete_push`;
+  - only advertises `create_ffmpeg` / `delete_ffmpeg` when `is_available()` is true;
+  - rejects `create_ffmpeg_proxy` with `unavailable` when the executor is missing.
+- `MediaCapabilitySet` now carries optional per-capability operation overrides so providers can advertise exactly the operations backed by their runtime dependencies.
+
 ## 4. Media Model and Unification
 
 All protocol ingest into engine should converge to:
