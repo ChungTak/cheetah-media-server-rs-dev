@@ -523,6 +523,45 @@ async fn admission_deny_blocks_pull_proxy() {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn admission_defaults_schemeless_proxy_source_to_http_protocol() {
+    let admission = Arc::new(FakeAdmission::new(Decision::Allow));
+    let ps = Arc::new(FakePublishSubscribe::default());
+    let proxy = Arc::new(FakeProxy::default());
+    let rtp = Arc::new(FakeRtp::default());
+    let facade = facade(
+        Some(admission.clone()),
+        ps.clone(),
+        proxy.clone(),
+        rtp.clone(),
+    );
+
+    let _ = facade
+        .create_pull_proxy(
+            &ctx(),
+            PullProxyRequest {
+                source_url: "example.com/live.flv".to_string(),
+                destination: key(),
+                retry_policy: RetryPolicy {
+                    max_retries: 0,
+                    retry_delay_ms: 0,
+                    max_retry_delay_ms: 0,
+                },
+                heartbeat_ms: None,
+                timeout_ms: 0,
+                transcode_policy: Default::default(),
+                output_policy: Default::default(),
+                record_policy: None,
+            },
+        )
+        .await
+        .expect("allowed pull proxy should succeed");
+
+    let requests = admission.take_requests();
+    assert_eq!(requests[0].protocol, "http");
+    assert!(proxy.called.load(Ordering::SeqCst));
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn admission_deny_blocks_push_proxy() {
     let admission = Arc::new(FakeAdmission::new(deny()));
     let ps = Arc::new(FakePublishSubscribe::default());
