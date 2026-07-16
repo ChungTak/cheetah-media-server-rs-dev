@@ -265,7 +265,7 @@ impl ZlmMediaHttpService {
         let key = self.parse_media_key(&params)?;
         let file_path = params["file_path"]
             .as_str()
-            .or_else(|| params["file_path"].as_str())
+            .or_else(|| params["filePath"].as_str())
             .ok_or_else(|| AdapterError::InvalidRequest("file_path is required".to_string()))?;
         let start_position_ms = parse_json_f64(&params["seek_ms"])
             .map(|v| v as i64)
