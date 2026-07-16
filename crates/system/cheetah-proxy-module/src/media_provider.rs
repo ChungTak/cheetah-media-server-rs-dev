@@ -8,13 +8,12 @@ use cheetah_media_api::error::{MediaError, Result};
 use cheetah_media_api::ids::{MediaKey, ProxyId};
 use cheetah_media_api::model::{Page, ProxyInfo, ProxyKind, ProxyState};
 use cheetah_media_api::port::{MediaRequestContext, ProxyApi};
-use cheetah_sdk::EngineContext;
-use std::net::{IpAddr, Ipv6Addr};
+use cheetah_sdk::{EngineContext, SdkError};
 use tracing::{debug, warn};
-use url::{Host, Url};
 
 use crate::config::ProxyModuleConfig;
 use crate::registry::{ProxyEntry, ProxyRegistry};
+use crate::ssrf::{validate_url, IpNetwork};
 use crate::task::{spawn_proxy_task, validate_ffmpeg_options, ProxySessionSpec};
 
 /// Bridge that exposes the proxy registry as a [`ProxyApi`] provider.
@@ -25,6 +24,7 @@ pub struct ProxyMediaProvider {
     ctx: EngineContext,
     registry: Arc<ProxyRegistry>,
     config: ProxyModuleConfig,
+    ssrf_allowlist: Arc<Vec<IpNetwork>>,
 }
 
 impl ProxyMediaProvider {
@@ -35,12 +35,18 @@ impl ProxyMediaProvider {
         ctx: EngineContext,
         registry: Arc<ProxyRegistry>,
         config: ProxyModuleConfig,
-    ) -> Self {
-        Self {
+    ) -> std::result::Result<Self, SdkError> {
+        let ssrf_allowlist = Arc::new(
+            crate::ssrf::parse_allowlist(&config.ssrf_allowlist_cidrs).map_err(|e| {
+                SdkError::InvalidArgument(format!("invalid ssrf_allowlist_cidrs: {e}"))
+            })?,
+        );
+        Ok(Self {
             ctx,
             registry,
             config,
-        }
+            ssrf_allowlist,
+        })
     }
 }
 
@@ -51,7 +57,7 @@ impl ProxyApi for ProxyMediaProvider {
         ctx: &MediaRequestContext,
         request: PullProxyRequest,
     ) -> Result<ProxyInfo> {
-        validate_url(&request.source_url)?;
+        validate_url(&request.source_url, &self.ssrf_allowlist)?;
 
         let proxy_id = self.ensure_idempotency_or_create_id(
             ctx,
@@ -144,7 +150,7 @@ impl ProxyApi for ProxyMediaProvider {
         ctx: &MediaRequestContext,
         request: PushProxyRequest,
     ) -> Result<ProxyInfo> {
-        validate_url(&request.destination_url)?;
+        validate_url(&request.destination_url, &self.ssrf_allowlist)?;
 
         let proxy_id = self.ensure_idempotency_or_create_id(
             ctx,
@@ -206,7 +212,7 @@ impl ProxyApi for ProxyMediaProvider {
         ctx: &MediaRequestContext,
         request: FfmpegProxyRequest,
     ) -> Result<ProxyInfo> {
-        validate_url(&request.source_url)?;
+        validate_url(&request.source_url, &self.ssrf_allowlist)?;
         validate_ffmpeg_options(&request.input_options, &request.output_options)
             .map_err(MediaError::invalid_argument)?;
 
@@ -374,98 +380,10 @@ fn build_proxy_info(
     }
 }
 
+/// Returns the current unix timestamp in milliseconds.
 fn now_unix_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
-}
-
-fn validate_url(url: &str) -> Result<()> {
-    let parsed =
-        Url::parse(url).map_err(|e| MediaError::invalid_argument(format!("invalid URL: {e}")))?;
-
-    match parsed.scheme() {
-        "http" | "https" | "rtmp" | "rtsp" | "srt" | "webrtc" | "rtp" => {}
-        _ => {
-            return Err(MediaError::invalid_argument(format!(
-                "unsupported URL scheme: {}",
-                parsed.scheme()
-            )))
-        }
-    }
-
-    let host = parsed
-        .host()
-        .ok_or_else(|| MediaError::invalid_argument("URL missing host".to_string()))?;
-
-    match host {
-        Host::Domain(domain) => {
-            if is_forbidden_domain(domain) {
-                return Err(MediaError::invalid_argument(format!(
-                    "forbidden proxy target host: {domain}"
-                )));
-            }
-        }
-        Host::Ipv4(ip) => {
-            let addr = IpAddr::from(ip);
-            if is_internal_ip(&addr) {
-                return Err(MediaError::invalid_argument(format!(
-                    "forbidden proxy target address: {addr}"
-                )));
-            }
-        }
-        Host::Ipv6(ip) => {
-            let addr = IpAddr::from(ip);
-            if is_internal_ip(&addr) {
-                return Err(MediaError::invalid_argument(format!(
-                    "forbidden proxy target address: {addr}"
-                )));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn is_forbidden_domain(domain: &str) -> bool {
-    let lower = domain.to_lowercase();
-    lower == "localhost"
-        || lower == "localhost.localdomain"
-        || lower.ends_with(".localhost")
-        || lower.ends_with(".local")
-}
-
-fn is_internal_ip(addr: &IpAddr) -> bool {
-    match addr {
-        IpAddr::V4(v4) => {
-            v4.is_loopback()
-                || v4.is_private()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_multicast()
-                || v4.is_broadcast()
-                || v4.is_documentation()
-        }
-        IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4_mapped() {
-                return is_internal_ip(&IpAddr::V4(v4));
-            }
-            is_ipv6_unique_local(v6)
-                || is_ipv6_link_local(v6)
-                || v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-        }
-    }
-}
-
-fn is_ipv6_unique_local(v6: &Ipv6Addr) -> bool {
-    // fc00::/7
-    v6.segments()[0] & 0xfe00 == 0xfc00
-}
-
-fn is_ipv6_link_local(v6: &Ipv6Addr) -> bool {
-    // fe80::/10
-    v6.segments()[0] & 0xffc0 == 0xfe80
 }

@@ -15,6 +15,7 @@ pub mod config;
 pub mod media_provider;
 pub mod module;
 pub mod registry;
+pub(crate) mod ssrf;
 pub mod task;
 
 pub use config::ProxyModuleConfig;

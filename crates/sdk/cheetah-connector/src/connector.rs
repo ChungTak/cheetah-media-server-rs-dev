@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use cheetah_engine::Engine;
 
 use crate::error::ConnectorError;
-use crate::handles::{LoopbackPair, PullHandle, PushHandle};
+#[cfg(feature = "loopback")]
+use crate::handles::LoopbackPair;
+use crate::handles::{PullHandle, PushHandle};
 #[cfg(feature = "loopback")]
 use crate::options::LoopbackOptions;
 use crate::options::{ConnectorPullOptions, ConnectorPushOptions};
@@ -142,8 +144,8 @@ impl RuntimeConnector for EngineConnector {
     async fn open_push(
         &self,
         protocol: Protocol,
-        url: &str,
-        options: ConnectorPushOptions,
+        _url: &str,
+        _options: ConnectorPushOptions,
     ) -> Result<PushHandle, ConnectorError> {
         crate::engine_bootstrap::validate_capability(protocol, Direction::Push, None)?;
 
@@ -151,11 +153,11 @@ impl RuntimeConnector for EngineConnector {
         match protocol {
             #[cfg(feature = "rtmp")]
             Protocol::Rtmp => {
-                crate::push::rtmp::open_rtmp_push(self.engine.clone(), url, options).await
+                crate::push::rtmp::open_rtmp_push(self.engine.clone(), _url, _options).await
             }
             #[cfg(feature = "webrtc")]
             Protocol::WebRtc => {
-                crate::push::webrtc::open_webrtc_push(self.engine.clone(), url, options).await
+                crate::push::webrtc::open_webrtc_push(self.engine.clone(), _url, _options).await
             }
             #[cfg(feature = "rtsp")]
             Protocol::Rtsp => Err(ConnectorError::UnsupportedProtocol {
