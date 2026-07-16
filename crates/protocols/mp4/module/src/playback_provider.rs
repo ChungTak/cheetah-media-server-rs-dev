@@ -97,6 +97,11 @@ impl PlaybackApi for Mp4PlaybackProvider {
         request: OpenPlaybackRequest,
     ) -> MediaResult<PlaybackSession> {
         validate_scale(request.scale)?;
+        if request.start_position_ms < 0 {
+            return Err(MediaError::invalid_argument(
+                "start_position_ms must be non-negative".to_string(),
+            ));
+        }
         let uri = self.resolve_uri(ctx, &request.file_handle, &request.media_key)?;
         let session_id = self.generate_id();
         let pb_id = PlaybackSessionId(session_id.clone());
@@ -118,7 +123,7 @@ impl PlaybackApi for Mp4PlaybackProvider {
         self.vod
             .control(ControlVodRequest {
                 session_id: session_id.clone(),
-                seek: None,
+                seek: (request.start_position_ms > 0).then_some(request.start_position_ms),
                 pause: None,
                 scale: Some(request.scale as f32),
             })
