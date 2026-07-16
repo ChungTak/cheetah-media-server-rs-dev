@@ -12,7 +12,9 @@ use cheetah_sdk::media_api::model::{
     SessionInfo, StreamInfo,
 };
 use cheetah_sdk::media_api::output::MediaOutputEndpoint;
-use cheetah_sdk::media_api::port::{MediaAdmissionApi, MediaControlApi, MediaRequestContext, PlaybackApi};
+use cheetah_sdk::media_api::port::{
+    MediaAdmissionApi, MediaControlApi, MediaRequestContext, PlaybackApi,
+};
 use cheetah_sdk::media_api::{AdmissionRequest, Decision};
 use cheetah_sdk::module::MediaServices;
 use cheetah_sdk::output::InMemoryMediaOutputRegistry;
