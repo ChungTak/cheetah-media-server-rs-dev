@@ -871,11 +871,13 @@ name = "cheetah-proxy-module"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "cheetah-codec",
  "cheetah-config",
  "cheetah-connector",
  "cheetah-engine",
  "cheetah-media-api",
+ "cheetah-rtmp-module",
  "cheetah-runtime-api",
  "cheetah-runtime-tokio",
  "cheetah-sdk",
