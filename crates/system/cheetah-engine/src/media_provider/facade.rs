@@ -187,12 +187,17 @@ impl PublishSubscribeApi for EngineMediaFacade {
         ctx: &MediaRequestContext,
         request: SubscribeRequest,
     ) -> MediaResult<SubscriberHandle> {
+        let protocol = if request.protocol.is_empty() {
+            request.output_schema.to_string()
+        } else {
+            request.protocol.clone()
+        };
         self.check_admission(
             ctx,
             AdmissionAction::Play,
             request.media_key.clone(),
-            request.output_schema.to_string(),
-            None,
+            protocol,
+            request.remote_endpoint.clone(),
             request.auth_context.clone(),
         )
         .await?;

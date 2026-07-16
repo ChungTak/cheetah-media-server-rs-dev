@@ -113,8 +113,30 @@ pub struct SubscribeRequest {
     pub subscriber_kind: String,
     #[serde(default)]
     pub start_policy: String,
+    /// Transport protocol the subscriber intends to use for admission decisions.
+    /// Falls back to `output_schema` when empty.
+    #[serde(default)]
+    pub protocol: String,
+    /// Optional client endpoint of the viewer, forwarded to admission hooks.
+    #[serde(default)]
+    pub remote_endpoint: Option<String>,
     #[serde(default)]
     pub auth_context: HashMap<String, String>,
+}
+
+impl Default for SubscribeRequest {
+    fn default() -> Self {
+        Self {
+            media_key: MediaKey::new("__defaultVhost__", "live", "test", None)
+                .expect("default key valid"),
+            output_schema: MediaSchema::Hls,
+            subscriber_kind: String::new(),
+            start_policy: String::new(),
+            protocol: String::new(),
+            remote_endpoint: None,
+            auth_context: HashMap::new(),
+        }
+    }
 }
 
 /// Start record request.

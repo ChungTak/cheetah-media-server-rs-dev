@@ -469,7 +469,12 @@ async fn admission_deny_blocks_subscriber() {
     let ps = Arc::new(FakePublishSubscribe::default());
     let proxy = Arc::new(FakeProxy::default());
     let rtp = Arc::new(FakeRtp::default());
-    let facade = facade(Some(admission), ps.clone(), proxy.clone(), rtp.clone());
+    let facade = facade(
+        Some(admission.clone()),
+        ps.clone(),
+        proxy.clone(),
+        rtp.clone(),
+    );
 
     let err = facade
         .open_subscriber(
@@ -479,6 +484,8 @@ async fn admission_deny_blocks_subscriber() {
                 output_schema: MediaSchema::Hls,
                 subscriber_kind: "".to_string(),
                 start_policy: "".to_string(),
+                protocol: "hls".to_string(),
+                remote_endpoint: Some("10.0.0.2:1234".to_string()),
                 auth_context: HashMap::new(),
             },
         )
@@ -487,6 +494,15 @@ async fn admission_deny_blocks_subscriber() {
 
     assert_eq!(err.code, MediaErrorCode::PermissionDenied);
     assert!(!ps.called.load(Ordering::SeqCst));
+
+    let requests = admission.take_requests();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].action, AdmissionAction::Play);
+    assert_eq!(requests[0].protocol, "hls");
+    assert_eq!(
+        requests[0].source_address,
+        Some("10.0.0.2:1234".to_string())
+    );
 }
 
 #[tokio::test(flavor = "current_thread")]
