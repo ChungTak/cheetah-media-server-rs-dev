@@ -641,8 +641,6 @@ async fn run_ffmpeg(
         Ok(url) => url,
         Err(err) => return RunOnceOutcome::Failed(err),
     };
-    let redacted_source_url = redact_url_credentials(&resolved_source_url);
-    let redacted_original_url = redact_url_credentials(source_url);
 
     let spec = FfmpegJobSpec {
         profile_id: "default".to_string(),
@@ -694,11 +692,13 @@ async fn run_ffmpeg(
             FfmpegJobState::Cancelled => RunOnceOutcome::Stopped,
             _ => {
                 // Strip any embedded source credentials before the summary is persisted
-                // in registry errors, logged, or returned to callers.
-                let summary = status
-                    .exit_summary
-                    .replace(&resolved_source_url, &redacted_source_url)
-                    .replace(source_url, &redacted_original_url);
+                // in registry errors, logged, or returned to callers. Also redact
+                // normalized variants (default ports, etc.) that differ from the
+                // original URL string.
+                let summary = redact_url_in_text(
+                    &redact_url_in_text(&status.exit_summary, &resolved_source_url),
+                    source_url,
+                );
                 RunOnceOutcome::Failed(summary)
             }
         },
@@ -759,6 +759,35 @@ fn redact_url_credentials(url: &str) -> String {
         }
         Err(_) => url.to_string(),
     }
+}
+
+fn extract_userinfo(url: &str) -> Option<&str> {
+    let scheme_end = url.find("://")? + 3;
+    let at = url[scheme_end..].find('@')? + scheme_end;
+    Some(&url[scheme_end..=at])
+}
+
+/// Redact the credentials in `url` wherever they appear in `text`.
+///
+/// In addition to an exact string match, this replaces the raw userinfo
+/// substring (`user:pass@` or `user@`) so normalized forms such as those with
+/// an explicit default port are also sanitized.
+fn redact_url_in_text(text: &str, url: &str) -> String {
+    let redacted = redact_url_credentials(url);
+    if redacted == url {
+        return text.to_string();
+    }
+
+    let mut result = text.replace(url, &redacted);
+    if let Some(userinfo) = extract_userinfo(url) {
+        let replacement = if userinfo.contains(':') {
+            "***:***@"
+        } else {
+            "***@"
+        };
+        result = result.replace(userinfo, replacement);
+    }
+    result
 }
 
 /// Rewrite `source_url` so its host and port match the validated `peer`.
@@ -963,5 +992,15 @@ mod tests {
         let rewritten =
             rewrite_url_to_peer("rtsp://cam.example/stream", peer).expect("rewrite should succeed");
         assert!(rewritten.contains("[::1]:554"), "{rewritten}");
+    }
+
+    #[test]
+    fn redact_url_in_text_covers_normalized_forms() {
+        let text = "connection to rtmp://user:pass@cam.example/live failed; retried rtmp://user:pass@cam.example:1935/live";
+        let redacted = redact_url_in_text(text, "rtmp://user:pass@cam.example/live/stream");
+        assert!(!redacted.contains("pass"), "{redacted}");
+        assert!(!redacted.contains("user:"), "{redacted}");
+        assert!(redacted.contains("***:***@"), "{redacted}");
+        assert!(redacted.contains("cam.example:1935"), "{redacted}");
     }
 }

@@ -382,7 +382,6 @@ async fn run_ffmpeg_job(
     let input_url = match spec.input {
         FfmpegInput::Url { url } => url,
     };
-    let redacted_input_url = redact_url_credentials(&input_url);
 
     let output_url = match spec.output {
         FfmpegOutput::Url { url } => url,
@@ -391,7 +390,6 @@ async fn run_ffmpeg_job(
             media_key.vhost.0, media_key.app.0, media_key.stream.0
         ),
     };
-    let redacted_output_url = redact_url_credentials(&output_url);
 
     let concat_input = if url_has_credentials(&input_url) {
         match ConcatInput::write(&_job_id, &input_url, &spec.input_options) {
@@ -506,9 +504,16 @@ async fn run_ffmpeg_job(
     };
 
     let stderr_lines = wait_stderr(stderr_rx).await;
-    let summary = build_exit_summary(exit_code, signal, cancelled, timed_out, &stderr_lines)
-        .replace(&input_url, &redacted_input_url)
-        .replace(&output_url, &redacted_output_url);
+    let summary = build_exit_summary(
+        exit_code,
+        signal,
+        cancelled,
+        timed_out,
+        &stderr_lines,
+        max_stderr_lines,
+    );
+    let summary = redact_url_in_text(&summary, &input_url);
+    let summary = redact_url_in_text(&summary, &output_url);
     let state = if cancelled {
         FfmpegJobState::Cancelled
     } else if exit_code == Some(0) {
@@ -600,12 +605,42 @@ fn redact_url_credentials(url: &str) -> String {
     }
 }
 
+/// Redact the credentials in `url` wherever they appear in `text`.
+///
+/// In addition to an exact string match, this replaces the raw userinfo
+/// substring (`user:pass@` or `user@`) so normalized forms such as those with
+/// an explicit default port are also sanitized.
+fn redact_url_in_text(text: &str, url: &str) -> String {
+    let redacted = redact_url_credentials(url);
+    if redacted == url {
+        return text.to_string();
+    }
+
+    let mut result = text.replace(url, &redacted);
+    if let Some(userinfo) = extract_userinfo(url) {
+        let replacement = if userinfo.contains(':') {
+            "***:***@"
+        } else {
+            "***@"
+        };
+        result = result.replace(userinfo, replacement);
+    }
+    result
+}
+
+fn extract_userinfo(url: &str) -> Option<&str> {
+    let scheme_end = url.find("://")? + 3;
+    let at = url[scheme_end..].find('@')? + scheme_end;
+    Some(&url[scheme_end..=at])
+}
+
 fn build_exit_summary(
     exit_code: Option<i32>,
     signal: Option<i32>,
     cancelled: bool,
     timed_out: bool,
     stderr_lines: &[String],
+    max_stderr_lines: usize,
 ) -> String {
     let mut parts = Vec::new();
     if cancelled {
@@ -619,7 +654,7 @@ fn build_exit_summary(
     } else {
         parts.push("no exit code".to_string());
     }
-    for line in stderr_lines.iter().rev().take(20) {
+    for line in stderr_lines.iter().rev().take(max_stderr_lines) {
         parts.push(line.clone());
     }
     parts.join(" | ")
@@ -1081,5 +1116,34 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, SdkError::NotFound(_)));
+    }
+
+    #[test]
+    fn build_exit_summary_honors_max_stderr_lines() {
+        let lines: Vec<String> = (1..=30).map(|i| format!("line {i}")).collect();
+        let summary = build_exit_summary(Some(1), None, false, false, &lines, 25);
+        assert!(summary.contains("line 30"), "{summary}");
+        assert!(summary.contains("line 6"), "{summary}");
+        assert!(!summary.contains("line 5 |"), "{summary}");
+    }
+
+    #[test]
+    fn extract_userinfo_parses_common_forms() {
+        assert_eq!(
+            extract_userinfo("rtsp://user:secret@host"),
+            Some("user:secret@")
+        );
+        assert_eq!(extract_userinfo("rtsp://user@host"), Some("user@"));
+        assert_eq!(extract_userinfo("rtsp://host"), None);
+    }
+
+    #[test]
+    fn redact_url_in_text_covers_normalized_forms() {
+        let text = "failed rtsp://user:secret@host/stream and rtsp://user:secret@host:554/stream";
+        let redacted = redact_url_in_text(text, "rtsp://user:secret@host/stream");
+        assert!(!redacted.contains("secret"), "{redacted}");
+        assert!(!redacted.contains("user:"), "{redacted}");
+        assert!(redacted.contains("***:***@"), "{redacted}");
+        assert!(redacted.contains("host:554"), "{redacted}");
     }
 }
