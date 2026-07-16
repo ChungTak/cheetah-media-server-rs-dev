@@ -147,13 +147,14 @@
 | `MediaErrorCode` | ZLM `code` | 含义 |
 | --- | --- | --- |
 | `InvalidArgument` | `-300` | 参数缺失/格式错误/别名冲突 |
-| `Unauthorized` | `-100` | 未认证/无 scope |
-| `Forbidden` | `-101` | 有认证但权限不足 |
+| `Unauthenticated` | `-100` | 未认证/无 scope |
+| `PermissionDenied` | `-100` | 有认证但权限不足 |
 | `NotFound` | `-500` | 资源/会话/流不存在 |
-| `Unavailable` | `-200` | 能力未注册/ provider 未启动 |
+| `Unavailable` | `-400` | 能力未注册/ provider 未启动 |
+| `StorageFailed` | `-200` | 存储操作失败 |
 | `Unsupported` | `-501` | 能力被能力门控明确拒绝（非媒体能力） |
-| `Conflict` | `-409` | 同 idempotency key 冲突或资源重复 |
-| `Internal` | `-1` | 内部错误/未分类 |
+| `Conflict` | `-300` | 同幂等键冲突或资源重复 |
+| `Internal` | `-400` | 内部错误/未分类 |
 
 ### 4. 响应信封
 
@@ -168,7 +169,7 @@
 - `openRtpServer` 成功：`{"code":0,"data":{"port":10000,"ssrc":123456,"session_id":"..."}}`
 - `startRecord` 成功：`{"code":0,"data":{"result":true,"taskId":"..."}}`
 - `getSnap` 成功：HTTP 200 + `image/jpeg` 二进制，首字节 `FF D8 FF`。
-- `getSnap` 非 JPEG 失败：`{"code":-1,"msg":"snapshot is not a decodable JPEG"}`。
+- `getSnap` 非 JPEG 失败：`{"code":-400,"msg":"snapshot is not a decodable JPEG"}`。
 - `loadMP4File` 成功：`{"code":0,"data":{"sessionId":"...","duration_ms":0}}`。
 - 任意 capability-gated 路由：`{"code":-501,"msg":"unsupported capability: ..."}`。
 
