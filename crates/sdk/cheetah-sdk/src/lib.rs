@@ -71,8 +71,9 @@ pub use media_data_plane::{
 pub use media_session::{default_session_directory, MediaSessionDirectoryApi, SessionCloseHandle};
 pub use module::{
     EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse, HttpRouteDescriptor,
-    HttpRouteMount, MediaServices, Module, ModuleCapability, ModuleFactory, ModuleHttpService,
-    ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState, ProviderRegistration,
+    HttpRouteMount, MediaServices, MediaServicesWeak, Module, ModuleCapability, ModuleFactory,
+    ModuleHttpService, ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState,
+    ProviderRegistration,
 };
 pub use output::{InMemoryMediaOutputRegistry, MediaOutputEndpoint, OutputRegistryRegistration};
 pub use service::{

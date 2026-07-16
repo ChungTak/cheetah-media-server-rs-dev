@@ -38,6 +38,18 @@ pub struct MediaServices {
     idempotency: Arc<InMemoryIdempotencyRepository>,
 }
 
+/// A weak handle to `MediaServices` that does not keep the registry alive.
+///
+/// Used by providers that are themselves stored in the registry to avoid
+/// reference cycles while still allowing lazy capability lookups.
+///
+/// `MediaServices` 的弱引用，不会阻止注册表被释放。供本身被保存在注册表中的
+/// provider 使用，以避免循环引用，同时仍支持延迟查询能力。
+#[derive(Clone)]
+pub struct MediaServicesWeak {
+    inner: std::sync::Weak<RwLock<MediaProviderRegistry>>,
+}
+
 impl MediaServices {
     /// Create a media services bundle with all capabilities unavailable.
     ///
@@ -46,6 +58,15 @@ impl MediaServices {
         Self {
             inner: Arc::new(RwLock::new(MediaProviderRegistry::empty())),
             idempotency: Arc::new(InMemoryIdempotencyRepository::new()),
+        }
+    }
+
+    /// Return a weak handle to this registry.
+    ///
+    /// 返回指向该注册表的弱引用。
+    pub fn downgrade(&self) -> MediaServicesWeak {
+        MediaServicesWeak {
+            inner: Arc::downgrade(&self.inner),
         }
     }
 
@@ -338,7 +359,20 @@ impl MediaServices {
             .as_ref()
             .map(|e| e.provider.clone())
     }
+}
 
+impl MediaServicesWeak {
+    /// Return the current playback provider, if any.
+    ///
+    /// 返回当前回放 provider（如有）。
+    pub fn playback(&self) -> Option<Arc<dyn PlaybackApi>> {
+        let inner = self.inner.upgrade()?;
+        let guard = inner.read().expect("media services lock");
+        guard.playback.as_ref().map(|e| e.provider.clone())
+    }
+}
+
+impl MediaServices {
     /// Register the image encode provider.
     ///
     /// 注册图片编码 provider。

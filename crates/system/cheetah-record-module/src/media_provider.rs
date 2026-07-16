@@ -11,7 +11,7 @@ use cheetah_media_api::ids::{FileHandle, MediaKey, PlaybackSessionId, RecordFile
 use cheetah_media_api::model::{Page, RecordFile, RecordTask, RecordTaskState};
 use cheetah_media_api::port::{MediaRequestContext, PlaybackApi, RecordApi as RecordApiPort};
 use cheetah_media_api::MediaFileStoreApi;
-use cheetah_sdk::MediaServices;
+use cheetah_sdk::MediaServicesWeak;
 use parking_lot::Mutex as SyncMutex;
 
 use crate::api::{RecordApi, RecordApiError, RecordTemplate};
@@ -30,7 +30,7 @@ pub struct RecordMediaProvider {
     api: Arc<RecordApi>,
     playback: Arc<PlaybackRegistry>,
     file_store: Arc<dyn MediaFileStoreApi>,
-    media_services: MediaServices,
+    media_services: MediaServicesWeak,
     playback_sessions: Arc<SyncMutex<HashMap<String, PlaybackSessionId>>>,
 }
 
@@ -41,7 +41,7 @@ impl RecordMediaProvider {
     pub fn new(
         api: Arc<RecordApi>,
         file_store: Arc<dyn MediaFileStoreApi>,
-        media_services: MediaServices,
+        media_services: MediaServicesWeak,
     ) -> Self {
         Self {
             api,
@@ -578,6 +578,7 @@ mod tests {
     };
     use cheetah_media_api::ids::{IdempotencyKey, MediaKey};
     use cheetah_media_api::model::{PlaybackSession, PlaybackSessionState, StoragePolicy};
+    use cheetah_sdk::MediaServices;
     use parking_lot::Mutex;
 
     struct MockExecutor;
@@ -696,7 +697,7 @@ mod tests {
                 bus,
             )),
             Arc::new(MockFileStore),
-            cheetah_sdk::MediaServices::unavailable(),
+            cheetah_sdk::MediaServices::unavailable().downgrade(),
         )
     }
 
@@ -1107,7 +1108,7 @@ mod tests {
                 bus,
             )),
             Arc::new(MockFileStore),
-            services,
+            services.downgrade(),
         );
 
         provider

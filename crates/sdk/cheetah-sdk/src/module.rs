@@ -174,7 +174,7 @@ pub struct ModuleManifest {
     pub capabilities: Vec<ModuleCapability>,
 }
 
-pub use crate::media_provider::{MediaServices, ProviderRegistration};
+pub use crate::media_provider::{MediaServices, MediaServicesWeak, ProviderRegistration};
 
 /// Capability injection handle passed to every module during initialization.
 ///
