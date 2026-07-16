@@ -12,7 +12,7 @@ use cheetah_media_api::model::{Page, RecordFile, RecordTask, RecordTaskState};
 use cheetah_media_api::port::{MediaRequestContext, PlaybackApi, RecordApi as RecordApiPort};
 use cheetah_media_api::MediaFileStoreApi;
 use cheetah_sdk::MediaServices;
-use tokio::sync::Mutex as AsyncMutex;
+use parking_lot::Mutex as SyncMutex;
 
 use crate::api::{RecordApi, RecordApiError, RecordTemplate};
 use crate::metadata::{
@@ -31,7 +31,7 @@ pub struct RecordMediaProvider {
     playback: Arc<PlaybackRegistry>,
     file_store: Arc<dyn MediaFileStoreApi>,
     media_services: MediaServices,
-    playback_sessions: Arc<AsyncMutex<HashMap<String, PlaybackSessionId>>>,
+    playback_sessions: Arc<SyncMutex<HashMap<String, PlaybackSessionId>>>,
 }
 
 impl RecordMediaProvider {
@@ -48,7 +48,7 @@ impl RecordMediaProvider {
             playback: Arc::new(PlaybackRegistry::new()),
             file_store,
             media_services,
-            playback_sessions: Arc::new(AsyncMutex::new(HashMap::new())),
+            playback_sessions: Arc::new(SyncMutex::new(HashMap::new())),
         }
     }
 
@@ -105,32 +105,36 @@ impl RecordMediaProvider {
         file: &RecordFileMetadata,
         playback: &Arc<dyn PlaybackApi>,
     ) -> Result<PlaybackSessionId> {
-        let sessions = self.playback_sessions.lock().await;
-        if let Some(id) = sessions.get(&file_id.0) {
-            return Ok(id.clone());
-        }
-
-        let open_req = OpenPlaybackRequest {
-            file_handle: FileHandle(file_id.0.clone()),
-            media_key: Self::media_key_for_file(file),
-            start_position_ms: 0,
-            scale: 1.0,
+        let open_req = {
+            let sessions = self.playback_sessions.lock();
+            if let Some(id) = sessions.get(&file_id.0) {
+                return Ok(id.clone());
+            }
+            OpenPlaybackRequest {
+                file_handle: FileHandle(file_id.0.clone()),
+                media_key: Self::media_key_for_file(file),
+                start_position_ms: 0,
+                scale: 1.0,
+            }
         };
-        drop(sessions);
 
         let session = playback.open_playback(ctx, open_req).await?;
         let new_id = session.session_id;
 
-        let mut sessions = self.playback_sessions.lock().await;
-        // A concurrent caller may have inserted while we awaited.  Stop the
-        // just-opened session we no longer need so it does not leak.
-        if let Some(existing) = sessions.get(&file_id.0) {
-            let existing = existing.clone();
-            drop(sessions);
+        let existing = {
+            let mut sessions = self.playback_sessions.lock();
+            if let Some(existing) = sessions.get(&file_id.0).cloned() {
+                Some(existing)
+            } else {
+                sessions.insert(file_id.0.clone(), new_id.clone());
+                None
+            }
+        };
+
+        if let Some(existing) = existing {
             let _ = playback.stop_playback(ctx, &new_id).await;
             return Ok(existing);
         }
-        sessions.insert(file_id.0.clone(), new_id.clone());
         Ok(new_id)
     }
 }
@@ -373,15 +377,13 @@ impl RecordApiPort for RecordMediaProvider {
         // Only MP4 files can be delegated to the shared `PlaybackApi`.
         // Other formats and setups without a playback provider keep using
         // the in-memory state registry for backward compatibility.
-        if file.format != RecordFormatStr::Mp4 || self.media_services.playback().is_none() {
+        let playback = self.media_services.playback();
+        if file.format != RecordFormatStr::Mp4 || playback.is_none() {
             let _ = self.playback.apply(&file_id.0, file.duration_ms, command)?;
             return Ok(());
         }
 
-        let playback = self
-            .media_services
-            .playback()
-            .expect("playback checked above");
+        let playback = playback.expect("playback checked above");
 
         let control = Self::validate_and_clamp(&command, file.duration_ms)?;
         let pb_id = self
@@ -394,7 +396,10 @@ impl RecordApiPort for RecordMediaProvider {
                 // The cached session ended (e.g. VOD loop_count=1 finished and
                 // the registry removed it).  Drop the stale mapping and retry
                 // once with a fresh session so subsequent controls keep working.
-                self.playback_sessions.lock().await.remove(&file_id.0);
+                {
+                    let mut sessions = self.playback_sessions.lock();
+                    sessions.remove(&file_id.0);
+                }
                 let pb_id = self
                     .playback_session_for_file(ctx, file_id, &file, &playback)
                     .await?;

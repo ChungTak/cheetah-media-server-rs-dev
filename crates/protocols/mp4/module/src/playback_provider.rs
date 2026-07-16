@@ -268,6 +268,9 @@ fn map_vod_error(err: VodApiError) -> MediaError {
         VodApiError::Session(SessionError::CapacityExceeded(cap)) => {
             MediaError::unavailable(format!("playback capacity exceeded: {cap}"))
         }
+        VodApiError::Driver(msg) if msg.contains("channel closed") => {
+            MediaError::not_found(format!("vod session closed: {msg}"))
+        }
         VodApiError::Driver(msg) => MediaError::internal(format!("vod driver: {msg}")),
         VodApiError::NotFound(msg) => MediaError::not_found(msg),
     }
