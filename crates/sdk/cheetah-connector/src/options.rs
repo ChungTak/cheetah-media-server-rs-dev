@@ -1,3 +1,5 @@
+use std::net::SocketAddr;
+
 use crate::protocol::Protocol;
 
 #[cfg(feature = "rtsp")]
@@ -10,6 +12,9 @@ use cheetah_rtsp_module::pull::RtspPullOptions;
 pub struct ConnectorPullOptions {
     pub subscriber: cheetah_sdk::SubscriberOptions,
     pub cancel: Option<cheetah_runtime_api::CancellationToken>,
+    /// Pre-resolved peer address. When `Some`, the connector connects to this
+    /// address instead of re-resolving the URL hostname, which prevents DNS rebinding.
+    pub peer: Option<SocketAddr>,
     pub protocol: ProtocolPullExtras,
 }
 
@@ -52,6 +57,9 @@ pub struct ConnectorPushOptions {
     pub publisher: cheetah_sdk::PublisherOptions,
     pub cancel: Option<cheetah_runtime_api::CancellationToken>,
     pub tracks: Vec<cheetah_codec::TrackInfo>,
+    /// Pre-resolved peer address. When `Some`, the connector connects to this
+    /// address instead of re-resolving the URL hostname, which prevents DNS rebinding.
+    pub peer: Option<SocketAddr>,
     pub protocol: ProtocolPushExtras,
 }
 

@@ -129,6 +129,7 @@ modules:
             ConnectorPullOptions {
                 subscriber: Default::default(),
                 cancel: None,
+                peer: None,
                 protocol: ProtocolPullExtras::HttpFlv {
                     reconnect: None,
                     read_limits: None,
