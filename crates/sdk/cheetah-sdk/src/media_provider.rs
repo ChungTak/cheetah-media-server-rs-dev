@@ -5,8 +5,8 @@ use crate::output::OutputRegistryRegistration;
 use cheetah_media_api::capability::{MediaCapabilityDescriptor, MediaCapabilityReport};
 use cheetah_media_api::image::ImageEncodeApi;
 use cheetah_media_api::port::{
-    MediaAdmissionApi, MediaControlApi, MediaOutputRegistryApi, ProxyApi, PublishSubscribeApi,
-    RecordApi, RtpApi, SnapshotApi, WebhookAdminApi, WebhookApi,
+    MediaAdmissionApi, MediaControlApi, MediaOutputRegistryApi, PlaybackApi, ProxyApi,
+    PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookAdminApi, WebhookApi,
 };
 use cheetah_media_api::{MediaCapability, MediaCapabilitySet};
 
@@ -294,6 +294,51 @@ impl MediaServices {
             .map(|e| e.provider.clone())
     }
 
+    /// Register the playback provider.
+    ///
+    /// 注册回放 provider。
+    pub fn register_playback(&self, playback: Arc<dyn PlaybackApi>) -> ProviderRegistration {
+        self.register_playback_with_capabilities(playback, playback_default_capabilities())
+    }
+
+    /// Register the playback provider with explicit capabilities.
+    ///
+    /// 注册带显式能力声明的回放 provider。
+    pub fn register_playback_with_capabilities(
+        &self,
+        playback: Arc<dyn PlaybackApi>,
+        capabilities: MediaCapabilitySet,
+    ) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        let provider_id = format!("playback:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
+        registry.playback = Some(ProviderEntry {
+            provider: playback,
+            generation,
+            capabilities,
+            descriptors,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::Playback,
+            provider_id: format!("playback:{generation}"),
+            generation,
+        }
+    }
+
+    /// Return the current playback provider, if any.
+    ///
+    /// 返回当前回放 provider（如有）。
+    pub fn playback(&self) -> Option<Arc<dyn PlaybackApi>> {
+        self.inner
+            .read()
+            .expect("media services lock")
+            .playback
+            .as_ref()
+            .map(|e| e.provider.clone())
+    }
+
     /// Register the image encode provider.
     ///
     /// 注册图片编码 provider。
@@ -577,6 +622,9 @@ impl MediaServices {
         if let Some(entry) = &registry.snapshot {
             set.merge(&entry.capabilities);
         }
+        if let Some(entry) = &registry.playback {
+            set.merge(&entry.capabilities);
+        }
         if let Some(entry) = &registry.image_encode {
             set.merge(&entry.capabilities);
         }
@@ -616,6 +664,9 @@ impl MediaServices {
         if let Some(entry) = &registry.snapshot {
             descriptors.extend(entry.descriptors.clone());
         }
+        if let Some(entry) = &registry.playback {
+            descriptors.extend(entry.descriptors.clone());
+        }
         if let Some(entry) = &registry.image_encode {
             descriptors.extend(entry.descriptors.clone());
         }
@@ -653,6 +704,7 @@ struct MediaProviderRegistry {
     publish_subscribe: Option<ProviderEntry<Arc<dyn PublishSubscribeApi>>>,
     record: Option<ProviderEntry<Arc<dyn RecordApi>>>,
     snapshot: Option<ProviderEntry<Arc<dyn SnapshotApi>>>,
+    playback: Option<ProviderEntry<Arc<dyn PlaybackApi>>>,
     image_encode: Option<ProviderEntry<Arc<dyn ImageEncodeApi>>>,
     proxy: Option<ProviderEntry<Arc<dyn ProxyApi>>>,
     rtp: Option<ProviderEntry<Arc<dyn RtpApi>>>,
@@ -679,6 +731,7 @@ enum ProviderSlot<'a> {
     PublishSubscribe(&'a mut Option<ProviderEntry<Arc<dyn PublishSubscribeApi>>>),
     Record(&'a mut Option<ProviderEntry<Arc<dyn RecordApi>>>),
     Snapshot(&'a mut Option<ProviderEntry<Arc<dyn SnapshotApi>>>),
+    Playback(&'a mut Option<ProviderEntry<Arc<dyn PlaybackApi>>>),
     ImageEncode(&'a mut Option<ProviderEntry<Arc<dyn ImageEncodeApi>>>),
     Proxy(&'a mut Option<ProviderEntry<Arc<dyn ProxyApi>>>),
     Rtp(&'a mut Option<ProviderEntry<Arc<dyn RtpApi>>>),
@@ -694,6 +747,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::PublishSubscribe(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Record(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Snapshot(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::Playback(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::ImageEncode(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Proxy(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Rtp(opt) => opt.as_ref().map(|e| e.generation),
@@ -709,6 +763,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::PublishSubscribe(opt) => **opt = None,
             ProviderSlot::Record(opt) => **opt = None,
             ProviderSlot::Snapshot(opt) => **opt = None,
+            ProviderSlot::Playback(opt) => **opt = None,
             ProviderSlot::ImageEncode(opt) => **opt = None,
             ProviderSlot::Proxy(opt) => **opt = None,
             ProviderSlot::Rtp(opt) => **opt = None,
@@ -732,10 +787,9 @@ impl MediaProviderRegistry {
             MediaCapability::Publish | MediaCapability::Subscribe => {
                 Some(ProviderSlot::PublishSubscribe(&mut self.publish_subscribe))
             }
-            MediaCapability::Record | MediaCapability::Playback => {
-                Some(ProviderSlot::Record(&mut self.record))
-            }
+            MediaCapability::Record => Some(ProviderSlot::Record(&mut self.record)),
             MediaCapability::Snapshot => Some(ProviderSlot::Snapshot(&mut self.snapshot)),
+            MediaCapability::Playback => Some(ProviderSlot::Playback(&mut self.playback)),
             MediaCapability::ImageEncode => Some(ProviderSlot::ImageEncode(&mut self.image_encode)),
             MediaCapability::Proxy => Some(ProviderSlot::Proxy(&mut self.proxy)),
             MediaCapability::Rtp => Some(ProviderSlot::Rtp(&mut self.rtp)),
@@ -778,6 +832,12 @@ fn record_default_capabilities() -> MediaCapabilitySet {
 fn snapshot_default_capabilities() -> MediaCapabilitySet {
     let mut set = MediaCapabilitySet::empty();
     set.add(MediaCapability::Snapshot, 1);
+    set
+}
+
+fn playback_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::Playback, 1);
     set
 }
 

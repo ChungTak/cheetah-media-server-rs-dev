@@ -371,6 +371,40 @@ pub enum RtpTcpMode {
     Active,
 }
 
+/// Playback session state.
+///
+/// 回放会话状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaybackSessionState {
+    Pending,
+    Playing,
+    Paused,
+    Seeking,
+    Completed,
+    Failed,
+}
+
+/// Playback session information.
+///
+/// 回放会话信息。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PlaybackSession {
+    pub session_id: PlaybackSessionId,
+    pub media_key: MediaKey,
+    pub file_handle: FileHandle,
+    pub state: PlaybackSessionState,
+    pub duration_ms: u64,
+    pub position_ms: i64,
+    pub scale: f64,
+    pub generation: u64,
+    pub output_key: Option<MediaKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
 /// Page of results.
 ///
 /// 分页结果。

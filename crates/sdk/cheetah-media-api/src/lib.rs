@@ -30,7 +30,7 @@ pub use capability::{
 };
 pub use error::{MediaError, MediaErrorCode};
 pub use event::MediaEvent;
-pub use ids::{AppName, MediaKey, MediaSchema, StreamName, VhostName};
+pub use ids::{AppName, MediaKey, MediaSchema, PlaybackSessionId, StreamName, VhostName};
 pub use image::{ImageArtifact, ImageEncodeApi, ImageEncodeRequest, ImageFormat};
 pub use media_file_store::{
     sanitize_filename, DeleteBatchResult, FileDownload, FileRange, FileStoreEntry, FileStoreQuery,
@@ -40,8 +40,8 @@ pub use model::{AdmissionAction, AdmissionRequest, Decision};
 pub use output::{EndpointState, MediaOutputEndpoint};
 pub use port::{
     ControlAuthApi, MediaAdmissionApi, MediaControlApi, MediaFacade, MediaOutputRegistryApi,
-    MediaRequestContext, MediaUrlResolverApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi,
-    SnapshotApi, WebhookAdminApi, WebhookApi,
+    MediaRequestContext, MediaUrlResolverApi, PlaybackApi, ProxyApi, PublishSubscribeApi,
+    RecordApi, RtpApi, SnapshotApi, WebhookAdminApi, WebhookApi,
 };
 pub use webhook::{
     CreateWebhookProfileRequest, UpdateWebhookProfileRequest, WebhookFailurePolicy, WebhookProfile,
