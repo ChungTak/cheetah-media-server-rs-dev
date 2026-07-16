@@ -10,7 +10,10 @@ use cheetah_media_api::event::{EventHeader, MediaEvent, ProxyStateChanged};
 use cheetah_media_api::ids::{MediaKey, ProxyId};
 use cheetah_media_api::model::ProxyState;
 use cheetah_runtime_api::{CancellationToken, RuntimeApi};
-use cheetah_sdk::{EngineContext, FfmpegJob, TaskId, TaskKind, TaskOutcome};
+use cheetah_sdk::{
+    EngineContext, FfmpegInput, FfmpegJobSpec, FfmpegJobState, FfmpegOutput, FfmpegResourceLimits,
+    TaskId, TaskKind, TaskOutcome,
+};
 use futures::future::{select, Either};
 use futures::Future;
 #[cfg(any(feature = "rtsp", feature = "http-flv", feature = "rtmp"))]
@@ -200,6 +203,7 @@ async fn run_once(
                 output_options,
                 job_id,
                 cancel,
+                config,
             )
             .await
         }
@@ -625,6 +629,7 @@ async fn run_ffmpeg(
     output_options: &[String],
     job_id: &str,
     cancel: &CancellationToken,
+    config: &ProxyModuleConfig,
 ) -> RunOnceOutcome {
     if let Err(e) = validate_ffmpeg_options(input_options, output_options) {
         return RunOnceOutcome::Failed(e);
@@ -637,30 +642,55 @@ async fn run_ffmpeg(
         Err(err) => return RunOnceOutcome::Failed(err),
     };
 
-    let command = build_ffmpeg_command(
-        &resolved_source_url,
-        destination,
-        input_options,
-        output_options,
-    );
-    let job = FfmpegJob {
-        job_id: job_id.to_string(),
-        command,
+    let spec = FfmpegJobSpec {
+        profile_id: "default".to_string(),
+        input: FfmpegInput::Url {
+            url: resolved_source_url,
+        },
+        output: FfmpegOutput::Engine {
+            media_key: destination.clone(),
+        },
+        input_options: input_options.to_vec(),
+        output_options: output_options.to_vec(),
+        timeout_ms: config.ffmpeg_timeout_ms,
+        resource_limits: FfmpegResourceLimits::default(),
     };
-    if let Err(e) = ctx.ffmpeg_api.submit_job(job) {
-        return RunOnceOutcome::Failed(format!("submit ffmpeg job: {e}"));
-    }
 
-    // LocalFfmpegService is a typed job registry (no child process). Keep the
-    // proxy Connected while the job is registered so delete can cancel it.
+    let handle = match ctx.ffmpeg_api.submit(job_id.to_string(), spec).await {
+        Ok(handle) => handle,
+        Err(e) => return RunOnceOutcome::Failed(format!("submit ffmpeg job: {e}")),
+    };
+
     registry.update_state(proxy_id, ProxyState::Connected);
     registry.update_error(proxy_id, None);
     publish_state(ctx, proxy_id, ProxyState::Connected, None);
-    debug!(proxy_id = %proxy_id.0, job_id, "ffmpeg proxy job registered");
+    debug!(proxy_id = %proxy_id.0, job_id, "ffmpeg proxy job submitted");
 
-    cancel.cancelled().await;
-    let _ = ctx.ffmpeg_api.cancel_job(job_id);
-    RunOnceOutcome::Stopped
+    let wait_fut = Box::pin(ctx.ffmpeg_api.wait(&handle.job_id));
+    let cancel_fut = Box::pin(cancel.cancelled());
+    let status = match select(wait_fut, cancel_fut).await {
+        Either::Left((result, _)) => result,
+        Either::Right(((), _)) => {
+            let _ = ctx.ffmpeg_api.cancel(&handle.job_id).await;
+            match ctx.ffmpeg_api.wait(&handle.job_id).await {
+                Ok(s) => Ok(s),
+                Err(e) => {
+                    return RunOnceOutcome::Failed(format!(
+                        "ffmpeg job cancelled but failed to wait: {e}"
+                    ));
+                }
+            }
+        }
+    };
+
+    match status {
+        Ok(status) => match status.state {
+            FfmpegJobState::Exited if status.exit_code == Some(0) => RunOnceOutcome::Stopped,
+            FfmpegJobState::Cancelled => RunOnceOutcome::Stopped,
+            _ => RunOnceOutcome::Failed(status.exit_summary),
+        },
+        Err(e) => RunOnceOutcome::Failed(format!("ffmpeg job error: {e}")),
+    }
 }
 
 /// Validate FFmpeg option tokens: no shell metacharacters, newlines, or
@@ -700,25 +730,7 @@ pub fn validate_ffmpeg_options(input: &[String], output: &[String]) -> Result<()
     Ok(())
 }
 
-fn build_ffmpeg_command(
-    source_url: &str,
-    destination: &MediaKey,
-    input_options: &[String],
-    output_options: &[String],
-) -> String {
-    let mut parts = Vec::with_capacity(8 + input_options.len() + output_options.len());
-    parts.push("ffmpeg".to_string());
-    parts.extend(input_options.iter().cloned());
-    parts.push("-i".to_string());
-    parts.push(redact_url_credentials(source_url));
-    parts.extend(output_options.iter().cloned());
-    parts.push(format!(
-        "engine://{}/{}/{}",
-        destination.vhost.0, destination.app.0, destination.stream.0
-    ));
-    parts.join(" ")
-}
-
+#[cfg(test)]
 fn redact_url_credentials(url: &str) -> String {
     match Url::parse(url) {
         Ok(mut u) => {
