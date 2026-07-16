@@ -132,6 +132,7 @@ jobs:
     name: S5 - Release profile build and artifact smoke
     needs: s0-toolchain
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
 
@@ -148,7 +149,7 @@ jobs:
       - name: S5 - Binary smoke test
         run: |
           set -euo pipefail
-          ./target/release/cheetah-server --help || true
+          ./target/release/cheetah-server --help
 
       - name: S5 - Upload release artifact
         uses: actions/upload-artifact@ea165f8d4b37e84e4d54d34e33cd6c3493a51c99

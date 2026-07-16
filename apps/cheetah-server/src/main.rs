@@ -72,6 +72,21 @@ use tracing::{error, info};
 /// 启动错误以 `anyhow::Result<()>` 传播，失败时返回非零退出码。
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Handle basic CLI flags before starting the runtime so that --help and
+    // --version exit immediately without booting the engine.
+    for arg in std::env::args().skip(1) {
+        if arg == "--help" || arg == "-h" {
+            println!("cheetah-server - Cheetah media server");
+            println!("Usage: cheetah-server [--help] [--version]");
+            println!("Optional environment: CHEETAH_CONFIG, CHEETAH_CONTROL_ADDR, RUST_LOG");
+            std::process::exit(0);
+        }
+        if arg == "--version" {
+            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
+    }
+
     // Install rustls crypto provider before any TLS operations.
     // 在任何 TLS 操作前安装 rustls 加密提供方。
     rustls::crypto::ring::default_provider()
