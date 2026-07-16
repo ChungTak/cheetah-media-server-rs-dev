@@ -16,6 +16,8 @@ pub struct ProxyModuleConfig {
     pub retry_max_delay_ms: u64,
     #[serde(default = "default_connect_timeout_ms")]
     pub connect_timeout_ms: u64,
+    #[serde(default = "default_ffmpeg_timeout_ms")]
+    pub ffmpeg_timeout_ms: u64,
     /// CIDR allowlist for proxy source / destination hosts.
     ///
     /// Entries such as `127.0.0.0/8` or `::1/128` bypass the default SSRF
@@ -37,6 +39,7 @@ impl Default for ProxyModuleConfig {
             retry_delay_ms: default_retry_delay_ms(),
             retry_max_delay_ms: default_retry_max_delay_ms(),
             connect_timeout_ms: default_connect_timeout_ms(),
+            ffmpeg_timeout_ms: default_ffmpeg_timeout_ms(),
             ssrf_allowlist_cidrs: default_ssrf_allowlist_cidrs(),
         }
     }
@@ -73,6 +76,9 @@ impl ProxyModuleConfig {
         if self.connect_timeout_ms == 0 {
             return Err("connect_timeout_ms must be > 0".into());
         }
+        if self.ffmpeg_timeout_ms == 0 {
+            return Err("ffmpeg_timeout_ms must be > 0".into());
+        }
         if let Err(e) = crate::ssrf::parse_allowlist(&self.ssrf_allowlist_cidrs) {
             return Err(format!("invalid ssrf_allowlist_cidrs: {e}"));
         }
@@ -98,6 +104,10 @@ fn default_retry_max_delay_ms() -> u64 {
 
 fn default_connect_timeout_ms() -> u64 {
     10_000
+}
+
+fn default_ffmpeg_timeout_ms() -> u64 {
+    300_000
 }
 
 fn default_ssrf_allowlist_cidrs() -> Vec<String> {

@@ -10,7 +10,10 @@ use cheetah_media_api::event::{EventHeader, MediaEvent, ProxyStateChanged};
 use cheetah_media_api::ids::{MediaKey, ProxyId};
 use cheetah_media_api::model::ProxyState;
 use cheetah_runtime_api::{CancellationToken, RuntimeApi};
-use cheetah_sdk::{EngineContext, FfmpegJob, TaskId, TaskKind, TaskOutcome};
+use cheetah_sdk::{
+    EngineContext, FfmpegInput, FfmpegJobSpec, FfmpegJobState, FfmpegOutput, FfmpegResourceLimits,
+    TaskId, TaskKind, TaskOutcome,
+};
 use futures::future::{select, Either};
 use futures::Future;
 #[cfg(any(feature = "rtsp", feature = "http-flv", feature = "rtmp"))]
@@ -200,6 +203,7 @@ async fn run_once(
                 output_options,
                 job_id,
                 cancel,
+                config,
             )
             .await
         }
@@ -625,6 +629,7 @@ async fn run_ffmpeg(
     output_options: &[String],
     job_id: &str,
     cancel: &CancellationToken,
+    config: &ProxyModuleConfig,
 ) -> RunOnceOutcome {
     if let Err(e) = validate_ffmpeg_options(input_options, output_options) {
         return RunOnceOutcome::Failed(e);
@@ -637,30 +642,71 @@ async fn run_ffmpeg(
         Err(err) => return RunOnceOutcome::Failed(err),
     };
 
-    let command = build_ffmpeg_command(
-        &resolved_source_url,
-        destination,
-        input_options,
-        output_options,
-    );
-    let job = FfmpegJob {
-        job_id: job_id.to_string(),
-        command,
+    let spec = FfmpegJobSpec {
+        profile_id: "default".to_string(),
+        input: FfmpegInput::Url {
+            url: resolved_source_url.clone(),
+        },
+        output: FfmpegOutput::Engine {
+            media_key: destination.clone(),
+        },
+        input_options: input_options.to_vec(),
+        output_options: output_options.to_vec(),
+        resource_limits: FfmpegResourceLimits {
+            max_runtime_ms: config.ffmpeg_timeout_ms,
+            ..Default::default()
+        },
     };
-    if let Err(e) = ctx.ffmpeg_api.submit_job(job) {
-        return RunOnceOutcome::Failed(format!("submit ffmpeg job: {e}"));
-    }
 
-    // LocalFfmpegService is a typed job registry (no child process). Keep the
-    // proxy Connected while the job is registered so delete can cancel it.
+    let handle = match ctx.ffmpeg_api.submit(job_id.to_string(), spec).await {
+        Ok(handle) => handle,
+        Err(e) => return RunOnceOutcome::Failed(format!("submit ffmpeg job: {e}")),
+    };
+
     registry.update_state(proxy_id, ProxyState::Connected);
     registry.update_error(proxy_id, None);
     publish_state(ctx, proxy_id, ProxyState::Connected, None);
-    debug!(proxy_id = %proxy_id.0, job_id, "ffmpeg proxy job registered");
+    debug!(proxy_id = %proxy_id.0, job_id, "ffmpeg proxy job submitted");
 
-    cancel.cancelled().await;
-    let _ = ctx.ffmpeg_api.cancel_job(job_id);
-    RunOnceOutcome::Stopped
+    let wait_fut = Box::pin(ctx.ffmpeg_api.wait(&handle.job_id));
+    let cancel_fut = Box::pin(cancel.cancelled());
+    let status = match select(wait_fut, cancel_fut).await {
+        Either::Left((result, _)) => result,
+        Either::Right(((), _)) => {
+            let _ = ctx.ffmpeg_api.cancel(&handle.job_id).await;
+            match ctx.ffmpeg_api.wait(&handle.job_id).await {
+                Ok(s) => Ok(s),
+                Err(e) => {
+                    let _ = ctx.ffmpeg_api.remove(&handle.job_id).await;
+                    return RunOnceOutcome::Failed(format!(
+                        "ffmpeg job cancelled but failed to wait: {e}"
+                    ));
+                }
+            }
+        }
+    };
+
+    let outcome = match status {
+        Ok(status) => match status.state {
+            FfmpegJobState::Exited if status.exit_code == Some(0) => RunOnceOutcome::Stopped,
+            FfmpegJobState::Cancelled => RunOnceOutcome::Stopped,
+            _ => {
+                // Strip any embedded source credentials before the summary is persisted
+                // in registry errors, logged, or returned to callers. Also redact
+                // normalized variants (default ports, etc.) that differ from the
+                // original URL string.
+                let summary = redact_url_in_text(
+                    &redact_url_in_text(&status.exit_summary, &resolved_source_url),
+                    source_url,
+                );
+                RunOnceOutcome::Failed(summary)
+            }
+        },
+        Err(e) => RunOnceOutcome::Failed(format!("ffmpeg job error: {e}")),
+    };
+
+    let _ = ctx.ffmpeg_api.remove(&handle.job_id).await;
+    outcome
 }
 
 /// Validate FFmpeg option tokens: no shell metacharacters, newlines, or
@@ -700,25 +746,6 @@ pub fn validate_ffmpeg_options(input: &[String], output: &[String]) -> Result<()
     Ok(())
 }
 
-fn build_ffmpeg_command(
-    source_url: &str,
-    destination: &MediaKey,
-    input_options: &[String],
-    output_options: &[String],
-) -> String {
-    let mut parts = Vec::with_capacity(8 + input_options.len() + output_options.len());
-    parts.push("ffmpeg".to_string());
-    parts.extend(input_options.iter().cloned());
-    parts.push("-i".to_string());
-    parts.push(redact_url_credentials(source_url));
-    parts.extend(output_options.iter().cloned());
-    parts.push(format!(
-        "engine://{}/{}/{}",
-        destination.vhost.0, destination.app.0, destination.stream.0
-    ));
-    parts.join(" ")
-}
-
 fn redact_url_credentials(url: &str) -> String {
     match Url::parse(url) {
         Ok(mut u) => {
@@ -732,6 +759,35 @@ fn redact_url_credentials(url: &str) -> String {
         }
         Err(_) => url.to_string(),
     }
+}
+
+fn extract_userinfo(url: &str) -> Option<&str> {
+    let scheme_end = url.find("://")? + 3;
+    let at = url[scheme_end..].find('@')? + scheme_end;
+    Some(&url[scheme_end..=at])
+}
+
+/// Redact the credentials in `url` wherever they appear in `text`.
+///
+/// In addition to an exact string match, this replaces the raw userinfo
+/// substring (`user:pass@` or `user@`) so normalized forms such as those with
+/// an explicit default port are also sanitized.
+fn redact_url_in_text(text: &str, url: &str) -> String {
+    let redacted = redact_url_credentials(url);
+    if redacted == url {
+        return text.to_string();
+    }
+
+    let mut result = text.replace(url, &redacted);
+    if let Some(userinfo) = extract_userinfo(url) {
+        let replacement = if userinfo.contains(':') {
+            "***:***@"
+        } else {
+            "***@"
+        };
+        result = result.replace(userinfo, replacement);
+    }
+    result
 }
 
 /// Rewrite `source_url` so its host and port match the validated `peer`.
@@ -936,5 +992,15 @@ mod tests {
         let rewritten =
             rewrite_url_to_peer("rtsp://cam.example/stream", peer).expect("rewrite should succeed");
         assert!(rewritten.contains("[::1]:554"), "{rewritten}");
+    }
+
+    #[test]
+    fn redact_url_in_text_covers_normalized_forms() {
+        let text = "connection to rtmp://user:pass@cam.example/live failed; retried rtmp://user:pass@cam.example:1935/live";
+        let redacted = redact_url_in_text(text, "rtmp://user:pass@cam.example/live/stream");
+        assert!(!redacted.contains("pass"), "{redacted}");
+        assert!(!redacted.contains("user:"), "{redacted}");
+        assert!(redacted.contains("***:***@"), "{redacted}");
+        assert!(redacted.contains("cam.example:1935"), "{redacted}");
     }
 }
