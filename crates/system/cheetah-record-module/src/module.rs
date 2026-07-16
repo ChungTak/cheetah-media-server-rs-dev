@@ -184,6 +184,7 @@ impl Module for RecordModule {
                 Arc::new(crate::media_provider::RecordMediaProvider::new(
                     record_api,
                     ctx.engine.media_file_store.clone(),
+                    ctx.engine.media_services.downgrade(),
                 )),
                 record_capabilities,
             ));

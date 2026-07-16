@@ -13,6 +13,7 @@
 use std::sync::Arc;
 
 use cheetah_mp4_core::VodControlCommand;
+use cheetah_sdk::media_api::ids::{FileHandle, MediaKey};
 use serde::Deserialize;
 
 use crate::api::{StartVodRequest, VodApi, VodApiError};
@@ -92,15 +93,24 @@ impl ZlmVodCompat {
     pub async fn load_mp4(&self, req: ZlmLoadMp4) -> Result<serde_json::Value, ZlmVodError> {
         let session_id = vod_session_id(&req.app, &req.stream);
         let normalized = normalize_rtmp_mp4_uri(&req.file_path);
+        let media_key = match req.vhost.as_deref() {
+            Some(vhost) => MediaKey::new(vhost, &req.app, &req.stream, None),
+            None => MediaKey::with_default_vhost(&req.app, &req.stream, None),
+        }
+        .unwrap_or_else(|_| {
+            MediaKey::with_default_vhost("zlm", "anon", None).expect("zlm/anon is valid")
+        });
         let resp = self
             .inner
             .start(StartVodRequest {
-                uri: normalized,
+                uri: normalized.clone(),
                 format: Some("mp4".to_string()),
                 start_time_ms: req.seek_ms,
                 end_time_ms: None,
                 loop_count: req.file_repeat.map(|r| if r { u32::MAX } else { 1 }),
                 session_id: Some(session_id.clone()),
+                media_key: Some(media_key),
+                file_handle: Some(FileHandle(normalized)),
             })
             .await?;
         if let Some(speed) = req.speed {

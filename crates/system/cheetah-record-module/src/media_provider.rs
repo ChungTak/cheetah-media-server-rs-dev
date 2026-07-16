@@ -1,18 +1,23 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use cheetah_media_api::command::{
-    DeleteRecordRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    StartRecordRequest, StopRecordRequest,
+    DeleteRecordRequest, OpenPlaybackRequest, PlaybackControl, RecordFileQuery,
+    RecordPlaybackCommand, RecordTaskQuery, StartRecordRequest, StopRecordRequest,
 };
-use cheetah_media_api::error::{MediaError, Result};
-use cheetah_media_api::ids::{FileHandle, MediaKey, RecordFileId, RecordTaskId};
+use cheetah_media_api::error::{MediaError, MediaErrorCode, Result};
+use cheetah_media_api::ids::{FileHandle, MediaKey, PlaybackSessionId, RecordFileId, RecordTaskId};
 use cheetah_media_api::model::{Page, RecordFile, RecordTask, RecordTaskState};
-use cheetah_media_api::port::{MediaRequestContext, RecordApi as RecordApiPort};
+use cheetah_media_api::port::{MediaRequestContext, PlaybackApi, RecordApi as RecordApiPort};
 use cheetah_media_api::MediaFileStoreApi;
+use cheetah_sdk::MediaServicesWeak;
+use parking_lot::Mutex as SyncMutex;
 
 use crate::api::{RecordApi, RecordApiError, RecordTemplate};
-use crate::metadata::RecordTaskState as InternalRecordTaskState;
+use crate::metadata::{
+    RecordFileMetadata, RecordFormatStr, RecordTaskState as InternalRecordTaskState,
+};
 use crate::playback::PlaybackRegistry;
 use crate::registry::RegistryError;
 
@@ -25,18 +30,116 @@ pub struct RecordMediaProvider {
     api: Arc<RecordApi>,
     playback: Arc<PlaybackRegistry>,
     file_store: Arc<dyn MediaFileStoreApi>,
+    media_services: MediaServicesWeak,
+    playback_sessions: Arc<SyncMutex<HashMap<String, PlaybackSessionId>>>,
 }
 
 impl RecordMediaProvider {
     /// Create a provider wrapping the record module's API handle and file store.
     ///
     /// 创建包装录制模块 API 句柄与文件存储的 provider。
-    pub fn new(api: Arc<RecordApi>, file_store: Arc<dyn MediaFileStoreApi>) -> Self {
+    pub fn new(
+        api: Arc<RecordApi>,
+        file_store: Arc<dyn MediaFileStoreApi>,
+        media_services: MediaServicesWeak,
+    ) -> Self {
         Self {
             api,
             playback: Arc::new(PlaybackRegistry::new()),
             file_store,
+            media_services,
+            playback_sessions: Arc::new(SyncMutex::new(HashMap::new())),
         }
+    }
+
+    fn media_key_for_file(file: &RecordFileMetadata) -> MediaKey {
+        MediaKey::new(&file.vhost, &file.app, &file.stream, None).unwrap_or_else(|_| {
+            MediaKey::with_default_vhost(&file.app, &file.stream, None)
+                .expect("record app/stream must be valid")
+        })
+    }
+
+    /// Validate a legacy record playback command and convert it to a
+    /// `PlaybackControl`, keeping the same acceptance range as the previous
+    /// in-memory `PlaybackRegistry` but clamping scale to the values the MP4
+    /// driver supports in this phase.
+    ///
+    /// 校验旧版录制回放命令并转换为 `PlaybackControl`：保持与旧的
+    /// `PlaybackRegistry` 相同的接受范围，但将倍速钳位到本阶段 MP4 驱动支持
+    /// 的档位。
+    fn validate_and_clamp(
+        command: &RecordPlaybackCommand,
+        duration_ms: u64,
+    ) -> Result<PlaybackControl> {
+        match *command {
+            RecordPlaybackCommand::Pause => Ok(PlaybackControl::Pause),
+            RecordPlaybackCommand::Resume => Ok(PlaybackControl::Resume),
+            RecordPlaybackCommand::Scale { value } => {
+                if !value.is_finite() || !(0.25..=16.0).contains(&value) {
+                    return Err(MediaError::invalid_argument(
+                        "scale must be finite and in [0.25, 16.0]".to_string(),
+                    ));
+                }
+                Ok(PlaybackControl::SetScale {
+                    scale: clamp_supported_scale(value),
+                })
+            }
+            RecordPlaybackCommand::Seek { value } => {
+                if value < 0 || (value as u64) > duration_ms {
+                    return Err(MediaError::invalid_argument(format!(
+                        "seek {value} is out of range [0, {duration_ms}]"
+                    )));
+                }
+                Ok(PlaybackControl::Seek { position_ms: value })
+            }
+        }
+    }
+
+    /// Return an active playback session id for `file`, opening one if needed.
+    ///
+    /// 返回 `file` 的活跃回放会话 id，必要时新建。
+    async fn playback_session_for_file(
+        &self,
+        ctx: &MediaRequestContext,
+        file_id: &RecordFileId,
+        file: &RecordFileMetadata,
+        playback: &Arc<dyn PlaybackApi>,
+    ) -> Result<PlaybackSessionId> {
+        let open_req = {
+            let sessions = self.playback_sessions.lock();
+            if let Some(id) = sessions.get(&file_id.0) {
+                return Ok(id.clone());
+            }
+            OpenPlaybackRequest {
+                file_handle: FileHandle(
+                    file.file_handle
+                        .clone()
+                        .unwrap_or_else(|| file_id.0.clone()),
+                ),
+                media_key: Self::media_key_for_file(file),
+                start_position_ms: 0,
+                scale: 1.0,
+            }
+        };
+
+        let session = playback.open_playback(ctx, open_req).await?;
+        let new_id = session.session_id;
+
+        let existing = {
+            let mut sessions = self.playback_sessions.lock();
+            if let Some(existing) = sessions.get(&file_id.0).cloned() {
+                Some(existing)
+            } else {
+                sessions.insert(file_id.0.clone(), new_id.clone());
+                None
+            }
+        };
+
+        if let Some(existing) = existing {
+            let _ = playback.stop_playback(ctx, &new_id).await;
+            return Ok(existing);
+        }
+        Ok(new_id)
     }
 }
 
@@ -267,15 +370,66 @@ impl RecordApiPort for RecordMediaProvider {
 
     async fn control_record_playback(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         file_id: &RecordFileId,
         command: RecordPlaybackCommand,
     ) -> Result<()> {
         let file = self.api.registry().get_file(&file_id.0).ok_or_else(|| {
             MediaError::not_found(format!("record file not found: {}", file_id.0))
         })?;
-        let _ = self.playback.apply(&file_id.0, file.duration_ms, command)?;
-        Ok(())
+
+        // Only MP4 files can be delegated to the shared `PlaybackApi`.
+        // Other formats and setups without a playback provider keep using
+        // the in-memory state registry for backward compatibility.
+        let playback = self.media_services.playback();
+        if file.format != RecordFormatStr::Mp4 || playback.is_none() {
+            let _ = self.playback.apply(&file_id.0, file.duration_ms, command)?;
+            return Ok(());
+        }
+
+        let playback = playback.expect("playback checked above");
+
+        let control = Self::validate_and_clamp(&command, file.duration_ms)?;
+        let pb_id = self
+            .playback_session_for_file(ctx, file_id, &file, &playback)
+            .await?;
+
+        match playback.control_playback(ctx, &pb_id, control).await {
+            Ok(_) => Ok(()),
+            Err(ref e) if e.code == MediaErrorCode::NotFound => {
+                // The cached session ended (e.g. VOD loop_count=1 finished and
+                // the registry removed it).  Drop the stale mapping and retry
+                // once with a fresh session so subsequent controls keep working.
+                {
+                    let mut sessions = self.playback_sessions.lock();
+                    sessions.remove(&file_id.0);
+                }
+                let pb_id = self
+                    .playback_session_for_file(ctx, file_id, &file, &playback)
+                    .await?;
+                let control = Self::validate_and_clamp(&command, file.duration_ms)?;
+                let _ = playback.control_playback(ctx, &pb_id, control).await?;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// Clamp a legacy playback scale to the set the MP4 driver supports in this
+/// phase: {0.5, 1.0, 2.0, 4.0}.
+///
+/// 将旧版回放倍速钳位到本阶段 MP4 驱动支持的档位：{0.5, 1.0, 2.0, 4.0}。
+fn clamp_supported_scale(value: f64) -> f64 {
+    // Midpoints are geometric means so exact supported values stay unchanged.
+    if value < 0.5f64.sqrt() {
+        0.5
+    } else if value < 2.0f64.sqrt() {
+        1.0
+    } else if value < 8.0f64.sqrt() {
+        2.0
+    } else {
+        4.0
     }
 }
 
@@ -416,12 +570,15 @@ fn civil_from_days(days: i64) -> (u32, u32, u32) {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use cheetah_media_api::command::{RecordFileQuery, RecordTaskQuery, StartRecordRequest};
+    use cheetah_media_api::command::{
+        PlaybackQuery, RecordFileQuery, RecordTaskQuery, StartRecordRequest,
+    };
     use cheetah_media_api::event::{
         MediaEvent, MediaEventBusApi, MediaEventSender, MediaEventSubscription,
     };
     use cheetah_media_api::ids::{IdempotencyKey, MediaKey};
-    use cheetah_media_api::model::StoragePolicy;
+    use cheetah_media_api::model::{PlaybackSession, PlaybackSessionState, StoragePolicy};
+    use cheetah_sdk::MediaServices;
     use parking_lot::Mutex;
 
     struct MockExecutor;
@@ -540,6 +697,7 @@ mod tests {
                 bus,
             )),
             Arc::new(MockFileStore),
+            cheetah_sdk::MediaServices::unavailable().downgrade(),
         )
     }
 
@@ -838,5 +996,155 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.to_string().contains("not found"));
+    }
+
+    #[derive(Clone)]
+    struct FakePlaybackApi {
+        open_count: Arc<std::sync::atomic::AtomicU64>,
+        control_count: Arc<std::sync::atomic::AtomicU64>,
+    }
+
+    impl FakePlaybackApi {
+        fn new() -> Self {
+            Self {
+                open_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+                control_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            }
+        }
+    }
+
+    fn dummy_session(id: &str) -> PlaybackSession {
+        PlaybackSession {
+            session_id: PlaybackSessionId(id.to_string()),
+            media_key: MediaKey::with_default_vhost("live", "test", None).unwrap(),
+            file_handle: FileHandle("f1".to_string()),
+            state: PlaybackSessionState::Playing,
+            duration_ms: 0,
+            position_ms: 0,
+            scale: 1.0,
+            generation: 1,
+            output_key: None,
+            last_error: None,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[async_trait]
+    impl PlaybackApi for FakePlaybackApi {
+        async fn open_playback(
+            &self,
+            _ctx: &MediaRequestContext,
+            _request: OpenPlaybackRequest,
+        ) -> Result<PlaybackSession> {
+            let n = self
+                .open_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            Ok(dummy_session(&format!("pb-{n}")))
+        }
+
+        async fn get_playback(
+            &self,
+            _ctx: &MediaRequestContext,
+            _id: &PlaybackSessionId,
+        ) -> Result<PlaybackSession> {
+            Err(MediaError::not_found("session"))
+        }
+
+        async fn list_playbacks(
+            &self,
+            _ctx: &MediaRequestContext,
+            _query: PlaybackQuery,
+        ) -> Result<Page<PlaybackSession>> {
+            Ok(Page {
+                items: Vec::new(),
+                page: 1,
+                page_size: 20,
+                total: 0,
+                next_cursor: None,
+            })
+        }
+
+        async fn control_playback(
+            &self,
+            _ctx: &MediaRequestContext,
+            _id: &PlaybackSessionId,
+            _command: PlaybackControl,
+        ) -> Result<PlaybackSession> {
+            let n = self
+                .control_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            if n == 1 {
+                Err(MediaError::not_found("session expired"))
+            } else {
+                Ok(dummy_session("pb-retry"))
+            }
+        }
+
+        async fn stop_playback(
+            &self,
+            _ctx: &MediaRequestContext,
+            _id: &PlaybackSessionId,
+        ) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn control_record_playback_reopens_after_stale_session() {
+        let services = MediaServices::unavailable();
+        let fake = Arc::new(FakePlaybackApi::new());
+        let _ = services.register_playback(fake.clone());
+
+        let bus = Arc::new(MockBus {
+            events: Mutex::new(Vec::new()),
+        });
+        let provider = RecordMediaProvider::new(
+            Arc::new(crate::api::RecordApi::new(
+                Arc::new(crate::registry::RecordRegistry::new(16)),
+                Arc::new(MockExecutor),
+                bus,
+            )),
+            Arc::new(MockFileStore),
+            services.downgrade(),
+        );
+
+        provider
+            .api
+            .registry()
+            .insert_file(crate::metadata::RecordFileMetadata {
+                file_id: "f1".to_string(),
+                task_id: "t1".to_string(),
+                format: RecordFormatStr::Mp4,
+                vhost: cheetah_media_api::ids::DEFAULT_VHOST.to_string(),
+                app: "live".to_string(),
+                stream: "test".to_string(),
+                path: "/rec/live/test/2026/f1-1.mp4".to_string(),
+                file_handle: None,
+                duration_ms: 10_000,
+                size_bytes: 1_000_000,
+                start_time_ms: 1_000,
+                end_time_ms: 11_000,
+                track_summary: vec![],
+            })
+            .unwrap();
+
+        let ctx = MediaRequestContext::default();
+        provider
+            .control_record_playback(
+                &ctx,
+                &RecordFileId("f1".to_string()),
+                RecordPlaybackCommand::Pause,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(fake.open_count.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(
+            fake.control_count.load(std::sync::atomic::Ordering::SeqCst),
+            2
+        );
     }
 }

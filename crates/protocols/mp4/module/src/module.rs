@@ -9,11 +9,12 @@ use cheetah_sdk::{
     CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
     ModuleHttpService, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
-    ModuleSchemaRegistration, ModuleState, SdkError,
+    ModuleSchemaRegistration, ModuleState, ProviderRegistration, SdkError,
 };
 
 use crate::api::{ControlVodRequest, StartVodRequest, StopVodRequest, VodApi};
 use crate::config::Mp4ModuleConfig;
+use crate::playback_provider::Mp4PlaybackProvider;
 use crate::session_registry::VodSessionRegistry;
 use crate::zlm_compat::{ZlmLoadMp4, ZlmSeekRecord, ZlmSetSpeed, ZlmVodCompat};
 
@@ -69,6 +70,7 @@ pub struct Mp4Module {
     ctx: Option<EngineContext>,
     registry: Arc<VodSessionRegistry>,
     api: Option<Arc<VodApi>>,
+    playback_registration: Option<ProviderRegistration>,
 }
 
 /// `Mp4Module` constructor and helpers.
@@ -85,6 +87,7 @@ impl Mp4Module {
             ctx: None,
             registry: Arc::new(VodSessionRegistry::new(0)),
             api: None,
+            playback_registration: None,
         }
     }
 }
@@ -120,13 +123,27 @@ impl Module for Mp4Module {
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
         self.ctx = Some(ctx.engine.clone());
         self.registry = Arc::new(VodSessionRegistry::new(self.config.max_sessions));
-        let api = VodApi::with_engine_bridge(
+        let api = Arc::new(VodApi::with_engine_bridge(
             self.registry.clone(),
             Arc::new(self.config.clone()),
             ctx.engine.core_adapters_api.clone(),
             ctx.engine.runtime_api.clone(),
-        );
-        self.api = Some(Arc::new(api));
+        ));
+        self.api = Some(api.clone());
+
+        if self.config.enabled {
+            let playback = Mp4PlaybackProvider::new(
+                api,
+                ctx.engine.media_file_store.clone(),
+                self.config.root_path.clone(),
+            );
+            self.playback_registration = Some(
+                ctx.engine
+                    .media_services
+                    .register_playback(Arc::new(playback)),
+            );
+        }
+
         self.state = ModuleState::Initialized;
         Ok(())
     }
@@ -143,6 +160,18 @@ impl Module for Mp4Module {
     }
 
     async fn stop(&mut self) -> Result<(), SdkError> {
+        if let Some(api) = self.api.as_ref() {
+            for rec in api.registry().list() {
+                let _ = api.stop(StopVodRequest {
+                    session_id: rec.session_id,
+                });
+            }
+        }
+        if let Some(reg) = self.playback_registration.take() {
+            if let Some(ctx) = self.ctx.as_ref() {
+                ctx.media_services.unregister(&reg);
+            }
+        }
         self.state = ModuleState::Stopped;
         Ok(())
     }
