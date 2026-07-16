@@ -51,8 +51,14 @@ impl UrlSigner {
             let now = now_secs();
             let mut keys = Vec::with_capacity(list.len());
             for (idx, item) in list.iter().enumerate() {
-                let id = item.get("id")?.as_str()?.to_string();
-                let secret = item.get("secret")?.as_str()?.as_bytes().to_vec();
+                let (Some(id), Some(secret)) = (
+                    item.get("id").and_then(|v| v.as_str()),
+                    item.get("secret").and_then(|v| v.as_str()),
+                ) else {
+                    continue;
+                };
+                let id = id.to_string();
+                let secret = secret.as_bytes().to_vec();
                 if id.is_empty() || secret.is_empty() {
                     continue;
                 }
