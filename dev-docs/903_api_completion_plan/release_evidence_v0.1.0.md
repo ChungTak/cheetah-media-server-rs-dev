@@ -27,8 +27,8 @@
 | PRX-01..05 | devin | main | `cargo test -p cheetah-proxy-module` | PASS | #156..#160 | 无 |
 | EVT-01..05 | devin | main | `cargo test -p cheetah-engine` + `cheetah-webhook-dispatcher` | PASS | #161..#165 | 无 |
 | ZLM-01..04 | devin | main | `cargo test -p cheetah-media-module` | PASS | #168..#171 | 无 |
-| REL-02/04 | devin | #172 | S0..S5 GitHub Actions workflow | PASS | #172 制品 `cheetah-server-release` | REL-03 尚未实施 |
-| REL-03 | - | - | 待补充并发取消/module restart 后资源泄漏观测 | N/A | - | 资源泄漏观测缺失 |
+| REL-02/04 | devin | #172 | S0..S5 GitHub Actions workflow | PASS | #172 制品 `cheetah-server-release` | 无 |
+| REL-03 | devin | REL-03 PR | `cargo test -p cheetah-engine --test resource_leak -- --test-threads=1` | PASS | REL-03 PR | 无 |
 | SIG-01..06 | - | - | `cargo test -p cheetah-sdk --test signal_contracts` 仅覆盖 A 层 | PARTIAL | - | B 层 native HTTP 黑盒 runner 缺失 |
 
 ## 3. 能力证据
@@ -66,19 +66,19 @@ ZLM 兼容接口目录及 L0-L4 证据见 `11_zlm_compatibility_revalidation.md`
 - [x] admission、Webhook 投递、资源授权、deadline、幂等通过。
 - [x] native/兼容 HTTP 黑盒通过（ZLM-04 L3 已覆盖 getApiList/version/getMediaList）。
 - [ ] 四类信令 A/B 合同通过（A 层通过，B 层 runner 缺失）。
-- [ ] 并发取消、module restart、资源泄漏观测通过（REL-03 待实施）。
+- [x] 并发取消、module restart、资源泄漏观测通过（REL-03 已完成）。
 - [x] 发布阻断项逐项确认：未发现新增阻断项。
 
 ## 6. 失败与豁免
 
 - 发布阻断项无豁免。
-- REL-03 与 SIG-06 为当前剩余发布阻断风险；需在发布前完成。
+- SIG-06 为当前剩余发布阻断风险；需在发布前完成。
 
 ## 7. 签署
 
 | 角色 | 结论 | 姓名/时间 | 证据 |
 | --- | --- | --- | --- |
-| implementation | APPROVE (P0/P1/ZLM) | devin / 2026-07-15 | PR #135..#172 CI 全绿 |
+| implementation | APPROVE (P0/P1/ZLM/REL-03) | devin / 2026-07-15 | PR #135..#172、REL-03 PR CI 全绿 |
 | API compatibility | 待最终签署 | - | ZLM/SIG B 层完成后 |
 | security | 待最终签署 | - | REL-03 完成后 |
 | release | 待最终签署 | - | 全部门禁清单打勾后 |

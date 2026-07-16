@@ -26,6 +26,7 @@ use crate::media_provider::{
 use crate::metrics::MetricsRegistry;
 use crate::module_manager::ModuleManager;
 use crate::proxy::LocalProxyManager;
+use crate::resource_leak::{ResourceLeakObserver, ResourceLeakReport};
 use crate::room::RoomService;
 use crate::service_registry::InMemoryServiceRegistry;
 use crate::stream::{DispatcherMode, StreamManager};
@@ -499,6 +500,20 @@ impl Engine {
 
     pub fn ffmpeg_api(&self) -> Arc<dyn FfmpegApi> {
         self.ffmpeg.clone()
+    }
+
+    /// Capture a snapshot of runtime objects that are still alive.
+    ///
+    /// 抓取仍在运行的运行时对象快照，用于检测资源泄漏。
+    pub async fn resource_leak_report(&self) -> anyhow::Result<ResourceLeakReport> {
+        ResourceLeakObserver::observe(
+            &*self.task_system,
+            &*self.stream_manager,
+            &*self.module_manager,
+            &*self.ffmpeg,
+            &*self.session_directory,
+        )
+        .await
     }
 
     pub fn media_facade(&self) -> Arc<crate::media_provider::EngineMediaFacade> {
