@@ -282,12 +282,13 @@ impl MediaCapabilitySet {
     ) {
         let changed =
             if let Some(entry) = self.capabilities.iter_mut().find(|(c, _)| *c == capability) {
+                let version_changed = entry.1 != version;
                 let ops_changed = self.operations.get(&capability) != Some(&operations);
-                if entry.1 == version && !ops_changed {
+                if !version_changed && !ops_changed {
                     return;
                 }
                 entry.1 = version;
-                ops_changed
+                version_changed || ops_changed
             } else {
                 self.capabilities.push((capability, version));
                 true
@@ -457,5 +458,40 @@ mod tests {
         a.merge(&b);
         assert_eq!(a.generation, gen_before.max(b.generation) + 1);
         assert_eq!(a.descriptors[0].version, 2);
+    }
+
+    #[test]
+    fn capability_set_add_with_operations_advances_version_on_version_change() {
+        let mut set = MediaCapabilitySet::empty();
+        let ops = vec!["a".to_string()];
+        set.add_with_operations(MediaCapability::Record, 1, ops.clone());
+        assert_eq!(set.version, 1);
+
+        // Same operations but a new version must bump the generation.
+        set.add_with_operations(MediaCapability::Record, 2, ops.clone());
+        assert_eq!(set.capabilities[0].1, 2);
+        assert_eq!(set.version, 2);
+
+        // Same version and same operations must not bump the generation.
+        set.add_with_operations(MediaCapability::Record, 2, ops);
+        assert_eq!(set.version, 2);
+    }
+
+    #[test]
+    fn capability_report_from_set_uses_explicit_operations() {
+        let mut set = MediaCapabilitySet::empty();
+        set.add_with_operations(
+            MediaCapability::Proxy,
+            1,
+            vec!["create_pull".to_string(), "delete_pull".to_string()],
+        );
+        let report = MediaCapabilityReport::from_capability_set(&set, "proxy:1");
+        let descriptor = report
+            .descriptors
+            .iter()
+            .find(|d| d.capability == MediaCapability::Proxy)
+            .expect("proxy descriptor");
+        assert_eq!(descriptor.operations, vec!["create_pull", "delete_pull"]);
+        assert!(!descriptor.operations.contains(&"create_ffmpeg".to_string()));
     }
 }
