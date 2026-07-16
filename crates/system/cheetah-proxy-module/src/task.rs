@@ -259,8 +259,10 @@ async fn run_pull_rtsp(
 
     let (ns, path) = StreamKeyBridge::to_namespace_path(destination);
     let target = StreamKey::new(ns, path);
-    let mut options = ConnectorPullOptions::default();
-    options.cancel = Some(cancel.child_token());
+    let options = ConnectorPullOptions {
+        cancel: Some(cancel.child_token()),
+        ..Default::default()
+    };
 
     let open = open_rtsp_pull_to_stream(
         ctx.runtime_api.clone(),
@@ -315,8 +317,10 @@ async fn run_pull_http_flv(
     use cheetah_media_api::port::MediaRequestContext;
     use tracing::info;
 
-    let mut options = ConnectorPullOptions::default();
-    options.cancel = Some(cancel.child_token());
+    let options = ConnectorPullOptions {
+        cancel: Some(cancel.child_token()),
+        ..Default::default()
+    };
 
     let open = open_http_flv_pull_with_runtime(ctx.runtime_api.clone(), source_url, options);
     let mut pull = match with_timeout(&ctx.runtime_api, connect_timeout_ms, open, cancel).await {
@@ -487,8 +491,10 @@ async fn run_push_rtmp(
         Err(e) => return RunOnceOutcome::Failed(format!("open source subscriber: {e}")),
     };
 
-    let mut options = ConnectorPushOptions::default();
-    options.cancel = Some(cancel.child_token());
+    let options = ConnectorPushOptions {
+        cancel: Some(cancel.child_token()),
+        ..Default::default()
+    };
     let open = open_rtmp_push_with_runtime(ctx.runtime_api.clone(), destination_url, options);
     let push = match with_timeout(&ctx.runtime_api, connect_timeout_ms, open, cancel).await {
         TimeoutResult::Ok(Ok(h)) => h,

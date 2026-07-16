@@ -109,20 +109,20 @@ impl RuntimeConnector for EngineConnector {
     async fn open_pull(
         &self,
         protocol: Protocol,
-        url: &str,
-        options: ConnectorPullOptions,
+        _url: &str,
+        _options: ConnectorPullOptions,
     ) -> Result<PullHandle, ConnectorError> {
-        crate::engine_bootstrap::validate_capability(protocol, Direction::Pull, Some(&options))?;
+        crate::engine_bootstrap::validate_capability(protocol, Direction::Pull, Some(&_options))?;
 
         #[allow(unreachable_patterns)]
         match protocol {
             #[cfg(feature = "http-flv")]
             Protocol::HttpFlv => {
-                crate::pull::http_flv::open_http_flv_pull(self.engine.clone(), url, options).await
+                crate::pull::http_flv::open_http_flv_pull(self.engine.clone(), _url, _options).await
             }
             #[cfg(feature = "rtsp")]
             Protocol::Rtsp => {
-                crate::pull::rtsp::open_rtsp_pull(self.engine.clone(), url, options).await
+                crate::pull::rtsp::open_rtsp_pull(self.engine.clone(), _url, _options).await
             }
             #[cfg(feature = "rtmp")]
             Protocol::Rtmp => Err(ConnectorError::UnsupportedProtocol {
