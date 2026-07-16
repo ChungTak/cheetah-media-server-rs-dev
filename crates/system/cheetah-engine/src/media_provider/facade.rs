@@ -473,6 +473,21 @@ impl ProxyApi for EngineMediaFacade {
         ctx: &MediaRequestContext,
         request: FfmpegProxyRequest,
     ) -> MediaResult<ProxyInfo> {
+        let protocol = request
+            .source_url
+            .split("://")
+            .next()
+            .unwrap_or("http")
+            .to_string();
+        self.check_admission(
+            ctx,
+            AdmissionAction::CreateFfmpegProxy,
+            request.destination.clone(),
+            protocol,
+            Some(request.source_url.clone()),
+            HashMap::new(),
+        )
+        .await?;
         let provider = self
             .services
             .proxy()
