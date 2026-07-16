@@ -121,6 +121,7 @@ impl fmt::Debug for PushHandle {
 }
 
 impl PushHandle {
+    #[cfg(any(feature = "rtmp", feature = "webrtc"))]
     pub(crate) fn new(
         protocol: Protocol,
         url: String,

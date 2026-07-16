@@ -43,7 +43,7 @@ mod loopback;
 pub mod options;
 mod protocol;
 
-#[cfg(feature = "http-flv")]
+#[cfg(any(feature = "http-flv", feature = "rtsp"))]
 mod pull;
 #[cfg(any(feature = "rtmp", feature = "webrtc"))]
 mod push;
