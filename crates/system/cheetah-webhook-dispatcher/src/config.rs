@@ -57,6 +57,9 @@ pub struct WebhookProfile {
     /// Maximum body size in bytes.
     #[serde(default = "default_max_body_bytes")]
     pub max_body_bytes: usize,
+    /// Maximum response body size in bytes.
+    #[serde(default = "default_max_response_bytes")]
+    pub max_response_bytes: usize,
     /// Maximum retries for transient failures.
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
@@ -119,6 +122,7 @@ impl fmt::Debug for WebhookProfile {
             .field("secret", &self.secret.as_deref().map(|_| "***"))
             .field("timeout_ms", &self.timeout_ms)
             .field("max_body_bytes", &self.max_body_bytes)
+            .field("max_response_bytes", &self.max_response_bytes)
             .field("max_retries", &self.max_retries)
             .field("retry_interval_ms", &self.retry_interval_ms)
             .field("max_retry_duration_ms", &self.max_retry_duration_ms)
@@ -142,6 +146,7 @@ impl Default for WebhookProfile {
             secret: None,
             timeout_ms: default_timeout_ms(),
             max_body_bytes: default_max_body_bytes(),
+            max_response_bytes: default_max_response_bytes(),
             max_retries: default_max_retries(),
             retry_interval_ms: default_retry_interval_ms(),
             max_retry_duration_ms: default_max_retry_duration_ms(),
@@ -162,6 +167,12 @@ fn default_timeout_ms() -> u64 {
 fn default_max_body_bytes() -> usize {
     64 * 1024
 }
+
+fn default_max_response_bytes() -> usize {
+    DEFAULT_MAX_RESPONSE_BYTES
+}
+
+pub(crate) const DEFAULT_MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 fn default_max_retries() -> u32 {
     2

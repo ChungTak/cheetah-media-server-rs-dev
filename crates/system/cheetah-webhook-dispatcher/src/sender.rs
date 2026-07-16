@@ -18,6 +18,8 @@ pub struct WebhookHttpRequest {
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
     pub timeout: Duration,
+    /// Maximum response body size in bytes.
+    pub max_response_bytes: usize,
 }
 
 /// Result of a webhook HTTP POST.
@@ -118,7 +120,7 @@ impl WebhookSender for RuntimeHttpClient {
                     });
                 }
 
-                if buf.len() > 1_048_576 {
+                if buf.len() > request.max_response_bytes {
                     return Err(WebhookSendError::InvalidResponse);
                 }
             }
