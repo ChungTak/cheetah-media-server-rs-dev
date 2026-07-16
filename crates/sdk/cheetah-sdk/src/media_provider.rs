@@ -6,7 +6,7 @@ use cheetah_media_api::capability::{MediaCapabilityDescriptor, MediaCapabilityRe
 use cheetah_media_api::image::ImageEncodeApi;
 use cheetah_media_api::port::{
     MediaAdmissionApi, MediaControlApi, MediaOutputRegistryApi, ProxyApi, PublishSubscribeApi,
-    RecordApi, RtpApi, SnapshotApi, WebhookApi,
+    RecordApi, RtpApi, SnapshotApi, WebhookAdminApi, WebhookApi,
 };
 use cheetah_media_api::{MediaCapability, MediaCapabilitySet};
 
@@ -457,6 +457,41 @@ impl MediaServices {
             .map(|e| e.provider.clone())
     }
 
+    /// Register the webhook admin provider.
+    ///
+    /// 注册 webhook 管理 provider。
+    pub fn register_webhook_admin(&self, admin: Arc<dyn WebhookAdminApi>) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        let capabilities = webhook_admin_default_capabilities();
+        let provider_id = format!("webhook-admin:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
+        registry.webhook_admin = Some(ProviderEntry {
+            provider: admin,
+            generation,
+            capabilities,
+            descriptors,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::WebhookAdmin,
+            provider_id: format!("webhook-admin:{generation}"),
+            generation,
+        }
+    }
+
+    /// Return the current webhook admin provider, if any.
+    ///
+    /// 返回当前 webhook 管理 provider（如有）。
+    pub fn webhook_admin(&self) -> Option<Arc<dyn WebhookAdminApi>> {
+        self.inner
+            .read()
+            .expect("media services lock")
+            .webhook_admin
+            .as_ref()
+            .map(|e| e.provider.clone())
+    }
+
     /// Register the admission provider.
     ///
     /// 注册 admission provider。
@@ -554,6 +589,9 @@ impl MediaServices {
         if let Some(entry) = &registry.webhook {
             set.merge(&entry.capabilities);
         }
+        if let Some(entry) = &registry.webhook_admin {
+            set.merge(&entry.capabilities);
+        }
         if let Some(entry) = &registry.admission {
             set.merge(&entry.capabilities);
         }
@@ -590,6 +628,9 @@ impl MediaServices {
         if let Some(entry) = &registry.webhook {
             descriptors.extend(entry.descriptors.clone());
         }
+        if let Some(entry) = &registry.webhook_admin {
+            descriptors.extend(entry.descriptors.clone());
+        }
         if let Some(entry) = &registry.admission {
             descriptors.extend(entry.descriptors.clone());
         }
@@ -616,6 +657,7 @@ struct MediaProviderRegistry {
     proxy: Option<ProviderEntry<Arc<dyn ProxyApi>>>,
     rtp: Option<ProviderEntry<Arc<dyn RtpApi>>>,
     webhook: Option<ProviderEntry<Arc<dyn WebhookApi>>>,
+    webhook_admin: Option<ProviderEntry<Arc<dyn WebhookAdminApi>>>,
     admission: Option<ProviderEntry<Arc<dyn MediaAdmissionApi>>>,
     output_registry: Option<OutputRegistrySlot>,
 }
@@ -641,6 +683,7 @@ enum ProviderSlot<'a> {
     Proxy(&'a mut Option<ProviderEntry<Arc<dyn ProxyApi>>>),
     Rtp(&'a mut Option<ProviderEntry<Arc<dyn RtpApi>>>),
     Webhook(&'a mut Option<ProviderEntry<Arc<dyn WebhookApi>>>),
+    WebhookAdmin(&'a mut Option<ProviderEntry<Arc<dyn WebhookAdminApi>>>),
     Admission(&'a mut Option<ProviderEntry<Arc<dyn MediaAdmissionApi>>>),
 }
 
@@ -655,6 +698,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::Proxy(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Rtp(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Webhook(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::WebhookAdmin(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Admission(opt) => opt.as_ref().map(|e| e.generation),
         }
     }
@@ -669,6 +713,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::Proxy(opt) => **opt = None,
             ProviderSlot::Rtp(opt) => **opt = None,
             ProviderSlot::Webhook(opt) => **opt = None,
+            ProviderSlot::WebhookAdmin(opt) => **opt = None,
             ProviderSlot::Admission(opt) => **opt = None,
         }
     }
@@ -695,6 +740,9 @@ impl MediaProviderRegistry {
             MediaCapability::Proxy => Some(ProviderSlot::Proxy(&mut self.proxy)),
             MediaCapability::Rtp => Some(ProviderSlot::Rtp(&mut self.rtp)),
             MediaCapability::Webhook => Some(ProviderSlot::Webhook(&mut self.webhook)),
+            MediaCapability::WebhookAdmin => {
+                Some(ProviderSlot::WebhookAdmin(&mut self.webhook_admin))
+            }
             MediaCapability::Admission => Some(ProviderSlot::Admission(&mut self.admission)),
         }
     }
@@ -754,6 +802,12 @@ fn rtp_default_capabilities() -> MediaCapabilitySet {
 fn webhook_default_capabilities() -> MediaCapabilitySet {
     let mut set = MediaCapabilitySet::empty();
     set.add(MediaCapability::Webhook, 1);
+    set
+}
+
+fn webhook_admin_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::WebhookAdmin, 1);
     set
 }
 

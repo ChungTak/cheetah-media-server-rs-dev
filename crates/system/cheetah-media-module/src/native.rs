@@ -16,6 +16,11 @@ use cheetah_media_api::ids::{
 use cheetah_media_api::model::CloseReason;
 use cheetah_media_api::port::{
     ControlAuthApi, MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, SnapshotApi,
+    WebhookAdminApi,
+};
+use cheetah_media_api::webhook::{
+    CreateWebhookProfileRequest, UpdateWebhookProfileRequest, WebhookProfileId,
+    WebhookProfileListResponse, WebhookProfileResponse, WebhookTestResponse,
 };
 use cheetah_media_api::{
     AuthCredentials, FileRange, MediaError, MediaFileStoreApi, MediaScope, Principal,
@@ -201,6 +206,14 @@ impl NativeMediaHttpService {
         })
     }
 
+    fn webhook_admin(&self) -> Result<Arc<dyn WebhookAdminApi>, AdapterError> {
+        self.ctx.media_services.webhook_admin().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "webhook admin not available",
+            ))
+        })
+    }
+
     fn file_store(&self) -> Arc<dyn MediaFileStoreApi> {
         self.ctx.media_file_store.clone()
     }
@@ -333,6 +346,21 @@ impl NativeMediaHttpService {
                 if path.starts_with("/rtp/sessions/") && path.ends_with("/stop") =>
             {
                 Some("rtp.session.stop")
+            }
+            (HttpMethod::Post, "/webhook/profiles") => Some("webhook.profile.create"),
+            (HttpMethod::Get, path) if path.starts_with("/webhook/profiles/") => {
+                Some("webhook.profile.get")
+            }
+            (HttpMethod::Put, path) if path.starts_with("/webhook/profiles/") => {
+                Some("webhook.profile.update")
+            }
+            (HttpMethod::Delete, path) if path.starts_with("/webhook/profiles/") => {
+                Some("webhook.profile.delete")
+            }
+            (HttpMethod::Post, path)
+                if path.starts_with("/webhook/profiles/") && path.ends_with("/test") =>
+            {
+                Some("webhook.profile.test")
             }
             _ => None,
         }
@@ -708,6 +736,86 @@ impl NativeMediaHttpService {
             .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
         rtp_api.stop_rtp_session(ctx, &RtpSessionId(id)).await?;
         Ok(no_content_response())
+    }
+
+    async fn webhook_profile_list(
+        &self,
+        ctx: &MediaRequestContext,
+        _req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.webhook_admin()?;
+        let profiles = api.list_profiles(ctx).await?;
+        let views = profiles.into_iter().map(|p| p.view()).collect();
+        Ok(json_response(&WebhookProfileListResponse {
+            profiles: views,
+        }))
+    }
+
+    async fn webhook_profile_create(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.webhook_admin()?;
+        let request: CreateWebhookProfileRequest = parse_body(&req)?;
+        let profile = api.create_profile(ctx, request).await?;
+        Ok(json_response(&WebhookProfileResponse {
+            profile: profile.view(),
+        }))
+    }
+
+    async fn webhook_profile_get(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.webhook_admin()?;
+        let id = webhook_profile_id_from_path(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing profile_id".to_string()))?;
+        let profile = api.get_profile(ctx, &id).await?;
+        Ok(json_response(&WebhookProfileResponse {
+            profile: profile.view(),
+        }))
+    }
+
+    async fn webhook_profile_update(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.webhook_admin()?;
+        let id = webhook_profile_id_from_path(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing profile_id".to_string()))?;
+        let mut body: UpdateWebhookProfileRequest = parse_body(&req)?;
+        body.profile.id = id;
+        let profile = api.update_profile(ctx, body).await?;
+        Ok(json_response(&WebhookProfileResponse {
+            profile: profile.view(),
+        }))
+    }
+
+    async fn webhook_profile_delete(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.webhook_admin()?;
+        let id = webhook_profile_id_from_path(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing profile_id".to_string()))?;
+        api.delete_profile(ctx, &id).await?;
+        Ok(no_content_response())
+    }
+
+    async fn webhook_profile_test(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.webhook_admin()?;
+        let id = webhook_profile_id_from_path(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing profile_id".to_string()))?;
+        let report = api.test_profile(ctx, &id).await?;
+        Ok(json_response(&WebhookTestResponse { report }))
     }
 
     async fn snapshot_create(
@@ -1112,6 +1220,26 @@ impl ModuleHttpService for NativeMediaHttpService {
                 {
                     self.rtp_session_stop(&ctx, req).await
                 }
+                (HttpMethod::Get, "/webhook/profiles") => {
+                    self.webhook_profile_list(&ctx, req).await
+                }
+                (HttpMethod::Post, "/webhook/profiles") => {
+                    self.webhook_profile_create(&ctx, req).await
+                }
+                (HttpMethod::Get, path) if path.starts_with("/webhook/profiles/") => {
+                    self.webhook_profile_get(&ctx, req).await
+                }
+                (HttpMethod::Put, path) if path.starts_with("/webhook/profiles/") => {
+                    self.webhook_profile_update(&ctx, req).await
+                }
+                (HttpMethod::Delete, path) if path.starts_with("/webhook/profiles/") => {
+                    self.webhook_profile_delete(&ctx, req).await
+                }
+                (HttpMethod::Post, path)
+                    if path.starts_with("/webhook/profiles/") && path.ends_with("/test") =>
+                {
+                    self.webhook_profile_test(&ctx, req).await
+                }
                 _ => Err(AdapterError::InvalidRequest("not found".to_string())),
             };
 
@@ -1218,6 +1346,18 @@ fn rtp_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
         return None;
     }
     Some(id.to_string())
+}
+
+/// Extract the webhook profile id from `/webhook/profiles/{id}[/<suffix>]`.
+///
+/// 从 `/webhook/profiles/{id}` 路径中提取 webhook profile id。
+fn webhook_profile_id_from_path(path: &str) -> Option<WebhookProfileId> {
+    let rest = path.strip_prefix("/webhook/profiles/")?;
+    let id = rest.split('/').next()?;
+    if id.is_empty() {
+        return None;
+    }
+    Some(WebhookProfileId(id.to_string()))
 }
 
 /// Parse a request body (JSON) or URL query string into the target query type.

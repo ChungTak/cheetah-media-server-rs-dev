@@ -366,6 +366,18 @@ Synchronous admission decisions gate side-effecting media operations before they
 - `EngineMediaFacade` invokes admission before `acquire_publisher`, `open_subscriber`, `create_pull_proxy`, `create_push_proxy`, `create_ffmpeg_proxy`, `open_rtp_receiver` and `open_rtp_sender`. A `Deny` returns the stable `MediaErrorCode` before the provider allocates any lease, port or session.
 - The existing `WebhookApi` decision path is kept for ZLM-compatible webhook hooks. `WebhookDecisionClient` also implements `MediaAdmissionApi` and maps `Publish`/`Play` to the existing `on_publish`/`on_play` webhook decision flow; other actions default to `Allow` until native translators land.
 
+## 3.12 Webhook Administration
+
+Webhook profiles are managed through `WebhookAdminApi` and exposed as native HTTP routes.
+
+- `cheetah-media-api` defines `WebhookAdminApi` with `create_profile`, `get_profile`, `list_profiles`, `update_profile`, `delete_profile` and `test_profile`.
+- Profiles carry `id`, `enabled`, `mode` (`NativeDomain`/`ZlmCompatible`), `target_url`, `event_filter`, `admission_actions`, `failure_policy`, `timeout_ms`, `secret` and `generation`.
+- Updates require `expected_generation`; the provider preserves the existing `secret` when an update request leaves it empty.
+- `WebhookAdminStore` persists profiles through `DatabaseApi` under the `webhook:profile:` key prefix; module restart reloads from the same store.
+- `test_profile` sends a synthetic `WebhookTest` envelope, validates DNS/connect/HTTP/signature and returns a `WebhookTestReport` without allocating media resources.
+- Native routes under `/api/v1/webhook/profiles` map to `WebhookAdminApi` and require `MediaScope::ServerAdmin`.
+- `cheetah-webhook-dispatcher` registers the admin provider as `MediaCapability::WebhookAdmin` in `MediaServices` alongside the `Webhook` and `Admission` providers.
+
 ## 4. Media Model and Unification
 
 All protocol ingest into engine should converge to:

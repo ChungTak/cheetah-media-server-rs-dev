@@ -18,6 +18,7 @@ pub enum MediaCapability {
     Proxy,
     Rtp,
     Webhook,
+    WebhookAdmin,
     Playback,
     Admission,
 }
@@ -192,6 +193,14 @@ pub fn default_operations(capability: MediaCapability) -> Vec<String> {
             "get_session".to_string(),
         ],
         MediaCapability::Webhook => vec!["request_decision".to_string()],
+        MediaCapability::WebhookAdmin => vec![
+            "create_profile".to_string(),
+            "get_profile".to_string(),
+            "list_profiles".to_string(),
+            "update_profile".to_string(),
+            "delete_profile".to_string(),
+            "test_profile".to_string(),
+        ],
         MediaCapability::Playback => vec![
             "open".to_string(),
             "get".to_string(),
