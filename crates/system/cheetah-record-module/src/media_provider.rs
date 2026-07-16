@@ -59,12 +59,39 @@ impl RecordMediaProvider {
         })
     }
 
-    fn map_playback_command(command: &RecordPlaybackCommand) -> PlaybackControl {
+    /// Validate a legacy record playback command and convert it to a
+    /// `PlaybackControl`, keeping the same acceptance range as the previous
+    /// in-memory `PlaybackRegistry` but clamping scale to the values the MP4
+    /// driver supports in this phase.
+    ///
+    /// 校验旧版录制回放命令并转换为 `PlaybackControl`：保持与旧的
+    /// `PlaybackRegistry` 相同的接受范围，但将倍速钳位到本阶段 MP4 驱动支持
+    /// 的档位。
+    fn validate_and_clamp(
+        command: &RecordPlaybackCommand,
+        duration_ms: u64,
+    ) -> Result<PlaybackControl> {
         match *command {
-            RecordPlaybackCommand::Pause => PlaybackControl::Pause,
-            RecordPlaybackCommand::Resume => PlaybackControl::Resume,
-            RecordPlaybackCommand::Scale { value } => PlaybackControl::SetScale { scale: value },
-            RecordPlaybackCommand::Seek { value } => PlaybackControl::Seek { position_ms: value },
+            RecordPlaybackCommand::Pause => Ok(PlaybackControl::Pause),
+            RecordPlaybackCommand::Resume => Ok(PlaybackControl::Resume),
+            RecordPlaybackCommand::Scale { value } => {
+                if !value.is_finite() || !(0.25..=16.0).contains(&value) {
+                    return Err(MediaError::invalid_argument(
+                        "scale must be finite and in [0.25, 16.0]".to_string(),
+                    ));
+                }
+                Ok(PlaybackControl::SetScale {
+                    scale: clamp_supported_scale(value),
+                })
+            }
+            RecordPlaybackCommand::Seek { value } => {
+                if value < 0 || (value as u64) > duration_ms {
+                    return Err(MediaError::invalid_argument(format!(
+                        "seek {value} is out of range [0, {duration_ms}]"
+                    )));
+                }
+                Ok(PlaybackControl::Seek { position_ms: value })
+            }
         }
     }
 
@@ -356,11 +383,11 @@ impl RecordApiPort for RecordMediaProvider {
             .playback()
             .expect("playback checked above");
 
+        let control = Self::validate_and_clamp(&command, file.duration_ms)?;
         let pb_id = self
             .playback_session_for_file(ctx, file_id, &file, &playback)
             .await?;
 
-        let control = Self::map_playback_command(&command);
         match playback.control_playback(ctx, &pb_id, control).await {
             Ok(_) => Ok(()),
             Err(ref e) if e.code == MediaErrorCode::NotFound => {
@@ -371,12 +398,29 @@ impl RecordApiPort for RecordMediaProvider {
                 let pb_id = self
                     .playback_session_for_file(ctx, file_id, &file, &playback)
                     .await?;
-                let control = Self::map_playback_command(&command);
+                let control = Self::validate_and_clamp(&command, file.duration_ms)?;
                 let _ = playback.control_playback(ctx, &pb_id, control).await?;
                 Ok(())
             }
             Err(e) => Err(e),
         }
+    }
+}
+
+/// Clamp a legacy playback scale to the set the MP4 driver supports in this
+/// phase: {0.5, 1.0, 2.0, 4.0}.
+///
+/// 将旧版回放倍速钳位到本阶段 MP4 驱动支持的档位：{0.5, 1.0, 2.0, 4.0}。
+fn clamp_supported_scale(value: f64) -> f64 {
+    // Midpoints are geometric means so exact supported values stay unchanged.
+    if value < 0.5f64.sqrt() {
+        0.5
+    } else if value < 2.0f64.sqrt() {
+        1.0
+    } else if value < 8.0f64.sqrt() {
+        2.0
+    } else {
+        4.0
     }
 }
 
