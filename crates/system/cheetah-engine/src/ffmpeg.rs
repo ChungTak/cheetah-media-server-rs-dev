@@ -238,7 +238,7 @@ struct ConcatInput {
 }
 
 impl ConcatInput {
-    fn write(job_id: &str, url: &str) -> std::io::Result<Self> {
+    fn write(job_id: &str, url: &str, input_options: &[String]) -> std::io::Result<Self> {
         let safe_id = job_id.replace(
             |c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_',
             "_",
@@ -263,9 +263,13 @@ impl ConcatInput {
             }
         };
 
-        let escaped = url.replace('\'', "''");
+        let escaped = url.replace('\'', r"'\''");
+        let concat_options = input_options_to_concat_options(input_options);
         writeln!(file, "ffconcat version 1.0")?;
         writeln!(file, "file '{escaped}'")?;
+        for (key, value) in &concat_options {
+            writeln!(file, "option {key} {value}")?;
+        }
         file.flush()?;
 
         Ok(Self { path, _file: file })
@@ -276,6 +280,31 @@ impl Drop for ConcatInput {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
     }
+}
+
+/// Convert command-line `-key value` tokens into ffconcat `option key value` lines.
+fn input_options_to_concat_options(opts: &[String]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < opts.len() {
+        let token = &opts[i];
+        let key = token
+            .strip_prefix("--")
+            .or_else(|| token.strip_prefix('-'))
+            .unwrap_or(token);
+        if key.is_empty() || key == token {
+            i += 1;
+            continue;
+        }
+        if i + 1 < opts.len() && !opts[i + 1].starts_with('-') {
+            out.push((key.to_string(), opts[i + 1].clone()));
+            i += 2;
+        } else {
+            out.push((key.to_string(), "1".to_string()));
+            i += 1;
+        }
+    }
+    out
 }
 
 fn url_has_credentials(url: &str) -> bool {
@@ -365,7 +394,7 @@ async fn run_ffmpeg_job(
     let redacted_output_url = redact_url_credentials(&output_url);
 
     let concat_input = if url_has_credentials(&input_url) {
-        match ConcatInput::write(&_job_id, &input_url) {
+        match ConcatInput::write(&_job_id, &input_url, &spec.input_options) {
             Ok(c) => Some(c),
             Err(err) => {
                 finish_job(
@@ -385,7 +414,12 @@ async fn run_ffmpeg_job(
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
-    cmd.args(&spec.input_options);
+    if concat_input.is_some() {
+        // Input options are written into the concat file so they bind to the
+        // nested protocol context rather than the concat demuxer itself.
+    } else {
+        cmd.args(&spec.input_options);
+    }
     if let Some(c) = &concat_input {
         cmd.arg("-f")
             .arg("concat")
