@@ -72,7 +72,7 @@ fn make_engine() -> Arc<cheetah_engine::Engine> {
     let config = Arc::new(ConfigStore::new());
     config
         .load_yaml_str(
-            "modules:\n  rtmp:\n    enabled: true\n    listen: \"127.0.0.1:0\"\n  proxy:\n    ssrf_allowlist_cidrs:\n      - 127.0.0.0/8\n    retry_max: 3\n    retry_delay_ms: 500\n    connect_timeout_ms: 10000\n",
+            "modules:\n  rtmp:\n    enabled: true\n    listen: \"127.0.0.1:0\"\n  proxy:\n    ssrf_allowlist_cidrs:\n      - 127.0.0.0/8\n      - ::1/128\n    retry_max: 3\n    retry_delay_ms: 500\n    connect_timeout_ms: 10000\n",
         )
         .expect("load config");
     let runtime = Arc::new(TokioRuntime::new());
