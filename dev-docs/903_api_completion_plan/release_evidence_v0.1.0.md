@@ -28,7 +28,7 @@
 | EVT-01..05 | devin | main | `cargo test -p cheetah-engine` + `cheetah-webhook-dispatcher` | PASS | #161..#165 | 无 |
 | ZLM-01..04 | devin | main | `cargo test -p cheetah-media-module` | PASS | #168..#171 | 无 |
 | REL-02/04 | devin | #172 | S0..S5 GitHub Actions workflow | PASS | #172 制品 `cheetah-server-release` | 无 |
-| REL-03 | devin | REL-03 PR | `cargo test -p cheetah-engine --test resource_leak -- --test-threads=1` | PASS | REL-03 PR | 无 |
+| REL-03 | devin | #174 | `cargo test -p cheetah-engine --test resource_leak -- --test-threads=1` | PASS | #174 | 无 |
 | SIG-01..06 | - | - | `cargo test -p cheetah-sdk --test signal_contracts` 仅覆盖 A 层 | PARTIAL | - | B 层 native HTTP 黑盒 runner 缺失 |
 
 ## 3. 能力证据
@@ -78,7 +78,7 @@ ZLM 兼容接口目录及 L0-L4 证据见 `11_zlm_compatibility_revalidation.md`
 
 | 角色 | 结论 | 姓名/时间 | 证据 |
 | --- | --- | --- | --- |
-| implementation | APPROVE (P0/P1/ZLM/REL-03) | devin / 2026-07-15 | PR #135..#172、REL-03 PR CI 全绿 |
+| implementation | APPROVE (P0/P1/ZLM/REL-03) | devin / 2026-07-15 | PR #135..#172、#174 CI 全绿 |
 | API compatibility | 待最终签署 | - | ZLM/SIG B 层完成后 |
 | security | 待最终签署 | - | REL-03 完成后 |
 | release | 待最终签署 | - | 全部门禁清单打勾后 |

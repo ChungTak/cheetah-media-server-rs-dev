@@ -79,7 +79,7 @@ P0 结束时，暂未完成的 playback/proxy/FFmpeg operation 必须从 Availab
 | SEC-04/05 | mTLS/HMAC TTL/webhook 响应大小限制 | 已完成并合并 | #166/#167 |
 | ZLM-01..04 | 接口目录/高价值接口/golden/L3 黑盒 | 已完成并合并 | #168..#171 |
 | REL-02/04 | S0-S5 CI 分组、release build、制品归档 | 已完成并合并 | #172 |
-| REL-03 | 并发取消、module restart、资源泄漏观测 | 已完成，PR 待合并 | REL-03 PR |
+| REL-03 | 并发取消、module restart、资源泄漏观测 | 已完成，PR 待合并 | #174 |
 | SIG-01..06 | 四类信令 A/B 合同与公共 fixture/native HTTP 黑盒 | A 层合同已存在，B 层 runner 待建 | - |
 | 14/15 | 执行路线与发布证据 | 本文档更新中 | 本 PR |
 
