@@ -350,7 +350,7 @@ mod tests {
     use cheetah_codec::MonoTime;
     use cheetah_sdk::{
         AsyncTcpListener, AsyncTcpStream, AsyncTimer, ConnectTcpFuture, ConnectTlsFuture,
-        JoinHandle, SpawnError, TaskJoinError, UdpRecvMeta,
+        JoinHandle, ResolveHostFuture, SpawnError, TaskJoinError, UdpRecvMeta,
     };
     use std::future::Future;
     use std::io;
@@ -535,6 +535,15 @@ mod tests {
         fn sleep_until(&self, _deadline: MonoTime) -> Box<dyn AsyncTimer> {
             Box::new(NeverTimer)
         }
+
+        fn resolve_host<'a>(&'a self, _host: &str) -> ResolveHostFuture<'a> {
+            Box::pin(async move {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "DNS not used by multicast registry tests",
+                ))
+            })
+        }
     }
 
     struct InlineRuntimeApi {
@@ -633,6 +642,15 @@ mod tests {
 
         fn sleep_until(&self, _deadline: MonoTime) -> Box<dyn AsyncTimer> {
             Box::new(ImmediateTimer)
+        }
+
+        fn resolve_host<'a>(&'a self, _host: &str) -> ResolveHostFuture<'a> {
+            Box::pin(async move {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "DNS not used by multicast registry tests",
+                ))
+            })
         }
     }
 

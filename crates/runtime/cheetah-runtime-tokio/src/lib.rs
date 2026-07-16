@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::io;
 use std::net::{
-    Ipv4Addr, SocketAddr, TcpListener as StdTcpListener, TcpStream as StdTcpStream,
+    IpAddr, Ipv4Addr, SocketAddr, TcpListener as StdTcpListener, TcpStream as StdTcpStream,
     UdpSocket as StdUdpSocket,
 };
 use std::pin::Pin;
@@ -16,7 +16,7 @@ use cheetah_runtime_api::{
     RuntimeApi, SpawnError, TaskJoinError, UdpRecvMeta,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
+use tokio::net::{lookup_host, TcpListener, TcpStream, UdpSocket};
 use tokio::time::{sleep_until, Duration, Instant as TokioInstant, Sleep};
 use tokio_rustls::TlsConnector;
 
@@ -453,6 +453,27 @@ impl RuntimeApi for TokioRuntime {
 
     fn sleep_until(&self, deadline: MonoTime) -> Box<dyn AsyncTimer> {
         Box::new(<Self as Runtime>::sleep_until(self, deadline))
+    }
+
+    fn resolve_host(
+        &self,
+        host: &str,
+    ) -> Pin<Box<dyn Future<Output = io::Result<Vec<IpAddr>>> + Send + '_>> {
+        let host = host.to_string();
+        Box::pin(async move {
+            let query = format!("{host}:0");
+            let addrs = lookup_host(query)
+                .await?
+                .map(|sa| sa.ip())
+                .collect::<Vec<_>>();
+            if addrs.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("host {host} resolved no addresses"),
+                ));
+            }
+            Ok(addrs)
+        })
     }
 
     fn oneshot(&self) -> (OneShotSender, OneShotReceiver) {
