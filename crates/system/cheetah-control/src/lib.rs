@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -474,9 +474,19 @@ fn trusted_proxy_networks(config: &dyn ConfigProvider) -> Vec<cidr::IpNet> {
 /// Return true when `addr` is inside at least one of the configured trusted
 /// proxy networks.
 ///
-/// 当 `addr` 落在任一可信代理网络中时返回 true。
+/// IPv4-mapped IPv6 addresses (e.g. `::ffff:127.0.0.1`) are normalized to their
+/// IPv4 form before matching, so dual-stack listeners still match IPv4 CIDRs.
+///
+/// 当 `addr` 落在任一可信代理网络中时返回 true。IPv4 映射的 IPv6 地址会先归一化为 IPv4 再匹配。
 fn is_trusted_proxy(addr: &SocketAddr, networks: &[cidr::IpNet]) -> bool {
-    networks.iter().any(|net| net.contains(&addr.ip()))
+    let ip = addr.ip();
+    let mapped_v4 = match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4),
+        _ => None,
+    };
+    networks
+        .iter()
+        .any(|net| net.contains(&ip) || mapped_v4.map_or(false, |v4| net.contains(&v4)))
 }
 
 /// Remove the `x-mtls-identity` header unless the request comes from a trusted
@@ -1441,5 +1451,18 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
         let out = sanitize_mtls_header(headers, &addr, &[]);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn sanitize_mtls_header_allows_ipv4_mapped_ipv6_peer_for_v4_cidr() {
+        let headers = vec![HttpHeader {
+            name: "x-mtls-identity".to_string(),
+            value: "alice".to_string(),
+        }];
+        let networks = vec![IpNet::from_str("127.0.0.1/32").unwrap()];
+        let addr: SocketAddr = "[::ffff:127.0.0.1]:12345".parse().unwrap();
+        let out = sanitize_mtls_header(headers, &addr, &networks);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].value, "alice");
     }
 }
