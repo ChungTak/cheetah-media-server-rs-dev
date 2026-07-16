@@ -120,6 +120,7 @@ impl WebhookDecisionClient {
             headers,
             body,
             timeout: profile.decision_timeout(),
+            max_response_bytes: profile.max_response_bytes,
         };
 
         match self.sender.send(request).await {

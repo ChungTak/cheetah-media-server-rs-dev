@@ -421,6 +421,7 @@ impl TargetWorker {
                 headers,
                 body,
                 timeout: job.profile.timeout(),
+                max_response_bytes: job.profile.max_response_bytes,
             };
 
             match self.sender.send(request).await {

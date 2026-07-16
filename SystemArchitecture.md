@@ -386,6 +386,7 @@ Webhook profiles are managed through `WebhookAdminApi` and exposed as native HTT
 - `WebhookProfileMode::ZlmCompatible` emits ZLM-style hooks (`on_publish`, `on_play`, `on_stream_changed`, etc.) for the subset of events that have a defined mapping.
 - Each profile gets its own bounded worker queue; slow profiles do not block others.
 - Retries are limited by `max_retries` and `max_retry_duration_ms`, use exponential backoff from `retry_interval_ms`, and only happen for network errors, HTTP 429, or 5xx responses. 4xx responses (other than 429) are not retried.
+- Outbound request bodies are capped by `max_body_bytes` and response bodies by `max_response_bytes` per profile (default 64 KiB and 1 MiB); oversized responses are rejected as invalid.
 - Unsupported mappings for the active mode increment `unsupported_mapping_total{event_type,profile}` through `MetricsApi`.
 - Closing the dispatcher handle or removing a profile from configuration stops further delivery attempts for that profile.
 

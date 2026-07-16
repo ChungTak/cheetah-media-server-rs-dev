@@ -269,6 +269,7 @@ async fn run_webhook_test(
         headers,
         body,
         timeout,
+        max_response_bytes: crate::config::DEFAULT_MAX_RESPONSE_BYTES,
     };
 
     match sender.send(request).await {
