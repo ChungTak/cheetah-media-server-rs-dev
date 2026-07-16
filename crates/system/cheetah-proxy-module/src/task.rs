@@ -675,6 +675,7 @@ async fn run_ffmpeg(
             match ctx.ffmpeg_api.wait(&handle.job_id).await {
                 Ok(s) => Ok(s),
                 Err(e) => {
+                    let _ = ctx.ffmpeg_api.remove(&handle.job_id).await;
                     return RunOnceOutcome::Failed(format!(
                         "ffmpeg job cancelled but failed to wait: {e}"
                     ));
@@ -683,14 +684,17 @@ async fn run_ffmpeg(
         }
     };
 
-    match status {
+    let outcome = match status {
         Ok(status) => match status.state {
             FfmpegJobState::Exited if status.exit_code == Some(0) => RunOnceOutcome::Stopped,
             FfmpegJobState::Cancelled => RunOnceOutcome::Stopped,
             _ => RunOnceOutcome::Failed(status.exit_summary),
         },
         Err(e) => RunOnceOutcome::Failed(format!("ffmpeg job error: {e}")),
-    }
+    };
+
+    let _ = ctx.ffmpeg_api.remove(&handle.job_id).await;
+    outcome
 }
 
 /// Validate FFmpeg option tokens: no shell metacharacters, newlines, or

@@ -289,4 +289,8 @@ pub trait FfmpegApi: Send + Sync {
     async fn list(&self) -> Vec<FfmpegJobStatus>;
     async fn wait(&self, job_id: &str) -> Result<FfmpegJobStatus, SdkError>;
     async fn cancel(&self, job_id: &str) -> Result<(), SdkError>;
+    /// Remove a finished job from the registry, releasing its memory.
+    ///
+    /// 从注册表中移除已结束的任务，释放其内存。
+    async fn remove(&self, job_id: &str) -> Result<(), SdkError>;
 }
