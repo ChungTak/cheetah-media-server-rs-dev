@@ -738,8 +738,8 @@ impl NativeMediaHttpService {
     ) -> Result<HttpResponse, AdapterError> {
         let snapshot_api = self.snapshot()?;
         let request: DeleteSnapshotRequest = parse_body(&req)?;
-        snapshot_api.delete_snapshot_directory(ctx, request).await?;
-        Ok(json_response(&serde_json::json!({ "deleted": true })))
+        let result = snapshot_api.delete_snapshots(ctx, request).await?;
+        Ok(json_response(&result))
     }
 
     async fn file_download(

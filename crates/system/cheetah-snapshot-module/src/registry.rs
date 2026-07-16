@@ -92,6 +92,26 @@ impl SnapshotRegistry {
         (page_items, total)
     }
 
+    pub fn find_by_media_key(
+        &self,
+        media_key: &cheetah_media_api::ids::MediaKey,
+    ) -> Vec<SnapshotInfo> {
+        self.entries
+            .iter()
+            .filter(|e| &e.value().media_key == media_key)
+            .map(|e| e.value().clone())
+            .collect()
+    }
+
+    pub fn remove(&self, snapshot_id: &str) -> Option<SnapshotInfo> {
+        let removed = self.entries.remove(snapshot_id).map(|(_, v)| v);
+        if removed.is_some() {
+            let mut order = self.order.lock();
+            order.retain(|x| x != snapshot_id);
+        }
+        removed
+    }
+
     pub fn delete_matching(&self, media_key: &cheetah_media_api::ids::MediaKey) -> u64 {
         let ids: Vec<String> = self
             .entries

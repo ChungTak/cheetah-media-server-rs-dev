@@ -176,11 +176,33 @@ pub trait SnapshotApi: Send + Sync {
         query: SnapshotQuery,
     ) -> Result<Page<SnapshotInfo>>;
 
+    /// Delete snapshots matching the request and return a per-handle batch result.
+    ///
+    /// 删除匹配请求的快照并返回逐项批量结果。
+    async fn delete_snapshots(
+        &self,
+        ctx: &MediaRequestContext,
+        request: DeleteSnapshotRequest,
+    ) -> Result<crate::media_file_store::DeleteBatchResult>;
+
+    /// Deprecated alias for `delete_snapshots`. Delegates to the new method and
+    /// returns an error if any deletion failed.
+    ///
+    /// `delete_snapshots` 的旧别名，委托给新方法并在有失败项时返回错误。
     async fn delete_snapshot_directory(
         &self,
         ctx: &MediaRequestContext,
         request: DeleteSnapshotRequest,
-    ) -> Result<()>;
+    ) -> Result<()> {
+        let result = self.delete_snapshots(ctx, request).await?;
+        if result.failed > 0 {
+            return Err(crate::error::MediaError::new(
+                crate::error::MediaErrorCode::Internal,
+                format!("{} snapshot deletion(s) failed", result.failed),
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Proxy operations.

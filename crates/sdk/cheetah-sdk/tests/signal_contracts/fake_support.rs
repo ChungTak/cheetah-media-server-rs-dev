@@ -5,6 +5,7 @@ use cheetah_media_api::command::*;
 use cheetah_media_api::error::{MediaError, Result as MediaResult};
 use cheetah_media_api::event::{MediaEvent, MediaEventSender, MediaEventSubscription};
 use cheetah_media_api::ids::*;
+use cheetah_media_api::media_file_store::DeleteBatchResult;
 use cheetah_media_api::model::*;
 use cheetah_media_api::port::{
     MediaControlApi, MediaFacade, MediaRequestContext, ProxyApi, PublishSubscribeApi, RecordApi,
@@ -322,12 +323,17 @@ impl SnapshotApi for FakeMediaProvider {
         Ok(empty_page(query.page, query.page_size))
     }
 
-    async fn delete_snapshot_directory(
+    async fn delete_snapshots(
         &self,
         _ctx: &MediaRequestContext,
         _request: DeleteSnapshotRequest,
-    ) -> MediaResult<()> {
-        Ok(())
+    ) -> MediaResult<DeleteBatchResult> {
+        Ok(DeleteBatchResult {
+            matched: 0,
+            deleted: 0,
+            failed: 0,
+            failures: Vec::new(),
+        })
     }
 }
 

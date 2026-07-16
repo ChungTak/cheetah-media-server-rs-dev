@@ -63,13 +63,24 @@ pub struct FileStoreQuery {
     pub owner_principal: Option<String>,
 }
 
+/// Per-handle deletion failure.
+///
+/// 单个句柄删除失败详情。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteFailure {
+    pub handle: FileHandle,
+    pub reason: String,
+}
+
 /// Result of a batch deletion.
 ///
 /// 批量删除结果。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DeleteBatchResult {
+    pub matched: u64,
     pub deleted: u64,
     pub failed: u64,
+    pub failures: Vec<DeleteFailure>,
 }
 
 /// A byte range within a file.

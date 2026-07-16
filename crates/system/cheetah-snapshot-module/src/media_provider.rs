@@ -15,7 +15,7 @@ use cheetah_media_api::error::{MediaError, MediaErrorCode, Result};
 use cheetah_media_api::event::{EventHeader, MediaEvent, SnapshotCompleted};
 use cheetah_media_api::ids::MediaSchema;
 use cheetah_media_api::image::{ImageArtifact, ImageEncodeRequest, ImageFormat};
-use cheetah_media_api::media_file_store::FileStoreEntry;
+use cheetah_media_api::media_file_store::{DeleteBatchResult, DeleteFailure, FileStoreEntry};
 use cheetah_media_api::model::{Page, SnapshotHandle, SnapshotInfo, SnapshotState};
 use cheetah_media_api::port::{MediaRequestContext, SnapshotApi};
 use cheetah_runtime_api::RuntimeApi;
@@ -328,13 +328,96 @@ impl SnapshotApi for SnapshotMediaProvider {
         })
     }
 
-    async fn delete_snapshot_directory(
+    async fn delete_snapshots(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         request: DeleteSnapshotRequest,
-    ) -> Result<()> {
-        let _ = self.registry.delete_matching(&request.media_key);
-        Ok(())
+    ) -> Result<DeleteBatchResult> {
+        let root = PathBuf::from(&self.config.root_path);
+
+        let mut candidates = self.registry.find_by_media_key(&request.media_key);
+        candidates.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        let matched = candidates.len() as u64;
+
+        if let Some(retain) = request.retain_count {
+            let retain = retain as usize;
+            if candidates.len() > retain {
+                candidates = candidates.split_off(retain);
+            } else {
+                candidates.clear();
+            }
+        }
+
+        let mut deleted = 0u64;
+        let mut failed = 0u64;
+        let mut failures = Vec::new();
+
+        for info in candidates {
+            let handle = &info.path_handle;
+
+            // Resolve the file store entry (auth check, ignore expiry for cleanup).
+            let entry =
+                match self
+                    .ctx
+                    .media_file_store
+                    .resolve_for_read(ctx, handle, None, i64::MAX)
+                {
+                    Ok(e) => e,
+                    Err(e) => {
+                        failed += 1;
+                        failures.push(DeleteFailure {
+                            handle: handle.clone(),
+                            reason: format!("failed to resolve file handle: {e}"),
+                        });
+                        continue;
+                    }
+                };
+
+            // Ensure the file is located under the configured managed root and is
+            // not a symlink or otherwise escaped path.
+            let path = Path::new(&entry.absolute_path);
+            if let Err(reason) = is_safe_snapshot_path(path, &root) {
+                failed += 1;
+                failures.push(DeleteFailure {
+                    handle: handle.clone(),
+                    reason,
+                });
+                continue;
+            }
+
+            // Remove file-store entry first so we never expose a deleted file.
+            if let Err(e) = self.ctx.media_file_store.delete(ctx, handle, now_ms()) {
+                failed += 1;
+                failures.push(DeleteFailure {
+                    handle: handle.clone(),
+                    reason: format!("failed to unregister file: {e}"),
+                });
+                continue;
+            }
+
+            // Remove the physical file. A missing file is treated as already cleaned.
+            if let Err(e) = fs::remove_file(path) {
+                if e.kind() != io::ErrorKind::NotFound {
+                    failed += 1;
+                    failures.push(DeleteFailure {
+                        handle: handle.clone(),
+                        reason: format!("failed to delete physical file: {e}"),
+                    });
+                    continue;
+                }
+            }
+
+            // Drop the snapshot registry entry last.
+            self.registry.remove(&info.snapshot_id.0);
+            deleted += 1;
+        }
+
+        Ok(DeleteBatchResult {
+            matched,
+            deleted,
+            failed,
+            failures,
+        })
     }
 }
 
@@ -434,4 +517,48 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// Verify that `path` is an absolute path located under `root`, contains no
+/// parent-directory traversal, and has no symlink components.
+///
+/// 验证 `path` 是绝对路径、位于 `root` 下、不含 `..` 且无符号链接组件。
+fn is_safe_snapshot_path(path: &Path, root: &Path) -> std::result::Result<(), String> {
+    if !path.is_absolute() {
+        return Err("path is not absolute".to_string());
+    }
+
+    let canonical_root =
+        std::fs::canonicalize(root).map_err(|e| format!("failed to canonicalize root: {e}"))?;
+
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Prefix(p) => current.push(p.as_os_str()),
+            std::path::Component::RootDir => current.push(component.as_os_str()),
+            std::path::Component::CurDir => continue,
+            std::path::Component::ParentDir => {
+                return Err("path contains parent directory reference".to_string());
+            }
+            std::path::Component::Normal(name) => current.push(name),
+        }
+
+        if current.as_os_str().is_empty() || current == canonical_root {
+            continue;
+        }
+
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err("path contains symlink".to_string());
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("failed to stat path component: {e}")),
+        }
+    }
+
+    if !current.starts_with(&canonical_root) {
+        return Err("path escapes managed root".to_string());
+    }
+    Ok(())
 }
