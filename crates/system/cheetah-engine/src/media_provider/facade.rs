@@ -1,3 +1,6 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use cheetah_media_api::command::*;
 use cheetah_media_api::error::{MediaError, Result as MediaResult};
@@ -6,9 +9,9 @@ use cheetah_media_api::ids::{MediaKey, ProxyId, RecordFileId, RtpSessionId, Sess
 use cheetah_media_api::image::{ImageArtifact, ImageEncodeApi, ImageEncodeRequest};
 use cheetah_media_api::media_file_store::DeleteBatchResult;
 use cheetah_media_api::model::{
-    CloseReason, CloseReport, OnlineState, Page, ProxyInfo, PublisherHandle, RecordFile,
-    RecordTask, RtpSession, SessionInfo, SnapshotHandle, SnapshotInfo, StreamInfo,
-    SubscriberHandle,
+    AdmissionAction, AdmissionRequest, CloseReason, CloseReport, Decision, OnlineState, Page,
+    ProxyInfo, PublisherHandle, RecordFile, RecordTask, RtpSession, SessionInfo, SnapshotHandle,
+    SnapshotInfo, StreamInfo, SubscriberHandle,
 };
 use cheetah_media_api::port::{
     MediaControlApi, MediaFacade, MediaRequestContext, ProxyApi, PublishSubscribeApi, RecordApi,
@@ -16,7 +19,6 @@ use cheetah_media_api::port::{
 };
 use cheetah_media_api::MediaCapabilitySet;
 use cheetah_sdk::MediaServices;
-use std::sync::Arc;
 
 /// Engine media facade backed by the runtime `MediaServices` registry.
 ///
@@ -35,6 +37,37 @@ impl EngineMediaFacade {
         Self {
             services,
             media_event_bus,
+        }
+    }
+
+    /// Ask the configured admission provider whether a side-effecting media
+    /// operation should proceed. A missing provider is treated as allow-all.
+    ///
+    /// 询问已配置的 admission provider 是否允许执行会产生副作用的媒体操作；
+    /// provider 缺失时默认放行。
+    async fn check_admission(
+        &self,
+        ctx: &MediaRequestContext,
+        action: AdmissionAction,
+        resource: MediaKey,
+        protocol: String,
+        source_address: Option<String>,
+        params: HashMap<String, String>,
+    ) -> MediaResult<()> {
+        let Some(provider) = self.services.admission() else {
+            return Ok(());
+        };
+        let request = AdmissionRequest {
+            action,
+            principal: ctx.principal.clone(),
+            resource,
+            protocol,
+            source_address,
+            params,
+        };
+        match provider.authorize(ctx, request).await? {
+            Decision::Allow => Ok(()),
+            Decision::Deny { code, reason } => Err(MediaError::new(code, reason)),
         }
     }
 }
@@ -133,6 +166,15 @@ impl PublishSubscribeApi for EngineMediaFacade {
         ctx: &MediaRequestContext,
         request: PublishRequest,
     ) -> MediaResult<PublisherHandle> {
+        self.check_admission(
+            ctx,
+            AdmissionAction::Publish,
+            request.media_key.clone(),
+            request.protocol.clone(),
+            request.origin.clone().or(request.remote_endpoint.clone()),
+            request.auth_context.clone(),
+        )
+        .await?;
         let provider = self
             .services
             .publish_subscribe()
@@ -145,6 +187,15 @@ impl PublishSubscribeApi for EngineMediaFacade {
         ctx: &MediaRequestContext,
         request: SubscribeRequest,
     ) -> MediaResult<SubscriberHandle> {
+        self.check_admission(
+            ctx,
+            AdmissionAction::Play,
+            request.media_key.clone(),
+            request.output_schema.to_string(),
+            None,
+            request.auth_context.clone(),
+        )
+        .await?;
         let provider = self
             .services
             .publish_subscribe()
@@ -308,6 +359,21 @@ impl ProxyApi for EngineMediaFacade {
         ctx: &MediaRequestContext,
         request: PullProxyRequest,
     ) -> MediaResult<ProxyInfo> {
+        let protocol = request
+            .source_url
+            .split("://")
+            .next()
+            .unwrap_or("http")
+            .to_string();
+        self.check_admission(
+            ctx,
+            AdmissionAction::CreatePullProxy,
+            request.destination.clone(),
+            protocol,
+            Some(request.source_url.clone()),
+            HashMap::new(),
+        )
+        .await?;
         let provider = self
             .services
             .proxy()
@@ -378,6 +444,15 @@ impl ProxyApi for EngineMediaFacade {
         ctx: &MediaRequestContext,
         request: PushProxyRequest,
     ) -> MediaResult<ProxyInfo> {
+        self.check_admission(
+            ctx,
+            AdmissionAction::CreatePushProxy,
+            request.source_media_key.clone(),
+            request.protocol.clone(),
+            Some(request.destination_url.clone()),
+            request.protocol_options.clone(),
+        )
+        .await?;
         let provider = self
             .services
             .proxy()
@@ -450,6 +525,15 @@ impl RtpApi for EngineMediaFacade {
         ctx: &MediaRequestContext,
         request: RtpReceiverRequest,
     ) -> MediaResult<RtpSession> {
+        self.check_admission(
+            ctx,
+            AdmissionAction::OpenRtpReceiver,
+            request.media_key.clone(),
+            "rtp".to_string(),
+            request.ip.clone(),
+            HashMap::new(),
+        )
+        .await?;
         let provider = self
             .services
             .rtp()
@@ -474,6 +558,15 @@ impl RtpApi for EngineMediaFacade {
         ctx: &MediaRequestContext,
         request: RtpSenderRequest,
     ) -> MediaResult<RtpSession> {
+        self.check_admission(
+            ctx,
+            AdmissionAction::OpenRtpSender,
+            request.media_key.clone(),
+            "rtp".to_string(),
+            Some(request.destination_endpoint.clone()),
+            HashMap::new(),
+        )
+        .await?;
         let provider = self
             .services
             .rtp()
