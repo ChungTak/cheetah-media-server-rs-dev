@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::io;
 use std::net::{
-    Ipv4Addr, SocketAddr, TcpListener as StdTcpListener, TcpStream as StdTcpStream,
+    IpAddr, Ipv4Addr, SocketAddr, TcpListener as StdTcpListener, TcpStream as StdTcpStream,
     UdpSocket as StdUdpSocket,
 };
 use std::pin::Pin;
@@ -503,6 +503,11 @@ pub type ConnectTlsFuture<'a> =
 
 pub type ConnectTcpFuture<'a> = ConnectTlsFuture<'a>;
 
+/// Future returned by [`RuntimeApi::resolve_host`].
+///
+/// [`RuntimeApi::resolve_host`] 返回的 future。
+pub type ResolveHostFuture<'a> = Pin<Box<dyn Future<Output = io::Result<Vec<IpAddr>>> + Send + 'a>>;
+
 pub trait RuntimeApi: Send + Sync + 'static {
     fn now(&self) -> MonoTime;
     fn spawn(&self, fut: Pin<Box<dyn Future<Output = ()> + Send + 'static>>)
@@ -520,6 +525,12 @@ pub trait RuntimeApi: Send + Sync + 'static {
     fn wrap_tcp_listener(&self, listener: StdTcpListener) -> io::Result<Box<dyn AsyncTcpListener>>;
     fn wrap_tcp_stream(&self, stream: StdTcpStream) -> io::Result<Box<dyn AsyncTcpStream>>;
     fn sleep_until(&self, deadline: MonoTime) -> Box<dyn AsyncTimer>;
+
+    /// Resolve a hostname to all A/AAAA records.
+    ///
+    /// 将主机名解析为所有 A/AAAA 地址。
+    fn resolve_host(&self, host: &str) -> ResolveHostFuture<'_>;
+
     fn oneshot(&self) -> (OneShotSender, OneShotReceiver) {
         oneshot_channel()
     }
