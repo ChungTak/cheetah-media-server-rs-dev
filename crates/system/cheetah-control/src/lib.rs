@@ -1,16 +1,19 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use axum::body::{to_bytes, Body};
-use axum::extract::{Extension, Path, Request};
+use axum::extract::{ConnectInfo, Extension, Path, Request};
 use axum::http::{Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch};
 use axum::{Json, Router};
+
+mod cidr;
 use cheetah_sdk::{
-    ConfigApplyApi, ConfigEffect, ConfigProvider, ConfigSchemaRegistry, HttpMethod, HttpRequest,
-    HttpResponse, HttpRouteMount, ModuleId, ModuleManagerApi, ServiceRegistry, StreamManagerApi,
-    TaskSystemApi,
+    ConfigApplyApi, ConfigEffect, ConfigProvider, ConfigSchemaRegistry, HttpHeader, HttpMethod,
+    HttpRequest, HttpResponse, HttpRouteMount, ModuleId, ModuleManagerApi, ServiceRegistry,
+    StreamManagerApi, TaskSystemApi,
 };
 use cheetah_sdk::{HealthApi, MetricsApi};
 use serde::Deserialize;
@@ -73,7 +76,11 @@ pub fn spawn_server(
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
     tokio::spawn(async move {
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        axum::serve(listener, router(state)).await?;
+        axum::serve(
+            listener,
+            router(state).into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await?;
         Ok(())
     })
 }
@@ -445,10 +452,75 @@ async fn patch_module_config(
         .into_response()
 }
 
+/// Load the list of trusted reverse proxy CIDR networks from global config.
+///
+/// 从全局配置加载可信反向代理 CIDR 列表。
+fn trusted_proxy_networks(config: &dyn ConfigProvider) -> Vec<cidr::IpNet> {
+    let global = config.global();
+    let Some(list) = global
+        .get("media")
+        .and_then(|v| v.get("native"))
+        .and_then(|v| v.get("trusted_proxies"))
+        .and_then(|v| v.as_array())
+    else {
+        return Vec::new();
+    };
+    list.iter()
+        .filter_map(|v| v.as_str())
+        .filter_map(|s| cidr::IpNet::from_str(s).ok())
+        .collect()
+}
+
+/// Return true when `addr` is inside at least one of the configured trusted
+/// proxy networks.
+///
+/// IPv4-mapped IPv6 addresses (e.g. `::ffff:127.0.0.1`) are normalized to their
+/// IPv4 form before matching, so dual-stack listeners still match IPv4 CIDRs.
+///
+/// 当 `addr` 落在任一可信代理网络中时返回 true。IPv4 映射的 IPv6 地址会先归一化为 IPv4 再匹配。
+fn is_trusted_proxy(addr: &SocketAddr, networks: &[cidr::IpNet]) -> bool {
+    let ip = addr.ip();
+    let mapped_v4 = match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map(IpAddr::V4),
+        _ => None,
+    };
+    networks
+        .iter()
+        .any(|net| net.contains(&ip) || mapped_v4.is_some_and(|v4| net.contains(&v4)))
+}
+
+/// Remove the `x-mtls-identity` header unless the request comes from a trusted
+/// reverse proxy. This prevents clients from spoofing the mTLS identity header
+/// before it reaches the adapter authentication layer.
+///
+/// 若请求不来自可信反向代理，则移除 `x-mtls-identity` 头。
+fn sanitize_mtls_header(
+    headers: Vec<HttpHeader>,
+    addr: &SocketAddr,
+    networks: &[cidr::IpNet],
+) -> Vec<HttpHeader> {
+    if networks.is_empty() {
+        // Without an explicit trusted proxy list the header is not forwarded,
+        // so mTLS identity can only be accepted from configured proxies.
+        return headers
+            .into_iter()
+            .filter(|h| !h.name.eq_ignore_ascii_case("x-mtls-identity"))
+            .collect();
+    }
+    if is_trusted_proxy(addr, networks) {
+        return headers;
+    }
+    headers
+        .into_iter()
+        .filter(|h| !h.name.eq_ignore_ascii_case("x-mtls-identity"))
+        .collect()
+}
+
 /// Dispatch a request to a module HTTP handler based on prefix and route matching.
 ///
 /// 根据前缀与路由匹配将请求分派给模块 HTTP 处理器。
 async fn handle_module_http(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Extension(state): Extension<Arc<ControlState>>,
     req: Request<Body>,
 ) -> Response {
@@ -510,16 +582,18 @@ async fn handle_module_http(
         return (StatusCode::NOT_FOUND, "not found").into_response();
     };
 
-    let headers = req
+    let trusted_proxies = trusted_proxy_networks(&*state.config);
+    let raw_headers = req
         .headers()
         .iter()
         .filter_map(|(k, v)| {
-            v.to_str().ok().map(|value| cheetah_sdk::HttpHeader {
+            v.to_str().ok().map(|value| HttpHeader {
                 name: k.as_str().to_string(),
                 value: value.to_string(),
             })
         })
         .collect::<Vec<_>>();
+    let headers = sanitize_mtls_header(raw_headers, &addr, &trusted_proxies);
 
     let body = match to_bytes(req.into_body(), mount.max_body_bytes).await {
         Ok(v) => v,
@@ -744,14 +818,16 @@ fn parse_effect(effect: Option<&str>) -> ConfigEffect {
 
 #[cfg(test)]
 mod tests {
+    use std::net::SocketAddr;
+    use std::str::FromStr;
     use std::sync::{Arc, Mutex};
 
     use async_trait::async_trait;
     use axum::response::IntoResponse;
     use cheetah_sdk::{
         CancellationToken, ConfigApplyApi, ConfigApplyOutcome, ConfigEffect, ConfigProvider,
-        ConfigRollbackToken, ConfigSchemaRegistry, ConfigValidator, HealthApi, HttpMethod,
-        HttpRequest, HttpResponse, HttpRouteDescriptor, HttpRouteMount, MetricsApi,
+        ConfigRollbackToken, ConfigSchemaRegistry, ConfigValidator, HealthApi, HttpHeader,
+        HttpMethod, HttpRequest, HttpResponse, HttpRouteDescriptor, HttpRouteMount, MetricsApi,
         ModuleConfigApplyReport, ModuleConfigChange, ModuleHttpService, ModuleId, ModuleManagerApi,
         ModuleState, PublisherOptions, PublisherSink, RegisteredSchema, SdkError,
         ServiceDescriptor, ServiceRegistry, StreamKey, StreamManagerApi, StreamSnapshot,
@@ -761,8 +837,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        patch_global_config, path_template_match, relative_path, root_route_match, route_match,
-        sanitize_config, ControlState, PatchRequest,
+        cidr::IpNet, patch_global_config, path_template_match, relative_path, root_route_match,
+        route_match, sanitize_config, sanitize_mtls_header, trusted_proxy_networks, ControlState,
+        PatchRequest,
     };
 
     struct DummyHttpService;
@@ -1307,5 +1384,85 @@ mod tests {
         assert_eq!(out["nested"]["somePassword"], "***");
         assert_eq!(out["nested"]["plain"], "visible");
         assert_eq!(out["normal"], 42);
+    }
+
+    #[derive(Default)]
+    struct ProxyTestConfig(serde_json::Value);
+
+    impl ConfigProvider for ProxyTestConfig {
+        fn global(&self) -> serde_json::Value {
+            self.0.clone()
+        }
+        fn module(&self, _module_id: &cheetah_sdk::ModuleId) -> serde_json::Value {
+            json!({})
+        }
+        fn version(&self) -> u64 {
+            0
+        }
+    }
+
+    #[test]
+    fn trusted_proxy_networks_parses_cidr_config() {
+        let config = ProxyTestConfig(json!({
+            "media": {
+                "native": {
+                    "trusted_proxies": ["10.0.0.0/8", "127.0.0.1/32"]
+                }
+            }
+        }));
+        let nets = trusted_proxy_networks(&config);
+        assert_eq!(nets.len(), 2);
+        assert!(nets[0].contains(&"10.1.2.3".parse().unwrap()));
+        assert!(!nets[0].contains(&"192.168.1.1".parse().unwrap()));
+        assert!(nets[1].contains(&"127.0.0.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn sanitize_mtls_header_keeps_identity_for_trusted_proxy() {
+        let headers = vec![HttpHeader {
+            name: "x-mtls-identity".to_string(),
+            value: "alice".to_string(),
+        }];
+        let networks = vec![IpNet::from_str("127.0.0.1/32").unwrap()];
+        let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let out = sanitize_mtls_header(headers, &addr, &networks);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].value, "alice");
+    }
+
+    #[test]
+    fn sanitize_mtls_header_removes_identity_for_untrusted_proxy() {
+        let headers = vec![HttpHeader {
+            name: "x-mtls-identity".to_string(),
+            value: "alice".to_string(),
+        }];
+        let networks = vec![IpNet::from_str("10.0.0.0/8").unwrap()];
+        let addr: SocketAddr = "192.168.1.1:12345".parse().unwrap();
+        let out = sanitize_mtls_header(headers, &addr, &networks);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn sanitize_mtls_header_removes_identity_when_no_trusted_proxies_configured() {
+        let headers = vec![HttpHeader {
+            name: "x-mtls-identity".to_string(),
+            value: "alice".to_string(),
+        }];
+        let addr: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+        let out = sanitize_mtls_header(headers, &addr, &[]);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn sanitize_mtls_header_allows_ipv4_mapped_ipv6_peer_for_v4_cidr() {
+        let headers = vec![HttpHeader {
+            name: "x-mtls-identity".to_string(),
+            value: "alice".to_string(),
+        }];
+        let networks = vec![IpNet::from_str("127.0.0.1/32").unwrap()];
+        let addr: SocketAddr = "[::ffff:127.0.0.1]:12345".parse().unwrap();
+        let out = sanitize_mtls_header(headers, &addr, &networks);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].value, "alice");
     }
 }
