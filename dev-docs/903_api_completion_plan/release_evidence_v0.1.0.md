@@ -54,7 +54,7 @@
 | HomeKit media | A 层通过 | 待补充 | audio/video/RTP | subscriptions | PARTIAL |
 | Matter media | A 层通过 | 待补充 | files/events | subscription | PARTIAL |
 
-ZLM 兼容接口目录及 L0-L4 证据见 `11_zlm_interface_evidence_catalog.md`。
+ZLM 兼容接口目录及 L0-L4 证据见 `11_zlm_compatibility_revalidation.md`。
 
 ## 5. 门禁清单
 

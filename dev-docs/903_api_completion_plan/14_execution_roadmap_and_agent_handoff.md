@@ -63,7 +63,7 @@ P0 结束时，暂未完成的 playback/proxy/FFmpeg operation 必须从 Availab
 
 交接记录必须包含 task id、已修改公共接口、未完成分支、测试结果、临时 feature/config、可安全回滚点。不得用“基本完成”“应该可用”等不可验证表述。
 
-## 7. 当前执行状态
+## 6. 当前执行状态
 
 | 阶段 | 任务 | 状态 | PR |
 | --- | --- | --- | --- |
@@ -104,7 +104,7 @@ cargo build --release -p cheetah-server --features media-control-full
 3. **分支**：所有已合并 PR 在 `main`；#172 分支为 `devin/rel-02-ci-stages`；若 #172 合并后继续，请从 `main` 切出 REL-03 分支。
 4. **可安全回滚点**：`main` 在 #171 合并后稳定；如需回退 REL-02 CI，可仅撤销 `.github/workflows/ci.yml` 与 `apps/cheetah-server/src/main.rs` 的 CLI flag 变更。
 
-## 6. 最终 DoD
+## 7. 最终 DoD
 
 所有任务有唯一 owner/提交/证据；P0/P1/P2 门禁全绿；能力报告只含通过对应等级的 operation；无 release blocker；四类 A/B 合同与完整服务器 smoke 在同一候选制品上通过。
 
