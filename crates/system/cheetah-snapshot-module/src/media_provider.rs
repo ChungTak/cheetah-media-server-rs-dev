@@ -360,7 +360,7 @@ impl SnapshotApi for SnapshotMediaProvider {
                 match self
                     .ctx
                     .media_file_store
-                    .resolve_for_read(ctx, handle, None, i64::MAX)
+                    .resolve_for_read(ctx, handle, None, i64::MIN)
                 {
                     Ok(e) => e,
                     Err(e) => {
