@@ -3,6 +3,7 @@ use std::sync::{Arc, RwLock};
 use crate::idempotency::InMemoryIdempotencyRepository;
 use crate::output::OutputRegistryRegistration;
 use cheetah_media_api::capability::{MediaCapabilityDescriptor, MediaCapabilityReport};
+use cheetah_media_api::image::ImageEncodeApi;
 use cheetah_media_api::port::{
     MediaControlApi, MediaOutputRegistryApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi,
     SnapshotApi, WebhookApi,
@@ -293,6 +294,44 @@ impl MediaServices {
             .map(|e| e.provider.clone())
     }
 
+    /// Register the image encode provider.
+    ///
+    /// 注册图片编码 provider。
+    pub fn register_image_encode(
+        &self,
+        image_encode: Arc<dyn ImageEncodeApi>,
+    ) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        let capabilities = image_encode_default_capabilities();
+        let provider_id = format!("image_encode:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
+        registry.image_encode = Some(ProviderEntry {
+            provider: image_encode,
+            generation,
+            capabilities,
+            descriptors,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::ImageEncode,
+            provider_id: format!("image_encode:{generation}"),
+            generation,
+        }
+    }
+
+    /// Return the current image encode provider, if any.
+    ///
+    /// 返回当前图片编码 provider（如有）。
+    pub fn image_encode(&self) -> Option<Arc<dyn ImageEncodeApi>> {
+        self.inner
+            .read()
+            .expect("media services lock")
+            .image_encode
+            .as_ref()
+            .map(|e| e.provider.clone())
+    }
+
     /// Register the proxy provider.
     ///
     /// 注册代理 provider。
@@ -455,6 +494,9 @@ impl MediaServices {
         if let Some(entry) = &registry.snapshot {
             set.merge(&entry.capabilities);
         }
+        if let Some(entry) = &registry.image_encode {
+            set.merge(&entry.capabilities);
+        }
         if let Some(entry) = &registry.proxy {
             set.merge(&entry.capabilities);
         }
@@ -485,6 +527,9 @@ impl MediaServices {
         if let Some(entry) = &registry.snapshot {
             descriptors.extend(entry.descriptors.clone());
         }
+        if let Some(entry) = &registry.image_encode {
+            descriptors.extend(entry.descriptors.clone());
+        }
         if let Some(entry) = &registry.proxy {
             descriptors.extend(entry.descriptors.clone());
         }
@@ -513,6 +558,7 @@ struct MediaProviderRegistry {
     publish_subscribe: Option<ProviderEntry<Arc<dyn PublishSubscribeApi>>>,
     record: Option<ProviderEntry<Arc<dyn RecordApi>>>,
     snapshot: Option<ProviderEntry<Arc<dyn SnapshotApi>>>,
+    image_encode: Option<ProviderEntry<Arc<dyn ImageEncodeApi>>>,
     proxy: Option<ProviderEntry<Arc<dyn ProxyApi>>>,
     rtp: Option<ProviderEntry<Arc<dyn RtpApi>>>,
     webhook: Option<ProviderEntry<Arc<dyn WebhookApi>>>,
@@ -536,6 +582,7 @@ enum ProviderSlot<'a> {
     PublishSubscribe(&'a mut Option<ProviderEntry<Arc<dyn PublishSubscribeApi>>>),
     Record(&'a mut Option<ProviderEntry<Arc<dyn RecordApi>>>),
     Snapshot(&'a mut Option<ProviderEntry<Arc<dyn SnapshotApi>>>),
+    ImageEncode(&'a mut Option<ProviderEntry<Arc<dyn ImageEncodeApi>>>),
     Proxy(&'a mut Option<ProviderEntry<Arc<dyn ProxyApi>>>),
     Rtp(&'a mut Option<ProviderEntry<Arc<dyn RtpApi>>>),
     Webhook(&'a mut Option<ProviderEntry<Arc<dyn WebhookApi>>>),
@@ -548,6 +595,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::PublishSubscribe(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Record(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Snapshot(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::ImageEncode(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Proxy(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Rtp(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Webhook(opt) => opt.as_ref().map(|e| e.generation),
@@ -560,6 +608,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::PublishSubscribe(opt) => **opt = None,
             ProviderSlot::Record(opt) => **opt = None,
             ProviderSlot::Snapshot(opt) => **opt = None,
+            ProviderSlot::ImageEncode(opt) => **opt = None,
             ProviderSlot::Proxy(opt) => **opt = None,
             ProviderSlot::Rtp(opt) => **opt = None,
             ProviderSlot::Webhook(opt) => **opt = None,
@@ -584,6 +633,7 @@ impl MediaProviderRegistry {
                 Some(ProviderSlot::Record(&mut self.record))
             }
             MediaCapability::Snapshot => Some(ProviderSlot::Snapshot(&mut self.snapshot)),
+            MediaCapability::ImageEncode => Some(ProviderSlot::ImageEncode(&mut self.image_encode)),
             MediaCapability::Proxy => Some(ProviderSlot::Proxy(&mut self.proxy)),
             MediaCapability::Rtp => Some(ProviderSlot::Rtp(&mut self.rtp)),
             MediaCapability::Webhook => Some(ProviderSlot::Webhook(&mut self.webhook)),
@@ -621,6 +671,12 @@ fn record_default_capabilities() -> MediaCapabilitySet {
 fn snapshot_default_capabilities() -> MediaCapabilitySet {
     let mut set = MediaCapabilitySet::empty();
     set.add(MediaCapability::Snapshot, 1);
+    set
+}
+
+fn image_encode_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::ImageEncode, 1);
     set
 }
 

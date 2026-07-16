@@ -35,6 +35,9 @@ pub mod task;
 #[cfg(feature = "macros")]
 pub use cheetah_sdk_macros::ConfigSchema;
 
+pub use cheetah_media_api::image::{
+    ImageArtifact, ImageEncodeApi, ImageEncodeRequest, ImageFormat,
+};
 pub use cheetah_media_api::media_file_store::{
     sanitize_filename, DeleteBatchResult, FileDownload, FileRange, FileStoreEntry, FileStoreQuery,
     MediaFileStoreApi,

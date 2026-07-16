@@ -14,11 +14,13 @@
 //! video keyframe arrives before the deadline.
 
 mod config;
+mod image_encode;
 mod media_provider;
 mod module;
 mod registry;
 
 pub use config::SnapshotModuleConfig;
+pub use image_encode::ImageEncoderBackend;
 pub use media_provider::SnapshotMediaProvider;
 pub use module::{SnapshotModule, SnapshotModuleFactory};
 pub use registry::SnapshotRegistry;

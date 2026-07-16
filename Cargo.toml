@@ -87,6 +87,7 @@ bytes = "1"
 dashmap = "6"
 futures = "0.3"
 getrandom = "0.2"
+image = { version = "0.25.5", default-features = false, features = ["jpeg", "png"] }
 hmac = "0.12.1"
 parking_lot = "0.12"
 proc-macro2 = "1"

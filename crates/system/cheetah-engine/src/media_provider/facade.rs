@@ -3,6 +3,7 @@ use cheetah_media_api::command::*;
 use cheetah_media_api::error::{MediaError, Result as MediaResult};
 use cheetah_media_api::event::{MediaEventBusApi, MediaEventSender, MediaEventSubscription};
 use cheetah_media_api::ids::{MediaKey, ProxyId, RecordFileId, RtpSessionId, SessionId};
+use cheetah_media_api::image::{ImageArtifact, ImageEncodeApi, ImageEncodeRequest};
 use cheetah_media_api::model::{
     CloseReason, CloseReport, OnlineState, Page, ProxyInfo, PublisherHandle, RecordFile,
     RecordTask, RtpSession, SessionInfo, SnapshotHandle, SnapshotInfo, StreamInfo,
@@ -281,6 +282,21 @@ impl SnapshotApi for EngineMediaFacade {
             .snapshot()
             .ok_or_else(|| MediaError::unavailable("snapshot"))?;
         provider.delete_snapshot_directory(ctx, request).await
+    }
+}
+
+#[async_trait]
+impl ImageEncodeApi for EngineMediaFacade {
+    async fn encode(
+        &self,
+        ctx: &MediaRequestContext,
+        request: ImageEncodeRequest,
+    ) -> MediaResult<ImageArtifact> {
+        let provider = self
+            .services
+            .image_encode()
+            .ok_or_else(|| MediaError::unavailable("image encode"))?;
+        provider.encode(ctx, request).await
     }
 }
 
