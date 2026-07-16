@@ -5,10 +5,10 @@
 use cheetah_media_api::command::{DeleteSnapshotRequest, SnapshotRequest};
 use cheetah_media_api::media_file_store::{DeleteBatchResult, DeleteFailure};
 use cheetah_media_api::port::MediaRequestContext;
-use cheetah_sdk::{HttpRequest, HttpResponse};
+use cheetah_sdk::{HttpHeader, HttpRequest, HttpResponse};
 use serde::Serialize;
 
-use super::{zlm_response, Data, ZlmMediaHttpService, ZlmResponse};
+use super::{zlm_response, ZlmMediaHttpService, ZlmResponse};
 use crate::error::AdapterError;
 
 impl ZlmMediaHttpService {
@@ -28,7 +28,7 @@ impl ZlmMediaHttpService {
         let request = SnapshotRequest {
             media_key: key,
             timeout_ms,
-            format,
+            format: format.clone(),
             quality,
             max_width: None,
             max_height: None,
@@ -36,7 +36,33 @@ impl ZlmMediaHttpService {
             capture_policy: Default::default(),
         };
         let handle = snapshot_api.take_snapshot(ctx, request).await?;
-        Ok(zlm_response(ZlmResponse::ok(Data::new(handle))))
+
+        // ZLM getSnap returns the actual image bytes, not a JSON handle.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+        let filename = format!("{}.{}", handle.snapshot_id.0, format);
+        let download = self
+            .ctx
+            .media_file_store
+            .resolve_download(ctx, &handle.path_handle, None, Some(filename), now)
+            .map_err(AdapterError::Media)?;
+
+        Ok(HttpResponse {
+            status: 200,
+            headers: vec![
+                HttpHeader {
+                    name: "content-type".to_string(),
+                    value: download.content_type,
+                },
+                HttpHeader {
+                    name: "content-length".to_string(),
+                    value: download.body.len().to_string(),
+                },
+            ],
+            body: download.body,
+        })
     }
 
     pub(crate) async fn delete_snap_directory(

@@ -71,6 +71,11 @@ impl SnapshotRegistry {
                         return false;
                     }
                 }
+                if let Some(id) = &query.snapshot_id {
+                    if &info.snapshot_id.0 != id {
+                        return false;
+                    }
+                }
                 true
             })
             .collect();

@@ -17,7 +17,9 @@ use cheetah_media_api::model::CloseReason;
 use cheetah_media_api::port::{
     ControlAuthApi, MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, SnapshotApi,
 };
-use cheetah_media_api::{AuthCredentials, FileRange, MediaFileStoreApi, MediaScope, Principal};
+use cheetah_media_api::{
+    AuthCredentials, FileRange, MediaError, MediaFileStoreApi, MediaScope, Principal,
+};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -742,6 +744,45 @@ impl NativeMediaHttpService {
         Ok(json_response(&result))
     }
 
+    async fn snapshot_download(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let snapshot_id = snapshot_id_from_download_path(&req.path).ok_or_else(|| {
+            AdapterError::InvalidRequest("invalid snapshot download path".to_string())
+        })?;
+
+        let snapshot_api = self.snapshot()?;
+        let mut query = SnapshotQuery {
+            snapshot_id: Some(snapshot_id.clone()),
+            page_size: 1,
+            ..Default::default()
+        };
+        query.clamp_page_size();
+        let page = snapshot_api.query_snapshots(ctx, query).await?;
+        let info = page
+            .items
+            .into_iter()
+            .next()
+            .ok_or_else(|| AdapterError::Media(MediaError::not_found("snapshot")))?;
+
+        let default_filename = format!("{}.{}", snapshot_id, info.format);
+        let filename = query_param(&req, "filename").unwrap_or(default_filename);
+        let range = parse_range_header(&req.headers).map(http_range_to_file_range);
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+
+        let download = self
+            .file_store()
+            .resolve_download(ctx, &info.path_handle, range, Some(filename), now_ms)
+            .map_err(AdapterError::Media)?;
+
+        Ok(download_response(download))
+    }
+
     async fn file_download(
         &self,
         ctx: &MediaRequestContext,
@@ -1006,6 +1047,11 @@ impl ModuleHttpService for NativeMediaHttpService {
                 }
                 (HttpMethod::Post, "/snapshots") => self.snapshot_create(&ctx, req).await,
                 (HttpMethod::Get, "/snapshots") => self.snapshot_list(&ctx, req).await,
+                (HttpMethod::Get, path)
+                    if path.starts_with("/snapshots/") && path.ends_with("/download") =>
+                {
+                    self.snapshot_download(&ctx, req).await
+                }
                 (HttpMethod::Delete, "/snapshots/directories") => {
                     self.snapshot_delete_directory(&ctx, req).await
                 }
@@ -1204,7 +1250,7 @@ fn parse_body<T: DeserializeOwned>(req: &HttpRequest) -> Result<T, AdapterError>
             "request body is required".to_string(),
         ));
     }
-    serde_json::from_slice(&req.body).map_err(|e| AdapterError::Serialization(e.to_string()))
+    serde_json::from_slice(&req.body).map_err(|e| AdapterError::InvalidRequest(e.to_string()))
 }
 
 /// Extract the file handle from a path like `/files/{handle}/download`.
@@ -1212,6 +1258,18 @@ fn parse_body<T: DeserializeOwned>(req: &HttpRequest) -> Result<T, AdapterError>
 /// 从 `/files/{handle}/download` 路径中提取文件句柄。
 fn file_id_from_download_path(path: &str) -> Option<String> {
     let rest = path.strip_prefix("/files/")?;
+    let id = rest.strip_suffix("/download")?;
+    if id.is_empty() || id.contains('/') || id.contains("..") {
+        return None;
+    }
+    Some(id.to_string())
+}
+
+/// Extract the snapshot id from a path like `/snapshots/{id}/download`.
+///
+/// 从 `/snapshots/{id}/download` 路径中提取快照 ID。
+fn snapshot_id_from_download_path(path: &str) -> Option<String> {
+    let rest = path.strip_prefix("/snapshots/")?;
     let id = rest.strip_suffix("/download")?;
     if id.is_empty() || id.contains('/') || id.contains("..") {
         return None;

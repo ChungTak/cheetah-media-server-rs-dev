@@ -254,6 +254,7 @@ fn golden_query() -> SnapshotQuery {
         vhost: Some("__defaultVhost__".to_string()),
         app: Some("live".to_string()),
         stream: Some("snap-test".to_string()),
+        snapshot_id: None,
         start_time_ms: None,
         end_time_ms: None,
         page: 1,

@@ -82,6 +82,10 @@ pub fn native_http_routes() -> Vec<HttpRouteDescriptor> {
             path: "/snapshots".to_string(),
         },
         HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/snapshots/{snapshot_id}/download".to_string(),
+        },
+        HttpRouteDescriptor {
             method: HttpMethod::Delete,
             path: "/snapshots/directories".to_string(),
         },
@@ -215,6 +219,9 @@ pub fn native_required_scope(method: HttpMethod, path: &str) -> Option<MediaScop
         }
         (HttpMethod::Post, "/snapshots") => Some(MediaScope::MediaControl),
         (HttpMethod::Get, "/snapshots") => Some(MediaScope::MediaRead),
+        (HttpMethod::Get, _) if path.starts_with("/snapshots/") && path.ends_with("/download") => {
+            Some(MediaScope::FileRead)
+        }
         (HttpMethod::Delete, "/snapshots/directories") => Some(MediaScope::FileDelete),
         (HttpMethod::Get, _) if path.starts_with("/files/") && path.ends_with("/download") => {
             Some(MediaScope::FileRead)
@@ -376,7 +383,8 @@ mod tests {
         assert!(paths.contains(&(HttpMethod::Get, "/rtp/sessions/{session_id}")));
         assert!(paths.contains(&(HttpMethod::Patch, "/rtp/sessions/{session_id}")));
         assert!(paths.contains(&(HttpMethod::Delete, "/rtp/sessions/{session_id}")));
-        assert_eq!(routes.len(), 39);
+        assert!(paths.contains(&(HttpMethod::Get, "/snapshots/{snapshot_id}/download")));
+        assert_eq!(routes.len(), 40);
     }
 
     #[test]
