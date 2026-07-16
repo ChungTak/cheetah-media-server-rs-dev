@@ -178,4 +178,4 @@
 - 缺 `vhost`/`app`/`stream` 返回 `-300`。
 - 不存在 session/stream 的查询返回 `code=0` 且空数组/ `online=false`（按 ZLM 惯例）。
 - 不存在 session/stream 的修改返回 `-500`。
-- 越权访问返回 `-100`/`-101`。
+- 越权访问返回 `-100`。
