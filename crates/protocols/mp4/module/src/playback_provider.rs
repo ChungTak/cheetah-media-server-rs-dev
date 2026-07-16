@@ -157,8 +157,7 @@ impl PlaybackApi for Mp4PlaybackProvider {
             records.retain(|r| r.media_key.stream.0 == *stream);
         }
         if let Some(state) = query.state {
-            let expected = state_name(state);
-            records.retain(|r| r.state == expected);
+            records.retain(|r| parse_state(&r.state) == state);
         }
 
         let total = records.len() as u64;
@@ -257,17 +256,6 @@ fn parse_state(state: &str) -> PlaybackSessionState {
         "completed" => PlaybackSessionState::Completed,
         "failed" => PlaybackSessionState::Failed,
         _ => PlaybackSessionState::Playing,
-    }
-}
-
-fn state_name(state: PlaybackSessionState) -> &'static str {
-    match state {
-        PlaybackSessionState::Pending => "pending",
-        PlaybackSessionState::Playing => "playing",
-        PlaybackSessionState::Paused => "paused",
-        PlaybackSessionState::Seeking => "seeking",
-        PlaybackSessionState::Completed => "completed",
-        PlaybackSessionState::Failed => "failed",
     }
 }
 
