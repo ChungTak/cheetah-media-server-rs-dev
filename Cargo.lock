@@ -848,12 +848,14 @@ dependencies = [
  "cheetah-mp4-core",
  "cheetah-mp4-driver-tokio",
  "cheetah-runtime-api",
+ "cheetah-runtime-tokio",
  "cheetah-sdk",
  "futures",
  "parking_lot",
  "serde",
  "serde_json",
  "thiserror",
+ "tokio",
  "tracing",
 ]
 

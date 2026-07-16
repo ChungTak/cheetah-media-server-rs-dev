@@ -129,6 +129,12 @@ pub struct VodSession {
     started_media_us: i64,
     pending_seek_us: Option<i64>,
     tracks_emitted: bool,
+    /// The `now_us` from the most recent `Tick`, reused by `ReadAt` responses
+    /// so byte feeding continues under the same pacing anchor.
+    last_drive_now_us: Option<u64>,
+    /// True when a seek was just applied; the next emitted frame should carry
+    /// the discontinuity flag so downstream knows the timeline jumped.
+    pending_discontinuity: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,6 +165,8 @@ impl VodSession {
             started_media_us: 0,
             pending_seek_us: None,
             tracks_emitted: false,
+            last_drive_now_us: None,
+            pending_discontinuity: false,
         }
     }
 
@@ -198,9 +206,12 @@ impl VodSession {
             VodCoreInput::Control(cmd) => self.handle_control(cmd),
             VodCoreInput::ReadAt(result) => {
                 self.reader.feed_bytes(result);
-                self.drive(None)
+                self.drive(self.last_drive_now_us)
             }
-            VodCoreInput::Tick { now_us } => self.drive(Some(now_us)),
+            VodCoreInput::Tick { now_us } => {
+                self.last_drive_now_us = Some(now_us);
+                self.drive(Some(now_us))
+            }
         }
     }
 
@@ -212,7 +223,10 @@ impl VodSession {
             VodControlCommand::Start { file_size } => {
                 self.reader.set_file_size(file_size);
                 self.state = SessionState::Loading;
-                self.drive(None)
+                // Defer actual reading and frame pacing to the first driver
+                // tick so control commands (pause/seek/scale) can be applied
+                // before playback begins.
+                vec![VodOutput::ScheduleTick { delay_us: 0 }]
             }
             VodControlCommand::Seek { position_us } => {
                 // ABL requires explicit out-of-range errors rather than
@@ -231,6 +245,7 @@ impl VodSession {
                 self.reader.seek(position_us);
                 self.started_real_us = None;
                 self.started_media_us = position_us;
+                self.pending_discontinuity = true;
                 vec![VodOutput::ScheduleTick { delay_us: 0 }]
             }
             VodControlCommand::Pause(p) => {
@@ -285,12 +300,12 @@ impl VodSession {
                             // outside? For simplicity, still emit and schedule next
                             // tick. The driver may also choose to delay handing
                             // the bytes back, but the core does not buffer frames.
-                            out.push(VodOutput::EmitFrame(frame));
+                            self.push_frame(&mut out, frame);
                             out.push(VodOutput::ScheduleTick { delay_us: delay });
                             return out;
                         }
                     }
-                    out.push(VodOutput::EmitFrame(frame));
+                    self.push_frame(&mut out, frame);
                 }
                 Mp4ReadEvent::Eof => {
                     self.state = SessionState::Stopped;
@@ -303,12 +318,24 @@ impl VodSession {
         }
     }
 
+    /// Emit a frame, marking the first one after a seek as a discontinuity.
+    ///
+    /// 发出一帧；若刚执行过 seek，则给该帧打上 discontinuity 标记。
+    fn push_frame(&mut self, out: &mut Vec<VodOutput>, mut frame: AVFrame) {
+        if self.pending_discontinuity {
+            frame.flags.insert(cheetah_codec::FrameFlags::DISCONTINUITY);
+            self.pending_discontinuity = false;
+        }
+        out.push(VodOutput::EmitFrame(frame));
+    }
+
     /// Compute the pacing delay before emitting this frame.
     ///
     /// 计算发出该帧前的 pacing 延迟。
     fn frame_delay_us(&mut self, frame: &AVFrame, now_us: u64) -> u64 {
+        let first_frame = self.started_real_us.is_none();
         let started_real = *self.started_real_us.get_or_insert(now_us);
-        if self.started_media_us == 0 && self.pending_seek_us.is_none() {
+        if first_frame && self.pending_seek_us.is_none() {
             self.started_media_us = frame.dts_us;
         }
         // Saturating sub guards against backwards-stepping frames after a

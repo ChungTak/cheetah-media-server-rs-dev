@@ -225,6 +225,7 @@ impl VodApi {
             remote_port: None,
             network_type: None,
             params: None,
+            last_error: None,
         };
         let engine_path = stream_stem.clone();
         // ABL semantics: `loop_count` becomes `read_count`. `None` defaults
@@ -279,7 +280,13 @@ impl VodApi {
         {
             if let Some(events) = driver_arc.take_events() {
                 let stream_key = StreamKey::new("file", &engine_path);
-                runtime_api.spawn(Box::pin(bridge_events(events, core_adapters, stream_key)));
+                runtime_api.spawn(Box::pin(bridge_events(
+                    events,
+                    core_adapters,
+                    stream_key,
+                    self.registry.clone(),
+                    session_id.clone(),
+                )));
             }
         }
         Ok(StartVodResponse {
@@ -401,6 +408,8 @@ async fn bridge_events(
     mut events: VodEventStream,
     core_adapters: Arc<dyn CoreAdaptersApi>,
     stream_key: StreamKey,
+    registry: Arc<VodSessionRegistry>,
+    session_id: String,
 ) {
     while let Some(event) = events.next().await {
         match event {
@@ -427,7 +436,20 @@ async fn bridge_events(
                 // and similar control-plane errors.
                 tracing::debug!(?diag, "vod bridge received diagnostic");
             }
-            VodDriverEvent::Closed { .. } => {
+            VodDriverEvent::Closed { reason } => {
+                // Mirror terminal driver state into the registry so
+                // PlaybackApi::get reflects completed/failed instead of
+                // leaving the session stuck in playing/starting.
+                if let Some(mut record) = registry.get(&session_id) {
+                    if reason == "session closed" {
+                        record.state = "completed".to_string();
+                        record.last_error = None;
+                    } else {
+                        record.state = "failed".to_string();
+                        record.last_error = Some(reason);
+                    }
+                    let _ = registry.update(record);
+                }
                 let _ = core_adapters.close_stream(&stream_key).await;
                 break;
             }

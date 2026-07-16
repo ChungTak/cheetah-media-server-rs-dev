@@ -257,7 +257,7 @@ fn map_record_to_session(record: &VodSessionRecord) -> PlaybackSession {
         scale: record.scale as f64,
         generation: 1,
         output_key: record.output_key.clone(),
-        last_error: None,
+        last_error: record.last_error.clone(),
         created_at: 0,
         updated_at: 0,
     }
