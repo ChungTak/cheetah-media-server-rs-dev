@@ -154,19 +154,6 @@ impl PlaybackApi for DummyPlayback {
     }
 }
 
-struct DummyAdmission;
-
-#[async_trait]
-impl MediaAdmissionApi for DummyAdmission {
-    async fn authorize(
-        &self,
-        _ctx: &MediaRequestContext,
-        _request: AdmissionRequest,
-    ) -> MediaResult<Decision> {
-        Ok(Decision::Allow)
-    }
-}
-
 #[test]
 fn default_capabilities_are_empty() {
     let services = MediaServices::unavailable();
