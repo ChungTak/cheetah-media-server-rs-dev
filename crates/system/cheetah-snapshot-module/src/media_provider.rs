@@ -385,17 +385,8 @@ impl SnapshotApi for SnapshotMediaProvider {
                 continue;
             }
 
-            // Remove file-store entry first so we never expose a deleted file.
-            if let Err(e) = self.ctx.media_file_store.delete(ctx, handle, now_ms()) {
-                failed += 1;
-                failures.push(DeleteFailure {
-                    handle: handle.clone(),
-                    reason: format!("failed to unregister file: {e}"),
-                });
-                continue;
-            }
-
-            // Remove the physical file. A missing file is treated as already cleaned.
+            // Remove the physical file first. If it cannot be removed we keep the
+            // file-store and snapshot registry entries so the deletion can be retried.
             if let Err(e) = fs::remove_file(path) {
                 if e.kind() != io::ErrorKind::NotFound {
                     failed += 1;
@@ -407,7 +398,17 @@ impl SnapshotApi for SnapshotMediaProvider {
                 }
             }
 
-            // Drop the snapshot registry entry last.
+            // Unregister the file and drop the snapshot entry once the physical file
+            // is gone. If the file was already missing we still clean the metadata.
+            if let Err(e) = self.ctx.media_file_store.delete(ctx, handle, now_ms()) {
+                failed += 1;
+                failures.push(DeleteFailure {
+                    handle: handle.clone(),
+                    reason: format!("failed to unregister file: {e}"),
+                });
+                continue;
+            }
+
             self.registry.remove(&info.snapshot_id.0);
             deleted += 1;
         }

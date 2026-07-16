@@ -242,28 +242,28 @@ impl MediaFileStoreApi for EngineMediaFileStore {
         {
             let files = self.files.read();
             for (handle, entry) in files.iter() {
-                if to_remove.len() >= limit {
-                    break;
-                }
                 if !Self::matches_query(entry, &query) {
                     continue;
                 }
                 matched += 1;
-                if let Some(expiry) = entry.expires_at_ms {
-                    if now_ms > expiry {
-                        to_remove.push(handle.clone());
+
+                if to_remove.len() < limit {
+                    if let Some(expiry) = entry.expires_at_ms {
+                        if now_ms > expiry {
+                            to_remove.push(handle.clone());
+                            continue;
+                        }
+                    }
+                    if !self.is_authorized(ctx, entry) {
+                        failed += 1;
+                        failures.push(DeleteFailure {
+                            handle: FileHandle(handle.clone()),
+                            reason: "permission denied".to_string(),
+                        });
                         continue;
                     }
+                    to_remove.push(handle.clone());
                 }
-                if !self.is_authorized(ctx, entry) {
-                    failed += 1;
-                    failures.push(DeleteFailure {
-                        handle: FileHandle(handle.clone()),
-                        reason: "permission denied".to_string(),
-                    });
-                    continue;
-                }
-                to_remove.push(handle.clone());
             }
         }
 
