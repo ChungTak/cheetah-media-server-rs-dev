@@ -154,7 +154,7 @@ impl FfmpegApi for LocalFfmpegService {
 
         let semaphore = self.semaphore.clone();
         let max_stderr_lines = spec.resource_limits.max_stderr_lines;
-        let timeout_ms = spec.timeout_ms;
+        let max_runtime_ms = spec.resource_limits.max_runtime_ms;
 
         tokio::spawn(run_ffmpeg_job(
             job_id.clone(),
@@ -164,7 +164,7 @@ impl FfmpegApi for LocalFfmpegService {
             task_status,
             task_cancel,
             max_stderr_lines,
-            timeout_ms,
+            max_runtime_ms,
         ));
 
         Ok(FfmpegJobHandle {
@@ -235,7 +235,7 @@ async fn run_ffmpeg_job(
     status: Arc<watch::Sender<FfmpegJobStatus>>,
     cancel: Arc<watch::Sender<bool>>,
     max_stderr_lines: usize,
-    timeout_ms: u64,
+    max_runtime_ms: u64,
 ) {
     // Update to Pending (the initial state is already Pending, but keep the channel fresh).
     let _ = status.send_if_modified(|s| {
@@ -351,7 +351,7 @@ async fn run_ffmpeg_job(
     let mut cancel_rx = cancel.subscribe();
     let initial_cancelled = *cancel_rx.borrow_and_update();
 
-    let timeout = Duration::from_millis(timeout_ms);
+    let timeout = Duration::from_millis(max_runtime_ms);
 
     let (exit_code, cancelled) = if initial_cancelled {
         let _ = child.kill().await;
@@ -549,7 +549,10 @@ mod tests {
                 FfmpegJobSpec {
                     input: FfmpegInput::Url { url: "in".into() },
                     output: FfmpegOutput::Url { url: "out".into() },
-                    timeout_ms: 100,
+                    resource_limits: FfmpegResourceLimits {
+                        max_runtime_ms: 100,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
             )
@@ -570,7 +573,10 @@ mod tests {
                 FfmpegJobSpec {
                     input: FfmpegInput::Url { url: "in".into() },
                     output: FfmpegOutput::Url { url: "out".into() },
-                    timeout_ms: 60_000,
+                    resource_limits: FfmpegResourceLimits {
+                        max_runtime_ms: 60_000,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
             )
@@ -653,7 +659,10 @@ mod tests {
                 FfmpegJobSpec {
                     input: FfmpegInput::Url { url: "in".into() },
                     output: FfmpegOutput::Url { url: "out".into() },
-                    timeout_ms: 5_000,
+                    resource_limits: FfmpegResourceLimits {
+                        max_runtime_ms: 5_000,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
             )
@@ -669,7 +678,10 @@ mod tests {
                 FfmpegJobSpec {
                     input: FfmpegInput::Url { url: "in".into() },
                     output: FfmpegOutput::Url { url: "out".into() },
-                    timeout_ms: 5_000,
+                    resource_limits: FfmpegResourceLimits {
+                        max_runtime_ms: 5_000,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
             )
@@ -693,7 +705,10 @@ mod tests {
         let spec = FfmpegJobSpec {
             input: FfmpegInput::Url { url: "in".into() },
             output: FfmpegOutput::Url { url: "out".into() },
-            timeout_ms: 5_000,
+            resource_limits: FfmpegResourceLimits {
+                max_runtime_ms: 5_000,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let _ = service.submit("dup".into(), spec.clone()).await.unwrap();
@@ -754,7 +769,10 @@ mod tests {
                 FfmpegJobSpec {
                     input: FfmpegInput::Url { url: "in".into() },
                     output: FfmpegOutput::Url { url: "out".into() },
-                    timeout_ms: 10_000,
+                    resource_limits: FfmpegResourceLimits {
+                        max_runtime_ms: 10_000,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
             )
@@ -770,7 +788,10 @@ mod tests {
                 FfmpegJobSpec {
                     input: FfmpegInput::Url { url: "in".into() },
                     output: FfmpegOutput::Url { url: "out".into() },
-                    timeout_ms: 10_000,
+                    resource_limits: FfmpegResourceLimits {
+                        max_runtime_ms: 10_000,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
             )

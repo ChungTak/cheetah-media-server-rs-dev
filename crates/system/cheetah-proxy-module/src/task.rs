@@ -652,8 +652,10 @@ async fn run_ffmpeg(
         },
         input_options: input_options.to_vec(),
         output_options: output_options.to_vec(),
-        timeout_ms: config.ffmpeg_timeout_ms,
-        resource_limits: FfmpegResourceLimits::default(),
+        resource_limits: FfmpegResourceLimits {
+            max_runtime_ms: config.ffmpeg_timeout_ms,
+            ..Default::default()
+        },
     };
 
     let handle = match ctx.ffmpeg_api.submit(job_id.to_string(), spec).await {

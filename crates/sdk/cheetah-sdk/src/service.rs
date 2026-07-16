@@ -186,8 +186,6 @@ pub struct FfmpegResourceLimits {
     pub max_stderr_lines: usize,
     /// Maximum runtime in milliseconds before the job is killed.
     pub max_runtime_ms: u64,
-    /// Maximum number of concurrently running FFmpeg jobs.
-    pub max_concurrent_jobs: usize,
 }
 
 impl Default for FfmpegResourceLimits {
@@ -195,7 +193,6 @@ impl Default for FfmpegResourceLimits {
         Self {
             max_stderr_lines: 256,
             max_runtime_ms: 300_000,
-            max_concurrent_jobs: 8,
         }
     }
 }
@@ -212,7 +209,6 @@ pub struct FfmpegJobSpec {
     pub output: FfmpegOutput,
     pub input_options: Vec<String>,
     pub output_options: Vec<String>,
-    pub timeout_ms: u64,
     pub resource_limits: FfmpegResourceLimits,
 }
 
@@ -224,7 +220,6 @@ impl Default for FfmpegJobSpec {
             output: FfmpegOutput::Url { url: String::new() },
             input_options: Vec::new(),
             output_options: Vec::new(),
-            timeout_ms: 30_000,
             resource_limits: FfmpegResourceLimits::default(),
         }
     }
