@@ -334,6 +334,7 @@ impl MediaCapabilitySet {
         for (cap, version) in &other.capabilities {
             self.add(*cap, *version);
         }
+        let mut ops_changed = false;
         for (cap, ops) in &other.operations {
             if let Some(existing) = self.operations.get_mut(cap) {
                 // Union the operation lists while preserving order.
@@ -341,15 +342,23 @@ impl MediaCapabilitySet {
                 for op in ops {
                     if !combined.contains(op) {
                         combined.push(op.clone());
+                        ops_changed = true;
                     }
+                }
+                if combined.len() != existing.len() {
+                    ops_changed = true;
                 }
                 *existing = combined;
             } else {
                 self.operations.insert(*cap, ops.clone());
+                ops_changed = true;
             }
         }
-        // `add` advances version on every structural change, so no further bump is needed.
-        let _ = before_version;
+        // `add` advances version for new/changed capabilities, but operations can
+        // change independently of the capability version, so bump if the union changed.
+        if ops_changed && self.version == before_version {
+            self.version += 1;
+        }
     }
 }
 
@@ -493,5 +502,26 @@ mod tests {
             .expect("proxy descriptor");
         assert_eq!(descriptor.operations, vec!["create_pull", "delete_pull"]);
         assert!(!descriptor.operations.contains(&"create_ffmpeg".to_string()));
+    }
+
+    #[test]
+    fn capability_set_merge_bumps_version_on_operation_union() {
+        let mut a = MediaCapabilitySet::empty();
+        a.add(MediaCapability::Record, 1);
+        a.set_operations(MediaCapability::Record, vec!["start".to_string()]);
+
+        let mut b = MediaCapabilitySet::empty();
+        b.add(MediaCapability::Record, 1);
+        b.set_operations(
+            MediaCapability::Record,
+            vec!["start".to_string(), "stop".to_string()],
+        );
+
+        let version_before = a.version;
+        a.merge(&b);
+        assert!(a.version > version_before);
+        let ops = a.operations.get(&MediaCapability::Record).unwrap();
+        assert!(ops.contains(&"start".to_string()));
+        assert!(ops.contains(&"stop".to_string()));
     }
 }
