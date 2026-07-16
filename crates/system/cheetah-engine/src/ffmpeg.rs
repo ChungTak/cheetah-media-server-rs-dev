@@ -1,4 +1,6 @@
 use std::collections::{HashMap, VecDeque};
+use std::fs::File;
+use std::io::Write;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -227,6 +229,62 @@ impl FfmpegApi for LocalFfmpegService {
     }
 }
 
+/// Hides a URL with embedded credentials from the process command line by writing
+/// it into a temporary `ffconcat` script that ffmpeg reads instead of an argument.
+struct ConcatInput {
+    path: PathBuf,
+    #[allow(dead_code)]
+    _file: File,
+}
+
+impl ConcatInput {
+    fn write(job_id: &str, url: &str) -> std::io::Result<Self> {
+        let safe_id = job_id.replace(
+            |c: char| !c.is_ascii_alphanumeric() && c != '-' && c != '_',
+            "_",
+        );
+        let path =
+            std::env::temp_dir().join(format!("cheetah_ffmpeg_{safe_id}_{}.ffconcat", now_ms()));
+
+        let mut file = {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create(true)
+                    .truncate(true)
+                    .mode(0o600)
+                    .open(&path)?
+            }
+            #[cfg(not(unix))]
+            {
+                std::fs::File::create(&path)?
+            }
+        };
+
+        let escaped = url.replace('\'', "''");
+        writeln!(file, "ffconcat version 1.0")?;
+        writeln!(file, "file '{escaped}'")?;
+        file.flush()?;
+
+        Ok(Self { path, _file: file })
+    }
+}
+
+impl Drop for ConcatInput {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn url_has_credentials(url: &str) -> bool {
+    match Url::parse(url) {
+        Ok(u) => !u.username().is_empty() || u.password().is_some(),
+        Err(_) => false,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_ffmpeg_job(
     _job_id: String,
@@ -306,12 +364,38 @@ async fn run_ffmpeg_job(
     };
     let redacted_output_url = redact_url_credentials(&output_url);
 
+    let concat_input = if url_has_credentials(&input_url) {
+        match ConcatInput::write(&_job_id, &input_url) {
+            Ok(c) => Some(c),
+            Err(err) => {
+                finish_job(
+                    &status,
+                    FfmpegJobState::Failed,
+                    None,
+                    format!("failed to write concat input file: {err}"),
+                );
+                return;
+            }
+        }
+    } else {
+        None
+    };
+
     let mut cmd = Command::new(&executable);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     cmd.args(&spec.input_options);
-    cmd.arg("-i").arg(&input_url);
+    if let Some(c) = &concat_input {
+        cmd.arg("-f")
+            .arg("concat")
+            .arg("-safe")
+            .arg("0")
+            .arg("-i")
+            .arg(&c.path);
+    } else {
+        cmd.arg("-i").arg(&input_url);
+    }
     cmd.args(&spec.output_options);
     cmd.arg(&output_url);
 
@@ -709,7 +793,10 @@ mod tests {
 
     #[tokio::test]
     async fn stderr_url_credentials_are_redacted() {
-        let path = script(b"#!/bin/sh\necho \"$@\" >&2\nexit 1\n");
+        // The executor writes credential-bearing URLs to a temporary ffconcat file
+        // so the command line does not leak them. Echo that file's contents to stderr
+        // so we can verify the stored summary is redacted.
+        let path = script(b"#!/bin/sh\nfor f in \"$@\"; do case \"$f\" in *.ffconcat) cat \"$f\" >&2 ;; esac; done\nexit 1\n");
         let service = LocalFfmpegService::with_executable(path.clone());
         let handle = service
             .submit(
