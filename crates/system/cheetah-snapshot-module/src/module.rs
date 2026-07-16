@@ -58,6 +58,7 @@ pub struct SnapshotModule {
     config: SnapshotModuleConfig,
     registry: Arc<SnapshotRegistry>,
     media_services_registration: Option<ProviderRegistration>,
+    image_encode_registration: Option<ProviderRegistration>,
 }
 
 impl SnapshotModule {
@@ -70,6 +71,7 @@ impl SnapshotModule {
                 SnapshotModuleConfig::default().max_snapshots,
             )),
             media_services_registration: None,
+            image_encode_registration: None,
         }
     }
 }
@@ -115,6 +117,13 @@ impl Module for SnapshotModule {
                 .register_snapshot_with_capabilities(provider, capabilities),
         );
 
+        let image_encoder = Arc::new(crate::image_encode::ImageEncoderBackend::new());
+        self.image_encode_registration = Some(
+            ctx.engine
+                .media_services
+                .register_image_encode(image_encoder),
+        );
+
         info!("snapshot module initialized");
         self.state = ModuleState::Initialized;
         Ok(())
@@ -127,6 +136,11 @@ impl Module for SnapshotModule {
 
     async fn stop(&mut self) -> Result<(), SdkError> {
         if let Some(reg) = self.media_services_registration.take() {
+            if let Some(ctx) = self.ctx.as_ref() {
+                ctx.media_services.unregister(&reg);
+            }
+        }
+        if let Some(reg) = self.image_encode_registration.take() {
             if let Some(ctx) = self.ctx.as_ref() {
                 ctx.media_services.unregister(&reg);
             }

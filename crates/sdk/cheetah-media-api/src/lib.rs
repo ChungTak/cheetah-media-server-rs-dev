@@ -17,6 +17,7 @@ pub mod command;
 pub mod error;
 pub mod event;
 pub mod ids;
+pub mod image;
 pub mod media_file_store;
 pub mod model;
 pub mod output;
@@ -29,6 +30,7 @@ pub use capability::{
 pub use error::{MediaError, MediaErrorCode};
 pub use event::MediaEvent;
 pub use ids::{AppName, MediaKey, MediaSchema, StreamName, VhostName};
+pub use image::{ImageArtifact, ImageEncodeApi, ImageEncodeRequest, ImageFormat};
 pub use media_file_store::{
     sanitize_filename, DeleteBatchResult, FileDownload, FileRange, FileStoreEntry, FileStoreQuery,
     MediaFileStoreApi,

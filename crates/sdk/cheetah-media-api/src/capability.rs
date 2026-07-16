@@ -12,6 +12,7 @@ pub enum MediaCapability {
     Subscribe,
     Record,
     Snapshot,
+    ImageEncode,
     Proxy,
     Rtp,
     Webhook,
@@ -160,6 +161,7 @@ pub fn default_operations(capability: MediaCapability) -> Vec<String> {
             "query".to_string(),
             "delete_directory".to_string(),
         ],
+        MediaCapability::ImageEncode => vec!["encode".to_string()],
         MediaCapability::Proxy => vec![
             "create_pull".to_string(),
             "delete_pull".to_string(),
