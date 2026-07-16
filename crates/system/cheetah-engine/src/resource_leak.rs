@@ -84,14 +84,27 @@ impl ResourceLeakObserver {
         }
 
         let ctx = MediaRequestContext::default();
-        let sessions = session_directory
-            .list_sessions(&ctx, SessionQuery::default())
-            .await?;
-        for session in sessions.items {
-            if !matches!(session.state, SessionState::Closed | SessionState::Failed) {
-                report
-                    .active_session_ids
-                    .push(session.session_id.to_string());
+        let session_query = SessionQuery {
+            page: 1,
+            page_size: SessionQuery::MAX_PAGE_SIZE,
+            ..Default::default()
+        };
+        let mut collected = 0u64;
+        loop {
+            let mut query = session_query.clone();
+            query.page = (collected / session_query.page_size) + 1;
+            let page = session_directory.list_sessions(&ctx, query).await?;
+            let page_len = page.items.len() as u64;
+            for session in page.items {
+                if !matches!(session.state, SessionState::Closed | SessionState::Failed) {
+                    report
+                        .active_session_ids
+                        .push(session.session_id.to_string());
+                }
+            }
+            collected += page_len;
+            if collected >= page.total || page_len == 0 {
+                break;
             }
         }
 
