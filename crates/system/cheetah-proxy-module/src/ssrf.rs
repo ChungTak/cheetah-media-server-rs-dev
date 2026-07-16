@@ -296,7 +296,14 @@ async fn resolve_domain(
         }
     }
 
-    Ok(normalize_ip(addrs[0]))
+    // Prefer an IPv4 address to match common dual-stack environments where the
+    // server may only be listening on IPv4; fall back to the first address.
+    let normalized: Vec<_> = addrs.into_iter().map(normalize_ip).collect();
+    if let Some(v4) = normalized.iter().find(|a| a.is_ipv4()) {
+        Ok(*v4)
+    } else {
+        Ok(normalized[0])
+    }
 }
 
 fn normalize_ip(addr: IpAddr) -> IpAddr {

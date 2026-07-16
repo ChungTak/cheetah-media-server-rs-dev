@@ -619,7 +619,7 @@ async fn run_ffmpeg(
     registry: &ProxyRegistry,
     proxy_id: &ProxyId,
     source_url: &str,
-    _source_peer: SocketAddr,
+    source_peer: SocketAddr,
     destination: &MediaKey,
     input_options: &[String],
     output_options: &[String],
@@ -630,7 +630,19 @@ async fn run_ffmpeg(
         return RunOnceOutcome::Failed(e);
     }
 
-    let command = build_ffmpeg_command(source_url, destination, input_options, output_options);
+    // FFmpeg performs its own DNS resolution, so rewrite the input URL to the
+    // validated peer address to prevent DNS-rebinding SSRF.
+    let resolved_source_url = match rewrite_url_to_peer(source_url, source_peer) {
+        Ok(url) => url,
+        Err(err) => return RunOnceOutcome::Failed(err),
+    };
+
+    let command = build_ffmpeg_command(
+        &resolved_source_url,
+        destination,
+        input_options,
+        output_options,
+    );
     let job = FfmpegJob {
         job_id: job_id.to_string(),
         command,
@@ -720,6 +732,26 @@ fn redact_url_credentials(url: &str) -> String {
         }
         Err(_) => url.to_string(),
     }
+}
+
+/// Rewrite `source_url` so its host and port match the validated `peer`.
+///
+/// FFmpeg performs its own DNS resolution, so the command line must carry the
+/// already-validated IP address to prevent DNS-rebinding SSRF.
+fn rewrite_url_to_peer(source_url: &str, peer: SocketAddr) -> Result<String, String> {
+    let mut parsed = Url::parse(source_url).map_err(|err| format!("invalid source url: {err}"))?;
+    let host = if peer.ip().is_ipv6() {
+        format!("[{ip}]", ip = peer.ip())
+    } else {
+        peer.ip().to_string()
+    };
+    parsed
+        .set_host(Some(&host))
+        .map_err(|err| format!("rewrite source host: {err}"))?;
+    parsed
+        .set_port(Some(peer.port()))
+        .map_err(|_err| "rewrite source port: invalid port".to_string())?;
+    Ok(parsed.to_string())
 }
 
 #[cfg(any(feature = "http-flv", feature = "rtmp"))]
@@ -887,5 +919,22 @@ mod tests {
         let redacted = redact_url_credentials("rtsp://user:secret@cam.example/stream");
         assert!(!redacted.contains("secret"));
         assert!(redacted.contains("***"));
+    }
+
+    #[test]
+    fn rewrite_url_to_peer_preserves_path_and_userinfo() {
+        let peer = SocketAddr::from(([127, 0, 0, 1], 1935));
+        let rewritten = rewrite_url_to_peer("rtmp://user:pass@cam.example/live/stream", peer)
+            .expect("rewrite should succeed");
+        assert!(rewritten.contains("127.0.0.1:1935"), "{rewritten}");
+        assert!(rewritten.contains("/live/stream"), "{rewritten}");
+    }
+
+    #[test]
+    fn rewrite_url_to_peer_brackets_ipv6() {
+        let peer = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 554));
+        let rewritten =
+            rewrite_url_to_peer("rtsp://cam.example/stream", peer).expect("rewrite should succeed");
+        assert!(rewritten.contains("[::1]:554"), "{rewritten}");
     }
 }
