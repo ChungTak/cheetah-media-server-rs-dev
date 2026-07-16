@@ -86,7 +86,7 @@
 - module 不得直接依赖 `tokio::net`、`tokio::time`、`tokio::sync`、`tokio_util::sync`；需要的取消、任务句柄、完成通知统一走 `RuntimeApi` / SDK 抽象。
 - module 不得使用 `tokio::select!`；多路等待统一使用 runtime-neutral 原语（如 `CancellationToken` + futures 组合子）。
 - 资源分配、会话绑定、鉴权、API 路由、业务映射写在 module。
-- publish、play、proxy 创建、RTP open 等会分配租约/端口/会话的资源操作，必须在分配前调用 `MediaAdmissionApi::authorize`；`Deny` 时不得留下任何租约、端口、任务或幂等成功记录。
+- publish、play、proxy 创建（pull / push / ffmpeg）、RTP open 等会分配租约/端口/会话的资源操作，必须在分配前调用 `MediaAdmissionApi::authorize`；`Deny` 时不得留下任何租约、端口、任务或幂等成功记录。
 - 当配置应用结果为 `ModuleRestartRequired` 时，由基础层执行模块重建重启（`create -> init -> start`）；module 不应自行绕过该语义维护私有重启流程。
 - `ModuleManagerApi::restart_module / restart_modules` 只接受 `Running` 模块；非 `Running` 状态必须返回 `Conflict`，避免绕过生命周期约束。
 - 同一 `StreamKey` 默认采用单发布者独占语义；不要在 module 侧绕过发布租约模型实现多发布者并写。
