@@ -102,8 +102,16 @@ impl FfmpegApi for LocalFfmpegService {
         job_id: String,
         spec: FfmpegJobSpec,
     ) -> Result<FfmpegJobHandle, SdkError> {
-        if self.jobs.contains_key(&job_id) {
-            return Err(SdkError::AlreadyExists(format!("ffmpeg job {job_id}")));
+        // Allow re-submission of the same job id only once the previous run has
+        // reached a terminal state. This supports proxy retries and delete/recreate
+        // flows that reuse the id derived from the proxy id.
+        if let Some(entry) = self.jobs.get(&job_id) {
+            if entry.value().status.borrow().state.is_terminal() {
+                drop(entry);
+                self.jobs.remove(&job_id);
+            } else {
+                return Err(SdkError::AlreadyExists(format!("ffmpeg job {job_id}")));
+            }
         }
 
         let profile = self
@@ -423,10 +431,16 @@ mod tests {
 
     use cheetah_sdk::FfmpegResourceLimits;
     use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     fn script(content: &[u8]) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
         let dir = std::env::temp_dir();
-        let path = dir.join(format!("cheetah_ffmpeg_test_{}.sh", now_ms()));
+        let path = dir.join(format!(
+            "cheetah_ffmpeg_test_{}_{}.sh",
+            now_ms(),
+            COUNTER.fetch_add(1, Ordering::SeqCst)
+        ));
         let mut file = std::fs::File::create(&path).expect("create temp script");
         file.write_all(content).expect("write temp script");
         #[cfg(unix)]
@@ -629,6 +643,22 @@ mod tests {
 
     #[tokio::test]
     async fn submit_rejects_duplicate_job_id() {
+        let path = script(b"#!/bin/sh\nwhile true; do sleep 1; done\n");
+        let service = LocalFfmpegService::with_executable(path.clone());
+        let spec = FfmpegJobSpec {
+            input: FfmpegInput::Url { url: "in".into() },
+            output: FfmpegOutput::Url { url: "out".into() },
+            timeout_ms: 5_000,
+            ..Default::default()
+        };
+        let _ = service.submit("dup".into(), spec.clone()).await.unwrap();
+        let err = service.submit("dup".into(), spec).await.unwrap_err();
+        assert!(matches!(err, SdkError::AlreadyExists(_)));
+        let _ = service.cancel("dup").await;
+    }
+
+    #[tokio::test]
+    async fn resubmit_after_terminal_reuses_job_id() {
         let path = script(b"#!/bin/sh\nexit 0\n");
         let service = LocalFfmpegService::with_executable(path.clone());
         let spec = FfmpegJobSpec {
@@ -636,9 +666,14 @@ mod tests {
             output: FfmpegOutput::Url { url: "out".into() },
             ..Default::default()
         };
-        let _ = service.submit("dup".into(), spec.clone()).await.unwrap();
-        let err = service.submit("dup".into(), spec).await.unwrap_err();
-        assert!(matches!(err, SdkError::AlreadyExists(_)));
+        let h1 = service.submit("reused".into(), spec.clone()).await.unwrap();
+        let s1 = service.wait(&h1.job_id).await.unwrap();
+        assert_eq!(s1.state, FfmpegJobState::Exited);
+
+        let h2 = service.submit("reused".into(), spec).await.unwrap();
+        let s2 = service.wait(&h2.job_id).await.unwrap();
+        assert_eq!(s2.state, FfmpegJobState::Exited);
+        assert_ne!(s1.created_at, s2.created_at);
     }
 
     #[tokio::test]
