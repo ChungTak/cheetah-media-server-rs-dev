@@ -516,6 +516,8 @@ async fn run_push_rtmp(
                 output_schema: MediaSchema::Rtmp,
                 subscriber_kind: "proxy".to_string(),
                 start_policy: String::new(),
+                protocol: "rtmp".to_string(),
+                remote_endpoint: None,
                 auth_context: Default::default(),
             },
         )
