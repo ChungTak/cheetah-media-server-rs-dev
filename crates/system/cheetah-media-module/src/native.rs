@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::adapter_config::{extract_native_config, load_native_config, NativeAdapterConfig};
@@ -7,13 +8,15 @@ use cheetah_media_api::audit::{AuditApi, AuditEvent, AuditResult};
 use cheetah_media_api::command::{
     DeleteRecordRequest, DeleteSnapshotRequest, FfmpegProxyRequest, MediaQuery, ProxyQuery,
     PullProxyRequest, PushProxyRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderRequest, SessionQuery, SnapshotQuery,
-    SnapshotRequest, StartRecordRequest, StopRecordRequest, UpdateRtpRequest,
+    RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, SessionQuery,
+    SnapshotQuery, SnapshotRequest, StartRecordRequest, StopRecordRequest, UpdateRtpRequest,
 };
 use cheetah_media_api::ids::{
     FileHandle, MediaKey, ProxyId, RecordFileId, RecordTaskId, RtpSessionId, SessionId,
 };
-use cheetah_media_api::model::CloseReason;
+use cheetah_media_api::model::{
+    AdmissionAction, AdmissionRequest, CloseReason, Decision, RtpTcpMode,
+};
 use cheetah_media_api::port::{
     ControlAuthApi, MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, SnapshotApi,
     WebhookAdminApi,
@@ -204,6 +207,34 @@ impl NativeMediaHttpService {
                 "proxy not available",
             ))
         })
+    }
+
+    async fn check_admission(
+        &self,
+        ctx: &MediaRequestContext,
+        action: AdmissionAction,
+        resource: MediaKey,
+        protocol: String,
+        source_address: Option<String>,
+        params: HashMap<String, String>,
+    ) -> Result<(), AdapterError> {
+        let Some(provider) = self.ctx.media_services.admission() else {
+            return Ok(());
+        };
+        let request = AdmissionRequest {
+            action,
+            principal: ctx.principal.clone(),
+            resource,
+            protocol,
+            source_address,
+            params,
+        };
+        match provider.authorize(ctx, request).await? {
+            Decision::Allow => Ok(()),
+            Decision::Deny { code, reason } => {
+                Err(AdapterError::Media(MediaError::new(code, reason)))
+            }
+        }
     }
 
     fn webhook_admin(&self) -> Result<Arc<dyn WebhookAdminApi>, AdapterError> {
@@ -642,6 +673,36 @@ impl NativeMediaHttpService {
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
         let request: RtpReceiverRequest = parse_body(&req)?;
+        let protocol = match request.tcp_mode {
+            Some(RtpTcpMode::Active) => "tcp-active".to_string(),
+            Some(RtpTcpMode::Passive) => "tcp-passive".to_string(),
+            None => "udp".to_string(),
+        };
+        let mut params = HashMap::new();
+        if let Some(port) = request.port {
+            params.insert("port".to_string(), port.to_string());
+        }
+        if let Some(ip) = &request.ip {
+            params.insert("ip".to_string(), ip.clone());
+        }
+        if let Some(ssrc) = request.ssrc {
+            params.insert("ssrc".to_string(), ssrc.to_string());
+        }
+        if let Some(payload_type) = request.payload_type {
+            params.insert("payload_type".to_string(), payload_type.to_string());
+        }
+        if let Some(codec_hint) = &request.codec_hint {
+            params.insert("codec_hint".to_string(), codec_hint.clone());
+        }
+        self.check_admission(
+            ctx,
+            AdmissionAction::OpenRtpReceiver,
+            request.media_key.clone(),
+            protocol,
+            request.ip.clone(),
+            params,
+        )
+        .await?;
         let session = rtp_api.open_rtp_receiver(ctx, request).await?;
         Ok(json_response(&session))
     }
@@ -653,6 +714,34 @@ impl NativeMediaHttpService {
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
         let request: RtpSenderRequest = parse_body(&req)?;
+        let protocol = match request.mode {
+            RtpSenderMode::Active => "active".to_string(),
+            RtpSenderMode::Passive => "passive".to_string(),
+            RtpSenderMode::Talk => "talk".to_string(),
+        };
+        let mut params = HashMap::new();
+        params.insert(
+            "destination_endpoint".to_string(),
+            request.destination_endpoint.clone(),
+        );
+        if let Some(ssrc) = request.ssrc {
+            params.insert("ssrc".to_string(), ssrc.to_string());
+        }
+        if let Some(payload_type) = request.payload_type {
+            params.insert("payload_type".to_string(), payload_type.to_string());
+        }
+        if let Some(codec_hint) = &request.codec_hint {
+            params.insert("codec_hint".to_string(), codec_hint.clone());
+        }
+        self.check_admission(
+            ctx,
+            AdmissionAction::OpenRtpSender,
+            request.media_key.clone(),
+            protocol,
+            None,
+            params,
+        )
+        .await?;
         let session = rtp_api.open_rtp_sender(ctx, request).await?;
         Ok(json_response(&session))
     }
@@ -931,6 +1020,22 @@ impl NativeMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let request: PullProxyRequest = parse_body(&req)?;
+        let protocol = request
+            .source_url
+            .split_once("://")
+            .map(|(scheme, _)| scheme.to_lowercase())
+            .unwrap_or_else(|| "http".to_string());
+        let mut params = HashMap::new();
+        params.insert("source_url".to_string(), request.source_url.clone());
+        self.check_admission(
+            ctx,
+            AdmissionAction::CreatePullProxy,
+            request.destination.clone(),
+            protocol,
+            None,
+            params,
+        )
+        .await?;
         let info = self.proxy()?.create_pull_proxy(ctx, request).await?;
         Ok(json_response(&info))
     }
@@ -979,6 +1084,16 @@ impl NativeMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let request: PushProxyRequest = parse_body(&req)?;
+        let params = request.protocol_options.clone();
+        self.check_admission(
+            ctx,
+            AdmissionAction::CreatePushProxy,
+            request.source_media_key.clone(),
+            request.protocol.clone(),
+            None,
+            params,
+        )
+        .await?;
         let info = self.proxy()?.create_push_proxy(ctx, request).await?;
         Ok(json_response(&info))
     }
@@ -1027,6 +1142,22 @@ impl NativeMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let request: FfmpegProxyRequest = parse_body(&req)?;
+        let protocol = request
+            .source_url
+            .split_once("://")
+            .map(|(scheme, _)| scheme.to_lowercase())
+            .unwrap_or_else(|| "http".to_string());
+        let mut params = HashMap::new();
+        params.insert("source_url".to_string(), request.source_url.clone());
+        self.check_admission(
+            ctx,
+            AdmissionAction::CreateFfmpegProxy,
+            request.destination.clone(),
+            protocol,
+            None,
+            params,
+        )
+        .await?;
         let info = self.proxy()?.create_ffmpeg_proxy(ctx, request).await?;
         Ok(json_response(&info))
     }
