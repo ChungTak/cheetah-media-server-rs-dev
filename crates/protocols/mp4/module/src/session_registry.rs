@@ -38,6 +38,8 @@ pub struct VodSessionRecord {
     pub remote_port: Option<u16>,
     pub network_type: Option<String>,
     pub params: Option<String>,
+    /// Optional failure reason surfaced when the session ends abnormally.
+    pub last_error: Option<String>,
 }
 
 /// In-memory registry of active VOD sessions.
