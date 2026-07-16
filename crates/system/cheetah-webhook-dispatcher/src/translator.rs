@@ -18,6 +18,48 @@ pub trait WebhookTranslator: Send + Sync {
     fn translate(&self, event: &MediaEvent) -> Vec<WebhookDispatch>;
 }
 
+/// Returns the snake_case event type tag for a `MediaEvent`.
+///
+/// 返回 `MediaEvent` 的 snake_case 事件类型标记。
+pub fn media_event_type(event: &MediaEvent) -> Option<String> {
+    let value = serde_json::to_value(event).ok()?;
+    value
+        .get("event")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// Native-domain translator that wraps every `MediaEvent` in a consistent
+/// envelope payload.
+///
+/// 原生域翻译器：将每个 `MediaEvent` 包装成一致的 envelope payload。
+#[derive(Debug, Clone, Default)]
+pub struct NativeWebhookTranslator;
+
+impl WebhookTranslator for NativeWebhookTranslator {
+    fn translate(&self, event: &MediaEvent) -> Vec<WebhookDispatch> {
+        let mut value = match serde_json::to_value(event) {
+            Ok(v) => v,
+            Err(_) => return Vec::new(),
+        };
+
+        let event_type = value
+            .get("event")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("event");
+        }
+
+        vec![WebhookDispatch {
+            hook_name: event_type,
+            payload: value,
+        }]
+    }
+}
+
 /// ZLMediaKit-compatible translator.
 ///
 /// ZLMediaKit 兼容翻译器。

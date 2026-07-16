@@ -1,17 +1,18 @@
 use cheetah_sdk::{
-    ConfigEffect, EngineContext, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
-    ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState, ProviderRegistration,
-    SdkError,
+    ConfigEffect, EngineContext, MetricsApi, Module, ModuleCapability, ModuleConfigChange,
+    ModuleFactory, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState,
+    ProviderRegistration, SdkError,
 };
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::admin::WebhookAdminStore;
-use crate::config::WebhookDispatcherConfig;
+use crate::config::{WebhookDispatcherConfig, WebhookProfileMode};
 use crate::decision::WebhookDecisionClient;
 use crate::dispatcher::WebhookDispatcher;
 use crate::security::WebhookUrlPolicy;
 use crate::sender::{RuntimeHttpClient, WebhookSender};
-use crate::translator::ZlmWebhookTranslator;
+use crate::translator::{NativeWebhookTranslator, WebhookTranslator, ZlmWebhookTranslator};
 
 const MODULE_ID: &str = "webhook-dispatcher";
 const DISPATCHER_QUEUE_CAPACITY: usize = 1024;
@@ -69,13 +70,25 @@ impl WebhookModule {
     }
 
     fn build_dispatcher(config: WebhookDispatcherConfig, ctx: &EngineContext) -> WebhookDispatcher {
+        let mut translators: HashMap<WebhookProfileMode, Arc<dyn WebhookTranslator>> =
+            HashMap::new();
+        translators.insert(
+            WebhookProfileMode::NativeDomain,
+            Arc::new(NativeWebhookTranslator),
+        );
+        translators.insert(
+            WebhookProfileMode::ZlmCompatible,
+            Arc::new(ZlmWebhookTranslator),
+        );
+
         WebhookDispatcher::new(
             config,
             ctx.media_event_bus.clone(),
             ctx.runtime_api.clone(),
             Self::sender(ctx),
-            Arc::new(ZlmWebhookTranslator),
+            translators,
             WebhookUrlPolicy::default(),
+            Some(ctx.metrics_api.clone() as Arc<dyn MetricsApi>),
         )
     }
 
