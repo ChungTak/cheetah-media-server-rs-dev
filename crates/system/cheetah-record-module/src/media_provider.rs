@@ -497,8 +497,10 @@ mod tests {
             _now_ms: i64,
         ) -> cheetah_media_api::error::Result<cheetah_media_api::DeleteBatchResult> {
             Ok(cheetah_media_api::DeleteBatchResult {
+                matched: 0,
                 deleted: 0,
                 failed: 0,
+                failures: Vec::new(),
             })
         }
 

@@ -308,6 +308,65 @@ pub struct DeleteSnapshotRequest {
     pub retain_count: Option<u32>,
 }
 
+/// Open playback request.
+///
+/// 打开回放请求。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct OpenPlaybackRequest {
+    pub file_handle: FileHandle,
+    pub media_key: MediaKey,
+    #[serde(default)]
+    pub start_position_ms: i64,
+    #[serde(default = "default_playback_scale")]
+    pub scale: f64,
+}
+
+fn default_playback_scale() -> f64 {
+    1.0
+}
+
+/// Playback control command.
+///
+/// 回放控制命令。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "command")]
+pub enum PlaybackControl {
+    Pause,
+    Resume,
+    Seek { position_ms: i64 },
+    SetScale { scale: f64 },
+}
+
+/// Playback query.
+///
+/// 回放查询。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PlaybackQuery {
+    #[serde(default)]
+    pub vhost: Option<String>,
+    #[serde(default)]
+    pub app: Option<String>,
+    #[serde(default)]
+    pub stream: Option<String>,
+    #[serde(default)]
+    pub state: Option<crate::model::PlaybackSessionState>,
+    #[serde(default)]
+    pub page: u64,
+    #[serde(default = "default_page_size")]
+    pub page_size: u64,
+}
+
+impl PlaybackQuery {
+    pub const MAX_PAGE_SIZE: u64 = 1_000;
+
+    pub fn clamp_page_size(&mut self) {
+        if self.page_size == 0 {
+            self.page_size = default_page_size();
+        }
+        self.page_size = self.page_size.min(Self::MAX_PAGE_SIZE);
+    }
+}
+
 /// Pull proxy request.
 ///
 /// 拉流代理请求。
