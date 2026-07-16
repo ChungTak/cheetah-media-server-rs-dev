@@ -205,6 +205,7 @@ pub async fn open_rtmp_push_with_runtime(
         read_buffer_size,
         ack_window_size,
         chunk_size,
+        peer: options.peer,
     };
 
     let client = start_client(

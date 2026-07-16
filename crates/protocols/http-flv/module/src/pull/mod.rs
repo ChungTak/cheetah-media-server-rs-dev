@@ -1,4 +1,4 @@
-use std::net::ToSocketAddrs;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -131,6 +131,9 @@ struct ParsedPullUrl {
     port: u16,
     authority: String,
     path_and_query: String,
+    /// Pre-resolved peer address. When `Some`, the connection uses this address
+    /// instead of resolving `host`.
+    peer: Option<SocketAddr>,
 }
 
 impl ParsedPullUrl {
@@ -199,6 +202,7 @@ impl ParsedPullUrl {
             port,
             authority: authority.to_string(),
             path_and_query,
+            peer: None,
         })
     }
 }
@@ -487,11 +491,14 @@ fn connect_stream(
     runtime_api: Arc<dyn RuntimeApi>,
     parsed: &ParsedPullUrl,
 ) -> Result<Box<dyn cheetah_runtime_api::AsyncTcpStream>, HttpFlvPullError> {
-    let addr = (parsed.host.as_str(), parsed.port)
-        .to_socket_addrs()
-        .map_err(|err| HttpFlvPullError::Resolve(err.to_string()))?
-        .next()
-        .ok_or_else(|| HttpFlvPullError::Resolve("no socket address resolved".to_string()))?;
+    let addr = match parsed.peer {
+        Some(peer) => peer,
+        None => (parsed.host.as_str(), parsed.port)
+            .to_socket_addrs()
+            .map_err(|err| HttpFlvPullError::Resolve(err.to_string()))?
+            .next()
+            .ok_or_else(|| HttpFlvPullError::Resolve("no socket address resolved".to_string()))?,
+    };
     runtime_api
         .connect_tcp(addr)
         .map_err(|err| HttpFlvPullError::Connect(err.to_string()))

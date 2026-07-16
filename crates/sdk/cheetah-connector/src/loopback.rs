@@ -133,6 +133,7 @@ async fn cross_protocol_loopback(
     let pull_options = ConnectorPullOptions {
         subscriber: options.subscriber.clone(),
         cancel: Some(cancel.clone()),
+        peer: None,
         protocol: ProtocolPullExtras::HttpFlv {
             reconnect: None,
             read_limits: None,
@@ -144,6 +145,7 @@ async fn cross_protocol_loopback(
         publisher: options.publisher.clone(),
         cancel: Some(cancel),
         tracks: options.tracks.clone(),
+        peer: None,
         protocol: ProtocolPushExtras::Rtmp(RtmpPushExtras {
             command_queue_capacity: Some(options.queue_capacity),
             write_queue_capacity: Some(options.queue_capacity),

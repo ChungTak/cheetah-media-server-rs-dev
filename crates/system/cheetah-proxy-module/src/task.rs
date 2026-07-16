@@ -18,6 +18,8 @@ use futures::FutureExt;
 use tracing::{debug, error, warn};
 use url::Url;
 
+use std::net::SocketAddr;
+
 use crate::config::ProxyModuleConfig;
 use crate::registry::ProxyRegistry;
 
@@ -28,15 +30,18 @@ use crate::registry::ProxyRegistry;
 pub enum ProxySessionSpec {
     Pull {
         source_url: String,
+        source_peer: SocketAddr,
         destination: MediaKey,
     },
     Push {
         source_media_key: MediaKey,
         destination_url: String,
+        destination_peer: SocketAddr,
         protocol: String,
     },
     Ffmpeg {
         source_url: String,
+        source_peer: SocketAddr,
         destination: MediaKey,
         input_options: Vec<String>,
         output_options: Vec<String>,
@@ -142,6 +147,7 @@ async fn run_once(
     match spec {
         ProxySessionSpec::Pull {
             source_url,
+            source_peer,
             destination,
         } => {
             run_pull(
@@ -149,6 +155,7 @@ async fn run_once(
                 registry,
                 proxy_id,
                 source_url,
+                *source_peer,
                 destination,
                 cancel,
                 config,
@@ -158,6 +165,7 @@ async fn run_once(
         ProxySessionSpec::Push {
             source_media_key,
             destination_url,
+            destination_peer,
             protocol,
         } => {
             run_push(
@@ -166,6 +174,7 @@ async fn run_once(
                 proxy_id,
                 source_media_key,
                 destination_url,
+                *destination_peer,
                 protocol,
                 cancel,
                 config,
@@ -174,6 +183,7 @@ async fn run_once(
         }
         ProxySessionSpec::Ffmpeg {
             source_url,
+            source_peer,
             destination,
             input_options,
             output_options,
@@ -184,6 +194,7 @@ async fn run_once(
                 registry,
                 proxy_id,
                 source_url,
+                *source_peer,
                 destination,
                 input_options,
                 output_options,
@@ -195,11 +206,13 @@ async fn run_once(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_pull(
     ctx: &EngineContext,
     registry: &ProxyRegistry,
     proxy_id: &ProxyId,
     source_url: &str,
+    source_peer: SocketAddr,
     destination: &MediaKey,
     cancel: &CancellationToken,
     config: &ProxyModuleConfig,
@@ -218,6 +231,7 @@ async fn run_pull(
                 registry,
                 proxy_id,
                 source_url,
+                source_peer,
                 destination,
                 cancel,
                 connect_timeout,
@@ -230,6 +244,7 @@ async fn run_pull(
                 registry,
                 proxy_id,
                 source_url,
+                source_peer,
                 destination,
                 cancel,
                 connect_timeout,
@@ -243,11 +258,13 @@ async fn run_pull(
 }
 
 #[cfg(feature = "rtsp")]
+#[allow(clippy::too_many_arguments)]
 async fn run_pull_rtsp(
     ctx: &EngineContext,
     registry: &ProxyRegistry,
     proxy_id: &ProxyId,
     source_url: &str,
+    source_peer: SocketAddr,
     destination: &MediaKey,
     cancel: &CancellationToken,
     connect_timeout_ms: u64,
@@ -261,6 +278,7 @@ async fn run_pull_rtsp(
     let target = StreamKey::new(ns, path);
     let options = ConnectorPullOptions {
         cancel: Some(cancel.child_token()),
+        peer: Some(source_peer),
         ..Default::default()
     };
 
@@ -290,11 +308,13 @@ async fn run_pull_rtsp(
 }
 
 #[cfg(not(feature = "rtsp"))]
+#[allow(clippy::too_many_arguments)]
 async fn run_pull_rtsp(
     _ctx: &EngineContext,
     _registry: &ProxyRegistry,
     _proxy_id: &ProxyId,
     _source_url: &str,
+    _source_peer: SocketAddr,
     _destination: &MediaKey,
     _cancel: &CancellationToken,
     _connect_timeout_ms: u64,
@@ -303,11 +323,13 @@ async fn run_pull_rtsp(
 }
 
 #[cfg(feature = "http-flv")]
+#[allow(clippy::too_many_arguments)]
 async fn run_pull_http_flv(
     ctx: &EngineContext,
     registry: &ProxyRegistry,
     proxy_id: &ProxyId,
     source_url: &str,
+    source_peer: SocketAddr,
     destination: &MediaKey,
     cancel: &CancellationToken,
     connect_timeout_ms: u64,
@@ -319,6 +341,7 @@ async fn run_pull_http_flv(
 
     let options = ConnectorPullOptions {
         cancel: Some(cancel.child_token()),
+        peer: Some(source_peer),
         ..Default::default()
     };
 
@@ -411,11 +434,13 @@ async fn run_pull_http_flv(
 }
 
 #[cfg(not(feature = "http-flv"))]
+#[allow(clippy::too_many_arguments)]
 async fn run_pull_http_flv(
     _ctx: &EngineContext,
     _registry: &ProxyRegistry,
     _proxy_id: &ProxyId,
     _source_url: &str,
+    _source_peer: SocketAddr,
     _destination: &MediaKey,
     _cancel: &CancellationToken,
     _connect_timeout_ms: u64,
@@ -423,12 +448,14 @@ async fn run_pull_http_flv(
     RunOnceOutcome::Failed("http-flv pull requires cheetah-proxy-module feature `http-flv`".into())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_push(
     ctx: &EngineContext,
     registry: &ProxyRegistry,
     proxy_id: &ProxyId,
     source_media_key: &MediaKey,
     destination_url: &str,
+    destination_peer: SocketAddr,
     protocol: &str,
     cancel: &CancellationToken,
     config: &ProxyModuleConfig,
@@ -442,6 +469,7 @@ async fn run_push(
                 proxy_id,
                 source_media_key,
                 destination_url,
+                destination_peer,
                 cancel,
                 config.connect_timeout_ms,
             )
@@ -454,12 +482,14 @@ async fn run_push(
 }
 
 #[cfg(feature = "rtmp")]
+#[allow(clippy::too_many_arguments)]
 async fn run_push_rtmp(
     ctx: &EngineContext,
     registry: &ProxyRegistry,
     proxy_id: &ProxyId,
     source_media_key: &MediaKey,
     destination_url: &str,
+    destination_peer: SocketAddr,
     cancel: &CancellationToken,
     connect_timeout_ms: u64,
 ) -> RunOnceOutcome {
@@ -493,6 +523,7 @@ async fn run_push_rtmp(
 
     let options = ConnectorPushOptions {
         cancel: Some(cancel.child_token()),
+        peer: Some(destination_peer),
         ..Default::default()
     };
     let open = open_rtmp_push_with_runtime(ctx.runtime_api.clone(), destination_url, options);
@@ -568,23 +599,27 @@ async fn run_push_rtmp(
 }
 
 #[cfg(not(feature = "rtmp"))]
+#[allow(clippy::too_many_arguments)]
 async fn run_push_rtmp(
     _ctx: &EngineContext,
     _registry: &ProxyRegistry,
     _proxy_id: &ProxyId,
     _source_media_key: &MediaKey,
     _destination_url: &str,
+    _destination_peer: SocketAddr,
     _cancel: &CancellationToken,
     _connect_timeout_ms: u64,
 ) -> RunOnceOutcome {
     RunOnceOutcome::Failed("rtmp push requires cheetah-proxy-module feature `rtmp`".into())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_ffmpeg(
     ctx: &EngineContext,
     registry: &ProxyRegistry,
     proxy_id: &ProxyId,
     source_url: &str,
+    source_peer: SocketAddr,
     destination: &MediaKey,
     input_options: &[String],
     output_options: &[String],
@@ -595,7 +630,19 @@ async fn run_ffmpeg(
         return RunOnceOutcome::Failed(e);
     }
 
-    let command = build_ffmpeg_command(source_url, destination, input_options, output_options);
+    // FFmpeg performs its own DNS resolution, so rewrite the input URL to the
+    // validated peer address to prevent DNS-rebinding SSRF.
+    let resolved_source_url = match rewrite_url_to_peer(source_url, source_peer) {
+        Ok(url) => url,
+        Err(err) => return RunOnceOutcome::Failed(err),
+    };
+
+    let command = build_ffmpeg_command(
+        &resolved_source_url,
+        destination,
+        input_options,
+        output_options,
+    );
     let job = FfmpegJob {
         job_id: job_id.to_string(),
         command,
@@ -685,6 +732,26 @@ fn redact_url_credentials(url: &str) -> String {
         }
         Err(_) => url.to_string(),
     }
+}
+
+/// Rewrite `source_url` so its host and port match the validated `peer`.
+///
+/// FFmpeg performs its own DNS resolution, so the command line must carry the
+/// already-validated IP address to prevent DNS-rebinding SSRF.
+fn rewrite_url_to_peer(source_url: &str, peer: SocketAddr) -> Result<String, String> {
+    let mut parsed = Url::parse(source_url).map_err(|err| format!("invalid source url: {err}"))?;
+    let host = if peer.ip().is_ipv6() {
+        format!("[{ip}]", ip = peer.ip())
+    } else {
+        peer.ip().to_string()
+    };
+    parsed
+        .set_host(Some(&host))
+        .map_err(|err| format!("rewrite source host: {err}"))?;
+    parsed
+        .set_port(Some(peer.port()))
+        .map_err(|_err| "rewrite source port: invalid port".to_string())?;
+    Ok(parsed.to_string())
 }
 
 #[cfg(any(feature = "http-flv", feature = "rtmp"))]
@@ -852,5 +919,22 @@ mod tests {
         let redacted = redact_url_credentials("rtsp://user:secret@cam.example/stream");
         assert!(!redacted.contains("secret"));
         assert!(redacted.contains("***"));
+    }
+
+    #[test]
+    fn rewrite_url_to_peer_preserves_path_and_userinfo() {
+        let peer = SocketAddr::from(([127, 0, 0, 1], 1935));
+        let rewritten = rewrite_url_to_peer("rtmp://user:pass@cam.example/live/stream", peer)
+            .expect("rewrite should succeed");
+        assert!(rewritten.contains("127.0.0.1:1935"), "{rewritten}");
+        assert!(rewritten.contains("/live/stream"), "{rewritten}");
+    }
+
+    #[test]
+    fn rewrite_url_to_peer_brackets_ipv6() {
+        let peer = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 554));
+        let rewritten =
+            rewrite_url_to_peer("rtsp://cam.example/stream", peer).expect("rewrite should succeed");
+        assert!(rewritten.contains("[::1]:554"), "{rewritten}");
     }
 }

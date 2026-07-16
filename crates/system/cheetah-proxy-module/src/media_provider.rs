@@ -13,7 +13,7 @@ use tracing::{debug, warn};
 
 use crate::config::ProxyModuleConfig;
 use crate::registry::{ProxyEntry, ProxyRegistry};
-use crate::ssrf::{validate_url, IpNetwork};
+use crate::ssrf::{resolve_and_validate_url, IpNetwork};
 use crate::task::{spawn_proxy_task, validate_ffmpeg_options, ProxySessionSpec};
 
 /// Bridge that exposes the proxy registry as a [`ProxyApi`] provider.
@@ -57,7 +57,12 @@ impl ProxyApi for ProxyMediaProvider {
         ctx: &MediaRequestContext,
         request: PullProxyRequest,
     ) -> Result<ProxyInfo> {
-        validate_url(&request.source_url, &self.ssrf_allowlist)?;
+        let resolved_source = resolve_and_validate_url(
+            &request.source_url,
+            &self.ssrf_allowlist,
+            &self.ctx.runtime_api,
+        )
+        .await?;
 
         let proxy_id = self.ensure_idempotency_or_create_id(
             ctx,
@@ -96,7 +101,8 @@ impl ProxyApi for ProxyMediaProvider {
             proxy_id.clone(),
             self.config.clone(),
             ProxySessionSpec::Pull {
-                source_url: info.source.clone(),
+                source_url: resolved_source.url,
+                source_peer: resolved_source.peer,
                 destination: info.destination.clone(),
             },
         )
@@ -150,7 +156,12 @@ impl ProxyApi for ProxyMediaProvider {
         ctx: &MediaRequestContext,
         request: PushProxyRequest,
     ) -> Result<ProxyInfo> {
-        validate_url(&request.destination_url, &self.ssrf_allowlist)?;
+        let resolved_destination = resolve_and_validate_url(
+            &request.destination_url,
+            &self.ssrf_allowlist,
+            &self.ctx.runtime_api,
+        )
+        .await?;
 
         let proxy_id = self.ensure_idempotency_or_create_id(
             ctx,
@@ -192,7 +203,8 @@ impl ProxyApi for ProxyMediaProvider {
             self.config.clone(),
             ProxySessionSpec::Push {
                 source_media_key: info.destination.clone(),
-                destination_url: info.source.clone(),
+                destination_url: resolved_destination.url,
+                destination_peer: resolved_destination.peer,
                 protocol: request.protocol.clone(),
             },
         )
@@ -212,7 +224,12 @@ impl ProxyApi for ProxyMediaProvider {
         ctx: &MediaRequestContext,
         request: FfmpegProxyRequest,
     ) -> Result<ProxyInfo> {
-        validate_url(&request.source_url, &self.ssrf_allowlist)?;
+        let resolved_source = resolve_and_validate_url(
+            &request.source_url,
+            &self.ssrf_allowlist,
+            &self.ctx.runtime_api,
+        )
+        .await?;
         validate_ffmpeg_options(&request.input_options, &request.output_options)
             .map_err(MediaError::invalid_argument)?;
 
@@ -254,7 +271,8 @@ impl ProxyApi for ProxyMediaProvider {
             proxy_id.clone(),
             self.config.clone(),
             ProxySessionSpec::Ffmpeg {
-                source_url: request.source_url,
+                source_url: resolved_source.url,
+                source_peer: resolved_source.peer,
                 destination: request.destination,
                 input_options: request.input_options,
                 output_options: request.output_options,

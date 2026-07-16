@@ -51,6 +51,7 @@ pub async fn open_http_flv_pull_with_runtime(
         read_limits: read_limits.unwrap_or_default(),
         buffer_size,
         reconnect,
+        peer: options.peer,
     };
 
     let endpoint = endpoint.to_string();

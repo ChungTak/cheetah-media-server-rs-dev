@@ -54,6 +54,9 @@ pub struct RtspPullOptions {
     pub subscriber_options: SubscriberOptions,
     /// Options for acquiring the internal publisher lease.
     pub publisher_options: PublisherOptions,
+    /// Pre-resolved peer address. When `Some`, the RTSP client connects to this
+    /// address instead of re-resolving the URL hostname, which prevents DNS rebinding.
+    pub peer: Option<SocketAddr>,
 }
 
 impl Default for RtspPullOptions {
@@ -66,6 +69,7 @@ impl Default for RtspPullOptions {
             alert_thresholds: RtspAlertThresholds::default(),
             subscriber_options: SubscriberOptions::default(),
             publisher_options: PublisherOptions::default(),
+            peer: None,
         }
     }
 }
@@ -83,9 +87,12 @@ pub async fn open_rtsp_pull(
     cancel: CancellationToken,
     options: RtspPullOptions,
 ) -> Result<Box<dyn SubscriberSource>, SdkError> {
-    let peer = parse_rtsp_source_peer(source_url).map_err(|reason| {
-        SdkError::InvalidArgument(format!("invalid rtsp source url: {reason}"))
-    })?;
+    let peer = match options.peer {
+        Some(peer) => peer,
+        None => parse_rtsp_source_peer(source_url).map_err(|reason| {
+            SdkError::InvalidArgument(format!("invalid rtsp source url: {reason}"))
+        })?,
+    };
 
     let transports = supported_pull_transports(&options.transport_preference)
         .map_err(SdkError::InvalidArgument)?;
