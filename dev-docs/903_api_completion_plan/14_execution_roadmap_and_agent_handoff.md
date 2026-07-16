@@ -63,7 +63,48 @@ P0 结束时，暂未完成的 playback/proxy/FFmpeg operation 必须从 Availab
 
 交接记录必须包含 task id、已修改公共接口、未完成分支、测试结果、临时 feature/config、可安全回滚点。不得用“基本完成”“应该可用”等不可验证表述。
 
-## 6. 最终 DoD
+## 6. 当前执行状态
+
+| 阶段 | 任务 | 状态 | PR |
+| --- | --- | --- | --- |
+| REL-01 | 精确工具链与默认 cargo | 已完成并合并 | #135 |
+| CAP-01..04 | 能力/输出注册表/HMAC 签名 | 已完成并合并 | #136..#139 |
+| SEC-01..03 | 授权/deadline/幂等 | 已完成并合并 | #140..#142 |
+| HTTP-01 | RTP REST 路由与兼容别名 | 已完成并合并 | #143 |
+| RTP-01..04 | 原子更新/driver ack/orchestrator/adapter | 已完成并合并 | #144..#147 |
+| IMG-01..04 | JPEG 编码/原子提交/物理删除/兼容下载 | 已完成并合并 | #148..#151 |
+| VOD-01..04 | PlaybackApi/MP4 provider/路由/E2E | 已完成并合并 | #152..#155 |
+| PRX-01..05 | RTSP pull/RTMP push/DNS/FFmpeg executor/health | 已完成并合并 | #156..#160 |
+| EVT-01..05 | Admission/webhook 路由/translator/E2E | 已完成并合并 | #161..#165 |
+| SEC-04/05 | mTLS/HMAC TTL/webhook 响应大小限制 | 已完成并合并 | #166/#167 |
+| ZLM-01..04 | 接口目录/高价值接口/golden/L3 黑盒 | 已完成并合并 | #168..#171 |
+| REL-02/04 | S0-S5 CI 分组、release build、制品归档 | 已完成，PR 待合并 | #172 |
+| REL-03 | 并发取消、module restart、资源泄漏观测 | 待实施 | - |
+| SIG-01..06 | 四类信令 A/B 合同与公共 fixture/native HTTP 黑盒 | A 层合同已存在，B 层 runner 待建 | - |
+| 14/15 | 执行路线与发布证据 | 本文档更新中 | 本 PR |
+
+### 已验证命令
+
+P0/P1 及 ZLM 任务本地验证命令：
+
+```text
+cargo fmt --check
+cargo clippy -p cheetah-media-module -- -D warnings
+cargo test -p cheetah-sdk --test signal_contracts
+cargo test -p cheetah-media-module
+cargo build --release -p cheetah-server --features media-control-full
+```
+
+上述命令均已在当前 `main`（含 #168..#171）通过。REL-02 的 S0-S5 CI 分组正在 PR #172 验证。
+
+### 下一个 Agent 接手要点
+
+1. **优先 REL-03**：在 S4 增加并发取消与 module restart 后资源泄漏的自动化观测；`cheetah-engine` 已提供 `TaskSystemApi::snapshot()`，可在此基础上做终止后残留任务检查。
+2. **SIG B 层**：`crates/sdk/cheetah-sdk/tests/signal_contracts` 已覆盖 A 层，但 `12_signal_server_production_contracts.md` 要求 B 层通过 native HTTP 与网络媒体端口操作，尚未实现统一 runner。
+3. **分支**：所有已合并 PR 在 `main`；#172 分支为 `devin/rel-02-ci-stages`；若 #172 合并后继续，请从 `main` 切出 REL-03 分支。
+4. **可安全回滚点**：`main` 在 #171 合并后稳定；如需回退 REL-02 CI，可仅撤销 `.github/workflows/ci.yml` 与 `apps/cheetah-server/src/main.rs` 的 CLI flag 变更。
+
+## 7. 最终 DoD
 
 所有任务有唯一 owner/提交/证据；P0/P1/P2 门禁全绿；能力报告只含通过对应等级的 operation；无 release blocker；四类 A/B 合同与完整服务器 smoke 在同一候选制品上通过。
 
