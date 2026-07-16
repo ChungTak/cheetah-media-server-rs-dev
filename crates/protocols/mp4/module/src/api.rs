@@ -16,6 +16,7 @@ use tracing::warn;
 
 use crate::config::Mp4ModuleConfig;
 use crate::session_registry::{SessionError, VodSessionRecord, VodSessionRegistry};
+use cheetah_sdk::media_api::ids::{FileHandle, MediaKey};
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 /// Errors returned by the VOD API layer.
@@ -48,6 +49,12 @@ pub struct StartVodRequest {
     pub loop_count: Option<u32>,
     #[serde(rename = "sessionId", default)]
     pub session_id: Option<String>,
+    /// Optional target media key for the playback session.
+    #[serde(default)]
+    pub media_key: Option<MediaKey>,
+    /// Optional public file handle; defaults to the source URI.
+    #[serde(default)]
+    pub file_handle: Option<FileHandle>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -181,6 +188,23 @@ impl VodApi {
             .and_then(|s| s.to_str())
             .unwrap_or("anon")
             .to_string();
+        let file_handle = req
+            .file_handle
+            .clone()
+            .unwrap_or_else(|| FileHandle(req.uri.clone()));
+        let media_key = req.media_key.clone().unwrap_or_else(|| {
+            MediaKey::with_default_vhost("file", &stream_stem, None).unwrap_or_else(|_| {
+                MediaKey::with_default_vhost("file", "anon", None)
+                    .expect("anon is a valid app/stream")
+            })
+        });
+        let output_key = Some(
+            MediaKey::with_default_vhost("file", &stream_stem, None).unwrap_or_else(|_| {
+                MediaKey::with_default_vhost("file", "anon", None)
+                    .expect("anon is a valid app/stream")
+            }),
+        );
+        let start_position_ms = req.start_time_ms.unwrap_or(0);
         let record = VodSessionRecord {
             session_id: session_id.clone(),
             source_uri: req.uri.clone(),
@@ -192,6 +216,10 @@ impl VodApi {
             paused: false,
             scale: 1.0,
             state: "starting".to_string(),
+            file_handle,
+            media_key,
+            output_key,
+            start_position_ms,
             reader_count: 0,
             remote_ip: None,
             remote_port: None,
@@ -265,6 +293,10 @@ impl VodApi {
     ///
     /// 向运行中的会话发送 seek/pause/scale 命令。
     pub fn control(&self, req: ControlVodRequest) -> Result<ControlVodResponse, VodApiError> {
+        let mut record = self
+            .registry
+            .get(&req.session_id)
+            .ok_or_else(|| SessionError::NotFound(req.session_id.clone()))?;
         let handle = self
             .registry
             .handle(&req.session_id)
@@ -275,17 +307,33 @@ impl VodApi {
                     position_us: seek * 1000,
                 })
                 .map_err(|e| VodApiError::Driver(e.to_string()))?;
+            record.start_position_ms = seek;
+            record.state = "playing".to_string();
         }
         if let Some(p) = req.pause {
             handle
                 .send_control(VodControlCommand::Pause(p))
                 .map_err(|e| VodApiError::Driver(e.to_string()))?;
+            record.paused = p;
+            record.state = if p {
+                "paused".to_string()
+            } else {
+                "playing".to_string()
+            };
         }
         if let Some(s) = req.scale {
             handle
                 .send_control(VodControlCommand::Scale(s))
                 .map_err(|e| VodApiError::Driver(e.to_string()))?;
+            record.scale = s;
+            if record.state == "starting" {
+                record.state = "playing".to_string();
+            }
         }
+        // Mirror the new state into the registry so `PlaybackApi` get/list
+        // reflect the last known control state even before the driver reports
+        // events.
+        let _ = self.registry.update(record);
         Ok(ControlVodResponse {
             code: 200,
             msg: "success".to_string(),

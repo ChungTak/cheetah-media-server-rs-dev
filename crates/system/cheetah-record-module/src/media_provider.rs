@@ -1,15 +1,17 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use cheetah_media_api::command::{
-    DeleteRecordRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    StartRecordRequest, StopRecordRequest,
+    DeleteRecordRequest, OpenPlaybackRequest, PlaybackControl, RecordFileQuery,
+    RecordPlaybackCommand, RecordTaskQuery, StartRecordRequest, StopRecordRequest,
 };
 use cheetah_media_api::error::{MediaError, Result};
-use cheetah_media_api::ids::{FileHandle, MediaKey, RecordFileId, RecordTaskId};
+use cheetah_media_api::ids::{FileHandle, MediaKey, PlaybackSessionId, RecordFileId, RecordTaskId};
 use cheetah_media_api::model::{Page, RecordFile, RecordTask, RecordTaskState};
 use cheetah_media_api::port::{MediaRequestContext, RecordApi as RecordApiPort};
 use cheetah_media_api::MediaFileStoreApi;
+use cheetah_sdk::MediaServices;
 
 use crate::api::{RecordApi, RecordApiError, RecordTemplate};
 use crate::metadata::RecordTaskState as InternalRecordTaskState;
@@ -25,17 +27,25 @@ pub struct RecordMediaProvider {
     api: Arc<RecordApi>,
     playback: Arc<PlaybackRegistry>,
     file_store: Arc<dyn MediaFileStoreApi>,
+    media_services: MediaServices,
+    playback_sessions: Arc<Mutex<HashMap<String, PlaybackSessionId>>>,
 }
 
 impl RecordMediaProvider {
     /// Create a provider wrapping the record module's API handle and file store.
     ///
     /// 创建包装录制模块 API 句柄与文件存储的 provider。
-    pub fn new(api: Arc<RecordApi>, file_store: Arc<dyn MediaFileStoreApi>) -> Self {
+    pub fn new(
+        api: Arc<RecordApi>,
+        file_store: Arc<dyn MediaFileStoreApi>,
+        media_services: MediaServices,
+    ) -> Self {
         Self {
             api,
             playback: Arc::new(PlaybackRegistry::new()),
             file_store,
+            media_services,
+            playback_sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -267,14 +277,68 @@ impl RecordApiPort for RecordMediaProvider {
 
     async fn control_record_playback(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         file_id: &RecordFileId,
         command: RecordPlaybackCommand,
     ) -> Result<()> {
         let file = self.api.registry().get_file(&file_id.0).ok_or_else(|| {
             MediaError::not_found(format!("record file not found: {}", file_id.0))
         })?;
-        let _ = self.playback.apply(&file_id.0, file.duration_ms, command)?;
+
+        // Only MP4 files can be delegated to the shared `PlaybackApi`.
+        // Other formats and setups without a playback provider keep using
+        // the in-memory state registry for backward compatibility.
+        if file.format != crate::metadata::RecordFormatStr::Mp4
+            || self.media_services.playback().is_none()
+        {
+            let _ = self.playback.apply(&file_id.0, file.duration_ms, command)?;
+            return Ok(());
+        }
+
+        let playback = self
+            .media_services
+            .playback()
+            .expect("playback checked above");
+
+        let media_key =
+            MediaKey::new(&file.vhost, &file.app, &file.stream, None).unwrap_or_else(|_| {
+                MediaKey::with_default_vhost(&file.app, &file.stream, None)
+                    .expect("record app/stream must be valid")
+            });
+        let file_handle = FileHandle(file_id.0.clone());
+
+        let existing = self
+            .playback_sessions
+            .lock()
+            .unwrap()
+            .get(&file_id.0)
+            .cloned();
+        let pb_id = match existing {
+            Some(id) => id,
+            None => {
+                let open_req = OpenPlaybackRequest {
+                    file_handle,
+                    media_key,
+                    start_position_ms: 0,
+                    scale: 1.0,
+                };
+                let session = playback.open_playback(ctx, open_req).await?;
+                let id = session.session_id;
+                self.playback_sessions
+                    .lock()
+                    .unwrap()
+                    .insert(file_id.0.clone(), id.clone());
+                id
+            }
+        };
+
+        let control = match command {
+            RecordPlaybackCommand::Pause => PlaybackControl::Pause,
+            RecordPlaybackCommand::Resume => PlaybackControl::Resume,
+            RecordPlaybackCommand::Scale { value } => PlaybackControl::SetScale { scale: value },
+            RecordPlaybackCommand::Seek { value } => PlaybackControl::Seek { position_ms: value },
+        };
+        playback.control_playback(ctx, &pb_id, control).await?;
         Ok(())
     }
 }
@@ -540,6 +604,7 @@ mod tests {
                 bus,
             )),
             Arc::new(MockFileStore),
+            cheetah_sdk::MediaServices::unavailable(),
         )
     }
 

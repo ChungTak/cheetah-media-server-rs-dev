@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use cheetah_mp4_driver_tokio::VodDriverHandle;
+use cheetah_sdk::media_api::ids::{FileHandle, MediaKey};
 use parking_lot::RwLock;
 
 #[derive(Debug, Clone)]
@@ -19,6 +20,15 @@ pub struct VodSessionRecord {
     pub paused: bool,
     pub scale: f32,
     pub state: String,
+    /// Public file handle used to open the source. For HTTP routes this
+    /// mirrors the source URI; for `PlaybackApi` it is the resolved handle.
+    pub file_handle: FileHandle,
+    /// Target media key supplied when the session was opened.
+    pub media_key: MediaKey,
+    /// Actual output stream key, derived from the file stem or supplied by the caller.
+    pub output_key: Option<MediaKey>,
+    /// Playback start position in milliseconds.
+    pub start_position_ms: i64,
     /// ABL `on_rtsp_replay`-style audit fields. Populated by the
     /// protocol layer when a peer attaches; left empty for
     /// programmatically-loaded sessions. Bounded to a small set of
@@ -94,8 +104,24 @@ impl VodSessionRegistry {
             .collect()
     }
 
+    pub fn get(&self, session_id: &str) -> Option<VodSessionRecord> {
+        self.sessions
+            .read()
+            .get(session_id)
+            .map(|(rec, _)| rec.clone())
+    }
+
     pub fn handle(&self, session_id: &str) -> Option<Arc<VodDriverHandle>> {
         self.sessions.read().get(session_id).map(|(_, h)| h.clone())
+    }
+
+    pub fn update(&self, record: VodSessionRecord) -> Result<(), SessionError> {
+        let mut sessions = self.sessions.write();
+        let entry = sessions
+            .get_mut(&record.session_id)
+            .ok_or_else(|| SessionError::NotFound(record.session_id.clone()))?;
+        entry.0 = record;
+        Ok(())
     }
 
     pub fn remove(&self, session_id: &str) -> Result<VodSessionRecord, SessionError> {

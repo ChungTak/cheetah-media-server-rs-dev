@@ -14,6 +14,10 @@ pub mod config;
 ///
 /// `Module` 集成与 HTTP 路由注册。
 pub mod module;
+/// `PlaybackApi` provider backed by the MP4 VOD driver.
+///
+/// 基于 MP4 VOD 驱动的 `PlaybackApi` provider。
+pub mod playback_provider;
 /// VOD session registry.
 ///
 /// VOD 会话注册表。
