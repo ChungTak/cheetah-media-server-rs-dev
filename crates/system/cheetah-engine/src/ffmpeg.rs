@@ -227,6 +227,10 @@ impl FfmpegApi for LocalFfmpegService {
             .map(|_| ())
             .ok_or_else(|| SdkError::NotFound(format!("ffmpeg job {job_id}")))
     }
+
+    fn is_available(&self) -> bool {
+        self.profiles.contains_key("default")
+    }
 }
 
 /// Hides a URL with embedded credentials from the process command line by writing

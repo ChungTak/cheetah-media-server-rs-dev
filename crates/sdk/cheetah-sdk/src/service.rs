@@ -288,4 +288,13 @@ pub trait FfmpegApi: Send + Sync {
     ///
     /// 从注册表中移除已结束的任务，释放其内存。
     async fn remove(&self, job_id: &str) -> Result<(), SdkError>;
+    /// Whether the executor/provider is actually configured and ready to run
+    /// FFmpeg jobs. Capability reports should not advertise ffmpeg-related
+    /// operations when this returns false.
+    ///
+    /// executor/provider 是否已配置并可运行 FFmpeg 任务。返回 false 时，
+    /// 能力报告不应宣告与 ffmpeg 相关的操作。
+    fn is_available(&self) -> bool {
+        false
+    }
 }

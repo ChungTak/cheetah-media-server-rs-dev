@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// Capability declaration for a media provider.
@@ -99,7 +101,15 @@ impl MediaCapabilityReport {
         let mut descriptors: Vec<_> = set
             .capabilities
             .iter()
-            .map(|(cap, version)| MediaCapabilityDescriptor::new(*cap, *version, &provider_id))
+            .map(|(cap, version)| {
+                let operations = set
+                    .operations
+                    .get(cap)
+                    .cloned()
+                    .unwrap_or_else(|| default_operations(*cap));
+                MediaCapabilityDescriptor::new(*cap, *version, &provider_id)
+                    .with_operations(operations)
+            })
             .collect();
         descriptors.sort_by(|a, b| {
             a.capability
@@ -199,6 +209,16 @@ pub fn default_operations(capability: MediaCapability) -> Vec<String> {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MediaCapabilitySet {
     pub capabilities: Vec<(MediaCapability, u32)>,
+    /// Optional per-capability operation overrides.
+    ///
+    /// When present for a capability, these replace the default well-known
+    /// operations in a capability report. This lets providers advertise only
+    /// the operations that are actually backed by a runtime dependency.
+    ///
+    /// 每个能力的可选操作覆盖。存在时会在能力报告中替换默认的已知操作列表，
+    /// 使 provider 只宣告有运行时依赖支持的操作。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub operations: BTreeMap<MediaCapability, Vec<String>>,
     /// Monotonic generation of the capability set. Incremented whenever the set
     /// changes so callers can detect stale snapshots.
     ///
@@ -219,6 +239,7 @@ impl MediaCapabilitySet {
     pub fn empty() -> Self {
         Self {
             capabilities: Vec::new(),
+            operations: BTreeMap::new(),
             version: 0,
         }
     }
@@ -247,12 +268,58 @@ impl MediaCapabilitySet {
         self.version += 1;
     }
 
+    /// Add a capability with an explicit operation list.
+    ///
+    /// The provided operations override the default well-known list for this
+    /// capability in capability reports.
+    ///
+    /// 添加带版本和显式操作列表的能力。提供的操作会在能力报告中覆盖默认列表。
+    pub fn add_with_operations(
+        &mut self,
+        capability: MediaCapability,
+        version: u32,
+        operations: Vec<String>,
+    ) {
+        let changed =
+            if let Some(entry) = self.capabilities.iter_mut().find(|(c, _)| *c == capability) {
+                let version_changed = entry.1 != version;
+                let ops_changed = self.operations.get(&capability) != Some(&operations);
+                if !version_changed && !ops_changed {
+                    return;
+                }
+                entry.1 = version;
+                version_changed || ops_changed
+            } else {
+                self.capabilities.push((capability, version));
+                true
+            };
+        self.operations.insert(capability, operations);
+        if changed {
+            self.version += 1;
+        }
+    }
+
+    /// Override the operations for an already-registered capability.
+    ///
+    /// 覆盖已注册能力的操作列表。
+    pub fn set_operations(&mut self, capability: MediaCapability, operations: Vec<String>) {
+        if !self.has(capability) {
+            return;
+        }
+        if self.operations.get(&capability) == Some(&operations) {
+            return;
+        }
+        self.operations.insert(capability, operations);
+        self.version += 1;
+    }
+
     /// Remove a capability and advance the set generation.
     ///
     /// 移除能力并递增集合版本号。
     pub fn remove(&mut self, capability: MediaCapability) {
         let before = self.capabilities.len();
         self.capabilities.retain(|(c, _)| *c != capability);
+        self.operations.remove(&capability);
         if self.capabilities.len() != before {
             self.version += 1;
         }
@@ -267,8 +334,31 @@ impl MediaCapabilitySet {
         for (cap, version) in &other.capabilities {
             self.add(*cap, *version);
         }
-        // `add` advances version on every structural change, so no further bump is needed.
-        let _ = before_version;
+        let mut ops_changed = false;
+        for (cap, ops) in &other.operations {
+            if let Some(existing) = self.operations.get_mut(cap) {
+                // Union the operation lists while preserving order.
+                let mut combined = existing.clone();
+                for op in ops {
+                    if !combined.contains(op) {
+                        combined.push(op.clone());
+                        ops_changed = true;
+                    }
+                }
+                if combined.len() != existing.len() {
+                    ops_changed = true;
+                }
+                *existing = combined;
+            } else {
+                self.operations.insert(*cap, ops.clone());
+                ops_changed = true;
+            }
+        }
+        // `add` advances version for new/changed capabilities, but operations can
+        // change independently of the capability version, so bump if the union changed.
+        if ops_changed && self.version == before_version {
+            self.version += 1;
+        }
     }
 }
 
@@ -377,5 +467,61 @@ mod tests {
         a.merge(&b);
         assert_eq!(a.generation, gen_before.max(b.generation) + 1);
         assert_eq!(a.descriptors[0].version, 2);
+    }
+
+    #[test]
+    fn capability_set_add_with_operations_advances_version_on_version_change() {
+        let mut set = MediaCapabilitySet::empty();
+        let ops = vec!["a".to_string()];
+        set.add_with_operations(MediaCapability::Record, 1, ops.clone());
+        assert_eq!(set.version, 1);
+
+        // Same operations but a new version must bump the generation.
+        set.add_with_operations(MediaCapability::Record, 2, ops.clone());
+        assert_eq!(set.capabilities[0].1, 2);
+        assert_eq!(set.version, 2);
+
+        // Same version and same operations must not bump the generation.
+        set.add_with_operations(MediaCapability::Record, 2, ops);
+        assert_eq!(set.version, 2);
+    }
+
+    #[test]
+    fn capability_report_from_set_uses_explicit_operations() {
+        let mut set = MediaCapabilitySet::empty();
+        set.add_with_operations(
+            MediaCapability::Proxy,
+            1,
+            vec!["create_pull".to_string(), "delete_pull".to_string()],
+        );
+        let report = MediaCapabilityReport::from_capability_set(&set, "proxy:1");
+        let descriptor = report
+            .descriptors
+            .iter()
+            .find(|d| d.capability == MediaCapability::Proxy)
+            .expect("proxy descriptor");
+        assert_eq!(descriptor.operations, vec!["create_pull", "delete_pull"]);
+        assert!(!descriptor.operations.contains(&"create_ffmpeg".to_string()));
+    }
+
+    #[test]
+    fn capability_set_merge_bumps_version_on_operation_union() {
+        let mut a = MediaCapabilitySet::empty();
+        a.add(MediaCapability::Record, 1);
+        a.set_operations(MediaCapability::Record, vec!["start".to_string()]);
+
+        let mut b = MediaCapabilitySet::empty();
+        b.add(MediaCapability::Record, 1);
+        b.set_operations(
+            MediaCapability::Record,
+            vec!["start".to_string(), "stop".to_string()],
+        );
+
+        let version_before = a.version;
+        a.merge(&b);
+        assert!(a.version > version_before);
+        let ops = a.operations.get(&MediaCapability::Record).unwrap();
+        assert!(ops.contains(&"start".to_string()));
+        assert!(ops.contains(&"stop".to_string()));
     }
 }
