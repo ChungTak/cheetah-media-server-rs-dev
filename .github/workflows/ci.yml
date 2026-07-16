@@ -47,3 +47,111 @@ jobs:
           set -euo pipefail
           cargo test -p cheetah-media-api
           cargo test -p cheetah-sdk
+
+  s1-core:
+    name: S1 - Core, SDK and serde compatibility
+    needs: s0-toolchain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust 1.94.1
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.94.1
+
+      - name: S1 - Core/Sdk unit and integration tests
+        run: |
+          set -euo pipefail
+          cargo test -p cheetah-codec
+          cargo test -p cheetah-runtime-api
+          cargo test -p cheetah-media-api
+          cargo test -p cheetah-sdk
+
+  s2-modules:
+    name: S2 - RTP, MP4, snapshot, record, proxy and webhook modules
+    needs: s0-toolchain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust 1.94.1
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.94.1
+
+      - name: S2 - Module integration tests
+        run: |
+          set -euo pipefail
+          cargo test -p cheetah-rtp-core
+          cargo test -p cheetah-rtp-driver-tokio
+          cargo test -p cheetah-rtp-module
+          cargo test -p cheetah-mp4-core
+          cargo test -p cheetah-mp4-module
+          cargo test -p cheetah-snapshot-module
+          cargo test -p cheetah-record-module
+          cargo test -p cheetah-proxy-module
+          cargo test -p cheetah-webhook-dispatcher
+
+  s3-http-adapters:
+    name: S3 - Native and ZLM-compatible HTTP adapters
+    needs: s0-toolchain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust 1.94.1
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.94.1
+
+      - name: S3 - HTTP adapter and black-box tests
+        run: |
+          set -euo pipefail
+          cargo test -p cheetah-media-module
+
+  s4-signal-contracts:
+    name: S4 - Signal contracts, admission and engine integration
+    needs: s0-toolchain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust 1.94.1
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.94.1
+
+      - name: S4 - Signal, admission and engine tests
+        run: |
+          set -euo pipefail
+          cargo test -p cheetah-engine
+          cargo test -p cheetah-sdk --test signal_contracts
+
+  s5-release-build:
+    name: S5 - Release profile build and artifact smoke
+    needs: s0-toolchain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust 1.94.1
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.94.1
+
+      - name: S5 - Release build with full media-control feature set
+        run: |
+          set -euo pipefail
+          cargo build --release -p cheetah-server --features media-control-full
+
+      - name: S5 - Binary smoke test
+        run: |
+          set -euo pipefail
+          ./target/release/cheetah-server --help || true
+
+      - name: S5 - Upload release artifact
+        uses: actions/upload-artifact@ea165f8d4b37e84e4d54d34e33cd6c3493a51c99
+        with:
+          name: cheetah-server-release
+          path: target/release/cheetah-server
