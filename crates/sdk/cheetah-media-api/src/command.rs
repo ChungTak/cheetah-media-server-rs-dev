@@ -431,6 +431,7 @@ pub struct RtpReceiverRequest {
 /// RTP 连接请求。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RtpConnectRequest {
+    #[serde(default)]
     pub session_id: RtpSessionId,
     pub remote_endpoint: String,
     #[serde(default)]
@@ -499,6 +500,7 @@ impl RtpQuery {
 /// 更新 RTP 会话请求。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UpdateRtpRequest {
+    #[serde(default)]
     pub session_id: RtpSessionId,
     pub expected_generation: u64,
     #[serde(default)]
