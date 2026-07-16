@@ -289,10 +289,10 @@ impl ZlmMediaHttpService {
             scale: loop_scale,
         };
         let session = playback_api.open_playback(ctx, request).await?;
-        Ok(zlm_response(ZlmResponse::ok(json!({
+        Ok(zlm_response(ZlmResponse::ok(Data::new(json!({
             "sessionId": session.session_id.0,
             "duration_ms": session.duration_ms,
-        }))))
+        })))))
     }
 }
 
