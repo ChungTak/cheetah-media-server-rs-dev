@@ -69,6 +69,7 @@ async fn onvif_can_query_media_take_snapshot_and_record() {
                 vhost: None,
                 app: Some("live".to_string()),
                 stream: Some("golden".to_string()),
+                snapshot_id: None,
                 start_time_ms: None,
                 end_time_ms: None,
                 page: 1,

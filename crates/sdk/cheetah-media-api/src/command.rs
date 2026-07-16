@@ -274,6 +274,8 @@ pub struct SnapshotQuery {
     #[serde(default)]
     pub stream: Option<String>,
     #[serde(default)]
+    pub snapshot_id: Option<String>,
+    #[serde(default)]
     pub start_time_ms: Option<i64>,
     #[serde(default)]
     pub end_time_ms: Option<i64>,

@@ -35,6 +35,16 @@ use serde_json::json;
 
 static FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
+fn make_jpeg_payload(width: u32, height: u32) -> bytes::Bytes {
+    use std::io::Cursor;
+    let img = image::RgbaImage::new(width, height);
+    let mut buf = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut buf, image::ImageFormat::Jpeg)
+        .expect("encode jpeg");
+    bytes::Bytes::from(buf.into_inner())
+}
+
 /// Test-only snapshot provider that returns a pre-registered file handle.
 struct FakeSnapshotApi {
     handle: Arc<Mutex<Option<FileHandle>>>,
@@ -115,17 +125,17 @@ impl Module for GoldenFixtureModule {
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
         let ctx_req = MediaRequestContext::default();
 
-        // Register a public download file.
+        // Register a public download file (a real JPEG so getSnap can return image bytes).
         let n = FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let mut file_path = std::env::temp_dir();
-        file_path.push(format!("cheetah_zlm_golden_download_{n}.bin"));
-        let contents = b"golden file contents".to_vec();
+        file_path.push(format!("cheetah_zlm_golden_download_{n}.jpg"));
+        let contents = make_jpeg_payload(8, 6);
         std::fs::write(&file_path, &contents).map_err(|e| SdkError::Internal(e.to_string()))?;
         let entry = FileStoreEntry {
             media_key: MediaKey::with_default_vhost("live", "download", None)
                 .map_err(|e| SdkError::InvalidArgument(e.to_string()))?,
             file_type: "download".to_string(),
-            content_type: "application/octet-stream".to_string(),
+            content_type: "image/jpeg".to_string(),
             size_bytes: contents.len() as u64,
             created_at_ms: 0,
             expires_at_ms: None,
@@ -770,26 +780,19 @@ async fn zlm_golden_snapshot_and_download() {
     engine.start().await.expect("engine start");
     let service = zlm_service(&engine).await;
 
-    // getSnap returns a SnapshotHandle pointing at the pre-registered file.
+    // getSnap returns the actual JPEG image bytes.
     let resp = service
         .handle(get("/api/getSnap", query_for("snap-test")))
         .await
         .unwrap();
-    let body = body_json(&resp);
-    assert_eq!(body["code"], 0);
-    let handle = body["data"]["path_handle"].as_str().unwrap().to_string();
-    assert_eq!(body["data"]["state"], "completed");
-
-    // downloadFile streams the registered file back.
-    let resp = service
-        .handle(get(
-            "/api/downloadFile",
-            Some(format!("file_path={handle}")),
-        ))
-        .await
-        .unwrap();
     assert_eq!(resp.status, 200);
-    assert_eq!(resp.body, Bytes::from_static(b"golden file contents"));
+    let content_type = resp
+        .headers
+        .iter()
+        .find(|h| h.name.to_lowercase() == "content-type")
+        .map(|h| h.value.clone())
+        .unwrap();
+    assert_eq!(content_type, "image/jpeg");
     let content_length = resp
         .headers
         .iter()
@@ -797,6 +800,19 @@ async fn zlm_golden_snapshot_and_download() {
         .map(|h| h.value.parse::<usize>().unwrap())
         .unwrap();
     assert_eq!(content_length, resp.body.len());
+    assert!(resp.body.starts_with(b"\xff\xd8"));
+
+    // downloadFile returns a ZLM-compatible error for an unknown file handle.
+    let resp = service
+        .handle(get(
+            "/api/downloadFile",
+            Some("file_path=unknown-snapshot-handle".to_string()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status, 200);
+    let body = body_json(&resp);
+    assert_eq!(body["code"], -500);
 
     // deleteSnapDirectory returns success.
     let resp = service
