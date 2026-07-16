@@ -1,5 +1,6 @@
 #[cfg(feature = "rtmp")]
 use std::net::SocketAddr;
+#[cfg(feature = "rtmp")]
 use std::sync::Arc;
 #[cfg(feature = "rtmp")]
 use std::time::Duration;
@@ -11,6 +12,7 @@ use cheetah_codec::{
     AVFrame, CodecExtradata, CodecId, FrameFlags, FrameFormat, MediaKind, Timebase, TrackId,
     TrackInfo, TrackReadiness,
 };
+#[cfg(feature = "rtmp")]
 use cheetah_config::ConfigStore;
 #[cfg(feature = "rtmp")]
 use cheetah_engine::{EngineBuilder, EngineMediaFacade};
