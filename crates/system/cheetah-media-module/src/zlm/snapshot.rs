@@ -3,10 +3,12 @@
 //! ZLMediaKit 兼容的截图端点处理函数。
 
 use cheetah_media_api::command::{DeleteSnapshotRequest, SnapshotRequest};
+use cheetah_media_api::media_file_store::{DeleteBatchResult, DeleteFailure};
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::{HttpRequest, HttpResponse};
+use serde::Serialize;
 
-use super::{zlm_response, Data, ZlmMediaHttpService, ZlmResponse, ZlmResult};
+use super::{zlm_response, Data, ZlmMediaHttpService, ZlmResponse};
 use crate::error::AdapterError;
 
 impl ZlmMediaHttpService {
@@ -50,8 +52,34 @@ impl ZlmMediaHttpService {
             directory: params["directory"].as_str().map(String::from),
             retain_count: params["retain_count"].as_u64().map(|v| v as u32),
         };
-        snapshot_api.delete_snapshot_directory(ctx, request).await?;
-        Ok(zlm_response(ZlmResponse::ok(ZlmResult { result: true })))
+        let result = snapshot_api.delete_snapshots(ctx, request).await?;
+        Ok(zlm_response(ZlmResponse::ok(DeleteDirectoryResult::from(
+            result,
+        ))))
+    }
+}
+
+/// ZLM-compatible delete response that preserves the original `result` flag
+/// while also exposing the per-handle batch result.
+#[derive(Serialize)]
+struct DeleteDirectoryResult {
+    result: bool,
+    matched: u64,
+    deleted: u64,
+    failed: u64,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    failures: Vec<DeleteFailure>,
+}
+
+impl From<DeleteBatchResult> for DeleteDirectoryResult {
+    fn from(r: DeleteBatchResult) -> Self {
+        Self {
+            result: r.failed == 0,
+            matched: r.matched,
+            deleted: r.deleted,
+            failed: r.failed,
+            failures: r.failures,
+        }
     }
 }
 

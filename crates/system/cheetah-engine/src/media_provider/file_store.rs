@@ -16,8 +16,8 @@ use bytes::Bytes;
 use cheetah_media_api::error::{MediaError, Result};
 use cheetah_media_api::ids::{FileHandle, MediaKey};
 use cheetah_media_api::media_file_store::{
-    sanitize_filename, DeleteBatchResult, FileDownload, FileRange, FileStoreEntry, FileStoreQuery,
-    MediaFileStoreApi,
+    sanitize_filename, DeleteBatchResult, DeleteFailure, FileDownload, FileRange, FileStoreEntry,
+    FileStoreQuery, MediaFileStoreApi,
 };
 use cheetah_media_api::port::MediaRequestContext;
 use parking_lot::RwLock;
@@ -234,29 +234,36 @@ impl MediaFileStoreApi for EngineMediaFileStore {
     ) -> Result<DeleteBatchResult> {
         let mut deleted = 0u64;
         let mut failed = 0u64;
+        let mut failures = Vec::new();
         let limit = batch_limit.max(1) as usize;
+        let mut matched = 0u64;
         let mut to_remove = Vec::with_capacity(limit);
 
         {
             let files = self.files.read();
             for (handle, entry) in files.iter() {
-                if to_remove.len() >= limit {
-                    break;
-                }
                 if !Self::matches_query(entry, &query) {
                     continue;
                 }
-                if let Some(expiry) = entry.expires_at_ms {
-                    if now_ms > expiry {
-                        to_remove.push(handle.clone());
+                matched += 1;
+
+                if to_remove.len() < limit {
+                    if let Some(expiry) = entry.expires_at_ms {
+                        if now_ms > expiry {
+                            to_remove.push(handle.clone());
+                            continue;
+                        }
+                    }
+                    if !self.is_authorized(ctx, entry) {
+                        failed += 1;
+                        failures.push(DeleteFailure {
+                            handle: FileHandle(handle.clone()),
+                            reason: "permission denied".to_string(),
+                        });
                         continue;
                     }
+                    to_remove.push(handle.clone());
                 }
-                if !self.is_authorized(ctx, entry) {
-                    failed += 1;
-                    continue;
-                }
-                to_remove.push(handle.clone());
             }
         }
 
@@ -267,11 +274,20 @@ impl MediaFileStoreApi for EngineMediaFileStore {
                     deleted += 1;
                 } else {
                     failed += 1;
+                    failures.push(DeleteFailure {
+                        handle: FileHandle(handle.clone()),
+                        reason: "not found during removal".to_string(),
+                    });
                 }
             }
         }
 
-        Ok(DeleteBatchResult { deleted, failed })
+        Ok(DeleteBatchResult {
+            matched,
+            deleted,
+            failed,
+            failures,
+        })
     }
 
     fn resolve_download(

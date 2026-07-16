@@ -18,7 +18,7 @@ use cheetah_media_api::command::{
     DeleteSnapshotRequest, PublishRequest, SnapshotQuery, SnapshotRequest,
 };
 use cheetah_media_api::ids::{FileHandle, MediaKey, SnapshotId};
-use cheetah_media_api::media_file_store::FileStoreEntry;
+use cheetah_media_api::media_file_store::{DeleteBatchResult, FileStoreEntry};
 use cheetah_media_api::model::{Page, SnapshotHandle, SnapshotInfo, SnapshotState};
 use cheetah_media_api::port::{MediaRequestContext, SnapshotApi};
 use cheetah_media_module::ZlmMediaModuleFactory;
@@ -77,12 +77,17 @@ impl SnapshotApi for FakeSnapshotApi {
         })
     }
 
-    async fn delete_snapshot_directory(
+    async fn delete_snapshots(
         &self,
         _ctx: &MediaRequestContext,
         _request: DeleteSnapshotRequest,
-    ) -> cheetah_media_api::error::Result<()> {
-        Ok(())
+    ) -> cheetah_media_api::error::Result<DeleteBatchResult> {
+        Ok(DeleteBatchResult {
+            matched: 0,
+            deleted: 0,
+            failed: 0,
+            failures: Vec::new(),
+        })
     }
 }
 
