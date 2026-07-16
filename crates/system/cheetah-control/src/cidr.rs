@@ -99,8 +99,14 @@ impl FromStr for IpNet {
             .parse()
             .map_err(|_| IpNetParseError::InvalidPrefix)?;
         if let Ok(v4) = addr_str.parse::<Ipv4Addr>() {
+            if prefix > 32 {
+                return Err(IpNetParseError::InvalidPrefix);
+            }
             Ok(IpNet::V4(Ipv4Net::new(v4, prefix)))
         } else if let Ok(v6) = addr_str.parse::<Ipv6Addr>() {
+            if prefix > 128 {
+                return Err(IpNetParseError::InvalidPrefix);
+            }
             Ok(IpNet::V6(Ipv6Net::new(v6, prefix)))
         } else {
             Err(IpNetParseError::InvalidAddress)
@@ -140,5 +146,17 @@ mod tests {
     fn mixed_families_do_not_match() {
         let net = IpNet::from_str("127.0.0.1/32").unwrap();
         assert!(!net.contains(&IpAddr::V6("::1".parse().unwrap())));
+    }
+
+    #[test]
+    fn out_of_range_prefix_is_rejected() {
+        assert!(matches!(
+            IpNet::from_str("10.0.0.0/33"),
+            Err(IpNetParseError::InvalidPrefix)
+        ));
+        assert!(matches!(
+            IpNet::from_str("2001:db8::/129"),
+            Err(IpNetParseError::InvalidPrefix)
+        ));
     }
 }
