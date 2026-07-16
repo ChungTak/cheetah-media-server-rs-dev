@@ -120,16 +120,27 @@ impl PlaybackApi for Mp4PlaybackProvider {
             .await
             .map_err(map_vod_error)?;
 
-        self.vod
-            .control(ControlVodRequest {
+        if let Err(e) = self.vod.control(ControlVodRequest {
+            session_id: session_id.clone(),
+            seek: (request.start_position_ms > 0).then_some(request.start_position_ms),
+            pause: None,
+            scale: Some(request.scale as f32),
+        }) {
+            let _ = self.vod.stop(StopVodRequest {
                 session_id: session_id.clone(),
-                seek: (request.start_position_ms > 0).then_some(request.start_position_ms),
-                pause: None,
-                scale: Some(request.scale as f32),
-            })
-            .map_err(map_vod_error)?;
+            });
+            return Err(map_vod_error(e));
+        }
 
-        self.get_playback(ctx, &pb_id).await
+        match self.get_playback(ctx, &pb_id).await {
+            Ok(session) => Ok(session),
+            Err(e) => {
+                let _ = self.vod.stop(StopVodRequest {
+                    session_id: session_id.clone(),
+                });
+                Err(e)
+            }
+        }
     }
 
     async fn get_playback(
