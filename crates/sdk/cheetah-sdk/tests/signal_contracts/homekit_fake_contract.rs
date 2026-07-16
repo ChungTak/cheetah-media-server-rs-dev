@@ -35,6 +35,8 @@ async fn homekit_flow(services: MediaServices) {
                 output_schema: MediaSchema::Webrtc,
                 subscriber_kind: "homekit".to_string(),
                 start_policy: "immediate".to_string(),
+                protocol: "webrtc".to_string(),
+                remote_endpoint: None,
                 auth_context: HashMap::new(),
             },
         )
@@ -97,6 +99,8 @@ async fn homekit_can_subscribe_and_close_multiple_times() {
                     output_schema: MediaSchema::Webrtc,
                     subscriber_kind: "homekit".to_string(),
                     start_policy: "immediate".to_string(),
+                    protocol: "webrtc".to_string(),
+                    remote_endpoint: None,
                     auth_context: HashMap::new(),
                 },
             )

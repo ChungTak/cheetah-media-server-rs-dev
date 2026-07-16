@@ -360,10 +360,11 @@ Proxy capability wiring:
 Synchronous admission decisions gate side-effecting media operations before they allocate resources.
 
 - `cheetah-media-api` exposes `MediaAdmissionApi::authorize(ctx, AdmissionRequest) -> Decision`.
-- `AdmissionAction` is one of `Publish`, `Play`, `CreatePullProxy`, `CreatePushProxy`, `OpenRtpReceiver`, `OpenRtpSender`.
+- `AdmissionAction` is one of `Publish`, `Play`, `CreatePullProxy`, `CreatePushProxy`, `CreateFfmpegProxy`, `OpenRtpReceiver`, `OpenRtpSender`.
 - `Decision` is `Allow` or `Deny { code: MediaErrorCode, reason: String }`.
 - `MediaServices` has a dedicated `Admission` slot with `register_admission` / `admission` / `unregister`.
-- The existing `WebhookApi` decision path is kept for ZLM-compatible webhook hooks but now also uses the stable `Decision` shape.
+- `EngineMediaFacade` invokes admission before `acquire_publisher`, `open_subscriber`, `create_pull_proxy`, `create_push_proxy`, `create_ffmpeg_proxy`, `open_rtp_receiver` and `open_rtp_sender`. A `Deny` returns the stable `MediaErrorCode` before the provider allocates any lease, port or session.
+- The existing `WebhookApi` decision path is kept for ZLM-compatible webhook hooks. `WebhookDecisionClient` also implements `MediaAdmissionApi` and maps `Publish`/`Play` to the existing `on_publish`/`on_play` webhook decision flow; other actions default to `Allow` until native translators land.
 
 ## 4. Media Model and Unification
 

@@ -490,6 +490,7 @@ pub enum AdmissionAction {
     Play,
     CreatePullProxy,
     CreatePushProxy,
+    CreateFfmpegProxy,
     OpenRtpReceiver,
     OpenRtpSender,
 }
@@ -547,10 +548,14 @@ mod tests {
 
     #[test]
     fn admission_action_round_trips() {
-        let action = AdmissionAction::CreatePullProxy;
-        let json = serde_json::to_string(&action).unwrap();
-        assert!(json.contains("create_pull_proxy"));
-        let de: AdmissionAction = serde_json::from_str(&json).unwrap();
-        assert_eq!(de, action);
+        for action in [
+            AdmissionAction::CreatePullProxy,
+            AdmissionAction::CreateFfmpegProxy,
+            AdmissionAction::OpenRtpSender,
+        ] {
+            let json = serde_json::to_string(&action).unwrap();
+            let de: AdmissionAction = serde_json::from_str(&json).unwrap();
+            assert_eq!(de, action);
+        }
     }
 }

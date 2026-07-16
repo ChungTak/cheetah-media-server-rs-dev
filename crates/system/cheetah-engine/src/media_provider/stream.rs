@@ -572,6 +572,8 @@ mod tests {
             output_schema: MediaSchema::Webrtc,
             subscriber_kind: "webrtc".to_string(),
             start_policy: Default::default(),
+            protocol: "webrtc".to_string(),
+            remote_endpoint: None,
             auth_context: Default::default(),
         }
     }

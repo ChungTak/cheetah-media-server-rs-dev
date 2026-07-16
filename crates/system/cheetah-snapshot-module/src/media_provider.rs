@@ -178,6 +178,8 @@ impl SnapshotApi for SnapshotMediaProvider {
                     output_schema: MediaSchema::Rtmp,
                     subscriber_kind: "snapshot".to_string(),
                     start_policy: "keyframe".to_string(),
+                    protocol: "rtmp".to_string(),
+                    remote_endpoint: None,
                     auth_context: Default::default(),
                 },
             )

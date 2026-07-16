@@ -37,6 +37,8 @@ async fn matter_flow(services: MediaServices, facade: Arc<dyn MediaFacade>) {
                 output_schema: MediaSchema::Hls,
                 subscriber_kind: "matter".to_string(),
                 start_policy: "immediate".to_string(),
+                protocol: "hls".to_string(),
+                remote_endpoint: None,
                 auth_context: HashMap::new(),
             },
         )
