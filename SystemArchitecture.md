@@ -531,3 +531,38 @@ CI/check baseline for GB28181:
 - `cargo clippy -p cheetah-gb28181-module --tests`
 - `cargo test -p cheetah-gb28181-module`
 
+## 6. Security Configuration
+
+### 6.1 mTLS Identity Header
+
+The `x-mtls-identity` header is accepted by `ConfigControlAuth` only when `media.native.trust_mtls_identity` is `true` and, in the HTTP control plane, only when the request originates from a network listed in `media.native.trusted_proxies`. The control plane strips `x-mtls-identity` from requests that do not come from a configured trusted proxy CIDR, preventing clients from spoofing the header.
+
+```json
+{
+  "media": {
+    "native": {
+      "trust_mtls_identity": true,
+      "trusted_proxies": ["10.0.0.0/8", "127.0.0.1/32", "::1/128"]
+    }
+  }
+}
+```
+
+### 6.2 HMAC URL Signer Key Rotation
+
+Signed playback URLs are produced by `cheetah-engine/src/media_provider/url_signer.rs`. Keys are configured under `media.url_sign_keys` as objects with `id` and `secret`. The first key signs new URLs; all keys in the list verify existing URLs.
+
+When `media.url_sign_previous_key_ttl_secs` is set, verification keys after the first expire after that many seconds from the time the signer is loaded. This limits how long an old key remains valid after rotation without breaking in-flight URLs.
+
+```json
+{
+  "media": {
+    "url_sign_previous_key_ttl_secs": 86400,
+    "url_sign_keys": [
+      {"id": "2026-07", "secret": "current-secret"},
+      {"id": "2026-06", "secret": "previous-secret"}
+    ]
+  }
+}
+```
+

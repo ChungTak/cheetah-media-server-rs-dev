@@ -16,6 +16,9 @@ const DEFAULT_KEY_ID: &str = "0";
 struct SignKey {
     id: String,
     secret: Vec<u8>,
+    /// Unix seconds after which this key may no longer be used for
+    /// verification. `None` means the key never expires.
+    valid_until: Option<i64>,
 }
 
 /// HMAC-SHA256 URL signer supporting multiple keys for rotation.
@@ -24,6 +27,10 @@ struct SignKey {
 /// `{ "id": "kid", "secret": "..." }`. The first key is used for signing;
 /// all configured keys are accepted for verification so old URLs remain valid
 /// during rotation.
+///
+/// When `media.url_sign_previous_key_ttl_secs` is set, verification keys after
+/// the first expire after that many seconds. This lets old URLs work during a
+/// rotation window without keeping superseded keys valid indefinitely.
 ///
 /// Fallback: `media.url_sign_secret` creates a single key with id `"0"`.
 ///
@@ -36,19 +43,30 @@ pub struct UrlSigner {
 impl UrlSigner {
     /// Builds a signer from the `media` config section.
     pub fn from_config(media: &Value) -> Option<Self> {
+        let previous_key_ttl = media
+            .get("url_sign_previous_key_ttl_secs")
+            .and_then(|v| v.as_u64());
+
         if let Some(list) = media.get("url_sign_keys").and_then(|v| v.as_array()) {
-            let keys: Vec<_> = list
-                .iter()
-                .filter_map(|item| {
-                    let id = item.get("id")?.as_str()?.to_string();
-                    let secret = item.get("secret")?.as_str()?.as_bytes().to_vec();
-                    if id.is_empty() || secret.is_empty() {
-                        None
-                    } else {
-                        Some(SignKey { id, secret })
-                    }
-                })
-                .collect();
+            let now = now_secs();
+            let mut keys = Vec::with_capacity(list.len());
+            for (idx, item) in list.iter().enumerate() {
+                let id = item.get("id")?.as_str()?.to_string();
+                let secret = item.get("secret")?.as_str()?.as_bytes().to_vec();
+                if id.is_empty() || secret.is_empty() {
+                    continue;
+                }
+                let valid_until = if idx == 0 {
+                    None
+                } else {
+                    previous_key_ttl.map(|ttl| now + ttl as i64)
+                };
+                keys.push(SignKey {
+                    id,
+                    secret,
+                    valid_until,
+                });
+            }
             if !keys.is_empty() {
                 return Some(Self { keys });
             }
@@ -62,6 +80,7 @@ impl UrlSigner {
                 keys: vec![SignKey {
                     id: DEFAULT_KEY_ID.to_string(),
                     secret: s.as_bytes().to_vec(),
+                    valid_until: None,
                 }],
             })
     }
@@ -115,7 +134,8 @@ impl UrlSigner {
             return false;
         };
 
-        if now_secs() > exp {
+        let now = now_secs();
+        if now > exp {
             return false;
         }
 
@@ -123,6 +143,12 @@ impl UrlSigner {
             Some(k) => k,
             None => return false,
         };
+
+        if let Some(valid_until) = key.valid_until {
+            if now > valid_until {
+                return false;
+            }
+        }
 
         let canonical = canonical_string(&parsed, exp, &kid);
         let expected = hmac_signature(&key.secret, &canonical);
@@ -289,5 +315,35 @@ mod tests {
             .unwrap();
         url = url.replace("kid=a", "kid=b");
         assert!(!signer.verify(&url));
+    }
+
+    #[test]
+    fn previous_key_verifies_within_ttl_and_expires_after() {
+        let old_signer = UrlSigner::from_config(&json!({
+            "url_sign_keys": [
+                {"id": "old", "secret": "old-secret"}
+            ]
+        }))
+        .unwrap();
+        let (old_url, _exp) = old_signer
+            .sign("rtmp://cdn.example:1935/live/cam1", 60)
+            .unwrap();
+
+        // A signer loaded with the new key plus the old key accepts the old
+        // URL when the previous-key TTL has not expired.
+        let signer = UrlSigner::from_config(&json!({
+            "url_sign_previous_key_ttl_secs": 2,
+            "url_sign_keys": [
+                {"id": "new", "secret": "new-secret"},
+                {"id": "old", "secret": "old-secret"}
+            ]
+        }))
+        .unwrap();
+        assert!(signer.verify(&old_url));
+
+        // After the TTL, the old key is rejected even though the URL itself
+        // has not expired.
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        assert!(!signer.verify(&old_url));
     }
 }
