@@ -641,11 +641,13 @@ async fn run_ffmpeg(
         Ok(url) => url,
         Err(err) => return RunOnceOutcome::Failed(err),
     };
+    let redacted_source_url = redact_url_credentials(&resolved_source_url);
+    let redacted_original_url = redact_url_credentials(source_url);
 
     let spec = FfmpegJobSpec {
         profile_id: "default".to_string(),
         input: FfmpegInput::Url {
-            url: resolved_source_url,
+            url: resolved_source_url.clone(),
         },
         output: FfmpegOutput::Engine {
             media_key: destination.clone(),
@@ -690,7 +692,15 @@ async fn run_ffmpeg(
         Ok(status) => match status.state {
             FfmpegJobState::Exited if status.exit_code == Some(0) => RunOnceOutcome::Stopped,
             FfmpegJobState::Cancelled => RunOnceOutcome::Stopped,
-            _ => RunOnceOutcome::Failed(status.exit_summary),
+            _ => {
+                // Strip any embedded source credentials before the summary is persisted
+                // in registry errors, logged, or returned to callers.
+                let summary = status
+                    .exit_summary
+                    .replace(&resolved_source_url, &redacted_source_url)
+                    .replace(source_url, &redacted_original_url);
+                RunOnceOutcome::Failed(summary)
+            }
         },
         Err(e) => RunOnceOutcome::Failed(format!("ffmpeg job error: {e}")),
     };
@@ -736,7 +746,6 @@ pub fn validate_ffmpeg_options(input: &[String], output: &[String]) -> Result<()
     Ok(())
 }
 
-#[cfg(test)]
 fn redact_url_credentials(url: &str) -> String {
     match Url::parse(url) {
         Ok(mut u) => {
