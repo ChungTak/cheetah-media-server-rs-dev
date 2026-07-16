@@ -50,6 +50,7 @@ pub struct EngineBuilder {
     ring_capacity: usize,
     dispatcher_mode: DispatcherMode,
     factories: Vec<Arc<dyn ModuleFactory>>,
+    ffmpeg_api: Option<Arc<dyn FfmpegApi>>,
 }
 
 impl EngineBuilder {
@@ -70,6 +71,7 @@ impl EngineBuilder {
             ring_capacity: 2048,
             dispatcher_mode: DispatcherMode::PerStream,
             factories: Vec::new(),
+            ffmpeg_api: None,
         }
     }
 
@@ -113,6 +115,18 @@ impl EngineBuilder {
         self
     }
 
+    /// Inject a custom FFmpeg API provider.
+    ///
+    /// When omitted, the engine creates a `LocalFfmpegService` with the default
+    /// `ffmpeg` profile.
+    ///
+    /// 注入自定义 FFmpeg API provider。省略时引擎将使用默认 `ffmpeg` profile
+    /// 创建 `LocalFfmpegService`。
+    pub fn with_ffmpeg_api(mut self, ffmpeg_api: Arc<dyn FfmpegApi>) -> Self {
+        self.ffmpeg_api = Some(ffmpeg_api);
+        self
+    }
+
     /// Build the engine and wire all services.
     ///
     /// This registers module schemas, registers module factories, and creates the
@@ -142,7 +156,9 @@ impl EngineBuilder {
         let database = Arc::new(InMemoryDatabase::default());
         let proxy_manager = Arc::new(LocalProxyManager::default());
         let cluster = Arc::new(LocalCluster::default());
-        let ffmpeg = Arc::new(LocalFfmpegService::default());
+        let ffmpeg: Arc<dyn FfmpegApi> = self
+            .ffmpeg_api
+            .unwrap_or_else(|| Arc::new(LocalFfmpegService::default()));
         let core_adapters = Arc::new(LocalCoreAdapters::new(stream_manager.clone()));
 
         if let Some(registry) = &self.config_schema_registry {
@@ -259,7 +275,7 @@ pub struct Engine {
     database: Arc<InMemoryDatabase>,
     proxy_manager: Arc<LocalProxyManager>,
     cluster: Arc<LocalCluster>,
-    ffmpeg: Arc<LocalFfmpegService>,
+    ffmpeg: Arc<dyn FfmpegApi>,
     core_adapters: Arc<LocalCoreAdapters>,
     media_facade: Arc<crate::media_provider::EngineMediaFacade>,
     media_services: MediaServices,

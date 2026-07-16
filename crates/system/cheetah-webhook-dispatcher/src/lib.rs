@@ -3,6 +3,7 @@
 //!
 //! 出站 webhook 分发器：消费 `MediaEvent`，按目标 profile 翻译并发送 HTTP POST。
 
+pub mod admin;
 pub mod circuit;
 pub mod config;
 pub mod decision;
@@ -13,6 +14,7 @@ pub mod sender;
 pub mod translator;
 pub mod util;
 
+pub use admin::WebhookAdminStore;
 pub use circuit::{CircuitBreaker, CircuitState};
 pub use config::{FailurePolicy, WebhookDispatcherConfig, WebhookProfile};
 pub use decision::WebhookDecisionClient;

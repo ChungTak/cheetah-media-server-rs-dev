@@ -314,6 +314,70 @@ WebRTC boundary clarification:
   - The tokio driver task, UDP/ICE transport, and `WebRtcDriverHandle`/`WebRtcDriverCommand` command channel.
 - `cheetah-webrtc-module` holds engine wiring plus WebRTC business/signaling logic: WHIP/WHEP + OME + P2P route handling, SDP munging/compat, SSRF/URL policy, `OmeWsMessage`/`P2pMessage` encode/decode, publish leases, and session bookkeeping. It consumes the driver's neutral `WsConnection`/`WsConnector`/`WsServerListener` handles and injects `RuntimeApi` for timers/tasks. The module's production code carries **no direct `tokio` dependency** (tokio is a dev-dependency for tests only); `dev-scripts/check_runtime_boundaries.sh` enforces this at the manifest level.
 
+## 3.10 FFmpeg API Reference Mapping
+
+Current FFmpeg crates:
+
+- `crates/sdk/cheetah-sdk` (`cheetah-sdk`): public `FfmpegApi` trait and typed `FfmpegJobSpec` / `FfmpegResourceLimits`.
+- `crates/system/cheetah-engine` (`cheetah-engine`): `LocalFfmpegService`, the concrete process executor.
+- `crates/system/cheetah-proxy-module` (`cheetah-proxy-module`): proxy orchestration that submits FFmpeg jobs through `FfmpegApi`.
+
+`FfmpegApi` lifecycle:
+
+- `submit(job_id, FfmpegJobSpec) -> FfmpegJobHandle`
+- `get(job_id) -> FfmpegJobStatus`
+- `list() -> Vec<FfmpegJobStatus>`
+- `wait(job_id) -> FfmpegJobStatus`
+- `cancel(job_id)`
+- `remove(job_id)`
+
+`FfmpegJobSpec` is typed and controlled:
+
+- `profile_id` selects a configured `FfmpegProfile` (callers cannot pass an executable path).
+- `input` / `output` are typed as `FfmpegInput::Url` or `FfmpegOutput::{Url, Engine}`.
+- `input_options` / `output_options` are passed as individual tokens (no shell).
+- `resource_limits` carries `max_runtime_ms` (timeout) and `max_stderr_lines`; concurrency is enforced by the executor's service-level semaphore.
+
+`LocalFfmpegService` executor constraints:
+
+- Spawns the configured executable directly; no shell, arguments passed verbatim.
+- Maintains a bounded stderr ring buffer for diagnostic summaries.
+- Enforces `max_runtime_ms` after the process starts; kills on timeout.
+- Limits concurrent jobs via a `tokio::sync::Semaphore` sized at service construction.
+- Cancel terminates the process; `wait` reaps exit status; failed spawn never reaches `Running`.
+
+Proxy capability wiring:
+
+- `FfmpegApi::is_available()` reports whether an executor/provider is actually configured.
+- `cheetah-proxy-module` builds its `MediaCapability::Proxy` operation list from `FfmpegApi::is_available()`:
+  - always advertises `create_pull`, `delete_pull`, `list_pull`, `create_push`, `delete_push`;
+  - only advertises `create_ffmpeg` / `delete_ffmpeg` when `is_available()` is true;
+  - rejects `create_ffmpeg_proxy` with `unavailable` when the executor is missing.
+- `MediaCapabilitySet` now carries optional per-capability operation overrides so providers can advertise exactly the operations backed by their runtime dependencies.
+
+## 3.11 Admission API
+
+Synchronous admission decisions gate side-effecting media operations before they allocate resources.
+
+- `cheetah-media-api` exposes `MediaAdmissionApi::authorize(ctx, AdmissionRequest) -> Decision`.
+- `AdmissionAction` is one of `Publish`, `Play`, `CreatePullProxy`, `CreatePushProxy`, `CreateFfmpegProxy`, `OpenRtpReceiver`, `OpenRtpSender`.
+- `Decision` is `Allow` or `Deny { code: MediaErrorCode, reason: String }`.
+- `MediaServices` has a dedicated `Admission` slot with `register_admission` / `admission` / `unregister`.
+- `EngineMediaFacade` invokes admission before `acquire_publisher`, `open_subscriber`, `create_pull_proxy`, `create_push_proxy`, `create_ffmpeg_proxy`, `open_rtp_receiver` and `open_rtp_sender`. A `Deny` returns the stable `MediaErrorCode` before the provider allocates any lease, port or session.
+- The existing `WebhookApi` decision path is kept for ZLM-compatible webhook hooks. `WebhookDecisionClient` also implements `MediaAdmissionApi` and maps `Publish`/`Play` to the existing `on_publish`/`on_play` webhook decision flow; other actions default to `Allow` until native translators land.
+
+## 3.12 Webhook Administration
+
+Webhook profiles are managed through `WebhookAdminApi` and exposed as native HTTP routes.
+
+- `cheetah-media-api` defines `WebhookAdminApi` with `create_profile`, `get_profile`, `list_profiles`, `update_profile`, `delete_profile` and `test_profile`.
+- Profiles carry `id`, `enabled`, `mode` (`NativeDomain`/`ZlmCompatible`), `target_url`, `event_filter`, `admission_actions`, `failure_policy`, `timeout_ms`, `secret` and `generation`.
+- Updates require `expected_generation`; the provider preserves the existing `secret` when an update request leaves it empty.
+- `WebhookAdminStore` persists profiles through `DatabaseApi` under the `webhook:profile:` key prefix; module restart reloads from the same store.
+- `test_profile` sends a synthetic `WebhookTest` envelope, validates DNS/connect/HTTP/signature and returns a `WebhookTestReport` without allocating media resources.
+- Native routes under `/api/v1/webhook/profiles` map to `WebhookAdminApi` and require `MediaScope::ServerAdmin`.
+- `cheetah-webhook-dispatcher` registers the admin provider as `MediaCapability::WebhookAdmin` in `MediaServices` alongside the `Webhook` and `Admission` providers.
+
 ## 4. Media Model and Unification
 
 All protocol ingest into engine should converge to:

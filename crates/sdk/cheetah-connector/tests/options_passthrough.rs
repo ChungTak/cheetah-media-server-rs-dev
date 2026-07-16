@@ -64,6 +64,7 @@ async fn connector_pull_options_queue_capacity_zero_returns_invalid_argument(
             ConnectorPullOptions {
                 subscriber,
                 cancel: None,
+                peer: None,
                 protocol: ProtocolPullExtras::HttpFlv {
                     reconnect: None,
                     read_limits: None,
@@ -105,6 +106,7 @@ async fn connector_pull_options_http_flv_extras_reach_adapter(
             ConnectorPullOptions {
                 subscriber,
                 cancel: Some(cancel.clone()),
+                peer: None,
                 protocol: ProtocolPullExtras::HttpFlv {
                     reconnect: None,
                     read_limits: Some(PullReadLimits {

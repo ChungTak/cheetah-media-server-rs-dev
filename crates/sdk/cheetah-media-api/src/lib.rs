@@ -22,6 +22,7 @@ pub mod media_file_store;
 pub mod model;
 pub mod output;
 pub mod port;
+pub mod webhook;
 
 pub use auth::{AuthCredentials, MediaScope, Principal};
 pub use capability::{
@@ -35,10 +36,15 @@ pub use media_file_store::{
     sanitize_filename, DeleteBatchResult, FileDownload, FileRange, FileStoreEntry, FileStoreQuery,
     MediaFileStoreApi,
 };
-pub use model::Decision;
+pub use model::{AdmissionAction, AdmissionRequest, Decision};
 pub use output::{EndpointState, MediaOutputEndpoint};
 pub use port::{
-    ControlAuthApi, MediaControlApi, MediaFacade, MediaOutputRegistryApi, MediaRequestContext,
-    MediaUrlResolverApi, PlaybackApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi,
-    SnapshotApi, WebhookApi,
+    ControlAuthApi, MediaAdmissionApi, MediaControlApi, MediaFacade, MediaOutputRegistryApi,
+    MediaRequestContext, MediaUrlResolverApi, PlaybackApi, ProxyApi, PublishSubscribeApi,
+    RecordApi, RtpApi, SnapshotApi, WebhookAdminApi, WebhookApi,
+};
+pub use webhook::{
+    CreateWebhookProfileRequest, UpdateWebhookProfileRequest, WebhookFailurePolicy, WebhookProfile,
+    WebhookProfileId, WebhookProfileListResponse, WebhookProfileMode, WebhookProfileResponse,
+    WebhookProfileView, WebhookTest, WebhookTestReport, WebhookTestRequest, WebhookTestResponse,
 };

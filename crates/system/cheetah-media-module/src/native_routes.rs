@@ -176,6 +176,31 @@ pub fn native_http_routes() -> Vec<HttpRouteDescriptor> {
             method: HttpMethod::Post,
             path: "/rtp/sessions/{session_id}/stop".to_string(),
         },
+        // webhook admin
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/webhook/profiles".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Post,
+            path: "/webhook/profiles".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/webhook/profiles/{profile_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Put,
+            path: "/webhook/profiles/{profile_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Delete,
+            path: "/webhook/profiles/{profile_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Post,
+            path: "/webhook/profiles/{profile_id}/test".to_string(),
+        },
     ]
 }
 
@@ -273,6 +298,20 @@ pub fn native_required_scope(method: HttpMethod, path: &str) -> Option<MediaScop
         }
         (HttpMethod::Post, _) if path.starts_with("/rtp/sessions/") && path.ends_with("/stop") => {
             Some(MediaScope::MediaControl)
+        }
+        (HttpMethod::Get, "/webhook/profiles") => Some(MediaScope::ServerAdmin),
+        (HttpMethod::Post, "/webhook/profiles") => Some(MediaScope::ServerAdmin),
+        (HttpMethod::Post, _) if path.starts_with("/webhook/profiles/") => {
+            Some(MediaScope::ServerAdmin)
+        }
+        (HttpMethod::Get, _) if path.starts_with("/webhook/profiles/") => {
+            Some(MediaScope::ServerAdmin)
+        }
+        (HttpMethod::Put, _) if path.starts_with("/webhook/profiles/") => {
+            Some(MediaScope::ServerAdmin)
+        }
+        (HttpMethod::Delete, _) if path.starts_with("/webhook/profiles/") => {
+            Some(MediaScope::ServerAdmin)
         }
         _ => None,
     }
@@ -384,7 +423,13 @@ mod tests {
         assert!(paths.contains(&(HttpMethod::Patch, "/rtp/sessions/{session_id}")));
         assert!(paths.contains(&(HttpMethod::Delete, "/rtp/sessions/{session_id}")));
         assert!(paths.contains(&(HttpMethod::Get, "/snapshots/{snapshot_id}/download")));
-        assert_eq!(routes.len(), 40);
+        assert!(paths.contains(&(HttpMethod::Get, "/webhook/profiles")));
+        assert!(paths.contains(&(HttpMethod::Post, "/webhook/profiles")));
+        assert!(paths.contains(&(HttpMethod::Get, "/webhook/profiles/{profile_id}")));
+        assert!(paths.contains(&(HttpMethod::Put, "/webhook/profiles/{profile_id}")));
+        assert!(paths.contains(&(HttpMethod::Delete, "/webhook/profiles/{profile_id}")));
+        assert!(paths.contains(&(HttpMethod::Post, "/webhook/profiles/{profile_id}/test")));
+        assert_eq!(routes.len(), 46);
     }
 
     #[test]
@@ -408,6 +453,34 @@ mod tests {
         assert_eq!(
             native_required_scope(HttpMethod::Get, "/rtp/sessions"),
             Some(MediaScope::MediaRead)
+        );
+    }
+
+    #[test]
+    fn webhook_admin_routes_require_server_admin() {
+        assert_eq!(
+            native_required_scope(HttpMethod::Get, "/webhook/profiles"),
+            Some(MediaScope::ServerAdmin)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Post, "/webhook/profiles"),
+            Some(MediaScope::ServerAdmin)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Get, "/webhook/profiles/uuid"),
+            Some(MediaScope::ServerAdmin)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Put, "/webhook/profiles/uuid"),
+            Some(MediaScope::ServerAdmin)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Delete, "/webhook/profiles/uuid"),
+            Some(MediaScope::ServerAdmin)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Post, "/webhook/profiles/uuid/test"),
+            Some(MediaScope::ServerAdmin)
         );
     }
 }

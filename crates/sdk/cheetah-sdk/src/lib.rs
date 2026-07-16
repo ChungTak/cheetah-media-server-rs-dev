@@ -45,7 +45,8 @@ pub use cheetah_media_api::media_file_store::{
 pub use cheetah_runtime_api::{
     AsyncTcpListener, AsyncTcpStream, AsyncTimer, AsyncUdpSocket, CancellationToken,
     ConnectTcpFuture, ConnectTlsFuture, JoinHandle, OneShotReceiver, OneShotRecvError,
-    OneShotSendError, OneShotSender, Runtime, RuntimeApi, SpawnError, TaskJoinError, UdpRecvMeta,
+    OneShotSendError, OneShotSender, ResolveHostFuture, Runtime, RuntimeApi, SpawnError,
+    TaskJoinError, UdpRecvMeta,
 };
 pub use config::{
     ConfigAdminApi, ConfigApplyApi, ConfigApplyOutcome, ConfigApplyResult, ConfigEffect,
@@ -76,7 +77,8 @@ pub use module::{
 };
 pub use output::{InMemoryMediaOutputRegistry, MediaOutputEndpoint, OutputRegistryRegistration};
 pub use service::{
-    ClusterApi, ClusterNode, DatabaseApi, FfmpegApi, FfmpegJob, HealthApi, MetricsApi,
+    ClusterApi, ClusterNode, DatabaseApi, FfmpegApi, FfmpegInput, FfmpegJobHandle, FfmpegJobSpec,
+    FfmpegJobState, FfmpegJobStatus, FfmpegOutput, FfmpegResourceLimits, HealthApi, MetricsApi,
     ModuleConfigApplyReport, ModuleManagerApi, ProxyManager, ProxyRoute, RoomParticipant,
     RoomServiceApi, RoomSnapshot, ServiceDescriptor, ServiceRegistry,
 };

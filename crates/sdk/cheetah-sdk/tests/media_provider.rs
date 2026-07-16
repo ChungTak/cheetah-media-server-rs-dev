@@ -12,7 +12,10 @@ use cheetah_sdk::media_api::model::{
     SessionInfo, StreamInfo,
 };
 use cheetah_sdk::media_api::output::MediaOutputEndpoint;
-use cheetah_sdk::media_api::port::{MediaControlApi, MediaRequestContext, PlaybackApi};
+use cheetah_sdk::media_api::port::{
+    MediaAdmissionApi, MediaControlApi, MediaRequestContext, PlaybackApi,
+};
+use cheetah_sdk::media_api::{AdmissionRequest, Decision};
 use cheetah_sdk::module::MediaServices;
 use cheetah_sdk::output::InMemoryMediaOutputRegistry;
 
@@ -135,6 +138,19 @@ impl PlaybackApi for DummyPlayback {
         _id: &PlaybackSessionId,
     ) -> MediaResult<()> {
         unimplemented!()
+    }
+}
+
+struct DummyAdmission;
+
+#[async_trait]
+impl MediaAdmissionApi for DummyAdmission {
+    async fn authorize(
+        &self,
+        _ctx: &MediaRequestContext,
+        _request: AdmissionRequest,
+    ) -> MediaResult<Decision> {
+        Ok(Decision::Allow)
     }
 }
 
@@ -267,4 +283,22 @@ async fn output_registry_register_and_unregister_lifecycle() {
     assert!(services.unregister_output_registry(&reg));
     assert!(services.output_registry().is_none());
     assert!(!services.unregister_output_registry(&reg));
+}
+
+#[test]
+fn register_admission_updates_capabilities() {
+    let services = MediaServices::unavailable();
+    services.register_admission(Arc::new(DummyAdmission));
+    let caps = services.capabilities();
+    assert!(caps.has(MediaCapability::Admission));
+    assert!(services.admission().is_some());
+}
+
+#[test]
+fn unregister_admission_removes_provider() {
+    let services = MediaServices::unavailable();
+    let reg = services.register_admission(Arc::new(DummyAdmission));
+    assert!(services.unregister(&reg));
+    assert!(services.admission().is_none());
+    assert!(!services.capabilities().has(MediaCapability::Admission));
 }

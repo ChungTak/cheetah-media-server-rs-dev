@@ -5,6 +5,7 @@ use cheetah_sdk::{
 };
 use std::sync::Arc;
 
+use crate::admin::WebhookAdminStore;
 use crate::config::WebhookDispatcherConfig;
 use crate::decision::WebhookDecisionClient;
 use crate::dispatcher::WebhookDispatcher;
@@ -45,7 +46,10 @@ pub struct WebhookModule {
     ctx: Option<EngineContext>,
     dispatcher: Option<WebhookDispatcher>,
     decision_client: Option<WebhookDecisionClient>,
-    media_services_registration: Option<ProviderRegistration>,
+    admin_store: Option<Arc<WebhookAdminStore>>,
+    webhook_registration: Option<ProviderRegistration>,
+    admin_registration: Option<ProviderRegistration>,
+    admission_registration: Option<ProviderRegistration>,
     handle: Option<crate::dispatcher::WebhookDispatcherHandle>,
 }
 
@@ -56,7 +60,10 @@ impl WebhookModule {
             ctx: None,
             dispatcher: None,
             decision_client: None,
-            media_services_registration: None,
+            admin_store: None,
+            webhook_registration: None,
+            admin_registration: None,
+            admission_registration: None,
             handle: None,
         }
     }
@@ -117,13 +124,34 @@ impl Module for WebhookModule {
                 .map_err(|e| SdkError::InvalidArgument(e.to_string()))?
         };
         let decision_client = Self::build_decision_client(config.clone(), &ctx.engine);
-        self.media_services_registration = Some(
+        let decision_client = Arc::new(decision_client);
+        self.webhook_registration = Some(
             ctx.engine
                 .media_services
-                .register_webhook(Arc::new(decision_client.clone())),
+                .register_webhook(decision_client.clone()),
         );
+        self.admission_registration = Some(
+            ctx.engine
+                .media_services
+                .register_admission(decision_client.clone()),
+        );
+
+        let sender: Arc<dyn WebhookSender> =
+            Arc::new(RuntimeHttpClient::new(ctx.engine.runtime_api.clone()));
+        let admin_store = Arc::new(WebhookAdminStore::new(
+            ctx.engine.database_api.clone(),
+            sender,
+            WebhookUrlPolicy::default(),
+        ));
+        self.admin_registration = Some(
+            ctx.engine
+                .media_services
+                .register_webhook_admin(admin_store.clone()),
+        );
+        self.admin_store = Some(admin_store);
+
         self.dispatcher = Some(Self::build_dispatcher(config, &ctx.engine));
-        self.decision_client = Some(decision_client);
+        self.decision_client = Some((*decision_client).clone());
         self.ctx = Some(ctx.engine);
         self.state = ModuleState::Initialized;
         Ok(())
@@ -149,11 +177,22 @@ impl Module for WebhookModule {
         if let Some(handle) = self.handle.take() {
             handle.stop();
         }
-        if let Some(reg) = self.media_services_registration.take() {
+        if let Some(reg) = self.webhook_registration.take() {
             if let Some(ctx) = self.ctx.as_ref() {
                 ctx.media_services.unregister(&reg);
             }
         }
+        if let Some(reg) = self.admin_registration.take() {
+            if let Some(ctx) = self.ctx.as_ref() {
+                ctx.media_services.unregister(&reg);
+            }
+        }
+        if let Some(reg) = self.admission_registration.take() {
+            if let Some(ctx) = self.ctx.as_ref() {
+                ctx.media_services.unregister(&reg);
+            }
+        }
+        self.admin_store = None;
         self.state = ModuleState::Stopped;
         Ok(())
     }

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
 use crate::adapter_config::{extract_native_config, load_native_config, NativeAdapterConfig};
@@ -7,15 +8,22 @@ use cheetah_media_api::audit::{AuditApi, AuditEvent, AuditResult};
 use cheetah_media_api::command::{
     DeleteRecordRequest, DeleteSnapshotRequest, FfmpegProxyRequest, MediaQuery, ProxyQuery,
     PullProxyRequest, PushProxyRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderRequest, SessionQuery, SnapshotQuery,
-    SnapshotRequest, StartRecordRequest, StopRecordRequest, UpdateRtpRequest,
+    RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, SessionQuery,
+    SnapshotQuery, SnapshotRequest, StartRecordRequest, StopRecordRequest, UpdateRtpRequest,
 };
 use cheetah_media_api::ids::{
     FileHandle, MediaKey, ProxyId, RecordFileId, RecordTaskId, RtpSessionId, SessionId,
 };
-use cheetah_media_api::model::CloseReason;
+use cheetah_media_api::model::{
+    AdmissionAction, AdmissionRequest, CloseReason, Decision, RtpTcpMode,
+};
 use cheetah_media_api::port::{
     ControlAuthApi, MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, SnapshotApi,
+    WebhookAdminApi,
+};
+use cheetah_media_api::webhook::{
+    CreateWebhookProfileRequest, UpdateWebhookProfileRequest, WebhookProfileId,
+    WebhookProfileListResponse, WebhookProfileResponse, WebhookTestResponse,
 };
 use cheetah_media_api::{
     AuthCredentials, FileRange, MediaError, MediaFileStoreApi, MediaScope, Principal,
@@ -201,6 +209,42 @@ impl NativeMediaHttpService {
         })
     }
 
+    async fn check_admission(
+        &self,
+        ctx: &MediaRequestContext,
+        action: AdmissionAction,
+        resource: MediaKey,
+        protocol: String,
+        source_address: Option<String>,
+        params: HashMap<String, String>,
+    ) -> Result<(), AdapterError> {
+        let Some(provider) = self.ctx.media_services.admission() else {
+            return Ok(());
+        };
+        let request = AdmissionRequest {
+            action,
+            principal: ctx.principal.clone(),
+            resource,
+            protocol,
+            source_address,
+            params,
+        };
+        match provider.authorize(ctx, request).await? {
+            Decision::Allow => Ok(()),
+            Decision::Deny { code, reason } => {
+                Err(AdapterError::Media(MediaError::new(code, reason)))
+            }
+        }
+    }
+
+    fn webhook_admin(&self) -> Result<Arc<dyn WebhookAdminApi>, AdapterError> {
+        self.ctx.media_services.webhook_admin().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "webhook admin not available",
+            ))
+        })
+    }
+
     fn file_store(&self) -> Arc<dyn MediaFileStoreApi> {
         self.ctx.media_file_store.clone()
     }
@@ -333,6 +377,21 @@ impl NativeMediaHttpService {
                 if path.starts_with("/rtp/sessions/") && path.ends_with("/stop") =>
             {
                 Some("rtp.session.stop")
+            }
+            (HttpMethod::Post, "/webhook/profiles") => Some("webhook.profile.create"),
+            (HttpMethod::Get, path) if path.starts_with("/webhook/profiles/") => {
+                Some("webhook.profile.get")
+            }
+            (HttpMethod::Put, path) if path.starts_with("/webhook/profiles/") => {
+                Some("webhook.profile.update")
+            }
+            (HttpMethod::Delete, path) if path.starts_with("/webhook/profiles/") => {
+                Some("webhook.profile.delete")
+            }
+            (HttpMethod::Post, path)
+                if path.starts_with("/webhook/profiles/") && path.ends_with("/test") =>
+            {
+                Some("webhook.profile.test")
             }
             _ => None,
         }
@@ -614,6 +673,36 @@ impl NativeMediaHttpService {
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
         let request: RtpReceiverRequest = parse_body(&req)?;
+        let protocol = match request.tcp_mode {
+            Some(RtpTcpMode::Active) => "tcp-active".to_string(),
+            Some(RtpTcpMode::Passive) => "tcp-passive".to_string(),
+            None => "udp".to_string(),
+        };
+        let mut params = HashMap::new();
+        if let Some(port) = request.port {
+            params.insert("port".to_string(), port.to_string());
+        }
+        if let Some(ip) = &request.ip {
+            params.insert("ip".to_string(), ip.clone());
+        }
+        if let Some(ssrc) = request.ssrc {
+            params.insert("ssrc".to_string(), ssrc.to_string());
+        }
+        if let Some(payload_type) = request.payload_type {
+            params.insert("payload_type".to_string(), payload_type.to_string());
+        }
+        if let Some(codec_hint) = &request.codec_hint {
+            params.insert("codec_hint".to_string(), codec_hint.clone());
+        }
+        self.check_admission(
+            ctx,
+            AdmissionAction::OpenRtpReceiver,
+            request.media_key.clone(),
+            protocol,
+            request.ip.clone(),
+            params,
+        )
+        .await?;
         let session = rtp_api.open_rtp_receiver(ctx, request).await?;
         Ok(json_response(&session))
     }
@@ -625,6 +714,34 @@ impl NativeMediaHttpService {
     ) -> Result<HttpResponse, AdapterError> {
         let rtp_api = self.rtp()?;
         let request: RtpSenderRequest = parse_body(&req)?;
+        let protocol = match request.mode {
+            RtpSenderMode::Active => "active".to_string(),
+            RtpSenderMode::Passive => "passive".to_string(),
+            RtpSenderMode::Talk => "talk".to_string(),
+        };
+        let mut params = HashMap::new();
+        params.insert(
+            "destination_endpoint".to_string(),
+            request.destination_endpoint.clone(),
+        );
+        if let Some(ssrc) = request.ssrc {
+            params.insert("ssrc".to_string(), ssrc.to_string());
+        }
+        if let Some(payload_type) = request.payload_type {
+            params.insert("payload_type".to_string(), payload_type.to_string());
+        }
+        if let Some(codec_hint) = &request.codec_hint {
+            params.insert("codec_hint".to_string(), codec_hint.clone());
+        }
+        self.check_admission(
+            ctx,
+            AdmissionAction::OpenRtpSender,
+            request.media_key.clone(),
+            protocol,
+            None,
+            params,
+        )
+        .await?;
         let session = rtp_api.open_rtp_sender(ctx, request).await?;
         Ok(json_response(&session))
     }
@@ -708,6 +825,86 @@ impl NativeMediaHttpService {
             .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
         rtp_api.stop_rtp_session(ctx, &RtpSessionId(id)).await?;
         Ok(no_content_response())
+    }
+
+    async fn webhook_profile_list(
+        &self,
+        ctx: &MediaRequestContext,
+        _req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.webhook_admin()?;
+        let profiles = api.list_profiles(ctx).await?;
+        let views = profiles.into_iter().map(|p| p.view()).collect();
+        Ok(json_response(&WebhookProfileListResponse {
+            profiles: views,
+        }))
+    }
+
+    async fn webhook_profile_create(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.webhook_admin()?;
+        let request: CreateWebhookProfileRequest = parse_body(&req)?;
+        let profile = api.create_profile(ctx, request).await?;
+        Ok(json_response(&WebhookProfileResponse {
+            profile: profile.view(),
+        }))
+    }
+
+    async fn webhook_profile_get(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.webhook_admin()?;
+        let id = webhook_profile_id_from_path(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing profile_id".to_string()))?;
+        let profile = api.get_profile(ctx, &id).await?;
+        Ok(json_response(&WebhookProfileResponse {
+            profile: profile.view(),
+        }))
+    }
+
+    async fn webhook_profile_update(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.webhook_admin()?;
+        let id = webhook_profile_id_from_path(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing profile_id".to_string()))?;
+        let mut body: UpdateWebhookProfileRequest = parse_body(&req)?;
+        body.profile.id = id;
+        let profile = api.update_profile(ctx, body).await?;
+        Ok(json_response(&WebhookProfileResponse {
+            profile: profile.view(),
+        }))
+    }
+
+    async fn webhook_profile_delete(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.webhook_admin()?;
+        let id = webhook_profile_id_from_path(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing profile_id".to_string()))?;
+        api.delete_profile(ctx, &id).await?;
+        Ok(no_content_response())
+    }
+
+    async fn webhook_profile_test(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.webhook_admin()?;
+        let id = webhook_profile_id_from_path(&req.path)
+            .ok_or_else(|| AdapterError::InvalidRequest("missing profile_id".to_string()))?;
+        let report = api.test_profile(ctx, &id).await?;
+        Ok(json_response(&WebhookTestResponse { report }))
     }
 
     async fn snapshot_create(
@@ -823,6 +1020,22 @@ impl NativeMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let request: PullProxyRequest = parse_body(&req)?;
+        let protocol = request
+            .source_url
+            .split_once("://")
+            .map(|(scheme, _)| scheme.to_lowercase())
+            .unwrap_or_else(|| "http".to_string());
+        let mut params = HashMap::new();
+        params.insert("source_url".to_string(), request.source_url.clone());
+        self.check_admission(
+            ctx,
+            AdmissionAction::CreatePullProxy,
+            request.destination.clone(),
+            protocol,
+            None,
+            params,
+        )
+        .await?;
         let info = self.proxy()?.create_pull_proxy(ctx, request).await?;
         Ok(json_response(&info))
     }
@@ -871,6 +1084,16 @@ impl NativeMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let request: PushProxyRequest = parse_body(&req)?;
+        let params = request.protocol_options.clone();
+        self.check_admission(
+            ctx,
+            AdmissionAction::CreatePushProxy,
+            request.source_media_key.clone(),
+            request.protocol.clone(),
+            None,
+            params,
+        )
+        .await?;
         let info = self.proxy()?.create_push_proxy(ctx, request).await?;
         Ok(json_response(&info))
     }
@@ -919,6 +1142,22 @@ impl NativeMediaHttpService {
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
         let request: FfmpegProxyRequest = parse_body(&req)?;
+        let protocol = request
+            .source_url
+            .split_once("://")
+            .map(|(scheme, _)| scheme.to_lowercase())
+            .unwrap_or_else(|| "http".to_string());
+        let mut params = HashMap::new();
+        params.insert("source_url".to_string(), request.source_url.clone());
+        self.check_admission(
+            ctx,
+            AdmissionAction::CreateFfmpegProxy,
+            request.destination.clone(),
+            protocol,
+            None,
+            params,
+        )
+        .await?;
         let info = self.proxy()?.create_ffmpeg_proxy(ctx, request).await?;
         Ok(json_response(&info))
     }
@@ -1112,6 +1351,26 @@ impl ModuleHttpService for NativeMediaHttpService {
                 {
                     self.rtp_session_stop(&ctx, req).await
                 }
+                (HttpMethod::Get, "/webhook/profiles") => {
+                    self.webhook_profile_list(&ctx, req).await
+                }
+                (HttpMethod::Post, "/webhook/profiles") => {
+                    self.webhook_profile_create(&ctx, req).await
+                }
+                (HttpMethod::Get, path) if path.starts_with("/webhook/profiles/") => {
+                    self.webhook_profile_get(&ctx, req).await
+                }
+                (HttpMethod::Put, path) if path.starts_with("/webhook/profiles/") => {
+                    self.webhook_profile_update(&ctx, req).await
+                }
+                (HttpMethod::Delete, path) if path.starts_with("/webhook/profiles/") => {
+                    self.webhook_profile_delete(&ctx, req).await
+                }
+                (HttpMethod::Post, path)
+                    if path.starts_with("/webhook/profiles/") && path.ends_with("/test") =>
+                {
+                    self.webhook_profile_test(&ctx, req).await
+                }
                 _ => Err(AdapterError::InvalidRequest("not found".to_string())),
             };
 
@@ -1218,6 +1477,18 @@ fn rtp_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
         return None;
     }
     Some(id.to_string())
+}
+
+/// Extract the webhook profile id from `/webhook/profiles/{id}[/<suffix>]`.
+///
+/// 从 `/webhook/profiles/{id}` 路径中提取 webhook profile id。
+fn webhook_profile_id_from_path(path: &str) -> Option<WebhookProfileId> {
+    let rest = path.strip_prefix("/webhook/profiles/")?;
+    let id = rest.split('/').next()?;
+    if id.is_empty() {
+        return None;
+    }
+    Some(WebhookProfileId(id.to_string()))
 }
 
 /// Parse a request body (JSON) or URL query string into the target query type.

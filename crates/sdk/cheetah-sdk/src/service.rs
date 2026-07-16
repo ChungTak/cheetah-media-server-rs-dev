@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 
+use cheetah_media_api::ids::MediaKey;
+
 use crate::config::{ConfigEffect, ModuleConfigChange};
 use crate::ids::{ModuleId, RoomId, StreamKey};
 use crate::module::{HttpRouteMount, ModuleState};
@@ -155,20 +157,144 @@ pub trait ClusterApi: Send + Sync {
     fn list_nodes(&self) -> Vec<ClusterNode>;
 }
 
-/// FFmpeg job description.
+/// Typed input for an FFmpeg job.
 ///
-/// FFmpeg 任务描述。
-#[derive(Debug, Clone)]
-pub struct FfmpegJob {
-    pub job_id: String,
-    pub command: String,
+/// FFmpeg 任务的类型化输入。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FfmpegInput {
+    /// Pull from a URL; the host has already been validated by the caller.
+    Url { url: String },
 }
 
-/// API for submitting and cancelling FFmpeg jobs.
+/// Typed output for an FFmpeg job.
 ///
-/// 提交和取消 FFmpeg 任务的 API。
+/// FFmpeg 任务的类型化输出。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FfmpegOutput {
+    /// Push to a URL; the host has already been validated by the caller.
+    Url { url: String },
+    /// Write to the engine's media pipeline for `media_key`.
+    Engine { media_key: MediaKey },
+}
+
+/// Resource limits for an FFmpeg job.
+///
+/// FFmpeg 任务的资源限制。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FfmpegResourceLimits {
+    /// Maximum number of stderr lines retained for diagnostics.
+    pub max_stderr_lines: usize,
+    /// Maximum runtime in milliseconds before the job is killed.
+    pub max_runtime_ms: u64,
+}
+
+impl Default for FfmpegResourceLimits {
+    fn default() -> Self {
+        Self {
+            max_stderr_lines: 256,
+            max_runtime_ms: 300_000,
+        }
+    }
+}
+
+/// FFmpeg job specification.
+///
+/// Replaces the previous `command: String` design; callers cannot pass arbitrary
+/// executable names or shell strings. The profile is selected from a controlled
+/// set of configured profiles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FfmpegJobSpec {
+    pub profile_id: String,
+    pub input: FfmpegInput,
+    pub output: FfmpegOutput,
+    pub input_options: Vec<String>,
+    pub output_options: Vec<String>,
+    pub resource_limits: FfmpegResourceLimits,
+}
+
+impl Default for FfmpegJobSpec {
+    fn default() -> Self {
+        Self {
+            profile_id: "default".to_string(),
+            input: FfmpegInput::Url { url: String::new() },
+            output: FfmpegOutput::Url { url: String::new() },
+            input_options: Vec::new(),
+            output_options: Vec::new(),
+            resource_limits: FfmpegResourceLimits::default(),
+        }
+    }
+}
+
+/// Lifecycle state of an FFmpeg job.
+///
+/// FFmpeg 任务生命周期状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FfmpegJobState {
+    Pending,
+    Running,
+    Exited,
+    Failed,
+    Cancelled,
+}
+
+impl FfmpegJobState {
+    pub fn is_terminal(self) -> bool {
+        matches!(
+            self,
+            FfmpegJobState::Exited | FfmpegJobState::Failed | FfmpegJobState::Cancelled
+        )
+    }
+}
+
+/// Snapshot of an FFmpeg job's status.
+///
+/// FFmpeg 任务状态快照。
+#[derive(Debug, Clone)]
+pub struct FfmpegJobStatus {
+    pub job_id: String,
+    pub state: FfmpegJobState,
+    pub created_at: i64,
+    pub started_at: Option<i64>,
+    pub finished_at: Option<i64>,
+    pub exit_code: Option<i32>,
+    pub exit_summary: String,
+    pub pid: Option<u32>,
+}
+
+/// Handle returned by `FfmpegApi::submit`.
+///
+/// `FfmpegApi::submit` 返回的句柄。
+#[derive(Debug, Clone)]
+pub struct FfmpegJobHandle {
+    pub job_id: String,
+    pub status: FfmpegJobStatus,
+}
+
+/// API for submitting and managing FFmpeg jobs.
+///
+/// 提交与管理 FFmpeg 任务的 API。
+#[async_trait]
 pub trait FfmpegApi: Send + Sync {
-    fn submit_job(&self, job: FfmpegJob) -> Result<(), SdkError>;
-    fn cancel_job(&self, job_id: &str) -> Result<(), SdkError>;
-    fn list_jobs(&self) -> Vec<FfmpegJob>;
+    async fn submit(
+        &self,
+        job_id: String,
+        spec: FfmpegJobSpec,
+    ) -> Result<FfmpegJobHandle, SdkError>;
+    async fn get(&self, job_id: &str) -> Result<FfmpegJobStatus, SdkError>;
+    async fn list(&self) -> Vec<FfmpegJobStatus>;
+    async fn wait(&self, job_id: &str) -> Result<FfmpegJobStatus, SdkError>;
+    async fn cancel(&self, job_id: &str) -> Result<(), SdkError>;
+    /// Remove a finished job from the registry, releasing its memory.
+    ///
+    /// 从注册表中移除已结束的任务，释放其内存。
+    async fn remove(&self, job_id: &str) -> Result<(), SdkError>;
+    /// Whether the executor/provider is actually configured and ready to run
+    /// FFmpeg jobs. Capability reports should not advertise ffmpeg-related
+    /// operations when this returns false.
+    ///
+    /// executor/provider 是否已配置并可运行 FFmpeg 任务。返回 false 时，
+    /// 能力报告不应宣告与 ffmpeg 相关的操作。
+    fn is_available(&self) -> bool {
+        false
+    }
 }
