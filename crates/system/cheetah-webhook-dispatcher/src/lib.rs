@@ -16,7 +16,7 @@ pub mod util;
 
 pub use admin::WebhookAdminStore;
 pub use circuit::{CircuitBreaker, CircuitState};
-pub use config::{FailurePolicy, WebhookDispatcherConfig, WebhookProfile};
+pub use config::{FailurePolicy, WebhookDispatcherConfig, WebhookProfile, WebhookProfileMode};
 pub use decision::WebhookDecisionClient;
 pub use dispatcher::{WebhookDispatcher, WebhookDispatcherHandle, WebhookJob};
 pub use module::{WebhookModule, WebhookModuleFactory};
@@ -24,4 +24,7 @@ pub use security::{WebhookUrlPolicy, WebhookUrlVerdict};
 pub use sender::{
     RuntimeHttpClient, WebhookHttpRequest, WebhookResponse, WebhookSendError, WebhookSender,
 };
-pub use translator::{WebhookDispatch, WebhookTranslator, ZlmWebhookTranslator};
+pub use translator::{
+    media_event_type, NativeWebhookTranslator, WebhookDispatch, WebhookTranslator,
+    ZlmWebhookTranslator,
+};

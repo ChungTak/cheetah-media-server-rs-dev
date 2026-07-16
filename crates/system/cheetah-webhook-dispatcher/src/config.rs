@@ -14,6 +14,19 @@ pub enum FailurePolicy {
     Allow,
 }
 
+/// Dispatch mode for a webhook target.
+///
+/// webhook 目标的投递模式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WebhookProfileMode {
+    /// Native domain envelope with HMAC-SHA256 signing.
+    #[default]
+    NativeDomain,
+    /// ZLMediaKit-compatible hook translation.
+    ZlmCompatible,
+}
+
 /// Top-level configuration for the webhook dispatcher.
 ///
 /// 分发器顶层配置。
@@ -31,6 +44,9 @@ pub struct WebhookProfile {
     pub name: String,
     /// POST target URL.
     pub url: String,
+    /// Dispatch mode: native domain envelope or ZLM-compatible translation.
+    #[serde(default)]
+    pub mode: WebhookProfileMode,
     /// Only dispatch events whose hook name is in this list.
     pub events: Vec<String>,
     /// Optional HMAC-SHA256 secret.
@@ -44,9 +60,12 @@ pub struct WebhookProfile {
     /// Maximum retries for transient failures.
     #[serde(default = "default_max_retries")]
     pub max_retries: u32,
-    /// Fixed interval between retries.
+    /// Base interval between retries; doubled on each attempt (exponential backoff).
     #[serde(default = "default_retry_interval_ms")]
     pub retry_interval_ms: u64,
+    /// Maximum total time spent retrying a single webhook before giving up.
+    #[serde(default = "default_max_retry_duration_ms")]
+    pub max_retry_duration_ms: u64,
     /// Consecutive failures before opening the circuit breaker.
     #[serde(default = "default_circuit_failure_threshold")]
     pub circuit_failure_threshold: u32,
@@ -95,12 +114,14 @@ impl fmt::Debug for WebhookProfile {
         f.debug_struct("WebhookProfile")
             .field("name", &self.name)
             .field("url", &self.url)
+            .field("mode", &self.mode)
             .field("events", &self.events)
             .field("secret", &self.secret.as_deref().map(|_| "***"))
             .field("timeout_ms", &self.timeout_ms)
             .field("max_body_bytes", &self.max_body_bytes)
             .field("max_retries", &self.max_retries)
             .field("retry_interval_ms", &self.retry_interval_ms)
+            .field("max_retry_duration_ms", &self.max_retry_duration_ms)
             .field("circuit_failure_threshold", &self.circuit_failure_threshold)
             .field("circuit_open_ms", &self.circuit_open_ms)
             .field("allowed_cidrs", &self.allowed_cidrs)
@@ -116,12 +137,14 @@ impl Default for WebhookProfile {
         Self {
             name: String::new(),
             url: String::new(),
+            mode: WebhookProfileMode::default(),
             events: Vec::new(),
             secret: None,
             timeout_ms: default_timeout_ms(),
             max_body_bytes: default_max_body_bytes(),
             max_retries: default_max_retries(),
             retry_interval_ms: default_retry_interval_ms(),
+            max_retry_duration_ms: default_max_retry_duration_ms(),
             circuit_failure_threshold: default_circuit_failure_threshold(),
             circuit_open_ms: default_circuit_open_ms(),
             allowed_cidrs: Vec::new(),
@@ -146,6 +169,10 @@ fn default_max_retries() -> u32 {
 
 fn default_retry_interval_ms() -> u64 {
     1000
+}
+
+fn default_max_retry_duration_ms() -> u64 {
+    60_000
 }
 
 fn default_circuit_failure_threshold() -> u32 {

@@ -378,6 +378,17 @@ Webhook profiles are managed through `WebhookAdminApi` and exposed as native HTT
 - Native routes under `/api/v1/webhook/profiles` map to `WebhookAdminApi` and require `MediaScope::ServerAdmin`.
 - `cheetah-webhook-dispatcher` registers the admin provider as `MediaCapability::WebhookAdmin` in `MediaServices` alongside the `Webhook` and `Admission` providers.
 
+### Outbound dispatch
+
+`WebhookDispatcher` consumes `MediaEvent`s from the event bus, translates them per profile `mode` and POSTs the resulting envelope.
+
+- `WebhookProfileMode::NativeDomain` emits a signed envelope with `event_id`, `event_type`, `occurred_at`, `resource`, `payload` and `attempt`, signed with `HMAC-SHA256` in `X-Webhook-Signature` when a secret is configured.
+- `WebhookProfileMode::ZlmCompatible` emits ZLM-style hooks (`on_publish`, `on_play`, `on_stream_changed`, etc.) for the subset of events that have a defined mapping.
+- Each profile gets its own bounded worker queue; slow profiles do not block others.
+- Retries are limited by `max_retries` and `max_retry_duration_ms`, use exponential backoff from `retry_interval_ms`, and only happen for network errors, HTTP 429, or 5xx responses. 4xx responses (other than 429) are not retried.
+- Unsupported mappings for the active mode increment `unsupported_mapping_total{event_type,profile}` through `MetricsApi`.
+- Closing the dispatcher handle or removing a profile from configuration stops further delivery attempts for that profile.
+
 ## 4. Media Model and Unification
 
 All protocol ingest into engine should converge to:
@@ -429,7 +440,7 @@ Implementation status: the Sans-I/O baseline lives in `cheetah-codec::observabil
 
 - `RepairLayer` + `classify_timestamp_alert` map each `TimestampAlert` to the source/canonical layer (pure discontinuity/reset markers are not repairs); `RepairEventCounters` accumulate per-layer totals and expose `is_high_frequency_anomaly`, where the source layer never escalates and canonical/egress escalate at `REPAIR_WARN_HIGH_FREQUENCY_THRESHOLD`.
 - `RuntimeReportBuilder` computes the runtime-report schema (`RuntimeObservabilityReport`) from injected wall-clock (`now_us`) and canonical `pts_us` samples — it reads no clock and performs no I/O.
-- `cheetah-engine::MetricsRegistry` publishes these through `MetricsApi`: `record_repair_events` adds the layer counters and `record_runtime_report` sets the timing gauges (`startup_latency_ms`, `first_second_avg_frame_interval_ms`, `average_playback_rate_x`, `first_keyframe_delay_ms`).
+- `cheetah-engine::MetricsRegistry` publishes these through `MetricsApi`: `record_repair_events` adds the layer counters and `record_runtime_report` sets the timing gauges (`startup_latency_ms`, `first_second_avg_frame_interval_ms`, `average_playback_rate_x`, `first_keyframe_delay_ms`). `MetricsApi::inc` lets modules record ad-hoc counters such as `unsupported_mapping_total{event_type,profile}`.
 - Per-frame wiring of drivers/modules into `RuntimeReportBuilder` on the live egress path is staged (the metric feed points are defined; hot-path integration lands incrementally per protocol).
 
 ## 5. Runtime Abstraction Rule

@@ -955,6 +955,8 @@ mod tests {
 
     struct DummyMetrics;
     impl MetricsApi for DummyMetrics {
+        fn inc(&self, _key: &str, _value: u64) {}
+
         fn render(&self) -> String {
             "ok".to_string()
         }

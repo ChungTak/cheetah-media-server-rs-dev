@@ -242,6 +242,26 @@ pub trait MediaEventBusApi: Send + Sync {
 }
 
 impl MediaEvent {
+    /// Read-only access to the shared event header.
+    ///
+    /// 获取共享事件头部的只读引用。
+    pub fn header(&self) -> &EventHeader {
+        match self {
+            MediaEvent::StreamPublished(e) => &e.header,
+            MediaEvent::StreamUnpublished(e) => &e.header,
+            MediaEvent::StreamOnlineChanged(e) => &e.header,
+            MediaEvent::SessionOpened(e) => &e.header,
+            MediaEvent::SessionClosed(e) => &e.header,
+            MediaEvent::RecordStarted(e) => &e.header,
+            MediaEvent::RecordProgress(e) => &e.header,
+            MediaEvent::RecordCompleted(e) => &e.header,
+            MediaEvent::SnapshotCompleted(e) => &e.header,
+            MediaEvent::RtpSessionTimeout(e) => &e.header,
+            MediaEvent::ProxyStateChanged(e) => &e.header,
+            MediaEvent::ServerLifecycle(e) => &e.header,
+        }
+    }
+
     /// Mutable access to the shared event header.
     ///
     /// 获取共享事件头部的可变引用。

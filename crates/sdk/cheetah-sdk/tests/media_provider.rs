@@ -82,6 +82,19 @@ impl MediaControlApi for DummyControl {
     }
 }
 
+struct DummyAdmission;
+
+#[async_trait]
+impl MediaAdmissionApi for DummyAdmission {
+    async fn authorize(
+        &self,
+        _ctx: &MediaRequestContext,
+        _request: AdmissionRequest,
+    ) -> MediaResult<Decision> {
+        Ok(Decision::Allow)
+    }
+}
+
 struct DummyPlayback;
 
 #[async_trait]
@@ -138,19 +151,6 @@ impl PlaybackApi for DummyPlayback {
         _id: &PlaybackSessionId,
     ) -> MediaResult<()> {
         unimplemented!()
-    }
-}
-
-struct DummyAdmission;
-
-#[async_trait]
-impl MediaAdmissionApi for DummyAdmission {
-    async fn authorize(
-        &self,
-        _ctx: &MediaRequestContext,
-        _request: AdmissionRequest,
-    ) -> MediaResult<Decision> {
-        Ok(Decision::Allow)
     }
 }
 

@@ -74,6 +74,10 @@ impl MetricsRegistry {
 ///
 /// `MetricsApi` 实现，将计数器和仪表盘渲染为文本。
 impl MetricsApi for MetricsRegistry {
+    fn inc(&self, key: &str, value: u64) {
+        MetricsRegistry::inc(self, key, value);
+    }
+
     /// Render all counters and gauges as simple key-value lines.
     ///
     /// 将所有计数器和仪表盘渲染为简单键值行。
