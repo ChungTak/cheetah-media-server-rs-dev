@@ -10,7 +10,7 @@ use cheetah_sdk::{
     FfmpegOutput, SdkError,
 };
 use dashmap::DashMap;
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::{oneshot, watch, Semaphore};
 
@@ -352,20 +352,22 @@ async fn run_ffmpeg_job(
 
     let timeout = Duration::from_millis(max_runtime_ms);
 
-    let (exit_code, cancelled) = if initial_cancelled {
+    let (exit_code, signal, cancelled, timed_out) = if initial_cancelled {
         let _ = child.kill().await;
         let _ = child.wait().await;
-        (None, true)
+        (None, None, true, false)
     } else {
         tokio::select! {
             _ = cancel_rx.changed() => {
                 let _ = child.kill().await;
                 let _ = child.wait().await;
-                (None, true)
+                (None, None, true, false)
             }
             result = tokio::time::timeout(timeout, child.wait()) => {
                 match result {
-                    Ok(Ok(exit)) => (exit.code(), false),
+                    Ok(Ok(exit)) => {
+                        (exit.code(), exit_signal(&exit), false, false)
+                    }
                     Ok(Err(err)) => {
                         finish_job(&status, FfmpegJobState::Failed, None, format!("wait error: {err}"));
                         let _ = wait_stderr(stderr_rx).await;
@@ -375,23 +377,15 @@ async fn run_ffmpeg_job(
                     Err(_) => {
                         let _ = child.kill().await;
                         let _ = child.wait().await;
-                        (None, false)
+                        (None, None, false, true)
                     }
                 }
             }
         }
     };
 
-    // Reap the child in case timeout/cancel left it in an intermediate state.
-    let exit_code = if exit_code.is_none() && !cancelled {
-        // Timeout path already killed and waited; code is intentionally None.
-        None
-    } else {
-        exit_code
-    };
-
     let stderr_lines = wait_stderr(stderr_rx).await;
-    let summary = build_exit_summary(exit_code, cancelled, &stderr_lines);
+    let summary = build_exit_summary(exit_code, signal, cancelled, timed_out, &stderr_lines);
     let state = if cancelled {
         FfmpegJobState::Cancelled
     } else if exit_code == Some(0) {
@@ -413,33 +407,79 @@ async fn wait_stderr(rx: oneshot::Receiver<Vec<String>>) -> Vec<String> {
     }
 }
 
-async fn collect_stderr<R>(reader: R, max_lines: usize, tx: oneshot::Sender<Vec<String>>)
+async fn collect_stderr<R>(mut reader: R, max_lines: usize, tx: oneshot::Sender<Vec<String>>)
 where
     R: tokio::io::AsyncRead + Unpin,
 {
-    let mut reader = BufReader::new(reader).lines();
+    const MAX_LINE_BYTES: usize = 1024;
+    const READ_BUF_SIZE: usize = 1024;
+
+    let mut read_buf = [0u8; READ_BUF_SIZE];
+    let mut line = Vec::with_capacity(MAX_LINE_BYTES);
     let mut ring = VecDeque::with_capacity(max_lines);
-    while let Ok(Some(line)) = reader.next_line().await {
-        if max_lines == 0 {
-            continue;
+
+    fn flush_line(line: &mut Vec<u8>, max_lines: usize, ring: &mut VecDeque<String>) {
+        if line.is_empty() {
+            return;
         }
-        if ring.len() >= max_lines {
-            ring.pop_front();
+        if max_lines > 0 {
+            if ring.len() >= max_lines {
+                ring.pop_front();
+            }
+            ring.push_back(String::from_utf8_lossy(line).into_owned());
         }
-        ring.push_back(line);
+        line.clear();
     }
-    let lines: Vec<String> = ring.into_iter().collect();
-    let _ = tx.send(lines);
+
+    loop {
+        match reader.read(&mut read_buf).await {
+            Ok(0) => break,
+            Ok(n) => {
+                for &b in &read_buf[..n] {
+                    if b == b'\n' || b == b'\r' {
+                        flush_line(&mut line, max_lines, &mut ring);
+                    } else if line.len() < MAX_LINE_BYTES {
+                        line.push(b);
+                    }
+                }
+            }
+            Err(_) => break,
+        }
+    }
+    flush_line(&mut line, max_lines, &mut ring);
+
+    let _ = tx.send(ring.into_iter().collect());
 }
 
-fn build_exit_summary(exit_code: Option<i32>, cancelled: bool, stderr_lines: &[String]) -> String {
+#[cfg(unix)]
+fn exit_signal(exit: &std::process::ExitStatus) -> Option<i32> {
+    use std::os::unix::process::ExitStatusExt;
+    exit.signal()
+}
+
+#[cfg(not(unix))]
+fn exit_signal(_exit: &std::process::ExitStatus) -> Option<i32> {
+    None
+}
+
+fn build_exit_summary(
+    exit_code: Option<i32>,
+    signal: Option<i32>,
+    cancelled: bool,
+    timed_out: bool,
+    stderr_lines: &[String],
+) -> String {
     let mut parts = Vec::new();
     if cancelled {
         parts.push("cancelled".to_string());
-    } else if exit_code.is_none() {
+    } else if timed_out {
         parts.push("timeout".to_string());
+    } else if let Some(code) = exit_code {
+        parts.push(format!("exit_code={code}"));
+    } else if let Some(sig) = signal {
+        parts.push(format!("signal={sig}"));
     } else {
-        parts.push(format!("exit_code={}", exit_code.unwrap()));
+        parts.push("no exit code".to_string());
     }
     for line in stderr_lines.iter().rev().take(20) {
         parts.push(line.clone());
@@ -643,6 +683,45 @@ mod tests {
         assert!(
             !status.exit_summary.contains("line 90"),
             "summary: {}",
+            status.exit_summary
+        );
+    }
+
+    #[tokio::test]
+    async fn stderr_splits_on_carriage_return_and_newline() {
+        let path =
+            script(b"#!/bin/sh\nprintf 'progress 1\\rprogress 2\\rprogress 3\\n' >&2\nexit 1\n");
+        let service = LocalFfmpegService::with_executable(path.clone());
+        let handle = service
+            .submit(
+                "job-crlf".into(),
+                FfmpegJobSpec {
+                    input: FfmpegInput::Url { url: "in".into() },
+                    output: FfmpegOutput::Url { url: "out".into() },
+                    resource_limits: FfmpegResourceLimits {
+                        max_stderr_lines: 2,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let status = service.wait(&handle.job_id).await.unwrap();
+        assert_eq!(status.state, FfmpegJobState::Failed);
+        assert!(
+            status.exit_summary.contains("progress 3"),
+            "{}",
+            status.exit_summary
+        );
+        assert!(
+            status.exit_summary.contains("progress 2"),
+            "{}",
+            status.exit_summary
+        );
+        assert!(
+            !status.exit_summary.contains("progress 1"),
+            "{}",
             status.exit_summary
         );
     }
