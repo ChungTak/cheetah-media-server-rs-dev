@@ -13,6 +13,7 @@ use dashmap::DashMap;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::{oneshot, watch, Semaphore};
+use url::Url;
 
 /// A configured FFmpeg profile.
 ///
@@ -294,6 +295,7 @@ async fn run_ffmpeg_job(
     let input_url = match spec.input {
         FfmpegInput::Url { url } => url,
     };
+    let redacted_input_url = redact_url_credentials(&input_url);
 
     let output_url = match spec.output {
         FfmpegOutput::Url { url } => url,
@@ -302,6 +304,7 @@ async fn run_ffmpeg_job(
             media_key.vhost.0, media_key.app.0, media_key.stream.0
         ),
     };
+    let redacted_output_url = redact_url_credentials(&output_url);
 
     let mut cmd = Command::new(&executable);
     cmd.stdin(Stdio::null())
@@ -385,7 +388,9 @@ async fn run_ffmpeg_job(
     };
 
     let stderr_lines = wait_stderr(stderr_rx).await;
-    let summary = build_exit_summary(exit_code, signal, cancelled, timed_out, &stderr_lines);
+    let summary = build_exit_summary(exit_code, signal, cancelled, timed_out, &stderr_lines)
+        .replace(&input_url, &redacted_input_url)
+        .replace(&output_url, &redacted_output_url);
     let state = if cancelled {
         FfmpegJobState::Cancelled
     } else if exit_code == Some(0) {
@@ -460,6 +465,21 @@ fn exit_signal(exit: &std::process::ExitStatus) -> Option<i32> {
 #[cfg(not(unix))]
 fn exit_signal(_exit: &std::process::ExitStatus) -> Option<i32> {
     None
+}
+
+fn redact_url_credentials(url: &str) -> String {
+    match Url::parse(url) {
+        Ok(mut u) => {
+            if !u.username().is_empty() {
+                let _ = u.set_username("***");
+            }
+            if u.password().is_some() {
+                let _ = u.set_password(Some("***"));
+            }
+            u.to_string()
+        }
+        Err(_) => url.to_string(),
+    }
 }
 
 fn build_exit_summary(
@@ -683,6 +703,46 @@ mod tests {
         assert!(
             !status.exit_summary.contains("line 90"),
             "summary: {}",
+            status.exit_summary
+        );
+    }
+
+    #[tokio::test]
+    async fn stderr_url_credentials_are_redacted() {
+        let path = script(b"#!/bin/sh\necho \"$@\" >&2\nexit 1\n");
+        let service = LocalFfmpegService::with_executable(path.clone());
+        let handle = service
+            .submit(
+                "job-redact".into(),
+                FfmpegJobSpec {
+                    input: FfmpegInput::Url {
+                        url: "rtsp://user:secret@127.0.0.1/stream".into(),
+                    },
+                    output: FfmpegOutput::Url { url: "out".into() },
+                    resource_limits: FfmpegResourceLimits {
+                        max_stderr_lines: 10,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let status = service.wait(&handle.job_id).await.unwrap();
+        assert_eq!(status.state, FfmpegJobState::Failed);
+        assert!(
+            status.exit_summary.contains("***"),
+            "{}",
+            status.exit_summary
+        );
+        assert!(
+            !status.exit_summary.contains("secret"),
+            "{}",
+            status.exit_summary
+        );
+        assert!(
+            !status.exit_summary.contains("user:"),
+            "{}",
             status.exit_summary
         );
     }
