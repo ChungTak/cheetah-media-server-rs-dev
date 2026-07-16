@@ -211,9 +211,9 @@ pub async fn resolve_and_validate_url(
         .map_err(|e| MediaError::invalid_argument(format!("failed to rewrite URL host: {e}")))?;
 
     info!(
-        original = %url,
+        scheme = %parsed.scheme(),
+        original_host = %parsed.host_str().unwrap_or(""),
         resolved = %resolved_ip,
-        rewritten = %rewritten,
         "proxy URL resolved and validated"
     );
 
