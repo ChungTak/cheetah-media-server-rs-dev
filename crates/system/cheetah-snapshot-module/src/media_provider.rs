@@ -1,11 +1,12 @@
 use std::fs::{self, File};
-use std::io::{self, Write};
+use std::io::{self, Cursor, Write};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use bytes::Bytes;
 use cheetah_codec::{CodecId, FrameFlags, MediaKind, MonoTime, TrackId, TrackInfo, TrackReadiness};
 use cheetah_media_api::command::{
     DeleteSnapshotRequest, SnapshotQuery, SnapshotRequest, SubscribeRequest,
@@ -84,15 +85,47 @@ impl SnapshotMediaProvider {
                 .await;
         }
 
-        // No image encode backend is registered. Allow MJPEG -> JPEG passthrough
-        // after validating the payload is a complete JPEG.
-        if frame.codec == CodecId::MJPEG && format == ImageFormat::Jpeg {
-            let decoded = image::load_from_memory(&frame.payload)
+        // No image encode backend is registered. Re-encode from MJPEG to the
+        // requested format when the source frame is a complete JPEG.
+        if frame.codec == CodecId::MJPEG {
+            let mut decoded = image::load_from_memory(&frame.payload)
                 .map_err(|e| MediaError::invalid_argument(format!("invalid mjpeg payload: {e}")))?;
+
+            let needs_scale = request.max_width.is_some() || request.max_height.is_some();
+            if needs_scale {
+                let max_w = request.max_width.unwrap_or(u32::MAX);
+                let max_h = request.max_height.unwrap_or(u32::MAX);
+                decoded = decoded.thumbnail(max_w, max_h);
+            }
+
             let (width, height) = (decoded.width(), decoded.height());
+            let payload = if needs_scale || format == ImageFormat::Png {
+                let mut buf = Cursor::new(Vec::new());
+                match format {
+                    ImageFormat::Jpeg => {
+                        let q = quality.clamp(1, 100);
+                        let mut encoder =
+                            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, q);
+                        encoder.encode_image(&decoded).map_err(|e| {
+                            MediaError::storage_failed(format!("jpeg encode failed: {e}"))
+                        })?;
+                    }
+                    ImageFormat::Png => {
+                        decoded
+                            .write_to(&mut buf, image::ImageFormat::Png)
+                            .map_err(|e| {
+                                MediaError::storage_failed(format!("png encode failed: {e}"))
+                            })?;
+                    }
+                }
+                Bytes::from(buf.into_inner())
+            } else {
+                frame.payload.clone()
+            };
+
             return Ok(ImageArtifact {
-                payload: frame.payload.clone(),
-                content_type: "image/jpeg".to_string(),
+                payload,
+                content_type: format.content_type().to_string(),
                 format,
                 width,
                 height,
