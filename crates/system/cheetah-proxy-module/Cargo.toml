@@ -35,7 +35,9 @@ cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
 cheetah-connector = { path = "../../sdk/cheetah-connector", optional = true, default-features = false }
 
 [dev-dependencies]
+bytes = { workspace = true }
 cheetah-config = { path = "../cheetah-config" }
 cheetah-engine = { path = "../cheetah-engine" }
+cheetah-rtmp-module = { path = "../../protocols/rtmp/module" }
 cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
