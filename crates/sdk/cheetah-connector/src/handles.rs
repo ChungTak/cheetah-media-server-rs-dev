@@ -32,6 +32,7 @@ impl fmt::Debug for PullHandle {
 }
 
 impl PullHandle {
+    #[cfg(any(feature = "http-flv", feature = "rtsp"))]
     pub(crate) fn new(protocol: Protocol, url: String, inner: Box<dyn SubscriberSource>) -> Self {
         Self {
             protocol,
