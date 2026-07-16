@@ -25,13 +25,19 @@ impl ZlmMediaHttpService {
         let quality = crate::util::parse_json_u64(&params["quality"])
             .or_else(|| crate::util::parse_json_u64(&params["scale"]))
             .map(|v| v.min(100) as u8);
+        let max_width = crate::util::parse_json_u64(&params["max_width"])
+            .or_else(|| crate::util::parse_json_u64(&params["width"]))
+            .map(|v| v as u32);
+        let max_height = crate::util::parse_json_u64(&params["max_height"])
+            .or_else(|| crate::util::parse_json_u64(&params["height"]))
+            .map(|v| v as u32);
         let request = SnapshotRequest {
             media_key: key,
             timeout_ms,
             format: format.clone(),
             quality,
-            max_width: None,
-            max_height: None,
+            max_width,
+            max_height,
             storage_policy: Default::default(),
             capture_policy: Default::default(),
         };
@@ -48,6 +54,17 @@ impl ZlmMediaHttpService {
             .media_file_store
             .resolve_download(ctx, &handle.path_handle, None, Some(filename), now)
             .map_err(AdapterError::Media)?;
+
+        // ZLM getSnap must return a decodable JPEG when requested as jpg.
+        let is_jpg = format.eq_ignore_ascii_case("jpg") || format.eq_ignore_ascii_case("jpeg");
+        if is_jpg && !download.body.starts_with(&[0xff, 0xd8, 0xff]) {
+            return Err(AdapterError::Media(
+                cheetah_media_api::error::MediaError::new(
+                    cheetah_media_api::error::MediaErrorCode::Internal,
+                    "snapshot is not a decodable JPEG",
+                ),
+            ));
+        }
 
         Ok(HttpResponse {
             status: 200,

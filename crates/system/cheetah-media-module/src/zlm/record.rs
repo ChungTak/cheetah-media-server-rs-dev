@@ -3,13 +3,14 @@
 //! ZLMediaKit 兼容的录制端点处理函数。
 
 use cheetah_media_api::command::{
-    DeleteRecordRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    StartRecordRequest, StopRecordRequest,
+    DeleteRecordRequest, OpenPlaybackRequest, RecordFileQuery, RecordPlaybackCommand,
+    RecordTaskQuery, StartRecordRequest, StopRecordRequest,
 };
-use cheetah_media_api::ids::RecordFileId;
+use cheetah_media_api::ids::{FileHandle, RecordFileId};
 use cheetah_media_api::model::{RecordTaskState, StoragePolicy};
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::{HttpRequest, HttpResponse};
+use serde_json::json;
 
 use crate::error::AdapterError;
 
@@ -256,12 +257,37 @@ impl ZlmMediaHttpService {
 
     pub(crate) async fn load_mp4_file(
         &self,
-        _ctx: &MediaRequestContext,
-        _req: HttpRequest,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
-        Err(AdapterError::Media(
-            cheetah_media_api::error::MediaError::unsupported_capability("vod"),
-        ))
+        let playback_api = self.playback()?;
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let file_path = params["file_path"]
+            .as_str()
+            .or_else(|| params["file_path"].as_str())
+            .ok_or_else(|| AdapterError::InvalidRequest("file_path is required".to_string()))?;
+        let start_position_ms = parse_json_f64(&params["seek_ms"])
+            .map(|v| v as i64)
+            .unwrap_or(0);
+        let scale = parse_json_f64(&params["speed"]).unwrap_or(1.0);
+        let file_repeat = crate::util::parse_json_bool(&params["file_repeat"]).unwrap_or(false);
+        let loop_scale = if file_repeat && scale == 0.0 {
+            1.0
+        } else {
+            scale
+        };
+        let request = OpenPlaybackRequest {
+            file_handle: FileHandle(file_path.to_string()),
+            media_key: key,
+            start_position_ms,
+            scale: loop_scale,
+        };
+        let session = playback_api.open_playback(ctx, request).await?;
+        Ok(zlm_response(ZlmResponse::ok(json!({
+            "sessionId": session.session_id.0,
+            "duration_ms": session.duration_ms,
+        }))))
     }
 }
 
