@@ -1158,6 +1158,7 @@ dependencies = [
  "cheetah-runtime-tokio",
  "cheetah-sdk-macros",
  "cheetah-snapshot-module",
+ "image",
  "serde",
  "serde_json",
  "sha2",

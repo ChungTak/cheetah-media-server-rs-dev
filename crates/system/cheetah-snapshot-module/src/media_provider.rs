@@ -1,16 +1,19 @@
-use std::fs;
+use std::fs::{self, File};
+use std::io::{self, Write};
+use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use cheetah_codec::{CodecId, FrameFlags, MediaKind, MonoTime};
+use cheetah_codec::{CodecId, FrameFlags, MediaKind, MonoTime, TrackId, TrackInfo, TrackReadiness};
 use cheetah_media_api::command::{
     DeleteSnapshotRequest, SnapshotQuery, SnapshotRequest, SubscribeRequest,
 };
 use cheetah_media_api::error::{MediaError, MediaErrorCode, Result};
 use cheetah_media_api::event::{EventHeader, MediaEvent, SnapshotCompleted};
 use cheetah_media_api::ids::MediaSchema;
+use cheetah_media_api::image::{ImageArtifact, ImageEncodeRequest, ImageFormat};
 use cheetah_media_api::media_file_store::FileStoreEntry;
 use cheetah_media_api::model::{Page, SnapshotHandle, SnapshotInfo, SnapshotState};
 use cheetah_media_api::port::{MediaRequestContext, SnapshotApi};
@@ -22,9 +25,10 @@ use tracing::debug;
 use crate::config::SnapshotModuleConfig;
 use crate::registry::SnapshotRegistry;
 
-/// Production snapshot provider backed by the engine data plane and file store.
+/// Production snapshot provider backed by the engine data plane, image encoder,
+/// and file store.
 ///
-/// 由引擎数据面和文件存储支撑的生产快照 provider。
+/// 由引擎数据面、图片编码器和文件存储支撑的生产快照 provider。
 #[derive(Clone)]
 pub struct SnapshotMediaProvider {
     ctx: EngineContext,
@@ -43,6 +47,61 @@ impl SnapshotMediaProvider {
             registry,
             config,
         }
+    }
+
+    /// Encode a captured video frame into the requested image format using the
+    /// registered `ImageEncodeApi`. Falls back to MJPEG passthrough only when no
+    /// backend is available and the source frame is already a valid JPEG.
+    ///
+    /// 使用已注册的 `ImageEncodeApi` 将捕获的视频帧编码为请求的图片格式。
+    /// 仅当没有后端且源帧本身是有效 JPEG 时才透传 MJPEG。
+    async fn encode_frame(
+        &self,
+        ctx: &MediaRequestContext,
+        frame: &Arc<cheetah_codec::AVFrame>,
+        request: &SnapshotRequest,
+    ) -> Result<ImageArtifact> {
+        let format = request
+            .format
+            .parse::<ImageFormat>()
+            .map_err(MediaError::invalid_argument)?;
+        let quality = request.quality.unwrap_or(90);
+
+        if let Some(encoder) = self.ctx.media_services.image_encode() {
+            let track_info = track_info_for_frame(frame);
+            return encoder
+                .encode(
+                    ctx,
+                    ImageEncodeRequest {
+                        frame: Arc::clone(frame),
+                        track_info,
+                        format,
+                        quality,
+                        max_width: request.max_width,
+                        max_height: request.max_height,
+                    },
+                )
+                .await;
+        }
+
+        // No image encode backend is registered. Allow MJPEG -> JPEG passthrough
+        // after validating the payload is a complete JPEG.
+        if frame.codec == CodecId::MJPEG && format == ImageFormat::Jpeg {
+            let decoded = image::load_from_memory(&frame.payload)
+                .map_err(|e| MediaError::invalid_argument(format!("invalid mjpeg payload: {e}")))?;
+            let (width, height) = (decoded.width(), decoded.height());
+            return Ok(ImageArtifact {
+                payload: frame.payload.clone(),
+                content_type: "image/jpeg".to_string(),
+                format,
+                width,
+                height,
+            });
+        }
+
+        Err(MediaError::unavailable(
+            "image encode backend is not available",
+        ))
     }
 }
 
@@ -95,13 +154,8 @@ impl SnapshotApi for SnapshotMediaProvider {
         let capture = capture_keyframe(&self.ctx.runtime_api, &mut *subscriber, timeout_ms).await;
         let _ = subscriber.close().await;
 
-        let (payload, codec, content_type, format) = match capture {
-            CaptureResult::Ok {
-                payload,
-                codec,
-                content_type,
-                format,
-            } => (payload, codec, content_type, format),
+        let frame = match capture {
+            CaptureResult::Ok { frame } => frame,
             CaptureResult::Timeout => {
                 return Err(MediaError::new(
                     MediaErrorCode::Timeout,
@@ -114,9 +168,25 @@ impl SnapshotApi for SnapshotMediaProvider {
             CaptureResult::Error(e) => return Err(e),
         };
 
-        let ext = if format == "jpg" { "jpg" } else { "bin" };
+        let artifact = self.encode_frame(ctx, &frame, &request).await?;
+        let format_ext = match artifact.format {
+            ImageFormat::Jpeg => "jpg",
+            ImageFormat::Png => "png",
+        };
+
+        // Re-validate the produced image with an independent decode. This catches
+        // corrupt encoder output before it is persisted.
+        let decoded = image::load_from_memory(&artifact.payload).map_err(|e| {
+            MediaError::storage_failed(format!("encoded image failed validation: {e}"))
+        })?;
+        if decoded.width() != artifact.width || decoded.height() != artifact.height {
+            return Err(MediaError::storage_failed(
+                "encoded image dimensions do not match artifact metadata".to_string(),
+            ));
+        }
+
         let snapshot_id = self.registry.generate_id();
-        let file_name = format!("{}.{}", snapshot_id.0, ext);
+        let file_name = format!("{}.{}", snapshot_id.0, format_ext);
         let dir = PathBuf::from(&self.config.root_path)
             .join(&request.media_key.app.0)
             .join(&request.media_key.stream.0);
@@ -127,22 +197,19 @@ impl SnapshotApi for SnapshotMediaProvider {
         }
         let abs_path = dir.join(&file_name);
         let tmp_path = dir.join(format!("{file_name}.tmp"));
-        if let Err(e) = fs::write(&tmp_path, &payload) {
-            return Err(MediaError::storage_failed(format!("write snapshot: {e}")));
-        }
-        if let Err(e) = fs::rename(&tmp_path, &abs_path) {
+
+        if let Err(e) = write_atomic(&tmp_path, &abs_path, &artifact.payload) {
             let _ = fs::remove_file(&tmp_path);
-            return Err(MediaError::storage_failed(format!(
-                "finalize snapshot: {e}"
-            )));
+            let _ = fs::remove_file(&abs_path);
+            return Err(e);
         }
 
-        let size_bytes = payload.len() as u64;
+        let size_bytes = artifact.payload.len() as u64;
         let created_at = now_ms();
         let entry = FileStoreEntry {
             media_key: request.media_key.clone(),
             file_type: "snapshot".to_string(),
-            content_type,
+            content_type: artifact.content_type.clone(),
             size_bytes,
             created_at_ms: created_at,
             expires_at_ms: None,
@@ -150,11 +217,14 @@ impl SnapshotApi for SnapshotMediaProvider {
             owner_principal: ctx.principal.as_ref().map(|p| p.identity.clone()),
             allowed_principals: Vec::new(),
         };
-        let file_handle = self
-            .ctx
-            .media_file_store
-            .register_file(ctx, entry)
-            .map_err(|e| MediaError::internal(format!("register snapshot file: {e}")))?;
+
+        let file_handle = match self.ctx.media_file_store.register_file(ctx, entry) {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = fs::remove_file(&abs_path);
+                return Err(MediaError::internal(format!("register snapshot file: {e}")));
+            }
+        };
 
         let info = SnapshotInfo {
             snapshot_id: snapshot_id.clone(),
@@ -163,7 +233,9 @@ impl SnapshotApi for SnapshotMediaProvider {
             path_handle: file_handle.clone(),
             created_at,
             size_bytes: Some(size_bytes),
-            format,
+            format: format_ext.to_string(),
+            width: artifact.width,
+            height: artifact.height,
         };
         self.registry.insert(info);
 
@@ -182,11 +254,17 @@ impl SnapshotApi for SnapshotMediaProvider {
                 snapshot_id: snapshot_id.clone(),
                 path_handle: file_handle.clone(),
                 url: None,
+                format: format_ext.to_string(),
+                width: artifact.width,
+                height: artifact.height,
+                size_bytes,
             }));
 
         debug!(
             snapshot_id = %snapshot_id.0,
-            codec = ?codec,
+            format = format_ext,
+            width = artifact.width,
+            height = artifact.height,
             bytes = size_bytes,
             "snapshot captured"
         );
@@ -228,12 +306,7 @@ impl SnapshotApi for SnapshotMediaProvider {
 }
 
 enum CaptureResult {
-    Ok {
-        payload: bytes::Bytes,
-        codec: CodecId,
-        content_type: String,
-        format: String,
-    },
+    Ok { frame: Arc<cheetah_codec::AVFrame> },
     Timeout,
     NoVideo,
     Error(MediaError),
@@ -265,16 +338,8 @@ async fn capture_keyframe(
                         if !is_key {
                             continue;
                         }
-                        let (content_type, format) = if frame.codec == CodecId::MJPEG {
-                            ("image/jpeg".to_string(), "jpg".to_string())
-                        } else {
-                            ("application/octet-stream".to_string(), "bin".to_string())
-                        };
                         return CaptureResult::Ok {
-                            payload: frame.payload.clone(),
-                            codec: frame.codec,
-                            content_type,
-                            format,
+                            frame: Arc::clone(&frame),
                         };
                     }
                     Ok(None) => {
@@ -298,6 +363,37 @@ async fn capture_keyframe(
             }
         }
     }
+}
+
+fn track_info_for_frame(frame: &cheetah_codec::AVFrame) -> TrackInfo {
+    let mut info = TrackInfo::new(TrackId(0), frame.media_kind, frame.codec, 90_000);
+    info.readiness = TrackReadiness::Ready;
+    info
+}
+
+/// Write `data` to `tmp_path`, flush and fsync, then atomically rename to
+/// `final_path`. On error the temporary file is removed.
+///
+/// 将 `data` 写入 `tmp_path`，flush 并 fsync，然后原子重命名为 `final_path`。
+/// 出错时删除临时文件。
+fn write_atomic(tmp_path: &Path, final_path: &Path, data: &[u8]) -> Result<()> {
+    let mut file = File::create(tmp_path)
+        .map_err(|e| MediaError::storage_failed(format!("create snapshot temp file: {e}")))?;
+    if let Err(e) = (|| -> io::Result<()> {
+        file.write_all(data)?;
+        file.flush()?;
+        file.sync_all()?;
+        Ok(())
+    })() {
+        let _ = fs::remove_file(tmp_path);
+        return Err(MediaError::storage_failed(format!("write snapshot: {e}")));
+    }
+    drop(file);
+
+    fs::rename(tmp_path, final_path).map_err(|e| {
+        let _ = fs::remove_file(tmp_path);
+        MediaError::storage_failed(format!("finalize snapshot: {e}"))
+    })
 }
 
 fn now_ms() -> i64 {

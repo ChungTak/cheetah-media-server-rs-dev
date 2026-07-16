@@ -1,3 +1,4 @@
+use std::io::Cursor;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -24,6 +25,15 @@ use tokio::time::timeout;
 
 fn golden_key() -> MediaKey {
     MediaKey::with_default_vhost("live", "snap-test", None).expect("valid key")
+}
+
+fn make_jpeg_payload(width: u32, height: u32) -> Bytes {
+    let img = image::RgbaImage::new(width, height);
+    let mut buf = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut buf, image::ImageFormat::Jpeg)
+        .expect("encode jpeg");
+    Bytes::from(buf.into_inner())
 }
 
 struct FixtureModule {
@@ -60,7 +70,7 @@ impl Module for FixtureModule {
         self.state = ModuleState::Initialized;
         let engine_ctx = init_ctx.engine.clone();
         self.ctx = Some(engine_ctx.clone());
-        let mut track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::VP8, 90_000);
+        let mut track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::MJPEG, 90_000);
         track.width = Some(320);
         track.height = Some(240);
         track.readiness = TrackReadiness::Ready;
@@ -100,7 +110,7 @@ impl Module for FixtureModule {
         let cancel = cancel.child_token();
         let _ = runtime.spawn(Box::pin(async move {
             let mut pts = 0i64;
-            let payload = Bytes::from_static(b"vp8-keyframe");
+            let payload = make_jpeg_payload(8, 6);
             let timebase = Timebase::new(1, 30);
             loop {
                 if cancel.is_cancelled() {
@@ -112,8 +122,8 @@ impl Module for FixtureModule {
                 let mut frame = AVFrame::new(
                     TrackId(1),
                     MediaKind::Video,
-                    CodecId::VP8,
-                    FrameFormat::CanonicalVp8Frame,
+                    CodecId::MJPEG,
+                    FrameFormat::MjpegFrame,
                     pts,
                     pts,
                     timebase,
@@ -214,6 +224,8 @@ async fn snapshot_module_registers_capability_and_captures_keyframe() {
                 timeout_ms: 2000,
                 format: "jpg".to_string(),
                 quality: None,
+                max_width: None,
+                max_height: None,
                 storage_policy: Default::default(),
                 capture_policy: Default::default(),
             },

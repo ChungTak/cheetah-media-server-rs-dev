@@ -245,6 +245,10 @@ pub struct SnapshotRequest {
     #[serde(default)]
     pub quality: Option<u8>,
     #[serde(default)]
+    pub max_width: Option<u32>,
+    #[serde(default)]
+    pub max_height: Option<u32>,
+    #[serde(default)]
     pub storage_policy: StoragePolicy,
     #[serde(default)]
     pub capture_policy: HashMap<String, String>,

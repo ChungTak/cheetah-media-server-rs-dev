@@ -136,6 +136,14 @@ pub struct SnapshotCompleted {
     pub snapshot_id: SnapshotId,
     pub path_handle: FileHandle,
     pub url: Option<String>,
+    #[serde(default)]
+    pub format: String,
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
+    #[serde(default)]
+    pub size_bytes: u64,
 }
 
 /// RTP session timed out.

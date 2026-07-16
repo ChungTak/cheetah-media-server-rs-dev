@@ -1,14 +1,15 @@
 //! Production test support for external signal integration contracts.
 //!
 //! Provides a real `Engine` builder with `RtpModule`, `RecordModule`, `ProxyModule`,
-//! `SnapshotModule`, and a fixture module that publishes a VP8 stream.
+//! `SnapshotModule`, and a fixture module that publishes an MJPEG stream.
 //!
 //! 外部信令集成生产测试支持。
 //!
 //! 提供真实的 Engine 构建器，包含 RtpModule、RecordModule、ProxyModule、
-//! SnapshotModule 以及一个发布 VP8 视频流的 fixture module。
+//! SnapshotModule 以及一个发布 MJPEG 视频流的 fixture module。
 
 use std::fs;
+use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -47,6 +48,15 @@ pub fn golden_key() -> MediaKey {
 }
 
 /// Default golden stream key used by low-level subscriber tests.
+pub fn make_jpeg_payload(width: u32, height: u32) -> Bytes {
+    let img = image::RgbaImage::new(width, height);
+    let mut buf = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut buf, image::ImageFormat::Jpeg)
+        .expect("encode jpeg");
+    Bytes::from(buf.into_inner())
+}
+
 pub fn golden_stream_key() -> StreamKey {
     let (namespace, path) = StreamKeyBridge::to_namespace_path(&golden_key());
     StreamKey::new(namespace, path)
@@ -194,8 +204,8 @@ impl Module for ProductionFixtureModule {
         let engine_ctx = init_ctx.engine.clone();
         self.ctx = Some(engine_ctx.clone());
 
-        // Open a VP8 publisher on the golden stream for subscribe/snapshot tests.
-        let mut track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::VP8, 90_000);
+        // Open an MJPEG publisher on the golden stream for subscribe/snapshot tests.
+        let mut track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::MJPEG, 90_000);
         track.width = Some(640);
         track.height = Some(480);
         track.readiness = TrackReadiness::Ready;
@@ -235,7 +245,7 @@ impl Module for ProductionFixtureModule {
         let cancel = cancel.child_token();
         let _ = runtime_api.spawn(Box::pin(async move {
             let mut pts = 0i64;
-            let payload = Bytes::from_static(b"vp8-key");
+            let payload = make_jpeg_payload(8, 6);
             let timebase = Timebase::new(1, 30);
             loop {
                 if cancel.is_cancelled() {
@@ -251,8 +261,8 @@ impl Module for ProductionFixtureModule {
                 let mut frame = AVFrame::new(
                     TrackId(1),
                     MediaKind::Video,
-                    CodecId::VP8,
-                    FrameFormat::CanonicalVp8Frame,
+                    CodecId::MJPEG,
+                    FrameFormat::MjpegFrame,
                     pts,
                     pts,
                     timebase,
