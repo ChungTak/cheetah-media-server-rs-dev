@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use cheetah_media_api::error::MediaErrorCode;
 use cheetah_media_api::error::Result;
 use cheetah_media_api::{Decision, MediaEvent, WebhookApi};
 use parking_lot::RwLock;
@@ -176,8 +177,11 @@ impl WebhookApi for WebhookDecisionClient {
                 }
                 any_matched = true;
                 let decision = self.ask_one(profile, &dispatch, &event_id).await;
-                if let Decision::Deny(ref reason) = decision {
-                    return Ok(Decision::Deny(format!("{}: {}", profile.name, reason)));
+                if let Decision::Deny { reason, .. } = decision {
+                    return Ok(Decision::Deny {
+                        code: MediaErrorCode::PermissionDenied,
+                        reason: format!("{}: {}", profile.name, reason),
+                    });
                 }
             }
             if !any_matched {
@@ -200,7 +204,10 @@ fn event_id(event: &MediaEvent) -> Result<String> {
 fn policy_decision(policy: FailurePolicy, reason: &str) -> Decision {
     match policy {
         FailurePolicy::Allow => Decision::Allow,
-        FailurePolicy::Deny => Decision::Deny(reason.to_string()),
+        FailurePolicy::Deny => Decision::Deny {
+            code: MediaErrorCode::PermissionDenied,
+            reason: reason.to_string(),
+        },
     }
 }
 
@@ -218,14 +225,20 @@ fn parse_decision_response(
 ) -> std::result::Result<Decision, Box<dyn std::error::Error + Send + Sync>> {
     let resp: DecisionResponse = serde_json::from_str(body)?;
     if resp.code != 0 {
-        return Ok(Decision::Deny(if resp.msg.is_empty() {
-            format!("code {}", resp.code)
-        } else {
-            resp.msg
-        }));
+        return Ok(Decision::Deny {
+            code: MediaErrorCode::PermissionDenied,
+            reason: if resp.msg.is_empty() {
+                format!("code {}", resp.code)
+            } else {
+                resp.msg
+            },
+        });
     }
     if resp.close {
-        return Ok(Decision::Deny(resp.msg));
+        return Ok(Decision::Deny {
+            code: MediaErrorCode::PermissionDenied,
+            reason: resp.msg,
+        });
     }
     Ok(Decision::Allow)
 }
@@ -339,7 +352,7 @@ mod tests {
         );
 
         let decision = client.request_decision(play_event()).await.unwrap();
-        assert!(matches!(decision, Decision::Deny(_)));
+        assert!(matches!(decision, Decision::Deny { .. }));
     }
 
     #[tokio::test]
