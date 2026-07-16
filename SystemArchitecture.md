@@ -314,6 +314,38 @@ WebRTC boundary clarification:
   - The tokio driver task, UDP/ICE transport, and `WebRtcDriverHandle`/`WebRtcDriverCommand` command channel.
 - `cheetah-webrtc-module` holds engine wiring plus WebRTC business/signaling logic: WHIP/WHEP + OME + P2P route handling, SDP munging/compat, SSRF/URL policy, `OmeWsMessage`/`P2pMessage` encode/decode, publish leases, and session bookkeeping. It consumes the driver's neutral `WsConnection`/`WsConnector`/`WsServerListener` handles and injects `RuntimeApi` for timers/tasks. The module's production code carries **no direct `tokio` dependency** (tokio is a dev-dependency for tests only); `dev-scripts/check_runtime_boundaries.sh` enforces this at the manifest level.
 
+## 3.10 FFmpeg API Reference Mapping
+
+Current FFmpeg crates:
+
+- `crates/sdk/cheetah-sdk` (`cheetah-sdk`): public `FfmpegApi` trait and typed `FfmpegJobSpec` / `FfmpegResourceLimits`.
+- `crates/system/cheetah-engine` (`cheetah-engine`): `LocalFfmpegService`, the concrete process executor.
+- `crates/system/cheetah-proxy-module` (`cheetah-proxy-module`): proxy orchestration that submits FFmpeg jobs through `FfmpegApi`.
+
+`FfmpegApi` lifecycle:
+
+- `submit(job_id, FfmpegJobSpec) -> FfmpegJobHandle`
+- `get(job_id) -> FfmpegJobStatus`
+- `list() -> Vec<FfmpegJobStatus>`
+- `wait(job_id) -> FfmpegJobStatus`
+- `cancel(job_id)`
+- `remove(job_id)`
+
+`FfmpegJobSpec` is typed and controlled:
+
+- `profile_id` selects a configured `FfmpegProfile` (callers cannot pass an executable path).
+- `input` / `output` are typed as `FfmpegInput::Url` or `FfmpegOutput::{Url, Engine}`.
+- `input_options` / `output_options` are passed as individual tokens (no shell).
+- `resource_limits` carries `max_runtime_ms` (timeout) and `max_stderr_lines`; concurrency is enforced by the executor's service-level semaphore.
+
+`LocalFfmpegService` executor constraints:
+
+- Spawns the configured executable directly; no shell, arguments passed verbatim.
+- Maintains a bounded stderr ring buffer for diagnostic summaries.
+- Enforces `max_runtime_ms` after the process starts; kills on timeout.
+- Limits concurrent jobs via a `tokio::sync::Semaphore` sized at service construction.
+- Cancel terminates the process; `wait` reaps exit status; failed spawn never reaches `Running`.
+
 ## 4. Media Model and Unification
 
 All protocol ingest into engine should converge to:
