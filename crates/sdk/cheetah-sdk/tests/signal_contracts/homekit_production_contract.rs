@@ -39,7 +39,7 @@ async fn homekit_can_subscribe_and_snapshot() {
         .expect("recv timeout")
         .expect("recv result")
         .expect("first frame");
-    assert_eq!(frame.codec, CodecId::VP8);
+    assert_eq!(frame.codec, CodecId::MJPEG);
     assert!(!frame.payload.is_empty());
 
     facade
@@ -55,6 +55,8 @@ async fn homekit_can_subscribe_and_snapshot() {
                 timeout_ms: 5000,
                 format: "jpg".to_string(),
                 quality: None,
+                max_width: None,
+                max_height: None,
                 storage_policy: Default::default(),
                 capture_policy: Default::default(),
             },

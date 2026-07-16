@@ -52,6 +52,8 @@ async fn onvif_can_query_media_take_snapshot_and_record() {
                 timeout_ms: 5000,
                 format: "jpg".to_string(),
                 quality: None,
+                max_width: None,
+                max_height: None,
                 storage_policy: Default::default(),
                 capture_policy: Default::default(),
             },

@@ -261,6 +261,10 @@ pub struct SnapshotInfo {
     pub created_at: i64,
     pub size_bytes: Option<u64>,
     pub format: String,
+    #[serde(default)]
+    pub width: u32,
+    #[serde(default)]
+    pub height: u32,
 }
 
 /// Proxy state.

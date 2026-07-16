@@ -54,6 +54,8 @@ async fn matter_flow(services: MediaServices, facade: Arc<dyn MediaFacade>) {
                 timeout_ms: 10_000,
                 format: "jpg".to_string(),
                 quality: None,
+                max_width: None,
+                max_height: None,
                 storage_policy: StoragePolicy::default(),
                 capture_policy: HashMap::new(),
             },

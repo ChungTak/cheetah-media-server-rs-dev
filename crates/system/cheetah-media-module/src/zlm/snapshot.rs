@@ -28,6 +28,8 @@ impl ZlmMediaHttpService {
             timeout_ms,
             format,
             quality,
+            max_width: None,
+            max_height: None,
             storage_policy: Default::default(),
             capture_policy: Default::default(),
         };

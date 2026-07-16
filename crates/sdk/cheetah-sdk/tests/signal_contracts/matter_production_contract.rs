@@ -63,6 +63,8 @@ async fn matter_can_query_capabilities_and_subscribe() {
                 timeout_ms: 5000,
                 format: "jpg".to_string(),
                 quality: None,
+                max_width: None,
+                max_height: None,
                 storage_policy: Default::default(),
                 capture_policy: Default::default(),
             },

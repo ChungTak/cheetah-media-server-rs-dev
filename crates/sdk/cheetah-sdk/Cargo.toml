@@ -29,4 +29,5 @@ cheetah-record-module = { path = "../../system/cheetah-record-module" }
 cheetah-snapshot-module = { path = "../../system/cheetah-snapshot-module" }
 cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
 cheetah-rtp-module = { path = "../../protocols/rtp/module" }
+image = { workspace = true }
 tokio = { workspace = true }

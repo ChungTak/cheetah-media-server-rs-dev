@@ -2,6 +2,7 @@
 //!
 //! 图片编码 API 与请求/结果类型。
 
+use std::str::FromStr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -30,6 +31,18 @@ impl ImageFormat {
         match self {
             ImageFormat::Jpeg => "image/jpeg",
             ImageFormat::Png => "image/png",
+        }
+    }
+}
+
+impl FromStr for ImageFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "jpg" | "jpeg" => Ok(ImageFormat::Jpeg),
+            "png" => Ok(ImageFormat::Png),
+            _ => Err(format!("unknown image format: {s}")),
         }
     }
 }
