@@ -125,7 +125,9 @@ jobs:
       - name: S4 - Signal, admission and engine tests
         run: |
           set -euo pipefail
-          cargo test -p cheetah-engine
+          # Run cheetah-engine tests single-threaded to avoid tokio::process
+          # SIGCHLD/waitpid races between concurrent tokio runtimes.
+          cargo test -p cheetah-engine -- --test-threads=1
           cargo test -p cheetah-sdk --test signal_contracts
 
   s5-release-build:
