@@ -374,20 +374,24 @@ impl SnapshotApi for SnapshotMediaProvider {
                 };
 
             // Ensure the file is located under the configured managed root and is
-            // not a symlink or otherwise escaped path.
-            let path = Path::new(&entry.absolute_path);
-            if let Err(reason) = is_safe_snapshot_path(path, &root) {
-                failed += 1;
-                failures.push(DeleteFailure {
-                    handle: handle.clone(),
-                    reason,
-                });
-                continue;
-            }
+            // not a symlink or otherwise escaped path. Use the returned canonical
+            // path for removal to avoid re-resolving the original path.
+            let canonical_path = match is_safe_snapshot_path(Path::new(&entry.absolute_path), &root)
+            {
+                Ok(p) => p,
+                Err(reason) => {
+                    failed += 1;
+                    failures.push(DeleteFailure {
+                        handle: handle.clone(),
+                        reason,
+                    });
+                    continue;
+                }
+            };
 
             // Remove the physical file first. If it cannot be removed we keep the
             // file-store and snapshot registry entries so the deletion can be retried.
-            if let Err(e) = fs::remove_file(path) {
+            if let Err(e) = fs::remove_file(&canonical_path) {
                 if e.kind() != io::ErrorKind::NotFound {
                     failed += 1;
                     failures.push(DeleteFailure {
@@ -521,45 +525,141 @@ fn now_ms() -> i64 {
 }
 
 /// Verify that `path` is an absolute path located under `root`, contains no
-/// parent-directory traversal, and has no symlink components.
+/// parent-directory traversal, and has no symlink components below `root`.
 ///
-/// 验证 `path` 是绝对路径、位于 `root` 下、不含 `..` 且无符号链接组件。
-fn is_safe_snapshot_path(path: &Path, root: &Path) -> std::result::Result<(), String> {
+/// Returns the canonical path that should be used for removal so the caller
+/// does not re-resolve the original path after this check.
+///
+/// 验证 `path` 是绝对路径、位于 `root` 下、不含 `..` 且 root 以下无符号链接。
+/// 返回规范路径供删除调用使用，避免检查后再重新解析原路径。
+fn is_safe_snapshot_path(path: &Path, root: &Path) -> std::result::Result<PathBuf, String> {
     if !path.is_absolute() {
         return Err("path is not absolute".to_string());
     }
 
     let canonical_root =
         std::fs::canonicalize(root).map_err(|e| format!("failed to canonicalize root: {e}"))?;
+    let root_component_count = canonical_root.components().count();
+    let total_components = path.components().count();
 
     let mut current = PathBuf::new();
+    let mut idx = 0usize;
     for component in path.components() {
         match component {
-            std::path::Component::Prefix(p) => current.push(p.as_os_str()),
-            std::path::Component::RootDir => current.push(component.as_os_str()),
+            std::path::Component::Prefix(p) => {
+                current.push(p.as_os_str());
+                idx += 1;
+            }
+            std::path::Component::RootDir => {
+                current.push(component.as_os_str());
+                idx += 1;
+            }
             std::path::Component::CurDir => continue,
             std::path::Component::ParentDir => {
                 return Err("path contains parent directory reference".to_string());
             }
-            std::path::Component::Normal(name) => current.push(name),
-        }
-
-        if current.as_os_str().is_empty() || current == canonical_root {
-            continue;
-        }
-
-        match std::fs::symlink_metadata(&current) {
-            Ok(meta) if meta.file_type().is_symlink() => {
-                return Err("path contains symlink".to_string());
+            std::path::Component::Normal(name) => {
+                current.push(name);
+                idx += 1;
             }
-            Ok(_) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            Err(e) => return Err(format!("failed to stat path component: {e}")),
+        }
+
+        // Only check components strictly below the configured root. Root itself
+        // may legitimately contain symlinks (e.g. /tmp on macOS).
+        if idx > root_component_count {
+            match std::fs::symlink_metadata(&current) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    return Err("path contains symlink".to_string());
+                }
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound && idx == total_components => {}
+                Err(e) => return Err(format!("failed to stat path component: {e}")),
+            }
         }
     }
 
-    if !current.starts_with(&canonical_root) {
+    // Canonicalize the final path and compare with the canonical root. If the
+    // final file no longer exists, canonicalize its parent and append the name
+    // so missing files can still be cleaned up.
+    let canonical_path = std::fs::canonicalize(&current).or_else(|e| {
+        if e.kind() == io::ErrorKind::NotFound {
+            let file_name = current
+                .file_name()
+                .ok_or_else(|| "invalid path: no file name".to_string())?;
+            let parent = current
+                .parent()
+                .ok_or_else(|| "invalid path: no parent directory".to_string())?;
+            let canonical_parent = std::fs::canonicalize(parent)
+                .map_err(|e| format!("failed to canonicalize parent: {e}"))?;
+            Ok::<_, String>(canonical_parent.join(file_name))
+        } else {
+            Err(format!("failed to canonicalize path: {e}"))
+        }
+    })?;
+
+    if !canonical_path.starts_with(&canonical_root) {
         return Err("path escapes managed root".to_string());
     }
-    Ok(())
+
+    Ok(canonical_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_name(prefix: &str) -> String {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("{prefix}-{now}-{}", std::process::id())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn safe_snapshot_path_accepts_symlinked_root() {
+        use std::os::unix::fs::symlink;
+
+        let real = std::env::temp_dir().join(unique_name("cheetah_real_root"));
+        let link = std::env::temp_dir().join(unique_name("cheetah_link_root"));
+        let _ = std::fs::remove_dir_all(&real);
+        let _ = std::fs::remove_file(&link);
+        std::fs::create_dir_all(&real).unwrap();
+        symlink(&real, &link).unwrap();
+
+        let file = link.join("live").join("stream").join("snap.jpg");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, b"x").unwrap();
+
+        let canonical = is_safe_snapshot_path(&file, &link).unwrap();
+        assert!(canonical.starts_with(&real));
+
+        let _ = std::fs::remove_file(&file);
+        let _ = std::fs::remove_dir_all(&link);
+        let _ = std::fs::remove_dir_all(&real);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn safe_snapshot_path_rejects_symlink_below_root() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(unique_name("cheetah_safe_root"));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let outside = std::env::temp_dir().join(unique_name("cheetah_outside"));
+        std::fs::write(&outside, b"x").unwrap();
+
+        let link = root.join("escape.jpg");
+        symlink(&outside, &link).unwrap();
+
+        let err = is_safe_snapshot_path(&link, &root).unwrap_err();
+        assert!(err.contains("symlink"), "{err}");
+
+        let _ = std::fs::remove_file(&link);
+        let _ = std::fs::remove_file(&outside);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
