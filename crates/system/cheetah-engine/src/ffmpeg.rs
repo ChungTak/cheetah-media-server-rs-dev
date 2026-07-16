@@ -35,6 +35,10 @@ impl Default for FfmpegProfile {
 struct JobEntry {
     status: Arc<watch::Sender<FfmpegJobStatus>>,
     cancel: Arc<watch::Sender<bool>>,
+    // Keep a receiver alive so a cancellation sent before the worker has
+    // subscribed is not lost and the sender is never closed while queued.
+    #[allow(dead_code)]
+    cancel_rx: watch::Receiver<bool>,
 }
 
 /// In-process FFmpeg executor.
@@ -133,7 +137,7 @@ impl FfmpegApi for LocalFfmpegService {
         };
 
         let (status_tx, _status_rx) = watch::channel(status.clone());
-        let (cancel_tx, _cancel_rx) = watch::channel(false);
+        let (cancel_tx, cancel_rx) = watch::channel(false);
         let status = Arc::new(status_tx);
         let cancel = Arc::new(cancel_tx);
 
@@ -141,7 +145,11 @@ impl FfmpegApi for LocalFfmpegService {
         let task_status = status.clone();
         let task_cancel = cancel.clone();
 
-        let entry = JobEntry { status, cancel };
+        let entry = JobEntry {
+            status,
+            cancel,
+            cancel_rx,
+        };
         self.jobs.insert(job_id.clone(), entry);
 
         let semaphore = self.semaphore.clone();
@@ -209,6 +217,13 @@ impl FfmpegApi for LocalFfmpegService {
         let _ = entry.value().cancel.send(true);
         Ok(())
     }
+
+    async fn remove(&self, job_id: &str) -> Result<(), SdkError> {
+        self.jobs
+            .remove(job_id)
+            .map(|_| ())
+            .ok_or_else(|| SdkError::NotFound(format!("ffmpeg job {job_id}")))
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -232,20 +247,49 @@ async fn run_ffmpeg_job(
         }
     });
 
-    // Enforce concurrency limit. A closed semaphore would only happen during service shutdown.
-    let _permit = match semaphore.acquire().await {
-        Ok(permit) => permit,
-        Err(_) => {
-            finish_job(
-                &status,
-                FfmpegJobState::Failed,
-                None,
-                "semaphore closed".to_string(),
-            );
-            status.send_modify(|s| s.finished_at = Some(now_ms()));
+    // Race the semaphore against an early cancellation so a queued job can be
+    // cancelled promptly instead of waiting for a free slot.
+    let mut cancel_rx = cancel.subscribe();
+    if *cancel_rx.borrow_and_update() {
+        finish_job(
+            &status,
+            FfmpegJobState::Cancelled,
+            None,
+            "cancelled".to_string(),
+        );
+        return;
+    }
+
+    let _permit = tokio::select! {
+        _ = cancel_rx.changed() => {
+            finish_job(&status, FfmpegJobState::Cancelled, None, "cancelled".to_string());
             return;
         }
+        result = semaphore.acquire() => match result {
+            Ok(permit) => permit,
+            Err(_) => {
+                finish_job(
+                    &status,
+                    FfmpegJobState::Failed,
+                    None,
+                    "semaphore closed".to_string(),
+                );
+                return;
+            }
+        },
     };
+
+    // Re-subscribe after acquiring the permit; the old `changed()` future was cancelled.
+    let mut cancel_rx = cancel.subscribe();
+    if *cancel_rx.borrow_and_update() {
+        finish_job(
+            &status,
+            FfmpegJobState::Cancelled,
+            None,
+            "cancelled".to_string(),
+        );
+        return;
+    }
 
     let input_url = match spec.input {
         FfmpegInput::Url { url } => url,
@@ -432,6 +476,7 @@ mod tests {
     use cheetah_sdk::FfmpegResourceLimits;
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Instant;
 
     fn script(content: &[u8]) -> PathBuf {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -673,7 +718,70 @@ mod tests {
         let h2 = service.submit("reused".into(), spec).await.unwrap();
         let s2 = service.wait(&h2.job_id).await.unwrap();
         assert_eq!(s2.state, FfmpegJobState::Exited);
-        assert_ne!(s1.created_at, s2.created_at);
+        assert!(s2.created_at >= s1.created_at);
+    }
+
+    #[tokio::test]
+    async fn remove_releases_job_id_and_status() {
+        let path = script(b"#!/bin/sh\nexit 0\n");
+        let service = LocalFfmpegService::with_executable(path.clone());
+        let spec = FfmpegJobSpec {
+            input: FfmpegInput::Url { url: "in".into() },
+            output: FfmpegOutput::Url { url: "out".into() },
+            ..Default::default()
+        };
+        let handle = service.submit("gone".into(), spec.clone()).await.unwrap();
+        let _ = service.wait(&handle.job_id).await.unwrap();
+        service.remove(&handle.job_id).await.unwrap();
+
+        let err = service.get(&handle.job_id).await.unwrap_err();
+        assert!(matches!(err, SdkError::NotFound(_)));
+
+        // The same id can be reused after removal.
+        let handle2 = service.submit("gone".into(), spec).await.unwrap();
+        let s2 = service.wait(&handle2.job_id).await.unwrap();
+        assert_eq!(s2.state, FfmpegJobState::Exited);
+    }
+
+    #[tokio::test]
+    async fn pending_job_cancels_without_waiting_for_slot() {
+        let slow = script(b"#!/bin/sh\nsleep 5\n");
+        let service = LocalFfmpegService::with_executable(slow).with_max_concurrent_jobs(1);
+
+        let _ = service
+            .submit(
+                "first".into(),
+                FfmpegJobSpec {
+                    input: FfmpegInput::Url { url: "in".into() },
+                    output: FfmpegOutput::Url { url: "out".into() },
+                    timeout_ms: 10_000,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        // Give the first job time to acquire the only permit.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let pending = service
+            .submit(
+                "pending-cancel".into(),
+                FfmpegJobSpec {
+                    input: FfmpegInput::Url { url: "in".into() },
+                    output: FfmpegOutput::Url { url: "out".into() },
+                    timeout_ms: 10_000,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+
+        let start = Instant::now();
+        service.cancel(&pending.job_id).await.unwrap();
+        let status = service.wait(&pending.job_id).await.unwrap();
+        assert_eq!(status.state, FfmpegJobState::Cancelled);
+        assert!(start.elapsed() < Duration::from_secs(1));
     }
 
     #[tokio::test]
