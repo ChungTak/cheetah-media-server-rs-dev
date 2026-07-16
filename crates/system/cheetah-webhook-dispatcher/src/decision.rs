@@ -229,7 +229,11 @@ impl MediaAdmissionApi for WebhookDecisionClient {
                 ));
                 self.request_decision(event).await
             }
-            _ => {
+            AdmissionAction::CreatePullProxy
+            | AdmissionAction::CreatePushProxy
+            | AdmissionAction::CreateFfmpegProxy
+            | AdmissionAction::OpenRtpReceiver
+            | AdmissionAction::OpenRtpSender => {
                 debug!(
                     action = ?request.action,
                     "admission action not yet supported by webhook translator; default allow"
