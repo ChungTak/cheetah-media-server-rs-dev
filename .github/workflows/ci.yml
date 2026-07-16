@@ -154,7 +154,7 @@ jobs:
           ./target/release/cheetah-server --help
 
       - name: S5 - Upload release artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: cheetah-server-release
           path: target/release/cheetah-server
