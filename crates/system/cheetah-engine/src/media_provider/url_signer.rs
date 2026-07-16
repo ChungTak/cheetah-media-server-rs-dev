@@ -46,7 +46,7 @@ impl UrlSigner {
     pub fn from_config(media: &Value) -> Option<Self> {
         if let Some(list) = media.get("url_sign_keys").and_then(|v| v.as_array()) {
             let mut keys = Vec::with_capacity(list.len());
-            for (idx, item) in list.iter().enumerate() {
+            for item in list.iter() {
                 let (Some(id), Some(secret)) = (
                     item.get("id").and_then(|v| v.as_str()),
                     item.get("secret").and_then(|v| v.as_str()),
@@ -58,8 +58,9 @@ impl UrlSigner {
                 if id.is_empty() || secret.is_empty() {
                     continue;
                 }
-                // Only non-signing keys honor `valid_until`.
-                let valid_until = if idx == 0 {
+                // Only non-signing keys honor `valid_until`. The first
+                // successfully-parsed key is the active signing key.
+                let valid_until = if keys.is_empty() {
                     None
                 } else {
                     item.get("valid_until").and_then(|v| v.as_i64())
@@ -364,5 +365,41 @@ mod tests {
         }))
         .unwrap();
         assert!(!signer_later.verify(&old_url));
+    }
+
+    #[test]
+    fn signing_key_is_first_valid_key_after_skipping_malformed_entries() {
+        let signer = UrlSigner::from_config(&json!({
+            "url_sign_keys": [
+                {"id": "", "secret": "ignored"},
+                {"id": "real", "secret": "real-secret"},
+                {
+                    "id": "old",
+                    "secret": "old-secret",
+                    "valid_until": 1
+                }
+            ]
+        }))
+        .unwrap();
+
+        // The first valid key must be the signing key and never expire.
+        let (signed_url, _exp) = signer.sign("rtmp://cdn.example/live/cam1", 60).unwrap();
+        assert!(signed_url.contains("kid=real"));
+
+        // Even if `valid_until` is in the past, a fresh signer built from the
+        // same config must still be able to verify URLs signed by the active key.
+        let later = UrlSigner::from_config(&json!({
+            "url_sign_keys": [
+                {"id": "", "secret": "ignored"},
+                {"id": "real", "secret": "real-secret"},
+                {
+                    "id": "old",
+                    "secret": "old-secret",
+                    "valid_until": 1
+                }
+            ]
+        }))
+        .unwrap();
+        assert!(later.verify(&signed_url));
     }
 }
