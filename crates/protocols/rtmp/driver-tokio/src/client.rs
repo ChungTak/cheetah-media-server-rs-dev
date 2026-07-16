@@ -38,6 +38,9 @@ pub struct RtmpClientDriverConfig {
     pub read_buffer_size: usize,
     pub ack_window_size: u32,
     pub chunk_size: u32,
+    /// Optional pre-resolved peer address. When `Some`, the RTMP client connects
+    /// to this address instead of resolving the URL hostname, which prevents DNS rebinding.
+    pub peer: Option<SocketAddr>,
 }
 
 impl Default for RtmpClientDriverConfig {
@@ -49,6 +52,7 @@ impl Default for RtmpClientDriverConfig {
             read_buffer_size: 64 * 1024,
             ack_window_size: 5_000_000,
             chunk_size: 4096,
+            peer: None,
         }
     }
 }
@@ -300,7 +304,11 @@ pub fn start_client(
     config: RtmpClientDriverConfig,
     cancel: CancellationToken,
 ) -> io::Result<RtmpClientHandle> {
-    let addr = resolve_url_addr(&url)?;
+    let addr = if let Some(peer) = config.peer {
+        peer
+    } else {
+        resolve_url_addr(&url)?
+    };
     let stream = runtime_api.connect_tcp(addr)?;
     let peer = stream.peer_addr().ok();
 
@@ -789,7 +797,11 @@ pub fn start_tls_client(
     tls_config: crate::tls::RtmpTlsClientConfig,
     cancel: CancellationToken,
 ) -> io::Result<RtmpClientHandle> {
-    let addr = resolve_url_addr(&url)?;
+    let addr = if let Some(peer) = config.peer {
+        peer
+    } else {
+        resolve_url_addr(&url)?
+    };
 
     let (event_tx, event_rx) = mpsc::channel(config.event_queue_capacity.max(64));
     let (cmd_tx, mut cmd_rx) = mpsc::channel(config.command_queue_capacity.max(64));

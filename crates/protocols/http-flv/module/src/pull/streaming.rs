@@ -9,6 +9,7 @@
 //! 解复用时逐步发出 `AVFrame`。
 
 use std::fmt;
+use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -79,6 +80,9 @@ pub struct HttpFlvSubscriberOptions {
     ///
     /// 可选取消令牌。订阅者会从中创建子令牌。
     pub cancel: Option<CancellationToken>,
+    /// Pre-resolved peer address. When `Some`, the subscriber connects to this
+    /// address instead of re-resolving the URL hostname, which prevents DNS rebinding.
+    pub peer: Option<SocketAddr>,
 }
 
 impl Default for HttpFlvSubscriberOptions {
@@ -88,6 +92,7 @@ impl Default for HttpFlvSubscriberOptions {
             reconnect: None,
             buffer_size: 64,
             cancel: None,
+            peer: None,
         }
     }
 }
@@ -172,9 +177,12 @@ static NEXT_SUBSCRIBER_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 pub async fn open_http_flv_subscriber(
     runtime_api: Arc<dyn RuntimeApi>,
     source_url: &str,
-    options: HttpFlvSubscriberOptions,
+    mut options: HttpFlvSubscriberOptions,
 ) -> Result<HttpFlvSubscriber, HttpFlvPullError> {
-    let parsed = ParsedPullUrl::parse(source_url)?;
+    let mut parsed = ParsedPullUrl::parse(source_url)?;
+    if options.peer.is_some() {
+        parsed.peer = options.peer.take();
+    }
     let (tx, rx) = mpsc::channel(options.buffer_size);
     let parent_cancel = options.cancel.clone().unwrap_or_default();
     let cancel = parent_cancel.child_token();

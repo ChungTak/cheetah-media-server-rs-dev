@@ -55,17 +55,20 @@ pub async fn open_rtsp_pull_to_stream(
     target_stream_key: cheetah_sdk::StreamKey,
     options: ConnectorPullOptions,
 ) -> Result<PullHandle, ConnectorError> {
-    parse_rtsp_source_peer(url).map_err(|reason| ConnectorError::InvalidUrl {
-        protocol: Protocol::Rtsp,
-        url: url.to_string(),
-        reason,
-    })?;
+    if options.peer.is_none() {
+        parse_rtsp_source_peer(url).map_err(|reason| ConnectorError::InvalidUrl {
+            protocol: Protocol::Rtsp,
+            url: url.to_string(),
+            reason,
+        })?;
+    }
 
     let mut rtsp_options = match &options.protocol {
         ProtocolPullExtras::Rtsp(opts) => opts.clone(),
         _ => RtspPullOptions::default(),
     };
     rtsp_options.subscriber_options = options.subscriber;
+    rtsp_options.peer = options.peer;
 
     let cancel = options.cancel.clone().unwrap_or_default().child_token();
 

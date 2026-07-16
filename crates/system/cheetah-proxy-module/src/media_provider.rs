@@ -57,7 +57,7 @@ impl ProxyApi for ProxyMediaProvider {
         ctx: &MediaRequestContext,
         request: PullProxyRequest,
     ) -> Result<ProxyInfo> {
-        let resolved_source_url = resolve_and_validate_url(
+        let resolved_source = resolve_and_validate_url(
             &request.source_url,
             &self.ssrf_allowlist,
             &self.ctx.runtime_api,
@@ -101,7 +101,8 @@ impl ProxyApi for ProxyMediaProvider {
             proxy_id.clone(),
             self.config.clone(),
             ProxySessionSpec::Pull {
-                source_url: resolved_source_url,
+                source_url: resolved_source.url,
+                source_peer: resolved_source.peer,
                 destination: info.destination.clone(),
             },
         )
@@ -155,7 +156,7 @@ impl ProxyApi for ProxyMediaProvider {
         ctx: &MediaRequestContext,
         request: PushProxyRequest,
     ) -> Result<ProxyInfo> {
-        let resolved_destination_url = resolve_and_validate_url(
+        let resolved_destination = resolve_and_validate_url(
             &request.destination_url,
             &self.ssrf_allowlist,
             &self.ctx.runtime_api,
@@ -202,7 +203,8 @@ impl ProxyApi for ProxyMediaProvider {
             self.config.clone(),
             ProxySessionSpec::Push {
                 source_media_key: info.destination.clone(),
-                destination_url: resolved_destination_url,
+                destination_url: resolved_destination.url,
+                destination_peer: resolved_destination.peer,
                 protocol: request.protocol.clone(),
             },
         )
@@ -222,7 +224,7 @@ impl ProxyApi for ProxyMediaProvider {
         ctx: &MediaRequestContext,
         request: FfmpegProxyRequest,
     ) -> Result<ProxyInfo> {
-        let resolved_source_url = resolve_and_validate_url(
+        let resolved_source = resolve_and_validate_url(
             &request.source_url,
             &self.ssrf_allowlist,
             &self.ctx.runtime_api,
@@ -269,7 +271,8 @@ impl ProxyApi for ProxyMediaProvider {
             proxy_id.clone(),
             self.config.clone(),
             ProxySessionSpec::Ffmpeg {
-                source_url: resolved_source_url,
+                source_url: resolved_source.url,
+                source_peer: resolved_source.peer,
                 destination: request.destination,
                 input_options: request.input_options,
                 output_options: request.output_options,

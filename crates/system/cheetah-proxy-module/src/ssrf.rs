@@ -7,13 +7,25 @@
 //! 代理源/目标 URL 的 SSRF 保护辅助函数。
 //! 默认拒绝回环、链路本地、私有、组播和未指定地址，可通过 CIDR 白名单显式放行。
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
 use cheetah_media_api::error::{MediaError, Result};
 use cheetah_runtime_api::RuntimeApi;
 use tracing::{info, warn};
 use url::{Host, Url};
+
+/// A validated proxy target: the original URL plus the first allowed resolved
+/// peer address. The URL is kept unchanged so protocol drivers can still derive
+/// TLS SNI and HTTP `Host` from the original hostname.
+///
+/// 校验后的代理目标：保留原始 URL 与首个合规解析地址。URL 保持原样，以便协议驱动
+/// 仍可从原始主机名派生 TLS SNI 和 HTTP `Host`。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ValidatedTarget {
+    pub url: String,
+    pub peer: SocketAddr,
+}
 
 /// An IPv4 or IPv6 network with a prefix length.
 ///
@@ -159,20 +171,24 @@ pub fn validate_url(url: &str, allowlist: &[IpNetwork]) -> Result<()> {
     Ok(())
 }
 
-/// Resolve the URL hostname, validate all A/AAAA records, and return a URL
-/// whose host has been rewritten to the first allowed resolved IP address.
+/// Resolve the URL hostname, validate all A/AAAA records, and return the
+/// original URL together with the first allowed resolved peer address.
 ///
-/// This prevents DNS rebinding attacks: the validated IP is used for the
-/// connection and is not re-resolved by the protocol driver on reconnect.
-/// Any redirect target should be passed through the same validation.
+/// The original URL is preserved so protocol drivers can still derive TLS SNI
+/// and HTTP `Host` from the requested hostname, while `peer` pins the actual
+/// TCP connection to a validated IP. This prevents DNS rebinding and means
+/// reconnects reuse the same validated address. Any redirect target should be
+/// passed through the same validation.
 ///
-/// 解析 URL 主机名并校验所有 A/AAAA 记录，返回已将主机替换为首个合规 IP 的 URL。  
-/// 通过使用已校验的 IP 地址，避免 DNS 重绑定；重定向目标应再次经过同样校验。  
+/// 解析 URL 主机名并校验所有 A/AAAA 记录，返回原始 URL 与首个合规解析地址。  
+/// 保留原始 URL，使协议驱动仍可从请求主机名派生 TLS SNI 和 HTTP `Host`；  
+/// `peer` 则将实际 TCP 连接固定到已校验的 IP，防止 DNS 重绑定。重定向目标
+/// 应再次经过同样校验。
 pub async fn resolve_and_validate_url(
     url: &str,
     allowlist: &[IpNetwork],
     runtime_api: &Arc<dyn RuntimeApi>,
-) -> Result<String> {
+) -> Result<ValidatedTarget> {
     let parsed =
         Url::parse(url).map_err(|e| MediaError::invalid_argument(format!("invalid URL: {e}")))?;
 
@@ -182,33 +198,36 @@ pub async fn resolve_and_validate_url(
         .host()
         .ok_or_else(|| MediaError::invalid_argument("URL missing host".to_string()))?;
 
+    let port = parsed
+        .port()
+        .or_else(|| default_port_for_scheme(parsed.scheme()))
+        .ok_or_else(|| {
+            MediaError::invalid_argument(format!(
+                "URL missing port and no default for scheme {}",
+                parsed.scheme()
+            ))
+        })?;
+
     let resolved_ip = match host {
         Host::Domain(domain) => {
             if let Ok(addr) = domain.parse::<IpAddr>() {
                 check_ip_addr(addr, allowlist)?;
-                return Ok(url.to_string());
+                addr
+            } else {
+                resolve_domain(domain, allowlist, runtime_api).await?
             }
-            resolve_domain(domain, allowlist, runtime_api).await?
         }
         Host::Ipv4(ip) => {
             check_ip_addr(IpAddr::from(ip), allowlist)?;
-            return Ok(url.to_string());
+            IpAddr::from(ip)
         }
         Host::Ipv6(ip) => {
             check_ip_addr(IpAddr::from(ip), allowlist)?;
-            return Ok(url.to_string());
+            IpAddr::from(ip)
         }
     };
 
-    let mut rewritten = parsed.clone();
-    let host_str = if resolved_ip.is_ipv6() {
-        format!("[{resolved_ip}]")
-    } else {
-        resolved_ip.to_string()
-    };
-    rewritten
-        .set_host(Some(&host_str))
-        .map_err(|e| MediaError::invalid_argument(format!("failed to rewrite URL host: {e}")))?;
+    let peer = SocketAddr::new(resolved_ip, port);
 
     info!(
         scheme = %parsed.scheme(),
@@ -217,7 +236,20 @@ pub async fn resolve_and_validate_url(
         "proxy URL resolved and validated"
     );
 
-    Ok(rewritten.to_string())
+    Ok(ValidatedTarget {
+        url: url.to_string(),
+        peer,
+    })
+}
+
+fn default_port_for_scheme(scheme: &str) -> Option<u16> {
+    match scheme {
+        "http" | "ws" => Some(80),
+        "https" | "wss" => Some(443),
+        "rtmp" | "rtmps" => Some(1935),
+        "rtsp" | "rtsps" => Some(554),
+        _ => None,
+    }
 }
 
 fn validate_scheme(parsed: &Url) -> Result<()> {
@@ -256,14 +288,15 @@ async fn resolve_domain(
     }
 
     for addr in &addrs {
-        if is_internal_ip(addr) && !allowlist.iter().any(|net| net.contains(addr)) {
+        let addr = normalize_ip(*addr);
+        if is_internal_ip(&addr) && !allowlist.iter().any(|net| net.contains(&addr)) {
             return Err(MediaError::invalid_argument(format!(
                 "forbidden proxy target address: {addr}"
             )));
         }
     }
 
-    Ok(addrs[0])
+    Ok(normalize_ip(addrs[0]))
 }
 
 fn normalize_ip(addr: IpAddr) -> IpAddr {
@@ -373,12 +406,18 @@ mod tests {
             parse_cidr("127.0.0.0/8").unwrap(),
             parse_cidr("::1/128").unwrap(),
         ];
-        let resolved = resolve_and_validate_url("http://localhost/x", &allowlist, &runtime)
+        let target = resolve_and_validate_url("http://localhost/x", &allowlist, &runtime)
             .await
             .expect("localhost should resolve to loopback with loopback allowlist");
         assert!(
-            resolved.contains("127.") || resolved.contains("[::1]"),
-            "resolved URL should contain a loopback IP: {resolved}"
+            target.url.contains("localhost"),
+            "original URL should be preserved: {}",
+            target.url
+        );
+        assert!(
+            target.peer.ip().is_loopback(),
+            "resolved peer should be a loopback address: {}",
+            target.peer
         );
     }
 
@@ -391,5 +430,16 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn ip_literal_preserved_as_url_and_peer() {
+        let runtime = tokio_runtime();
+        let allowlist = [parse_cidr("127.0.0.0/8").unwrap()];
+        let target = resolve_and_validate_url("rtmp://127.0.0.1:1935/live", &allowlist, &runtime)
+            .await
+            .expect("IP literal should validate");
+        assert_eq!(target.url, "rtmp://127.0.0.1:1935/live");
+        assert_eq!(target.peer, SocketAddr::from(([127, 0, 0, 1], 1935)));
     }
 }
