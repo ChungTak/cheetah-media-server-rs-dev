@@ -486,7 +486,7 @@ fn is_trusted_proxy(addr: &SocketAddr, networks: &[cidr::IpNet]) -> bool {
     };
     networks
         .iter()
-        .any(|net| net.contains(&ip) || mapped_v4.map_or(false, |v4| net.contains(&v4)))
+        .any(|net| net.contains(&ip) || mapped_v4.is_some_and(|v4| net.contains(&v4)))
 }
 
 /// Remove the `x-mtls-identity` header unless the request comes from a trusted
