@@ -552,15 +552,14 @@ The `x-mtls-identity` header is accepted by `ConfigControlAuth` only when `media
 
 Signed playback URLs are produced by `cheetah-engine/src/media_provider/url_signer.rs`. Keys are configured under `media.url_sign_keys` as objects with `id` and `secret`. The first key signs new URLs; all keys in the list verify existing URLs.
 
-When `media.url_sign_previous_key_ttl_secs` is set, verification keys after the first expire after that many seconds from the time the signer is loaded. This limits how long an old key remains valid after rotation without breaking in-flight URLs.
+Previous (non-signing) keys may include an absolute `valid_until` Unix timestamp in seconds. After that time the key is no longer accepted for verification, giving rotated-out keys a bounded grace window without keeping them valid indefinitely.
 
 ```json
 {
   "media": {
-    "url_sign_previous_key_ttl_secs": 86400,
     "url_sign_keys": [
       {"id": "2026-07", "secret": "current-secret"},
-      {"id": "2026-06", "secret": "previous-secret"}
+      {"id": "2026-06", "secret": "previous-secret", "valid_until": 1751308800}
     ]
   }
 }

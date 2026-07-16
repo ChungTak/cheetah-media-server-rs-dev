@@ -28,9 +28,10 @@ struct SignKey {
 /// all configured keys are accepted for verification so old URLs remain valid
 /// during rotation.
 ///
-/// When `media.url_sign_previous_key_ttl_secs` is set, verification keys after
-/// the first expire after that many seconds. This lets old URLs work during a
-/// rotation window without keeping superseded keys valid indefinitely.
+/// Previous (non-signing) keys may include an optional `valid_until` field with
+/// an absolute Unix timestamp in seconds. After that time the key is no longer
+/// accepted for verification, giving old URLs a bounded grace window without
+/// keeping a rotated key valid indefinitely.
 ///
 /// Fallback: `media.url_sign_secret` creates a single key with id `"0"`.
 ///
@@ -43,12 +44,7 @@ pub struct UrlSigner {
 impl UrlSigner {
     /// Builds a signer from the `media` config section.
     pub fn from_config(media: &Value) -> Option<Self> {
-        let previous_key_ttl = media
-            .get("url_sign_previous_key_ttl_secs")
-            .and_then(|v| v.as_u64());
-
         if let Some(list) = media.get("url_sign_keys").and_then(|v| v.as_array()) {
-            let now = now_secs();
             let mut keys = Vec::with_capacity(list.len());
             for (idx, item) in list.iter().enumerate() {
                 let (Some(id), Some(secret)) = (
@@ -62,10 +58,11 @@ impl UrlSigner {
                 if id.is_empty() || secret.is_empty() {
                     continue;
                 }
+                // Only non-signing keys honor `valid_until`.
                 let valid_until = if idx == 0 {
                     None
                 } else {
-                    previous_key_ttl.map(|ttl| now + ttl as i64)
+                    item.get("valid_until").and_then(|v| v.as_i64())
                 };
                 keys.push(SignKey {
                     id,
@@ -324,32 +321,48 @@ mod tests {
     }
 
     #[test]
-    fn previous_key_verifies_within_ttl_and_expires_after() {
+    fn previous_key_respects_valid_until_across_signer_reconstruction() {
+        let start = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
         let old_signer = UrlSigner::from_config(&json!({
-            "url_sign_keys": [
-                {"id": "old", "secret": "old-secret"}
-            ]
+            "url_sign_keys": [{"id": "old", "secret": "old-secret"}]
         }))
         .unwrap();
         let (old_url, _exp) = old_signer
             .sign("rtmp://cdn.example:1935/live/cam1", 60)
             .unwrap();
 
-        // A signer loaded with the new key plus the old key accepts the old
-        // URL when the previous-key TTL has not expired.
+        // A signer with the new key plus an old key whose `valid_until` is one
+        // second in the future accepts the old URL now.
         let signer = UrlSigner::from_config(&json!({
-            "url_sign_previous_key_ttl_secs": 2,
             "url_sign_keys": [
                 {"id": "new", "secret": "new-secret"},
-                {"id": "old", "secret": "old-secret"}
+                {
+                    "id": "old",
+                    "secret": "old-secret",
+                    "valid_until": start + 1
+                }
             ]
         }))
         .unwrap();
         assert!(signer.verify(&old_url));
 
-        // After the TTL, the old key is rejected even though the URL itself
-        // has not expired.
-        std::thread::sleep(std::time::Duration::from_secs(3));
-        assert!(!signer.verify(&old_url));
+        // `valid_until` is an absolute timestamp, so a fresh signer built from
+        // the same config still rejects the old key after the deadline.
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let signer_later = UrlSigner::from_config(&json!({
+            "url_sign_keys": [
+                {"id": "new", "secret": "new-secret"},
+                {
+                    "id": "old",
+                    "secret": "old-secret",
+                    "valid_until": start + 1
+                }
+            ]
+        }))
+        .unwrap();
+        assert!(!signer_later.verify(&old_url));
     }
 }
