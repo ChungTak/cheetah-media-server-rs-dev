@@ -118,3 +118,64 @@
 本目录由 `crates/system/cheetah-media-module/src/zlm/routes.rs`、
 `dev-docs/902_api_delivery_plan/09_zlm_full_compatibility_catalog.md`、
 及 `crates/system/cheetah-media-module/tests/*.rs` 中的测试引用自动生成。
+
+## Golden 参考（ZLM-03）
+
+### 1. 公共别名表
+
+| 内部字段 | 兼容别名 | 说明 |
+| --- | --- | --- |
+| `stream` | `stream_id` | stream id 与 stream 互转，只保留 `MediaKey.stream` |
+| `vhost` | `domain` | 缺省 vhost 取部署默认值，空字符串不视为任意 vhost |
+| `schema` | `protocol` | 输出 URL schema 过滤 |
+| `timeout_ms` | `timeout`, `timeout_sec` | 毫秒优先；秒别名乘以 1000 |
+| `quality` | `scale` | 图片质量 0-100 |
+| `max_width` | `width` | 快照最大宽度 |
+| `max_height` | `height` | 快照最大高度 |
+| `file_path` | `fileId` | 文件句柄/安全路径句柄 |
+| `dst_url` | `dst_ip` + `dst_port` | RTP 发送目标 |
+| `tcp_mode` | `tcp`, `enable_tcp`, `is_udp` | `0`/UDP, `1`/passive, `2`/active |
+| `codec_hint` | `codec`, `payload_mode` | 编码提示 |
+
+### 2. 布尔/数值别名
+
+- 布尔：`true`/`false`、`1`/`0`、`yes`/`no`、`on`/`off`、非零数字均解析为 true。
+- 输出保持 ZLM profile 的固定格式，不混合格式。
+
+### 3. 错误码映射
+
+| `MediaErrorCode` | ZLM `code` | 含义 |
+| --- | --- | --- |
+| `InvalidArgument` | `-300` | 参数缺失/格式错误/别名冲突 |
+| `Unauthenticated` | `-100` | 未认证/无 scope |
+| `PermissionDenied` | `-100` | 有认证但权限不足 |
+| `NotFound` | `-500` | 资源/会话/流不存在 |
+| `Unavailable` | `-400` | 能力未注册/ provider 未启动 |
+| `StorageFailed` | `-200` | 存储操作失败 |
+| `Unsupported` | `-501` | 能力被能力门控明确拒绝（非媒体能力） |
+| `Conflict` | `-300` | 同幂等键冲突或资源重复 |
+| `Internal` | `-400` | 内部错误/未分类 |
+
+### 4. 响应信封
+
+- 成功（data 型）：`{"code":0,"data":{...}}`
+- 成功（action 型）：`{"code":0,"result":true}` 或 `{ "result": true, "taskId": "..." }`
+- 成功（状态型）：`{"code":0,"online":true}` / `{"code":0,"status":true}`
+- 错误：`{"code":<code>,"msg":"..."}`
+
+### 5. 关键端点字段示例
+
+- `getMediaList` 成功：`{"code":0,"data":[{"schema":"rtmp",...}]}`
+- `openRtpServer` 成功：`{"code":0,"data":{"port":10000,"ssrc":123456,"session_id":"..."}}`
+- `startRecord` 成功：`{"code":0,"data":{"result":true,"taskId":"..."}}`
+- `getSnap` 成功：HTTP 200 + `image/jpeg` 二进制，首字节 `FF D8 FF`。
+- `getSnap` 非 JPEG 失败：`{"code":-400,"msg":"snapshot is not a decodable JPEG"}`。
+- `loadMP4File` 成功：`{"code":0,"data":{"sessionId":"...","duration_ms":0}}`。
+- 任意 capability-gated 路由：`{"code":-501,"msg":"unsupported capability: ..."}`。
+
+### 6. 负向 golden
+
+- 缺 `vhost`/`app`/`stream` 返回 `-300`。
+- 不存在 session/stream 的查询返回 `code=0` 且空数组/ `online=false`（按 ZLM 惯例）。
+- 不存在 session/stream 的修改返回 `-500`。
+- 越权访问返回 `-100`。
