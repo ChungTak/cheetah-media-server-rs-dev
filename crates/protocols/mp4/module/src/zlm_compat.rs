@@ -98,7 +98,7 @@ impl ZlmVodCompat {
             None => MediaKey::with_default_vhost(&req.app, &req.stream, None),
         }
         .unwrap_or_else(|_| {
-            MediaKey::with_default_vhost("zlm", &req.stream, None).expect("zlm/anon is valid")
+            MediaKey::with_default_vhost("zlm", "anon", None).expect("zlm/anon is valid")
         });
         let resp = self
             .inner
