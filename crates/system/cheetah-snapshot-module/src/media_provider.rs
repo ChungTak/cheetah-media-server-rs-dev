@@ -539,7 +539,13 @@ fn is_safe_snapshot_path(path: &Path, root: &Path) -> std::result::Result<PathBu
 
     let canonical_root =
         std::fs::canonicalize(root).map_err(|e| format!("failed to canonicalize root: {e}"))?;
-    let root_component_count = canonical_root.components().count();
+    // Use the original root's component count so the symlink-check boundary
+    // aligns with the components of the input path, even when the root itself
+    // contains symlinks (e.g. /tmp on macOS).
+    let root_component_count = root
+        .components()
+        .filter(|c| !matches!(c, std::path::Component::CurDir))
+        .count();
     let total_components = path.components().count();
 
     let mut current = PathBuf::new();
