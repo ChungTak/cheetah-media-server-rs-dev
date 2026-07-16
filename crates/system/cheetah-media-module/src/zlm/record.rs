@@ -267,6 +267,13 @@ impl ZlmMediaHttpService {
             .as_str()
             .or_else(|| params["filePath"].as_str())
             .ok_or_else(|| AdapterError::InvalidRequest("file_path is required".to_string()))?;
+        let safe_path =
+            cheetah_media_api::media_file_store::sanitize_filename(file_path, file_path);
+        if safe_path != file_path {
+            return Err(AdapterError::InvalidRequest(
+                "file_path contains unsafe characters or path traversal".to_string(),
+            ));
+        }
         let start_position_ms = parse_json_f64(&params["seek_ms"])
             .map(|v| v as i64)
             .unwrap_or(0);
@@ -278,7 +285,7 @@ impl ZlmMediaHttpService {
             scale
         };
         let request = OpenPlaybackRequest {
-            file_handle: FileHandle(file_path.to_string()),
+            file_handle: FileHandle(safe_path),
             media_key: key,
             start_position_ms,
             scale: loop_scale,
