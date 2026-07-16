@@ -205,6 +205,39 @@ pub trait SnapshotApi: Send + Sync {
     }
 }
 
+/// Playback operations.
+///
+/// 回放操作。
+#[async_trait]
+pub trait PlaybackApi: Send + Sync {
+    async fn open_playback(
+        &self,
+        ctx: &MediaRequestContext,
+        request: OpenPlaybackRequest,
+    ) -> Result<PlaybackSession>;
+
+    async fn get_playback(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &PlaybackSessionId,
+    ) -> Result<PlaybackSession>;
+
+    async fn list_playbacks(
+        &self,
+        ctx: &MediaRequestContext,
+        query: PlaybackQuery,
+    ) -> Result<Page<PlaybackSession>>;
+
+    async fn control_playback(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &PlaybackSessionId,
+        command: PlaybackControl,
+    ) -> Result<PlaybackSession>;
+
+    async fn stop_playback(&self, ctx: &MediaRequestContext, id: &PlaybackSessionId) -> Result<()>;
+}
+
 /// Proxy operations.
 ///
 /// 代理操作。
@@ -327,7 +360,15 @@ pub trait RtpApi: Send + Sync {
 /// them behind this facade. Unimplemented methods return `Unsupported`.
 #[async_trait]
 pub trait MediaFacade:
-    MediaControlApi + PublishSubscribeApi + RecordApi + SnapshotApi + ProxyApi + RtpApi + Send + Sync
+    MediaControlApi
+    + PublishSubscribeApi
+    + RecordApi
+    + SnapshotApi
+    + PlaybackApi
+    + ProxyApi
+    + RtpApi
+    + Send
+    + Sync
 {
     /// Return the capability set currently supported by the facade.
     ///
