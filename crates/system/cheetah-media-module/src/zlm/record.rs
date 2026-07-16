@@ -3,10 +3,10 @@
 //! ZLMediaKit 兼容的录制端点处理函数。
 
 use cheetah_media_api::command::{
-    DeleteRecordRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    StartRecordRequest, StopRecordRequest,
+    DeleteRecordRequest, OpenPlaybackRequest, RecordFileQuery, RecordPlaybackCommand,
+    RecordTaskQuery, StartRecordRequest, StopRecordRequest,
 };
-use cheetah_media_api::ids::RecordFileId;
+use cheetah_media_api::ids::{FileHandle, RecordFileId};
 use cheetah_media_api::model::{RecordTaskState, StoragePolicy};
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::{HttpRequest, HttpResponse};
@@ -256,12 +256,39 @@ impl ZlmMediaHttpService {
 
     pub(crate) async fn load_mp4_file(
         &self,
-        _ctx: &MediaRequestContext,
-        _req: HttpRequest,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
-        Err(AdapterError::Media(
-            cheetah_media_api::error::MediaError::unsupported_capability("vod"),
-        ))
+        let playback_api = self.playback()?;
+        let params = self.extract_params(&req)?;
+        let media_key = self.parse_media_key(&params)?;
+        let file_handle = FileHandle(parse_zlm_file_id(&params)?);
+        let start_position_ms = parse_zlm_i64(
+            &params,
+            &["seek_ms", "seek", "start_time_ms", "startTimeMs", "start"],
+        )
+        .unwrap_or(0);
+        let speed = parse_zlm_f64(&params, &["speed", "scale", "value"]).unwrap_or(1.0);
+        let scale = clamp_mp4_scale(speed);
+
+        let session = playback_api
+            .open_playback(
+                ctx,
+                OpenPlaybackRequest {
+                    file_handle,
+                    media_key,
+                    start_position_ms,
+                    scale,
+                },
+            )
+            .await?;
+
+        Ok(zlm_response(ZlmResponse::ok(Data::new(
+            serde_json::json!({
+                "sessionId": session.session_id.0,
+                "duration_ms": session.duration_ms,
+            }),
+        ))))
     }
 }
 
@@ -317,5 +344,44 @@ pub(crate) fn parse_zlm_playback_command(
         _ => Err(AdapterError::InvalidRequest(format!(
             "unsupported playback command {command}"
         ))),
+    }
+}
+
+fn parse_json_i64(value: &serde_json::Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_str().and_then(|s| s.trim().parse().ok()))
+}
+
+fn parse_zlm_i64(params: &serde_json::Value, aliases: &[&str]) -> Option<i64> {
+    for alias in aliases {
+        if let Some(v) = parse_json_i64(&params[*alias]) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn parse_zlm_f64(params: &serde_json::Value, aliases: &[&str]) -> Option<f64> {
+    for alias in aliases {
+        if let Some(v) = parse_json_f64(&params[*alias]) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn clamp_mp4_scale(value: f64) -> f64 {
+    if !value.is_finite() {
+        return 1.0;
+    }
+    if value < 0.5f64.sqrt() {
+        0.5
+    } else if value < 2.0f64.sqrt() {
+        1.0
+    } else if value < 8.0f64.sqrt() {
+        2.0
+    } else {
+        4.0
     }
 }

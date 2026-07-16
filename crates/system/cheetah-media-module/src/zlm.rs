@@ -7,7 +7,8 @@ use bytes::Bytes;
 use cheetah_media_api::audit::{AuditApi, AuditEvent, AuditResult};
 use cheetah_media_api::ids::MediaKey;
 use cheetah_media_api::port::{
-    ControlAuthApi, MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, SnapshotApi,
+    ControlAuthApi, MediaControlApi, MediaRequestContext, PlaybackApi, ProxyApi, RecordApi, RtpApi,
+    SnapshotApi,
 };
 use cheetah_media_api::{AuthCredentials, MediaScope, Principal};
 use cheetah_sdk::{
@@ -210,6 +211,12 @@ impl ZlmMediaHttpService {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "proxy not available",
             ))
+        })
+    }
+
+    pub(crate) fn playback(&self) -> Result<Arc<dyn PlaybackApi>, AdapterError> {
+        self.ctx.media_services.playback().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unsupported_capability("vod"))
         })
     }
 
