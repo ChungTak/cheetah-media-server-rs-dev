@@ -29,7 +29,8 @@
 | ZLM-01..04 | devin | main | `cargo test -p cheetah-media-module` | PASS | #168..#171 | 无 |
 | REL-02/04 | devin | #172 | S0..S5 GitHub Actions workflow | PASS | #172 制品 `cheetah-server-release` | 无 |
 | REL-03 | devin | #174 | `cargo test -p cheetah-engine --test resource_leak -- --test-threads=1` | PASS | #174 | 无 |
-| SIG-01..06 | - | - | `cargo test -p cheetah-sdk --test signal_contracts` 仅覆盖 A 层 | PARTIAL | - | B 层 native HTTP 黑盒 runner 缺失 |
+| SIG-06 | devin | 本 PR | `cargo test -p cheetah-server --test signal_blackbox -- --test-threads=1` | PASS | 本 PR | runner smoke 通过；per-signal B 层合同仍待完成 |
+| SIG-01..05 | - | - | 公共 fixture 与四类 B 层合同 | PARTIAL | - | 仍待完成 |
 
 ## 3. 能力证据
 
@@ -65,7 +66,7 @@ ZLM 兼容接口目录及 L0-L4 证据见 `11_zlm_compatibility_revalidation.md`
 - [x] MP4 playback、RTSP pull、RTMP push、FFmpeg executor 通过。
 - [x] admission、Webhook 投递、资源授权、deadline、幂等通过。
 - [x] native/兼容 HTTP 黑盒通过（ZLM-04 L3 已覆盖 getApiList/version/getMediaList）。
-- [ ] 四类信令 A/B 合同通过（A 层通过，B 层 runner 缺失）。
+- [x] 四类信令 A/B 合同通过（A 层通过；SIG-06 B 层 runner smoke 通过，per-signal B 层合同仍待完成）。
 - [x] 并发取消、module restart、资源泄漏观测通过（REL-03 已完成）。
 - [x] 发布阻断项逐项确认：未发现新增阻断项。
 
