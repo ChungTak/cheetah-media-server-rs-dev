@@ -8,7 +8,7 @@ use cheetah_media_api::error::{MediaError, Result};
 use cheetah_media_api::ids::{MediaKey, ProxyId};
 use cheetah_media_api::model::{Page, ProxyInfo, ProxyKind, ProxyState};
 use cheetah_media_api::port::{MediaRequestContext, ProxyApi};
-use cheetah_sdk::EngineContext;
+use cheetah_sdk::{EngineContext, SdkError};
 use tracing::{debug, warn};
 
 use crate::config::ProxyModuleConfig;
@@ -35,17 +35,18 @@ impl ProxyMediaProvider {
         ctx: EngineContext,
         registry: Arc<ProxyRegistry>,
         config: ProxyModuleConfig,
-    ) -> Self {
+    ) -> std::result::Result<Self, SdkError> {
         let ssrf_allowlist = Arc::new(
-            crate::ssrf::parse_allowlist(&config.ssrf_allowlist_cidrs)
-                .expect("config validator ensures allowlist is parseable"),
+            crate::ssrf::parse_allowlist(&config.ssrf_allowlist_cidrs).map_err(|e| {
+                SdkError::InvalidArgument(format!("invalid ssrf_allowlist_cidrs: {e}"))
+            })?,
         );
-        Self {
+        Ok(Self {
             ctx,
             registry,
             config,
             ssrf_allowlist,
-        }
+        })
     }
 }
 

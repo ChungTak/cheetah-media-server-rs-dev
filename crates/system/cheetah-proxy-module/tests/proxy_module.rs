@@ -243,3 +243,23 @@ async fn unsupported_url_scheme_is_rejected() {
     let result = facade.create_pull_proxy(&ctx, req).await;
     assert!(result.is_err(), "ftp scheme should be rejected");
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn malformed_allowlist_fails_engine_start() {
+    let config = Arc::new(ConfigStore::new());
+    config
+        .load_yaml_str("modules:\n  proxy:\n    ssrf_allowlist_cidrs:\n      - not-a-cidr\n")
+        .expect("load proxy config");
+    let runtime = Arc::new(TokioRuntime::new());
+    let engine = EngineBuilder::new(config.clone(), config, runtime)
+        .register_module_factory(Arc::new(ProxyModuleFactory))
+        .build()
+        .expect("engine build");
+
+    let err = engine.start().await.expect_err("engine start should fail");
+    let msg = format!("{err:?}");
+    assert!(
+        msg.contains("invalid ssrf_allowlist_cidrs") || msg.contains("InvalidArgument"),
+        "expected invalid allowlist error, got {msg}"
+    );
+}

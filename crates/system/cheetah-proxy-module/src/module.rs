@@ -105,7 +105,7 @@ impl Module for ProxyModule {
             ctx.engine.clone(),
             self.registry.clone(),
             self.config.clone(),
-        ));
+        )?);
 
         let mut capabilities = cheetah_media_api::MediaCapabilitySet::empty();
         capabilities.add(cheetah_media_api::MediaCapability::Proxy, 1);
