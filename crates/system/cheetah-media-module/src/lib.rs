@@ -3,7 +3,7 @@
 //! This crate exposes two `cheetah_sdk::ModuleFactory` implementations:
 //!
 //! - `NativeMediaModuleFactory` mounts native `/api/v1/media/*`, `/api/v1/sessions/*`,
-//!   `/api/v1/proxies/*`, `/api/v1/rtp/*` and `/api/v1/record/*` routes.
+//!   `/api/v1/proxies/*`, `/api/v1/rtp/*`, `/api/v1/playback/*` and `/api/v1/record/*` routes.
 //! - `ZlmMediaModuleFactory` mounts ZLMediaKit-compatible `/index/api/*` and
 //!   `/index/hook/*` routes.
 //!
@@ -15,7 +15,7 @@
 //! 本 crate 暴露两个 `cheetah_sdk::ModuleFactory` 实现：
 //!
 //! - `NativeMediaModuleFactory` 挂载 native `/api/v1/media/*`、`/api/v1/sessions/*`、
-//!   `/api/v1/proxies/*`、`/api/v1/rtp/*` 与 `/api/v1/record/*` 路由。
+//!   `/api/v1/proxies/*`、`/api/v1/rtp/*`、`/api/v1/playback/*` 与 `/api/v1/record/*` 路由。
 //! - `ZlmMediaModuleFactory` 挂载 ZLMediaKit 兼容的 `/index/api/*` 与 `/index/hook/*` 路由。
 //!
 //! 两个 adapter 都通过 `EngineContext::media_services` 调用同一组 `cheetah_media_api` 端口。
@@ -60,6 +60,8 @@ mod tests {
         assert!(paths.contains("/media/{vhost}/{app}/{stream}"));
         assert!(paths.contains("/record/tasks/{task_id}/stop"));
         assert!(paths.contains("/rtp/sessions/{session_id}/stop"));
+        assert!(paths.contains("/playback/sessions"));
+        assert!(paths.contains("/playback/sessions/{session_id}"));
     }
 
     #[test]

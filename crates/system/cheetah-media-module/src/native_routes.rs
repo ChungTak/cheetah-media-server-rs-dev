@@ -72,6 +72,27 @@ pub fn native_http_routes() -> Vec<HttpRouteDescriptor> {
             method: HttpMethod::Post,
             path: "/record/playback/{file_id}/control".to_string(),
         },
+        // playback
+        HttpRouteDescriptor {
+            method: HttpMethod::Post,
+            path: "/playback/sessions".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/playback/sessions".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/playback/sessions/{session_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Patch,
+            path: "/playback/sessions/{session_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Delete,
+            path: "/playback/sessions/{session_id}".to_string(),
+        },
         // snapshots
         HttpRouteDescriptor {
             method: HttpMethod::Post,
@@ -217,6 +238,17 @@ pub fn native_required_scope(method: HttpMethod, path: &str) -> Option<MediaScop
         {
             Some(MediaScope::RecordManage)
         }
+        (HttpMethod::Post, "/playback/sessions") => Some(MediaScope::MediaConsume),
+        (HttpMethod::Get, "/playback/sessions") => Some(MediaScope::MediaRead),
+        (HttpMethod::Get, _) if path.starts_with("/playback/sessions/") => {
+            Some(MediaScope::MediaRead)
+        }
+        (HttpMethod::Patch, _) if path.starts_with("/playback/sessions/") => {
+            Some(MediaScope::MediaControl)
+        }
+        (HttpMethod::Delete, _) if path.starts_with("/playback/sessions/") => {
+            Some(MediaScope::MediaControl)
+        }
         (HttpMethod::Post, "/snapshots") => Some(MediaScope::MediaControl),
         (HttpMethod::Get, "/snapshots") => Some(MediaScope::MediaRead),
         (HttpMethod::Get, _) if path.starts_with("/snapshots/") && path.ends_with("/download") => {
@@ -347,6 +379,30 @@ mod tests {
     }
 
     #[test]
+    fn playback_routes_require_correct_scopes() {
+        assert_eq!(
+            native_required_scope(HttpMethod::Post, "/playback/sessions"),
+            Some(MediaScope::MediaConsume)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Get, "/playback/sessions"),
+            Some(MediaScope::MediaRead)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Get, "/playback/sessions/uuid"),
+            Some(MediaScope::MediaRead)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Patch, "/playback/sessions/uuid"),
+            Some(MediaScope::MediaControl)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Delete, "/playback/sessions/uuid"),
+            Some(MediaScope::MediaControl)
+        );
+    }
+
+    #[test]
     fn unknown_routes_have_no_required_scope() {
         assert_eq!(native_required_scope(HttpMethod::Get, "/unknown"), None);
     }
@@ -384,7 +440,12 @@ mod tests {
         assert!(paths.contains(&(HttpMethod::Patch, "/rtp/sessions/{session_id}")));
         assert!(paths.contains(&(HttpMethod::Delete, "/rtp/sessions/{session_id}")));
         assert!(paths.contains(&(HttpMethod::Get, "/snapshots/{snapshot_id}/download")));
-        assert_eq!(routes.len(), 40);
+        assert!(paths.contains(&(HttpMethod::Post, "/playback/sessions")));
+        assert!(paths.contains(&(HttpMethod::Get, "/playback/sessions")));
+        assert!(paths.contains(&(HttpMethod::Get, "/playback/sessions/{session_id}")));
+        assert!(paths.contains(&(HttpMethod::Patch, "/playback/sessions/{session_id}")));
+        assert!(paths.contains(&(HttpMethod::Delete, "/playback/sessions/{session_id}")));
+        assert_eq!(routes.len(), 45);
     }
 
     #[test]
