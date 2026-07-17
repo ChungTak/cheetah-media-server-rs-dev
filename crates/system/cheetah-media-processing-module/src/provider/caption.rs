@@ -795,4 +795,20 @@ mod tests {
         };
         assert!(worker.push_cue(&publisher, cue).is_err());
     }
+
+    #[tokio::test]
+    async fn push_cue_accepts_dropped_by_policy() {
+        let worker = CaptionExtractWorker::new(CeaParserConfig::default());
+        let (mut publisher, _frames, _tracks, _closed) = MockPublisher::new();
+        publisher.result = DispatchResult::DroppedByPolicy;
+
+        let cue = WebVttCue {
+            id: None,
+            start_ms: 0,
+            end_ms: 1000,
+            payload: "HI".to_string(),
+            settings: None,
+        };
+        assert!(worker.push_cue(&publisher, cue).is_ok());
+    }
 }
