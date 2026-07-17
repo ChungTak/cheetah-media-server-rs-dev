@@ -1408,12 +1408,48 @@ mod tests {
         }
     }
 
+    fn is_font_path(p: &std::path::Path) -> bool {
+        matches!(
+            p.extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_ascii_lowercase())
+                .as_deref(),
+            Some("ttf") | Some("otf")
+        )
+    }
+
+    fn find_test_font() -> Option<String> {
+        let candidates = ["/usr/share/fonts", "/usr/local/share/fonts"];
+        for root in candidates {
+            let Ok(entries) = std::fs::read_dir(root) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Ok(sub) = std::fs::read_dir(&path) {
+                        for e in sub.flatten() {
+                            let p = e.path();
+                            if is_font_path(&p) {
+                                return Some(p.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                } else if is_font_path(&path) {
+                    return Some(path.to_string_lossy().to_string());
+                }
+            }
+        }
+        None
+    }
+
     #[tokio::test]
     async fn text_overlay_renders_with_font() {
+        let Some(font_path) = find_test_font() else {
+            return;
+        };
         let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
-        let store: Arc<dyn MediaFileStoreApi> = Arc::new(MockFontStore {
-            path: "/usr/share/fonts/truetype/freefont/FreeSerif.ttf".to_string(),
-        });
+        let store: Arc<dyn MediaFileStoreApi> = Arc::new(MockFontStore { path: font_path });
         let provider =
             ImageProcessProvider::new(runtime, Some(store), MediaProcessingModuleConfig::default());
 
