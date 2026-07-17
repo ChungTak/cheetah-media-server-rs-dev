@@ -456,6 +456,7 @@ fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
 #[cfg(all(test, feature = "media-processing-image"))]
 mod tests {
     use super::*;
+    use avcodec::native_free_software_registry_builder;
     use cheetah_media_api::{ImageFormat, ImageInput, ImageProcessRequest, MediaErrorCode};
     use cheetah_runtime_api::RuntimeApi;
     use cheetah_runtime_tokio::TokioRuntime;
@@ -485,6 +486,29 @@ mod tests {
         )
     }
 
+    fn decode_jpeg_output(data: &[u8]) -> (u32, u32) {
+        use avcodec::core::{
+            BufferHandle, BufferSlice, EncodedImage, EncodedImageFormat, ImageDecoder,
+            ImageDecoderConfig, ImageInfo, Poll,
+        };
+
+        let registry = native_free_software_registry_builder().build();
+        let mut decoder: Box<dyn ImageDecoder> = registry
+            .create_image_decoder(
+                &ImageDecoderConfig::new(ImageInfo::Rgb24).with_format(EncodedImageFormat::Jpeg),
+            )
+            .expect("jpeg decoder");
+        let handle = BufferHandle::from_host_bytes(0, data.to_vec());
+        let slice = BufferSlice::new(handle, 0, data.len());
+        let encoded = EncodedImage::new(slice, EncodedImageFormat::Jpeg);
+        decoder.submit(encoded).expect("submit");
+        let image = match decoder.poll_image().expect("poll") {
+            Poll::Ready(img) => img,
+            _ => panic!("decoder did not produce output"),
+        };
+        (image.coded_width, image.coded_height)
+    }
+
     #[tokio::test]
     async fn decodes_and_resizes_jpeg() {
         let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
@@ -511,6 +535,37 @@ mod tests {
         assert_eq!(artifact.width, 2);
         assert_eq!(artifact.height, 2);
         assert!(!artifact.payload.is_empty());
+
+        // Decode the produced JPEG to verify it is a valid image of the
+        // reported size, not just a correctly-sized blob.
+        let (decoded_w, decoded_h) = decode_jpeg_output(&artifact.payload);
+        assert_eq!(decoded_w, artifact.width);
+        assert_eq!(decoded_h, artifact.height);
+    }
+
+    #[tokio::test]
+    async fn repeated_process_runs_are_stable() {
+        let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
+        let provider = ImageProcessProvider::new(runtime, MediaProcessingModuleConfig::default());
+        let request = ImageProcessRequest::new(
+            ImageInput::Encoded {
+                data: make_jpeg_fixture(),
+                format: ImageFormat::Jpeg,
+            },
+            ImageFormat::Jpeg,
+        )
+        .with_operations(vec![ImageOperation::Resize {
+            width: 2,
+            height: 2,
+        }]);
+
+        for i in 0..50 {
+            let artifact = provider
+                .process(&MediaRequestContext::default(), request.clone())
+                .await
+                .expect(&format!("process iteration {i} should succeed"));
+            assert!(!artifact.payload.is_empty());
+        }
     }
 
     #[tokio::test]

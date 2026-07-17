@@ -535,6 +535,13 @@ impl Engine {
     pub fn media_facade(&self) -> Arc<crate::media_provider::EngineMediaFacade> {
         self.media_facade.clone()
     }
+
+    /// Return the media services registry.
+    ///
+    /// 返回媒体服务注册表。
+    pub fn media_services(&self) -> cheetah_sdk::MediaServices {
+        self.media_services.clone()
+    }
 }
 
 #[cfg(test)]
