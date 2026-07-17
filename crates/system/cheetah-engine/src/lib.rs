@@ -2,6 +2,7 @@
 //!
 //! 内存引擎实现：服务注册表、流分发、模块生命周期和任务系统。
 
+mod admitting_stream;
 mod audit;
 mod cluster;
 mod control_auth;

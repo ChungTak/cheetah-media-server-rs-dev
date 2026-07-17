@@ -160,7 +160,6 @@ impl EngineBuilder {
         let ffmpeg: Arc<dyn FfmpegApi> = self
             .ffmpeg_api
             .unwrap_or_else(|| Arc::new(LocalFfmpegService::default()));
-        let core_adapters = Arc::new(LocalCoreAdapters::new(stream_manager.clone()));
 
         if let Some(registry) = &self.config_schema_registry {
             for factory in &self.factories {
@@ -174,15 +173,27 @@ impl EngineBuilder {
             module_manager.register_factory(factory)?;
         }
 
-        let publisher_api: Arc<dyn PublisherApi> = stream_manager.clone();
-        let subscriber_api: Arc<dyn SubscriberApi> = stream_manager.clone();
+        let media_services = MediaServices::unavailable();
+        let admitting_publisher_api: Arc<dyn PublisherApi> =
+            Arc::new(crate::admitting_stream::AdmittingPublisherApi::new(
+                stream_manager.clone(),
+                media_services.clone(),
+            ));
+        let admitting_subscriber_api: Arc<dyn SubscriberApi> =
+            Arc::new(crate::admitting_stream::AdmittingSubscriberApi::new(
+                stream_manager.clone(),
+                media_services.clone(),
+            ));
+        // VOD / core bridge uses admitting so Publish admission cannot be skipped.
+        // Control-plane publish/play still admits in EngineMediaFacade; the data
+        // plane keeps the raw stream manager to avoid double webhook calls.
+        let core_adapters = Arc::new(LocalCoreAdapters::new(admitting_publisher_api.clone()));
         let session_directory_impl = Arc::new(EngineMediaSessionDirectory::new());
         let session_directory: Arc<dyn MediaSessionDirectoryApi> = session_directory_impl.clone();
         let media_data_plane: Arc<dyn MediaDataPlaneApi> = Arc::new(EngineMediaDataPlane::new(
-            publisher_api.clone(),
-            subscriber_api.clone(),
+            stream_manager.clone(),
+            stream_manager.clone(),
         ));
-        let media_services = MediaServices::unavailable();
         media_services.register_output_registry(Arc::new(
             cheetah_sdk::output::InMemoryMediaOutputRegistry::new(),
         )
@@ -246,6 +257,8 @@ impl EngineBuilder {
             media_event_bus,
             control_auth,
             audit_api,
+            admitting_publisher_api,
+            admitting_subscriber_api,
             root_cancel: RwLock::new(CancellationToken::new()),
         })
     }
@@ -286,6 +299,9 @@ pub struct Engine {
     media_event_bus: Arc<crate::media_provider::LocalMediaEventBus>,
     control_auth: Arc<dyn cheetah_media_api::port::ControlAuthApi>,
     audit_api: Arc<dyn cheetah_media_api::audit::AuditApi>,
+    /// Protocol-facing APIs that enforce MediaAdmissionApi before lease/subscribe.
+    admitting_publisher_api: Arc<dyn PublisherApi>,
+    admitting_subscriber_api: Arc<dyn SubscriberApi>,
     root_cancel: RwLock<CancellationToken>,
 }
 
@@ -296,8 +312,8 @@ impl Engine {
     fn context(&self) -> EngineContext {
         EngineContext {
             runtime_api: self.runtime_api.clone(),
-            publisher_api: self.stream_manager.clone(),
-            subscriber_api: self.stream_manager.clone(),
+            publisher_api: self.admitting_publisher_api.clone(),
+            subscriber_api: self.admitting_subscriber_api.clone(),
             core_adapters_api: self.core_adapters.clone(),
             stream_manager_api: self.stream_manager.clone(),
             task_system_api: self.task_system.clone(),
@@ -435,11 +451,11 @@ impl Engine {
     }
 
     pub fn publisher_api(&self) -> Arc<dyn PublisherApi> {
-        self.stream_manager.clone()
+        self.admitting_publisher_api.clone()
     }
 
     pub fn subscriber_api(&self) -> Arc<dyn SubscriberApi> {
-        self.stream_manager.clone()
+        self.admitting_subscriber_api.clone()
     }
 
     pub fn core_adapters_api(&self) -> Arc<dyn CoreAdaptersApi> {

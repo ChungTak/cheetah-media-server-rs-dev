@@ -346,10 +346,21 @@ impl MediaServices {
         &self,
         image_encode: Arc<dyn ImageEncodeApi>,
     ) -> ProviderRegistration {
+        self.register_image_encode_with_capabilities(
+            image_encode,
+            image_encode_default_capabilities(),
+        )
+    }
+
+    /// Register the image encode provider with explicit capabilities.
+    pub fn register_image_encode_with_capabilities(
+        &self,
+        image_encode: Arc<dyn ImageEncodeApi>,
+        capabilities: MediaCapabilitySet,
+    ) -> ProviderRegistration {
         let mut registry = self.inner.write().expect("media services lock");
         registry.generation += 1;
         let generation = registry.generation;
-        let capabilities = image_encode_default_capabilities();
         let provider_id = format!("image_encode:{generation}");
         let descriptors = descriptors_from_set(&capabilities, &provider_id);
         registry.image_encode = Some(ProviderEntry {

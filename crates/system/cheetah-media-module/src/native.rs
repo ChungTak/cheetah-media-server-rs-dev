@@ -6,20 +6,22 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::audit::{AuditApi, AuditEvent, AuditResult};
 use cheetah_media_api::command::{
-    DeleteRecordRequest, DeleteSnapshotRequest, FfmpegProxyRequest, MediaQuery, ProxyQuery,
-    PullProxyRequest, PushProxyRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, SessionQuery,
-    SnapshotQuery, SnapshotRequest, StartRecordRequest, StopRecordRequest, UpdateRtpRequest,
+    DeleteRecordRequest, DeleteSnapshotRequest, FfmpegProxyRequest, MediaQuery,
+    OpenPlaybackRequest, PlaybackControl, PlaybackQuery, ProxyQuery, PullProxyRequest,
+    PushProxyRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery, RtpConnectRequest,
+    RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, SessionQuery, SnapshotQuery,
+    SnapshotRequest, StartRecordRequest, StopRecordRequest, UpdateRtpRequest,
 };
 use cheetah_media_api::ids::{
-    FileHandle, MediaKey, ProxyId, RecordFileId, RecordTaskId, RtpSessionId, SessionId,
+    FileHandle, MediaKey, PlaybackSessionId, ProxyId, RecordFileId, RecordTaskId, RtpSessionId,
+    SessionId,
 };
 use cheetah_media_api::model::{
     AdmissionAction, AdmissionRequest, CloseReason, Decision, RtpTcpMode,
 };
 use cheetah_media_api::port::{
-    ControlAuthApi, MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, SnapshotApi,
-    WebhookAdminApi,
+    ControlAuthApi, MediaControlApi, MediaRequestContext, PlaybackApi, ProxyApi, RecordApi, RtpApi,
+    SnapshotApi, WebhookAdminApi,
 };
 use cheetah_media_api::webhook::{
     CreateWebhookProfileRequest, UpdateWebhookProfileRequest, WebhookProfileId,
@@ -209,6 +211,14 @@ impl NativeMediaHttpService {
         })
     }
 
+    fn playback(&self) -> Result<Arc<dyn PlaybackApi>, AdapterError> {
+        self.ctx.media_services.playback().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "playback not available",
+            ))
+        })
+    }
+
     async fn check_admission(
         &self,
         ctx: &MediaRequestContext,
@@ -336,6 +346,17 @@ impl NativeMediaHttpService {
                 if path.starts_with("/record/playback/") && path.ends_with("/control") =>
             {
                 Some("record.playback_control")
+            }
+            (HttpMethod::Post, "/playback/sessions") => Some("playback.open"),
+            (HttpMethod::Post, path)
+                if path.starts_with("/playback/sessions/") && path.ends_with("/control") =>
+            {
+                Some("playback.control")
+            }
+            (HttpMethod::Post, path)
+                if path.starts_with("/playback/sessions/") && path.ends_with("/stop") =>
+            {
+                Some("playback.stop")
             }
             (HttpMethod::Post, "/snapshots") => Some("snapshot.create"),
             (HttpMethod::Delete, "/snapshots/directories") => Some("snapshot.directory.delete"),
@@ -664,6 +685,67 @@ impl NativeMediaHttpService {
             .control_record_playback(ctx, &RecordFileId(file_id), command)
             .await?;
         Ok(json_response(&serde_json::json!({ "controlled": true })))
+    }
+
+    async fn playback_open(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.playback()?;
+        let request: OpenPlaybackRequest = parse_body(&req)?;
+        let session = api.open_playback(ctx, request).await?;
+        Ok(json_response(&session))
+    }
+
+    async fn playback_list(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.playback()?;
+        let query: PlaybackQuery = parse_query(&req)?;
+        let page = api.list_playbacks(ctx, query).await?;
+        Ok(json_response(&page))
+    }
+
+    async fn playback_get(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.playback()?;
+        let id = record_id_from_path(&req.path, "/playback/sessions/", "")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
+        let session = api.get_playback(ctx, &PlaybackSessionId(id)).await?;
+        Ok(json_response(&session))
+    }
+
+    async fn playback_control(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.playback()?;
+        let id = record_id_from_path(&req.path, "/playback/sessions/", "/control")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
+        let command: PlaybackControl = parse_body(&req)?;
+        let session = api
+            .control_playback(ctx, &PlaybackSessionId(id), command)
+            .await?;
+        Ok(json_response(&session))
+    }
+
+    async fn playback_stop(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let api = self.playback()?;
+        let id = record_id_from_path(&req.path, "/playback/sessions/", "/stop")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
+        api.stop_playback(ctx, &PlaybackSessionId(id)).await?;
+        Ok(json_response(&serde_json::json!({ "stopped": true })))
     }
 
     async fn rtp_receivers(
@@ -1283,6 +1365,21 @@ impl ModuleHttpService for NativeMediaHttpService {
                     if path.starts_with("/record/playback/") && path.ends_with("/control") =>
                 {
                     self.record_playback_control(&ctx, req).await
+                }
+                (HttpMethod::Post, "/playback/sessions") => self.playback_open(&ctx, req).await,
+                (HttpMethod::Get, "/playback/sessions") => self.playback_list(&ctx, req).await,
+                (HttpMethod::Post, path)
+                    if path.starts_with("/playback/sessions/") && path.ends_with("/control") =>
+                {
+                    self.playback_control(&ctx, req).await
+                }
+                (HttpMethod::Post, path)
+                    if path.starts_with("/playback/sessions/") && path.ends_with("/stop") =>
+                {
+                    self.playback_stop(&ctx, req).await
+                }
+                (HttpMethod::Get, path) if path.starts_with("/playback/sessions/") => {
+                    self.playback_get(&ctx, req).await
                 }
                 (HttpMethod::Post, "/snapshots") => self.snapshot_create(&ctx, req).await,
                 (HttpMethod::Get, "/snapshots") => self.snapshot_list(&ctx, req).await,

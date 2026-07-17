@@ -363,6 +363,18 @@ async fn run_pull_http_flv(
         source_adapter: "proxy".to_string(),
         ..MediaRequestContext::default()
     };
+    if let Err(e) = authorize_media(
+        ctx,
+        &media_ctx,
+        cheetah_media_api::model::AdmissionAction::Publish,
+        destination.clone(),
+        "proxy-http-flv",
+        Some(source_url.to_string()),
+    )
+    .await
+    {
+        return RunOnceOutcome::Failed(format!("admission denied: {e}"));
+    }
     let publisher = match ctx
         .media_data_plane
         .open_frame_publisher(
@@ -507,6 +519,18 @@ async fn run_push_rtmp(
         source_adapter: "proxy".to_string(),
         ..MediaRequestContext::default()
     };
+    if let Err(e) = authorize_media(
+        ctx,
+        &media_ctx,
+        cheetah_media_api::model::AdmissionAction::Play,
+        source_media_key.clone(),
+        "rtmp",
+        None,
+    )
+    .await
+    {
+        return RunOnceOutcome::Failed(format!("admission denied: {e}"));
+    }
     let mut subscriber = match ctx
         .media_data_plane
         .open_frame_subscriber(
@@ -958,6 +982,39 @@ fn publish_state(
             state,
             last_error,
         }));
+}
+
+#[cfg(any(feature = "http-flv", feature = "rtmp"))]
+async fn authorize_media(
+    ctx: &EngineContext,
+    media_ctx: &cheetah_media_api::port::MediaRequestContext,
+    action: cheetah_media_api::model::AdmissionAction,
+    resource: MediaKey,
+    protocol: &str,
+    source_address: Option<String>,
+) -> Result<(), String> {
+    let Some(admission) = ctx.media_services.admission() else {
+        return Ok(());
+    };
+    use cheetah_media_api::model::{AdmissionRequest, Decision};
+    let decision = admission
+        .authorize(
+            media_ctx,
+            AdmissionRequest {
+                action,
+                principal: media_ctx.principal.clone(),
+                resource,
+                protocol: protocol.to_string(),
+                source_address,
+                params: Default::default(),
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    match decision {
+        Decision::Allow => Ok(()),
+        Decision::Deny { reason, .. } => Err(reason),
+    }
 }
 
 #[cfg(test)]

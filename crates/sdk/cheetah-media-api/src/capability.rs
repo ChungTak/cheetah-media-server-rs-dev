@@ -109,8 +109,12 @@ impl MediaCapabilityReport {
                     .get(cap)
                     .cloned()
                     .unwrap_or_else(|| default_operations(*cap));
-                MediaCapabilityDescriptor::new(*cap, *version, &provider_id)
-                    .with_operations(operations)
+                let mut desc = MediaCapabilityDescriptor::new(*cap, *version, &provider_id)
+                    .with_operations(operations);
+                if let Some(reason) = set.reasons.get(cap) {
+                    desc = desc.with_reason(reason.clone());
+                }
+                desc
             })
             .collect();
         descriptors.sort_by(|a, b| {
@@ -230,6 +234,13 @@ pub struct MediaCapabilitySet {
     /// 使 provider 只宣告有运行时依赖支持的操作。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub operations: BTreeMap<MediaCapability, Vec<String>>,
+    /// Optional per-capability degraded reasons.
+    ///
+    /// When present, the corresponding descriptor is reported as `Degraded`
+    /// with this reason so clients do not treat partial implementations as
+    /// fully available.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub reasons: BTreeMap<MediaCapability, String>,
     /// Monotonic generation of the capability set. Incremented whenever the set
     /// changes so callers can detect stale snapshots.
     ///
@@ -251,8 +262,15 @@ impl MediaCapabilitySet {
         Self {
             capabilities: Vec::new(),
             operations: BTreeMap::new(),
+            reasons: BTreeMap::new(),
             version: 0,
         }
+    }
+
+    /// Mark a capability as degraded with a stable reason string.
+    pub fn set_reason(&mut self, capability: MediaCapability, reason: impl Into<String>) {
+        self.reasons.insert(capability, reason.into());
+        self.version += 1;
     }
 
     /// Check whether a capability is available.

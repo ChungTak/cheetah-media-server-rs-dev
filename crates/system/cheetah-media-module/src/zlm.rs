@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -6,10 +7,11 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::audit::{AuditApi, AuditEvent, AuditResult};
 use cheetah_media_api::ids::MediaKey;
+use cheetah_media_api::model::{AdmissionAction, AdmissionRequest, Decision};
 use cheetah_media_api::port::{
     ControlAuthApi, MediaControlApi, MediaRequestContext, ProxyApi, RecordApi, RtpApi, SnapshotApi,
 };
-use cheetah_media_api::{AuthCredentials, MediaScope, Principal};
+use cheetah_media_api::{AuthCredentials, MediaError, MediaScope, Principal};
 use cheetah_sdk::{
     ConfigEffect, EngineContext, HttpHeader, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -211,6 +213,33 @@ impl ZlmMediaHttpService {
                 "proxy not available",
             ))
         })
+    }
+
+    pub(crate) async fn check_admission(
+        &self,
+        ctx: &MediaRequestContext,
+        action: AdmissionAction,
+        resource: MediaKey,
+        protocol: String,
+        source_address: Option<String>,
+    ) -> Result<(), AdapterError> {
+        let Some(provider) = self.ctx.media_services.admission() else {
+            return Ok(());
+        };
+        let request = AdmissionRequest {
+            action,
+            principal: ctx.principal.clone(),
+            resource,
+            protocol,
+            source_address,
+            params: HashMap::new(),
+        };
+        match provider.authorize(ctx, request).await? {
+            Decision::Allow => Ok(()),
+            Decision::Deny { code, reason } => {
+                Err(AdapterError::Media(MediaError::new(code, reason)))
+            }
+        }
     }
 
     fn auth(&self) -> Result<Arc<dyn ControlAuthApi>, AdapterError> {

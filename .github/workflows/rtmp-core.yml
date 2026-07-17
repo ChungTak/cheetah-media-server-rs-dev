@@ -1,0 +1,86 @@
+name: rtmp-core
+
+on:
+  push:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/cheetah-rtmp-core/**"
+      - "crates/cheetah-rtmp-pbt/**"
+      - "crates/cheetah-rtmp-fuzz/**"
+      - "crates/cheetah-rtmp-c-api/**"
+      - "crates/cheetah-rtmp-wasm/**"
+      - "crates/cheetah-rtmp-driver-tokio/**"
+      - "crates/cheetah-rtmp-module/**"
+      - "vendor-ref/rtmp-rs/**"
+      - "dev-scripts/check_rtmp_core_no_std.sh"
+      - "dev-scripts/check_rtmp_fuzz_smoke.sh"
+      - "dev-scripts/check_rtmp_vendor_parity.sh"
+      - ".github/workflows/rtmp-core.yml"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/cheetah-rtmp-core/**"
+      - "crates/cheetah-rtmp-pbt/**"
+      - "crates/cheetah-rtmp-fuzz/**"
+      - "crates/cheetah-rtmp-c-api/**"
+      - "crates/cheetah-rtmp-wasm/**"
+      - "crates/cheetah-rtmp-driver-tokio/**"
+      - "crates/cheetah-rtmp-module/**"
+      - "vendor-ref/rtmp-rs/**"
+      - "dev-scripts/check_rtmp_core_no_std.sh"
+      - "dev-scripts/check_rtmp_fuzz_smoke.sh"
+      - "dev-scripts/check_rtmp_vendor_parity.sh"
+      - ".github/workflows/rtmp-core.yml"
+
+jobs:
+  core-std:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+      - name: install cargo-fuzz
+        run: cargo +nightly install cargo-fuzz --locked
+      - name: fmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy -p cheetah-rtmp-core --all-targets -- -D warnings
+      - name: clippy c api
+        run: cargo clippy -p cheetah-rtmp-c-api --all-targets -- -D warnings
+      - name: clippy wasm
+        run: cargo clippy -p cheetah-rtmp-wasm --all-targets -- -D warnings
+      - name: vendor parity
+        run: ./dev-scripts/check_rtmp_vendor_parity.sh
+      - name: core tests
+        run: cargo test -p cheetah-rtmp-core
+      - name: pbt tests
+        run: cargo test -p cheetah-rtmp-pbt
+      - name: driver/module tests
+        run: cargo test -p cheetah-rtmp-driver-tokio -p cheetah-rtmp-module
+      - name: fuzz smoke build and bounded run
+        env:
+          RUN_FUZZ_SMOKE_RUN: "1"
+          FUZZ_MAX_TOTAL_TIME: "3"
+        run: ./dev-scripts/check_rtmp_fuzz_smoke.sh
+      - name: c api tests
+        run: cargo test -p cheetah-rtmp-c-api
+      - name: wasm tests
+        run: cargo test -p cheetah-rtmp-wasm
+
+  core-no-std:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown,thumbv7em-none-eabihf
+      - uses: Swatinem/rust-cache@v2
+      - name: no-std checks
+        env:
+          STRICT_TARGETS: "1"
+        run: ./dev-scripts/check_rtmp_core_no_std.sh

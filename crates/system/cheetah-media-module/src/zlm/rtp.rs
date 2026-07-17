@@ -10,7 +10,7 @@ use cheetah_media_api::command::{
     UpdateRtpRequest,
 };
 use cheetah_media_api::ids::{MediaKey, RtpSessionId, StreamKeyBridge};
-use cheetah_media_api::model::{RtpSessionKind, RtpTcpMode};
+use cheetah_media_api::model::{AdmissionAction, RtpSessionKind, RtpTcpMode};
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::{HttpRequest, HttpResponse};
 
@@ -31,7 +31,7 @@ impl ZlmMediaHttpService {
         let key = self.parse_media_key(&params)?;
         let tcp_mode = parse_zlm_rtp_tcp_mode(&params);
         let request = RtpReceiverRequest {
-            media_key: key,
+            media_key: key.clone(),
             port: parse_zlm_u16(&params, "port")?,
             ip: params["ip"].as_str().map(String::from),
             ssrc: parse_zlm_u32(&params, "ssrc")?,
@@ -45,6 +45,14 @@ impl ZlmMediaHttpService {
             reuse_port: crate::util::parse_json_bool(&params["reuse_port"]).unwrap_or(false),
             timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
         };
+        self.check_admission(
+            ctx,
+            AdmissionAction::OpenRtpReceiver,
+            key,
+            "rtp".to_string(),
+            request.ip.clone(),
+        )
+        .await?;
         let session = rtp_api.open_rtp_receiver(ctx, request).await?;
         Ok(zlm_response(ZlmResponse::ok(OpenRtpServerResult {
             port: session.local_port.unwrap_or(0),
@@ -72,7 +80,7 @@ impl ZlmMediaHttpService {
         let key = self.parse_media_key(&params)?;
         let tcp_mode = parse_zlm_rtp_tcp_mode(&params);
         let request = RtpReceiverRequest {
-            media_key: key,
+            media_key: key.clone(),
             port: parse_zlm_u16(&params, "port")?,
             ip: params["ip"].as_str().map(String::from),
             ssrc: parse_zlm_u32(&params, "ssrc")?,
@@ -86,6 +94,14 @@ impl ZlmMediaHttpService {
             reuse_port,
             timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
         };
+        self.check_admission(
+            ctx,
+            AdmissionAction::OpenRtpReceiver,
+            key,
+            "rtp".to_string(),
+            request.ip.clone(),
+        )
+        .await?;
         let session = rtp_api.open_rtp_receiver(ctx, request).await?;
         Ok(zlm_response(ZlmResponse::ok(OpenRtpServerResult {
             port: session.local_port.unwrap_or(0),
@@ -208,14 +224,26 @@ impl ZlmMediaHttpService {
             transport_options.insert("tcp".to_string(), "true".to_string());
         }
         let request = RtpSenderRequest {
-            media_key: key,
-            destination_endpoint: destination,
+            media_key: key.clone(),
+            destination_endpoint: destination.clone(),
             ssrc,
             payload_type: parse_zlm_u8(&params, "payload_type")?,
             codec_hint,
             mode,
             transport_options,
         };
+        self.check_admission(
+            ctx,
+            AdmissionAction::OpenRtpSender,
+            key,
+            "rtp".to_string(),
+            if destination.is_empty() {
+                None
+            } else {
+                Some(destination)
+            },
+        )
+        .await?;
         let session = rtp_api.open_rtp_sender(ctx, request).await?;
         Ok(zlm_response(ZlmResponse::ok(StartSendRtpResult {
             local_port: session.local_port.unwrap_or(0),

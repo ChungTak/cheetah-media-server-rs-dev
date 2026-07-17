@@ -30,6 +30,10 @@ const EVENT_CHANNEL_CAPACITY: usize = 128;
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
 pub enum VodDriverEvent {
+    /// Session ready after moov parse; duration is in media microseconds.
+    Ready {
+        duration_us: i64,
+    },
     Tracks(Vec<cheetah_codec::TrackInfo>),
     Frame(cheetah_codec::AVFrame),
     /// Forwarded core diagnostic for audit / error responses.
@@ -432,6 +436,15 @@ async fn drive_outputs_filtered(
             VodOutput::EmitTrackInfo(tracks) => {
                 if !*tracks_emitted {
                     *tracks_emitted = true;
+                    let duration_us = session.duration_us();
+                    if event_tx
+                        .send(VodDriverEvent::Ready { duration_us })
+                        .await
+                        .is_err()
+                    {
+                        *closed = true;
+                        return Ok(next_delay_us);
+                    }
                     if event_tx.send(VodDriverEvent::Tracks(tracks)).await.is_err() {
                         // Receiver dropped: no consumers. Treat as session
                         // close so the driver task exits promptly instead
@@ -567,6 +580,7 @@ mod tests {
         // Take up to 50 events to bound test time
         for _ in 0..50 {
             match tokio::time::timeout(std::time::Duration::from_millis(500), events.next()).await {
+                Ok(Some(VodDriverEvent::Ready { .. })) => {}
                 Ok(Some(VodDriverEvent::Tracks(_))) => got_tracks = true,
                 Ok(Some(VodDriverEvent::Frame(_))) => frames += 1,
                 Ok(Some(VodDriverEvent::Closed { .. })) => break,
@@ -591,6 +605,7 @@ mod tests {
         let mut frames = 0;
         for _ in 0..200 {
             match tokio::time::timeout(std::time::Duration::from_millis(500), events.next()).await {
+                Ok(Some(VodDriverEvent::Ready { .. })) => {}
                 Ok(Some(VodDriverEvent::Tracks(_))) => tracks_count += 1,
                 Ok(Some(VodDriverEvent::Frame(_))) => frames += 1,
                 Ok(Some(VodDriverEvent::Closed { .. })) => break,

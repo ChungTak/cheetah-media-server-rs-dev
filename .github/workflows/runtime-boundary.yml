@@ -1,0 +1,30 @@
+name: runtime-boundary
+
+on:
+  push:
+    paths:
+      - "crates/cheetah-runtime-api/**"
+      - "crates/cheetah-sdk/**"
+      - "crates/cheetah-engine/**"
+      - "crates/cheetah-rtmp-module/**"
+      - "crates/cheetah-rtmp-driver-tokio/**"
+      - "dev-scripts/check_runtime_boundaries.sh"
+      - ".github/workflows/runtime-boundary.yml"
+  pull_request:
+    paths:
+      - "crates/cheetah-runtime-api/**"
+      - "crates/cheetah-sdk/**"
+      - "crates/cheetah-engine/**"
+      - "crates/cheetah-rtmp-module/**"
+      - "crates/cheetah-rtmp-driver-tokio/**"
+      - "dev-scripts/check_runtime_boundaries.sh"
+      - ".github/workflows/runtime-boundary.yml"
+
+jobs:
+  boundary-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: runtime boundary audit
+        run: ./dev-scripts/check_runtime_boundaries.sh

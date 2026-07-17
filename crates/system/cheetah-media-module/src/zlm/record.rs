@@ -2,13 +2,16 @@
 //!
 //! ZLMediaKit 兼容的录制端点处理函数。
 
+use std::path::PathBuf;
+
 use cheetah_media_api::command::{
-    DeleteRecordRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    StartRecordRequest, StopRecordRequest,
+    DeleteRecordRequest, OpenPlaybackRequest, RecordFileQuery, RecordPlaybackCommand,
+    RecordTaskQuery, StartRecordRequest, StopRecordRequest,
 };
 use cheetah_media_api::ids::RecordFileId;
+use cheetah_media_api::media_file_store::FileStoreEntry;
 use cheetah_media_api::model::{RecordTaskState, StoragePolicy};
-use cheetah_media_api::port::MediaRequestContext;
+use cheetah_media_api::port::{MediaRequestContext, PlaybackApi};
 use cheetah_sdk::{HttpRequest, HttpResponse};
 
 use crate::error::AdapterError;
@@ -256,12 +259,81 @@ impl ZlmMediaHttpService {
 
     pub(crate) async fn load_mp4_file(
         &self,
-        _ctx: &MediaRequestContext,
-        _req: HttpRequest,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
-        Err(AdapterError::Media(
-            cheetah_media_api::error::MediaError::unsupported_capability("vod"),
-        ))
+        let playback = self.playback()?;
+        let params = self.extract_params(&req)?;
+        let key = self.parse_media_key(&params)?;
+        let file_path = params["file_path"]
+            .as_str()
+            .or_else(|| params["filePath"].as_str())
+            .ok_or_else(|| AdapterError::InvalidRequest("file_path is required".to_string()))?
+            .to_string();
+        let absolute = PathBuf::from(&file_path);
+        if !absolute.is_absolute() {
+            return Err(AdapterError::InvalidRequest(
+                "file_path must be an absolute path".to_string(),
+            ));
+        }
+        let size_bytes = std::fs::metadata(&absolute).map(|m| m.len()).unwrap_or(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let handle = self.ctx.media_file_store.register_file(
+            ctx,
+            FileStoreEntry {
+                media_key: key.clone(),
+                file_type: "vod".to_string(),
+                content_type: "video/mp4".to_string(),
+                size_bytes,
+                created_at_ms: now,
+                expires_at_ms: None,
+                absolute_path: absolute.to_string_lossy().to_string(),
+                owner_principal: None,
+                allowed_principals: Vec::new(),
+            },
+        )?;
+        let seek_ms = params["seek_ms"]
+            .as_i64()
+            .or_else(|| params["seekMS"].as_i64())
+            .unwrap_or(0);
+        let mut scale = params["speed"]
+            .as_f64()
+            .or_else(|| params["speed"].as_str().and_then(|s| s.parse().ok()))
+            .unwrap_or(1.0);
+        if ![0.5, 1.0, 2.0, 4.0]
+            .iter()
+            .any(|s| (*s - scale).abs() < 1e-9)
+        {
+            scale = 1.0;
+        }
+        let session = playback
+            .open_playback(
+                ctx,
+                OpenPlaybackRequest {
+                    file_handle: handle,
+                    media_key: key,
+                    start_position_ms: seek_ms.max(0),
+                    scale,
+                },
+            )
+            .await?;
+        Ok(zlm_response(ZlmResponse::ok(Data {
+            data: serde_json::json!({
+                "sessionId": session.session_id.0,
+                "duration_ms": session.duration_ms,
+            }),
+        })))
+    }
+
+    fn playback(&self) -> Result<std::sync::Arc<dyn PlaybackApi>, AdapterError> {
+        self.ctx.media_services.playback().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "playback not available",
+            ))
+        })
     }
 }
 

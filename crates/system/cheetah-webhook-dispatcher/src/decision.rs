@@ -231,14 +231,32 @@ impl MediaAdmissionApi for WebhookDecisionClient {
             }
             AdmissionAction::CreatePullProxy
             | AdmissionAction::CreatePushProxy
-            | AdmissionAction::CreateFfmpegProxy
-            | AdmissionAction::OpenRtpReceiver
-            | AdmissionAction::OpenRtpSender => {
-                debug!(
-                    action = ?request.action,
-                    "admission action not yet supported by webhook translator; default allow"
-                );
-                Ok(Decision::Allow)
+            | AdmissionAction::CreateFfmpegProxy => {
+                // Proxy creates are treated as publish-side resource allocation.
+                let event = MediaEvent::StreamPublished(build_stream_published(
+                    self.next_seq(),
+                    ctx,
+                    &request,
+                ));
+                self.request_decision(event).await
+            }
+            AdmissionAction::OpenRtpReceiver => {
+                let event = MediaEvent::SessionOpened(build_session_opened(
+                    self.next_seq(),
+                    ctx,
+                    &request,
+                    SessionKind::RtpReceiver,
+                ));
+                self.request_decision(event).await
+            }
+            AdmissionAction::OpenRtpSender => {
+                let event = MediaEvent::SessionOpened(build_session_opened(
+                    self.next_seq(),
+                    ctx,
+                    &request,
+                    SessionKind::RtpSender,
+                ));
+                self.request_decision(event).await
             }
         }
     }

@@ -8,10 +8,10 @@
 //! 5. Register FileHandle + SnapshotInfo
 //! 6. Publish SnapshotCompleted
 //!
-//! Encoding: MJPEG frames are stored as JPEG. Other codecs store the keyframe
-//! payload as `application/octet-stream` with the requested extension when a
-//! real image encoder is unavailable, returning `Unsupported` only when no
-//! video keyframe arrives before the deadline.
+//! Encoding: MJPEG frames are decoded and re-encoded as JPEG/PNG. Non-MJPEG
+//! codecs (e.g. H264) currently return `Unsupported` from `ImageEncodeApi`.
+//! Capability reports advertise snapshot as degraded (`mjpeg-only`) until a
+//! multi-codec decode path lands.
 
 mod config;
 mod image_encode;

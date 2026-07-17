@@ -8,7 +8,7 @@ use cheetah_media_api::error::{MediaError, Result};
 use cheetah_media_api::ids::{MediaKey, ProxyId};
 use cheetah_media_api::model::{Page, ProxyInfo, ProxyKind, ProxyState};
 use cheetah_media_api::port::{MediaRequestContext, ProxyApi};
-use cheetah_sdk::{EngineContext, SdkError};
+use cheetah_sdk::{Deadline, EngineContext, SdkError};
 use tracing::{debug, warn};
 
 use crate::config::ProxyModuleConfig;
@@ -57,6 +57,9 @@ impl ProxyApi for ProxyMediaProvider {
         ctx: &MediaRequestContext,
         request: PullProxyRequest,
     ) -> Result<ProxyInfo> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
         let resolved_source = resolve_and_validate_url(
             &request.source_url,
             &self.ssrf_allowlist,
@@ -113,7 +116,10 @@ impl ProxyApi for ProxyMediaProvider {
         Ok(info)
     }
 
-    async fn delete_pull_proxy(&self, _ctx: &MediaRequestContext, id: &ProxyId) -> Result<()> {
+    async fn delete_pull_proxy(&self, ctx: &MediaRequestContext, id: &ProxyId) -> Result<()> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
         delete_proxy_of_kind(&self.registry, id, ProxyKind::Pull)
     }
 
@@ -156,6 +162,9 @@ impl ProxyApi for ProxyMediaProvider {
         ctx: &MediaRequestContext,
         request: PushProxyRequest,
     ) -> Result<ProxyInfo> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
         let resolved_destination = resolve_and_validate_url(
             &request.destination_url,
             &self.ssrf_allowlist,
@@ -215,7 +224,10 @@ impl ProxyApi for ProxyMediaProvider {
         Ok(info)
     }
 
-    async fn delete_push_proxy(&self, _ctx: &MediaRequestContext, id: &ProxyId) -> Result<()> {
+    async fn delete_push_proxy(&self, ctx: &MediaRequestContext, id: &ProxyId) -> Result<()> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
         delete_proxy_of_kind(&self.registry, id, ProxyKind::Push)
     }
 
@@ -224,6 +236,9 @@ impl ProxyApi for ProxyMediaProvider {
         ctx: &MediaRequestContext,
         request: FfmpegProxyRequest,
     ) -> Result<ProxyInfo> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
         if !self.ctx.ffmpeg_api.is_available() {
             return Err(MediaError::unavailable("ffmpeg executor not available"));
         }
@@ -290,7 +305,10 @@ impl ProxyApi for ProxyMediaProvider {
         Ok(info)
     }
 
-    async fn delete_ffmpeg_proxy(&self, _ctx: &MediaRequestContext, id: &ProxyId) -> Result<()> {
+    async fn delete_ffmpeg_proxy(&self, ctx: &MediaRequestContext, id: &ProxyId) -> Result<()> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
         delete_proxy_of_kind(&self.registry, id, ProxyKind::Ffmpeg)
     }
 

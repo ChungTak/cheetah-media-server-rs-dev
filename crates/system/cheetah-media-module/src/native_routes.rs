@@ -72,6 +72,27 @@ pub fn native_http_routes() -> Vec<HttpRouteDescriptor> {
             method: HttpMethod::Post,
             path: "/record/playback/{file_id}/control".to_string(),
         },
+        // playback (PlaybackApi)
+        HttpRouteDescriptor {
+            method: HttpMethod::Post,
+            path: "/playback/sessions".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/playback/sessions".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/playback/sessions/{session_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Post,
+            path: "/playback/sessions/{session_id}/control".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Post,
+            path: "/playback/sessions/{session_id}/stop".to_string(),
+        },
         // snapshots
         HttpRouteDescriptor {
             method: HttpMethod::Post,
@@ -241,6 +262,21 @@ pub fn native_required_scope(method: HttpMethod, path: &str) -> Option<MediaScop
             if path.starts_with("/record/playback/") && path.ends_with("/control") =>
         {
             Some(MediaScope::RecordManage)
+        }
+        (HttpMethod::Get, "/playback/sessions") => Some(MediaScope::MediaRead),
+        (HttpMethod::Post, "/playback/sessions") => Some(MediaScope::MediaPublish),
+        (HttpMethod::Get, _) if path.starts_with("/playback/sessions/") => {
+            Some(MediaScope::MediaRead)
+        }
+        (HttpMethod::Post, _)
+            if path.starts_with("/playback/sessions/") && path.ends_with("/control") =>
+        {
+            Some(MediaScope::MediaControl)
+        }
+        (HttpMethod::Post, _)
+            if path.starts_with("/playback/sessions/") && path.ends_with("/stop") =>
+        {
+            Some(MediaScope::MediaControl)
         }
         (HttpMethod::Post, "/snapshots") => Some(MediaScope::MediaControl),
         (HttpMethod::Get, "/snapshots") => Some(MediaScope::MediaRead),
@@ -429,7 +465,12 @@ mod tests {
         assert!(paths.contains(&(HttpMethod::Put, "/webhook/profiles/{profile_id}")));
         assert!(paths.contains(&(HttpMethod::Delete, "/webhook/profiles/{profile_id}")));
         assert!(paths.contains(&(HttpMethod::Post, "/webhook/profiles/{profile_id}/test")));
-        assert_eq!(routes.len(), 46);
+        assert!(paths.contains(&(HttpMethod::Post, "/playback/sessions")));
+        assert!(paths.contains(&(HttpMethod::Get, "/playback/sessions")));
+        assert!(paths.contains(&(HttpMethod::Get, "/playback/sessions/{session_id}")));
+        assert!(paths.contains(&(HttpMethod::Post, "/playback/sessions/{session_id}/control")));
+        assert!(paths.contains(&(HttpMethod::Post, "/playback/sessions/{session_id}/stop")));
+        assert_eq!(routes.len(), 51);
     }
 
     #[test]

@@ -251,7 +251,13 @@ impl VodApi {
         {
             if let Some(events) = driver_arc.take_events() {
                 let stream_key = StreamKey::new("file", &engine_path);
-                runtime_api.spawn(Box::pin(bridge_events(events, core_adapters, stream_key)));
+                runtime_api.spawn(Box::pin(bridge_events(
+                    events,
+                    core_adapters,
+                    stream_key,
+                    session_id.clone(),
+                    None,
+                )));
             }
         }
         Ok(StartVodResponse {
@@ -289,6 +295,101 @@ impl VodApi {
         Ok(ControlVodResponse {
             code: 200,
             msg: "success".to_string(),
+        })
+    }
+
+    /// Start playback from an absolute, already-authorized path.
+    ///
+    /// Used by `PlaybackApi`. Path traversal checks are the caller's
+    /// responsibility (file-store resolve). Frames are published to `stream_key`.
+    /// When `playback_sessions` is set, driver Ready/Frame/Closed events update
+    /// the live `PlaybackSession` row (duration, position, EOF state).
+    ///
+    /// 从已授权的绝对路径启动回放（供 `PlaybackApi` 使用）。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn start_absolute(
+        &self,
+        session_id: String,
+        absolute_path: PathBuf,
+        source_uri: String,
+        stream_key: StreamKey,
+        start_position_ms: i64,
+        scale: f32,
+        playback_sessions: Option<
+            Arc<
+                parking_lot::RwLock<
+                    std::collections::HashMap<String, cheetah_media_api::model::PlaybackSession>,
+                >,
+            >,
+        >,
+    ) -> Result<StartVodResponse, VodApiError> {
+        if session_id.is_empty() {
+            return Err(VodApiError::InvalidRequest(
+                "session_id must not be empty".into(),
+            ));
+        }
+        if !absolute_path.is_absolute() {
+            return Err(VodApiError::InvalidRequest(
+                "absolute_path must be absolute".into(),
+            ));
+        }
+        let stream_key_display = format!("{}/{}", stream_key.namespace, stream_key.path);
+        let record = VodSessionRecord {
+            session_id: session_id.clone(),
+            source_uri,
+            stream_key: stream_key_display,
+            paused: false,
+            scale,
+            state: "starting".to_string(),
+            reader_count: 0,
+            remote_ip: None,
+            remote_port: None,
+            network_type: None,
+            params: None,
+        };
+        let driver_config = VodDriverConfig {
+            read_chunk_bytes: self.config.read_chunk_bytes,
+            idle_timeout_ms: self.config.idle_timeout_ms,
+            reader_config: cheetah_codec::Mp4ReaderConfig {
+                max_box_bytes: self.config.max_box_bytes,
+                max_top_level_scan: 8 * 1024 * 1024,
+            },
+            read_count: 1,
+            ..Default::default()
+        };
+        let driver = open_file(absolute_path, driver_config)
+            .await
+            .map_err(|e| VodApiError::Driver(e.to_string()))?;
+        let driver_arc = Arc::new(driver);
+        if let Err(e) = self.registry.insert(record, driver_arc.clone()) {
+            let _ = driver_arc.send_control(VodControlCommand::Stop);
+            return Err(e.into());
+        }
+        if let (Some(core_adapters), Some(runtime_api)) =
+            (self.core_adapters.clone(), self.runtime_api.clone())
+        {
+            if let Some(events) = driver_arc.take_events() {
+                runtime_api.spawn(Box::pin(bridge_events(
+                    events,
+                    core_adapters,
+                    stream_key,
+                    session_id.clone(),
+                    playback_sessions,
+                )));
+            }
+        }
+        if start_position_ms > 0 {
+            let _ = driver_arc.send_control(VodControlCommand::Seek {
+                position_us: start_position_ms.saturating_mul(1_000),
+            });
+        }
+        if (scale - 1.0).abs() > f32::EPSILON {
+            let _ = driver_arc.send_control(VodControlCommand::Scale(scale));
+        }
+        Ok(StartVodResponse {
+            code: 200,
+            msg: "success".to_string(),
+            session_id,
         })
     }
 
@@ -353,9 +454,29 @@ async fn bridge_events(
     mut events: VodEventStream,
     core_adapters: Arc<dyn CoreAdaptersApi>,
     stream_key: StreamKey,
+    session_id: String,
+    playback_sessions: Option<
+        Arc<
+            parking_lot::RwLock<
+                std::collections::HashMap<String, cheetah_media_api::model::PlaybackSession>,
+            >,
+        >,
+    >,
 ) {
+    use cheetah_media_api::model::PlaybackSessionState;
     while let Some(event) = events.next().await {
         match event {
+            VodDriverEvent::Ready { duration_us } => {
+                if let Some(sessions) = playback_sessions.as_ref() {
+                    if let Some(s) = sessions.write().get_mut(&session_id) {
+                        s.duration_ms = (duration_us.max(0) / 1000) as u64;
+                        s.updated_at = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as i64)
+                            .unwrap_or(s.updated_at);
+                    }
+                }
+            }
             VodDriverEvent::Tracks(tracks) => {
                 if let Err(e) = core_adapters
                     .update_tracks(stream_key.clone(), tracks)
@@ -365,22 +486,57 @@ async fn bridge_events(
                 }
             }
             VodDriverEvent::Frame(frame) => {
+                if let Some(sessions) = playback_sessions.as_ref() {
+                    if let Some(s) = sessions.write().get_mut(&session_id) {
+                        if frame.pts_us >= 0 {
+                            s.position_ms = frame.pts_us / 1000;
+                            s.updated_at = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as i64)
+                                .unwrap_or(s.updated_at);
+                        }
+                    }
+                }
                 if let Err(e) = core_adapters
                     .publish_frame(stream_key.clone(), Arc::new(frame))
                     .await
                 {
                     warn!("vod bridge publish_frame failed: {e}");
+                    if let Some(sessions) = playback_sessions.as_ref() {
+                        if let Some(s) = sessions.write().get_mut(&session_id) {
+                            s.state = PlaybackSessionState::Failed;
+                            s.last_error = Some(e.to_string());
+                        }
+                    }
                     break;
                 }
             }
             VodDriverEvent::Diagnostic(diag) => {
-                // Diagnostics are best-effort audit events; record them in
-                // the trace log so operators can correlate seek failures
-                // and similar control-plane errors.
                 tracing::debug!(?diag, "vod bridge received diagnostic");
             }
-            VodDriverEvent::Closed { .. } => {
+            VodDriverEvent::Closed { reason } => {
                 let _ = core_adapters.close_stream(&stream_key).await;
+                if let Some(sessions) = playback_sessions.as_ref() {
+                    if let Some(s) = sessions.write().get_mut(&session_id) {
+                        let eof = reason.is_empty()
+                            || reason.contains("eof")
+                            || reason.contains("EOF")
+                            || reason.contains("end")
+                            || reason.contains("CloseSession")
+                            || reason.contains("completed");
+                        if eof {
+                            s.state = PlaybackSessionState::Completed;
+                            s.last_error = None;
+                        } else {
+                            s.state = PlaybackSessionState::Failed;
+                            s.last_error = Some(reason);
+                        }
+                        s.updated_at = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_millis() as i64)
+                            .unwrap_or(s.updated_at);
+                    }
+                }
                 break;
             }
         }

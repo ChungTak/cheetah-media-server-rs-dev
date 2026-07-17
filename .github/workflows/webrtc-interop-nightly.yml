@@ -1,0 +1,236 @@
+name: webrtc-interop-nightly
+
+# Nightly job that runs the WebRTC ignored interop suite. Designed
+# to coexist with the existing per-crate workflows: this one only
+# fires on the schedule or on manual dispatch, so feature branches
+# don't pay the full cost of bringing up ZLMediaKit / Pion / Janus.
+#
+# Phase 06 (`dev-docs/plans-27-webrtc-zlm2/phase-06-external-interop-infra.md`).
+
+on:
+  schedule:
+    # Run at 03:00 UTC every day. Adjust upward as soon as the suite
+    # grows past ~15 minutes; the goal is to keep nightly distinct
+    # from regular CI.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      run_filter:
+        description: "Optional cargo test filter (default: empty -> run all)"
+        required: false
+        default: ""
+
+jobs:
+  interop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      zlmediakit:
+        image: zlmediakit/zlmediakit:master
+        # ZLM listens on a fixed set of ports; using `host` networking
+        # avoids the per-port forward dance and matches the runner
+        # manual at `dev-docs/plans-27-webrtc-zlm2/interop-runner.md`.
+        options: --network host
+
+    env:
+      CARGO_TERM_COLOR: always
+      WEBRTC_INTEROP_ARTIFACT_DIR: ${{ github.workspace }}/target/webrtc-interop
+      # Default WHIP / WHEP / signaling URLs match the runner manual;
+      # override per-job to point at staging or a custom container.
+      WEBRTC_INTEROP_ZLM_WHIP_URL: "http://127.0.0.1/index/api/webrtc?app=live&stream=sample&type=push"
+      WEBRTC_INTEROP_ZLM_WHEP_URL: "http://127.0.0.1/index/api/webrtc?app=live&stream=sample&type=play"
+      WEBRTC_INTEROP_ZLM_SIGNALING_URL: "ws://127.0.0.1:8800"
+      WEBRTC_INTEROP_TIMEOUT_MS: "30000"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Wait for ZLMediaKit to come up
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1/index/api/getServerConfig >/dev/null; then
+              echo "ZLMediaKit is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::warning::ZLMediaKit did not respond on /index/api/getServerConfig within 60s; ignored interop tests will skip ZLM-dependent cases"
+
+      - name: Run ZLM answer SDP fixture sanity tests
+        # Non-ignored fixture tests (`zlm_sdp_fixtures`) run against
+        # static SDP samples in `tests/fixtures/zlm/`. Failing here
+        # means cheetah's harness expectations have drifted from
+        # what ZLM actually emits — fix the assertion helpers or
+        # update the fixture before continuing.
+        run: |
+          cargo test -p cheetah-webrtc-module --test zlm_sdp_fixtures
+
+      - name: Run cheetah self-loopback interop sanity tests
+        # Verifies cheetah's own WHIP answers satisfy the harness
+        # assertion helpers. Catches drift between str0m's defaults
+        # and our harness expectations before we drive any external
+        # ignored interop case.
+        run: |
+          cargo test -p cheetah-webrtc-module --test cheetah_self_interop
+
+      - name: Run WebRTC interop ignored suite
+        # `--ignored` runs only the gated tests. Tests that need an
+        # env var we did not set will skip themselves via the harness
+        # in `tests/interop_harness.rs`.
+        env:
+          FILTER: ${{ inputs.run_filter }}
+        run: |
+          cargo test -p cheetah-webrtc-module --test interop -- --ignored ${FILTER:-}
+
+      - name: Run cheetah↔ZLM ignored end-to-end test
+        # Drives a real ZLM WHIP request from inside the harness
+        # using the in-process WebRtcModule. Requires the ZLM
+        # service container to be reachable; harness skips when env
+        # is unset.
+        env:
+          FILTER: ${{ inputs.run_filter }}
+        run: |
+          cargo test -p cheetah-webrtc-module --test cheetah_to_zlm_interop -- --ignored ${FILTER:-}
+
+      - name: Run cheetah↔Pion ignored end-to-end test
+        # Drives the Pion helper binary against a running cheetah /
+        # ZLM WHIP endpoint. Requires `WEBRTC_INTEROP_PION_BIN` and
+        # `WEBRTC_INTEROP_ZLM_WHIP_URL` to be set (lab compose
+        # exposes both); harness skips when env is unset.
+        env:
+          FILTER: ${{ inputs.run_filter }}
+        run: |
+          cargo test -p cheetah-webrtc-module --test cheetah_to_pion_interop -- --ignored ${FILTER:-}
+
+      - name: Run cheetah↔Janus ignored end-to-end test
+        # Drives Janus's REST API through a 3-step echotest
+        # handshake. Requires `WEBRTC_INTEROP_JANUS_URL` to be set;
+        # harness skips when env is unset.
+        env:
+          FILTER: ${{ inputs.run_filter }}
+        run: |
+          cargo test -p cheetah-webrtc-module --test cheetah_to_janus_interop -- --ignored ${FILTER:-}
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webrtc-interop-artifacts
+          path: target/webrtc-interop/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Weak network matrix. Runs the `weak_network_nack_recovery`
+  # ignored test under each `tc netem` profile. The job needs root
+  # to apply qdisc rules to the loopback interface, so we run it on
+  # a self-hosted privileged runner via `sudo`. Failures here are
+  # informational on flaky lab nights but should not gate other
+  # interop runs — they get their own job so the schedule view
+  # stays readable.
+  weak-network:
+    needs: interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [loss-1, loss-5, loss-10, loss-20, reorder, bw-cap]
+
+    env:
+      CARGO_TERM_COLOR: always
+      WEBRTC_INTEROP_ARTIFACT_DIR: ${{ github.workspace }}/target/webrtc-interop-weak
+      WEBRTC_INTEROP_WEAK_NETWORK: "1"
+      WEBRTC_INTEROP_TIMEOUT_MS: "60000"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build interop test harness
+        # Compile the test binary up-front so the `tc qdisc` window
+        # is short — we only want netem applied while the actual
+        # test is running. `--no-run` produces the deps without
+        # executing.
+        run: |
+          cargo test -p cheetah-webrtc-module --test interop --no-run
+
+      - name: Run weak network test under tc netem
+        run: |
+          sudo -E env "PATH=$PATH" \
+            dev-docs/plans-27-webrtc-zlm2/interop-weak-network/run-netem.sh \
+            ${{ matrix.profile }} -- \
+            cargo test -p cheetah-webrtc-module --test interop -- \
+            --ignored weak_network_nack_recovery
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webrtc-interop-weak-${{ matrix.profile }}
+          path: target/webrtc-interop-weak/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Lightweight weak-network sanity job that runs on the regular
+  # nightly schedule (not just manual dispatch). Picks a small set
+  # of representative profiles so the schedule view stays green by
+  # default. Operators kick off the full matrix above via
+  # `workflow_dispatch` when they need wider coverage.
+  weak-network-default:
+    needs: interop
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [loss-5, reorder]
+
+    env:
+      CARGO_TERM_COLOR: always
+      WEBRTC_INTEROP_ARTIFACT_DIR: ${{ github.workspace }}/target/webrtc-interop-weak-default
+      WEBRTC_INTEROP_WEAK_NETWORK: "1"
+      WEBRTC_INTEROP_TIMEOUT_MS: "60000"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cargo cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build interop test harness
+        run: |
+          cargo test -p cheetah-webrtc-module --test interop --no-run
+
+      - name: Run ${{ matrix.profile }} weak network test under tc netem
+        run: |
+          sudo -E env "PATH=$PATH" \
+            dev-docs/plans-27-webrtc-zlm2/interop-weak-network/run-netem.sh \
+            ${{ matrix.profile }} -- \
+            cargo test -p cheetah-webrtc-module --test interop -- \
+            --ignored weak_network_nack_recovery
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webrtc-interop-weak-default-${{ matrix.profile }}
+          path: target/webrtc-interop-weak-default/
+          if-no-files-found: warn
+          retention-days: 14

@@ -2,18 +2,20 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cheetah_media_api::command::{
-    DeleteRecordRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery,
-    StartRecordRequest, StopRecordRequest,
+    DeleteRecordRequest, OpenPlaybackRequest, PlaybackControl, RecordFileQuery,
+    RecordPlaybackCommand, RecordTaskQuery, StartRecordRequest, StopRecordRequest,
 };
 use cheetah_media_api::error::{MediaError, Result};
-use cheetah_media_api::ids::{FileHandle, MediaKey, RecordFileId, RecordTaskId};
+use cheetah_media_api::ids::{FileHandle, MediaKey, PlaybackSessionId, RecordFileId, RecordTaskId};
 use cheetah_media_api::model::{Page, RecordFile, RecordTask, RecordTaskState};
-use cheetah_media_api::port::{MediaRequestContext, RecordApi as RecordApiPort};
+use cheetah_media_api::port::{MediaRequestContext, PlaybackApi, RecordApi as RecordApiPort};
 use cheetah_media_api::MediaFileStoreApi;
+use cheetah_sdk::{Deadline, MediaServices};
+use parking_lot::Mutex;
+use std::collections::HashMap;
 
 use crate::api::{RecordApi, RecordApiError, RecordTemplate};
 use crate::metadata::RecordTaskState as InternalRecordTaskState;
-use crate::playback::PlaybackRegistry;
 use crate::registry::RegistryError;
 
 /// Bridge from the record module's internal `RecordApi` to the media-domain
@@ -23,20 +25,101 @@ use crate::registry::RegistryError;
 #[derive(Clone)]
 pub struct RecordMediaProvider {
     api: Arc<RecordApi>,
-    playback: Arc<PlaybackRegistry>,
     file_store: Arc<dyn MediaFileStoreApi>,
+    media_services: MediaServices,
+    /// file_id -> playback session id (compat shim).
+    file_sessions: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl RecordMediaProvider {
     /// Create a provider wrapping the record module's API handle and file store.
     ///
     /// 创建包装录制模块 API 句柄与文件存储的 provider。
-    pub fn new(api: Arc<RecordApi>, file_store: Arc<dyn MediaFileStoreApi>) -> Self {
+    pub fn new(
+        api: Arc<RecordApi>,
+        file_store: Arc<dyn MediaFileStoreApi>,
+        media_services: MediaServices,
+    ) -> Self {
         Self {
             api,
-            playback: Arc::new(PlaybackRegistry::new()),
             file_store,
+            media_services,
+            file_sessions: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    fn check_deadline(ctx: &MediaRequestContext) -> Result<()> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))
+    }
+
+    fn map_playback_command(command: RecordPlaybackCommand) -> Result<PlaybackControl> {
+        Ok(match command {
+            RecordPlaybackCommand::Pause => PlaybackControl::Pause,
+            RecordPlaybackCommand::Resume => PlaybackControl::Resume,
+            RecordPlaybackCommand::Scale { value } => PlaybackControl::SetScale { scale: value },
+            RecordPlaybackCommand::Seek { value } => PlaybackControl::Seek { position_ms: value },
+        })
+    }
+
+    async fn ensure_playback_session(
+        &self,
+        ctx: &MediaRequestContext,
+        playback: &Arc<dyn PlaybackApi>,
+        file_id: &str,
+        file: &crate::metadata::RecordFileMetadata,
+    ) -> Result<PlaybackSessionId> {
+        if let Some(id) = self.file_sessions.lock().get(file_id).cloned() {
+            return Ok(PlaybackSessionId(id));
+        }
+        let handle = file
+            .file_handle
+            .clone()
+            .filter(|h| !h.is_empty())
+            .map(FileHandle)
+            .unwrap_or_else(|| FileHandle(file_id.to_string()));
+        // Prefer registered file-store handle; fall back to registering path.
+        let resolved = self
+            .file_store
+            .resolve_for_read(ctx, &handle, None, now_ms());
+        let file_handle = match resolved {
+            Ok(_) => handle,
+            Err(_) if !file.path.is_empty() => {
+                let media_key = MediaKey::new(&file.vhost, &file.app, &file.stream, None)
+                    .map_err(|e| MediaError::invalid_argument(e.to_string()))?;
+                let entry = cheetah_media_api::media_file_store::FileStoreEntry {
+                    media_key: media_key.clone(),
+                    file_type: "record".to_string(),
+                    content_type: "video/mp4".to_string(),
+                    size_bytes: file.size_bytes,
+                    created_at_ms: file.start_time_ms,
+                    expires_at_ms: None,
+                    absolute_path: file.path.clone(),
+                    owner_principal: None,
+                    allowed_principals: Vec::new(),
+                };
+                self.file_store.register_file(ctx, entry)?
+            }
+            Err(e) => return Err(e),
+        };
+        let media_key = MediaKey::new(&file.vhost, &file.app, &file.stream, None)
+            .map_err(|e| MediaError::invalid_argument(e.to_string()))?;
+        let session = playback
+            .open_playback(
+                ctx,
+                OpenPlaybackRequest {
+                    file_handle,
+                    media_key,
+                    start_position_ms: 0,
+                    scale: 1.0,
+                },
+            )
+            .await?;
+        self.file_sessions
+            .lock()
+            .insert(file_id.to_string(), session.session_id.0.clone());
+        Ok(session.session_id)
     }
 }
 
@@ -44,9 +127,10 @@ impl RecordMediaProvider {
 impl RecordApiPort for RecordMediaProvider {
     async fn start_record(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         request: StartRecordRequest,
     ) -> Result<RecordTask> {
+        Self::check_deadline(ctx)?;
         let media_key = request.media_key;
         let format = request.format;
         let vhost = media_key.vhost.0.clone();
@@ -136,9 +220,10 @@ impl RecordApiPort for RecordMediaProvider {
 
     async fn stop_record(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         request: StopRecordRequest,
     ) -> Result<RecordTask> {
+        Self::check_deadline(ctx)?;
         let task_id = request.task_id.0;
         self.api
             .stop(crate::api::StopRecordRequest {
@@ -254,6 +339,7 @@ impl RecordApiPort for RecordMediaProvider {
         ctx: &MediaRequestContext,
         request: DeleteRecordRequest,
     ) -> Result<()> {
+        Self::check_deadline(ctx)?;
         let now = now_ms();
         self.file_store
             .delete(ctx, &FileHandle(request.file_id.0.clone()), now)
@@ -267,15 +353,34 @@ impl RecordApiPort for RecordMediaProvider {
 
     async fn control_record_playback(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         file_id: &RecordFileId,
         command: RecordPlaybackCommand,
     ) -> Result<()> {
+        Self::check_deadline(ctx)?;
         let file = self.api.registry().get_file(&file_id.0).ok_or_else(|| {
             MediaError::not_found(format!("record file not found: {}", file_id.0))
         })?;
-        let _ = self.playback.apply(&file_id.0, file.duration_ms, command)?;
-        Ok(())
+        if let Some(playback) = self.media_services.playback() {
+            // Validate seek bounds against known duration before opening driver.
+            if let RecordPlaybackCommand::Seek { value } = &command {
+                if *value < 0 || *value > file.duration_ms as i64 {
+                    return Err(MediaError::invalid_argument(format!(
+                        "seek {value} is out of range [0, {}]",
+                        file.duration_ms
+                    )));
+                }
+            }
+            let session_id = self
+                .ensure_playback_session(ctx, &playback, &file_id.0, &file)
+                .await?;
+            let mapped = Self::map_playback_command(command)?;
+            playback.control_playback(ctx, &session_id, mapped).await?;
+            return Ok(());
+        }
+        Err(MediaError::unavailable(
+            "playback provider not registered; cannot control record playback",
+        ))
     }
 }
 
@@ -540,6 +645,7 @@ mod tests {
                 bus,
             )),
             Arc::new(MockFileStore),
+            MediaServices::unavailable(),
         )
     }
 
@@ -771,7 +877,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn control_playback_validates_and_changes_state() {
+    async fn control_playback_requires_playback_provider() {
         let provider = provider();
         let ctx = MediaRequestContext::default();
         provider
@@ -794,40 +900,15 @@ mod tests {
             })
             .unwrap();
 
-        provider
+        let err = provider
             .control_record_playback(
                 &ctx,
                 &RecordFileId("f1".to_string()),
                 RecordPlaybackCommand::Pause,
             )
             .await
-            .unwrap();
-
-        let state = provider
-            .playback
-            .get("f1")
-            .expect("playback session missing");
-        assert!(state.paused);
-
-        provider
-            .control_record_playback(
-                &ctx,
-                &RecordFileId("f1".to_string()),
-                RecordPlaybackCommand::Scale { value: 2.0 },
-            )
-            .await
-            .unwrap();
-        assert_eq!(provider.playback.get("f1").unwrap().scale, 2.0);
-
-        let err = provider
-            .control_record_playback(
-                &ctx,
-                &RecordFileId("f1".to_string()),
-                RecordPlaybackCommand::Seek { value: 20_000 },
-            )
-            .await
             .unwrap_err();
-        assert!(err.to_string().contains("seek"));
+        assert!(err.to_string().contains("playback provider"));
 
         let err = provider
             .control_record_playback(

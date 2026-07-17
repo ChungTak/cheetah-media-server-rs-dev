@@ -6,7 +6,7 @@ use cheetah_media_api::command::{
     FfmpegProxyRequest, ProxyQuery, PullProxyRequest, PushProxyRequest, RetryPolicy,
 };
 use cheetah_media_api::ids::ProxyId;
-use cheetah_media_api::model::{OutputPolicy, ProxyKind, TranscodePolicy};
+use cheetah_media_api::model::{AdmissionAction, OutputPolicy, ProxyKind, TranscodePolicy};
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::{HttpRequest, HttpResponse};
 
@@ -33,7 +33,7 @@ impl ZlmMediaHttpService {
 
         let request = PullProxyRequest {
             source_url: url.to_string(),
-            destination: key,
+            destination: key.clone(),
             retry_policy: RetryPolicy::default(),
             heartbeat_ms: None,
             timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
@@ -41,6 +41,14 @@ impl ZlmMediaHttpService {
             output_policy: OutputPolicy::default(),
             record_policy: None,
         };
+        self.check_admission(
+            &ctx,
+            AdmissionAction::CreatePullProxy,
+            key,
+            "proxy-pull".to_string(),
+            Some(url.to_string()),
+        )
+        .await?;
         let info = proxy_api.create_pull_proxy(&ctx, request).await?;
         Ok(zlm_response(ZlmResponse::ok(Data::new(KeyData {
             key: info.proxy_id.0,
@@ -115,13 +123,22 @@ impl ZlmMediaHttpService {
         let mut ctx = ctx.clone();
         ctx.idempotency_key = params["key"].as_str().map(|s| s.to_string());
 
+        let protocol = params["schema"].as_str().unwrap_or("rtmp").to_string();
         let request = PushProxyRequest {
-            source_media_key: key,
+            source_media_key: key.clone(),
             destination_url: dst_url.to_string(),
-            protocol: params["schema"].as_str().unwrap_or("rtmp").to_string(),
+            protocol: protocol.clone(),
             retry_policy: RetryPolicy::default(),
             protocol_options: Default::default(),
         };
+        self.check_admission(
+            &ctx,
+            AdmissionAction::CreatePushProxy,
+            key,
+            protocol,
+            Some(dst_url.to_string()),
+        )
+        .await?;
         let info = proxy_api.create_push_proxy(&ctx, request).await?;
         Ok(zlm_response(ZlmResponse::ok(Data::new(KeyData {
             key: info.proxy_id.0,
@@ -199,12 +216,20 @@ impl ZlmMediaHttpService {
 
         let request = FfmpegProxyRequest {
             source_url: src_url.to_string(),
-            destination: key,
+            destination: key.clone(),
             input_options: Vec::new(),
             output_options: Vec::new(),
             transcode_policy: TranscodePolicy::default(),
             output_policy: OutputPolicy::default(),
         };
+        self.check_admission(
+            &ctx,
+            AdmissionAction::CreateFfmpegProxy,
+            key,
+            "proxy-ffmpeg".to_string(),
+            Some(src_url.to_string()),
+        )
+        .await?;
         let info = proxy_api.create_ffmpeg_proxy(&ctx, request).await?;
         Ok(zlm_response(ZlmResponse::ok(Data::new(KeyData {
             key: info.proxy_id.0,

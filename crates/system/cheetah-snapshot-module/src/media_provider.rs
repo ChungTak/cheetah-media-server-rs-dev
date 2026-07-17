@@ -16,11 +16,13 @@ use cheetah_media_api::event::{EventHeader, MediaEvent, SnapshotCompleted};
 use cheetah_media_api::ids::MediaSchema;
 use cheetah_media_api::image::{ImageArtifact, ImageEncodeRequest, ImageFormat};
 use cheetah_media_api::media_file_store::{DeleteBatchResult, DeleteFailure, FileStoreEntry};
-use cheetah_media_api::model::{Page, SnapshotHandle, SnapshotInfo, SnapshotState};
+use cheetah_media_api::model::{
+    AdmissionAction, AdmissionRequest, Decision, Page, SnapshotHandle, SnapshotInfo, SnapshotState,
+};
 use cheetah_media_api::port::{MediaRequestContext, SnapshotApi};
-use cheetah_runtime_api::RuntimeApi;
-use cheetah_sdk::EngineContext;
+use cheetah_sdk::{Deadline, EngineContext, RuntimeApi};
 use futures::FutureExt;
+use std::collections::HashMap;
 use tracing::debug;
 
 use crate::config::SnapshotModuleConfig;
@@ -145,6 +147,9 @@ impl SnapshotApi for SnapshotMediaProvider {
         ctx: &MediaRequestContext,
         request: SnapshotRequest,
     ) -> Result<SnapshotHandle> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
         if self.registry.is_full() {
             return Err(MediaError::unavailable("snapshot capacity exceeded"));
         }
@@ -166,6 +171,26 @@ impl SnapshotApi for SnapshotMediaProvider {
                 "media not online: {}/{}/{}",
                 request.media_key.vhost.0, request.media_key.app.0, request.media_key.stream.0
             )));
+        }
+
+        // Snapshot opens a play-side subscription; admit before the lease is created.
+        if let Some(admission) = self.ctx.media_services.admission() {
+            let decision = admission
+                .authorize(
+                    ctx,
+                    AdmissionRequest {
+                        action: AdmissionAction::Play,
+                        principal: ctx.principal.clone(),
+                        resource: request.media_key.clone(),
+                        protocol: "snapshot".to_string(),
+                        source_address: None,
+                        params: HashMap::new(),
+                    },
+                )
+                .await?;
+            if let Decision::Deny { code, reason } = decision {
+                return Err(MediaError::new(code, reason));
+            }
         }
 
         let mut subscriber = self
@@ -335,6 +360,9 @@ impl SnapshotApi for SnapshotMediaProvider {
         ctx: &MediaRequestContext,
         request: DeleteSnapshotRequest,
     ) -> Result<DeleteBatchResult> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
         let root = PathBuf::from(&self.config.root_path);
 
         let mut candidates = self.registry.find_by_media_key(&request.media_key);

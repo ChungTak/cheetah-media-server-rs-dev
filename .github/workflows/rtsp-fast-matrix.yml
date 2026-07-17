@@ -1,0 +1,77 @@
+name: rtsp-fast-matrix
+
+on:
+  push:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/protocols/rtsp/**"
+      - "crates/foundation/cheetah-codec/**"
+      - "crates/runtime/**"
+      - "crates/sdk/**"
+      - "crates/system/cheetah-engine/**"
+      - "dev-scripts/check_rtsp_transport_smoke.sh"
+      - "dev-scripts/check_rtsp_jobs_smoke.sh"
+      - ".github/workflows/rtsp-fast-matrix.yml"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "crates/protocols/rtsp/**"
+      - "crates/foundation/cheetah-codec/**"
+      - "crates/runtime/**"
+      - "crates/sdk/**"
+      - "crates/system/cheetah-engine/**"
+      - "dev-scripts/check_rtsp_transport_smoke.sh"
+      - "dev-scripts/check_rtsp_jobs_smoke.sh"
+      - ".github/workflows/rtsp-fast-matrix.yml"
+  workflow_dispatch:
+  schedule:
+    - cron: "20 2 * * *"
+
+jobs:
+  quick-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: core
+            clippy_cmd: cargo clippy -p cheetah-rtsp-core --all-targets -- -D warnings
+            test_cmd: cargo test -p cheetah-rtsp-core
+          - name: property
+            clippy_cmd: cargo clippy -p cheetah-rtsp-property-tests --tests -- -D warnings
+            test_cmd: cargo test -p cheetah-rtsp-property-tests
+          - name: module
+            clippy_cmd: cargo clippy -p cheetah-rtsp-module --tests -- -D warnings
+            test_cmd: cargo test -p cheetah-rtsp-module
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --check
+      - name: clippy (${{ matrix.name }})
+        run: ${{ matrix.clippy_cmd }}
+      - name: test (${{ matrix.name }})
+        run: ${{ matrix.test_cmd }}
+
+  nightly-smoke:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: ensure ffmpeg tools
+        run: |
+          if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+      - name: rtsp transport smoke (tcp/udp/http/multicast)
+        run: ./dev-scripts/check_rtsp_transport_smoke.sh
+      - name: rtsp jobs smoke (pull/push synthetic remote)
+        run: ./dev-scripts/check_rtsp_jobs_smoke.sh

@@ -110,6 +110,11 @@ impl Module for SnapshotModule {
 
         let mut capabilities = cheetah_media_api::MediaCapabilitySet::empty();
         capabilities.add(cheetah_media_api::MediaCapability::Snapshot, 1);
+        // Image encode is MJPEG-only until a multi-codec decode path lands.
+        capabilities.set_reason(
+            cheetah_media_api::MediaCapability::Snapshot,
+            "mjpeg-only: non-MJPEG keyframes return Unsupported",
+        );
 
         self.media_services_registration = Some(
             ctx.engine
@@ -118,10 +123,16 @@ impl Module for SnapshotModule {
         );
 
         let image_encoder = Arc::new(crate::image_encode::ImageEncoderBackend::new());
+        let mut encode_caps = cheetah_media_api::MediaCapabilitySet::empty();
+        encode_caps.add(cheetah_media_api::MediaCapability::ImageEncode, 1);
+        encode_caps.set_reason(
+            cheetah_media_api::MediaCapability::ImageEncode,
+            "mjpeg-only",
+        );
         self.image_encode_registration = Some(
             ctx.engine
                 .media_services
-                .register_image_encode(image_encoder),
+                .register_image_encode_with_capabilities(image_encoder, encode_caps),
         );
 
         info!("snapshot module initialized");

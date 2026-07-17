@@ -10,6 +10,10 @@ pub mod api;
 ///
 /// MP4 VOD 模块配置。
 pub mod config;
+/// `PlaybackApi` media-services provider.
+///
+/// `PlaybackApi` 媒体服务 provider。
+pub mod media_provider;
 /// `Module` integration and HTTP route registration.
 ///
 /// `Module` 集成与 HTTP 路由注册。
@@ -25,6 +29,7 @@ pub mod zlm_compat;
 
 pub use api::VodApi;
 pub use config::Mp4ModuleConfig;
+pub use media_provider::Mp4PlaybackProvider;
 pub use module::{Mp4Module, Mp4ModuleFactory};
 pub use session_registry::{VodSessionRecord, VodSessionRegistry};
 pub use zlm_compat::{

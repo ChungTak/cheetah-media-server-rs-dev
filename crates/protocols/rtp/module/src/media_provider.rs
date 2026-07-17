@@ -10,12 +10,12 @@ use cheetah_rtp_driver_tokio::RtpDriverHandle;
 use cheetah_sdk::media_api::command::{
     RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderRequest, UpdateRtpRequest,
 };
-use cheetah_sdk::media_api::error::Result;
+use cheetah_sdk::media_api::error::{MediaError, Result};
 use cheetah_sdk::media_api::ids::StreamKeyBridge;
 use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId};
 use cheetah_sdk::media_api::model::{Page, RtpSession};
 use cheetah_sdk::media_api::port::{MediaRequestContext, RtpApi};
-use cheetah_sdk::{CancellationToken, EngineContext, StreamKey};
+use cheetah_sdk::{CancellationToken, Deadline, EngineContext, StreamKey};
 
 use crate::egress::{run_egress_session, ActiveEgressMap, EgressCleanup};
 use crate::orchestrator::RtpSessionOrchestrator;
@@ -71,25 +71,34 @@ impl RtpMediaProvider {
 impl RtpApi for RtpMediaProvider {
     async fn open_rtp_receiver(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         request: RtpReceiverRequest,
     ) -> Result<RtpSession> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
         self.orchestrator.open_rtp_receiver(request).await
     }
 
     async fn connect_rtp_receiver(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         request: RtpConnectRequest,
     ) -> Result<RtpSession> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
         self.orchestrator.connect_rtp_receiver(request).await
     }
 
     async fn open_rtp_sender(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         request: RtpSenderRequest,
     ) -> Result<RtpSession> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
         // Create the driver-side sender session first.
         let session = self.orchestrator.open_rtp_sender(request.clone()).await?;
         let session_key = session.session_id.0.clone();
@@ -123,7 +132,10 @@ impl RtpApi for RtpMediaProvider {
         Ok(session)
     }
 
-    async fn stop_rtp_session(&self, _ctx: &MediaRequestContext, id: &RtpSessionId) -> Result<()> {
+    async fn stop_rtp_session(&self, ctx: &MediaRequestContext, id: &RtpSessionId) -> Result<()> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
         if let Some(cancel) = self.active_senders.lock().remove(&id.0) {
             cancel.cancel();
         }
@@ -140,9 +152,12 @@ impl RtpApi for RtpMediaProvider {
 
     async fn update_rtp_session(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         request: UpdateRtpRequest,
     ) -> Result<RtpSession> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
         self.orchestrator.update_rtp_session(request).await
     }
 
