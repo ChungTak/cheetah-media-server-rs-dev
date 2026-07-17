@@ -105,7 +105,9 @@ fn process_blocking(
     }
 
     let mut image = match request.input {
-        ImageInput::Encoded { data, format } => decode_encoded_image(&registry, &data, format)?,
+        ImageInput::Encoded { data, format } => {
+            decode_encoded_image(&registry, &data, format, avcodec::core::ImageInfo::Rgb24)?
+        }
         ImageInput::Frame { frame, track } => {
             decode_video_frame(&registry, &frame, &track, config)?
         }
@@ -184,10 +186,11 @@ fn decode_encoded_image(
     registry: &avcodec::core::Registry,
     data: &Bytes,
     format: ImageFormat,
+    target_info: avcodec::core::ImageInfo,
 ) -> Result<avcodec::core::Image> {
     use avcodec::core::{
         BufferHandle, BufferSlice, EncodedImage, EncodedImageFormat, ImageDecoder,
-        ImageDecoderConfig, ImageInfo, Poll,
+        ImageDecoderConfig, Poll,
     };
 
     let encoded_format = match format {
@@ -195,7 +198,7 @@ fn decode_encoded_image(
         ImageFormat::Png => EncodedImageFormat::Png,
     };
 
-    let cfg = ImageDecoderConfig::new(ImageInfo::Rgb24).with_format(encoded_format);
+    let cfg = ImageDecoderConfig::new(target_info).with_format(encoded_format);
     let mut decoder: Box<dyn ImageDecoder> = registry
         .create_image_decoder(&cfg)
         .map_err(|e| MediaError::internal(format!("create image decoder: {e}")))?;
@@ -236,7 +239,12 @@ fn decode_video_frame(
 
     // MJPEG payloads are simply independent JPEG images.
     if frame.codec == CheetahCodecId::MJPEG {
-        return decode_encoded_image(registry, &frame.payload, ImageFormat::Jpeg);
+        return decode_encoded_image(
+            registry,
+            &frame.payload,
+            ImageFormat::Jpeg,
+            avcodec::core::ImageInfo::Rgb24,
+        );
     }
 
     let av_codec = avcodec_codec_id(frame.codec).ok_or_else(|| {
@@ -867,7 +875,13 @@ fn decode_overlay_image(
     format: ImageFormat,
     config: &MediaProcessingModuleConfig,
 ) -> std::result::Result<avcodec::core::Image, String> {
-    let image = decode_encoded_image(registry, data, format)
+    use avcodec::core::ImageInfo;
+    let target_info = match format {
+        ImageFormat::Jpeg => ImageInfo::Rgb24,
+        // Preserve per-pixel alpha for PNG overlays so OpenCV Blend can use it.
+        ImageFormat::Png => ImageInfo::Rgba,
+    };
+    let image = decode_encoded_image(registry, data, format, target_info)
         .map_err(|e| format!("decode overlay image: {e}"))?;
     if image.coded_width > config.max_image_width || image.coded_height > config.max_image_height {
         return Err(format!(
