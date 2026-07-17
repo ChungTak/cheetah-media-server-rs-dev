@@ -26,9 +26,13 @@ media-processing-image = [
     "avcodec?/jpeg",
     "avcodec?/zune",
     "avcodec?/libyuv",
-    "avcodec?/opencv",
     "avcodec?/rust-h264",
     "avcodec?/rust-h265",
+]
+
+media-processing-image-overlay = [
+    "dep:avcodec",
+    "avcodec?/opencv",
 ]
 
 avcodec-profile-native-free = ["avcodec?/profile-native-free"]
@@ -38,6 +42,7 @@ media-processing-cpu = [
     "media-processing-audio",
     "media-processing-video",
     "media-processing-image",
+    "media-processing-image-overlay",
     "avcodec-profile-native-free",
 ]
 

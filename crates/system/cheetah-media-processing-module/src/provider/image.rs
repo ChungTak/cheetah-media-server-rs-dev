@@ -1245,6 +1245,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "media-processing-image-overlay")]
     async fn blends_jpeg_overlay_onto_jpeg() {
         let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
         let provider =
