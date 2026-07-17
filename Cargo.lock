@@ -1183,6 +1183,8 @@ name = "cheetah-server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
+ "cheetah-codec",
  "cheetah-config",
  "cheetah-control",
  "cheetah-engine",

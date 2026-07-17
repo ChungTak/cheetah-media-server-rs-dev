@@ -453,5 +453,5 @@ fn parse_zlm_destination_optional(params: &serde_json::Value) -> Option<String> 
 
 fn zlm_rtp_session_id(key: &MediaKey, kind: &str) -> String {
     let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
-    format!("{kind}/{namespace}/{path}")
+    format!("{kind}:{namespace}:{path}")
 }
