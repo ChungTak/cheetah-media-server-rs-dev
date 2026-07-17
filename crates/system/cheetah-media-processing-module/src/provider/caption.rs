@@ -25,7 +25,7 @@ use cheetah_codec::{
 use cheetah_media_api::{
     error::{MediaError, Result as MediaResult},
     ids::{MediaKey, ProcessingJobId, StreamKeyBridge},
-    model::Page,
+    model::{AdmissionAction, AdmissionRequest, Decision, Page},
     port::MediaProcessingApi,
     processing::{
         CreateProcessingJob, ProcessingJob, ProcessingJobQuery, ProcessingJobSpec,
@@ -70,6 +70,33 @@ impl MediaProcessingProvider {
     fn media_key_to_stream_key(key: &MediaKey) -> StreamKey {
         let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
         StreamKey::new(namespace, path)
+    }
+
+    async fn authorize(
+        &self,
+        ctx: &MediaRequestContext,
+        action: AdmissionAction,
+        resource: &MediaKey,
+    ) -> MediaResult<()> {
+        if let Some(admission) = self.ctx.media_services.admission() {
+            let decision = admission
+                .authorize(
+                    ctx,
+                    AdmissionRequest {
+                        action,
+                        principal: ctx.principal.clone(),
+                        resource: resource.clone(),
+                        protocol: "caption-extract".to_string(),
+                        source_address: None,
+                        params: HashMap::new(),
+                    },
+                )
+                .await?;
+            if let Decision::Deny { code, reason } = decision {
+                return Err(MediaError::new(code, reason));
+            }
+        }
+        Ok(())
     }
 
     fn now_us(&self) -> i64 {
@@ -173,7 +200,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
 
     async fn create_job(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         request: CreateProcessingJob,
     ) -> MediaResult<ProcessingJob> {
         let ProcessingJobSpec::CaptionExtract {
@@ -189,6 +216,11 @@ impl MediaProcessingApi for MediaProcessingProvider {
 
         let source_key = Self::media_key_to_stream_key(source);
         let target_key = Self::media_key_to_stream_key(target);
+
+        // Admission check must happen before any stream resource is allocated.
+        self.authorize(ctx, AdmissionAction::Play, source).await?;
+        self.authorize(ctx, AdmissionAction::Publish, target)
+            .await?;
 
         if !self.source_has_video(source).await? {
             return Err(MediaError::invalid_argument(format!(
