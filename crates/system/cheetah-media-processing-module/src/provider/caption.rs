@@ -43,9 +43,16 @@ use tracing::{info, warn};
 
 use crate::config::MediaProcessingModuleConfig;
 
+fn now_us() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_micros() as i64
+}
+
 /// In-memory handle for a running or stopped caption job.
 struct JobEntry {
-    job: ProcessingJob,
+    job: Arc<Mutex<ProcessingJob>>,
     cancel: CancellationToken,
     handle: Option<Box<dyn cheetah_sdk::JoinHandle>>,
 }
@@ -100,13 +107,6 @@ impl MediaProcessingProvider {
         Ok(())
     }
 
-    fn now_us() -> i64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_micros() as i64
-    }
-
     fn new_job_id(&self) -> ProcessingJobId {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -143,7 +143,7 @@ impl MediaProcessingProvider {
     }
 
     fn build_job(&self, request: &CreateProcessingJob, state: ProcessingJobState) -> ProcessingJob {
-        let now = Self::now_us();
+        let now = now_us();
         ProcessingJob {
             job_id: self.new_job_id(),
             spec: request.spec.clone(),
@@ -182,8 +182,9 @@ impl MediaProcessingProvider {
             let mut jobs = self.jobs.lock().unwrap();
             for entry in jobs.values_mut() {
                 entry.cancel.cancel();
-                entry.job.state = ProcessingJobState::Stopped;
-                entry.job.updated_at = Self::now_us();
+                let mut guard = entry.job.lock().unwrap();
+                guard.state = ProcessingJobState::Stopped;
+                guard.updated_at = now_us();
             }
             jobs.values_mut()
                 .filter_map(|e| e.handle.take())
@@ -283,8 +284,11 @@ impl MediaProcessingApi for MediaProcessingProvider {
         let cancel_child = cancel.child_token();
         let runtime = self.ctx.runtime_api.clone();
 
-        let job = self.build_job(&request, ProcessingJobState::Running);
-        let job_id = job.job_id.clone();
+        let job = Arc::new(Mutex::new(
+            self.build_job(&request, ProcessingJobState::Running),
+        ));
+        let job_id = job.lock().unwrap().job_id.clone();
+        let job_snapshot = job.lock().unwrap().clone();
 
         // Insert the job record before spawning the worker so that a very fast
         // completion (or failure) still finds the entry and transitions it.
@@ -297,24 +301,12 @@ impl MediaProcessingApi for MediaProcessingProvider {
             },
         );
 
-        let jobs = self.jobs.clone();
         let publisher_api = self.ctx.publisher_api.clone();
         let spawned_job_id = job_id.clone();
         let handle = runtime.spawn(Box::pin(async move {
-            let result = worker.run(subscriber, publisher, cancel_child).await;
-            let finished_at = Self::now_us();
-            if let Ok(mut guard) = jobs.lock() {
-                if let Some(entry) = guard.get_mut(&spawned_job_id) {
-                    entry.job.finished_at = Some(finished_at);
-                    if let Err(ref e) = result {
-                        entry.job.last_error = Some(e.to_string());
-                    }
-                    if entry.job.state == ProcessingJobState::Running {
-                        entry.job.state = ProcessingJobState::Stopped;
-                        entry.job.updated_at = finished_at;
-                    }
-                }
-            }
+            let result = worker
+                .run(subscriber, publisher, cancel_child, Some(job.clone()))
+                .await;
             if let Err(e) = result {
                 warn!(job_id = %spawned_job_id, "caption extract worker failed: {e}");
             }
@@ -325,8 +317,8 @@ impl MediaProcessingApi for MediaProcessingProvider {
             entry.handle = Some(handle);
         }
 
-        info!(job_id = %job.job_id, "caption extract job started");
-        Ok(job)
+        info!(job_id = %job_id, "caption extract job started");
+        Ok(job_snapshot)
     }
 
     async fn get_job(
@@ -336,7 +328,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
     ) -> MediaResult<ProcessingJob> {
         let jobs = self.jobs.lock().unwrap();
         jobs.get(id)
-            .map(|e| e.job.clone())
+            .map(|e| e.job.lock().unwrap().clone())
             .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))
     }
 
@@ -349,7 +341,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
         let jobs = self.jobs.lock().unwrap();
         let mut items: Vec<ProcessingJob> = jobs
             .values()
-            .map(|e| e.job.clone())
+            .map(|e| e.job.lock().unwrap().clone())
             .filter(|j| {
                 query.state.is_none_or(|s| j.state == s)
                     && query.vhost.as_ref().is_none_or(|v| {
@@ -407,9 +399,10 @@ impl MediaProcessingApi for MediaProcessingProvider {
             .get_mut(id)
             .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))?;
         entry.cancel.cancel();
-        entry.job.state = ProcessingJobState::Stopped;
-        entry.job.updated_at = Self::now_us();
-        Ok(entry.job.clone())
+        let mut guard = entry.job.lock().unwrap();
+        guard.state = ProcessingJobState::Stopped;
+        guard.updated_at = now_us();
+        Ok(guard.clone())
     }
 
     async fn delete_job(
@@ -483,9 +476,27 @@ impl CaptionExtractWorker {
     /// Run the worker loop until the subscriber ends or cancellation is requested.
     pub async fn run(
         &mut self,
+        subscriber: Box<dyn SubscriberSource>,
+        publisher: Box<dyn PublisherSink>,
+        cancel: CancellationToken,
+        progress: Option<Arc<Mutex<ProcessingJob>>>,
+    ) -> Result<(), SdkError> {
+        let result = self
+            .run_loop(subscriber, publisher, cancel, &progress)
+            .await;
+        Self::finish_progress(
+            &progress,
+            result.as_ref().err().map(|e| format!("{e}")).as_deref(),
+        );
+        result
+    }
+
+    async fn run_loop(
+        &mut self,
         mut subscriber: Box<dyn SubscriberSource>,
         publisher: Box<dyn PublisherSink>,
         cancel: CancellationToken,
+        progress: &Option<Arc<Mutex<ProcessingJob>>>,
     ) -> Result<(), SdkError> {
         publisher.update_tracks(vec![self.output_track()])?;
 
@@ -500,8 +511,18 @@ impl CaptionExtractWorker {
                     match frame {
                         Ok(Some(frame)) => {
                             last_pts_ms = (frame.pts_us.max(0) / 1000) as u64;
+                            Self::update_progress(progress, |job| {
+                                job.frames_in += 1;
+                                job.bytes_in += frame.payload.len() as u64;
+                            });
                             for cue in self.process_frame(&frame) {
-                                self.push_cue(&*publisher, cue)?;
+                                let payload = serde_json::to_vec(&cue)
+                                    .map_err(|e| SdkError::Internal(format!("failed to serialize WebVTT cue: {e}")))?;
+                                Self::update_progress(progress, |job| {
+                                    job.frames_out += 1;
+                                    job.bytes_out += payload.len() as u64;
+                                });
+                                self.push_cue_payload(&*publisher, cue, Bytes::from(payload))?;
                             }
                             drop(recv_fut);
                             drop(cancel_fut);
@@ -520,15 +541,59 @@ impl CaptionExtractWorker {
         }
 
         for cue in self.parser.reset(Some(last_pts_ms)) {
-            self.push_cue(&*publisher, cue)?;
+            let payload = serde_json::to_vec(&cue)
+                .map_err(|e| SdkError::Internal(format!("failed to serialize WebVTT cue: {e}")))?;
+            Self::update_progress(progress, |job| {
+                job.frames_out += 1;
+                job.bytes_out += payload.len() as u64;
+            });
+            self.push_cue_payload(&*publisher, cue, Bytes::from(payload))?;
         }
 
         publisher.close()
     }
 
+    fn update_progress<F>(progress: &Option<Arc<Mutex<ProcessingJob>>>, f: F)
+    where
+        F: FnOnce(&mut ProcessingJob),
+    {
+        if let Some(p) = progress {
+            if let Ok(mut guard) = p.lock() {
+                f(&mut guard);
+                guard.updated_at = now_us();
+            }
+        }
+    }
+
+    fn finish_progress(progress: &Option<Arc<Mutex<ProcessingJob>>>, last_error: Option<&str>) {
+        if let Some(p) = progress {
+            if let Ok(mut guard) = p.lock() {
+                let finished_at = now_us();
+                guard.finished_at = Some(finished_at);
+                if let Some(err) = last_error {
+                    guard.last_error = Some(err.to_string());
+                }
+                if guard.state == ProcessingJobState::Running {
+                    guard.state = ProcessingJobState::Stopped;
+                    guard.updated_at = finished_at;
+                }
+            }
+        }
+    }
+
+    #[allow(dead_code)]
     fn push_cue(&self, publisher: &dyn PublisherSink, cue: WebVttCue) -> Result<(), SdkError> {
         let payload = serde_json::to_vec(&cue)
             .map_err(|e| SdkError::Internal(format!("failed to serialize WebVTT cue: {e}")))?;
+        self.push_cue_payload(publisher, cue, Bytes::from(payload))
+    }
+
+    fn push_cue_payload(
+        &self,
+        publisher: &dyn PublisherSink,
+        cue: WebVttCue,
+        payload: Bytes,
+    ) -> Result<(), SdkError> {
         let duration = (cue.end_ms - cue.start_ms) as i64;
         let mut frame = AVFrame::new(
             TrackId(0),
@@ -538,7 +603,7 @@ impl CaptionExtractWorker {
             cue.start_ms as i64,
             cue.start_ms as i64,
             Timebase::new(1, 1000),
-            Bytes::from(payload),
+            payload,
         );
         frame.duration = duration;
         frame.duration_us = duration * 1000;
@@ -740,7 +805,7 @@ mod tests {
         let mut worker = CaptionExtractWorker::new(CeaParserConfig::default());
         let cancel = CancellationToken::new();
         worker
-            .run(subscriber, publisher, cancel)
+            .run(subscriber, publisher, cancel, None)
             .await
             .expect("run should complete cleanly");
 
@@ -765,7 +830,8 @@ mod tests {
         let cancel = CancellationToken::new();
         let child = cancel.child_token();
 
-        let handle = tokio::spawn(async move { worker.run(subscriber, publisher, child).await });
+        let handle =
+            tokio::spawn(async move { worker.run(subscriber, publisher, child, None).await });
 
         // Give the worker a chance to enter the receive loop.
         tokio::task::yield_now().await;
