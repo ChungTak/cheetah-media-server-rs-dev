@@ -60,6 +60,7 @@ impl SnapshotMediaProvider {
         &self,
         ctx: &MediaRequestContext,
         frame: &Arc<cheetah_codec::AVFrame>,
+        track: &TrackInfo,
         request: &SnapshotRequest,
     ) -> Result<ImageArtifact> {
         let format = request
@@ -85,7 +86,7 @@ impl SnapshotMediaProvider {
         let process_request = ImageProcessRequest::new(
             ImageInput::Frame {
                 frame: Arc::clone(frame),
-                track: track_info_for_frame(frame),
+                track: track.clone(),
             },
             format,
         )
@@ -170,8 +171,8 @@ impl SnapshotApi for SnapshotMediaProvider {
         let capture = capture_keyframe(&self.ctx.runtime_api, &mut *subscriber, timeout_ms).await;
         let _ = subscriber.close().await;
 
-        let frame = match capture {
-            CaptureResult::Ok { frame } => frame,
+        let (frame, track) = match capture {
+            CaptureResult::Ok { frame, track } => (frame, track),
             CaptureResult::Timeout => {
                 return Err(MediaError::new(
                     MediaErrorCode::Timeout,
@@ -184,7 +185,9 @@ impl SnapshotApi for SnapshotMediaProvider {
             CaptureResult::Error(e) => return Err(e),
         };
 
-        let artifact = self.encode_frame(ctx, &frame, &request).await?;
+        let fallback = track_info_for_frame(&frame);
+        let track = track.as_ref().unwrap_or(&fallback);
+        let artifact = self.encode_frame(ctx, &frame, track, &request).await?;
         let format_ext = match artifact.format {
             ImageFormat::Jpeg => "jpg",
             ImageFormat::Png => "png",
@@ -402,7 +405,10 @@ impl SnapshotApi for SnapshotMediaProvider {
 }
 
 enum CaptureResult {
-    Ok { frame: Arc<cheetah_codec::AVFrame> },
+    Ok {
+        frame: Arc<cheetah_codec::AVFrame>,
+        track: Option<TrackInfo>,
+    },
     Timeout,
     NoVideo,
     Error(MediaError),
@@ -418,6 +424,7 @@ async fn capture_keyframe(
     let mut saw_video = false;
 
     loop {
+        let tracks = subscriber.tracks();
         let recv = subscriber.recv();
         futures::pin_mut!(recv);
         futures::select! {
@@ -434,8 +441,12 @@ async fn capture_keyframe(
                         if !is_key {
                             continue;
                         }
+                        let track = tracks
+                            .into_iter()
+                            .find(|t| t.track_id == frame.track_id && t.media_kind == MediaKind::Video);
                         return CaptureResult::Ok {
                             frame: Arc::clone(&frame),
+                            track,
                         };
                     }
                     Ok(None) => {

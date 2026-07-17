@@ -265,10 +265,7 @@ fn decode_video_frame(
         }
     }
 
-    let time_base = track.media_timebase().map_err(|e| {
-        MediaError::invalid_argument(format!("invalid track timebase for image decode: {e}"))
-    })?;
-    let av_time_base = TimeBase::new(time_base.num, time_base.den);
+    let av_time_base = TimeBase::new(frame.timebase.num, frame.timebase.den);
 
     let decoder_cfg = DecoderConfig::new(av_codec, av_time_base)
         .with_memory_domain(avcodec::core::MemoryDomain::Host)
