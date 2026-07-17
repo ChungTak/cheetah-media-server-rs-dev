@@ -578,7 +578,7 @@ async fn zlm_golden_rtp_endpoints() {
     let body = body_json(&resp);
     assert_eq!(body["code"], 0);
     assert!(body["port"].as_u64().is_some());
-    assert_eq!(body["session_id"].as_str().unwrap(), "recv/live/rtp-udp");
+    assert_eq!(body["session_id"].as_str().unwrap(), "recv:live:rtp-udp");
 
     // listRtpServer returns the receiver.
     let resp = service
@@ -636,7 +636,7 @@ async fn zlm_golden_rtp_endpoints() {
         .unwrap();
     let body = body_json(&resp);
     assert_eq!(body["code"], 0);
-    assert_eq!(body["session_id"].as_str().unwrap(), "recv/live/rtp-recv");
+    assert_eq!(body["session_id"].as_str().unwrap(), "recv:live:rtp-recv");
 
     let resp = service
         .handle(post(
@@ -651,7 +651,7 @@ async fn zlm_golden_rtp_endpoints() {
         .unwrap();
     let body = body_json(&resp);
     assert_eq!(body["code"], 0);
-    assert_eq!(body["session_id"].as_str().unwrap(), "recv/live/rtp-recv");
+    assert_eq!(body["session_id"].as_str().unwrap(), "recv:live:rtp-recv");
 
     let resp = service
         .handle(get("/api/getRtpInfo", query_for("rtp-recv")))
@@ -691,7 +691,7 @@ async fn zlm_golden_rtp_endpoints() {
         .unwrap();
     let body = body_json(&resp);
     assert_eq!(body["code"], 0);
-    assert_eq!(body["session_id"].as_str().unwrap(), "send/live/rtp-send");
+    assert_eq!(body["session_id"].as_str().unwrap(), "send:live:rtp-send");
 
     let resp = service
         .handle(get("/api/listRtpSender", None))
@@ -749,7 +749,7 @@ async fn zlm_golden_rtp_endpoints() {
     assert_eq!(body["code"], 0);
     assert_eq!(
         body["session_id"].as_str().unwrap(),
-        "send/live/rtp-passive"
+        "send:live:rtp-passive"
     );
 
     let resp = service

@@ -610,17 +610,19 @@ async fn run_ingress_worker(
 
 /// Parse `session_key` into a `StreamKey`.
 ///
-/// The key may be a 2-segment `{namespace}/{path}` (HTTP endpoints) or a
-/// 3-segment `{kind}/{namespace}/{path}` (SDK/orchestrator paths).
+/// Modern orchestrator keys use `{kind}:{namespace}:{path}` so the `session_id`
+/// remains a single URL path segment. Legacy 2/3-segment slash forms are still
+/// accepted for pull jobs and backward compatibility.
 ///
 /// 将 `session_key` 解析为 `StreamKey`。
-/// 键可以是 2 段 `{namespace}/{path}`（HTTP 端点）或 3 段
-/// `{kind}/{namespace}/{path}`（SDK/编排器路径）。
+/// 新版编排器键使用 `{kind}:{namespace}:{path}`，使 `session_id` 在 URL path 中保持单一段；
+/// 对旧的 2/3 段斜杠形式仍兼容，用于 pull 任务。
 fn parse_session_key(key: &str) -> StreamKey {
-    let mut it = key.splitn(3, '/');
+    let sep = if key.contains(':') { ':' } else { '/' };
+    let mut it = key.splitn(3, sep);
     match (it.next(), it.next(), it.next()) {
-        (Some(ns), Some(path), None) => StreamKey::new(ns, path),
         (Some(_kind), Some(ns), Some(path)) => StreamKey::new(ns, path),
+        (Some(ns), Some(path), None) => StreamKey::new(ns, path),
         (Some(path), None, None) => StreamKey::new("live", path),
         _ => StreamKey::new("live", key),
     }

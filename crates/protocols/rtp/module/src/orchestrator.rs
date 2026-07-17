@@ -93,7 +93,7 @@ impl RtpSessionOrchestrator {
 
     fn session_key_from_media_key(key: &MediaKey, kind: &str) -> String {
         let (namespace, path) = StreamKeyBridge::to_namespace_path(key);
-        format!("{kind}/{namespace}/{path}")
+        format!("{kind}:{namespace}:{path}")
     }
 
     fn parse_payload_mode(hint: &Option<String>, payload_type: Option<u8>) -> RtpPayloadMode {
@@ -766,7 +766,7 @@ mod tests {
 
         assert_eq!(
             session.session_id,
-            RtpSessionId("recv/test/ch1".to_string())
+            RtpSessionId("recv:test:ch1".to_string())
         );
         assert_eq!(session.kind, RtpSessionKind::Receiver);
         assert_eq!(session.state, RtpSessionState::Listening);

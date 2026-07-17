@@ -1476,7 +1476,7 @@ fn rtp_id_from_path(path: &str, prefix: &str, suffix: &str) -> Option<String> {
     if id.is_empty() {
         return None;
     }
-    Some(id.to_string())
+    Some(crate::util::percent_decode(id))
 }
 
 /// Extract the webhook profile id from `/webhook/profiles/{id}[/<suffix>]`.
