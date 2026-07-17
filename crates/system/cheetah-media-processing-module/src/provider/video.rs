@@ -122,7 +122,7 @@ pub fn transcode_video_frame(
         .with_allow_staging(false)
         .with_memory_domain(avcodec::core::MemoryDomain::Host);
 
-    let dst_time_base = avcodec::core::TimeBase::new(output_fps.num, output_fps.den);
+    let dst_time_base = avcodec::core::TimeBase::new(output_fps.den, output_fps.num);
     let encoder_cfg = avcodec::core::EncoderConfig::new(
         dst_av_codec,
         output_width,
@@ -156,7 +156,7 @@ pub fn transcode_video_frame(
 
     let mut output_frames = Vec::new();
     let mut param_cache = ParameterSetCache::default();
-    let output_timebase = Timebase::new(output_fps.num, output_fps.den);
+    let output_timebase = Timebase::new(output_fps.den, output_fps.num);
 
     drain_transcoder(
         &mut transcoder,
@@ -540,5 +540,17 @@ mod tests {
 
         let result = transcode_video_frame(&frame, &track, &spec, &cfg).expect("transcode");
         assert_output(&result, CodecId::H264, 32, 32);
+    }
+
+    #[test]
+    fn output_timebase_is_reciprocal_of_fps() {
+        let cfg = MediaProcessingModuleConfig::default();
+        let (frame, track) = encode_input(CodecId::H264, 64, 64);
+        let spec = VideoTranscodeSpec::new(CodecId::H264);
+
+        let result = transcode_video_frame(&frame, &track, &spec, &cfg).expect("transcode");
+        assert_output(&result, CodecId::H264, 64, 64);
+        // 30 fps -> time base 1/30 seconds per tick, not 30/1.
+        assert_eq!(result.frames[0].timebase, Timebase::new(1, 30));
     }
 }
