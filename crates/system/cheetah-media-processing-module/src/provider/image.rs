@@ -261,7 +261,21 @@ fn validate_operation_dimensions(
                 .saturating_add(*top)
                 .saturating_add(*bottom),
         ),
-        _ => return Ok(()),
+        ImageOperation::Rotate { degrees } => {
+            if degrees.rem_euclid(180) == 0 {
+                return Ok(());
+            }
+            if degrees.rem_euclid(90) == 0 {
+                (image.coded_height, image.coded_width)
+            } else {
+                // Non-90-degree rotations are rejected by map_image_operation.
+                return Ok(());
+            }
+        }
+        ImageOperation::Flip { .. }
+        | ImageOperation::Csc { .. }
+        | ImageOperation::Blend { .. }
+        | ImageOperation::Text { .. } => return Ok(()),
     };
 
     if exceeds(target_w, target_h) {
@@ -611,6 +625,32 @@ mod tests {
             .process(&MediaRequestContext::default(), request)
             .await
             .expect_err("oversized resize should be rejected");
+        assert_eq!(err.code, MediaErrorCode::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn rejects_rotation_that_swaps_dimensions_over_limit() {
+        let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
+        let mut config = MediaProcessingModuleConfig::default();
+        // Fixture is 4x4; after 90° rotation it is still 4x4, so use limits
+        // smaller than one axis to force the swapped axis over the limit.
+        config.max_image_width = 8;
+        config.max_image_height = 3;
+
+        let provider = ImageProcessProvider::new(runtime, config);
+        let request = ImageProcessRequest::new(
+            ImageInput::Encoded {
+                data: make_jpeg_fixture(),
+                format: ImageFormat::Jpeg,
+            },
+            ImageFormat::Jpeg,
+        )
+        .with_operations(vec![ImageOperation::Rotate { degrees: 90 }]);
+
+        let err = provider
+            .process(&MediaRequestContext::default(), request)
+            .await
+            .expect_err("rotation swapping to over-limit height should be rejected");
         assert_eq!(err.code, MediaErrorCode::InvalidArgument);
     }
 
