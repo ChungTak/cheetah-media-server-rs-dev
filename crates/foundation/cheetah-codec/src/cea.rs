@@ -229,14 +229,15 @@ impl CeaParser {
     fn push_diagnostic(&mut self, message: &str) {
         if self.diagnostics.len() < MAX_DIAGNOSTICS {
             self.diagnostics.push(message.to_string());
-        } else if self.diagnostics.len() == MAX_DIAGNOSTICS {
-            self.dropped_diagnostics += 1;
-            self.diagnostics.push(format!(
-                "... {} further diagnostics dropped",
-                self.dropped_diagnostics
-            ));
         } else {
             self.dropped_diagnostics += 1;
+            let summary = format!("... {} further diagnostics dropped", self.dropped_diagnostics);
+            if self.diagnostics.len() == MAX_DIAGNOSTICS {
+                self.diagnostics.push(summary);
+            } else {
+                let last = self.diagnostics.len() - 1;
+                self.diagnostics[last] = summary;
+            }
         }
     }
 
@@ -752,9 +753,10 @@ mod tests {
             let unit = make_access_unit(0, 3000, vec![nal]);
             parser.push_access_unit(CodecId::H264, &unit);
         }
-        assert!(parser.diagnostics().len() <= MAX_DIAGNOSTICS + 1);
+        assert_eq!(parser.diagnostics().len(), MAX_DIAGNOSTICS + 1);
         let taken = parser.take_diagnostics();
-        assert!(!taken.is_empty());
+        let summary = taken.last().unwrap();
+        assert!(summary.contains("10"), "summary should report 10 dropped: {summary}");
         assert!(parser.diagnostics().is_empty());
     }
 }
