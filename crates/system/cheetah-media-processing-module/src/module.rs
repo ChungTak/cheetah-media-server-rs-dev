@@ -53,6 +53,7 @@ pub struct MediaProcessingModule {
     ctx: Option<EngineContext>,
     config: MediaProcessingModuleConfig,
     image_process_registration: Option<ProviderRegistration>,
+    processing_registration: Option<ProviderRegistration>,
 }
 
 impl MediaProcessingModule {
@@ -62,6 +63,7 @@ impl MediaProcessingModule {
             ctx: None,
             config: MediaProcessingModuleConfig::default(),
             image_process_registration: None,
+            processing_registration: None,
         }
     }
 }
@@ -117,6 +119,21 @@ impl Module for MediaProcessingModule {
             );
         }
 
+        #[cfg(feature = "media-processing-caption")]
+        {
+            let provider = Arc::new(crate::provider::MediaProcessingProvider::new(
+                ctx.engine.clone(),
+                self.config.clone(),
+            ));
+
+            let capabilities = crate::provider::MediaProcessingProvider::default_capabilities();
+            self.processing_registration = Some(
+                ctx.engine
+                    .media_services
+                    .register_processing_with_capabilities(provider, capabilities),
+            );
+        }
+
         info!("media processing module initialized");
         self.state = ModuleState::Initialized;
         Ok(())
@@ -129,6 +146,11 @@ impl Module for MediaProcessingModule {
 
     async fn stop(&mut self) -> Result<(), SdkError> {
         if let Some(reg) = self.image_process_registration.take() {
+            if let Some(ctx) = self.ctx.as_ref() {
+                ctx.media_services.unregister(&reg);
+            }
+        }
+        if let Some(reg) = self.processing_registration.take() {
             if let Some(ctx) = self.ctx.as_ref() {
                 ctx.media_services.unregister(&reg);
             }
