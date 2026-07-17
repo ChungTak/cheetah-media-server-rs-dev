@@ -25,8 +25,11 @@ for target in "${TARGETS[@]}"; do
   fi
 
   if [[ "${STRICT_TARGETS:-0}" == "1" ]]; then
-    echo "[no-std] missing required target: ${target}" >&2
-    exit 1
+    echo "[no-std] installing missing target: ${target}"
+    rustup target add "${target}"
+    echo "[no-std] checking ${CRATE} on ${target}"
+    cargo check -p "${CRATE}" --target "${target}"
+    continue
   fi
 
   echo "[no-std] skip ${target} (not installed; set STRICT_TARGETS=1 to fail)"

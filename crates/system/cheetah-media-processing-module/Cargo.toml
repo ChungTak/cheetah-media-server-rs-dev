@@ -31,13 +31,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
-avcodec = {
-    git = "https://github.com/TimothyWalker6922/avcodec-rs-develop.git",
-    rev = "dd3190008f2b544b51a74a9f4a225d52befc120a",
-    version = "0.2.0",
-    default-features = false,
-    optional = true,
-}
+avcodec = { git = "https://github.com/TimothyWalker6922/avcodec-rs-develop.git", rev = "dd3190008f2b544b51a74a9f4a225d52befc120a", version = "0.2.0", default-features = false, optional = true }
 
 cheetah-codec = { path = "../../foundation/cheetah-codec" }
 cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
