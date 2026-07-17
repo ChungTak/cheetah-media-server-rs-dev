@@ -202,7 +202,7 @@ fn format_vtt_timestamp(ms: u64) -> String {
     let rem = rem % 60_000;
     let ss = rem / 1_000;
     let ttt = rem % 1_000;
-    format!("{:02}:{:02}:{:02}.{:03}", hh, mm, ss, ttt)
+    format!("{hh:02}:{mm:02}:{ss:02}.{ttt:03}")
 }
 
 #[cfg(test)]
