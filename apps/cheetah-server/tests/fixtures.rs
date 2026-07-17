@@ -7,9 +7,8 @@
 //! 进程启动、PS/RTP 真实素材生成以及常用等待工具。
 
 use std::path::{Path, PathBuf};
-#[cfg(feature = "proxy-rtsp")]
-use std::process::Command as StdCommand;
-use std::process::Stdio;
+use std::process::{Command as StdCommand, Stdio};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 #[cfg(feature = "proxy-rtsp")]
@@ -265,6 +264,25 @@ pub fn rtp_receiver_request(
     })
 }
 
+#[cfg(feature = "rtp")]
+pub fn rtp_sender_request(
+    media_key: serde_json::Value,
+    destination_endpoint: &str,
+    ssrc: u32,
+    pt: u8,
+    codec_hint: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "media_key": media_key,
+        "destination_endpoint": destination_endpoint,
+        "ssrc": ssrc,
+        "payload_type": pt,
+        "codec_hint": codec_hint,
+        "mode": "active",
+        "transport_options": {},
+    })
+}
+
 pub fn start_record_request(media_key: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "media_key": media_key,
@@ -299,11 +317,31 @@ pub async fn wait_for_online(
     panic!("stream {vhost}/{app}/{stream} did not come online");
 }
 
+fn h264_params() -> (Bytes, Bytes, Bytes) {
+    static CACHE: OnceLock<(Bytes, Bytes, Bytes)> = OnceLock::new();
+    CACHE.get_or_init(generate_h264_keyframe).clone()
+}
+
+fn fallback_h264_params() -> (Bytes, Bytes, Bytes) {
+    let mut idr = vec![0x65];
+    idr.extend_from_slice(b"video frame data");
+    (
+        Bytes::from_static(&[0x67, 0x42, 0x00, 0x0A]),
+        Bytes::from_static(&[0x68, 0xCE, 0x38, 0x80]),
+        Bytes::from(idr),
+    )
+}
+
 pub fn make_video_track() -> TrackInfo {
     let mut track = TrackInfo::new(TrackId(0xE0), MediaKind::Video, CodecId::H264, 90_000);
+    let (sps, pps, _idr) = if ffmpeg_available() {
+        h264_params()
+    } else {
+        fallback_h264_params()
+    };
     track.extradata = CodecExtradata::H264 {
-        sps: vec![Bytes::from_static(&[0x67, 0x42, 0x00, 0x0A])],
-        pps: vec![Bytes::from_static(&[0x68, 0xCE, 0x38, 0x80])],
+        sps: vec![sps],
+        pps: vec![pps],
         avcc: None,
     };
     track.refresh_readiness();
@@ -315,9 +353,18 @@ pub fn make_audio_track() -> TrackInfo {
 }
 
 pub fn make_video_frame(pts_us: i64) -> AVFrame {
-    let mut payload = vec![0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x0A];
-    payload.extend_from_slice(&[0x00, 0x00, 0x00, 0x01, 0x65]);
-    payload.extend_from_slice(b"video frame data");
+    let (sps, pps, idr) = if ffmpeg_available() {
+        h264_params()
+    } else {
+        fallback_h264_params()
+    };
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+    payload.extend_from_slice(&sps);
+    payload.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+    payload.extend_from_slice(&pps);
+    payload.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+    payload.extend_from_slice(&idr);
     let mut frame = AVFrame::new(
         TrackId(0xE0),
         MediaKind::Video,
@@ -585,18 +632,19 @@ pub async fn wait_for_stream_offline(
     panic!("stream {vhost}/{app}/{stream} did not go offline");
 }
 
-#[cfg(feature = "proxy-rtsp")]
 pub fn ffmpeg_available() -> bool {
-    StdCommand::new("ffmpeg")
-        .arg("-version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::process::Command::new("ffmpeg")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s: std::process::ExitStatus| s.success())
+            .unwrap_or(false)
+    })
 }
 
-#[cfg(feature = "proxy-rtsp")]
 pub fn generate_h264_keyframe() -> (Bytes, Bytes, Bytes) {
     let output = StdCommand::new("ffmpeg")
         .args([
@@ -645,7 +693,6 @@ pub fn generate_h264_keyframe() -> (Bytes, Bytes, Bytes) {
     )
 }
 
-#[cfg(feature = "proxy-rtsp")]
 fn split_annex_b(data: &[u8]) -> Vec<Vec<u8>> {
     let mut nals = Vec::new();
     let mut i = 0;
