@@ -54,6 +54,8 @@ pub struct MediaProcessingModule {
     config: MediaProcessingModuleConfig,
     image_process_registration: Option<ProviderRegistration>,
     processing_registration: Option<ProviderRegistration>,
+    #[cfg(feature = "media-processing-caption")]
+    processing_provider: Option<Arc<crate::provider::MediaProcessingProvider>>,
 }
 
 impl MediaProcessingModule {
@@ -64,6 +66,8 @@ impl MediaProcessingModule {
             config: MediaProcessingModuleConfig::default(),
             image_process_registration: None,
             processing_registration: None,
+            #[cfg(feature = "media-processing-caption")]
+            processing_provider: None,
         }
     }
 }
@@ -125,6 +129,7 @@ impl Module for MediaProcessingModule {
                 ctx.engine.clone(),
                 self.config.clone(),
             ));
+            self.processing_provider = Some(provider.clone());
 
             let capabilities = crate::provider::MediaProcessingProvider::default_capabilities();
             self.processing_registration = Some(
@@ -149,6 +154,10 @@ impl Module for MediaProcessingModule {
             if let Some(ctx) = self.ctx.as_ref() {
                 ctx.media_services.unregister(&reg);
             }
+        }
+        #[cfg(feature = "media-processing-caption")]
+        if let Some(provider) = self.processing_provider.take() {
+            provider.cancel_all().await;
         }
         if let Some(reg) = self.processing_registration.take() {
             if let Some(ctx) = self.ctx.as_ref() {

@@ -34,8 +34,9 @@ use cheetah_media_api::{
     MediaCapability, MediaCapabilitySet, MediaRequestContext,
 };
 use cheetah_sdk::{
-    BackpressurePolicy, BootstrapPolicy, CancellationToken, EngineContext, MediaFilter,
-    PublisherOptions, PublisherSink, SdkError, StreamKey, SubscriberOptions, SubscriberSource,
+    BackpressurePolicy, BootstrapPolicy, CancellationToken, DispatchResult, EngineContext,
+    MediaFilter, PublisherOptions, PublisherSink, SdkError, StreamKey, SubscriberOptions,
+    SubscriberSource,
 };
 use futures::FutureExt;
 use tracing::{info, warn};
@@ -46,7 +47,7 @@ use crate::config::MediaProcessingModuleConfig;
 struct JobEntry {
     job: ProcessingJob,
     cancel: CancellationToken,
-    _handle: Option<Box<dyn cheetah_sdk::JoinHandle>>,
+    handle: Option<Box<dyn cheetah_sdk::JoinHandle>>,
 }
 
 /// `MediaProcessingApi` provider that currently supports `CaptionExtract` jobs.
@@ -174,6 +175,22 @@ impl MediaProcessingProvider {
             last_error: None,
         }
     }
+
+    /// Cancel every running job and wait for the worker tasks to complete.
+    pub async fn cancel_all(&self) {
+        let handles = {
+            let mut jobs = self.jobs.lock().unwrap();
+            for entry in jobs.values_mut() {
+                entry.cancel.cancel();
+                entry.job.state = ProcessingJobState::Stopped;
+                entry.job.updated_at = self.now_us();
+            }
+            jobs.values_mut()
+                .filter_map(|e| e.handle.take())
+                .collect::<Vec<_>>()
+        };
+        let _ = futures::future::join_all(handles.into_iter().map(|h| h.wait())).await;
+    }
 }
 
 #[async_trait]
@@ -283,7 +300,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
             JobEntry {
                 job: job.clone(),
                 cancel,
-                _handle: Some(handle),
+                handle: Some(handle),
             },
         );
 
@@ -506,8 +523,10 @@ impl CaptionExtractWorker {
         frame.duration_us = duration * 1000;
         frame.flags = FrameFlags::GENERATED;
         frame.origin = FrameOrigin::Generated;
-        publisher.push_frame(Arc::new(frame))?;
-        Ok(())
+        match publisher.push_frame(Arc::new(frame))? {
+            DispatchResult::Accepted | DispatchResult::DroppedByPolicy => Ok(()),
+            DispatchResult::RejectedClosed => Err(SdkError::Internal("publisher closed".into())),
+        }
     }
 }
 
@@ -621,6 +640,28 @@ mod tests {
     struct MockPublisher {
         frames: Arc<std::sync::Mutex<Vec<Arc<AVFrame>>>>,
         tracks: Arc<std::sync::Mutex<Vec<TrackInfo>>>,
+        closed: Arc<std::sync::Mutex<bool>>,
+        result: DispatchResult,
+    }
+
+    impl MockPublisher {
+        fn new() -> (
+            Self,
+            Arc<std::sync::Mutex<Vec<Arc<AVFrame>>>>,
+            Arc<std::sync::Mutex<Vec<TrackInfo>>>,
+            Arc<std::sync::Mutex<bool>>,
+        ) {
+            let frames = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let tracks = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let closed = Arc::new(std::sync::Mutex::new(false));
+            let publisher = Self {
+                frames: frames.clone(),
+                tracks: tracks.clone(),
+                closed: closed.clone(),
+                result: DispatchResult::Accepted,
+            };
+            (publisher, frames, tracks, closed)
+        }
     }
 
     impl PublisherSink for MockPublisher {
@@ -631,15 +672,33 @@ mod tests {
 
         fn push_frame(&self, frame: Arc<AVFrame>) -> Result<DispatchResult, SdkError> {
             self.frames.lock().unwrap().push(frame);
-            Ok(DispatchResult::Accepted)
+            Ok(self.result)
         }
 
         fn close(&self) -> Result<(), SdkError> {
+            *self.closed.lock().unwrap() = true;
             Ok(())
         }
 
         fn take_keyframe_requests(&self) -> u64 {
             0
+        }
+    }
+
+    struct BlockingSubscriber;
+
+    #[async_trait]
+    impl SubscriberSource for BlockingSubscriber {
+        async fn recv(&mut self) -> Result<Option<Arc<AVFrame>>, SdkError> {
+            std::future::pending::<Result<Option<Arc<AVFrame>>, SdkError>>().await
+        }
+
+        async fn close(&mut self) -> Result<(), SdkError> {
+            Ok(())
+        }
+
+        fn id(&self) -> SubscriberId {
+            SubscriberId(0)
         }
     }
 
@@ -654,12 +713,8 @@ mod tests {
             frames: vec![Some(frame), None],
             closed: false,
         });
-        let frames = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let tracks = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let publisher = Box::new(MockPublisher {
-            frames: frames.clone(),
-            tracks: tracks.clone(),
-        });
+        let (publisher, frames, tracks, closed) = MockPublisher::new();
+        let publisher = Box::new(publisher);
 
         let mut worker = CaptionExtractWorker::new(CeaParserConfig::default());
         let cancel = CancellationToken::new();
@@ -676,5 +731,47 @@ mod tests {
         assert_eq!(frame.codec, CodecId::WebVtt);
         let cue: WebVttCue = serde_json::from_slice(&frame.payload).expect("valid json cue");
         assert!(cue.payload.contains('H'));
+        assert!(*closed.lock().unwrap(), "publisher close should be called");
+    }
+
+    #[tokio::test]
+    async fn cancellation_stops_worker_and_releases_publisher() {
+        let subscriber = Box::new(BlockingSubscriber);
+        let (publisher, frames, _tracks, closed) = MockPublisher::new();
+        let publisher = Box::new(publisher);
+
+        let mut worker = CaptionExtractWorker::new(CeaParserConfig::default());
+        let cancel = CancellationToken::new();
+        let child = cancel.child_token();
+
+        let handle = tokio::spawn(async move { worker.run(subscriber, publisher, child).await });
+
+        // Give the worker a chance to enter the receive loop.
+        tokio::task::yield_now().await;
+        cancel.cancel();
+
+        let result = handle.await.expect("worker task should complete");
+        assert!(result.is_ok());
+        assert!(frames.lock().unwrap().is_empty());
+        assert!(
+            *closed.lock().unwrap(),
+            "publisher close should be called on cancel"
+        );
+    }
+
+    #[tokio::test]
+    async fn push_cue_returns_error_when_publisher_rejects() {
+        let worker = CaptionExtractWorker::new(CeaParserConfig::default());
+        let (mut publisher, _frames, _tracks, _closed) = MockPublisher::new();
+        publisher.result = DispatchResult::RejectedClosed;
+
+        let cue = WebVttCue {
+            id: None,
+            start_ms: 0,
+            end_ms: 1000,
+            payload: "HI".to_string(),
+            settings: None,
+        };
+        assert!(worker.push_cue(&publisher, cue).is_err());
     }
 }
