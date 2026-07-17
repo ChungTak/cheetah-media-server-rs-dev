@@ -106,6 +106,7 @@ fn process_blocking(
     }
 
     for (index, op) in request.operations.iter().enumerate() {
+        validate_operation_dimensions(op, &image, config, index)?;
         let av_op = map_image_operation(op)
             .map_err(|e| MediaError::unsupported(format!("operation #{index}: {e}")))?;
         let cfg = ImageProcessorConfig::new().with_target_op(discriminant_of(&av_op));
@@ -229,6 +230,48 @@ fn encode_jpeg(
         width,
         height,
     })
+}
+
+fn validate_operation_dimensions(
+    op: &ImageOperation,
+    image: &avcodec::core::Image,
+    config: &MediaProcessingModuleConfig,
+    index: usize,
+) -> Result<()> {
+    let exceeds = |w: u32, h: u32| w > config.max_image_width || h > config.max_image_height;
+
+    let (target_w, target_h) = match op {
+        ImageOperation::Resize { width, height } => (*width, *height),
+        ImageOperation::Fit { width, height } => (*width, *height),
+        ImageOperation::ResizePad { width, height, .. } => (*width, *height),
+        ImageOperation::Crop { width, height, .. } => (*width, *height),
+        ImageOperation::Pad {
+            top,
+            bottom,
+            left,
+            right,
+            ..
+        } => (
+            image
+                .coded_width
+                .saturating_add(*left)
+                .saturating_add(*right),
+            image
+                .coded_height
+                .saturating_add(*top)
+                .saturating_add(*bottom),
+        ),
+        _ => return Ok(()),
+    };
+
+    if exceeds(target_w, target_h) {
+        return Err(MediaError::invalid_argument(format!(
+            "operation #{index} target size {target_w}x{target_h} exceeds configured limit {}x{}",
+            config.max_image_width, config.max_image_height
+        )));
+    }
+
+    Ok(())
 }
 
 fn map_image_operation(op: &ImageOperation) -> std::result::Result<avcodec::core::ImageOp, String> {
@@ -487,6 +530,33 @@ mod tests {
             .await
             .expect_err("png output should be unsupported");
         assert_eq!(err.code, MediaErrorCode::Unsupported);
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_resize_before_allocating() {
+        let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
+        let mut config = MediaProcessingModuleConfig::default();
+        config.max_image_width = 64;
+        config.max_image_height = 64;
+
+        let provider = ImageProcessProvider::new(runtime, config);
+        let request = ImageProcessRequest::new(
+            ImageInput::Encoded {
+                data: make_jpeg_fixture(),
+                format: ImageFormat::Jpeg,
+            },
+            ImageFormat::Jpeg,
+        )
+        .with_operations(vec![ImageOperation::Resize {
+            width: 100_000,
+            height: 100_000,
+        }]);
+
+        let err = provider
+            .process(&MediaRequestContext::default(), request)
+            .await
+            .expect_err("oversized resize should be rejected");
+        assert_eq!(err.code, MediaErrorCode::InvalidArgument);
     }
 
     #[test]
