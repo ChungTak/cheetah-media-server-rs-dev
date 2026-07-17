@@ -43,11 +43,11 @@ use tracing::{info, warn};
 
 use crate::config::MediaProcessingModuleConfig;
 
-fn now_us() -> i64 {
+fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_micros() as i64
+        .as_millis() as i64
 }
 
 /// In-memory handle for a running or stopped caption job.
@@ -143,7 +143,7 @@ impl MediaProcessingProvider {
     }
 
     fn build_job(&self, request: &CreateProcessingJob, state: ProcessingJobState) -> ProcessingJob {
-        let now = now_us();
+        let now = now_ms();
         ProcessingJob {
             job_id: self.new_job_id(),
             spec: request.spec.clone(),
@@ -184,7 +184,7 @@ impl MediaProcessingProvider {
                 entry.cancel.cancel();
                 let mut guard = entry.job.lock().unwrap();
                 guard.state = ProcessingJobState::Stopped;
-                guard.updated_at = now_us();
+                guard.updated_at = now_ms();
             }
             jobs.values_mut()
                 .filter_map(|e| e.handle.take())
@@ -401,7 +401,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
         entry.cancel.cancel();
         let mut guard = entry.job.lock().unwrap();
         guard.state = ProcessingJobState::Stopped;
-        guard.updated_at = now_us();
+        guard.updated_at = now_ms();
         Ok(guard.clone())
     }
 
@@ -560,7 +560,7 @@ impl CaptionExtractWorker {
         if let Some(p) = progress {
             if let Ok(mut guard) = p.lock() {
                 f(&mut guard);
-                guard.updated_at = now_us();
+                guard.updated_at = now_ms();
             }
         }
     }
@@ -568,7 +568,7 @@ impl CaptionExtractWorker {
     fn finish_progress(progress: &Option<Arc<Mutex<ProcessingJob>>>, last_error: Option<&str>) {
         if let Some(p) = progress {
             if let Ok(mut guard) = p.lock() {
-                let finished_at = now_us();
+                let finished_at = now_ms();
                 guard.finished_at = Some(finished_at);
                 if let Some(err) = last_error {
                     guard.last_error = Some(err.to_string());
