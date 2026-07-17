@@ -26,6 +26,7 @@ media-processing-image = [
     "avcodec?/jpeg",
     "avcodec?/zune",
     "avcodec?/libyuv",
+    "avcodec?/opencv",
     "avcodec?/rust-h264",
     "avcodec?/rust-h265",
 ]

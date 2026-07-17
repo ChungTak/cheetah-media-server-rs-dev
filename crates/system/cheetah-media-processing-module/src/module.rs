@@ -97,6 +97,7 @@ impl Module for MediaProcessingModule {
         {
             let provider = Arc::new(crate::provider::ImageProcessProvider::new(
                 ctx.engine.runtime_api.clone(),
+                Some(ctx.engine.media_file_store.clone()),
                 self.config.clone(),
             ));
 
@@ -104,7 +105,7 @@ impl Module for MediaProcessingModule {
             capabilities.add(cheetah_media_api::MediaCapability::ImageProcessing, 1);
             capabilities.set_reason(
                 cheetah_media_api::MediaCapability::ImageProcessing,
-                "jpeg input/output; crop/resize/fit/rotate/flip/pad/csc/resize-pad",
+                "jpeg input/output; crop/resize/fit/rotate/flip/pad/csc/resize-pad/blend/text",
             );
 
             self.image_process_registration = Some(
