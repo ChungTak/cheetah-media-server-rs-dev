@@ -12,8 +12,10 @@ std = []
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 bitflags = { version = "2", default-features = false }
 bytes = { version = "1", default-features = false }
+cc-data = { version = "0.2.1", default-features = false, features = ["decode"] }
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "inline-more"] }
 libm = { version = "0.2", default-features = false }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 smallvec = { version = "1", default-features = false }
 thiserror = { version = "2", default-features = false }
 

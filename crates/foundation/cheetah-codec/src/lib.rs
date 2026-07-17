@@ -99,6 +99,7 @@ pub mod record;
 pub mod rtp;
 pub mod rtp_reorder;
 pub mod sdp;
+pub mod subtitle;
 pub mod time;
 pub mod track;
 pub mod traits;
