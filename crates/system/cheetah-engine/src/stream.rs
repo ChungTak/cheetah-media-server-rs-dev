@@ -1136,6 +1136,14 @@ impl SubscriberSource for SubscriberHandle {
     fn id(&self) -> SubscriberId {
         self.id
     }
+
+    fn tracks(&self) -> Vec<TrackInfo> {
+        self.inner
+            .streams
+            .get(&self.stream_key)
+            .map(|entry| entry.tracks.read().clone())
+            .unwrap_or_default()
+    }
 }
 
 /// Drop the subscriber handle, closing the subscription.

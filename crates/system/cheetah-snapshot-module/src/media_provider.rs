@@ -60,6 +60,7 @@ impl SnapshotMediaProvider {
         &self,
         ctx: &MediaRequestContext,
         frame: &Arc<cheetah_codec::AVFrame>,
+        track_info: &TrackInfo,
         request: &SnapshotRequest,
     ) -> Result<ImageArtifact> {
         let format = request
@@ -69,13 +70,12 @@ impl SnapshotMediaProvider {
         let quality = request.quality.unwrap_or(90);
 
         if let Some(encoder) = self.ctx.media_services.image_encode() {
-            let track_info = track_info_for_frame(frame);
             return encoder
                 .encode(
                     ctx,
                     ImageEncodeRequest {
                         frame: Arc::clone(frame),
-                        track_info,
+                        track_info: track_info.clone(),
                         format,
                         quality,
                         max_width: request.max_width,
@@ -187,6 +187,7 @@ impl SnapshotApi for SnapshotMediaProvider {
             .map_err(|e| MediaError::unavailable(format!("open subscriber: {e}")))?;
 
         let capture = capture_keyframe(&self.ctx.runtime_api, &mut *subscriber, timeout_ms).await;
+        let tracks = subscriber.tracks();
         let _ = subscriber.close().await;
 
         let frame = match capture {
@@ -203,7 +204,11 @@ impl SnapshotApi for SnapshotMediaProvider {
             CaptureResult::Error(e) => return Err(e),
         };
 
-        let artifact = self.encode_frame(ctx, &frame, &request).await?;
+        let track = tracks.into_iter().find(|t| t.track_id == frame.track_id);
+        let track_info = track.unwrap_or_else(|| track_info_for_frame(&frame));
+        let artifact = self
+            .encode_frame(ctx, &frame, &track_info, &request)
+            .await?;
         let format_ext = match artifact.format {
             ImageFormat::Jpeg => "jpg",
             ImageFormat::Png => "png",
