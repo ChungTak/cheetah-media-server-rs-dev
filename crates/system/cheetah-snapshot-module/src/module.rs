@@ -117,7 +117,10 @@ impl Module for SnapshotModule {
                 .register_snapshot_with_capabilities(provider, capabilities),
         );
 
-        let image_encoder = Arc::new(crate::image_encode::ImageEncoderBackend::new());
+        let image_encoder = Arc::new(
+            crate::image_encode::ImageEncoderBackend::new()
+                .with_ffmpeg_api(ctx.engine.ffmpeg_api.clone()),
+        );
         self.image_encode_registration = Some(
             ctx.engine
                 .media_services

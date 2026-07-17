@@ -61,5 +61,6 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
 bytes.workspace = true
 cheetah-codec = { path = "../../crates/foundation/cheetah-codec" }

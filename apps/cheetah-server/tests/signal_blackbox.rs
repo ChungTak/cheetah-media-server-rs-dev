@@ -9,10 +9,12 @@
 
 mod fixtures;
 
-use std::net::SocketAddr;
 use std::time::Duration;
 
 use fixtures::*;
+#[cfg(feature = "proxy-rtsp")]
+use tokio::net::TcpListener;
+#[cfg(feature = "rtp")]
 use tokio::net::UdpSocket;
 use tokio::time::sleep;
 
@@ -82,7 +84,9 @@ async fn gb28181_can_ingest_ps_over_udp_and_query_online() {
     let recv_port = session["local_port"].as_u64().unwrap() as u16;
     assert_ne!(recv_port, 0);
 
-    let recv_addr: SocketAddr = format!("127.0.0.1:{recv_port}").parse().unwrap();
+    let recv_addr = format!("127.0.0.1:{recv_port}")
+        .parse::<std::net::SocketAddr>()
+        .unwrap();
     let socket = bind_udp_socket().await;
 
     send_rtp(
@@ -252,7 +256,9 @@ async fn gb28181_can_record_mp4_and_download_file() {
     let session = parse_json(&body);
     let session_id = session["session_id"].as_str().unwrap();
     let recv_port = session["local_port"].as_u64().unwrap() as u16;
-    let recv_addr: SocketAddr = format!("127.0.0.1:{recv_port}").parse().unwrap();
+    let recv_addr = format!("127.0.0.1:{recv_port}")
+        .parse::<std::net::SocketAddr>()
+        .unwrap();
     let socket = bind_udp_socket().await;
 
     send_rtp(
@@ -444,7 +450,9 @@ async fn gb28181_can_egress_stream_over_rtp_sender() {
     let recv_session = parse_json(&body);
     let recv_session_id = recv_session["session_id"].as_str().unwrap();
     let recv_port = recv_session["local_port"].as_u64().unwrap() as u16;
-    let recv_addr: SocketAddr = format!("127.0.0.1:{recv_port}").parse().unwrap();
+    let recv_addr = format!("127.0.0.1:{recv_port}")
+        .parse::<std::net::SocketAddr>()
+        .unwrap();
     let send_socket = bind_udp_socket().await;
 
     send_rtp(
@@ -593,7 +601,9 @@ async fn gb28181_can_do_talkback_audio_round_trip() {
     let recv_session = parse_json(&body);
     let recv_session_id = recv_session["session_id"].as_str().unwrap();
     let recv_port = recv_session["local_port"].as_u64().unwrap() as u16;
-    let recv_addr: SocketAddr = format!("127.0.0.1:{recv_port}").parse().unwrap();
+    let recv_addr = format!("127.0.0.1:{recv_port}")
+        .parse::<std::net::SocketAddr>()
+        .unwrap();
 
     let talk_socket = bind_udp_socket().await;
     let src_addr = talk_socket.local_addr().unwrap();
@@ -667,5 +677,327 @@ async fn gb28181_can_do_talkback_audio_round_trip() {
         "delete talk session returned {status}"
     );
 
+    stop_server(child).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(feature = "proxy-rtsp")]
+async fn onvif_rtsp_proxy_default_ssrf_is_rejected() {
+    let control_port = free_local_port().await;
+    let temp_dir = std::env::temp_dir().join(format!("cheetah_onvif_ssrf_{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let config_path = write_config(
+        control_port,
+        &temp_dir,
+        &onvif_config(&temp_dir, false, &[]),
+    );
+    let child = spawn_server(&config_path, &temp_dir).await;
+    wait_for_server(control_port).await;
+
+    let key = media_key("__defaultVhost__", "onvif", "cam_ssrf");
+    let (status, _body) = http_post(
+        "127.0.0.1",
+        control_port,
+        "/api/v1/proxies/pull",
+        pull_proxy_request("rtsp://127.0.0.1:554/live/reject", key),
+    )
+    .await;
+
+    assert_ne!(
+        status, 200,
+        "SSRF should reject loopback RTSP source without allowlist"
+    );
+
+    stop_server(child).await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(all(feature = "proxy-rtsp", feature = "snapshot", feature = "record"))]
+async fn onvif_can_pull_rtsp_proxy_and_use_media_operations() {
+    let control_port = free_local_port().await;
+    let rtsp_port = free_local_port().await;
+    let temp_dir = std::env::temp_dir().join(format!("cheetah_onvif_{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let (sps, pps, idr) = generate_h264_keyframe();
+    let sdp = h264_sdp(&sps, &pps);
+    let mut frames = Vec::new();
+    for i in 0..40u32 {
+        let ts = 90_000u32.wrapping_add(i * 4_500);
+        let seq = ((i + 1) % (u16::MAX as u32 + 1)) as u16;
+        frames.push(h264_rtp_packet(&idr, seq, ts, 0x11223344, 96));
+    }
+
+    let source_uri = format!("rtsp://127.0.0.1:{rtsp_port}/live/onvif-source");
+    let rtsp_listener = TcpListener::bind(format!("127.0.0.1:{rtsp_port}"))
+        .await
+        .unwrap();
+    let rtsp_handle = tokio::spawn(async move {
+        let (socket, _) = rtsp_listener.accept().await.unwrap();
+        run_interleaved_rtsp_source(
+            socket,
+            format!("rtsp://127.0.0.1:{rtsp_port}/live/onvif-source"),
+            sdp,
+            frames,
+            Duration::from_millis(50),
+        )
+        .await;
+    });
+
+    let config_path = write_config(
+        control_port,
+        &temp_dir,
+        &onvif_config(&temp_dir, true, &["127.0.0.0/8"]),
+    );
+    let child = spawn_server(&config_path, &temp_dir).await;
+    wait_for_server(control_port).await;
+
+    let vhost = "__defaultVhost__";
+    let app = "onvif";
+    let stream = "cam_001";
+    let key = media_key(vhost, app, stream);
+
+    let (status, body) = http_post(
+        "127.0.0.1",
+        control_port,
+        "/api/v1/proxies/pull",
+        pull_proxy_request(&source_uri, key.clone()),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "create RTSP pull proxy failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let proxy = parse_json(&body);
+    let proxy_id = proxy["proxy_id"].as_str().unwrap();
+
+    wait_for_proxy_connected("127.0.0.1", control_port, proxy_id, Duration::from_secs(10)).await;
+
+    let (status, body) = http_get(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/proxies/pull/{proxy_id}"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "get proxy failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let proxy = parse_json(&body);
+    assert_eq!(proxy["state"].as_str(), Some("connected"));
+
+    wait_for_online(
+        "127.0.0.1",
+        control_port,
+        vhost,
+        app,
+        stream,
+        Duration::from_secs(10),
+    )
+    .await;
+
+    let (status, body) = http_get(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/media/{vhost}/{app}/{stream}"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "get media failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let info = parse_json(&body);
+    let tracks = info["tracks"].as_array().unwrap();
+    assert!(
+        tracks.iter().any(|t| t["media_type"] == "video"),
+        "expected a video track: {info}"
+    );
+
+    let (status, body) = http_get(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/media/{vhost}/{app}/{stream}/urls"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "get media urls failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let urls = parse_json(&body)["urls"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(!urls.is_empty(), "expected at least one playback URL");
+    assert!(
+        urls.iter()
+            .all(|u| u["available"].as_bool().unwrap_or(false)),
+        "all playback URLs should be available: {urls:?}"
+    );
+
+    let (status, _body) = http_post(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/media/{vhost}/{app}/{stream}/keyframe"),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, 200, "keyframe request failed");
+
+    let (status, body) = http_post(
+        "127.0.0.1",
+        control_port,
+        "/api/v1/snapshots",
+        snapshot_request(key.clone()),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "take snapshot failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let snap = parse_json(&body);
+    let snapshot_id = snap["snapshot_id"].as_str().unwrap();
+    assert_eq!(snap["state"].as_str(), Some("completed"));
+
+    let (status, body) = http_get(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/snapshots/{snapshot_id}/download"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "download snapshot failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    assert!(
+        body.starts_with(&[0xff, 0xd8]),
+        "downloaded snapshot is not a JPEG: {} bytes",
+        body.len()
+    );
+
+    let (status, body) = http_post(
+        "127.0.0.1",
+        control_port,
+        "/api/v1/record/tasks",
+        start_record_request(key.clone()),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "start record failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let record_task = parse_json(&body);
+    let task_id = record_task["task_id"].as_str().unwrap();
+    assert_eq!(record_task["state"].as_str(), Some("running"));
+
+    sleep(Duration::from_secs(2)).await;
+
+    let (status, body) = http_post(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/record/tasks/{task_id}/stop"),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "stop record failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let stopped = parse_json(&body);
+    assert!(
+        ["completed", "stopping"].contains(&stopped["state"].as_str().unwrap_or("")),
+        "unexpected record state: {stopped}"
+    );
+
+    let file_handle = wait_for_record_file(
+        "127.0.0.1",
+        control_port,
+        app,
+        stream,
+        Duration::from_secs(10),
+    )
+    .await;
+
+    let (status, body) = http_get(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/files/{file_handle}/download"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "download record file failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    assert!(
+        body.windows(4).any(|w| w == b"ftyp"),
+        "downloaded file does not look like MP4: {} bytes",
+        body.len()
+    );
+
+    let (status, _body) = http_delete(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/proxies/pull/{proxy_id}"),
+    )
+    .await;
+    assert!(
+        status == 200 || status == 204,
+        "delete proxy returned {status}"
+    );
+
+    wait_for_stream_offline(
+        "127.0.0.1",
+        control_port,
+        vhost,
+        app,
+        stream,
+        Duration::from_secs(10),
+    )
+    .await;
+
+    let (status, _body) = http_delete(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/record/files/{file_handle}"),
+    )
+    .await;
+    assert!(
+        status == 200 || status == 204,
+        "delete record file returned {status}"
+    );
+
+    let (status, _body) = http_delete_with_body(
+        "127.0.0.1",
+        control_port,
+        "/api/v1/snapshots/directories",
+        serde_json::json!({
+            "media_key": key,
+        }),
+    )
+    .await;
+    assert!(
+        status == 200 || status == 204,
+        "delete snapshots returned {status}"
+    );
+
+    rtsp_handle.abort();
     stop_server(child).await;
 }
