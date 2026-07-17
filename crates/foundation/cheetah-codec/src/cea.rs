@@ -24,6 +24,9 @@ const MAX_SEI_PAYLOAD_SIZE: usize = 4096;
 /// Maximum `cc_data()` packet size (header + 31 triplets + marker).
 const MAX_CC_DATA_SIZE: usize = 2 + 31 * 3 + 1;
 
+/// Maximum number of diagnostic messages kept in memory.
+const MAX_DIAGNOSTICS: usize = 32;
+
 /// CEA parser configuration.
 ///
 /// 选择默认提取的 608 通道（1–4）和 708 服务号（1–6）。
@@ -159,6 +162,7 @@ pub struct CeaParser {
     state708: ServiceState,
     last_duration_ms: u64,
     diagnostics: Vec<String>,
+    dropped_diagnostics: u64,
 }
 
 impl CeaParser {
@@ -172,11 +176,13 @@ impl CeaParser {
             state708: ServiceState::new("cea708"),
             last_duration_ms: 0,
             diagnostics: Vec::new(),
+            dropped_diagnostics: 0,
         }
     }
 
     /// Returns accumulated diagnostics and clears the internal buffer.
     pub fn take_diagnostics(&mut self) -> Vec<String> {
+        self.dropped_diagnostics = 0;
         core::mem::take(&mut self.diagnostics)
     }
 
@@ -209,6 +215,20 @@ impl CeaParser {
         cues
     }
 
+    fn push_diagnostic(&mut self, message: &str) {
+        if self.diagnostics.len() < MAX_DIAGNOSTICS {
+            self.diagnostics.push(message.to_string());
+        } else if self.diagnostics.len() == MAX_DIAGNOSTICS {
+            self.dropped_diagnostics += 1;
+            self.diagnostics.push(format!(
+                "... {} further diagnostics dropped",
+                self.dropped_diagnostics
+            ));
+        } else {
+            self.dropped_diagnostics += 1;
+        }
+    }
+
     /// Feeds one access unit and returns any cues whose text changed.
     ///
     /// `codec` must be `CodecId::H264` or `CodecId::H265`; other codecs produce no
@@ -217,8 +237,7 @@ impl CeaParser {
         let timing = match &unit.timing {
             Some(t) => t,
             None => {
-                self.diagnostics
-                    .push("access unit has no timing".to_string());
+                self.push_diagnostic("access unit has no timing");
                 return Vec::new();
             }
         };
@@ -231,7 +250,7 @@ impl CeaParser {
 
         for nal in &unit.units {
             if let Err(e) = self.push_nal(codec, nal) {
-                self.diagnostics.push(format!("{e}"));
+                self.push_diagnostic(&format!("{e}"));
             }
         }
 
@@ -277,6 +296,9 @@ impl CeaParser {
                 &nal[1..]
             }
             CodecId::H265 => {
+                if nal.len() < 2 {
+                    return Ok(());
+                }
                 let nal_type = (nal[0] >> 1) & 0x3F;
                 if !matches!(nal_type, 39 | 40) {
                     return Ok(());
@@ -292,6 +314,14 @@ impl CeaParser {
     /// Parses the SEI payload of a single NALU, extracting any `cc_data()` packets.
     fn parse_sei_payload(&mut self, mut data: &[u8]) -> Result<(), CeaError> {
         while !data.is_empty() {
+            if is_trailing_or_padding(data) {
+                return Ok(());
+            }
+            if data.len() < 2 {
+                return Err(CeaError::MalformedSei(
+                    "truncated SEI message header".to_string(),
+                ));
+            }
             let (payload_type, size, consumed) = read_sei_message_header(data)?;
             if consumed + size > data.len() {
                 return Err(CeaError::MalformedSei(
@@ -378,6 +408,25 @@ impl CeaParser {
         self.cea708.push_triplets(&cc.triplets);
         Ok(())
     }
+}
+
+/// Returns true if `data` is RBSP trailing bits or zero-byte padding.
+///
+/// A valid NALU ends with a `1` bit followed by zero bits to the next byte
+/// boundary (commonly `0x80`) and possibly additional zero bytes; we tolerate
+/// that without treating it as a malformed SEI message.
+fn is_trailing_or_padding(data: &[u8]) -> bool {
+    let mut seen_one = false;
+    for &b in data {
+        if b == 0 {
+            continue;
+        }
+        if seen_one || !b.is_power_of_two() {
+            return false;
+        }
+        seen_one = true;
+    }
+    true
 }
 
 /// Reads a SEI message `payload_type` and `payload_size` (both are FF-extended bytes).
@@ -572,5 +621,44 @@ mod tests {
         };
         assert_eq!(frame.len(), 1);
         assert!(!frame.is_empty());
+    }
+
+    #[test]
+    fn h265_one_byte_sei_does_not_panic() {
+        // A single H.265 NAL byte claiming to be a prefix SEI (type 39) with no
+        // second header byte and no payload must be ignored, not panic.
+        let mut parser = CeaParser::new(CeaParserConfig::default());
+        let nal = Bytes::from_static(&[0x4E]); // 0b01001110 -> nal_unit_type 39
+        let unit = make_access_unit(0, 3000, vec![nal]);
+        let cues = parser.push_access_unit(CodecId::H265, &unit);
+        assert!(cues.is_empty());
+    }
+
+    #[test]
+    fn h264_sei_trailing_bits_are_tolerated() {
+        let mut parser = CeaParser::new(CeaParserConfig::default());
+        let payload = make_h264_sei_nalu(&make_cea_payload(""));
+        let mut raw = payload.to_vec();
+        raw.extend_from_slice(&[0x80, 0x00]); // RBSP trailing bits + padding
+        let nal = Bytes::from(raw);
+        let unit = make_access_unit(0, 3000, vec![nal]);
+        let cues = parser.push_access_unit(CodecId::H264, &unit);
+        assert!(cues.is_empty());
+        assert!(parser.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn diagnostics_are_capped() {
+        let mut parser = CeaParser::new(CeaParserConfig::default());
+        for _ in 0..MAX_DIAGNOSTICS + 10 {
+            // Each call pushes one malformed-SEI diagnostic.
+            let nal = Bytes::from_static(&[0x06, 0xFF]);
+            let unit = make_access_unit(0, 3000, vec![nal]);
+            parser.push_access_unit(CodecId::H264, &unit);
+        }
+        assert!(parser.diagnostics().len() <= MAX_DIAGNOSTICS + 1);
+        let taken = parser.take_diagnostics();
+        assert!(!taken.is_empty());
+        assert!(parser.diagnostics().is_empty());
     }
 }
