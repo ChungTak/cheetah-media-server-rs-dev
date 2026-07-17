@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Maximum number of concurrent processing jobs allowed by the module.
+pub const MAX_CONCURRENT_JOBS: u32 = 4096;
+
 /// Configuration for `cheetah-media-processing-module`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MediaProcessingModuleConfig {
@@ -34,6 +37,11 @@ impl MediaProcessingModuleConfig {
     pub fn validate(&self) -> Result<(), String> {
         if self.max_concurrent_jobs == 0 {
             return Err("max_concurrent_jobs must be > 0".to_string());
+        }
+        if self.max_concurrent_jobs > MAX_CONCURRENT_JOBS {
+            return Err(format!(
+                "max_concurrent_jobs must be <= {MAX_CONCURRENT_JOBS}"
+            ));
         }
         if self.max_image_width == 0 || self.max_image_height == 0 {
             return Err("max_image_width/height must be > 0".to_string());

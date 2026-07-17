@@ -10,6 +10,8 @@ use futures::channel::mpsc;
 use futures::lock::Mutex;
 use futures::stream::StreamExt;
 
+use crate::config::MAX_CONCURRENT_JOBS;
+
 /// Async permit-backed concurrency limiter.
 #[derive(Clone)]
 pub struct Semaphore {
@@ -26,6 +28,7 @@ impl std::fmt::Debug for Semaphore {
 impl Semaphore {
     /// Creates a new semaphore with the given number of initial permits.
     pub fn new(permits: usize) -> Self {
+        let permits = permits.min(MAX_CONCURRENT_JOBS as usize);
         let (mut tx, rx) = mpsc::channel(permits.max(1));
         for _ in 0..permits {
             // The channel is sized to hold all permits, so seeding cannot fail.
