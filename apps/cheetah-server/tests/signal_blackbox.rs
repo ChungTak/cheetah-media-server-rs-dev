@@ -1249,3 +1249,289 @@ async fn homekit_can_ingest_and_egress_over_rtp() {
 
     stop_server(child).await;
 }
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(all(feature = "rtp", feature = "record"))]
+async fn matter_can_subscribe_to_webhook_events_and_cancel() {
+    let (webhook_addr, mut events) = start_webhook_receiver().await;
+    let webhook_url = format!("http://{webhook_addr}/");
+
+    let control_port = free_local_port().await;
+    let temp_dir = std::env::temp_dir().join(format!("cheetah_matter_{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let config_path = write_config(
+        control_port,
+        &temp_dir,
+        &matter_config(&temp_dir, &webhook_url),
+    );
+    let child = spawn_server(&config_path, &temp_dir).await;
+    wait_for_server(control_port).await;
+
+    let vhost = "__defaultVhost__";
+    let app = "matter";
+    let stream = "device_1";
+    let key = media_key(vhost, app, stream);
+
+    let (status, body) = http_get("127.0.0.1", control_port, "/api/v1/media/capabilities").await;
+    assert_eq!(
+        status,
+        200,
+        "capabilities query failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let caps = parse_json(&body);
+    assert!(
+        caps.get("capabilities").is_some() && caps.get("version").is_some(),
+        "capabilities should include fields: {caps}"
+    );
+
+    let ssrc = 0xDEADBEEFu32;
+    let pt = 100u8;
+    let (status, body) = http_post(
+        "127.0.0.1",
+        control_port,
+        "/api/v1/rtp/receivers",
+        rtp_receiver_request(key.clone(), Some(0), ssrc, pt, "ps"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "open RTP receiver failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let session = parse_json(&body);
+    let recv_session_id = session["session_id"].as_str().unwrap();
+    let recv_port = session["local_port"].as_u64().unwrap() as u16;
+
+    let recv_addr = format!("127.0.0.1:{recv_port}")
+        .parse::<std::net::SocketAddr>()
+        .unwrap();
+    let socket = bind_udp_socket().await;
+
+    let sender_handle = tokio::spawn(async move {
+        let mut seq: u16 = 1;
+        let mut pts: i64 = 100_000;
+        let mut ticker = tokio::time::interval(Duration::from_millis(20));
+        loop {
+            ticker.tick().await;
+            send_rtp(
+                &socket,
+                recv_addr,
+                mux_ps_frame(&make_video_frame(pts)),
+                ssrc,
+                seq,
+                (pts / 100 * 9) as u32,
+                pt,
+            )
+            .await;
+            seq = seq.wrapping_add(1);
+            send_rtp(
+                &socket,
+                recv_addr,
+                mux_ps_frame(&make_audio_frame(pts + 80)),
+                ssrc,
+                seq,
+                ((pts + 80) / 100 * 9) as u32,
+                pt,
+            )
+            .await;
+            seq = seq.wrapping_add(1);
+            pts += 100_000;
+        }
+    });
+
+    let online_event =
+        recv_event_of_type(&mut events, "stream_online_changed", Duration::from_secs(5)).await;
+    let payload = &online_event["payload"];
+    assert_eq!(payload["header"]["media_key"]["stream"], "device_1");
+    assert_eq!(payload["online"], "online");
+    assert!(!payload["header"]["event_id"].as_str().unwrap().is_empty());
+    assert!(payload["header"]["occurred_at"].as_i64().unwrap_or(0) > 0);
+
+    let (status, body) = http_get(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/media/{vhost}/{app}/{stream}"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "get media failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let info = parse_json(&body);
+    let tracks = info["tracks"].as_array().unwrap();
+    assert!(tracks.iter().any(|t| t["media_type"] == "video"));
+    assert!(tracks.iter().any(|t| t["media_type"] == "audio"));
+
+    let (status, body) = http_get(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/media/{vhost}/{app}/{stream}/urls"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "get media urls failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let urls = parse_json(&body);
+    assert!(
+        urls["urls"]
+            .as_array()
+            .map(|a| !a.is_empty())
+            .unwrap_or(false),
+        "playback URLs should be present"
+    );
+
+    let (status, body) = http_post(
+        "127.0.0.1",
+        control_port,
+        "/api/v1/record/tasks",
+        start_record_request(key.clone()),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "start record failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let record = parse_json(&body);
+    let record_task_id = record["task_id"].as_str().unwrap();
+
+    sleep(Duration::from_millis(500)).await;
+
+    let (status, body) = http_post(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/record/tasks/{record_task_id}/stop"),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "stop record failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let stopped = parse_json(&body);
+    assert!(
+        ["completed", "stopping"].contains(&stopped["state"].as_str().unwrap_or("")),
+        "unexpected record state: {stopped}"
+    );
+
+    let record_event =
+        recv_event_of_type(&mut events, "record_completed", Duration::from_secs(15)).await;
+    let rpayload = &record_event["payload"];
+    assert_eq!(rpayload["task_id"], record_task_id);
+    assert!(!rpayload["file_path"].as_str().unwrap().is_empty());
+    assert!(!rpayload["header"]["event_id"].as_str().unwrap().is_empty());
+    assert!(rpayload["file_size"].as_u64().unwrap_or(0) > 0);
+
+    if cfg!(feature = "snapshot") && ffmpeg_available() {
+        let (status, body) = http_post(
+            "127.0.0.1",
+            control_port,
+            "/api/v1/snapshots",
+            serde_json::json!({
+                "media_key": key,
+                "format": "jpg",
+                "timeout_ms": 15000,
+            }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            200,
+            "take snapshot failed: {}",
+            String::from_utf8_lossy(&body)
+        );
+        let snap = parse_json(&body);
+        let snapshot_id = snap["snapshot_id"].as_str().unwrap();
+
+        let snapshot_event =
+            recv_event_of_type(&mut events, "snapshot_completed", Duration::from_secs(10)).await;
+        let spayload = &snapshot_event["payload"];
+        assert_eq!(spayload["snapshot_id"], snapshot_id);
+        assert!(!spayload["path_handle"].as_str().unwrap().is_empty());
+        assert!(!spayload["header"]["event_id"].as_str().unwrap().is_empty());
+    }
+
+    while events.try_recv().is_ok() {}
+
+    let (status, body) = http_patch(
+        "127.0.0.1",
+        control_port,
+        "/api/v1/config/modules/webhook-dispatcher",
+        serde_json::json!({"patch": {"profiles": []}}),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "patch webhook-dispatcher config failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+
+    let (status, body) = http_post(
+        "127.0.0.1",
+        control_port,
+        "/api/v1/record/tasks",
+        start_record_request(key.clone()),
+    )
+    .await;
+    assert_eq!(status, 200, "start second record failed");
+    let second_record_id = parse_json(&body)["task_id"].as_str().unwrap().to_string();
+
+    sleep(Duration::from_millis(200)).await;
+
+    let (status, _body) = http_post(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/record/tasks/{second_record_id}/stop"),
+        serde_json::json!({}),
+    )
+    .await;
+    assert!(status == 200, "stop second record returned {status}");
+
+    if cfg!(feature = "snapshot") && ffmpeg_available() {
+        let (status, _body) = http_post(
+            "127.0.0.1",
+            control_port,
+            "/api/v1/snapshots",
+            serde_json::json!({
+                "media_key": key,
+                "format": "jpg",
+                "timeout_ms": 15000,
+            }),
+        )
+        .await;
+        assert_eq!(status, 200, "take second snapshot failed");
+    }
+
+    let no_event = tokio::time::timeout(Duration::from_secs(3), events.recv()).await;
+    assert!(
+        no_event.is_err(),
+        "webhook events should stop after cancelling profile"
+    );
+
+    sender_handle.abort();
+
+    let (status, _body) = http_delete(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/rtp/sessions/{recv_session_id}"),
+    )
+    .await;
+    assert!(
+        status == 200 || status == 204,
+        "delete RTP receiver returned {status}"
+    );
+
+    stop_server(child).await;
+}

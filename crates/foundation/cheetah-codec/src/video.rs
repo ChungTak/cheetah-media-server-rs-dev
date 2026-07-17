@@ -178,6 +178,33 @@ pub struct ParameterSetCache {
     pub pps: Option<Bytes>,
 }
 
+/// Returns `true` if `unit` is an H.26x parameter set NAL (SPS, PPS, or VPS).
+///
+/// 若 `unit` 是 H.26x 参数集 NAL（SPS、PPS 或 VPS）则返回 `true`。
+pub fn is_h26x_parameter_set_nal(codec: CodecId, unit: &[u8]) -> bool {
+    match codec {
+        CodecId::H264 => {
+            if unit.is_empty() {
+                return false;
+            }
+            matches!(unit[0] & 0x1f, 7..=8)
+        }
+        CodecId::H265 => {
+            if unit.is_empty() {
+                return false;
+            }
+            matches!((unit[0] >> 1) & 0x3f, 32..=34)
+        }
+        CodecId::H266 => {
+            if unit.len() < 2 {
+                return false;
+            }
+            matches!((unit[1] >> 3) & 0x1f, 14..=16)
+        }
+        _ => false,
+    }
+}
+
 impl ParameterSetCache {
     pub fn clear(&mut self) {
         self.vps = None;
@@ -597,7 +624,7 @@ impl AccessUnitAssembler {
 ///
 /// 遍历负载查找 `0x00 0x00 0x01` 或 `0x00 0x00 0x00 0x01` 起始码。
 /// 返回的切片指向原始负载并排除起始码字节。连续起始码之间的空单元被跳过。
-pub(crate) fn split_annexb_units(mut payload: &[u8]) -> Vec<&[u8]> {
+pub fn split_annexb_units(mut payload: &[u8]) -> Vec<&[u8]> {
     let mut out = Vec::new();
     while let Some((start, code_len)) = find_start_code(payload) {
         payload = &payload[start + code_len..];
@@ -610,6 +637,37 @@ pub(crate) fn split_annexb_units(mut payload: &[u8]) -> Vec<&[u8]> {
         payload = &payload[next_start..];
     }
     out
+}
+
+/// Strips H.26x parameter set NALs from an Annex-B payload and re-serializes the
+/// remaining NALs with 4-byte start codes.
+///
+/// Non-H.26x payloads are returned unchanged. The result starts with a start code
+/// when at least one non-parameter-set NAL is present.
+///
+/// 从 Annex-B 负载中移除 H.26x 参数集 NAL，并用 4 字节起始码重新序列化剩余 NAL。
+///
+/// 非 H.26x 负载原样返回。若存在非参数集 NAL，结果以起始码开头。
+pub fn strip_parameter_sets_annexb(codec: CodecId, payload: &[u8]) -> Bytes {
+    if !matches!(codec, CodecId::H264 | CodecId::H265 | CodecId::H266) {
+        return Bytes::copy_from_slice(payload);
+    }
+
+    let units = split_annexb_units(payload);
+    let total_len = units
+        .iter()
+        .filter(|u| !is_h26x_parameter_set_nal(codec, u))
+        .map(|u| u.len().saturating_add(4))
+        .sum();
+    let mut out = Vec::with_capacity(total_len);
+    for unit in units {
+        if is_h26x_parameter_set_nal(codec, unit) {
+            continue;
+        }
+        out.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        out.extend_from_slice(unit);
+    }
+    Bytes::from(out)
 }
 
 /// Locates the next Annex-B start code and returns its position and length.

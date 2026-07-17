@@ -164,6 +164,7 @@ RTP capability snapshot:
 
 - transport matrix: RTP over UDP, RTP over TCP (RFC 4571 2-byte length prefix and RTSP-style 4-byte interleaved framing with auto-detect), RTCP (SR/RR reports, RR-timeout sender shutdown, dedicated RTCP UDP socket support)
 - payload formatting: MPEG-TS, PS (Program Stream), ES (Elementary Stream), Ehome, Hikvision XHB, JT/T 1078 — all collapsed into `AVFrame + TrackInfo` by `cheetah-codec`
+- H26x parameter set handling: Annex-B NALU splitting (`cheetah_codec::video::split_annexb_units`), parameter set extraction/stripping (`cheetah_codec::video::strip_parameter_sets_annexb`), and keyframe repair/prepending live in `cheetah-codec` and are consumed by modules such as snapshot and WebRTC egress
 - codec matrix: H264, H265, AAC, G711 (PCMA/PCMU), Opus, MP3, VP8, VP9, AV1
 - server ingest: UDP/TCP active/passive server modes, SSRC lock, single-port multi-stream support, bounded TCP context recovery (search-by-SSRC + PS-system-header), dynamic `nMaxRtpLength` learner with bounded cap, ZLM-style `RtpProcess` pre-publish bounded frame cache
 - client egress: active/passive client sending, multi-target `senderInfos`, configurable G711 packet duration (ABL `kRtpG711DurMs`-style), `disableVideo` / `disableAudio` track filters

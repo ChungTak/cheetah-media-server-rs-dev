@@ -7,7 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use cheetah_codec::{CodecId, FrameFlags, MediaKind, MonoTime, TrackId, TrackInfo, TrackReadiness};
+use cheetah_codec::{
+    CodecExtradata, CodecId, FrameFlags, MediaKind, MonoTime, ParameterSetCache, TrackId,
+    TrackInfo, TrackReadiness,
+};
 use cheetah_media_api::command::{
     DeleteSnapshotRequest, SnapshotQuery, SnapshotRequest, SubscribeRequest,
 };
@@ -205,7 +208,30 @@ impl SnapshotApi for SnapshotMediaProvider {
         };
 
         let track = tracks.into_iter().find(|t| t.track_id == frame.track_id);
-        let track_info = track.unwrap_or_else(|| track_info_for_frame(&frame));
+        let mut track_info = track.unwrap_or_else(|| track_info_for_frame(&frame));
+        let frame = if matches!(track_info.extradata, CodecExtradata::None)
+            && matches!(frame.codec, CodecId::H264 | CodecId::H265 | CodecId::H266)
+        {
+            let mut cache = ParameterSetCache::default();
+            cache.update_from_annexb(frame.codec, &frame.payload);
+            if let Some(extradata) = cache.extradata_for_codec(frame.codec) {
+                track_info.extradata = extradata;
+                let stripped_payload =
+                    cheetah_codec::video::strip_parameter_sets_annexb(frame.codec, &frame.payload);
+                if stripped_payload.is_empty() {
+                    return Err(MediaError::invalid_argument(
+                        "keyframe contains no VCL NALs",
+                    ));
+                }
+                let mut stripped = (*frame).clone();
+                stripped.payload = stripped_payload;
+                Arc::new(stripped)
+            } else {
+                frame
+            }
+        } else {
+            frame
+        };
         let artifact = self
             .encode_frame(ctx, &frame, &track_info, &request)
             .await?;
