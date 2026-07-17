@@ -1004,3 +1004,248 @@ async fn onvif_can_pull_rtsp_proxy_and_use_media_operations() {
     rtsp_handle.abort();
     stop_server(child).await;
 }
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(all(feature = "rtp", feature = "record"))]
+async fn homekit_can_ingest_and_egress_over_rtp() {
+    let control_port = free_local_port().await;
+    let temp_dir = std::env::temp_dir().join(format!("cheetah_homekit_{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    let config_path = write_config(control_port, &temp_dir, &gb28181_config(&temp_dir));
+    let child = spawn_server(&config_path, &temp_dir).await;
+    wait_for_server(control_port).await;
+
+    let vhost = "__defaultVhost__";
+    let app = "homekit";
+    let stream = "cam_001";
+    let key = media_key(vhost, app, stream);
+
+    let recv_ssrc = 0xAABBCCDDu32;
+    let recv_pt = 100u8;
+
+    let (status, body) = http_post(
+        "127.0.0.1",
+        control_port,
+        "/api/v1/rtp/receivers",
+        rtp_receiver_request(key.clone(), Some(0), recv_ssrc, recv_pt, "ps"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "open RTP receiver failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let session = parse_json(&body);
+    let recv_session_id = session["session_id"].as_str().unwrap();
+    let recv_port = session["local_port"].as_u64().unwrap() as u16;
+    assert_ne!(recv_port, 0);
+
+    let recv_addr = format!("127.0.0.1:{recv_port}")
+        .parse::<std::net::SocketAddr>()
+        .unwrap();
+    let socket = bind_udp_socket().await;
+
+    let mut seq: u16 = 1;
+    let mut pts: i64 = 100_000;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline {
+        send_rtp(
+            &socket,
+            recv_addr,
+            mux_ps_frame(&make_video_frame(pts)),
+            recv_ssrc,
+            seq,
+            (pts / 100 * 9) as u32,
+            recv_pt,
+        )
+        .await;
+        seq = seq.wrapping_add(1);
+        send_rtp(
+            &socket,
+            recv_addr,
+            mux_ps_frame(&make_audio_frame(pts + 80)),
+            recv_ssrc,
+            seq,
+            ((pts + 80) / 100 * 9) as u32,
+            recv_pt,
+        )
+        .await;
+        seq = seq.wrapping_add(1);
+        pts += 100_000;
+
+        let (status, body) = http_get(
+            "127.0.0.1",
+            control_port,
+            &format!("/api/v1/media/{vhost}/{app}/{stream}/online"),
+        )
+        .await;
+        if status == 200 && parse_json(&body)["online"].as_str() == Some("online") {
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+
+    let (status, body) = http_get(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/media/{vhost}/{app}/{stream}"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "get media failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let info = parse_json(&body);
+    let tracks = info["tracks"].as_array().unwrap();
+    assert!(
+        tracks.iter().any(|t| t["media_type"] == "video"),
+        "expected video track: {info}"
+    );
+    assert!(
+        tracks.iter().any(|t| t["media_type"] == "audio"),
+        "expected audio track: {info}"
+    );
+
+    let (status, _body) = http_post(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/media/{vhost}/{app}/{stream}/keyframe"),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(status, 200, "keyframe request failed");
+
+    let sink = bind_udp_socket().await;
+    let sink_addr = sink.local_addr().unwrap();
+    let sink_port = sink_addr.port();
+
+    let send_ssrc = 0x11223344u32;
+    let send_pt = 100u8;
+    let (status, body) = http_post(
+        "127.0.0.1",
+        control_port,
+        "/api/v1/rtp/senders",
+        rtp_sender_request(
+            key.clone(),
+            &format!("127.0.0.1:{sink_port}"),
+            send_ssrc,
+            send_pt,
+            "ps",
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        200,
+        "create RTP sender failed: {}",
+        String::from_utf8_lossy(&body)
+    );
+    let sender = parse_json(&body);
+    let sender_id = sender["session_id"].as_str().unwrap();
+
+    for _ in 0..20 {
+        send_rtp(
+            &socket,
+            recv_addr,
+            mux_ps_frame(&make_video_frame(pts)),
+            recv_ssrc,
+            seq,
+            (pts / 100 * 9) as u32,
+            recv_pt,
+        )
+        .await;
+        seq = seq.wrapping_add(1);
+        send_rtp(
+            &socket,
+            recv_addr,
+            mux_ps_frame(&make_audio_frame(pts + 80)),
+            recv_ssrc,
+            seq,
+            ((pts + 80) / 100 * 9) as u32,
+            recv_pt,
+        )
+        .await;
+        seq = seq.wrapping_add(1);
+        pts += 100_000;
+        sleep(Duration::from_millis(20)).await;
+    }
+
+    let mut received = 0;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline {
+        if let Some((header, payload, _src)) = recv_rtp(&sink, Duration::from_millis(200)).await {
+            assert_eq!(header.ssrc, send_ssrc, "sender used unexpected SSRC");
+            assert!(
+                header.payload_type > 0,
+                "RTP sender should set a valid payload type"
+            );
+            assert!(!payload.is_empty(), "RTP payload should not be empty");
+            received += 1;
+            if received >= 5 {
+                break;
+            }
+        }
+    }
+    assert!(
+        received >= 5,
+        "expected RTP sender to egress packets, got {received}"
+    );
+
+    let (status, _body) = http_delete(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/rtp/sessions/{sender_id}"),
+    )
+    .await;
+    assert!(
+        status == 200 || status == 204,
+        "delete RTP sender returned {status}"
+    );
+
+    sleep(Duration::from_millis(300)).await;
+
+    for _ in 0..10 {
+        send_rtp(
+            &socket,
+            recv_addr,
+            mux_ps_frame(&make_video_frame(pts)),
+            recv_ssrc,
+            seq,
+            (pts / 100 * 9) as u32,
+            recv_pt,
+        )
+        .await;
+        seq = seq.wrapping_add(1);
+        pts += 100_000;
+    }
+
+    let (status, body) = http_get(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/rtp/sessions/{sender_id}"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        404,
+        "RTP sender session should be deleted: {}",
+        String::from_utf8_lossy(&body)
+    );
+
+    let (status, _body) = http_delete(
+        "127.0.0.1",
+        control_port,
+        &format!("/api/v1/rtp/sessions/{recv_session_id}"),
+    )
+    .await;
+    assert!(
+        status == 200 || status == 204,
+        "delete RTP receiver returned {status}"
+    );
+
+    stop_server(child).await;
+}
