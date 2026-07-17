@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use cheetah_codec::{video_payload_is_random_access, ParameterSetCache};
+use cheetah_codec::{CodecId as CheetahCodecId, MediaKind, TrackInfo};
 use cheetah_media_api::{
     error::Result, ImageArtifact, ImageFormat, ImageInput, ImageOperation, ImageProcessApi,
     ImageProcessRequest, MediaError, MediaRequestContext,
@@ -69,7 +71,7 @@ impl ImageProcessApi for ImageProcessProvider {
 
 fn build_registry(config: &MediaProcessingModuleConfig) -> Result<avcodec::core::Registry> {
     match config.profile.as_str() {
-        "native-free" => Ok(avcodec::native_free_software_registry_builder().build()),
+        "native-free" => Ok(filter_native_free_registry()),
         "software" if cfg!(feature = "avcodec-profile-software") => {
             Ok(avcodec::default_registry_builder().build())
         }
@@ -81,6 +83,21 @@ fn build_registry(config: &MediaProcessingModuleConfig) -> Result<avcodec::core:
             config.profile
         ))),
     }
+}
+
+/// Builds a `Registry` from the default avcodec backend set but restricted to
+/// the audited native-free software backend ids plus `libyuv` for CSC/resize.
+fn filter_native_free_registry() -> avcodec::core::Registry {
+    const ALLOWED: &[&str] = &["jpeg", "zune", "rust-h264", "rust-h265", "libyuv"];
+
+    let all = avcodec::default_registry_builder();
+    let mut filtered = avcodec::core::RegistryBuilder::new();
+    for backend in all.backends() {
+        if ALLOWED.contains(&backend.id()) {
+            filtered = filtered.with_backend(*backend);
+        }
+    }
+    filtered.build()
 }
 
 fn process_blocking(
@@ -108,10 +125,8 @@ fn process_blocking(
 
     let mut image = match request.input {
         ImageInput::Encoded { data, format } => decode_encoded_image(&registry, &data, format)?,
-        ImageInput::Frame { .. } => {
-            return Err(MediaError::unsupported(
-                "video frame input is not yet supported",
-            ));
+        ImageInput::Frame { frame, track } => {
+            decode_video_frame(&registry, &frame, &track, config)?
         }
     };
 
@@ -206,6 +221,169 @@ fn decode_encoded_image(
     }
 }
 
+fn decode_video_frame(
+    registry: &avcodec::core::Registry,
+    frame: &cheetah_codec::AVFrame,
+    track: &TrackInfo,
+    config: &MediaProcessingModuleConfig,
+) -> Result<avcodec::core::Image> {
+    use avcodec::core::{
+        BitstreamFormat, Decoder, DecoderConfig, Packet, PacketFlags, Poll, TimeBase,
+    };
+
+    if frame.media_kind != MediaKind::Video {
+        return Err(MediaError::invalid_argument(
+            "image process frame input must be a video frame",
+        ));
+    }
+
+    // MJPEG payloads are simply independent JPEG images.
+    if frame.codec == CheetahCodecId::MJPEG {
+        return decode_encoded_image(registry, &frame.payload, ImageFormat::Jpeg);
+    }
+
+    let av_codec = avcodec_codec_id(frame.codec).ok_or_else(|| {
+        MediaError::unsupported(format!(
+            "video frame codec {:?} is not supported",
+            frame.codec
+        ))
+    })?;
+
+    if !video_payload_is_random_access(frame.codec, frame.format, &frame.payload) {
+        return Err(MediaError::invalid_argument(
+            "video frame input must be a random-access (key) frame",
+        ));
+    }
+
+    // Validate declared track dimensions before decoding if available.
+    if let (Some(w), Some(h)) = (track.width, track.height) {
+        if w > config.max_image_width || h > config.max_image_height {
+            return Err(MediaError::invalid_argument(format!(
+                "video frame {}x{} exceeds configured limit {}x{}",
+                w, h, config.max_image_width, config.max_image_height
+            )));
+        }
+    }
+
+    let time_base = track.media_timebase().map_err(|e| {
+        MediaError::invalid_argument(format!("invalid track timebase for image decode: {e}"))
+    })?;
+    let av_time_base = TimeBase::new(time_base.num, time_base.den);
+
+    let decoder_cfg = DecoderConfig::new(av_codec, av_time_base)
+        .with_memory_domain(avcodec::core::MemoryDomain::Host)
+        .with_allow_staging(true);
+
+    // Prepend cached parameter sets so the decoder always sees a complete
+    // random-access unit.
+    let mut cache = ParameterSetCache::default();
+    cache.update_from_extradata(&track.extradata);
+    let annexb_payload = cache.prepend_to_annexb_access_unit(frame.codec, &frame.payload);
+
+    let bitstream_format = match av_codec {
+        avcodec::core::CodecId::H264 => BitstreamFormat::H264AnnexB,
+        avcodec::core::CodecId::H265 => BitstreamFormat::H265AnnexB,
+        _ => BitstreamFormat::Unknown,
+    };
+
+    let mut packet = Packet::from_host_bytes(
+        avcodec::core::utils::next_buffer_id(),
+        av_codec,
+        bitstream_format,
+        annexb_payload.to_vec(),
+    );
+    packet.pts = Some(frame.pts);
+    packet.dts = Some(frame.dts);
+    packet.time_base = Some(av_time_base);
+    packet.flags = PacketFlags::KEY;
+
+    let mut decoder: Box<dyn Decoder> = registry.create_decoder(&decoder_cfg).map_err(|e| {
+        if e.kind() == avcodec::core::AvErrorKind::Unsupported {
+            MediaError::unsupported(format!("video decoder unavailable for {av_codec:?}"))
+        } else {
+            MediaError::internal(format!("create video decoder: {e}"))
+        }
+    })?;
+
+    decoder
+        .submit_packet(packet)
+        .map_err(|e| MediaError::invalid_argument(format!("submit video packet: {e}")))?;
+    decoder
+        .flush()
+        .map_err(|e| MediaError::internal(format!("flush video decoder: {e}")))?;
+
+    loop {
+        match decoder
+            .poll_frame()
+            .map_err(|e| MediaError::internal(format!("poll decoded frame: {e}")))?
+        {
+            Poll::Ready(img) => return Ok(img),
+            Poll::EndOfStream => {
+                return Err(MediaError::internal("video decoder flushed without output"));
+            }
+            Poll::Pending => continue,
+        }
+    }
+}
+
+fn avcodec_codec_id(codec: CheetahCodecId) -> Option<avcodec::core::CodecId> {
+    Some(match codec {
+        CheetahCodecId::H264 => avcodec::core::CodecId::H264,
+        CheetahCodecId::H265 => avcodec::core::CodecId::H265,
+        CheetahCodecId::MJPEG => avcodec::core::CodecId::Jpeg,
+        _ => return None,
+    })
+}
+
+/// Converts `image` to `Rgb24` if necessary so downstream JPEG encoders can assume
+/// a host RGB buffer.
+fn ensure_rgb24(
+    registry: &avcodec::core::Registry,
+    image: avcodec::core::Image,
+) -> Result<avcodec::core::Image> {
+    use avcodec::core::{
+        ImageInfo, ImageOp, ImageOpKind, ImageProcessRequest as AvImageProcessRequest,
+        ImageProcessor, ImageProcessorConfig, Poll,
+    };
+
+    if image.format == ImageInfo::Rgb24 {
+        return Ok(image);
+    }
+
+    let mut cfg = ImageProcessorConfig::new();
+    cfg.allow_staging = true;
+    cfg.memory_domain = avcodec::core::MemoryDomain::Host;
+    cfg.target_op = Some(ImageOpKind::Csc);
+    cfg.output_format = Some(ImageInfo::Rgb24);
+
+    let mut processor: Box<dyn ImageProcessor> = registry
+        .create_image_processor(&cfg)
+        .map_err(|e| MediaError::internal(format!("create rgb24 converter: {e}")))?;
+
+    let request = AvImageProcessRequest {
+        src: image,
+        op: ImageOp::Csc {
+            dst_format: ImageInfo::Rgb24,
+        },
+        aux: None,
+        target_domain: None,
+    };
+
+    processor
+        .submit(request)
+        .map_err(|e| MediaError::internal(format!("submit rgb24 conversion: {e}")))?;
+
+    match processor
+        .poll_image()
+        .map_err(|e| MediaError::internal(format!("poll rgb24 conversion: {e}")))?
+    {
+        Poll::Ready(img) => Ok(img),
+        Poll::Pending | Poll::EndOfStream => Err(MediaError::internal(
+            "rgb24 converter did not produce output",
+        )),
+    }
+}
+
 fn encode_jpeg(
     registry: &avcodec::core::Registry,
     image: avcodec::core::Image,
@@ -213,6 +391,7 @@ fn encode_jpeg(
 ) -> Result<ImageArtifact> {
     use avcodec::core::{CodecId, JpegEncoder, JpegEncoderConfig, Poll};
 
+    let image = ensure_rgb24(registry, image)?;
     let coded_width = image.coded_width;
     let coded_height = image.coded_height;
 
@@ -518,6 +697,10 @@ fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
 mod tests {
     use super::*;
     use avcodec::native_free_software_registry_builder;
+    use cheetah_codec::{
+        AVFrame, CodecId as CheetahCodecId, FrameFlags, FrameFormat, MediaKind, Timebase, TrackId,
+        TrackInfo,
+    };
     use cheetah_media_api::{ImageFormat, ImageInput, ImageProcessRequest, MediaErrorCode};
     use cheetah_runtime_api::RuntimeApi;
     use cheetah_runtime_tokio::TokioRuntime;
@@ -758,5 +941,95 @@ mod tests {
         assert_eq!(parse_pad_color("black").unwrap().0, [0, 0, 0, 255]);
         assert_eq!(parse_pad_color("white").unwrap().0, [255, 255, 255, 255]);
         assert!(parse_pad_color("not-a-color").is_none());
+    }
+
+    fn make_h264_keyframe_fixture(width: u32, height: u32) -> Bytes {
+        use avcodec::core::{Encoder, EncoderConfig, Image, ImageInfo, Packet, Poll, TimeBase};
+
+        let registry = native_free_software_registry_builder().build();
+        let enc_cfg = EncoderConfig::new(
+            avcodec::core::CodecId::H264,
+            width,
+            height,
+            ImageInfo::Yuv420p,
+            TimeBase::new(1, 30),
+            1_000_000,
+        );
+        let mut encoder: Box<dyn Encoder> = registry
+            .create_encoder(&enc_cfg)
+            .expect("rust-h264 encoder available");
+
+        let y = vec![128u8; width as usize * height as usize];
+        let u = vec![128u8; (width as usize / 2) * (height as usize / 2)];
+        let v = vec![128u8; (width as usize / 2) * (height as usize / 2)];
+        let mut image = Image::from_host_i420(
+            width,
+            height,
+            &y,
+            width as usize,
+            &u,
+            width as usize / 2,
+            &v,
+            width as usize / 2,
+        )
+        .expect("from_host_i420");
+        image.pts = Some(0);
+        image.dts = Some(0);
+
+        encoder.submit_frame(image).expect("submit frame");
+        let packet: Packet = match encoder.poll_packet().expect("poll packet") {
+            Poll::Ready(p) => p,
+            other => panic!("expected packet immediately, got {other:?}"),
+        };
+
+        Bytes::copy_from_slice(
+            packet
+                .data
+                .host_bytes()
+                .expect("host bytes")
+                .expect("payload present"),
+        )
+    }
+
+    #[tokio::test]
+    async fn decodes_h264_video_frame_to_jpeg() {
+        let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
+        let provider = ImageProcessProvider::new(runtime, MediaProcessingModuleConfig::default());
+
+        let (width, height) = (64u32, 48u32);
+        let payload = make_h264_keyframe_fixture(width, height);
+        let mut frame = AVFrame::new(
+            TrackId(1),
+            MediaKind::Video,
+            CheetahCodecId::H264,
+            FrameFormat::CanonicalH26x,
+            0,
+            0,
+            Timebase::new(1, 30),
+            payload,
+        );
+        frame.flags |= FrameFlags::KEY;
+
+        let mut track = TrackInfo::new(TrackId(1), MediaKind::Video, CheetahCodecId::H264, 90_000);
+        track.width = Some(width);
+        track.height = Some(height);
+
+        let request = ImageProcessRequest::new(
+            ImageInput::Frame {
+                frame: Arc::new(frame),
+                track,
+            },
+            ImageFormat::Jpeg,
+        );
+
+        let artifact = provider
+            .process(&MediaRequestContext::default(), request)
+            .await
+            .expect("h264 frame should decode and encode to jpeg");
+
+        assert_eq!(artifact.format, ImageFormat::Jpeg);
+        assert_eq!(artifact.width, width);
+        assert_eq!(artifact.height, height);
+        assert!(!artifact.payload.is_empty());
     }
 }
