@@ -15,4 +15,9 @@ pub mod module;
 mod provider;
 
 pub use module::{MediaProcessingModule, MediaProcessingModuleFactory};
+
+#[cfg(feature = "media-processing-image")]
 pub use provider::ImageProcessProvider;
+
+#[cfg(feature = "media-processing-audio")]
+pub use provider::audio::{transcode_audio_frame, AudioTranscodeResult};

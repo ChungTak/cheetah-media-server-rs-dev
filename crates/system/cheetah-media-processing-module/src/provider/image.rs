@@ -17,6 +17,7 @@ use futures::channel::oneshot;
 use tracing::instrument;
 
 use crate::config::MediaProcessingModuleConfig;
+use crate::provider::avcodec_registry::build_registry;
 use crate::provider::semaphore::Semaphore;
 
 /// Image processing provider using an avcodec `Registry`.
@@ -67,37 +68,6 @@ impl ImageProcessApi for ImageProcessProvider {
         rx.await
             .map_err(|_| MediaError::internal("image process task canceled"))?
     }
-}
-
-fn build_registry(config: &MediaProcessingModuleConfig) -> Result<avcodec::core::Registry> {
-    match config.profile.as_str() {
-        "native-free" => Ok(filter_native_free_registry()),
-        "software" if cfg!(feature = "avcodec-profile-software") => {
-            Ok(avcodec::default_registry_builder().build())
-        }
-        "software" => Err(MediaError::unsupported(
-            "software profile requires the avcodec-profile-software feature",
-        )),
-        _ => Err(MediaError::invalid_argument(format!(
-            "unsupported avcodec profile: {}",
-            config.profile
-        ))),
-    }
-}
-
-/// Builds a `Registry` from the default avcodec backend set but restricted to
-/// the audited native-free software backend ids plus `libyuv` for CSC/resize.
-fn filter_native_free_registry() -> avcodec::core::Registry {
-    const ALLOWED: &[&str] = &["jpeg", "zune", "rust-h264", "rust-h265", "libyuv"];
-
-    let all = avcodec::default_registry_builder();
-    let mut filtered = avcodec::core::RegistryBuilder::new();
-    for backend in all.backends() {
-        if ALLOWED.contains(&backend.id()) {
-            filtered = filtered.with_backend(*backend);
-        }
-    }
-    filtered.build()
 }
 
 fn process_blocking(

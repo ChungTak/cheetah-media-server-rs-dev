@@ -8,9 +8,27 @@ description = "Media processing module: image/audio/video transcoding, snapshot,
 [features]
 default = []
 
-media-processing-audio = ["dep:avcodec"]
-media-processing-video = ["dep:avcodec"]
-media-processing-image = ["dep:avcodec"]
+media-processing-audio = [
+    "dep:avcodec",
+    "avcodec?/g711",
+    "avcodec?/opus",
+    "avcodec?/fdk-aac",
+    "avcodec?/audio-resample-rubato",
+]
+media-processing-video = [
+    "dep:avcodec",
+    "avcodec?/rust-h264",
+    "avcodec?/rust-h265",
+    "avcodec?/libyuv",
+]
+media-processing-image = [
+    "dep:avcodec",
+    "avcodec?/jpeg",
+    "avcodec?/zune",
+    "avcodec?/libyuv",
+    "avcodec?/rust-h264",
+    "avcodec?/rust-h265",
+]
 
 avcodec-profile-native-free = ["avcodec?/profile-native-free"]
 avcodec-profile-software = ["avcodec?/profile-software"]

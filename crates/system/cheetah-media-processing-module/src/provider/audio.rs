@@ -1,0 +1,524 @@
+//! Audio transcoding adapter backed by `avcodec-rs`.
+//!
+//! Only compiled when `media-processing-audio` is enabled.
+
+use bytes::Bytes;
+use cheetah_codec::{
+    audio::AacAudioSpecificConfig, AVFrame, CodecExtradata, CodecId, FrameFormat, MediaKind,
+    Timebase, TrackId, TrackInfo, TrackReadiness,
+};
+use cheetah_media_api::{error::Result, MediaError};
+
+use crate::config::MediaProcessingModuleConfig;
+use crate::provider::avcodec_registry::build_registry;
+
+/// One-shot audio transcode result: zero or more output frames plus the
+/// updated track description.
+#[derive(Debug, Clone)]
+pub struct AudioTranscodeResult {
+    pub frames: Vec<AVFrame>,
+    pub track: TrackInfo,
+}
+
+/// Transcodes a single compressed audio `AVFrame` to the requested codec,
+/// sample rate and channel count.
+///
+/// This is a stateless, one-shot helper intended for unit tests and for
+/// building higher-level streaming sessions. It creates a fresh decoder +
+/// encoder pair, submits the input packet, flushes, and returns all produced
+/// output packets.
+pub fn transcode_audio_frame(
+    input: &AVFrame,
+    input_track: &TrackInfo,
+    output_codec: CodecId,
+    output_sample_rate: u32,
+    output_channels: u8,
+    config: &MediaProcessingModuleConfig,
+) -> Result<AudioTranscodeResult> {
+    if input.media_kind != MediaKind::Audio {
+        return Err(MediaError::invalid_argument("input frame is not audio"));
+    }
+    if input_track.media_kind != MediaKind::Audio {
+        return Err(MediaError::invalid_argument("input track is not audio"));
+    }
+
+    let input_codec = input.codec;
+    let (src_av_codec, src_bitstream) =
+        map_input_format(input.format, input_codec).ok_or_else(|| {
+            MediaError::unsupported(format!(
+                "unsupported input audio codec/format: {input_codec:?}/{:?}",
+                input.format
+            ))
+        })?;
+
+    let (dst_av_codec, dst_frame_format) = map_output_codec(output_codec).ok_or_else(|| {
+        MediaError::unsupported(format!("unsupported output audio codec: {output_codec:?}"))
+    })?;
+
+    if output_channels == 0 || output_channels > 2 {
+        return Err(MediaError::unsupported(
+            "audio output channel count must be 1 or 2",
+        ));
+    }
+
+    let registry = build_registry(config)?;
+
+    let sample_rate = input_track.sample_rate.unwrap_or(input_track.clock_rate);
+    let channels = input_track.channels.unwrap_or(1);
+    let src_time_base = avcodec::core::TimeBase::new(input.timebase.num, input.timebase.den);
+
+    let mut decoder_cfg = avcodec::core::AudioDecoderConfig::new(
+        src_av_codec,
+        sample_rate,
+        channels as u16,
+        channel_layout(channels),
+        src_bitstream,
+        src_time_base,
+    )
+    .with_memory_domain(avcodec::core::MemoryDomain::Host)
+    .with_allow_staging(false);
+
+    if let Some(extra) = audio_extra_data(input_track) {
+        decoder_cfg = decoder_cfg.with_extra_data(Some(extra));
+    }
+
+    let dst_time_base = avcodec::core::TimeBase::new(1, output_sample_rate);
+    let encoder_cfg = avcodec::core::AudioEncoderConfig::new(
+        dst_av_codec,
+        output_sample_rate,
+        output_channels as u16,
+        channel_layout(output_channels),
+        avcodec::core::AudioSampleFormat::S16,
+        default_bitrate(output_codec),
+        dst_time_base,
+    )
+    .with_memory_domain(avcodec::core::MemoryDomain::Host)
+    .with_allow_staging(false);
+
+    let encoder_cfg = with_audio_profile(encoder_cfg, output_codec);
+    let encoder_cfg = with_audio_frame_size(encoder_cfg, output_codec, output_sample_rate);
+
+    let mut transcoder = avcodec::AudioTranscoder::new(&registry, &decoder_cfg, &encoder_cfg)
+        .map_err(|e| MediaError::unsupported(format!("create audio transcoder: {e}")))?;
+
+    let packet = avcodec::core::Packet::from_host_bytes(
+        avcodec::core::utils::next_buffer_id(),
+        src_av_codec,
+        src_bitstream,
+        input.payload.to_vec(),
+    );
+
+    transcoder
+        .submit_packet(packet)
+        .map_err(|e| MediaError::invalid_argument(format!("submit audio packet: {e}")))?;
+
+    let mut output_frames = Vec::new();
+    loop {
+        match transcoder.poll_packet() {
+            Ok(avcodec::core::Poll::Ready(packet)) => {
+                output_frames.push(av_frame_from_packet(
+                    input.track_id,
+                    output_codec,
+                    dst_frame_format,
+                    output_sample_rate,
+                    &packet,
+                )?);
+            }
+            Ok(avcodec::core::Poll::Pending) => break,
+            Ok(avcodec::core::Poll::EndOfStream) => break,
+            Err(e) => {
+                return Err(MediaError::invalid_argument(format!(
+                    "poll audio packet: {e}"
+                )))
+            }
+        }
+    }
+
+    transcoder
+        .flush()
+        .map_err(|e| MediaError::invalid_argument(format!("flush audio transcoder: {e}")))?;
+
+    loop {
+        match transcoder.poll_packet() {
+            Ok(avcodec::core::Poll::Ready(packet)) => {
+                output_frames.push(av_frame_from_packet(
+                    input.track_id,
+                    output_codec,
+                    dst_frame_format,
+                    output_sample_rate,
+                    &packet,
+                )?);
+            }
+            Ok(avcodec::core::Poll::EndOfStream) | Ok(avcodec::core::Poll::Pending) => break,
+            Err(e) => {
+                return Err(MediaError::invalid_argument(format!(
+                    "poll audio packet: {e}"
+                )))
+            }
+        }
+    }
+
+    let mut output_track = TrackInfo::new(
+        input.track_id,
+        MediaKind::Audio,
+        output_codec,
+        output_sample_rate,
+    );
+    output_track.sample_rate = Some(output_sample_rate);
+    output_track.channels = Some(output_channels);
+    output_track.extradata =
+        output_codec_extradata(output_codec, output_sample_rate, output_channels)
+            .unwrap_or(CodecExtradata::None);
+    output_track.readiness = TrackReadiness::Ready;
+
+    Ok(AudioTranscodeResult {
+        frames: output_frames,
+        track: output_track,
+    })
+}
+
+fn map_input_format(
+    format: FrameFormat,
+    codec: CodecId,
+) -> Option<(avcodec::core::CodecId, avcodec::core::BitstreamFormat)> {
+    match (format, codec) {
+        (FrameFormat::G711Packet, CodecId::G711A) | (FrameFormat::Unknown, CodecId::G711A) => {
+            Some((
+                avcodec::core::CodecId::G711A,
+                avcodec::core::BitstreamFormat::G711A,
+            ))
+        }
+        (FrameFormat::G711Packet, CodecId::G711U) | (FrameFormat::Unknown, CodecId::G711U) => {
+            Some((
+                avcodec::core::CodecId::G711U,
+                avcodec::core::BitstreamFormat::G711U,
+            ))
+        }
+        (FrameFormat::AacRaw, CodecId::AAC) | (FrameFormat::Unknown, CodecId::AAC) => Some((
+            avcodec::core::CodecId::Aac,
+            avcodec::core::BitstreamFormat::AacRaw,
+        )),
+        (FrameFormat::OpusPacket, CodecId::Opus) | (FrameFormat::Unknown, CodecId::Opus) => Some((
+            avcodec::core::CodecId::Opus,
+            avcodec::core::BitstreamFormat::OpusPacket,
+        )),
+        _ => None,
+    }
+}
+
+fn map_output_codec(codec: CodecId) -> Option<(avcodec::core::CodecId, FrameFormat)> {
+    match codec {
+        CodecId::G711A => Some((avcodec::core::CodecId::G711A, FrameFormat::G711Packet)),
+        CodecId::G711U => Some((avcodec::core::CodecId::G711U, FrameFormat::G711Packet)),
+        CodecId::AAC => Some((avcodec::core::CodecId::Aac, FrameFormat::AacRaw)),
+        CodecId::Opus => Some((avcodec::core::CodecId::Opus, FrameFormat::OpusPacket)),
+        _ => None,
+    }
+}
+
+fn channel_layout(channels: u8) -> avcodec::core::AudioChannelLayout {
+    match channels {
+        1 => avcodec::core::AudioChannelLayout::Mono,
+        2 => avcodec::core::AudioChannelLayout::Stereo,
+        n => avcodec::core::AudioChannelLayout::Unspecified { channels: n as u16 },
+    }
+}
+
+fn audio_extra_data(track: &TrackInfo) -> Option<avcodec::core::BufferSlice> {
+    use cheetah_codec::CodecExtradata;
+    let bytes: Option<Bytes> = match &track.extradata {
+        CodecExtradata::AAC { asc } => Some(asc.clone()),
+        CodecExtradata::Opus {
+            channel_mapping: Some(bytes),
+            ..
+        }
+        | CodecExtradata::AV1 {
+            sequence_header: Some(bytes),
+            ..
+        }
+        | CodecExtradata::VP8 {
+            config: Some(bytes),
+        }
+        | CodecExtradata::VP9 {
+            config: Some(bytes),
+        }
+        | CodecExtradata::Raw(bytes)
+        | CodecExtradata::MP3 {
+            side_info: Some(bytes),
+        } => Some(bytes.clone()),
+        _ => None,
+    };
+    bytes.and_then(|b| {
+        if b.is_empty() {
+            return None;
+        }
+        let len = b.len();
+        let handle = avcodec::core::BufferHandle::from_host_bytes(0, b.to_vec());
+        Some(avcodec::core::BufferSlice::new(handle, 0, len))
+    })
+}
+
+fn default_bitrate(codec: CodecId) -> u32 {
+    match codec {
+        CodecId::G711A | CodecId::G711U => 64_000,
+        CodecId::Opus => 64_000,
+        CodecId::AAC => 128_000,
+        _ => 128_000,
+    }
+}
+
+fn with_audio_profile(
+    cfg: avcodec::core::AudioEncoderConfig,
+    codec: CodecId,
+) -> avcodec::core::AudioEncoderConfig {
+    match codec {
+        CodecId::AAC => cfg.with_profile(Some(avcodec::core::AudioCodecProfile::AacLc)),
+        CodecId::Opus => cfg.with_profile(Some(avcodec::core::AudioCodecProfile::OpusAudio)),
+        _ => cfg,
+    }
+}
+
+fn with_audio_frame_size(
+    cfg: avcodec::core::AudioEncoderConfig,
+    codec: CodecId,
+    sample_rate: u32,
+) -> avcodec::core::AudioEncoderConfig {
+    match codec {
+        // AAC-LC requires 1024 samples per frame.
+        CodecId::AAC => cfg.with_frame_size(Some(1024)),
+        // Opus uses 20 ms frames; at 48 kHz that is 960 samples.
+        CodecId::Opus if sample_rate == 48_000 => cfg.with_frame_size(Some(960)),
+        _ => cfg,
+    }
+}
+
+fn output_codec_extradata(
+    codec: CodecId,
+    sample_rate: u32,
+    channels: u8,
+) -> Option<CodecExtradata> {
+    match codec {
+        CodecId::AAC => {
+            let index = aac_sample_rate_index(sample_rate)?;
+            let asc = AacAudioSpecificConfig {
+                audio_object_type: 2, // AAC-LC
+                sampling_frequency_index: index,
+                channel_configuration: channels,
+            };
+            Some(CodecExtradata::AAC {
+                asc: Bytes::copy_from_slice(&asc.to_bytes()),
+            })
+        }
+        CodecId::Opus => Some(CodecExtradata::Opus {
+            fmtp: None,
+            channel_mapping: None,
+        }),
+        _ => None,
+    }
+}
+
+fn aac_sample_rate_index(sample_rate: u32) -> Option<u8> {
+    match sample_rate {
+        96_000 => Some(0),
+        88_200 => Some(1),
+        64_000 => Some(2),
+        48_000 => Some(3),
+        44_100 => Some(4),
+        32_000 => Some(5),
+        24_000 => Some(6),
+        22_050 => Some(7),
+        16_000 => Some(8),
+        12_000 => Some(9),
+        11_025 => Some(10),
+        8_000 => Some(11),
+        7_350 => Some(12),
+        _ => None,
+    }
+}
+
+fn av_frame_from_packet(
+    track_id: TrackId,
+    codec: CodecId,
+    format: FrameFormat,
+    sample_rate: u32,
+    packet: &avcodec::core::Packet,
+) -> Result<AVFrame> {
+    let payload_bytes = packet
+        .data
+        .host_bytes()
+        .map_err(|e| MediaError::internal(format!("read audio packet payload: {e}")))?
+        .ok_or_else(|| MediaError::internal("audio packet payload not in host memory"))?;
+
+    let pts = packet.pts.unwrap_or(0);
+    let dts = packet.dts.unwrap_or(pts);
+    let timebase = Timebase::new(1, sample_rate);
+
+    let mut frame = AVFrame::new(
+        track_id,
+        MediaKind::Audio,
+        codec,
+        format,
+        pts,
+        dts,
+        timebase,
+        Bytes::copy_from_slice(payload_bytes),
+    );
+    if let Some(duration) = packet.duration {
+        let _ = frame.set_duration(duration);
+    }
+    Ok(frame)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytes::Bytes;
+
+    fn g711a_packet(payload: &[u8]) -> (AVFrame, TrackInfo) {
+        let payload = Bytes::copy_from_slice(payload);
+        let track = TrackInfo::new(TrackId(0), MediaKind::Audio, CodecId::G711A, 8_000);
+        let mut track = track;
+        track.sample_rate = Some(8_000);
+        track.channels = Some(1);
+        track.readiness = TrackReadiness::Ready;
+        let frame = AVFrame::new(
+            TrackId(0),
+            MediaKind::Audio,
+            CodecId::G711A,
+            FrameFormat::G711Packet,
+            0,
+            0,
+            Timebase::new(1, 8_000),
+            payload,
+        );
+        (frame, track)
+    }
+
+    #[test]
+    fn g711a_to_g711u_preserves_length() {
+        let cfg = MediaProcessingModuleConfig::default();
+        let payload = vec![0u8; 80]; // 10 ms of G.711 @ 8 kHz mono
+        let (frame, track) = g711a_packet(&payload);
+
+        let result = transcode_audio_frame(&frame, &track, CodecId::G711U, 8_000, 1, &cfg)
+            .expect("transcode");
+
+        assert_eq!(result.frames.len(), 1);
+        assert_eq!(result.frames[0].payload.len(), 80);
+        assert_eq!(result.frames[0].codec, CodecId::G711U);
+        assert_eq!(result.track.codec, CodecId::G711U);
+        assert_eq!(result.track.sample_rate, Some(8_000));
+    }
+
+    #[test]
+    fn g711a_to_opus_resamples_to_48k() {
+        let cfg = MediaProcessingModuleConfig::default();
+        // 20 ms @ 8 kHz mono = 160 bytes
+        let payload = (0..160).map(|v| v as u8).collect::<Vec<_>>();
+        let (frame, track) = g711a_packet(&payload);
+
+        let result = transcode_audio_frame(&frame, &track, CodecId::Opus, 48_000, 1, &cfg)
+            .expect("transcode");
+
+        assert!(!result.frames.is_empty());
+        assert_eq!(result.frames[0].codec, CodecId::Opus);
+        assert_eq!(result.track.codec, CodecId::Opus);
+        assert_eq!(result.track.sample_rate, Some(48_000));
+    }
+
+    #[test]
+    fn g711a_to_aac_48k() {
+        let cfg = MediaProcessingModuleConfig::default();
+        // 20 ms @ 8 kHz mono = 160 bytes
+        let payload = (0..160).map(|v| v as u8).collect::<Vec<_>>();
+        let (frame, track) = g711a_packet(&payload);
+
+        let result = transcode_audio_frame(&frame, &track, CodecId::AAC, 48_000, 1, &cfg)
+            .expect("transcode");
+
+        assert!(!result.frames.is_empty());
+        assert_eq!(result.frames[0].codec, CodecId::AAC);
+        assert_eq!(result.track.codec, CodecId::AAC);
+        assert_eq!(result.track.sample_rate, Some(48_000));
+    }
+
+    #[test]
+    fn opus_to_g711u_resamples_to_8k() {
+        let cfg = MediaProcessingModuleConfig::default();
+        // 20 ms @ 8 kHz mono = 160 bytes
+        let payload = (0..160).map(|v| v as u8).collect::<Vec<_>>();
+        let (frame, track) = g711a_packet(&payload);
+
+        let opus = transcode_audio_frame(&frame, &track, CodecId::Opus, 48_000, 1, &cfg)
+            .expect("encode to opus")
+            .frames
+            .pop()
+            .expect("one opus packet");
+
+        let mut opus_track = TrackInfo::new(TrackId(0), MediaKind::Audio, CodecId::Opus, 48_000);
+        opus_track.sample_rate = Some(48_000);
+        opus_track.channels = Some(1);
+        opus_track.readiness = TrackReadiness::Ready;
+
+        let result = transcode_audio_frame(&opus, &opus_track, CodecId::G711U, 8_000, 1, &cfg)
+            .expect("transcode opus to g711u");
+
+        assert!(!result.frames.is_empty());
+        assert_eq!(result.frames[0].codec, CodecId::G711U);
+        assert_eq!(result.track.codec, CodecId::G711U);
+        assert_eq!(result.track.sample_rate, Some(8_000));
+    }
+
+    #[test]
+    fn g711a_to_aac_to_g711u_roundtrip() {
+        let cfg = MediaProcessingModuleConfig::default();
+        // 20 ms @ 8 kHz mono = 160 bytes
+        let payload = (0..160).map(|v| v as u8).collect::<Vec<_>>();
+        let (frame, track) = g711a_packet(&payload);
+
+        let aac = transcode_audio_frame(&frame, &track, CodecId::AAC, 48_000, 1, &cfg)
+            .expect("encode to aac");
+        let aac_frame = aac.frames.into_iter().next().expect("one aac packet");
+        let aac_track = aac.track;
+
+        let result = transcode_audio_frame(&aac_frame, &aac_track, CodecId::G711U, 8_000, 1, &cfg)
+            .expect("decode aac to g711u");
+
+        assert!(!result.frames.is_empty());
+        assert_eq!(result.frames[0].codec, CodecId::G711U);
+        assert_eq!(result.track.codec, CodecId::G711U);
+        assert_eq!(result.track.sample_rate, Some(8_000));
+    }
+
+    #[test]
+    fn aac_to_opus_and_opus_to_aac_matrix() {
+        let cfg = MediaProcessingModuleConfig::default();
+        // 20 ms @ 8 kHz mono = 160 bytes
+        let payload = (0..160).map(|v| v as u8).collect::<Vec<_>>();
+        let (frame, track) = g711a_packet(&payload);
+
+        // G.711 -> AAC provides a valid AAC packet + ASC.
+        let aac = transcode_audio_frame(&frame, &track, CodecId::AAC, 48_000, 1, &cfg)
+            .expect("encode to aac");
+        let aac_frame = aac.frames.into_iter().next().expect("one aac packet");
+        let aac_track = aac.track;
+
+        let opus = transcode_audio_frame(&aac_frame, &aac_track, CodecId::Opus, 48_000, 1, &cfg)
+            .expect("aac to opus")
+            .frames
+            .pop()
+            .expect("one opus packet");
+
+        let mut opus_track = TrackInfo::new(TrackId(0), MediaKind::Audio, CodecId::Opus, 48_000);
+        opus_track.sample_rate = Some(48_000);
+        opus_track.channels = Some(1);
+        opus_track.readiness = TrackReadiness::Ready;
+
+        let back_to_aac = transcode_audio_frame(&opus, &opus_track, CodecId::AAC, 48_000, 1, &cfg)
+            .expect("opus to aac");
+
+        assert!(!back_to_aac.frames.is_empty());
+        assert_eq!(back_to_aac.frames[0].codec, CodecId::AAC);
+        assert_eq!(back_to_aac.track.codec, CodecId::AAC);
+    }
+}
