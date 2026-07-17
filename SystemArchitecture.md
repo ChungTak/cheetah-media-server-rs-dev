@@ -314,56 +314,59 @@ WebRTC boundary clarification:
   - The tokio driver task, UDP/ICE transport, and `WebRtcDriverHandle`/`WebRtcDriverCommand` command channel.
 - `cheetah-webrtc-module` holds engine wiring plus WebRTC business/signaling logic: WHIP/WHEP + OME + P2P route handling, SDP munging/compat, SSRF/URL policy, `OmeWsMessage`/`P2pMessage` encode/decode, publish leases, and session bookkeeping. It consumes the driver's neutral `WsConnection`/`WsConnector`/`WsServerListener` handles and injects `RuntimeApi` for timers/tasks. The module's production code carries **no direct `tokio` dependency** (tokio is a dev-dependency for tests only); `dev-scripts/check_runtime_boundaries.sh` enforces this at the manifest level.
 
-## 3.10 FFmpeg API Reference Mapping
+## 3.10 Optional Media Processing with avcodec-rs
 
-Current FFmpeg crates:
+Audio/video transcoding, image processing, snapshots, ABR generation, mixing, mosaic, and
+caption extraction are optional Job/Work capabilities. Their implementation contract is defined
+by [`dev-docs/904_avcodec_processing_plan`](dev-docs/904_avcodec_processing_plan/README.md).
 
-- `crates/sdk/cheetah-sdk` (`cheetah-sdk`): public `FfmpegApi` trait and typed `FfmpegJobSpec` / `FfmpegResourceLimits`.
-- `crates/system/cheetah-engine` (`cheetah-engine`): `LocalFfmpegService`, the concrete process executor.
-- `crates/system/cheetah-proxy-module` (`cheetah-proxy-module`): proxy orchestration that submits FFmpeg jobs through `FfmpegApi`.
+The fixed dependency boundary is:
 
-`FfmpegApi` lifecycle:
+- `cheetah-media-processing-module` is the only Cheetah module that owns codec/image sessions.
+- Cheetah directly depends only on the top-level `avcodec` crate, pinned by version and immutable
+  git revision with default features disabled.
+- Cheetah does not directly depend on avcodec backend/core/FFI crates, FFmpeg/image libraries, or
+  an FFmpeg executable.
+- avcodec types stay private to the processing module. Public SDK/domain types remain
+  runtime-neutral and backend-neutral.
+- `cheetah-codec` continues to own canonical compressed `AVFrame + TrackInfo` semantics,
+  timestamp normalization, Access Units, parameter sets, and pure compatibility parsers; it does
+  not own codec sessions.
 
-- `submit(job_id, FfmpegJobSpec) -> FfmpegJobHandle`
-- `get(job_id) -> FfmpegJobStatus`
-- `list() -> Vec<FfmpegJobStatus>`
-- `wait(job_id) -> FfmpegJobStatus`
-- `cancel(job_id)`
-- `remove(job_id)`
+Processing lifecycle:
 
-`FfmpegJobSpec` is typed and controlled:
+- `MediaProcessingApi` provides preflight plus create/get/list/update/stop/delete Job operations.
+- `ImageProcessApi` provides bounded still-image operations and JPEG output.
+- Each codec graph is owned by one blocking worker for its entire lifetime.
+- Stream processing publishes to a dedicated derived `StreamKey`; it never overwrites the source
+  or bypasses the single-publisher lease.
+- Auto-created derived Jobs are only allowed by explicit protocol policy and are shared by a
+  normalized processing-spec fingerprint.
+- Every queue, cache, input count, pixel rate, worker count, retry, and grace period is bounded.
 
-- `profile_id` selects a configured `FfmpegProfile` (callers cannot pass an executable path).
-- `input` / `output` are typed as `FfmpegInput::Url` or `FfmpegOutput::{Url, Engine}`.
-- `input_options` / `output_options` are passed as individual tokens (no shell).
-- `resource_limits` carries `max_runtime_ms` (timeout) and `max_stderr_lines`; concurrency is enforced by the executor's service-level semaphore.
+Cargo features for audio, video, image, NativeFree, and Software profiles are independent and
+disabled by default. Capabilities are advertised only when the feature is compiled, startup
+preflight succeeds, and a production provider is registered. PNG encoding, unavailable profiles,
+and unsupported codecs return explicit `Unsupported`; they never produce placeholder output.
 
-`LocalFfmpegService` executor constraints:
-
-- Spawns the configured executable directly; no shell, arguments passed verbatim.
-- Maintains a bounded stderr ring buffer for diagnostic summaries.
-- Enforces `max_runtime_ms` after the process starts; kills on timeout.
-- Limits concurrent jobs via a `tokio::sync::Semaphore` sized at service construction.
-- Cancel terminates the process; `wait` reaps exit status; failed spawn never reaches `Running`.
-
-Proxy capability wiring:
-
-- `FfmpegApi::is_available()` reports whether an executor/provider is actually configured.
-- `cheetah-proxy-module` builds its `MediaCapability::Proxy` operation list from `FfmpegApi::is_available()`:
-  - always advertises `create_pull`, `delete_pull`, `list_pull`, `create_push`, `delete_push`;
-  - only advertises `create_ffmpeg` / `delete_ffmpeg` when `is_available()` is true;
-  - rejects `create_ffmpeg_proxy` with `unavailable` when the executor is missing.
-- `MediaCapabilitySet` now carries optional per-capability operation overrides so providers can advertise exactly the operations backed by their runtime dependencies.
+The legacy `FfmpegApi`, local process executor, FFmpeg proxy routes/configuration, and direct
+`image` implementation are removed during the 904 migration. avcodec's Software profile may use
+an internal upstream backend, but that detail must not restore a Cheetah FFmpeg API or leak into
+public contracts.
 
 ## 3.11 Admission API
 
 Synchronous admission decisions gate side-effecting media operations before they allocate resources.
 
 - `cheetah-media-api` exposes `MediaAdmissionApi::authorize(ctx, AdmissionRequest) -> Decision`.
-- `AdmissionAction` is one of `Publish`, `Play`, `CreatePullProxy`, `CreatePushProxy`, `CreateFfmpegProxy`, `OpenRtpReceiver`, `OpenRtpSender`.
+- `AdmissionAction` covers `Publish`, `Play`, `CreatePullProxy`, `CreatePushProxy`,
+  `CreateProcessingJob`, `OpenRtpReceiver`, and `OpenRtpSender`.
 - `Decision` is `Allow` or `Deny { code: MediaErrorCode, reason: String }`.
 - `MediaServices` has a dedicated `Admission` slot with `register_admission` / `admission` / `unregister`.
-- `EngineMediaFacade` invokes admission before `acquire_publisher`, `open_subscriber`, `create_pull_proxy`, `create_push_proxy`, `create_ffmpeg_proxy`, `open_rtp_receiver` and `open_rtp_sender`. A `Deny` returns the stable `MediaErrorCode` before the provider allocates any lease, port or session.
+- `EngineMediaFacade` invokes admission before `acquire_publisher`, `open_subscriber`,
+  `create_pull_proxy`, `create_push_proxy`, `create_processing_job`, `open_rtp_receiver`, and
+  `open_rtp_sender`. A `Deny` returns the stable `MediaErrorCode` before the provider allocates any
+  lease, port, worker, derived stream, or session.
 - The existing `WebhookApi` decision path is kept for ZLM-compatible webhook hooks. `WebhookDecisionClient` also implements `MediaAdmissionApi` and maps `Publish`/`Play` to the existing `on_publish`/`on_play` webhook decision flow; other actions default to `Allow` until native translators land.
 
 ## 3.12 Webhook Administration
@@ -442,7 +445,11 @@ Implementation status: the Sans-I/O baseline lives in `cheetah-codec::observabil
 - `RuntimeReportBuilder` computes the runtime-report schema (`RuntimeObservabilityReport`) from injected wall-clock (`now_us`) and canonical `pts_us` samples — it reads no clock and performs no I/O.
 - `cheetah-engine::MetricsRegistry` publishes these through `MetricsApi`: `record_repair_events` adds the layer counters and `record_runtime_report` sets the timing gauges (`startup_latency_ms`, `first_second_avg_frame_interval_ms`, `average_playback_rate_x`, `first_keyframe_delay_ms`). `MetricsApi::inc` lets modules record ad-hoc counters such as `unsupported_mapping_total{event_type,profile}`.
 - Per-frame wiring of drivers/modules into `RuntimeReportBuilder` on the live egress path is staged (the metric feed points are defined; hot-path integration lands incrementally per protocol).
-- `cheetah-engine::ResourceLeakObserver` (exposed as `Engine::resource_leak_report`) gathers non-terminal tasks, active streams, running FFmpeg jobs and non-terminal media sessions into a `ResourceLeakReport`. This is used by tests and shutdown checks to confirm that cancellation, engine stop and module restart do not leave orphan runtime objects.
+- `cheetah-engine::ResourceLeakObserver` (exposed as `Engine::resource_leak_report`) gathers
+  non-terminal tasks, active streams, processing Jobs/workers/derived publishers/shared
+  references, and non-terminal media sessions into a `ResourceLeakReport`. This is used by tests
+  and shutdown checks to confirm that cancellation, engine stop, and module restart do not leave
+  orphan runtime objects.
 
 ## 5. Runtime Abstraction Rule
 
@@ -451,6 +458,9 @@ Public interfaces in `cheetah-runtime-api`, `cheetah-sdk`, `cheetah-engine`, and
 - Do not expose `tokio::*` or `tokio_util::*` in those public APIs.
 - Tokio-specific types stay in `cheetah-runtime-tokio`, `*-driver-tokio`, and application crates.
 - `cheetah-engine` may also use Tokio primitives internally as an orchestration layer implementation detail, but must not expose them in its public API.
+- CPU-bound codec/image work uses the runtime-neutral `RuntimeApi::spawn_blocking`; its Tokio
+  implementation may map to `tokio::task::spawn_blocking`. Codec sessions must never run on an
+  async protocol worker.
 - CI guard: `dev-scripts/check_runtime_boundaries.sh`
 
 ## 6. Testing Strategy
@@ -531,4 +541,3 @@ CI/check baseline for GB28181:
 - `cargo test -p cheetah-gb28181-driver-tokio`
 - `cargo clippy -p cheetah-gb28181-module --tests`
 - `cargo test -p cheetah-gb28181-module`
-

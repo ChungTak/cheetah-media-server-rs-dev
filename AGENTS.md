@@ -72,7 +72,7 @@
 - 多线程高性能并发是主目标；第一阶段 runtime 只实现 Tokio。
 - runtime 抽象放在 driver 层，不放在 core 层。
 - runtime 抽象统一通过 `RuntimeApi` 注入，公共接口使用 runtime-neutral 类型。
-- `RuntimeApi` 采用双通道任务模型：`spawn`（`Send` 主路径）+ `spawn_local`（browser/WASI 附加路径）；不得为了 wasm 目标削弱多线程主路径。
+- `RuntimeApi` 采用 `spawn`（`Send` 主路径）+ `spawn_local`（browser/WASI 附加路径）+ `spawn_blocking`（CPU/阻塞工作）任务模型；不得为了 wasm 目标削弱多线程主路径。
 - 在 `cheetah-runtime-api` / `cheetah-sdk` / `cheetah-engine` / `*-module` 的公共接口中，禁止直接暴露 `tokio::*` 或 `tokio_util::*` 类型。
 - `tokio`/`tokio-util` 仅允许留在 `cheetah-runtime-tokio`、`*-driver-tokio`、应用层 crate 以及 `cheetah-engine` 的内部实现；`cheetah-engine` 公共接口仍必须保持 runtime-neutral。若其他 runtime 缺少对应原语，只能在该 runtime adapter crate 内封装后再暴露抽象。
 - 收包、发包、分帧、组帧、timer、spawn、channel、backpressure 都在 driver。
@@ -86,7 +86,7 @@
 - module 不得直接依赖 `tokio::net`、`tokio::time`、`tokio::sync`、`tokio_util::sync`；需要的取消、任务句柄、完成通知统一走 `RuntimeApi` / SDK 抽象。
 - module 不得使用 `tokio::select!`；多路等待统一使用 runtime-neutral 原语（如 `CancellationToken` + futures 组合子）。
 - 资源分配、会话绑定、鉴权、API 路由、业务映射写在 module。
-- publish、play、proxy 创建（pull / push / ffmpeg）、RTP open 等会分配租约/端口/会话的资源操作，必须在分配前调用 `MediaAdmissionApi::authorize`；`Deny` 时不得留下任何租约、端口、任务或幂等成功记录。
+- publish、play、proxy 创建（pull / push）、processing job 创建、RTP open 等会分配租约/端口/worker/会话的资源操作，必须在分配前调用 `MediaAdmissionApi::authorize`；`Deny` 时不得留下任何租约、端口、worker、任务或幂等成功记录。
 - 当配置应用结果为 `ModuleRestartRequired` 时，由基础层执行模块重建重启（`create -> init -> start`）；module 不应自行绕过该语义维护私有重启流程。
 - `ModuleManagerApi::restart_module / restart_modules` 只接受 `Running` 模块；非 `Running` 状态必须返回 `Conflict`，避免绕过生命周期约束。
 - 同一 `StreamKey` 默认采用单发布者独占语义；不要在 module 侧绕过发布租约模型实现多发布者并写。
@@ -103,7 +103,19 @@
 - 时间戳归一化、timebase 转换、DTS 生成、回绕处理、断流标记、Access Unit 拼装、参数集缓存/补发，统一放在 `cheetah-codec`。
 - 不要让每个协议各自维护一套私有 frame 模型、时间戳修正器或参数集缓存。
 - `cheetah-codec` 不实现 RTMP/RTSP/WebRTC/SIP 等协议状态机。
-- 不要把 FFmpeg 类型泄漏进 `cheetah-codec` 的公共接口。
+- 不要把 avcodec-rs、FFmpeg 或其他编解码后端类型泄漏进 `cheetah-codec` 的公共接口。
+
+## 7.1 可选媒体处理规则
+
+- 音视频编解码、图片处理、快照、ABR、混音、宫格和字幕提取属于可选 Job/Work 能力，默认 feature 不编译。
+- Cheetah 只允许直接依赖顶层 `avcodec` crate，必须固定 version + git revision、关闭 default features；不得直接依赖其 backend/core/FFI crate。
+- `cheetah-media-processing-module` 负责 avcodec-rs adapter、preflight、任务编排和派生流；协议 core/driver、`cheetah-codec` 和公共 SDK 不得持有编解码 session。
+- avcodec-rs session 从创建到销毁必须由同一个 blocking worker 所有；CPU 编解码不得运行在 async 协议热路径。
+- 流式处理结果必须发布到独立 `StreamKey`，不得覆盖源流或绕过单发布者租约；相同处理 spec 的自动任务可以显式引用计数复用。
+- 图片、字体和水印资源只能通过授权的受控句柄访问；不得接受服务端任意路径、URL 或命令行参数。
+- capability operation 必须同时满足 feature 已编译、startup preflight 通过、production provider 已注册；缺失时返回 `Unavailable`/`Unsupported`，不得伪成功。
+- 不直接依赖 FFmpeg/image 库，不启动 FFmpeg 可执行任务，不提供 FFmpeg 公共 API。avcodec-rs Software profile 的上游内部实现不得泄漏到 Cheetah 边界。
+- PNG 编码、硬件 profile、SVC 等未通过产品矩阵的能力必须诚实标记 Unsupported，不得根据枚举或上游类型存在就宣称支持。
 
 ## 8. 兼容优先原则
 
@@ -118,6 +130,7 @@
 
 - 热路径优先单线程分片和所有权局部化。
 - 热路径禁止阻塞；避免 contended mutex。
+- 编解码和图片处理必须通过 `RuntimeApi::spawn_blocking` 或等价 runtime-neutral worker 隔离，并使用有界输入/输出队列。
 - 冷路径允许上锁，但不能把锁带入每包必经路径。
 - 使用 `Arc<AVFrame>`、`Bytes`、原地处理和有界缓冲；避免不必要的 clone / memcpy / 动态分配。
 - Dispatcher / RingBuffer / subscriber queue 必须保持“慢订阅者不拖累其他订阅者”的原则。
@@ -139,6 +152,7 @@
 - `driver`：做运行时与 I/O 集成测试。
 - `module`：做互操作测试、端到端流程测试。
 - 涉及时间戳、重排、参数集补发、协议兼容修复时，必须补测试。
+- 涉及编解码、图片处理、混音、ABR 或字幕时，必须覆盖 feature-off、preflight、真实输出解码、backpressure、取消和资源泄漏。
 - 修复真实设备或真实客户端兼容问题时，优先补可复现样例或回归测试。
 
 ## 12. 提交前最低检查
