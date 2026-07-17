@@ -15,16 +15,23 @@ use futures::channel::oneshot;
 use tracing::instrument;
 
 use crate::config::MediaProcessingModuleConfig;
+use crate::provider::semaphore::Semaphore;
 
 /// Image processing provider using an avcodec `Registry`.
 pub struct ImageProcessProvider {
     runtime: Arc<dyn RuntimeApi>,
     config: MediaProcessingModuleConfig,
+    semaphore: Semaphore,
 }
 
 impl ImageProcessProvider {
     pub fn new(runtime: Arc<dyn RuntimeApi>, config: MediaProcessingModuleConfig) -> Self {
-        Self { runtime, config }
+        let max_jobs = config.max_concurrent_jobs as usize;
+        Self {
+            runtime,
+            config,
+            semaphore: Semaphore::new(max_jobs),
+        }
     }
 }
 
@@ -36,6 +43,9 @@ impl ImageProcessApi for ImageProcessProvider {
         _ctx: &MediaRequestContext,
         request: ImageProcessRequest,
     ) -> Result<ImageArtifact> {
+        // Acquire a concurrency permit before scheduling blocking work.
+        let permit = self.semaphore.acquire().await;
+
         let runtime = Arc::clone(&self.runtime);
         let config = self.config.clone();
 
@@ -44,6 +54,8 @@ impl ImageProcessApi for ImageProcessProvider {
             .spawn_blocking(
                 "image-process",
                 Box::new(move || {
+                    // Hold the permit for the lifetime of the blocking task.
+                    let _permit = permit;
                     let result = process_blocking(request, &config);
                     let _ = tx.send(result);
                 }),
