@@ -8,6 +8,9 @@ use cheetah_sdk::{
 };
 use tracing::info;
 
+use cheetah_media_processing_module::config::MediaProcessingModuleConfig;
+use cheetah_media_processing_module::ImageProcessProvider;
+
 use crate::config::SnapshotModuleConfig;
 use crate::media_provider::SnapshotMediaProvider;
 use crate::registry::SnapshotRegistry;
@@ -58,7 +61,7 @@ pub struct SnapshotModule {
     config: SnapshotModuleConfig,
     registry: Arc<SnapshotRegistry>,
     media_services_registration: Option<ProviderRegistration>,
-    image_encode_registration: Option<ProviderRegistration>,
+    image_process_registration: Option<ProviderRegistration>,
 }
 
 impl SnapshotModule {
@@ -71,7 +74,7 @@ impl SnapshotModule {
                 SnapshotModuleConfig::default().max_snapshots,
             )),
             media_services_registration: None,
-            image_encode_registration: None,
+            image_process_registration: None,
         }
     }
 }
@@ -110,10 +113,9 @@ impl Module for SnapshotModule {
 
         let mut capabilities = cheetah_media_api::MediaCapabilitySet::empty();
         capabilities.add(cheetah_media_api::MediaCapability::Snapshot, 1);
-        // Image encode is MJPEG-only until a multi-codec decode path lands.
         capabilities.set_reason(
             cheetah_media_api::MediaCapability::Snapshot,
-            "mjpeg-only: non-MJPEG keyframes return Unsupported",
+            "avcodec-rs-backed image processing",
         );
 
         self.media_services_registration = Some(
@@ -122,18 +124,16 @@ impl Module for SnapshotModule {
                 .register_snapshot_with_capabilities(provider, capabilities),
         );
 
-        let image_encoder = Arc::new(crate::image_encode::ImageEncoderBackend::new());
-        let mut encode_caps = cheetah_media_api::MediaCapabilitySet::empty();
-        encode_caps.add(cheetah_media_api::MediaCapability::ImageEncode, 1);
-        encode_caps.set_reason(
-            cheetah_media_api::MediaCapability::ImageEncode,
-            "mjpeg-only",
-        );
-        self.image_encode_registration = Some(
-            ctx.engine
-                .media_services
-                .register_image_encode_with_capabilities(image_encoder, encode_caps),
-        );
+        // Register an ImageProcessApi provider if no other module (e.g. the
+        // dedicated media-processing module) has already done so.
+        if ctx.engine.media_services.image_process().is_none() {
+            let provider = Arc::new(ImageProcessProvider::new(
+                ctx.engine.runtime_api.clone(),
+                MediaProcessingModuleConfig::default(),
+            ));
+            self.image_process_registration =
+                Some(ctx.engine.media_services.register_image_process(provider));
+        }
 
         info!("snapshot module initialized");
         self.state = ModuleState::Initialized;
@@ -151,7 +151,7 @@ impl Module for SnapshotModule {
                 ctx.media_services.unregister(&reg);
             }
         }
-        if let Some(reg) = self.image_encode_registration.take() {
+        if let Some(reg) = self.image_process_registration.take() {
             if let Some(ctx) = self.ctx.as_ref() {
                 ctx.media_services.unregister(&reg);
             }

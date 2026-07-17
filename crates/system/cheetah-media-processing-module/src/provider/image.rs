@@ -140,7 +140,7 @@ fn process_blocking(
 
     for (index, op) in request.operations.iter().enumerate() {
         validate_operation_dimensions(op, &image, config, index)?;
-        let av_op = map_image_operation(op)
+        let av_op = map_image_operation(op, &image)
             .map_err(|e| MediaError::unsupported(format!("operation #{index}: {e}")))?;
         let cfg = ImageProcessorConfig::new().with_target_op(discriminant_of(&av_op));
         let mut processor: Box<dyn ImageProcessor> = registry
@@ -429,6 +429,21 @@ fn encode_jpeg(
     })
 }
 
+/// Computes a thumbnail-style fit: scales down if the source is larger than the
+/// supplied bounds, preserving aspect ratio. A bound of `0` means unconstrained
+/// along that axis.
+fn fit_dimensions(src_w: u32, src_h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
+    let bound_w = if max_w == 0 { src_w } else { max_w };
+    let bound_h = if max_h == 0 { src_h } else { max_h };
+    let scale = f64::min(
+        f64::min(bound_w as f64 / src_w as f64, bound_h as f64 / src_h as f64),
+        1.0,
+    );
+    let w = (src_w as f64 * scale).round() as u32;
+    let h = (src_h as f64 * scale).round() as u32;
+    (w.max(1), h.max(1))
+}
+
 fn validate_operation_dimensions(
     op: &ImageOperation,
     image: &avcodec::core::Image,
@@ -439,7 +454,12 @@ fn validate_operation_dimensions(
 
     let (target_w, target_h) = match op {
         ImageOperation::Resize { width, height } => (*width, *height),
-        ImageOperation::Fit { width, height } => (*width, *height),
+        ImageOperation::Fit { width, height } => {
+            if *width == 0 && *height == 0 {
+                return Ok(());
+            }
+            fit_dimensions(image.coded_width, image.coded_height, *width, *height)
+        }
         ImageOperation::ResizePad { width, height, .. } => (*width, *height),
         ImageOperation::Crop { width, height, .. } => (*width, *height),
         ImageOperation::Pad {
@@ -485,7 +505,10 @@ fn validate_operation_dimensions(
     Ok(())
 }
 
-fn map_image_operation(op: &ImageOperation) -> std::result::Result<avcodec::core::ImageOp, String> {
+fn map_image_operation(
+    op: &ImageOperation,
+    image: &avcodec::core::Image,
+) -> std::result::Result<avcodec::core::ImageOp, String> {
     use avcodec::core::{ImageOp, PadColor, Rect, Rotation, ScaleFilter};
 
     match op {
@@ -499,14 +522,21 @@ fn map_image_operation(op: &ImageOperation) -> std::result::Result<avcodec::core
             width: *width,
             height: *height,
         }),
-        ImageOperation::Fit { width, height } => Ok(ImageOp::ResizePad {
-            dst_width: *width,
-            dst_height: *height,
-            fit: avcodec::core::FitMode::Contain,
-            align: avcodec::core::PadAlign::Center,
-            fill: PadColor::BLACK,
-            filter: ScaleFilter::Bilinear,
-        }),
+        ImageOperation::Fit { width, height } => {
+            if *width == 0 && *height == 0 {
+                return Ok(ImageOp::Copy);
+            }
+            let (dst_w, dst_h) =
+                fit_dimensions(image.coded_width, image.coded_height, *width, *height);
+            Ok(ImageOp::ResizePad {
+                dst_width: dst_w,
+                dst_height: dst_h,
+                fit: avcodec::core::FitMode::Contain,
+                align: avcodec::core::PadAlign::Center,
+                fill: PadColor::BLACK,
+                filter: ScaleFilter::Bilinear,
+            })
+        }
         ImageOperation::Rotate { degrees } => {
             let rotation = match *degrees {
                 90 => Rotation::R90,

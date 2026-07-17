@@ -10,7 +10,6 @@ async-trait.workspace = true
 bytes.workspace = true
 dashmap.workspace = true
 futures.workspace = true
-image.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -19,11 +18,13 @@ tracing.workspace = true
 
 cheetah-codec = { path = "../../foundation/cheetah-codec" }
 cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
+cheetah-media-processing-module = { path = "../cheetah-media-processing-module", default-features = false, features = ["media-processing-image", "avcodec-profile-native-free"] }
 cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
 cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
 
 [dev-dependencies]
 cheetah-config = { path = "../cheetah-config" }
 cheetah-engine = { path = "../cheetah-engine" }
+image.workspace = true
 cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

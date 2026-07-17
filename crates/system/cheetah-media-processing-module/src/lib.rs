@@ -15,3 +15,4 @@ pub mod module;
 mod provider;
 
 pub use module::{MediaProcessingModule, MediaProcessingModuleFactory};
+pub use provider::ImageProcessProvider;

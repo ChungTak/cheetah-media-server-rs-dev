@@ -1426,6 +1426,7 @@ dependencies = [
  "cheetah-config",
  "cheetah-engine",
  "cheetah-media-api",
+ "cheetah-media-processing-module",
  "cheetah-runtime-api",
  "cheetah-runtime-tokio",
  "cheetah-sdk",

@@ -1,5 +1,5 @@
 use std::io::Cursor;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -286,7 +286,7 @@ fn grant_for(scope: MediaScope, key: &MediaKey) -> MediaResourceGrant {
     }
 }
 
-fn snapshot_file_path(root: &PathBuf, snapshot_id: &str, format: &str) -> PathBuf {
+fn snapshot_file_path(root: &Path, snapshot_id: &str, format: &str) -> PathBuf {
     root.join("live")
         .join("snap-test")
         .join(format!("{snapshot_id}.{format}"))
