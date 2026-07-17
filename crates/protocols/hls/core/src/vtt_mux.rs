@@ -126,12 +126,12 @@ impl VttMux {
                 continue;
             }
 
-            let local_start = cue.start_ms.max(start_ms) - start_ms;
-            let local_end = cue.end_ms.min(end_ms) - start_ms;
-            if local_end > local_start {
-                payload.push_str(&format_vtt_timestamp(local_start));
+            let segment_start = cue.start_ms.max(start_ms);
+            let segment_end = cue.end_ms.min(end_ms);
+            if segment_end > segment_start {
+                payload.push_str(&format_vtt_timestamp(segment_start));
                 payload.push_str(" --> ");
-                payload.push_str(&format_vtt_timestamp(local_end));
+                payload.push_str(&format_vtt_timestamp(segment_end));
                 if let Some(settings) = &cue.settings {
                     payload.push(' ');
                     payload.push_str(settings);
@@ -250,7 +250,7 @@ mod tests {
 
         assert!(first.payload.contains("00:00:02.000 --> 00:00:04.000"));
         assert!(first.payload.contains("Cross"));
-        assert!(second.payload.contains("00:00:00.000 --> 00:00:02.000"));
+        assert!(second.payload.contains("00:00:04.000 --> 00:00:06.000"));
         assert!(second.payload.contains("Cross"));
     }
 
@@ -270,7 +270,7 @@ mod tests {
 
         mux.close_segment(8_000).unwrap();
         let second = mux.segments().back().unwrap();
-        assert!(second.payload.contains("00:00:01.000 --> 00:00:03.000"));
+        assert!(second.payload.contains("00:00:05.000 --> 00:00:07.000"));
         assert!(second.payload.contains("Later"));
     }
 }
