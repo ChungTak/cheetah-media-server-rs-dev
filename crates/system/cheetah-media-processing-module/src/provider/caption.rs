@@ -54,7 +54,7 @@ struct JobEntry {
 pub struct MediaProcessingProvider {
     ctx: EngineContext,
     config: MediaProcessingModuleConfig,
-    jobs: Mutex<HashMap<ProcessingJobId, JobEntry>>,
+    jobs: Arc<Mutex<HashMap<ProcessingJobId, JobEntry>>>,
     id_counter: AtomicU64,
 }
 
@@ -63,7 +63,7 @@ impl MediaProcessingProvider {
         Self {
             ctx,
             config,
-            jobs: Mutex::new(HashMap::new()),
+            jobs: Arc::new(Mutex::new(HashMap::new())),
             id_counter: AtomicU64::new(0),
         }
     }
@@ -100,7 +100,7 @@ impl MediaProcessingProvider {
         Ok(())
     }
 
-    fn now_us(&self) -> i64 {
+    fn now_us() -> i64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -143,7 +143,7 @@ impl MediaProcessingProvider {
     }
 
     fn build_job(&self, request: &CreateProcessingJob, state: ProcessingJobState) -> ProcessingJob {
-        let now = self.now_us();
+        let now = Self::now_us();
         ProcessingJob {
             job_id: self.new_job_id(),
             spec: request.spec.clone(),
@@ -183,7 +183,7 @@ impl MediaProcessingProvider {
             for entry in jobs.values_mut() {
                 entry.cancel.cancel();
                 entry.job.state = ProcessingJobState::Stopped;
-                entry.job.updated_at = self.now_us();
+                entry.job.updated_at = Self::now_us();
             }
             jobs.values_mut()
                 .filter_map(|e| e.handle.take())
@@ -286,9 +286,23 @@ impl MediaProcessingApi for MediaProcessingProvider {
         let job = self.build_job(&request, ProcessingJobState::Running);
         let job_id = job.job_id.clone();
 
+        let jobs = self.jobs.clone();
         let publisher_api = self.ctx.publisher_api.clone();
         let handle = runtime.spawn(Box::pin(async move {
             let result = worker.run(subscriber, publisher, cancel_child).await;
+            let finished_at = Self::now_us();
+            if let Ok(mut guard) = jobs.lock() {
+                if let Some(entry) = guard.get_mut(&job_id) {
+                    entry.job.finished_at = Some(finished_at);
+                    if let Err(ref e) = result {
+                        entry.job.last_error = Some(e.to_string());
+                    }
+                    if entry.job.state == ProcessingJobState::Running {
+                        entry.job.state = ProcessingJobState::Stopped;
+                        entry.job.updated_at = finished_at;
+                    }
+                }
+            }
             if let Err(e) = result {
                 warn!(job_id = %job_id, "caption extract worker failed: {e}");
             }
@@ -349,9 +363,9 @@ impl MediaProcessingApi for MediaProcessingProvider {
             })
             .collect();
         let total = items.len() as u64;
-        let page = query.page;
+        let page = query.page.max(1);
         let page_size = query.page_size as usize;
-        let start = (page as usize).saturating_mul(page_size);
+        let start = ((page - 1) as usize).saturating_mul(page_size);
         items = if start > items.len() {
             Vec::new()
         } else {
@@ -387,7 +401,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
             .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))?;
         entry.cancel.cancel();
         entry.job.state = ProcessingJobState::Stopped;
-        entry.job.updated_at = self.now_us();
+        entry.job.updated_at = Self::now_us();
         Ok(entry.job.clone())
     }
 
