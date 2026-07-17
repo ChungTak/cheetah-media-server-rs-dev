@@ -100,8 +100,8 @@ impl VttMux {
     ///
     /// The segment start is taken from the previous boundary, or `0` for the
     /// first segment. Cues overlapping the interval are written into the segment
-    /// with timestamps local to that segment; cues that continue past the end
-    /// are retained for the next segment.
+    /// with absolute timestamps continuous with the media timeline; cues that
+    /// continue past the end are retained for the next segment.
     pub fn close_segment(&mut self, end_ms: u64) -> Result<(), HlsCoreError> {
         let start_ms = self
             .next_segment_start
