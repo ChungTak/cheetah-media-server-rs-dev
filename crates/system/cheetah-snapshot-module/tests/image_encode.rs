@@ -239,6 +239,9 @@ fn split_annex_b(data: &[u8]) -> Vec<Vec<u8>> {
             }
             j += 1;
         }
+        if j + 2 >= data.len() {
+            j = data.len();
+        }
         nals.push(data[nal_start..j].to_vec());
         i = nal_start;
     }

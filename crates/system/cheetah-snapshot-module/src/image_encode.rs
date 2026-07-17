@@ -166,11 +166,13 @@ impl ImageEncoderBackend {
             ));
         }
 
-        let bytes = fs::read(&output_path)
-            .map_err(|e| MediaError::storage_failed(format!("read H264 snapshot output: {e}")))?;
+        let read_result = fs::read(&output_path)
+            .map_err(|e| MediaError::storage_failed(format!("read H264 snapshot output: {e}")));
 
         let _ = fs::remove_file(&input_path);
         let _ = fs::remove_file(&output_path);
+
+        let bytes = read_result?;
 
         if bytes.is_empty() {
             return Err(MediaError::storage_failed(
