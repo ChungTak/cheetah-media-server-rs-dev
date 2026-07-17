@@ -26,6 +26,7 @@ id_wrapper!(SnapshotId, String);
 id_wrapper!(ProxyId, String);
 id_wrapper!(RtpSessionId, String);
 id_wrapper!(PlaybackSessionId, String);
+id_wrapper!(ProcessingJobId, String);
 id_wrapper!(FileHandle, String);
 id_wrapper!(IdempotencyKey, String);
 id_wrapper!(RequestId, String);

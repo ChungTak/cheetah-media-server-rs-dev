@@ -21,6 +21,9 @@ pub enum MediaCapability {
     WebhookAdmin,
     Playback,
     Admission,
+    AudioProcessing,
+    VideoProcessing,
+    ImageProcessing,
 }
 
 /// Runtime state of a capability advertised by a provider.
@@ -213,6 +216,16 @@ pub fn default_operations(capability: MediaCapability) -> Vec<String> {
             "stop".to_string(),
         ],
         MediaCapability::Admission => vec!["authorize".to_string()],
+        MediaCapability::AudioProcessing => vec!["transcode".to_string(), "audio_mix".to_string()],
+        MediaCapability::VideoProcessing => vec![
+            "transcode".to_string(),
+            "abr".to_string(),
+            "video_mosaic".to_string(),
+            "caption_extract".to_string(),
+        ],
+        MediaCapability::ImageProcessing => {
+            vec!["image_process".to_string(), "jpeg_encode".to_string()]
+        }
     }
     .into_iter()
     .collect()

@@ -470,6 +470,18 @@ pub trait Runtime: Send + Sync + 'static {
         fut: Pin<Box<dyn Future<Output = ()> + 'static>>,
     ) -> Result<Self::Handle, SpawnError>;
 
+    /// Spawn a blocking task onto a dedicated worker pool.
+    ///
+    /// The supplied closure runs on a thread outside the async runtime. It must
+    /// not perform async I/O; it is intended for CPU-bound or blocking codec work.
+    ///
+    /// 在专用工作线程池上生成阻塞任务。
+    fn spawn_blocking(
+        &self,
+        name: &str,
+        task: Box<dyn FnOnce() + Send + 'static>,
+    ) -> Result<Self::Handle, SpawnError>;
+
     fn bind_udp(&self, addr: SocketAddr) -> io::Result<Self::UdpSocket>;
 
     fn connect_tcp(&self, addr: SocketAddr) -> io::Result<Self::TcpStream>;
@@ -516,6 +528,16 @@ pub trait RuntimeApi: Send + Sync + 'static {
         &self,
         fut: Pin<Box<dyn Future<Output = ()> + 'static>>,
     ) -> Result<Box<dyn JoinHandle>, SpawnError>;
+
+    /// Spawn a blocking task onto a dedicated worker pool.
+    ///
+    /// 在专用工作线程池上生成阻塞任务。
+    fn spawn_blocking(
+        &self,
+        name: &str,
+        task: Box<dyn FnOnce() + Send + 'static>,
+    ) -> Result<Box<dyn JoinHandle>, SpawnError>;
+
     fn bind_udp(&self, addr: SocketAddr) -> io::Result<Box<dyn AsyncUdpSocket>>;
     fn connect_tcp(&self, addr: SocketAddr) -> io::Result<Box<dyn AsyncTcpStream>>;
     fn connect_tcp_async<'a>(&'a self, addr: SocketAddr) -> ConnectTcpFuture<'a>;

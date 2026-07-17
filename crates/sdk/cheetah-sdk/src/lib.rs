@@ -36,12 +36,22 @@ pub mod task;
 pub use cheetah_sdk_macros::ConfigSchema;
 
 pub use cheetah_media_api::image::{
-    ImageArtifact, ImageEncodeApi, ImageEncodeRequest, ImageFormat,
+    ImageArtifact, ImageEncodeApi, ImageEncodeRequest, ImageFormat, ImageProcessApi,
+    ImageProcessRequest,
 };
 pub use cheetah_media_api::media_file_store::{
     sanitize_filename, DeleteBatchResult, FileDownload, FileRange, FileStoreEntry, FileStoreQuery,
     MediaFileStoreApi,
 };
+pub use cheetah_media_api::processing::{
+    AbrVariant, AudioCodec, AudioMix, AudioMixInput, AudioTarget, CaptionConfig,
+    CreateProcessingJob, ImageInput, ImageOperation, MosaicCell, MosaicLayout, Overlay,
+    OverlayKind, OverlayPosition, OverlaySize, ProcessingJob, ProcessingJobQuery,
+    ProcessingJobSpec, ProcessingJobState, ProcessingPolicy, ProcessingPreflightReport,
+    ProcessingPreset, ProcessingTarget, TrackSelection, UpdateProcessingJob, VideoCodec,
+    VideoMosaicInput, VideoTarget,
+};
+pub use cheetah_media_api::{MediaProcessingApi, ProcessingJobId};
 pub use cheetah_runtime_api::{
     AsyncTcpListener, AsyncTcpStream, AsyncTimer, AsyncUdpSocket, CancellationToken,
     ConnectTcpFuture, ConnectTlsFuture, JoinHandle, OneShotReceiver, OneShotRecvError,
