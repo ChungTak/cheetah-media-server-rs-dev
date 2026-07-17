@@ -5,6 +5,7 @@
 
 use crate::ll_hls::LowLatencyState;
 use crate::segment::SegmentRing;
+use crate::vtt_mux::{VttMux, VttMuxConfig, VttSegment};
 
 /// Container mode for playlist generation.
 ///
@@ -157,6 +158,42 @@ impl PlaylistBuilder {
     pub fn build_vod(segments: &[SegmentFileEntry], container: HlsContainer) -> String {
         let mut out = Self::build_live_file(segments, 0, container);
         out.push_str("#EXT-X-ENDLIST\n");
+        out
+    }
+
+    /// Generate a live WebVTT media playlist from a [`VttMux`].
+    ///
+    /// 从 `VttMux` 生成直播 WebVTT 媒体播放列表。
+    pub fn build_vtt_media(mux: &VttMux, session_id: Option<u64>) -> String {
+        let segments: Vec<&VttSegment> = mux.segments().iter().collect();
+        if segments.is_empty() {
+            return "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n"
+                .to_string();
+        }
+
+        let target_duration = segments
+            .iter()
+            .map(|s| s.duration_secs.ceil() as u64)
+            .max()
+            .unwrap_or(4)
+            .max(1);
+        let media_sequence = segments.first().map(|s| s.sequence).unwrap_or(0);
+
+        let mut out = String::with_capacity(256);
+        out.push_str("#EXTM3U\n");
+        out.push_str("#EXT-X-VERSION:3\n");
+        out.push_str("#EXT-X-ALLOW-CACHE:NO\n");
+        out.push_str(&format!("#EXT-X-TARGETDURATION:{target_duration}\n"));
+        out.push_str(&format!("#EXT-X-MEDIA-SEQUENCE:{media_sequence}\n"));
+
+        for seg in segments {
+            out.push_str(&format!("#EXTINF:{:.3},\n", seg.duration_secs));
+            match session_id {
+                Some(uid) => out.push_str(&format!("{}.vtt?uid={uid}\n", seg.name)),
+                None => out.push_str(&format!("{}.vtt\n", seg.name)),
+            }
+        }
+
         out
     }
 
@@ -334,6 +371,21 @@ pub struct MediaRenditionInfo {
     pub channels: Option<u8>,
 }
 
+/// Info about a subtitle rendition for the master playlist.
+///
+/// 用于主播放列表的字幕 rendition 信息。
+#[derive(Debug, Clone)]
+pub struct SubtitleRenditionInfo {
+    /// Display name for the subtitle track.
+    pub name: String,
+    /// BCP-47 language tag, e.g. `en` or `zh-CN`.
+    pub language: String,
+    /// Whether this track is selected by default.
+    pub is_default: bool,
+    /// Whether the player may auto-select this track.
+    pub autoselect: bool,
+}
+
 /// Builder for demuxed LLHLS master playlist with independent audio rendition.
 ///
 /// 生成独立音频 rendition 的解复用 LLHLS 主播放列表构建器。
@@ -349,6 +401,30 @@ impl DemuxedMasterPlaylist {
     pub fn build(
         video: Option<&MediaRenditionInfo>,
         audio: Option<&MediaRenditionInfo>,
+        stream_name: &str,
+        session_id: Option<u64>,
+        include_stream_key: bool,
+        stream_key: &str,
+    ) -> String {
+        Self::build_with_subtitles(
+            video,
+            audio,
+            None,
+            stream_name,
+            session_id,
+            include_stream_key,
+            stream_key,
+        )
+    }
+
+    /// Generate a demuxed master playlist with optional subtitle rendition.
+    ///
+    /// Output includes `EXT-X-MEDIA:TYPE=SUBTITLES` and `EXT-X-STREAM-INF` with
+    /// `SUBTITLES="subs"` when `subtitle` is provided.
+    pub fn build_with_subtitles(
+        video: Option<&MediaRenditionInfo>,
+        audio: Option<&MediaRenditionInfo>,
+        subtitle: Option<&SubtitleRenditionInfo>,
         stream_name: &str,
         session_id: Option<u64>,
         include_stream_key: bool,
@@ -376,6 +452,18 @@ impl DemuxedMasterPlaylist {
                 "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"default\",\
                  DEFAULT=YES,AUTOSELECT=YES,CHANNELS=\"{channels}\",\
                  URI=\"{stream_name}/chunklist_audio.m3u8{uid_suffix}{key_suffix}\"\n"
+            ));
+        }
+
+        // Subtitle rendition declaration
+        if let Some(sub_info) = subtitle {
+            let default = if sub_info.is_default { "YES" } else { "NO" };
+            let autoselect = if sub_info.autoselect { "YES" } else { "NO" };
+            out.push_str(&format!(
+                "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"{}\",\
+                 LANGUAGE=\"{}\",DEFAULT={default},AUTOSELECT={autoselect},\
+                 URI=\"{stream_name}/chunklist_subtitles.m3u8{uid_suffix}{key_suffix}\"\n",
+                sub_info.name, sub_info.language
             ));
         }
 
@@ -407,6 +495,9 @@ impl DemuxedMasterPlaylist {
             if audio.is_some() {
                 attrs.push_str(",AUDIO=\"audio\"");
             }
+            if subtitle.is_some() {
+                attrs.push_str(",SUBTITLES=\"subs\"");
+            }
             out.push_str(&format!("#EXT-X-STREAM-INF:{attrs}\n"));
             out.push_str(&format!(
                 "{stream_name}/chunklist_video.m3u8{uid_suffix}{key_suffix}\n"
@@ -418,6 +509,9 @@ impl DemuxedMasterPlaylist {
             let mut attrs = format!("BANDWIDTH={bandwidth}");
             if !codecs.is_empty() {
                 attrs.push_str(&format!(",CODECS=\"{codecs}\""));
+            }
+            if subtitle.is_some() {
+                attrs.push_str(",SUBTITLES=\"subs\"");
             }
             out.push_str(&format!("#EXT-X-STREAM-INF:{attrs}\n"));
             out.push_str(&format!(
@@ -617,5 +711,66 @@ mod tests {
         let m3u8 = DemuxedMasterPlaylist::build(None, Some(&audio), "stream", None, false, "");
         assert!(m3u8.contains("stream/chunklist_audio.m3u8"));
         assert!(m3u8.contains("BANDWIDTH=128000"));
+    }
+
+    #[test]
+    fn vtt_media_playlist_from_mux() {
+        use super::{PlaylistBuilder, VttMux, VttMuxConfig};
+        use cheetah_codec::subtitle::WebVttCue;
+
+        let mut mux = VttMux::new(VttMuxConfig {
+            segment_duration_ms: 4_000,
+            max_segments: 4,
+        });
+        mux.push_cue(WebVttCue {
+            id: None,
+            start_ms: 500,
+            end_ms: 3_500,
+            payload: "Hello".to_string(),
+            settings: None,
+        })
+        .unwrap();
+        mux.close_segment(4_000).unwrap();
+
+        let m3u8 = PlaylistBuilder::build_vtt_media(&mux, Some(42));
+        assert!(m3u8.contains("#EXTM3U"));
+        assert!(m3u8.contains("#EXT-X-VERSION:3"));
+        assert!(m3u8.contains("#EXT-X-MEDIA-SEQUENCE:0"));
+        assert!(m3u8.contains("#EXTINF:4.000,"));
+        assert!(m3u8.contains("sub0.vtt?uid=42"));
+    }
+
+    #[test]
+    fn master_playlist_with_subtitle_rendition() {
+        use super::{DemuxedMasterPlaylist, MediaRenditionInfo, SubtitleRenditionInfo};
+
+        let video = MediaRenditionInfo {
+            codecs: "avc1.64001f".to_string(),
+            bandwidth: 2_000_000,
+            width: Some(1280),
+            height: Some(720),
+            frame_rate: None,
+            channels: None,
+        };
+        let subtitle = SubtitleRenditionInfo {
+            name: "English".to_string(),
+            language: "en".to_string(),
+            is_default: true,
+            autoselect: true,
+        };
+        let m3u8 = DemuxedMasterPlaylist::build_with_subtitles(
+            Some(&video),
+            None,
+            Some(&subtitle),
+            "stream",
+            Some(1),
+            false,
+            "",
+        );
+        assert!(m3u8.contains("#EXT-X-MEDIA:TYPE=SUBTITLES"));
+        assert!(m3u8.contains("GROUP-ID=\"subs\""));
+        assert!(m3u8.contains("LANGUAGE=\"en\""));
+        assert!(m3u8.contains("stream/chunklist_subtitles.m3u8?uid=1"));
+        assert!(m3u8.contains("SUBTITLES=\"subs\""));
     }
 }
