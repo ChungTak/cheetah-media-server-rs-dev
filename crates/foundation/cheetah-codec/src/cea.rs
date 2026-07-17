@@ -231,7 +231,10 @@ impl CeaParser {
             self.diagnostics.push(message.to_string());
         } else {
             self.dropped_diagnostics += 1;
-            let summary = format!("... {} further diagnostics dropped", self.dropped_diagnostics);
+            let summary = format!(
+                "... {} further diagnostics dropped",
+                self.dropped_diagnostics
+            );
             if self.diagnostics.len() == MAX_DIAGNOSTICS {
                 self.diagnostics.push(summary);
             } else {
@@ -756,7 +759,10 @@ mod tests {
         assert_eq!(parser.diagnostics().len(), MAX_DIAGNOSTICS + 1);
         let taken = parser.take_diagnostics();
         let summary = taken.last().unwrap();
-        assert!(summary.contains("10"), "summary should report 10 dropped: {summary}");
+        assert!(
+            summary.contains("10"),
+            "summary should report 10 dropped: {summary}"
+        );
         assert!(parser.diagnostics().is_empty());
     }
 }
