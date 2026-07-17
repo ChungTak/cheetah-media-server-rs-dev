@@ -286,13 +286,25 @@ impl MediaProcessingApi for MediaProcessingProvider {
         let job = self.build_job(&request, ProcessingJobState::Running);
         let job_id = job.job_id.clone();
 
+        // Insert the job record before spawning the worker so that a very fast
+        // completion (or failure) still finds the entry and transitions it.
+        self.jobs.lock().unwrap().insert(
+            job_id.clone(),
+            JobEntry {
+                job: job.clone(),
+                cancel,
+                handle: None,
+            },
+        );
+
         let jobs = self.jobs.clone();
         let publisher_api = self.ctx.publisher_api.clone();
+        let spawned_job_id = job_id.clone();
         let handle = runtime.spawn(Box::pin(async move {
             let result = worker.run(subscriber, publisher, cancel_child).await;
             let finished_at = Self::now_us();
             if let Ok(mut guard) = jobs.lock() {
-                if let Some(entry) = guard.get_mut(&job_id) {
+                if let Some(entry) = guard.get_mut(&spawned_job_id) {
                     entry.job.finished_at = Some(finished_at);
                     if let Err(ref e) = result {
                         entry.job.last_error = Some(e.to_string());
@@ -304,19 +316,14 @@ impl MediaProcessingApi for MediaProcessingProvider {
                 }
             }
             if let Err(e) = result {
-                warn!(job_id = %job_id, "caption extract worker failed: {e}");
+                warn!(job_id = %spawned_job_id, "caption extract worker failed: {e}");
             }
             let _ = publisher_api.release_publisher(&lease).await;
         }));
 
-        self.jobs.lock().unwrap().insert(
-            job.job_id.clone(),
-            JobEntry {
-                job: job.clone(),
-                cancel,
-                handle: Some(handle),
-            },
-        );
+        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+            entry.handle = Some(handle);
+        }
 
         info!(job_id = %job.job_id, "caption extract job started");
         Ok(job)
