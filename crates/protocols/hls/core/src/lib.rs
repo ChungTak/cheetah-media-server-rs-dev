@@ -60,6 +60,10 @@ pub mod ts_demux;
 ///
 /// 用于 HLS 分片生成的 MPEG-TS 复用器。
 pub mod ts_mux;
+/// WebVTT segment muxer for HLS subtitles.
+///
+/// HLS 字幕 WebVTT 分片复用器。
+pub mod vtt_mux;
 
 pub use error::HlsCoreError;
 pub use fmp4_demux::{Fmp4DemuxEvent, Fmp4DemuxTrack, Fmp4Demuxer};
@@ -76,7 +80,7 @@ pub use parser::{
 pub use player::{BandwidthStrategy, HlsPlayerState};
 pub use playlist::{
     format_iso8601, DemuxedMasterPlaylist, HlsContainer, MediaRenditionInfo, PlaylistBuilder,
-    SegmentFileEntry,
+    SegmentFileEntry, SubtitleRenditionInfo,
 };
 pub use request::{parse_hls_request, BlockingParams, HlsRequestKind, SkipMode, StreamKeyParts};
 pub use segment::{Segment, SegmentRing};
@@ -86,3 +90,4 @@ pub use session::{
 };
 pub use ts_demux::{TsDemuxEvent, TsDemuxer};
 pub use ts_mux::TsMuxer;
+pub use vtt_mux::{VttMux, VttMuxConfig, VttSegment};

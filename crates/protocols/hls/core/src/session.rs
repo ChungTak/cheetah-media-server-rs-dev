@@ -520,6 +520,7 @@ impl HlsCore {
                     HlsCoreError::SegmentNotFound { .. } => (404, "Segment Not Found"),
                     HlsCoreError::NotReady => (503, "Not Ready"),
                     HlsCoreError::InvalidPath { .. } => (400, "Bad Request"),
+                    HlsCoreError::InvalidTimestamp => (400, "Bad Request"),
                 };
                 vec![HlsCoreOutput::SendResponse {
                     connection_id,
