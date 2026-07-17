@@ -244,9 +244,7 @@ async fn zlm_rtp_compat_adapter_maps_server_and_sender() {
 
     let info = get(
         "/api/getRtpInfo",
-        Some(format!(
-            "?vhost=__defaultVhost__&app=live&stream=zlm-adapter"
-        )),
+        Some("?vhost=__defaultVhost__&app=live&stream=zlm-adapter".to_string()),
     );
     let resp = service.handle(info).await.expect("getRtpInfo");
     let body = body_json(&resp);
@@ -321,9 +319,7 @@ async fn zlm_rtp_compat_adapter_maps_server_and_sender() {
 
     let info = get(
         "/api/getRtpInfo",
-        Some(format!(
-            "?vhost=__defaultVhost__&app=live&stream=zlm-adapter"
-        )),
+        Some("?vhost=__defaultVhost__&app=live&stream=zlm-adapter".to_string()),
     );
     let resp = service.handle(info).await.expect("getRtpInfo after close");
     let body = body_json(&resp);

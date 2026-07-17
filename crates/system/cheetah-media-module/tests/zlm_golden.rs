@@ -242,6 +242,17 @@ fn make_engine() -> Arc<cheetah_engine::Engine> {
             }
         }
     }));
+    config
+        .apply_module_patch(
+            &ModuleId::new("rtp"),
+            json!({
+                "enabled": true,
+                "listen_udp": "127.0.0.1:0",
+                "listen_tcp": "127.0.0.1:0"
+            }),
+            ConfigEffect::Immediate,
+        )
+        .expect("apply rtp config patch");
 
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
