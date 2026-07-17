@@ -618,7 +618,13 @@ async fn run_ingress_worker(
 /// 新版编排器键使用 `{kind}:{namespace}:{path}`，使 `session_id` 在 URL path 中保持单一段；
 /// 对旧的 2/3 段斜杠形式仍兼容，用于 pull 任务。
 fn parse_session_key(key: &str) -> StreamKey {
-    let sep = if key.contains(':') { ':' } else { '/' };
+    // Modern orchestrator keys are `{kind}:{namespace}:{path}` and always start
+    // with a known kind prefix. Legacy pull/slash keys fall back to '/'.
+    let is_modern = key.starts_with("recv:")
+        || key.starts_with("send:")
+        || key.starts_with("pull:")
+        || key.starts_with("talk:");
+    let sep = if is_modern { ':' } else { '/' };
     let mut it = key.splitn(3, sep);
     match (it.next(), it.next(), it.next()) {
         (Some(_kind), Some(ns), Some(path)) => StreamKey::new(ns, path),
