@@ -11,6 +11,7 @@ std = []
 [dependencies]
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 bitflags = { version = "2", default-features = false }
+broadcast-common = { version = "8.4.0", default-features = false }
 bytes = { version = "1", default-features = false }
 cc-data = { version = "0.2.1", default-features = false, features = ["decode"] }
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "inline-more"] }

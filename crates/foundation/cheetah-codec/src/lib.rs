@@ -80,6 +80,7 @@ pub(crate) mod prelude {
 
 pub mod adapter;
 pub mod audio;
+pub mod cea;
 pub mod compat;
 pub mod egress;
 pub mod flv;
