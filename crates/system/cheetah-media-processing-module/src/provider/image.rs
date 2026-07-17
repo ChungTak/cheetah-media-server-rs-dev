@@ -70,7 +70,12 @@ impl ImageProcessApi for ImageProcessProvider {
 fn build_registry(config: &MediaProcessingModuleConfig) -> Result<avcodec::core::Registry> {
     match config.profile.as_str() {
         "native-free" => Ok(avcodec::native_free_software_registry_builder().build()),
-        "software" => Ok(avcodec::default_registry_builder().build()),
+        "software" if cfg!(feature = "avcodec-profile-software") => {
+            Ok(avcodec::default_registry_builder().build())
+        }
+        "software" => Err(MediaError::unsupported(
+            "software profile requires the avcodec-profile-software feature",
+        )),
         _ => Err(MediaError::invalid_argument(format!(
             "unsupported avcodec profile: {}",
             config.profile

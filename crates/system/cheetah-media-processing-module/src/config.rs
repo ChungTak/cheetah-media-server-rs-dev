@@ -49,9 +49,12 @@ impl MediaProcessingModuleConfig {
         if self.default_jpeg_quality == 0 || self.default_jpeg_quality > 100 {
             return Err("default_jpeg_quality must be in 1..=100".to_string());
         }
-        if !matches!(self.profile.as_str(), "native-free" | "software") {
+        let software_enabled = cfg!(feature = "avcodec-profile-software");
+        if !matches!(self.profile.as_str(), "native-free" | "software")
+            || (self.profile == "software" && !software_enabled)
+        {
             return Err(format!(
-                "profile must be 'native-free' or 'software', got '{}'",
+                "profile must be 'native-free' or 'software' (compiled), got '{}'",
                 self.profile
             ));
         }
