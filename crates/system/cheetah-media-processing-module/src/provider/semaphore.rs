@@ -63,11 +63,12 @@ impl Drop for Permit {
     fn drop(&mut self) {
         let mut state = self.state.lock().unwrap();
         state.permits += 1;
-        // Wake the longest-waiting task so it can re-check the permit count.
-        // If the receiver was dropped, the restored permit remains in the count
-        // for the next acquirer.
-        if let Some(tx) = state.waiters.pop_front() {
-            let _ = tx.send(());
+        // Wake the longest-waiting live task so it can re-check the permit
+        // count. Skips waiters whose receiver was dropped without consuming.
+        while let Some(tx) = state.waiters.pop_front() {
+            if tx.send(()).is_ok() {
+                return;
+            }
         }
     }
 }
@@ -118,6 +119,34 @@ mod tests {
         assert!(
             result.is_ok(),
             "queued waiter should obtain the released permit"
+        );
+    }
+
+    #[tokio::test]
+    async fn canceled_waiter_at_front_does_not_block_live_waiter() {
+        let sem = Semaphore::new(1);
+        let p1 = sem.acquire().await;
+
+        // W1 will time out and be canceled while in the waiter queue.
+        let sem2 = sem.clone();
+        let w1 = tokio::spawn(async move {
+            tokio::time::timeout(std::time::Duration::from_millis(50), sem2.acquire()).await
+        });
+
+        // W2 is queued behind W1.
+        let sem3 = sem.clone();
+        let w2 = tokio::spawn(async move { sem3.acquire().await });
+
+        // Let both tasks enter the wait queue.
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(w1.await.unwrap().is_err(), "w1 should time out");
+
+        // Releasing should skip the canceled W1 and wake W2.
+        drop(p1);
+        let result = tokio::time::timeout(std::time::Duration::from_millis(500), w2).await;
+        assert!(
+            result.is_ok(),
+            "live waiter behind a canceled waiter should still proceed"
         );
     }
 }
