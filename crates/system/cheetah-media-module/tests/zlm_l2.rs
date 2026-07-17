@@ -7,7 +7,7 @@ use cheetah_media_module::ZlmMediaModuleFactory;
 use cheetah_proxy_module::ProxyModuleFactory;
 use cheetah_rtp_module::RtpModuleFactory;
 use cheetah_runtime_tokio::TokioRuntime;
-use cheetah_sdk::{HttpMethod, HttpRequest};
+use cheetah_sdk::{ConfigApplyApi, ConfigEffect, HttpMethod, HttpRequest, ModuleId};
 use serde_json::json;
 
 fn make_engine() -> Arc<cheetah_engine::Engine> {
@@ -22,6 +22,17 @@ fn make_engine() -> Arc<cheetah_engine::Engine> {
             "enabled": true
         }
     }));
+    config
+        .apply_module_patch(
+            &ModuleId::new("rtp"),
+            json!({
+                "enabled": true,
+                "listen_udp": "127.0.0.1:0",
+                "listen_tcp": "127.0.0.1:0"
+            }),
+            ConfigEffect::Immediate,
+        )
+        .expect("apply rtp config patch");
     let runtime = Arc::new(TokioRuntime::new());
     let schema_registry = config.clone();
     let engine = EngineBuilder::new(config.clone(), config, runtime)

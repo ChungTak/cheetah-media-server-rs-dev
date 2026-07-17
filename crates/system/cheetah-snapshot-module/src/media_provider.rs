@@ -1,12 +1,11 @@
 use std::fs::{self, File};
-use std::io::{self, Cursor, Write};
+use std::io::{self, Write};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use cheetah_codec::{CodecId, FrameFlags, MediaKind, MonoTime, TrackId, TrackInfo, TrackReadiness};
 use cheetah_media_api::command::{
     DeleteSnapshotRequest, SnapshotQuery, SnapshotRequest, SubscribeRequest,
@@ -14,12 +13,13 @@ use cheetah_media_api::command::{
 use cheetah_media_api::error::{MediaError, MediaErrorCode, Result};
 use cheetah_media_api::event::{EventHeader, MediaEvent, SnapshotCompleted};
 use cheetah_media_api::ids::MediaSchema;
-use cheetah_media_api::image::{ImageArtifact, ImageEncodeRequest, ImageFormat};
+use cheetah_media_api::image::{ImageArtifact, ImageFormat};
 use cheetah_media_api::media_file_store::{DeleteBatchResult, DeleteFailure, FileStoreEntry};
 use cheetah_media_api::model::{
     AdmissionAction, AdmissionRequest, Decision, Page, SnapshotHandle, SnapshotInfo, SnapshotState,
 };
 use cheetah_media_api::port::{MediaRequestContext, SnapshotApi};
+use cheetah_media_api::processing::{ImageInput, ImageOperation, ImageProcessRequest};
 use cheetah_sdk::{Deadline, EngineContext, RuntimeApi};
 use futures::FutureExt;
 use std::collections::HashMap;
@@ -53,15 +53,14 @@ impl SnapshotMediaProvider {
     }
 
     /// Encode a captured video frame into the requested image format using the
-    /// registered `ImageEncodeApi`. Falls back to MJPEG passthrough only when no
-    /// backend is available and the source frame is already a valid JPEG.
+    /// registered `ImageProcessApi`.
     ///
-    /// 使用已注册的 `ImageEncodeApi` 将捕获的视频帧编码为请求的图片格式。
-    /// 仅当没有后端且源帧本身是有效 JPEG 时才透传 MJPEG。
+    /// 使用已注册的 `ImageProcessApi` 将捕获的视频帧编码为请求的图片格式。
     async fn encode_frame(
         &self,
         ctx: &MediaRequestContext,
         frame: &Arc<cheetah_codec::AVFrame>,
+        track: &TrackInfo,
         request: &SnapshotRequest,
     ) -> Result<ImageArtifact> {
         let format = request
@@ -70,73 +69,31 @@ impl SnapshotMediaProvider {
             .map_err(MediaError::invalid_argument)?;
         let quality = request.quality.unwrap_or(90);
 
-        if let Some(encoder) = self.ctx.media_services.image_encode() {
-            let track_info = track_info_for_frame(frame);
-            return encoder
-                .encode(
-                    ctx,
-                    ImageEncodeRequest {
-                        frame: Arc::clone(frame),
-                        track_info,
-                        format,
-                        quality,
-                        max_width: request.max_width,
-                        max_height: request.max_height,
-                    },
-                )
-                .await;
-        }
+        let processor = self
+            .ctx
+            .media_services
+            .image_process()
+            .ok_or_else(|| MediaError::unavailable("image process backend is not available"))?;
 
-        // No image encode backend is registered. Re-encode from MJPEG to the
-        // requested format when the source frame is a complete JPEG.
-        if frame.codec == CodecId::MJPEG {
-            let mut decoded = image::load_from_memory(&frame.payload)
-                .map_err(|e| MediaError::invalid_argument(format!("invalid mjpeg payload: {e}")))?;
-
-            let needs_scale = request.max_width.is_some() || request.max_height.is_some();
-            if needs_scale {
-                let max_w = request.max_width.unwrap_or(u32::MAX);
-                let max_h = request.max_height.unwrap_or(u32::MAX);
-                decoded = decoded.thumbnail(max_w, max_h);
-            }
-
-            let (width, height) = (decoded.width(), decoded.height());
-            let payload = if needs_scale || format == ImageFormat::Png {
-                let mut buf = Cursor::new(Vec::new());
-                match format {
-                    ImageFormat::Jpeg => {
-                        let q = quality.clamp(1, 100);
-                        let mut encoder =
-                            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, q);
-                        encoder.encode_image(&decoded).map_err(|e| {
-                            MediaError::storage_failed(format!("jpeg encode failed: {e}"))
-                        })?;
-                    }
-                    ImageFormat::Png => {
-                        decoded
-                            .write_to(&mut buf, image::ImageFormat::Png)
-                            .map_err(|e| {
-                                MediaError::storage_failed(format!("png encode failed: {e}"))
-                            })?;
-                    }
-                }
-                Bytes::from(buf.into_inner())
-            } else {
-                frame.payload.clone()
-            };
-
-            return Ok(ImageArtifact {
-                payload,
-                content_type: format.content_type().to_string(),
-                format,
-                width,
-                height,
+        let mut operations = Vec::new();
+        if request.max_width.is_some() || request.max_height.is_some() {
+            operations.push(ImageOperation::Fit {
+                width: request.max_width.unwrap_or(0),
+                height: request.max_height.unwrap_or(0),
             });
         }
 
-        Err(MediaError::unavailable(
-            "image encode backend is not available",
-        ))
+        let process_request = ImageProcessRequest::new(
+            ImageInput::Frame {
+                frame: Arc::clone(frame),
+                track: track.clone(),
+            },
+            format,
+        )
+        .with_quality(quality)
+        .with_operations(operations);
+
+        processor.process(ctx, process_request).await
     }
 }
 
@@ -214,8 +171,8 @@ impl SnapshotApi for SnapshotMediaProvider {
         let capture = capture_keyframe(&self.ctx.runtime_api, &mut *subscriber, timeout_ms).await;
         let _ = subscriber.close().await;
 
-        let frame = match capture {
-            CaptureResult::Ok { frame } => frame,
+        let (frame, track) = match capture {
+            CaptureResult::Ok { frame, track } => (frame, track),
             CaptureResult::Timeout => {
                 return Err(MediaError::new(
                     MediaErrorCode::Timeout,
@@ -228,22 +185,13 @@ impl SnapshotApi for SnapshotMediaProvider {
             CaptureResult::Error(e) => return Err(e),
         };
 
-        let artifact = self.encode_frame(ctx, &frame, &request).await?;
+        let fallback = track_info_for_frame(&frame);
+        let track = track.as_ref().unwrap_or(&fallback);
+        let artifact = self.encode_frame(ctx, &frame, track, &request).await?;
         let format_ext = match artifact.format {
             ImageFormat::Jpeg => "jpg",
             ImageFormat::Png => "png",
         };
-
-        // Re-validate the produced image with an independent decode. This catches
-        // corrupt encoder output before it is persisted.
-        let decoded = image::load_from_memory(&artifact.payload).map_err(|e| {
-            MediaError::storage_failed(format!("encoded image failed validation: {e}"))
-        })?;
-        if decoded.width() != artifact.width || decoded.height() != artifact.height {
-            return Err(MediaError::storage_failed(
-                "encoded image dimensions do not match artifact metadata".to_string(),
-            ));
-        }
 
         let snapshot_id = self.registry.generate_id();
         let file_name = format!("{}.{}", snapshot_id.0, format_ext);
@@ -457,7 +405,10 @@ impl SnapshotApi for SnapshotMediaProvider {
 }
 
 enum CaptureResult {
-    Ok { frame: Arc<cheetah_codec::AVFrame> },
+    Ok {
+        frame: Arc<cheetah_codec::AVFrame>,
+        track: Option<TrackInfo>,
+    },
     Timeout,
     NoVideo,
     Error(MediaError),
@@ -473,6 +424,7 @@ async fn capture_keyframe(
     let mut saw_video = false;
 
     loop {
+        let tracks = subscriber.tracks();
         let recv = subscriber.recv();
         futures::pin_mut!(recv);
         futures::select! {
@@ -489,8 +441,12 @@ async fn capture_keyframe(
                         if !is_key {
                             continue;
                         }
+                        let track = tracks
+                            .into_iter()
+                            .find(|t| t.track_id == frame.track_id && t.media_kind == MediaKind::Video);
                         return CaptureResult::Ok {
                             frame: Arc::clone(&frame),
+                            track,
                         };
                     }
                     Ok(None) => {

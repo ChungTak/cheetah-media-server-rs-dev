@@ -12,6 +12,11 @@ LOCAL_WASM_SRC="crates/cheetah-rtmp-wasm/src"
 
 echo "[parity] checking vendor parity against local RTMP suites"
 
+if [[ ! -d "${VENDOR_ROOT}" ]]; then
+  echo "[parity] vendor reference missing at ${VENDOR_ROOT}; skipping parity check"
+  exit 0
+fi
+
 require_dir() {
   local dir="$1"
   if [[ ! -d "${dir}" ]]; then

@@ -27,6 +27,7 @@ proxy-rtsp = ["proxy", "cheetah-proxy-module/rtsp"]
 proxy-rtmp = ["proxy", "cheetah-proxy-module/rtmp"]
 proxy-http-flv = ["proxy", "cheetah-proxy-module/http-flv"]
 snapshot = ["dep:cheetah-snapshot-module"]
+media-processing = ["dep:cheetah-media-processing-module", "cheetah-media-processing-module/media-processing-cpu"]
 media-control-full = ["rtmp", "rtsp", "http-flv", "hls", "ts", "fmp4", "mp4", "rtp", "gb28181", "record", "webrtc", "srt", "proxy", "proxy-rtsp", "proxy-rtmp", "proxy-http-flv", "snapshot"]
 tokio-console = ["dep:console-subscriber", "tokio/tracing"]
 
@@ -41,6 +42,7 @@ cheetah-fmp4-module = { path = "../../crates/protocols/fmp4/module", optional = 
 cheetah-gb28181-module = { path = "../../crates/protocols/gb28181/module", optional = true }
 cheetah-http-flv-module = { path = "../../crates/protocols/http-flv/module", optional = true }
 cheetah-hls-module = { path = "../../crates/protocols/hls/module", optional = true }
+cheetah-media-processing-module = { path = "../../crates/system/cheetah-media-processing-module", optional = true }
 cheetah-rtmp-module = { path = "../../crates/protocols/rtmp/module", optional = true }
 cheetah-rtsp-module = { path = "../../crates/protocols/rtsp/module", optional = true }
 cheetah-ts-module = { path = "../../crates/protocols/ts/module", optional = true }

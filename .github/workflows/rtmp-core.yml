@@ -58,8 +58,8 @@ jobs:
         run: ./dev-scripts/check_rtmp_vendor_parity.sh
       - name: core tests
         run: cargo test -p cheetah-rtmp-core
-      - name: pbt tests
-        run: cargo test -p cheetah-rtmp-pbt
+      - name: property tests
+        run: cargo test -p cheetah-rtmp-property-tests
       - name: driver/module tests
         run: cargo test -p cheetah-rtmp-driver-tokio -p cheetah-rtmp-module
       - name: fuzz smoke build and bounded run

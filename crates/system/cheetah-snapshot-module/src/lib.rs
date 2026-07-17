@@ -8,19 +8,15 @@
 //! 5. Register FileHandle + SnapshotInfo
 //! 6. Publish SnapshotCompleted
 //!
-//! Encoding: MJPEG frames are decoded and re-encoded as JPEG/PNG. Non-MJPEG
-//! codecs (e.g. H264) currently return `Unsupported` from `ImageEncodeApi`.
-//! Capability reports advertise snapshot as degraded (`mjpeg-only`) until a
-//! multi-codec decode path lands.
+//! Encoding: H.264/H.265 keyframes and MJPEG frames are decoded and re-encoded
+//! as JPEG through the shared `ImageProcessApi` backed by avcodec-rs.
 
 mod config;
-mod image_encode;
 mod media_provider;
 mod module;
 mod registry;
 
 pub use config::SnapshotModuleConfig;
-pub use image_encode::ImageEncoderBackend;
 pub use media_provider::SnapshotMediaProvider;
 pub use module::{SnapshotModule, SnapshotModuleFactory};
 pub use registry::SnapshotRegistry;
