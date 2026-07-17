@@ -715,6 +715,9 @@ async fn onvif_rtsp_proxy_default_ssrf_is_rejected() {
 #[tokio::test(flavor = "current_thread")]
 #[cfg(all(feature = "proxy-rtsp", feature = "snapshot", feature = "record"))]
 async fn onvif_can_pull_rtsp_proxy_and_use_media_operations() {
+    if !ffmpeg_available() {
+        return;
+    }
     let control_port = free_local_port().await;
     let rtsp_port = free_local_port().await;
     let temp_dir = std::env::temp_dir().join(format!("cheetah_onvif_{}", std::process::id()));

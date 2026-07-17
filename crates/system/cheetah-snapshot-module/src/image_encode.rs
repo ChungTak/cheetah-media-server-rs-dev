@@ -5,6 +5,7 @@
 use std::fmt;
 use std::fs;
 use std::io::Cursor;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -20,6 +21,25 @@ use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, ImageFormat as ImageCrateFormat};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+struct TempFileGuard(Vec<PathBuf>);
+
+impl TempFileGuard {
+    fn new(paths: Vec<PathBuf>) -> Self {
+        Self(paths)
+    }
+    fn disarm(mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.0)
+    }
+}
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        for p in &self.0 {
+            let _ = fs::remove_file(p);
+        }
+    }
+}
 
 /// A real image encode backend that decodes MJPEG payloads, or transcodes H.264
 /// keyframes via FFmpeg, and re-encodes them as JPEG or PNG with optional
@@ -115,6 +135,8 @@ impl ImageEncoderBackend {
         let input_path = temp_dir.join(format!("{prefix}.h264"));
         let output_path = temp_dir.join(format!("{prefix}.jpg"));
 
+        let guard = TempFileGuard::new(vec![input_path.clone(), output_path.clone()]);
+
         fs::write(&input_path, &stream).map_err(|e| {
             MediaError::storage_failed(format!("write H264 snapshot temp file: {e}"))
         })?;
@@ -158,19 +180,19 @@ impl ImageEncoderBackend {
         let _ = ffmpeg_api.remove(&job_id).await;
 
         if status.state != cheetah_sdk::FfmpegJobState::Exited || status.exit_code != Some(0) {
-            let _ = fs::remove_file(&input_path);
-            let _ = fs::remove_file(&output_path);
             return Err(MediaError::new(
                 MediaErrorCode::Unavailable,
                 format!("H264 snapshot decode failed: {}", status.exit_summary),
             ));
         }
 
+        let guard_paths = guard.disarm();
         let read_result = fs::read(&output_path)
             .map_err(|e| MediaError::storage_failed(format!("read H264 snapshot output: {e}")));
 
-        let _ = fs::remove_file(&input_path);
-        let _ = fs::remove_file(&output_path);
+        for p in &guard_paths {
+            let _ = fs::remove_file(p);
+        }
 
         let bytes = read_result?;
 

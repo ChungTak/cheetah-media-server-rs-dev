@@ -586,6 +586,17 @@ pub async fn wait_for_stream_offline(
 }
 
 #[cfg(feature = "proxy-rtsp")]
+pub fn ffmpeg_available() -> bool {
+    StdCommand::new("ffmpeg")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+#[cfg(feature = "proxy-rtsp")]
 pub fn generate_h264_keyframe() -> (Bytes, Bytes, Bytes) {
     let output = StdCommand::new("ffmpeg")
         .args([

@@ -205,6 +205,16 @@ fn generate_h264_keyframe() -> (Bytes, Bytes, Bytes) {
     )
 }
 
+fn ffmpeg_available() -> bool {
+    std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 fn split_annex_b(data: &[u8]) -> Vec<Vec<u8>> {
     let mut nals = Vec::new();
     let mut i = 0;
@@ -250,6 +260,9 @@ fn split_annex_b(data: &[u8]) -> Vec<Vec<u8>> {
 
 #[tokio::test]
 async fn image_encoder_decodes_h264_keyframe_with_ffmpeg() {
+    if !ffmpeg_available() {
+        return;
+    }
     let (sps, pps, idr) = generate_h264_keyframe();
     let mut frame = AVFrame::new(
         TrackId(0),
