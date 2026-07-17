@@ -574,7 +574,11 @@ impl CaptionExtractWorker {
                     guard.last_error = Some(err.to_string());
                 }
                 if guard.state == ProcessingJobState::Running {
-                    guard.state = ProcessingJobState::Stopped;
+                    guard.state = if last_error.is_some() {
+                        ProcessingJobState::Failed
+                    } else {
+                        ProcessingJobState::Stopped
+                    };
                     guard.updated_at = finished_at;
                 }
             }
