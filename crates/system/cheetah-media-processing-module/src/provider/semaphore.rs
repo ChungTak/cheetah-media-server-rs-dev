@@ -76,8 +76,6 @@ impl Drop for Permit {
 mod tests {
     use std::time::Duration;
 
-    use futures::future::{select, Either};
-
     use super::*;
 
     #[tokio::test]

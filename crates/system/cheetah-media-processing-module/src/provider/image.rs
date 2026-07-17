@@ -93,6 +93,19 @@ fn process_blocking(
 
     let registry = build_registry(config)?;
 
+    // Pre-validate declared encoded dimensions so the decoder does not have to
+    // allocate a huge pixel buffer for an oversized input.
+    if let ImageInput::Encoded { data, format } = &request.input {
+        if let Some((w, h)) = encoded_dimensions(data, *format) {
+            if w > config.max_image_width || h > config.max_image_height {
+                return Err(MediaError::invalid_argument(format!(
+                    "encoded image {w}x{h} exceeds configured limit {}x{}",
+                    config.max_image_width, config.max_image_height
+                )));
+            }
+        }
+    }
+
     let mut image = match request.input {
         ImageInput::Encoded { data, format } => decode_encoded_image(&registry, &data, format)?,
         ImageInput::Frame { .. } => {
@@ -436,6 +449,30 @@ fn parse_pad_color(s: &str) -> Option<avcodec::core::PadColor> {
     }
 }
 
+/// Parses width/height from an encoded image header without decoding pixels.
+fn encoded_dimensions(data: &[u8], format: ImageFormat) -> Option<(u32, u32)> {
+    match format {
+        ImageFormat::Jpeg => jpeg_dimensions(data),
+        ImageFormat::Png => png_dimensions(data),
+    }
+}
+
+/// Parses width/height from a PNG IHDR chunk.
+fn png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
+    const PNG_SIG: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+    if data.len() < 24 || data[..8] != PNG_SIG {
+        return None;
+    }
+    // Bytes 8-11: chunk length (always 13 for IHDR).
+    // Bytes 12-15: chunk type.
+    if &data[12..16] != b"IHDR" {
+        return None;
+    }
+    let width = u32::from_be_bytes([data[16], data[17], data[18], data[19]]);
+    let height = u32::from_be_bytes([data[20], data[21], data[22], data[23]]);
+    Some((width, height))
+}
+
 /// Parses width/height from a JPEG SOF0/SOF2 segment.
 fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     let mut i = 2; // skip SOI
@@ -663,6 +700,50 @@ mod tests {
     fn jpeg_dimensions_detects_fixture() {
         let jpeg = make_jpeg_fixture();
         assert_eq!(jpeg_dimensions(&jpeg), Some((4, 4)));
+    }
+
+    #[test]
+    fn png_dimensions_parses_ihdr() {
+        let mut data = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        // IHDR chunk length (13) and type.
+        data.extend_from_slice(&13u32.to_be_bytes());
+        data.extend_from_slice(b"IHDR");
+        // 1000x2000 image, 8-bit RGB, no interlace, then dummy CRC.
+        data.extend_from_slice(&1000u32.to_be_bytes());
+        data.extend_from_slice(&2000u32.to_be_bytes());
+        data.extend_from_slice(&[8, 2, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(png_dimensions(&data), Some((1000, 2000)));
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_encoded_input_before_decode() {
+        let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
+        let mut config = MediaProcessingModuleConfig::default();
+        config.max_image_width = 8;
+        config.max_image_height = 8;
+
+        // Craft a PNG IHDR that declares 100x100, which is over the 8x8 limit.
+        let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&100u32.to_be_bytes());
+        png.extend_from_slice(&100u32.to_be_bytes());
+        png.extend_from_slice(&[8, 2, 0, 0, 0, 0, 0, 0, 0]);
+
+        let provider = ImageProcessProvider::new(runtime, config);
+        let request = ImageProcessRequest::new(
+            ImageInput::Encoded {
+                data: Bytes::from(png),
+                format: ImageFormat::Png,
+            },
+            ImageFormat::Jpeg,
+        );
+
+        let err = provider
+            .process(&MediaRequestContext::default(), request)
+            .await
+            .expect_err("oversized encoded input should be rejected before decode");
+        assert_eq!(err.code, MediaErrorCode::InvalidArgument);
     }
 
     #[test]
