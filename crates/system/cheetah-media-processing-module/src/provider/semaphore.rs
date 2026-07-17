@@ -47,8 +47,13 @@ impl Semaphore {
                 rx
             };
 
-            // Wait for a permit release or for the sender to be dropped.
-            let _ = rx.await;
+            // A successful wakeup means a permit was handed directly to us.
+            // If the sender was dropped without sending, retry the loop.
+            if rx.await.is_ok() {
+                return Permit {
+                    state: Arc::clone(&self.state),
+                };
+            }
         }
     }
 }
@@ -61,11 +66,15 @@ pub struct Permit {
 impl Drop for Permit {
     fn drop(&mut self) {
         let mut state = self.state.lock().unwrap();
-        if let Some(tx) = state.waiters.pop_front() {
-            let _ = tx.send(());
-        } else {
-            state.permits += 1;
+        // Hand the permit off to the next waiter. If that waiter was canceled
+        // (receiver dropped), keep looking for a live waiter or restore the
+        // permit count.
+        while let Some(tx) = state.waiters.pop_front() {
+            if tx.send(()).is_ok() {
+                return;
+            }
         }
+        state.permits += 1;
     }
 }
 
@@ -74,9 +83,9 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn permits_limit_concurrency() {
+    async fn permits_limit_concurrency_until_released() {
         let sem = Semaphore::new(1);
-        let _p1 = sem.acquire().await;
+        let p1 = sem.acquire().await;
 
         let sem2 = sem.clone();
         let pending = tokio::spawn(async move {
@@ -84,6 +93,10 @@ mod tests {
         });
 
         assert!(pending.await.unwrap().is_err());
+
+        // Once the first permit is dropped, the queued waiter should proceed.
+        drop(p1);
+        let _p2 = sem.acquire().await;
     }
 
     #[tokio::test]
@@ -93,5 +106,24 @@ mod tests {
             let _p = sem.acquire().await;
         }
         let _p = sem.acquire().await;
+    }
+
+    #[tokio::test]
+    async fn queued_waiter_receives_released_permit() {
+        let sem = Semaphore::new(1);
+        let p1 = sem.acquire().await;
+
+        let sem2 = sem.clone();
+        let pending = tokio::spawn(async move { sem2.acquire().await });
+
+        // Give the spawned task time to reach the wait queue.
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        drop(p1);
+
+        let result = tokio::time::timeout(std::time::Duration::from_millis(500), pending).await;
+        assert!(
+            result.is_ok(),
+            "queued waiter should obtain the released permit"
+        );
     }
 }
