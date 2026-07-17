@@ -3,10 +3,10 @@ use std::sync::{Arc, RwLock};
 use crate::idempotency::InMemoryIdempotencyRepository;
 use crate::output::OutputRegistryRegistration;
 use cheetah_media_api::capability::{MediaCapabilityDescriptor, MediaCapabilityReport};
-use cheetah_media_api::image::ImageEncodeApi;
+use cheetah_media_api::image::{ImageEncodeApi, ImageProcessApi};
 use cheetah_media_api::port::{
-    MediaAdmissionApi, MediaControlApi, MediaOutputRegistryApi, PlaybackApi, ProxyApi,
-    PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookAdminApi, WebhookApi,
+    MediaAdmissionApi, MediaControlApi, MediaOutputRegistryApi, MediaProcessingApi, PlaybackApi,
+    ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookAdminApi, WebhookApi,
 };
 use cheetah_media_api::{MediaCapability, MediaCapabilitySet};
 
@@ -388,6 +388,101 @@ impl MediaServices {
             .map(|e| e.provider.clone())
     }
 
+    /// Register the image process provider.
+    ///
+    /// 注册图片处理 provider。
+    pub fn register_image_process(
+        &self,
+        image_process: Arc<dyn ImageProcessApi>,
+    ) -> ProviderRegistration {
+        self.register_image_process_with_capabilities(
+            image_process,
+            image_process_default_capabilities(),
+        )
+    }
+
+    /// Register the image process provider with explicit capabilities.
+    pub fn register_image_process_with_capabilities(
+        &self,
+        image_process: Arc<dyn ImageProcessApi>,
+        capabilities: MediaCapabilitySet,
+    ) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        let provider_id = format!("image_process:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
+        registry.image_process = Some(ProviderEntry {
+            provider: image_process,
+            generation,
+            capabilities,
+            descriptors,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::ImageProcessing,
+            provider_id: format!("image_process:{generation}"),
+            generation,
+        }
+    }
+
+    /// Return the current image process provider, if any.
+    ///
+    /// 返回当前图片处理 provider（如有）。
+    pub fn image_process(&self) -> Option<Arc<dyn ImageProcessApi>> {
+        self.inner
+            .read()
+            .expect("media services lock")
+            .image_process
+            .as_ref()
+            .map(|e| e.provider.clone())
+    }
+
+    /// Register the media processing provider.
+    ///
+    /// 注册媒体处理 provider。
+    pub fn register_processing(
+        &self,
+        processing: Arc<dyn MediaProcessingApi>,
+    ) -> ProviderRegistration {
+        self.register_processing_with_capabilities(processing, processing_default_capabilities())
+    }
+
+    /// Register the media processing provider with explicit capabilities.
+    pub fn register_processing_with_capabilities(
+        &self,
+        processing: Arc<dyn MediaProcessingApi>,
+        capabilities: MediaCapabilitySet,
+    ) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        let provider_id = format!("processing:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
+        registry.processing = Some(ProviderEntry {
+            provider: processing,
+            generation,
+            capabilities,
+            descriptors,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::VideoProcessing,
+            provider_id: format!("processing:{generation}"),
+            generation,
+        }
+    }
+
+    /// Return the current media processing provider, if any.
+    ///
+    /// 返回当前媒体处理 provider（如有）。
+    pub fn processing(&self) -> Option<Arc<dyn MediaProcessingApi>> {
+        self.inner
+            .read()
+            .expect("media services lock")
+            .processing
+            .as_ref()
+            .map(|e| e.provider.clone())
+    }
+
     /// Register the proxy provider.
     ///
     /// 注册代理 provider。
@@ -639,6 +734,12 @@ impl MediaServices {
         if let Some(entry) = &registry.image_encode {
             set.merge(&entry.capabilities);
         }
+        if let Some(entry) = &registry.image_process {
+            set.merge(&entry.capabilities);
+        }
+        if let Some(entry) = &registry.processing {
+            set.merge(&entry.capabilities);
+        }
         if let Some(entry) = &registry.proxy {
             set.merge(&entry.capabilities);
         }
@@ -681,6 +782,12 @@ impl MediaServices {
         if let Some(entry) = &registry.image_encode {
             descriptors.extend(entry.descriptors.clone());
         }
+        if let Some(entry) = &registry.image_process {
+            descriptors.extend(entry.descriptors.clone());
+        }
+        if let Some(entry) = &registry.processing {
+            descriptors.extend(entry.descriptors.clone());
+        }
         if let Some(entry) = &registry.proxy {
             descriptors.extend(entry.descriptors.clone());
         }
@@ -717,6 +824,8 @@ struct MediaProviderRegistry {
     snapshot: Option<ProviderEntry<Arc<dyn SnapshotApi>>>,
     playback: Option<ProviderEntry<Arc<dyn PlaybackApi>>>,
     image_encode: Option<ProviderEntry<Arc<dyn ImageEncodeApi>>>,
+    image_process: Option<ProviderEntry<Arc<dyn ImageProcessApi>>>,
+    processing: Option<ProviderEntry<Arc<dyn MediaProcessingApi>>>,
     proxy: Option<ProviderEntry<Arc<dyn ProxyApi>>>,
     rtp: Option<ProviderEntry<Arc<dyn RtpApi>>>,
     webhook: Option<ProviderEntry<Arc<dyn WebhookApi>>>,
@@ -744,6 +853,8 @@ enum ProviderSlot<'a> {
     Snapshot(&'a mut Option<ProviderEntry<Arc<dyn SnapshotApi>>>),
     Playback(&'a mut Option<ProviderEntry<Arc<dyn PlaybackApi>>>),
     ImageEncode(&'a mut Option<ProviderEntry<Arc<dyn ImageEncodeApi>>>),
+    ImageProcess(&'a mut Option<ProviderEntry<Arc<dyn ImageProcessApi>>>),
+    Processing(&'a mut Option<ProviderEntry<Arc<dyn MediaProcessingApi>>>),
     Proxy(&'a mut Option<ProviderEntry<Arc<dyn ProxyApi>>>),
     Rtp(&'a mut Option<ProviderEntry<Arc<dyn RtpApi>>>),
     Webhook(&'a mut Option<ProviderEntry<Arc<dyn WebhookApi>>>),
@@ -760,6 +871,8 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::Snapshot(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Playback(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::ImageEncode(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::ImageProcess(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::Processing(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Proxy(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Rtp(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Webhook(opt) => opt.as_ref().map(|e| e.generation),
@@ -776,6 +889,8 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::Snapshot(opt) => **opt = None,
             ProviderSlot::Playback(opt) => **opt = None,
             ProviderSlot::ImageEncode(opt) => **opt = None,
+            ProviderSlot::ImageProcess(opt) => **opt = None,
+            ProviderSlot::Processing(opt) => **opt = None,
             ProviderSlot::Proxy(opt) => **opt = None,
             ProviderSlot::Rtp(opt) => **opt = None,
             ProviderSlot::Webhook(opt) => **opt = None,
@@ -802,6 +917,12 @@ impl MediaProviderRegistry {
             MediaCapability::Snapshot => Some(ProviderSlot::Snapshot(&mut self.snapshot)),
             MediaCapability::Playback => Some(ProviderSlot::Playback(&mut self.playback)),
             MediaCapability::ImageEncode => Some(ProviderSlot::ImageEncode(&mut self.image_encode)),
+            MediaCapability::ImageProcessing => {
+                Some(ProviderSlot::ImageProcess(&mut self.image_process))
+            }
+            MediaCapability::AudioProcessing | MediaCapability::VideoProcessing => {
+                Some(ProviderSlot::Processing(&mut self.processing))
+            }
             MediaCapability::Proxy => Some(ProviderSlot::Proxy(&mut self.proxy)),
             MediaCapability::Rtp => Some(ProviderSlot::Rtp(&mut self.rtp)),
             MediaCapability::Webhook => Some(ProviderSlot::Webhook(&mut self.webhook)),
@@ -855,6 +976,19 @@ fn playback_default_capabilities() -> MediaCapabilitySet {
 fn image_encode_default_capabilities() -> MediaCapabilitySet {
     let mut set = MediaCapabilitySet::empty();
     set.add(MediaCapability::ImageEncode, 1);
+    set
+}
+
+fn image_process_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::ImageProcessing, 1);
+    set
+}
+
+fn processing_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::AudioProcessing, 1);
+    set.add(MediaCapability::VideoProcessing, 1);
     set
 }
 

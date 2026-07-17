@@ -6,6 +6,10 @@ use crate::error::{MediaError, Result};
 use crate::event::{MediaEvent, MediaEventSender, MediaEventSubscription};
 use crate::ids::*;
 use crate::model::{AdmissionRequest, Decision, *};
+use crate::processing::{
+    CreateProcessingJob, ProcessingJob, ProcessingJobQuery, ProcessingPreflightReport,
+    UpdateProcessingJob,
+};
 use crate::webhook::{
     CreateWebhookProfileRequest, UpdateWebhookProfileRequest, WebhookProfile, WebhookProfileId,
     WebhookTestReport,
@@ -310,6 +314,46 @@ pub trait ProxyApi: Send + Sync {
     ) -> Result<Page<ProxyInfo>> {
         Err(MediaError::unsupported_capability("list_ffmpeg_proxies"))
     }
+}
+
+/// Media processing job operations.
+///
+/// 媒体处理任务操作。
+#[async_trait]
+pub trait MediaProcessingApi: Send + Sync {
+    async fn preflight(&self, ctx: &MediaRequestContext) -> Result<ProcessingPreflightReport>;
+
+    async fn create_job(
+        &self,
+        ctx: &MediaRequestContext,
+        request: CreateProcessingJob,
+    ) -> Result<ProcessingJob>;
+
+    async fn get_job(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &ProcessingJobId,
+    ) -> Result<ProcessingJob>;
+
+    async fn list_jobs(
+        &self,
+        ctx: &MediaRequestContext,
+        query: ProcessingJobQuery,
+    ) -> Result<Page<ProcessingJob>>;
+
+    async fn update_job(
+        &self,
+        ctx: &MediaRequestContext,
+        request: UpdateProcessingJob,
+    ) -> Result<ProcessingJob>;
+
+    async fn stop_job(
+        &self,
+        ctx: &MediaRequestContext,
+        id: &ProcessingJobId,
+    ) -> Result<ProcessingJob>;
+
+    async fn delete_job(&self, ctx: &MediaRequestContext, id: &ProcessingJobId) -> Result<()>;
 }
 
 /// RTP operations.

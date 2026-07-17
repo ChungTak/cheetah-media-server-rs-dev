@@ -1,6 +1,6 @@
-//! Image encoding API and request/result types.
+//! Image encoding and processing API and request/result types.
 //!
-//! 图片编码 API 与请求/结果类型。
+//! 图片编码与处理 API 及请求/结果类型。
 
 use std::str::FromStr;
 use std::sync::Arc;
@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 use crate::port::MediaRequestContext;
+
+pub use crate::processing::{ImageInput, ImageOperation, ImageProcessRequest};
 
 /// Supported output image formats.
 ///
@@ -95,5 +97,20 @@ pub trait ImageEncodeApi: Send + Sync {
         &self,
         ctx: &MediaRequestContext,
         request: ImageEncodeRequest,
+    ) -> Result<ImageArtifact>;
+}
+
+/// Runtime-neutral image processing backend.
+///
+/// 运行时无关的图片处理后端。
+#[async_trait]
+pub trait ImageProcessApi: Send + Sync {
+    /// Process the supplied image through the requested operation pipeline.
+    ///
+    /// 通过请求的算子管道处理所提供的图片。
+    async fn process(
+        &self,
+        ctx: &MediaRequestContext,
+        request: ImageProcessRequest,
     ) -> Result<ImageArtifact>;
 }

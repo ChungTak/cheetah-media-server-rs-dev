@@ -470,6 +470,15 @@ mod tests {
             Ok(Box::new(NoopJoinHandle))
         }
 
+        fn spawn_blocking(
+            &self,
+            _name: &str,
+            task: Box<dyn FnOnce() + Send + 'static>,
+        ) -> Result<Box<dyn JoinHandle>, SpawnError> {
+            task();
+            Ok(Box::new(NoopJoinHandle))
+        }
+
         fn bind_udp(&self, _addr: SocketAddr) -> io::Result<Box<dyn AsyncUdpSocket>> {
             if self.bind_calls.fetch_add(1, Ordering::SeqCst) == 0 {
                 let (entered_lock, entered_cvar) = &self.first_bind_entered;
@@ -584,6 +593,15 @@ mod tests {
             &self,
             _fut: Pin<Box<dyn Future<Output = ()> + 'static>>,
         ) -> Result<Box<dyn JoinHandle>, SpawnError> {
+            Ok(Box::new(NoopJoinHandle))
+        }
+
+        fn spawn_blocking(
+            &self,
+            _name: &str,
+            task: Box<dyn FnOnce() + Send + 'static>,
+        ) -> Result<Box<dyn JoinHandle>, SpawnError> {
+            task();
             Ok(Box::new(NoopJoinHandle))
         }
 

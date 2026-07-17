@@ -6,14 +6,21 @@ use cheetah_sdk::media_api::command::{
     MediaQuery, OpenPlaybackRequest, PlaybackControl, PlaybackQuery, SessionQuery,
 };
 use cheetah_sdk::media_api::error::Result as MediaResult;
-use cheetah_sdk::media_api::ids::{MediaKey, MediaSchema, PlaybackSessionId, SessionId};
+use cheetah_sdk::media_api::ids::{
+    MediaKey, MediaSchema, PlaybackSessionId, ProcessingJobId, SessionId,
+};
+use cheetah_sdk::media_api::image::{ImageArtifact, ImageProcessApi, ImageProcessRequest};
 use cheetah_sdk::media_api::model::{
     CloseReason, CloseReport, OnlineState, Page, PlaybackSession, PlaybackSessionState,
     SessionInfo, StreamInfo,
 };
 use cheetah_sdk::media_api::output::MediaOutputEndpoint;
 use cheetah_sdk::media_api::port::{
-    MediaAdmissionApi, MediaControlApi, MediaRequestContext, PlaybackApi,
+    MediaAdmissionApi, MediaControlApi, MediaProcessingApi, MediaRequestContext, PlaybackApi,
+};
+use cheetah_sdk::media_api::processing::{
+    CreateProcessingJob, ProcessingJob, ProcessingJobQuery, ProcessingPreflightReport,
+    UpdateProcessingJob,
 };
 use cheetah_sdk::media_api::{AdmissionRequest, Decision};
 use cheetah_sdk::module::MediaServices;
@@ -78,6 +85,79 @@ impl MediaControlApi for DummyControl {
         _ctx: &MediaRequestContext,
         _key: &MediaKey,
     ) -> MediaResult<()> {
+        unimplemented!()
+    }
+}
+
+struct DummyProcessing;
+
+#[async_trait]
+impl MediaProcessingApi for DummyProcessing {
+    async fn preflight(
+        &self,
+        _ctx: &MediaRequestContext,
+    ) -> MediaResult<ProcessingPreflightReport> {
+        unimplemented!()
+    }
+
+    async fn create_job(
+        &self,
+        _ctx: &MediaRequestContext,
+        _request: CreateProcessingJob,
+    ) -> MediaResult<ProcessingJob> {
+        unimplemented!()
+    }
+
+    async fn get_job(
+        &self,
+        _ctx: &MediaRequestContext,
+        _id: &ProcessingJobId,
+    ) -> MediaResult<ProcessingJob> {
+        unimplemented!()
+    }
+
+    async fn list_jobs(
+        &self,
+        _ctx: &MediaRequestContext,
+        _query: ProcessingJobQuery,
+    ) -> MediaResult<Page<ProcessingJob>> {
+        unimplemented!()
+    }
+
+    async fn update_job(
+        &self,
+        _ctx: &MediaRequestContext,
+        _request: UpdateProcessingJob,
+    ) -> MediaResult<ProcessingJob> {
+        unimplemented!()
+    }
+
+    async fn stop_job(
+        &self,
+        _ctx: &MediaRequestContext,
+        _id: &ProcessingJobId,
+    ) -> MediaResult<ProcessingJob> {
+        unimplemented!()
+    }
+
+    async fn delete_job(
+        &self,
+        _ctx: &MediaRequestContext,
+        _id: &ProcessingJobId,
+    ) -> MediaResult<()> {
+        unimplemented!()
+    }
+}
+
+struct DummyImageProcess;
+
+#[async_trait]
+impl ImageProcessApi for DummyImageProcess {
+    async fn process(
+        &self,
+        _ctx: &MediaRequestContext,
+        _request: ImageProcessRequest,
+    ) -> MediaResult<ImageArtifact> {
         unimplemented!()
     }
 }
@@ -301,4 +381,45 @@ fn unregister_admission_removes_provider() {
     assert!(services.unregister(&reg));
     assert!(services.admission().is_none());
     assert!(!services.capabilities().has(MediaCapability::Admission));
+}
+
+#[test]
+fn register_processing_updates_capabilities() {
+    let services = MediaServices::unavailable();
+    services.register_processing(Arc::new(DummyProcessing));
+    let caps = services.capabilities();
+    assert!(caps.has(MediaCapability::AudioProcessing));
+    assert!(caps.has(MediaCapability::VideoProcessing));
+    assert!(services.processing().is_some());
+}
+
+#[test]
+fn unregister_processing_removes_provider() {
+    let services = MediaServices::unavailable();
+    let reg = services.register_processing(Arc::new(DummyProcessing));
+    assert!(services.unregister(&reg));
+    assert!(services.processing().is_none());
+    assert!(!services
+        .capabilities()
+        .has(MediaCapability::VideoProcessing));
+}
+
+#[test]
+fn register_image_process_updates_capabilities() {
+    let services = MediaServices::unavailable();
+    services.register_image_process(Arc::new(DummyImageProcess));
+    let caps = services.capabilities();
+    assert!(caps.has(MediaCapability::ImageProcessing));
+    assert!(services.image_process().is_some());
+}
+
+#[test]
+fn unregister_image_process_removes_provider() {
+    let services = MediaServices::unavailable();
+    let reg = services.register_image_process(Arc::new(DummyImageProcess));
+    assert!(services.unregister(&reg));
+    assert!(services.image_process().is_none());
+    assert!(!services
+        .capabilities()
+        .has(MediaCapability::ImageProcessing));
 }

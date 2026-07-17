@@ -22,6 +22,8 @@ pub mod media_file_store;
 pub mod model;
 pub mod output;
 pub mod port;
+pub mod processing;
+pub mod subtitle;
 pub mod webhook;
 
 pub use auth::{AuthCredentials, MediaScope, Principal};
@@ -30,8 +32,10 @@ pub use capability::{
 };
 pub use error::{MediaError, MediaErrorCode};
 pub use event::MediaEvent;
-pub use ids::{AppName, MediaKey, MediaSchema, PlaybackSessionId, StreamName, VhostName};
-pub use image::{ImageArtifact, ImageEncodeApi, ImageEncodeRequest, ImageFormat};
+pub use ids::{
+    AppName, MediaKey, MediaSchema, PlaybackSessionId, ProcessingJobId, StreamName, VhostName,
+};
+pub use image::{ImageArtifact, ImageEncodeApi, ImageEncodeRequest, ImageFormat, ImageProcessApi};
 pub use media_file_store::{
     sanitize_filename, DeleteBatchResult, FileDownload, FileRange, FileStoreEntry, FileStoreQuery,
     MediaFileStoreApi,
@@ -40,9 +44,18 @@ pub use model::{AdmissionAction, AdmissionRequest, Decision};
 pub use output::{EndpointState, MediaOutputEndpoint};
 pub use port::{
     ControlAuthApi, MediaAdmissionApi, MediaControlApi, MediaFacade, MediaOutputRegistryApi,
-    MediaRequestContext, MediaUrlResolverApi, PlaybackApi, ProxyApi, PublishSubscribeApi,
-    RecordApi, RtpApi, SnapshotApi, WebhookAdminApi, WebhookApi,
+    MediaProcessingApi, MediaRequestContext, MediaUrlResolverApi, PlaybackApi, ProxyApi,
+    PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookAdminApi, WebhookApi,
 };
+pub use processing::{
+    AbrVariant, AudioCodec, AudioMix, AudioMixInput, AudioTarget, CaptionConfig,
+    CreateProcessingJob, ImageInput, ImageOperation, ImageProcessRequest, MosaicCell, MosaicLayout,
+    Overlay, OverlayKind, OverlayPosition, OverlaySize, ProcessingJob, ProcessingJobQuery,
+    ProcessingJobSpec, ProcessingJobState, ProcessingPolicy, ProcessingPreflightReport,
+    ProcessingPreset, ProcessingTarget, TrackSelection, UpdateProcessingJob, VideoCodec,
+    VideoMosaicInput, VideoTarget,
+};
+pub use subtitle::{WebVttCue, WebVttFrame};
 pub use webhook::{
     CreateWebhookProfileRequest, UpdateWebhookProfileRequest, WebhookFailurePolicy, WebhookProfile,
     WebhookProfileId, WebhookProfileListResponse, WebhookProfileMode, WebhookProfileResponse,

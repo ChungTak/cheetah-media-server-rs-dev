@@ -341,6 +341,17 @@ impl Runtime for TokioRuntime {
         }
     }
 
+    fn spawn_blocking(
+        &self,
+        _name: &str,
+        task: Box<dyn FnOnce() + Send + 'static>,
+    ) -> Result<Self::Handle, SpawnError> {
+        let handle = tokio::task::spawn_blocking(move || {
+            task();
+        });
+        Ok(TokioJoinHandle { handle })
+    }
+
     fn bind_udp(&self, addr: SocketAddr) -> io::Result<Self::UdpSocket> {
         let socket = StdUdpSocket::bind(addr)?;
         <Self as Runtime>::wrap_udp_socket(self, socket)
@@ -408,6 +419,16 @@ impl RuntimeApi for TokioRuntime {
         fut: Pin<Box<dyn Future<Output = ()> + 'static>>,
     ) -> Result<Box<dyn JoinHandle>, SpawnError> {
         Ok(Box::new(<Self as Runtime>::spawn_local(self, fut)?))
+    }
+
+    fn spawn_blocking(
+        &self,
+        name: &str,
+        task: Box<dyn FnOnce() + Send + 'static>,
+    ) -> Result<Box<dyn JoinHandle>, SpawnError> {
+        Ok(Box::new(<Self as Runtime>::spawn_blocking(
+            self, name, task,
+        )?))
     }
 
     fn bind_udp(&self, addr: SocketAddr) -> io::Result<Box<dyn AsyncUdpSocket>> {
@@ -490,5 +511,22 @@ mod tests {
         let rt = TokioRuntime::new();
         let res = RuntimeApi::spawn_local(&rt, Box::pin(async {}));
         assert!(matches!(res, Err(SpawnError::LocalContextRequired)));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn spawn_blocking_runs_and_joins() {
+        let rt = TokioRuntime::new();
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag_clone = flag.clone();
+        let handle = RuntimeApi::spawn_blocking(
+            &rt,
+            "test",
+            Box::new(move || {
+                flag_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+            }),
+        )
+        .unwrap();
+        handle.wait().await.unwrap();
+        assert!(flag.load(std::sync::atomic::Ordering::SeqCst));
     }
 }

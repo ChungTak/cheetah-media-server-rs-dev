@@ -220,7 +220,7 @@ proptest! {
             addr_type: "IP4".to_string(),
             address: "127.0.0.1".to_string(),
         };
-        let sdp = build_sdp(origin, "test", connection, &[media.clone()]);
+        let sdp = build_sdp(origin, "test", connection, std::slice::from_ref(&media));
         let text = sdp.to_string();
         let parsed = Sdp::parse(&text).expect("parse sdp");
 
@@ -258,7 +258,7 @@ proptest! {
             address: "127.0.0.1".to_string(),
         };
         let sdp = build_sdp(origin, "test", connection, &[media]);
-        let sdp = with_media_attributes(sdp, payload, &encoding, clock_rate);
+        let sdp = with_media_attributes(sdp, payload, encoding, clock_rate);
         let text = sdp.to_string();
 
         let parsed = Sdp::parse(&text).expect("parse sdp with rtpmap/fmtp");
