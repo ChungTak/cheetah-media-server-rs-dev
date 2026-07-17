@@ -36,6 +36,8 @@ use cheetah_hls_module::HlsModuleFactory;
 #[cfg(feature = "http-flv")]
 use cheetah_http_flv_module::HttpFlvModuleFactory;
 use cheetah_media_module::{NativeMediaModuleFactory, ZlmMediaModuleFactory};
+#[cfg(feature = "media-processing")]
+use cheetah_media_processing_module::MediaProcessingModuleFactory;
 #[cfg(feature = "mp4")]
 use cheetah_mp4_module::Mp4ModuleFactory;
 #[cfg(feature = "proxy")]
@@ -213,6 +215,11 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(feature = "webrtc")]
     {
         builder = builder.register_module_factory(Arc::new(WebRtcModuleFactory));
+    }
+
+    #[cfg(feature = "media-processing")]
+    {
+        builder = builder.register_module_factory(Arc::new(MediaProcessingModuleFactory));
     }
 
     {

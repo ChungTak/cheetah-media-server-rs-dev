@@ -3,6 +3,22 @@
 version = 4
 
 [[package]]
+name = "ab_glyph"
+version = "0.2.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "01c0457472c38ea5bd1c3b5ada5e368271cb550be7a4ca4a0b4634e9913f6cc2"
+dependencies = [
+ "ab_glyph_rasterizer",
+ "owned_ttf_parser",
+]
+
+[[package]]
+name = "ab_glyph_rasterizer"
+version = "0.1.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
+
+[[package]]
 name = "addr2line"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -179,6 +195,139 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
+name = "avcodec"
+version = "0.2.0"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+dependencies = [
+ "avcodec-backend-ffmpeg",
+ "avcodec-backend-jpeg",
+ "avcodec-backend-libyuv",
+ "avcodec-backend-rust-h264",
+ "avcodec-backend-rust-h265",
+ "avcodec-backend-zune",
+ "avcodec-core-model",
+ "avcodec-core-pipeline",
+ "avcodec-core-plugin-api",
+ "avcodec-runtime-native",
+ "avcodec-runtime-web",
+]
+
+[[package]]
+name = "avcodec-backend-ffmpeg"
+version = "0.2.0"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+dependencies = [
+ "avcodec-codec-ffmpeg",
+ "avcodec-core-model",
+]
+
+[[package]]
+name = "avcodec-backend-jpeg"
+version = "0.2.0"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+dependencies = [
+ "avcodec-core-model",
+ "jpeg-decoder",
+ "jpeg-encoder",
+]
+
+[[package]]
+name = "avcodec-backend-libyuv"
+version = "0.2.0"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+dependencies = [
+ "avcodec-core-model",
+ "shiguredo_libyuv",
+]
+
+[[package]]
+name = "avcodec-backend-rust-h264"
+version = "0.2.0"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+dependencies = [
+ "avcodec-core-model",
+ "rust_h264",
+ "rusty_h264",
+]
+
+[[package]]
+name = "avcodec-backend-rust-h265"
+version = "0.2.0"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+dependencies = [
+ "avcodec-core-model",
+ "oxideav-core",
+ "oxideav-h265",
+ "rust_h265",
+]
+
+[[package]]
+name = "avcodec-backend-zune"
+version = "0.2.0"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+dependencies = [
+ "ab_glyph",
+ "avcodec-core-model",
+ "image-webp",
+ "zune-bmp",
+ "zune-core",
+ "zune-jpeg",
+ "zune-png",
+]
+
+[[package]]
+name = "avcodec-codec-ffmpeg"
+version = "0.2.0"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+dependencies = [
+ "ffmpeg-sys-next",
+]
+
+[[package]]
+name = "avcodec-core-model"
+version = "0.2.0"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+dependencies = [
+ "smallvec",
+ "spin",
+]
+
+[[package]]
+name = "avcodec-core-pipeline"
+version = "0.2.0"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+dependencies = [
+ "avcodec-core-model",
+ "parking_lot",
+]
+
+[[package]]
+name = "avcodec-core-plugin-api"
+version = "0.2.0"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+dependencies = [
+ "avcodec-core-model",
+]
+
+[[package]]
+name = "avcodec-runtime-native"
+version = "0.2.0"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+dependencies = [
+ "avcodec-core-model",
+ "avcodec-core-pipeline",
+]
+
+[[package]]
+name = "avcodec-runtime-web"
+version = "0.2.0"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+dependencies = [
+ "avcodec-core-model",
+ "avcodec-core-pipeline",
+]
+
+[[package]]
 name = "aws-lc-rs"
 version = "1.16.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -294,6 +443,26 @@ name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
+
+[[package]]
+name = "bindgen"
+version = "0.72.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "993776b509cfb49c750f11b8f07a46fa23e0a1386ffc01fb1e7d343efc387895"
+dependencies = [
+ "bitflags",
+ "cexpr",
+ "clang-sys",
+ "itertools 0.10.5",
+ "log",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "rustc-hash 2.1.2",
+ "shlex",
+ "syn",
+]
 
 [[package]]
 name = "bit-set"
@@ -413,6 +582,15 @@ dependencies = [
  "cipher",
  "ctr",
  "subtle",
+]
+
+[[package]]
+name = "cexpr"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fac387a98bb7c37292057cffc56d62ecb629900026402633ae9160df93a8766"
+dependencies = [
+ "nom 7.1.3",
 ]
 
 [[package]]
@@ -813,6 +991,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "cheetah-media-processing-module"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "avcodec",
+ "bytes",
+ "cheetah-codec",
+ "cheetah-config",
+ "cheetah-engine",
+ "cheetah-media-api",
+ "cheetah-runtime-api",
+ "cheetah-runtime-tokio",
+ "cheetah-sdk",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "cheetah-mp4-core"
 version = "0.1.0"
 dependencies = [
@@ -1194,6 +1394,7 @@ dependencies = [
  "cheetah-hls-module",
  "cheetah-http-flv-module",
  "cheetah-media-module",
+ "cheetah-media-processing-module",
  "cheetah-mp4-module",
  "cheetah-proxy-module",
  "cheetah-record-module",
@@ -1493,6 +1694,17 @@ dependencies = [
  "crypto-common",
  "inout",
  "zeroize",
+]
+
+[[package]]
+name = "clang-sys"
+version = "1.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b023947811758c97c59bf9d1c188fd619ad4718dcaa767947df1cadb14f39f4"
+dependencies = [
+ "glob",
+ "libc",
+ "libloading",
 ]
 
 [[package]]
@@ -1983,6 +2195,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ffmpeg-sys-next"
+version = "8.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a314bc0e022a33a99567ed4bd2576bd58ffd8fcff7891c29194cfecc26a62547"
+dependencies = [
+ "bindgen",
+ "cc",
+ "libc",
+ "num_cpus",
+ "pkg-config",
+ "vcpkg",
+]
+
+[[package]]
 name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2193,6 +2419,12 @@ name = "gimli"
 version = "0.32.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629b9b98ef3dd8afe6ca2bd0f89306cec16d43d907889945bc5d6687f2f13c7"
+
+[[package]]
+name = "glob"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "group"
@@ -2545,6 +2777,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "image-webp"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "525e9ff3e1a4be2fbea1fdf0e98686a6d98b4d8f937e1bf7402245af1909e8c3"
+dependencies = [
+ "byteorder-lite",
+ "quick-error 2.0.1",
+]
+
+[[package]]
 name = "indexmap"
 version = "1.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2634,6 +2876,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "jpeg-decoder"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "00810f1d8b74be64b13dbf3db89ac67740615d6c891f0e7b6179326533011a07"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
+name = "jpeg-encoder"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b454d911ac55068f53495488d8ccd0646eaa540c033a28ee15b07838afafb01f"
+
+[[package]]
 name = "js-sys"
 version = "0.3.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2661,6 +2918,16 @@ name = "libc"
 version = "0.2.183"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
+
+[[package]]
+name = "libloading"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
 
 [[package]]
 name = "libm"
@@ -2834,6 +3101,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num_cpus"
+version = "1.17.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "91df4bbde75afed763b708b7eee1e8e7651e02d97f6d5dd763e89367e957b23b"
+dependencies = [
+ "hermit-abi",
+ "libc",
+]
+
+[[package]]
 name = "object"
 version = "0.37.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2868,6 +3145,35 @@ name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
+
+[[package]]
+name = "owned_ttf_parser"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36820e9051aca1014ddc75770aab4d68bc1e9e632f0f5627c4086bc216fb583b"
+dependencies = [
+ "ttf-parser",
+]
+
+[[package]]
+name = "oxideav-core"
+version = "0.1.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90f122ec5ab9940f06ac87f34ffd165412aaf42017bcaf8e61f592d9cca838ce"
+dependencies = [
+ "bytemuck",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "oxideav-h265"
+version = "0.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "220f1220c6181200c7a46a063c1c70dfeee8086757663c316bca36ba106f1635"
+dependencies = [
+ "oxideav-core",
+]
 
 [[package]]
 name = "p256"
@@ -2976,6 +3282,12 @@ dependencies = [
  "der",
  "spki",
 ]
+
+[[package]]
+name = "pkg-config"
+version = "0.3.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "plotters"
@@ -3155,6 +3467,12 @@ name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
+
+[[package]]
+name = "quick-error"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
 name = "quote"
@@ -3354,6 +3672,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust_h264"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbedf5e104105e8783a77926f1e212ea37e78fd3b38b2c928938a283d083d6f1"
+
+[[package]]
+name = "rust_h265"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dde60f5842f27ed06f1d84844cacd93d1a159f606365b30a5594c771e6b4eb17"
+
+[[package]]
 name = "rustc-demangle"
 version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3461,9 +3791,48 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc6bf79ff24e648f6da1f8d1f011e9cac26491b619e6b9280f2b47f1774e6ee2"
 dependencies = [
  "fnv",
- "quick-error",
+ "quick-error 1.2.3",
  "tempfile",
  "wait-timeout",
+]
+
+[[package]]
+name = "rusty_h264"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "363e230d4077795bce5d9220fbc57adfd992f7b88cb51da61fcc821db94cb11f"
+dependencies = [
+ "rusty_h264-common",
+ "rusty_h264-decoder",
+ "rusty_h264-encoder",
+]
+
+[[package]]
+name = "rusty_h264-common"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d55b68927b9fef8e7193b3d646e3a6a53ff48f00e1b3b2c9d0356d1fcf0317a0"
+dependencies = [
+ "bytemuck",
+ "wide",
+]
+
+[[package]]
+name = "rusty_h264-decoder"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b7452c4bdc27d418d17ac7a08e026df05c95b76342aa31a637b270e6e776c0b7"
+dependencies = [
+ "rusty_h264-common",
+]
+
+[[package]]
+name = "rusty_h264-encoder"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "30fd45781286cbfb8680a653482610476f91fb51c0565fd1a8637b6d29b5c41f"
+dependencies = [
+ "rusty_h264-common",
 ]
 
 [[package]]
@@ -3471,6 +3840,15 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "safe_arch"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
+dependencies = [
+ "bytemuck",
+]
 
 [[package]]
 name = "same-file"
@@ -3642,6 +4020,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "shiguredo_cmake"
+version = "4.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ebe8d4ddac00dfb93edcd3edc678a743cb61601a8b5431df23d18d37f9c0d63"
+dependencies = [
+ "cmake",
+ "shiguredo_toml",
+]
+
+[[package]]
+name = "shiguredo_libyuv"
+version = "2026.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0af2cc3c4a128214a8b25409314cd6313d8776bb5db5fdd3a9010739dbb69ac0"
+dependencies = [
+ "bindgen",
+ "shiguredo_cmake",
+ "shiguredo_toml",
+]
+
+[[package]]
 name = "shiguredo_srt"
 version = "2026.1.0-canary.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3649,6 +4048,12 @@ checksum = "8e1fe078bda022a5409cae9a22c7c96403791eb5410a81841fd0766295c09d4d"
 dependencies = [
  "aws-lc-rs",
 ]
+
+[[package]]
+name = "shiguredo_toml"
+version = "2026.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b475c218cf15d056ed3e48c9e98693135b261b79530881e63b162650b236fdec"
 
 [[package]]
 name = "shlex"
@@ -3713,6 +4118,12 @@ dependencies = [
  "libc",
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "spin"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "023a211cb3138dbc438680b32560ad89f699977624c9f8dbb95a47d5b4c07dd3"
 
 [[package]]
 name = "spki"
@@ -4180,6 +4591,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
+name = "ttf-parser"
+version = "0.25.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
+
+[[package]]
 name = "tungstenite"
 version = "0.29.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4272,6 +4689,12 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
+
+[[package]]
+name = "vcpkg"
+version = "0.2.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
 
 [[package]]
 name = "version_check"
@@ -4436,6 +4859,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52f5ee44c96cf55f1b349600768e3ece3a8f26010c05265ab73f945bb1a2eb9d"
 dependencies = [
  "rustls-pki-types",
+]
+
+[[package]]
+name = "wide"
+version = "0.7.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
+dependencies = [
+ "bytemuck",
+ "safe_arch",
 ]
 
 [[package]]
@@ -4825,10 +5258,29 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
+name = "zune-bmp"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b77b890dbf6b1a32fc57d9f1f30e22175694c454581de7c6e466f2853cf9fe3"
+dependencies = [
+ "log",
+ "zune-core",
+]
+
+[[package]]
 name = "zune-core"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb8a0807f7c01457d0379ba880ba6322660448ddebc890ce29bb64da71fb40f9"
+
+[[package]]
+name = "zune-inflate"
+version = "0.2.54"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73ab332fe2f6680068f3582b16a24f90ad7096d5d39b974d1c0aff0125116f02"
+dependencies = [
+ "simd-adler32",
+]
 
 [[package]]
 name = "zune-jpeg"
@@ -4837,4 +5289,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27bc9d5b815bc103f142aa054f561d9187d191692ec7c2d1e2b4737f8dbd7296"
 dependencies = [
  "zune-core",
+]
+
+[[package]]
+name = "zune-png"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a321146329f7617ba0a5b26982cba45b7ce78163135aba78be25850aefcea80"
+dependencies = [
+ "zune-core",
+ "zune-inflate",
 ]

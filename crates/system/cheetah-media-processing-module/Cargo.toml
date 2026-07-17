@@ -1,0 +1,51 @@
+[package]
+name = "cheetah-media-processing-module"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Media processing module: image/audio/video transcoding, snapshot, and derived streams via avcodec-rs"
+
+[features]
+default = []
+
+media-processing-audio = ["dep:avcodec"]
+media-processing-video = ["dep:avcodec"]
+media-processing-image = ["dep:avcodec"]
+
+avcodec-profile-native-free = ["avcodec?/profile-native-free"]
+avcodec-profile-software = ["avcodec?/profile-software"]
+
+media-processing-cpu = [
+    "media-processing-audio",
+    "media-processing-video",
+    "media-processing-image",
+    "avcodec-profile-native-free",
+]
+
+[dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+futures.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+
+avcodec = {
+    git = "https://github.com/TimothyWalker6922/avcodec-rs-develop.git",
+    rev = "dd3190008f2b544b51a74a9f4a225d52befc120a",
+    version = "0.2.0",
+    default-features = false,
+    optional = true,
+}
+
+cheetah-codec = { path = "../../foundation/cheetah-codec" }
+cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
+cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
+cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
+
+[dev-dependencies]
+cheetah-config = { path = "../cheetah-config" }
+cheetah-engine = { path = "../cheetah-engine" }
+cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
