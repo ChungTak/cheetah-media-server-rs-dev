@@ -8,7 +8,13 @@ description = "Media processing module: image/audio/video transcoding, snapshot,
 [features]
 default = []
 
-media-processing-audio = ["dep:avcodec"]
+media-processing-audio = [
+    "dep:avcodec",
+    "avcodec?/g711",
+    "avcodec?/opus",
+    "avcodec?/fdk-aac",
+    "avcodec?/audio-resample-rubato",
+]
 media-processing-video = ["dep:avcodec"]
 media-processing-image = ["dep:avcodec"]
 
