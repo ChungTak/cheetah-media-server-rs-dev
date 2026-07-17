@@ -8,6 +8,7 @@
 //! CEA 608/708 闭字幕从 H.264/H.265 访问单元中提取。
 
 use crate::prelude::*;
+use alloc::borrow::Cow;
 use broadcast_common::Parse;
 use bytes::Bytes;
 use cc_data::decode::{Cea608Channel, Cea608Decoder, Cea708Decoder};
@@ -81,7 +82,10 @@ pub enum CeaError {
 struct ServiceState {
     source: &'static str,
     last_text: String,
+    /// PTS when the currently-displayed text first appeared.
     last_pts_ms: Option<u64>,
+    /// PTS of the most recent access unit that contained the same text.
+    last_seen_pts_ms: Option<u64>,
     sequence: u64,
 }
 
@@ -91,14 +95,20 @@ impl ServiceState {
             source,
             last_text: String::new(),
             last_pts_ms: None,
+            last_seen_pts_ms: None,
             sequence: 0,
         }
     }
 
     /// Updates the displayed text and returns a cue if it changed since the last update.
     fn emit_if_changed(&mut self, text: &str, pts_ms: u64) -> Option<WebVttCue> {
+        self.last_seen_pts_ms = Some(pts_ms);
+
         if self.last_text == text {
-            self.last_pts_ms = Some(pts_ms);
+            // Preserve the original appearance time; do not drift forward on repeats.
+            if self.last_pts_ms.is_none() {
+                self.last_pts_ms = Some(pts_ms);
+            }
             return None;
         }
 
@@ -146,6 +156,7 @@ impl ServiceState {
         };
         self.last_text.clear();
         self.last_pts_ms = None;
+        self.last_seen_pts_ms = None;
         Some(cue)
     }
 }
@@ -199,8 +210,8 @@ impl CeaParser {
         let mut cues = Vec::new();
         let end = end_ms.unwrap_or_else(|| {
             self.state608
-                .last_pts_ms
-                .or(self.state708.last_pts_ms)
+                .last_seen_pts_ms
+                .or(self.state708.last_seen_pts_ms)
                 .unwrap_or(1)
                 + self.last_duration_ms
         });
@@ -287,7 +298,7 @@ impl CeaParser {
             return Ok(());
         }
 
-        let payload = match codec {
+        let raw_payload = match codec {
             CodecId::H264 => {
                 let nal_type = nal[0] & 0x1F;
                 if nal_type != 6 {
@@ -308,7 +319,8 @@ impl CeaParser {
             _ => return Ok(()),
         };
 
-        self.parse_sei_payload(payload)
+        let payload = unescape_ebsp(raw_payload);
+        self.parse_sei_payload(&payload)
     }
 
     /// Parses the SEI payload of a single NALU, extracting any `cc_data()` packets.
@@ -427,6 +439,31 @@ fn is_trailing_or_padding(data: &[u8]) -> bool {
         seen_one = true;
     }
     true
+}
+
+/// Removes H.264/H.265 emulation-prevention three-bytes (`0x00 0x00 0x03` → `0x00 0x00`).
+///
+/// Returns a borrowed view if no escaping is present, otherwise an owned copy.
+fn unescape_ebsp(data: &[u8]) -> Cow<'_, [u8]> {
+    if data.windows(3).any(|w| w == [0x00, 0x00, 0x03]) {
+        let mut out = Vec::with_capacity(data.len());
+        let mut zero_run = 0usize;
+        for &byte in data {
+            if zero_run >= 2 && byte == 0x03 {
+                zero_run = 0;
+                continue;
+            }
+            out.push(byte);
+            if byte == 0 {
+                zero_run += 1;
+            } else {
+                zero_run = 0;
+            }
+        }
+        Cow::Owned(out)
+    } else {
+        Cow::Borrowed(data)
+    }
 }
 
 /// Reads a SEI message `payload_type` and `payload_size` (both are FF-extended bytes).
@@ -606,6 +643,51 @@ mod tests {
     }
 
     #[test]
+    fn pop_on_608_repeated_text_preserves_start_time() {
+        let mut parser = CeaParser::new(CeaParserConfig::default());
+        let triplets = [
+            (true, 0x14, 0x20), // RCL
+            (true, 0x14, 0x70), // PAC
+            (true, b'H', b'I'),
+            (true, 0x14, 0x2F), // EOC
+        ];
+
+        let mut cc_payload = Vec::new();
+        cc_payload.push(0xB5);
+        cc_payload.extend_from_slice(&0x0031u16.to_be_bytes());
+        cc_payload.extend_from_slice(b"GA94");
+        cc_payload.push(0x03);
+        cc_payload.push(0xC4);
+        cc_payload.push(0xFF);
+        for (valid, d1, d2) in triplets {
+            let flags = 0xF8 | (u8::from(valid) << 2);
+            cc_payload.push(flags);
+            cc_payload.push(d1);
+            cc_payload.push(d2);
+        }
+        cc_payload.push(0xFF);
+
+        let nal = make_h264_sei_nalu(&cc_payload);
+
+        // First access unit at pts 0, second at pts 1000 ms, same text.
+        let unit1 = make_access_unit(0, 3000, vec![nal.clone()]);
+        let unit2 = make_access_unit(90_000, 3000, vec![nal]);
+
+        parser.push_access_unit(CodecId::H264, &unit1);
+        parser.push_access_unit(CodecId::H264, &unit2);
+        let mut cues = parser.reset(None);
+
+        assert_eq!(cues.len(), 1);
+        let cue = cues.pop().unwrap();
+        assert_eq!(cue.start_ms, 0);
+        assert!(
+            cue.end_ms >= 1000,
+            "end_ms {} should be >= 1000",
+            cue.end_ms
+        );
+    }
+
+    #[test]
     fn webvtt_frame_helpers_work() {
         let cue = WebVttCue {
             id: None,
@@ -645,6 +727,20 @@ mod tests {
         let cues = parser.push_access_unit(CodecId::H264, &unit);
         assert!(cues.is_empty());
         assert!(parser.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn unescape_ebsp_removes_emulation_prevention_bytes() {
+        let escaped = [0x00, 0x00, 0x03, 0x04, 0x00, 0x00, 0x03, 0x00];
+        let out = super::unescape_ebsp(&escaped);
+        assert_eq!(out.as_ref(), &[0x00, 0x00, 0x04, 0x00, 0x00, 0x00]);
+
+        // No escape bytes should return a borrowed view.
+        let plain = [0x00, 0x00, 0x04];
+        match super::unescape_ebsp(&plain) {
+            Cow::Borrowed(_) => {}
+            Cow::Owned(_) => panic!("expected borrowed view for non-escaped data"),
+        }
     }
 
     #[test]

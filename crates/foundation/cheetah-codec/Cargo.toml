@@ -7,13 +7,14 @@ license.workspace = true
 [features]
 default = ["std"]
 std = []
+cea = ["dep:cc-data", "dep:broadcast-common"]
 
 [dependencies]
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 bitflags = { version = "2", default-features = false }
-broadcast-common = { version = "8.4.0", default-features = false }
+broadcast-common = { version = "8.4.0", default-features = false, optional = true }
 bytes = { version = "1", default-features = false }
-cc-data = { version = "0.2.1", default-features = false, features = ["decode"] }
+cc-data = { version = "0.2.1", default-features = false, features = ["decode"], optional = true }
 hashbrown = { version = "0.17", default-features = false, features = ["default-hasher", "inline-more"] }
 libm = { version = "0.2", default-features = false }
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
