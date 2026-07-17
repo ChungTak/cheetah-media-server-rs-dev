@@ -21,3 +21,6 @@ pub use provider::ImageProcessProvider;
 
 #[cfg(feature = "media-processing-audio")]
 pub use provider::audio::{transcode_audio_frame, AudioTranscodeResult};
+
+#[cfg(feature = "media-processing-video")]
+pub use provider::video::{transcode_video_frame, VideoTranscodeResult, VideoTranscodeSpec};
