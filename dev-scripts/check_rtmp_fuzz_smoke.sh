@@ -20,18 +20,13 @@ MAX_TOTAL_TIME="${FUZZ_MAX_TOTAL_TIME:-3}"
 if [[ -n "${FUZZ_TARGETS:-}" ]]; then
   read -r -a TARGETS <<<"${FUZZ_TARGETS}"
 else
-  TARGETS=(
-    fuzz_amf0
-    fuzz_amf3
-    fuzz_client_connection
-    fuzz_flv
-    fuzz_handshake
-    fuzz_rtmp_chunk
-    fuzz_rtmp_command
-    fuzz_rtmp_message
-    fuzz_server_connection
-    fuzz_user_control
-  )
+  TARGETS=()
+  shopt -s nullglob
+  for f in crates/protocols/rtmp/fuzz/fuzz_targets/fuzz_*.rs; do
+    target="$(basename "$f" .rs)"
+    TARGETS+=("$target")
+  done
+  shopt -u nullglob
 fi
 
 echo "[fuzz-smoke] runtime fuzz smoke enabled"
