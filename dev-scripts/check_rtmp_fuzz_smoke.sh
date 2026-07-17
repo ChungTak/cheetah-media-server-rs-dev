@@ -20,13 +20,14 @@ MAX_TOTAL_TIME="${FUZZ_MAX_TOTAL_TIME:-3}"
 if [[ -n "${FUZZ_TARGETS:-}" ]]; then
   read -r -a TARGETS <<<"${FUZZ_TARGETS}"
 else
+  # Discover fuzz targets from the [[bin]] entries in the fuzz workspace
+  # manifest, so we stay in sync with actually configured targets.
   TARGETS=()
-  shopt -s nullglob
-  for f in crates/protocols/rtmp/fuzz/fuzz_targets/fuzz_*.rs; do
-    target="$(basename "$f" .rs)"
-    TARGETS+=("$target")
-  done
-  shopt -u nullglob
+  while IFS= read -r line; do
+    if [[ "${line}" =~ ^name\ =\ \"fuzz_([^\"]+)\" ]]; then
+      TARGETS+=("fuzz_${BASH_REMATCH[1]}")
+    fi
+  done < crates/protocols/rtmp/fuzz/Cargo.toml
 fi
 
 echo "[fuzz-smoke] runtime fuzz smoke enabled"
