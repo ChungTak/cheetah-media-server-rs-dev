@@ -442,6 +442,7 @@ Implementation status: the Sans-I/O baseline lives in `cheetah-codec::observabil
 - `RuntimeReportBuilder` computes the runtime-report schema (`RuntimeObservabilityReport`) from injected wall-clock (`now_us`) and canonical `pts_us` samples — it reads no clock and performs no I/O.
 - `cheetah-engine::MetricsRegistry` publishes these through `MetricsApi`: `record_repair_events` adds the layer counters and `record_runtime_report` sets the timing gauges (`startup_latency_ms`, `first_second_avg_frame_interval_ms`, `average_playback_rate_x`, `first_keyframe_delay_ms`). `MetricsApi::inc` lets modules record ad-hoc counters such as `unsupported_mapping_total{event_type,profile}`.
 - Per-frame wiring of drivers/modules into `RuntimeReportBuilder` on the live egress path is staged (the metric feed points are defined; hot-path integration lands incrementally per protocol).
+- `cheetah-engine::ResourceLeakObserver` (exposed as `Engine::resource_leak_report`) gathers non-terminal tasks, active streams, running FFmpeg jobs and non-terminal media sessions into a `ResourceLeakReport`. This is used by tests and shutdown checks to confirm that cancellation, engine stop and module restart do not leave orphan runtime objects.
 
 ## 5. Runtime Abstraction Rule
 

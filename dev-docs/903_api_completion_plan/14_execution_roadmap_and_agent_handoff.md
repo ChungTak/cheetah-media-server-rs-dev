@@ -78,8 +78,8 @@ P0 结束时，暂未完成的 playback/proxy/FFmpeg operation 必须从 Availab
 | EVT-01..05 | Admission/webhook 路由/translator/E2E | 已完成并合并 | #161..#165 |
 | SEC-04/05 | mTLS/HMAC TTL/webhook 响应大小限制 | 已完成并合并 | #166/#167 |
 | ZLM-01..04 | 接口目录/高价值接口/golden/L3 黑盒 | 已完成并合并 | #168..#171 |
-| REL-02/04 | S0-S5 CI 分组、release build、制品归档 | 已完成，PR 待合并 | #172 |
-| REL-03 | 并发取消、module restart、资源泄漏观测 | 待实施 | - |
+| REL-02/04 | S0-S5 CI 分组、release build、制品归档 | 已完成并合并 | #172 |
+| REL-03 | 并发取消、module restart、资源泄漏观测 | 已完成，PR 待合并 | #174 |
 | SIG-01..06 | 四类信令 A/B 合同与公共 fixture/native HTTP 黑盒 | A 层合同已存在，B 层 runner 待建 | - |
 | 14/15 | 执行路线与发布证据 | 本文档更新中 | 本 PR |
 
@@ -95,14 +95,13 @@ cargo test -p cheetah-media-module
 cargo build --release -p cheetah-server --features media-control-full
 ```
 
-上述命令均已在当前 `main`（含 #168..#171）通过。REL-02 的 S0-S5 CI 分组正在 PR #172 验证。
+上述命令已在当前分支通过。REL-03 额外验证 `cargo test -p cheetah-engine --test resource_leak -- --test-threads=1`。
 
 ### 下一个 Agent 接手要点
 
-1. **优先 REL-03**：在 S4 增加并发取消与 module restart 后资源泄漏的自动化观测；`cheetah-engine` 已提供 `TaskSystemApi::snapshot()`，可在此基础上做终止后残留任务检查。
-2. **SIG B 层**：`crates/sdk/cheetah-sdk/tests/signal_contracts` 已覆盖 A 层，但 `12_signal_server_production_contracts.md` 要求 B 层通过 native HTTP 与网络媒体端口操作，尚未实现统一 runner。
-3. **分支**：所有已合并 PR 在 `main`；#172 分支为 `devin/rel-02-ci-stages`；若 #172 合并后继续，请从 `main` 切出 REL-03 分支。
-4. **可安全回滚点**：`main` 在 #171 合并后稳定；如需回退 REL-02 CI，可仅撤销 `.github/workflows/ci.yml` 与 `apps/cheetah-server/src/main.rs` 的 CLI flag 变更。
+1. **优先 SIG-01..06**：完成公共 real fixtures 与 B 层 native HTTP 黑盒 runner；`crates/sdk/cheetah-sdk/tests/signal_contracts` 已覆盖 A 层，B 层 runner 尚未实现。
+2. **分支**：所有已合并 PR 在 `main`；REL-03 分支为 `devin/rel-03-resource-leak-observation`。
+3. **可安全回滚点**：`main` 在 #172 合并后稳定；如需回退 REL-03，可仅撤销 `crates/system/cheetah-engine/src/resource_leak.rs`、`crates/system/cheetah-engine/tests/resource_leak.rs`、`Engine::resource_leak_report` 与 `SystemArchitecture.md` 中对应段落。
 
 ## 7. 最终 DoD
 
