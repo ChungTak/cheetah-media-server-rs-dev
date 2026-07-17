@@ -67,6 +67,17 @@ impl ImageProcessApi for ImageProcessProvider {
     }
 }
 
+fn build_registry(config: &MediaProcessingModuleConfig) -> Result<avcodec::core::Registry> {
+    match config.profile.as_str() {
+        "native-free" => Ok(avcodec::native_free_software_registry_builder().build()),
+        "software" => Ok(avcodec::default_registry_builder().build()),
+        _ => Err(MediaError::invalid_argument(format!(
+            "unsupported avcodec profile: {}",
+            config.profile
+        ))),
+    }
+}
+
 fn process_blocking(
     request: ImageProcessRequest,
     config: &MediaProcessingModuleConfig,
@@ -74,9 +85,8 @@ fn process_blocking(
     use avcodec::core::{
         ImageProcessRequest as AvImageProcessRequest, ImageProcessor, ImageProcessorConfig, Poll,
     };
-    use avcodec::native_free_software_registry_builder;
 
-    let registry = native_free_software_registry_builder().build();
+    let registry = build_registry(config)?;
 
     let mut image = match request.input {
         ImageInput::Encoded { data, format } => decode_encoded_image(&registry, &data, format)?,

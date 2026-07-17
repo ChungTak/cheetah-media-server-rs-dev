@@ -41,6 +41,12 @@ impl MediaProcessingModuleConfig {
         if self.default_jpeg_quality == 0 || self.default_jpeg_quality > 100 {
             return Err("default_jpeg_quality must be in 1..=100".to_string());
         }
+        if !matches!(self.profile.as_str(), "native-free" | "software") {
+            return Err(format!(
+                "profile must be 'native-free' or 'software', got '{}'",
+                self.profile
+            ));
+        }
         Ok(())
     }
 

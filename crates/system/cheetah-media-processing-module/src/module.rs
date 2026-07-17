@@ -87,8 +87,10 @@ impl Module for MediaProcessingModule {
     }
 
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
-        self.config = MediaProcessingModuleConfig::from_value(ctx.initial_config.clone())
+        let cfg = MediaProcessingModuleConfig::from_value(ctx.initial_config.clone())
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
+        cfg.validate().map_err(SdkError::InvalidArgument)?;
+        self.config = cfg;
         self.ctx = Some(ctx.engine.clone());
 
         #[cfg(feature = "media-processing-image")]
@@ -135,6 +137,7 @@ impl Module for MediaProcessingModule {
     async fn apply_config(&mut self, change: ModuleConfigChange) -> Result<ConfigEffect, SdkError> {
         let new_cfg = MediaProcessingModuleConfig::from_value(change.next)
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
+        new_cfg.validate().map_err(SdkError::InvalidArgument)?;
         if new_cfg != self.config {
             self.config = new_cfg;
             return Ok(ConfigEffect::ModuleRestartRequired);
