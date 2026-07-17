@@ -24,6 +24,7 @@ pub enum CodecKind {
     G711U,
     Mp3,
     Pcm,
+    WebVtt,
     Unknown,
 }
 

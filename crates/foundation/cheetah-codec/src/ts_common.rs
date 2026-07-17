@@ -52,7 +52,7 @@ pub fn stream_type_for_codec(codec: CodecId) -> u8 {
         CodecId::G711A => 0x90,
         CodecId::G711U => 0x91,
         CodecId::Opus => 0x06,
-        CodecId::ADPCM | CodecId::MJPEG | CodecId::Unknown => 0x06,
+        CodecId::ADPCM | CodecId::MJPEG | CodecId::WebVtt | CodecId::Unknown => 0x06,
     }
 }
 

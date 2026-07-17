@@ -36,6 +36,7 @@ pub fn codec_to_api(c: CodecId) -> CodecKind {
         CodecId::G711A => CodecKind::G711A,
         CodecId::G711U => CodecKind::G711U,
         CodecId::MP3 => CodecKind::Mp3,
+        CodecId::WebVtt => CodecKind::WebVtt,
         CodecId::MJPEG | CodecId::ADPCM | CodecId::MP2 | CodecId::Unknown => CodecKind::Unknown,
     }
 }

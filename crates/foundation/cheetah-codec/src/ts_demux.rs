@@ -670,6 +670,7 @@ fn frame_format_for_codec(codec: CodecId) -> FrameFormat {
         CodecId::G711A | CodecId::G711U => FrameFormat::G711Packet,
         CodecId::MP2 => FrameFormat::Mp2Frame,
         CodecId::MP3 => FrameFormat::Mp3Frame,
+        CodecId::WebVtt => FrameFormat::WebVttPacket,
         CodecId::ADPCM => FrameFormat::AdpcmPacket,
         CodecId::Unknown => FrameFormat::Unknown,
     }

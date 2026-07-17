@@ -213,6 +213,7 @@ pub fn parse_announce_sdp(
             CodecId::ADPCM => 8_000,
             CodecId::G711A | CodecId::G711U => 8_000,
             CodecId::MP2 | CodecId::MP3 => 90_000,
+            CodecId::WebVtt => 1_000,
             CodecId::Unknown => 90_000,
         });
         let mut track = TrackInfo::new(track_id, media.media_kind, codec, clock_rate);

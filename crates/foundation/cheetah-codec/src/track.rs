@@ -46,6 +46,7 @@ pub enum CodecId {
     G711U,
     MP2,
     MP3,
+    WebVtt,
     Unknown,
 }
 
@@ -559,6 +560,7 @@ impl TrackInfo {
             | CodecId::MP2
             | CodecId::ADPCM
             | CodecId::MJPEG
+            | CodecId::WebVtt
             | CodecId::Unknown => CodecConfigView {
                 requirement: CodecConfigRequirement::None,
                 payload: CodecConfigPayload::None,
