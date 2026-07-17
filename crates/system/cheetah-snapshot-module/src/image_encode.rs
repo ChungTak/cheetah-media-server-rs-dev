@@ -234,8 +234,20 @@ fn build_h264_annex_b(request: &ImageEncodeRequest) -> Result<Bytes> {
         buf.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
         buf.extend_from_slice(nal);
     }
-    buf.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
-    buf.extend_from_slice(&request.frame.payload);
+
+    let payload = &request.frame.payload;
+    if !payload.is_empty() {
+        // The payload may already be an Annex-B stream with leading start code(s)
+        // (e.g. after parameter-set stripping) or a raw NAL unit.
+        if payload.starts_with(&[0x00, 0x00, 0x00, 0x01])
+            || payload.starts_with(&[0x00, 0x00, 0x01])
+        {
+            buf.extend_from_slice(payload);
+        } else {
+            buf.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+            buf.extend_from_slice(payload);
+        }
+    }
     Ok(Bytes::from(buf))
 }
 

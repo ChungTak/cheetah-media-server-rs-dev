@@ -59,6 +59,53 @@ modules:
     config_path
 }
 
+#[cfg(all(feature = "rtp", feature = "record"))]
+pub fn matter_config(temp_dir: &Path, webhook_url: &str) -> String {
+    let snapshot_yaml = if cfg!(feature = "snapshot") {
+        format!(
+            r#"  snapshot:
+    root_path: "{}"
+"#,
+            temp_dir.join("snapshot").display()
+        )
+    } else {
+        String::new()
+    };
+    let rtmp_yaml = if cfg!(feature = "rtmp") {
+        r#"  rtmp:
+    enabled: true
+    listen: "0.0.0.0:0"
+"#
+    } else {
+        r#"  rtmp:
+    enabled: false
+"#
+    };
+    format!(
+        r#"{rtmp_yaml}  rtp:
+    enabled: true
+    listen_udp: "0.0.0.0:0"
+    listen_tcp: "0.0.0.0:0"
+    rtcp_listen_udp: "0.0.0.0:0"
+  record:
+    enabled: true
+    root_path: "{}"
+{snapshot_yaml}  webhook-dispatcher:
+    profiles:
+      - name: matter_test_receiver
+        url: "{webhook_url}"
+        mode: native_domain
+        allowed_cidrs:
+          - "127.0.0.1/32"
+        events:
+          - stream_online_changed
+          - record_completed
+          - snapshot_completed
+"#,
+        temp_dir.join("record").display()
+    )
+}
+
 pub fn gb28181_config(temp_dir: &Path) -> String {
     format!(
         r#"  rtmp:
@@ -193,6 +240,25 @@ pub async fn http_post(
     let payload = body.to_string();
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        payload.len()
+    );
+    send_request(&mut stream, &request).await;
+    read_http_response(&mut stream).await
+}
+
+#[cfg(all(feature = "rtp", feature = "record"))]
+pub async fn http_patch(
+    host: &str,
+    port: u16,
+    path: &str,
+    body: serde_json::Value,
+) -> (u16, Vec<u8>) {
+    let mut stream = TcpStream::connect((host, port))
+        .await
+        .unwrap_or_else(|e| panic!("connect to {host}:{port}: {e}"));
+    let payload = body.to_string();
+    let request = format!(
+        "PATCH {path} HTTP/1.1\r\nHost: {host}:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
         payload.len()
     );
     send_request(&mut stream, &request).await;
@@ -428,6 +494,90 @@ pub fn encode_rtp(
 #[cfg(feature = "rtp")]
 pub async fn bind_udp_socket() -> UdpSocket {
     UdpSocket::bind("127.0.0.1:0").await.expect("bind udp")
+}
+
+#[cfg(all(feature = "rtp", feature = "record"))]
+pub async fn start_webhook_receiver() -> (
+    std::net::SocketAddr,
+    tokio::sync::mpsc::Receiver<serde_json::Value>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind webhook receiver");
+    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = tokio::sync::mpsc::channel(64);
+
+    tokio::spawn(async move {
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                break;
+            };
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 4096];
+                let mut header_end = None;
+                let mut content_length = None;
+                let mut cursor = 0usize;
+                loop {
+                    match stream.read(&mut buf[cursor..]).await {
+                        Ok(0) => break,
+                        Ok(n) => cursor += n,
+                        Err(_) => break,
+                    }
+                    let text = String::from_utf8_lossy(&buf[..cursor]);
+                    if header_end.is_none() {
+                        if let Some(idx) = text.find("\r\n\r\n") {
+                            header_end = Some(idx + 4);
+                            let header_text = &text[..idx];
+                            for line in header_text.lines() {
+                                if let Some((name, value)) = line.split_once(":") {
+                                    if name.trim().eq_ignore_ascii_case("Content-Length") {
+                                        content_length = value.trim().parse::<usize>().ok();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    let body_start = header_end.unwrap_or(0);
+                    if let Some(len) = content_length {
+                        if cursor >= body_start + len {
+                            let body = &buf[body_start..body_start + len];
+                            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) {
+                                let _ = tx.send(value).await;
+                            }
+                            let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n";
+                            let _ = stream.write_all(response.as_bytes()).await;
+                            let _ = stream.flush().await;
+                            break;
+                        }
+                    } else if header_end.is_some() {
+                        break;
+                    }
+                }
+            });
+        }
+    });
+
+    (addr, rx)
+}
+
+#[cfg(all(feature = "rtp", feature = "record"))]
+pub async fn recv_event_of_type(
+    events: &mut tokio::sync::mpsc::Receiver<serde_json::Value>,
+    event_type: &str,
+    max_wait: Duration,
+) -> serde_json::Value {
+    let deadline = tokio::time::Instant::now() + max_wait;
+    while tokio::time::Instant::now() < deadline {
+        let remaining = deadline - tokio::time::Instant::now();
+        match tokio::time::timeout(remaining, events.recv()).await {
+            Ok(Some(event)) if event["event_type"].as_str() == Some(event_type) => return event,
+            Ok(Some(_)) => continue,
+            Ok(None) => panic!("event channel closed before {event_type}"),
+            Err(_) => break,
+        }
+    }
+    panic!("timed out waiting for webhook event {event_type}")
 }
 
 #[cfg(feature = "rtp")]
