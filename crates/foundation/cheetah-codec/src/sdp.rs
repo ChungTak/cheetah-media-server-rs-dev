@@ -141,6 +141,7 @@ fn codec_name(codec: CodecId) -> &'static str {
         CodecId::G711U => "PCMU",
         CodecId::MP2 => "MPA",
         CodecId::MP3 => "MPA",
+        CodecId::WebVtt => "WebVTT",
         CodecId::Unknown => "unknown",
     }
 }

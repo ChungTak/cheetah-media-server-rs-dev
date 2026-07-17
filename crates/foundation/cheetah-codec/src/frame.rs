@@ -29,6 +29,7 @@ pub enum FrameFormat {
     G711Packet,
     Mp2Frame,
     Mp3Frame,
+    WebVttPacket,
     DataPacket,
     Unknown,
 }
