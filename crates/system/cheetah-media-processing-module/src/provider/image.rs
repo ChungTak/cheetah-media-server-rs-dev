@@ -125,7 +125,7 @@ fn process_blocking(
         validate_operation_dimensions(op, &image, config, index)?;
 
         let mapped = map_image_operation(op, &image, &registry, config, ctx, file_store)
-            .map_err(|e| MediaError::unsupported(format!("operation #{index}: {e}")))?;
+            .map_err(|e| MediaError::invalid_argument(format!("operation #{index}: {e}")))?;
         let cfg = ImageProcessorConfig::new().with_target_op(discriminant_of(&mapped.op));
         let mut processor: Box<dyn ImageProcessor> = registry
             .create_image_processor(&cfg)
@@ -1355,7 +1355,7 @@ mod tests {
             .process(&MediaRequestContext::default(), request)
             .await
             .expect_err("text overlay without file store should fail");
-        assert_eq!(err.code, MediaErrorCode::Unsupported);
+        assert_eq!(err.code, MediaErrorCode::InvalidArgument);
     }
 
     struct MockFontStore {

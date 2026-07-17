@@ -28,10 +28,11 @@ avcodec = {
 | --- | --- |
 | `media-processing-audio` | `g711`、`opus`、`fdk-aac`、`audio-resample-rubato` 及 MP3 software decode |
 | `media-processing-video` | 视频任务和 AVFrame/Packet adapter |
-| `media-processing-image` | 图片任务、快照和 OSD |
+| `media-processing-image` | 图片任务、快照和文本 OSD |
+| `media-processing-image-overlay` | 图片叠加（Blend）所需的 OpenCV backend |
 | `avcodec-profile-native-free` | 映射 `avcodec/profile-native-free` |
 | `avcodec-profile-software` | 映射 `avcodec/profile-software` |
-| `media-processing-cpu` | 三项能力 + 两个 CPU profile |
+| `media-processing-cpu` | 上述能力 + 两个 CPU profile |
 
 所有 feature 默认关闭。`media-processing-video`/`image` 至少组合一个 profile，否则编译期给出明确错误；audio 可单独构建。任务必须显式选择 profile，默认配置选择 `NativeFree`，不得失败后静默切换 `Software`。
 
