@@ -79,14 +79,14 @@ P0 结束时，暂未完成的 playback/proxy/FFmpeg operation 必须从 Availab
 | SEC-04/05 | mTLS/HMAC TTL/webhook 响应大小限制 | 已完成并合并 | #166/#167 |
 | ZLM-01..04 | 接口目录/高价值接口/golden/L3 黑盒 | 已完成并合并 | #168..#171 |
 | REL-02/04 | S0-S5 CI 分组、release build、制品归档 | 已完成并合并 | #172 |
-| REL-03 | 并发取消、module restart、资源泄漏观测 | 已完成，PR 待合并 | #174 |
-| SIG-06 | native HTTP 黑盒 runner（smoke） | 已实现，PR 待合并 | 本 PR |
-| SIG-01..05 | 公共 fixture 与四类信令 B 层合同 | 仍待完成 | - |
+| REL-03 | 并发取消、module restart、资源泄漏观测 | 已完成并合并 | #174 |
+| SIG-06 | native HTTP 黑盒 runner（smoke） | 已完成并合并 | #175 |
+| SIG-01..05 | 公共 fixture 与四类信令 B 层合同 | 已完成并合并 | #176..#179 |
 | 14/15 | 执行路线与发布证据 | 本文档更新中 | 本 PR |
 
 ### 已验证命令
 
-P0/P1 及 ZLM 任务本地验证命令：
+P0/P1/P2 本地验证命令：
 
 ```text
 cargo fmt --check
@@ -94,16 +94,18 @@ cargo clippy -p cheetah-media-module -- -D warnings
 cargo test -p cheetah-sdk --test signal_contracts
 cargo test -p cheetah-media-module
 cargo build --release -p cheetah-server --features media-control-full
-cargo test -p cheetah-server --test signal_blackbox -- --test-threads=1
+cargo test -p cheetah-server --features proxy-rtsp,snapshot,record --test signal_blackbox -- --test-threads=1
+cargo test -p cheetah-server --features rtp,record,snapshot --test signal_blackbox -- --test-threads=1
+cargo test -p cheetah-engine --test resource_leak -- --test-threads=1
 ```
 
-上述命令已在当前分支通过。REL-03 额外验证 `cargo test -p cheetah-engine --test resource_leak -- --test-threads=1`；SIG-06 额外验证 `cargo test -p cheetah-server --test signal_blackbox -- --test-threads=1`。
+上述命令已在当前 `main` 通过。SIG 任务统一使用 `apps/cheetah-server/tests/signal_blackbox.rs` 中的 B 层黑盒 runner。
 
-### 下一个 Agent 接手要点
+### 当前结论
 
-1. **优先 SIG-01..05**：完成公共 real fixtures 与四类信令 B 层合同；`apps/cheetah-server/tests/signal_blackbox.rs` 已实现 native HTTP 黑盒 runner（smoke），可复用其进程启动、配置与原始 HTTP 客户端。
-2. **分支**：所有已合并 PR 在 `main`；REL-03 分支为 `devin/rel-03-resource-leak-observation`；本 PR 为 `devin/sig-native-http-blackbox-runner`。
-3. **可安全回滚点**：`main` 在 #172 合并后稳定；如需回退 REL-03 与本 PR，可仅撤销 `crates/system/cheetah-engine/src/resource_leak.rs` 相关文件、`apps/cheetah-server/tests/signal_blackbox.rs` 与 `apps/cheetah-server/Cargo.toml` 的 `tokio process` feature。
+1. `903_api_completion_plan` 所有代码任务已全部完成并合并到 `main`。
+2. 四类信令 A/B 层合同（GB28181、ONVIF、HomeKit、Matter）与 native HTTP 黑盒 runner 均已通过 CI（S0–S5）与 Devin Review。
+3. 残留工作：合并本 14/15 文档 PR，更新 `release_evidence_v0.1.0.md` 为最终发布证据，等待发布最终签署。
 
 ## 7. 最终 DoD
 
