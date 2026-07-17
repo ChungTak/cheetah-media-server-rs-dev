@@ -47,13 +47,9 @@ impl Semaphore {
                 rx
             };
 
-            // A successful wakeup means a permit was handed directly to us.
-            // If the sender was dropped without sending, retry the loop.
-            if rx.await.is_ok() {
-                return Permit {
-                    state: Arc::clone(&self.state),
-                };
-            }
+            // Wait for a release or for the sender to be dropped without waking
+            // us. Either way, loop back and re-check the permit count.
+            let _ = rx.await;
         }
     }
 }
@@ -66,15 +62,13 @@ pub struct Permit {
 impl Drop for Permit {
     fn drop(&mut self) {
         let mut state = self.state.lock().unwrap();
-        // Hand the permit off to the next waiter. If that waiter was canceled
-        // (receiver dropped), keep looking for a live waiter or restore the
-        // permit count.
-        while let Some(tx) = state.waiters.pop_front() {
-            if tx.send(()).is_ok() {
-                return;
-            }
-        }
         state.permits += 1;
+        // Wake the longest-waiting task so it can re-check the permit count.
+        // If the receiver was dropped, the restored permit remains in the count
+        // for the next acquirer.
+        if let Some(tx) = state.waiters.pop_front() {
+            let _ = tx.send(());
+        }
     }
 }
 
