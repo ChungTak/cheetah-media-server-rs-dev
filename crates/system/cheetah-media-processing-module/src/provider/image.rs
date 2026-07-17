@@ -485,7 +485,12 @@ fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
         if marker == 0xD9 {
             break; // EOI
         }
-        if marker == 0xD8 || marker == 0x00 || marker == 0xFF {
+        if marker == 0xFF {
+            // Fill byte: advance by one so the following `0xFF <marker>` is parsed.
+            i += 1;
+            continue;
+        }
+        if marker == 0xD8 || marker == 0x00 {
             i += 2;
             continue;
         }
