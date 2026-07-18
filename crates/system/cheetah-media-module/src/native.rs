@@ -839,9 +839,7 @@ impl NativeMediaHttpService {
         let id = Self::processing_job_id_from_path(&req.path, "/processing/jobs/", "")
             .ok_or_else(|| AdapterError::InvalidRequest("missing job_id".to_string()))?;
         let mut request: UpdateProcessingJob = parse_body(&req)?;
-        if request.job_id.0.is_empty() {
-            request.job_id = id;
-        }
+        request.job_id = id;
         let job = self.processing()?.update_job(ctx, request).await?;
         Ok(json_response(&job))
     }
