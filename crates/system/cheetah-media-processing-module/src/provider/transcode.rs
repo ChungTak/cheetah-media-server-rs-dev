@@ -558,10 +558,12 @@ pub async fn spawn_transcode_worker(
 
             match frame {
                 Ok(Some(frame)) => {
-                    let input = if frame.media_kind == MediaKind::Video {
-                        TranscodeInput::Video(frame)
-                    } else {
-                        TranscodeInput::Audio(frame)
+                    let input = match frame.media_kind {
+                        MediaKind::Video => TranscodeInput::Video(frame),
+                        MediaKind::Audio => TranscodeInput::Audio(frame),
+                        // Data/subtitle frames cannot be transcoded; skip them
+                        // instead of misrouting them to the audio session.
+                        _ => continue,
                     };
                     match tx.try_send(input) {
                         Ok(evicted) => {
