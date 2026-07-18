@@ -177,6 +177,240 @@ pub fn transcode_audio_frame(
     })
 }
 
+/// Output specification for a streaming audio transcode session.
+///
+/// 流式音频转码 session 的输出规格。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AudioTranscodeSpec {
+    pub codec: CodecId,
+    pub sample_rate: u32,
+    pub channels: u8,
+    pub bitrate: u32,
+}
+
+/// Stateful streaming audio transcode session.
+///
+/// 有状态的流式音频转码 session。
+pub struct AudioTranscodeSession {
+    config: MediaProcessingModuleConfig,
+    source_track: TrackInfo,
+    spec: AudioTranscodeSpec,
+    transcoder: Option<avcodec::AudioTranscoder>,
+    output_track: TrackInfo,
+}
+
+impl AudioTranscodeSession {
+    /// Create a new streaming transcode session for a source audio track.
+    pub fn new(
+        input_track: &TrackInfo,
+        spec: &AudioTranscodeSpec,
+        config: &MediaProcessingModuleConfig,
+    ) -> Result<Self> {
+        if input_track.media_kind != MediaKind::Audio {
+            return Err(MediaError::invalid_argument("input track is not audio"));
+        }
+        if !matches!(
+            spec.codec,
+            CodecId::G711A | CodecId::G711U | CodecId::AAC | CodecId::Opus
+        ) {
+            return Err(MediaError::unsupported(format!(
+                "unsupported output audio codec: {codec:?}",
+                codec = spec.codec
+            )));
+        }
+
+        let output_track = build_audio_output_track(input_track, spec);
+        Ok(Self {
+            config: config.clone(),
+            source_track: input_track.clone(),
+            spec: *spec,
+            transcoder: None,
+            output_track,
+        })
+    }
+
+    /// Submit one compressed source audio frame and return output frames.
+    pub fn submit(&mut self, input: &AVFrame) -> Result<Vec<AVFrame>> {
+        if input.media_kind != MediaKind::Audio {
+            return Err(MediaError::invalid_argument("input frame is not audio"));
+        }
+        if self.transcoder.is_none() {
+            self.transcoder = Some(self.build_transcoder(input)?);
+        }
+        let transcoder = self.transcoder.as_mut().unwrap();
+
+        let input_codec = input.codec;
+        let (src_av_codec, src_bitstream) = map_input_format(input.format, input_codec)
+            .ok_or_else(|| {
+                MediaError::unsupported(format!(
+                    "unsupported input audio codec/format: {input_codec:?}/{:?}",
+                    input.format
+                ))
+            })?;
+
+        let packet = avcodec::core::Packet::from_host_bytes(
+            avcodec::core::utils::next_buffer_id(),
+            src_av_codec,
+            src_bitstream,
+            input.payload.to_vec(),
+        );
+
+        transcoder
+            .submit_packet(packet)
+            .map_err(|e| MediaError::invalid_argument(format!("submit audio packet: {e}")))?;
+
+        let mut output_frames = Vec::new();
+        drain_audio_transcoder(
+            transcoder,
+            input.track_id,
+            self.spec.codec,
+            map_output_codec(self.spec.codec)
+                .map(|(_, fmt)| fmt)
+                .unwrap_or(FrameFormat::Unknown),
+            self.spec.sample_rate,
+            &mut output_frames,
+        )?;
+        Ok(output_frames)
+    }
+
+    /// Flush the encoder/decoder and return any remaining frames.
+    pub fn flush(&mut self) -> Result<Vec<AVFrame>> {
+        let Some(transcoder) = self.transcoder.as_mut() else {
+            return Ok(Vec::new());
+        };
+        transcoder
+            .flush()
+            .map_err(|e| MediaError::invalid_argument(format!("flush audio transcoder: {e}")))?;
+
+        let mut output_frames = Vec::new();
+        drain_audio_transcoder(
+            transcoder,
+            self.source_track.track_id,
+            self.spec.codec,
+            map_output_codec(self.spec.codec)
+                .map(|(_, fmt)| fmt)
+                .unwrap_or(FrameFormat::Unknown),
+            self.spec.sample_rate,
+            &mut output_frames,
+        )?;
+        Ok(output_frames)
+    }
+
+    /// Return the current output track description.
+    pub fn output_track(&self) -> &TrackInfo {
+        &self.output_track
+    }
+
+    fn build_transcoder(&self, input: &AVFrame) -> Result<avcodec::AudioTranscoder> {
+        let input_codec = input.codec;
+        let (src_av_codec, src_bitstream) = map_input_format(input.format, input_codec)
+            .ok_or_else(|| {
+                MediaError::unsupported(format!(
+                    "unsupported input audio codec/format: {input_codec:?}/{:?}",
+                    input.format
+                ))
+            })?;
+
+        let (dst_av_codec, _) = map_output_codec(self.spec.codec).ok_or_else(|| {
+            MediaError::unsupported(format!(
+                "unsupported output audio codec: {codec:?}",
+                codec = self.spec.codec
+            ))
+        })?;
+
+        let registry = build_registry(&self.config)?;
+
+        let sample_rate = self
+            .source_track
+            .sample_rate
+            .unwrap_or(self.source_track.clock_rate);
+        let channels = self.source_track.channels.unwrap_or(1);
+        let src_time_base = avcodec::core::TimeBase::new(input.timebase.num, input.timebase.den);
+
+        let mut decoder_cfg = avcodec::core::AudioDecoderConfig::new(
+            src_av_codec,
+            sample_rate,
+            channels as u16,
+            channel_layout(channels),
+            src_bitstream,
+            src_time_base,
+        )
+        .with_memory_domain(avcodec::core::MemoryDomain::Host)
+        .with_allow_staging(false);
+
+        if let Some(extra) = audio_extra_data(&self.source_track) {
+            decoder_cfg = decoder_cfg.with_extra_data(Some(extra));
+        }
+
+        let dst_time_base = avcodec::core::TimeBase::new(1, self.spec.sample_rate);
+        let encoder_cfg = avcodec::core::AudioEncoderConfig::new(
+            dst_av_codec,
+            self.spec.sample_rate,
+            self.spec.channels as u16,
+            channel_layout(self.spec.channels),
+            avcodec::core::AudioSampleFormat::S16,
+            self.spec.bitrate,
+            dst_time_base,
+        )
+        .with_memory_domain(avcodec::core::MemoryDomain::Host)
+        .with_allow_staging(false);
+
+        let encoder_cfg = with_audio_profile(encoder_cfg, self.spec.codec);
+        let encoder_cfg =
+            with_audio_frame_size(encoder_cfg, self.spec.codec, self.spec.sample_rate);
+
+        avcodec::AudioTranscoder::new(&registry, &decoder_cfg, &encoder_cfg)
+            .map_err(|e| MediaError::unsupported(format!("create audio transcoder: {e}")))
+    }
+}
+
+fn build_audio_output_track(input_track: &TrackInfo, spec: &AudioTranscodeSpec) -> TrackInfo {
+    let mut output_track = TrackInfo::new(
+        input_track.track_id,
+        MediaKind::Audio,
+        spec.codec,
+        spec.sample_rate,
+    );
+    output_track.sample_rate = Some(spec.sample_rate);
+    output_track.channels = Some(spec.channels);
+    output_track.bitrate = Some(spec.bitrate);
+    output_track.extradata = output_codec_extradata(spec.codec, spec.sample_rate, spec.channels)
+        .unwrap_or(CodecExtradata::None);
+    output_track.readiness = TrackReadiness::Ready;
+    output_track
+}
+
+fn drain_audio_transcoder(
+    transcoder: &mut avcodec::AudioTranscoder,
+    track_id: TrackId,
+    codec: CodecId,
+    frame_format: FrameFormat,
+    sample_rate: u32,
+    out: &mut Vec<AVFrame>,
+) -> Result<()> {
+    loop {
+        match transcoder.poll_packet() {
+            Ok(avcodec::core::Poll::Ready(packet)) => {
+                out.push(av_frame_from_packet(
+                    track_id,
+                    codec,
+                    frame_format,
+                    sample_rate,
+                    &packet,
+                )?);
+            }
+            Ok(avcodec::core::Poll::Pending) => break,
+            Ok(avcodec::core::Poll::EndOfStream) => break,
+            Err(e) => {
+                return Err(MediaError::invalid_argument(format!(
+                    "poll audio packet: {e}"
+                )))
+            }
+        }
+    }
+    Ok(())
+}
+
 fn map_input_format(
     format: FrameFormat,
     codec: CodecId,
@@ -520,5 +754,29 @@ mod tests {
         assert!(!back_to_aac.frames.is_empty());
         assert_eq!(back_to_aac.frames[0].codec, CodecId::AAC);
         assert_eq!(back_to_aac.track.codec, CodecId::AAC);
+    }
+
+    #[test]
+    fn streaming_session_produces_opus_output() {
+        let cfg = MediaProcessingModuleConfig::default();
+        let payload = (0..160).map(|v| v as u8).collect::<Vec<_>>();
+        let (frame, track) = g711a_packet(&payload);
+
+        let spec = AudioTranscodeSpec {
+            codec: CodecId::Opus,
+            sample_rate: 48_000,
+            channels: 1,
+            bitrate: 64_000,
+        };
+        let mut session = AudioTranscodeSession::new(&track, &spec, &cfg)
+            .expect("create audio transcode session");
+        let output = session.submit(&frame).expect("submit g711a frame");
+        assert!(!output.is_empty(), "session should produce opus output");
+        assert_eq!(session.output_track().codec, CodecId::Opus);
+        assert_eq!(session.output_track().sample_rate, Some(48_000));
+        assert_eq!(session.output_track().channels, Some(1));
+
+        let flushed = session.flush().expect("flush session");
+        assert!(flushed.iter().all(|f| f.codec == CodecId::Opus));
     }
 }
