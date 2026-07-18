@@ -22,7 +22,9 @@ use cheetah_codec::{
     AVFrame,
 };
 #[cfg(feature = "media-processing-cpu")]
-use cheetah_media_api::processing::{AbrVariant, AudioMix, AudioMixInput, TrackSelection};
+use cheetah_media_api::processing::{
+    AbrVariant, AudioMix, AudioMixInput, MosaicLayout, Overlay, TrackSelection, VideoMosaicInput,
+};
 use cheetah_media_api::{
     error::{MediaError, Result as MediaResult},
     ids::{MediaKey, ProcessingJobId, StreamKeyBridge},
@@ -52,6 +54,9 @@ use crate::provider::abr::spawn_abr_ladder_worker;
 
 #[cfg(feature = "media-processing-cpu")]
 use crate::provider::mix::spawn_audio_mix_worker;
+
+#[cfg(feature = "media-processing-cpu")]
+use crate::provider::mosaic::spawn_video_mosaic_worker;
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -592,6 +597,103 @@ impl MediaProcessingProvider {
         info!(job_id = %job_id, "audio mix job started");
         Ok(job_snapshot)
     }
+
+    #[cfg(feature = "media-processing-cpu")]
+    #[allow(clippy::too_many_arguments)]
+    async fn create_video_mosaic_job(
+        &self,
+        ctx: &MediaRequestContext,
+        request: CreateProcessingJob,
+        inputs: &[VideoMosaicInput],
+        layout: &MosaicLayout,
+        target: &MediaKey,
+        audio_mix: &Option<AudioMix>,
+        overlays: &[Overlay],
+    ) -> MediaResult<ProcessingJob> {
+        if inputs.len() < 2 || inputs.len() > 9 {
+            return Err(MediaError::invalid_argument(
+                "video mosaic requires 2-9 sources",
+            ));
+        }
+        if audio_mix.is_some() {
+            return Err(MediaError::unsupported(
+                "video mosaic audio mix is not supported in this release",
+            ));
+        }
+        if !overlays.is_empty() {
+            return Err(MediaError::unsupported(
+                "video mosaic overlays are not supported in this release",
+            ));
+        }
+
+        for input in inputs {
+            self.authorize(ctx, AdmissionAction::Play, &input.source)
+                .await?;
+        }
+        self.authorize(ctx, AdmissionAction::Publish, target)
+            .await?;
+
+        let target_key = Self::media_key_to_stream_key(target);
+        let pub_options = PublisherOptions {
+            announce_tracks: true,
+            protocol: "video-mosaic".to_string(),
+            remote_endpoint: None,
+        };
+        let (lease, publisher) = self
+            .ctx
+            .publisher_api
+            .acquire_publisher(target_key, pub_options)
+            .await
+            .map_err(|e| MediaError::internal(format!("acquire publisher failed: {e}")))?;
+
+        let cancel = CancellationToken::new();
+        let cancel_child = cancel.child_token();
+        let runtime = self.ctx.runtime_api.clone();
+
+        let job = Arc::new(Mutex::new(
+            self.build_job(&request, ProcessingJobState::Running),
+        ));
+        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
+        let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
+
+        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
+            job_id.clone(),
+            JobEntry {
+                job: job.clone(),
+                cancel,
+                handle: None,
+            },
+        );
+
+        let config = self.config.clone();
+        let engine = self.ctx.clone();
+        let spawned_job_id = job_id.clone();
+        let inputs = inputs.to_vec();
+        let layout = layout.clone();
+        let handle = runtime.spawn(Box::pin(async move {
+            let result = spawn_video_mosaic_worker(
+                engine,
+                config,
+                inputs,
+                layout,
+                lease,
+                publisher,
+                cancel_child,
+                Some(job.clone()),
+            )
+            .await;
+            if let Err(e) = result {
+                warn!(job_id = %spawned_job_id, "video mosaic worker failed: {e}");
+            }
+        }));
+
+        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+            entry.handle = Some(handle);
+        }
+
+        info!(job_id = %job_id, "video mosaic job started");
+        Ok(job_snapshot)
+    }
 }
 
 #[async_trait]
@@ -615,6 +717,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
             operations.push("transcode".to_string());
             operations.push("abr_ladder".to_string());
             operations.push("audio_mix".to_string());
+            operations.push("video_mosaic".to_string());
         }
         Ok(ProcessingPreflightReport {
             profile: self.config.profile.clone(),
@@ -676,9 +779,19 @@ impl MediaProcessingApi for MediaProcessingProvider {
                 };
                 self.create_audio_mix_job(ctx, request, inputs, &mix).await
             }
-            ProcessingJobSpec::VideoMosaic { .. } => Err(MediaError::unsupported(
-                "video mosaic is not supported in this release",
-            )),
+            #[cfg(feature = "media-processing-cpu")]
+            ProcessingJobSpec::VideoMosaic {
+                inputs,
+                target,
+                layout,
+                audio_mix,
+                overlays,
+            } => {
+                self.create_video_mosaic_job(
+                    ctx, request, inputs, layout, target, audio_mix, overlays,
+                )
+                .await
+            }
             #[cfg(not(feature = "media-processing-cpu"))]
             _ => Err(MediaError::unsupported(
                 "processing job type is not compiled in this build",

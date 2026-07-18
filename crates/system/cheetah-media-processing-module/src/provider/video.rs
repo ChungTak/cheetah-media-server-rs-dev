@@ -419,7 +419,7 @@ impl VideoTranscodeSession {
     }
 }
 
-fn map_input_format(
+pub(crate) fn map_input_format(
     format: FrameFormat,
     codec: CodecId,
 ) -> Option<(avcodec::core::CodecId, avcodec::core::BitstreamFormat)> {
@@ -440,7 +440,7 @@ fn map_input_format(
     }
 }
 
-fn map_output_codec(
+pub(crate) fn map_output_codec(
     codec: CodecId,
 ) -> Option<(
     avcodec::core::CodecId,
@@ -497,7 +497,7 @@ fn resolve_bitrate(spec_value: u32, codec: CodecId, width: u32, height: u32) -> 
     }
 }
 
-fn default_video_bitrate(codec: CodecId, width: u32, height: u32) -> u32 {
+pub(crate) fn default_video_bitrate(codec: CodecId, width: u32, height: u32) -> u32 {
     let pixels = u64::from(width) * u64::from(height);
     let base = match codec {
         CodecId::MJPEG => pixels * 8,
@@ -537,7 +537,7 @@ fn drain_transcoder(
     Ok(())
 }
 
-fn av_frame_from_packet(
+pub(crate) fn av_frame_from_packet(
     track_id: TrackId,
     codec: CodecId,
     frame_format: FrameFormat,
