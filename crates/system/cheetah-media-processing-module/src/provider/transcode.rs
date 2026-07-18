@@ -50,7 +50,8 @@ fn audio_codec_to_codec_id(codec: AudioCodec) -> Option<CodecId> {
         AudioCodec::G711U => Some(CodecId::G711U),
         AudioCodec::Aac => Some(CodecId::AAC),
         AudioCodec::Opus => Some(CodecId::Opus),
-        _ => None,
+        AudioCodec::Mp3 => Some(CodecId::MP3),
+        AudioCodec::Pcm => None,
     }
 }
 
