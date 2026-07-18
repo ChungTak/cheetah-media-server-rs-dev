@@ -69,6 +69,55 @@ impl PlaylistBuilder {
         out
     }
 
+    /// Generate a master playlist with ABR variants and an optional subtitle rendition.
+    ///
+    /// 生成包含 ABR 档位和可选字幕 rendition 的主播放列表。
+    pub fn build_master_with_variants(
+        variants: &[VariantRenditionInfo],
+        subtitle: Option<&SubtitleRenditionInfo>,
+        subtitle_uri: Option<&str>,
+    ) -> String {
+        let mut out = String::with_capacity(512);
+        out.push_str("#EXTM3U\n");
+        if let Some(sub) = subtitle {
+            let default = if sub.is_default { "YES" } else { "NO" };
+            let autoselect = if sub.autoselect { "YES" } else { "NO" };
+            let uri = subtitle_uri.unwrap_or("");
+            out.push_str(&format!(
+                "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"{}\",\
+                 LANGUAGE=\"{}\",DEFAULT={default},AUTOSELECT={autoselect},\
+                 URI=\"{uri}\"\n",
+                sub.name, sub.language
+            ));
+        }
+        for variant in variants {
+            let info = &variant.info;
+            let mut attrs = format!("BANDWIDTH={}", info.bandwidth);
+            if let (Some(w), Some(h)) = (info.width, info.height) {
+                attrs.push_str(&format!(",RESOLUTION={w}x{h}"));
+            }
+            if let Some(fps) = info.frame_rate {
+                attrs.push_str(&format!(",FRAME-RATE={fps:.3}"));
+            }
+            if !info.codecs.is_empty() {
+                attrs.push_str(&format!(",CODECS=\"{}\"", info.codecs));
+            }
+            if subtitle.is_some() {
+                attrs.push_str(",SUBTITLES=\"subs\"");
+            }
+            out.push_str(&format!("#EXT-X-STREAM-INF:{attrs}\n"));
+            out.push_str(&format!("{}\n", variant.uri));
+        }
+        // If no variants were provided, fall back to a single default entry so the
+        // master playlist is still valid. Callers with known variants should not
+        // rely on this fallback.
+        if variants.is_empty() {
+            out.push_str("#EXT-X-STREAM-INF:BANDWIDTH=2000000\n");
+            out.push_str("index.m3u8\n");
+        }
+        out
+    }
+
     /// Generate a live media playlist from the current segment ring (TS mode).
     ///
     /// 从当前分片环生成直播媒体播放列表（TS 模式）。
@@ -414,6 +463,17 @@ pub struct SubtitleRenditionInfo {
     pub is_default: bool,
     /// Whether the player may auto-select this track.
     pub autoselect: bool,
+}
+
+/// Info about a video variant rendition for a master playlist.
+///
+/// 用于主播放列表的视频档位 rendition 信息。
+#[derive(Debug, Clone)]
+pub struct VariantRenditionInfo {
+    /// Media attributes (codecs, bandwidth, resolution, frame-rate, channels).
+    pub info: MediaRenditionInfo,
+    /// URI to the variant's media playlist.
+    pub uri: String,
 }
 
 /// Builder for demuxed LLHLS master playlist with independent audio rendition.
