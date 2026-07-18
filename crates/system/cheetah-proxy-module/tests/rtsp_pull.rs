@@ -27,9 +27,11 @@ use cheetah_media_api::command::{PullProxyRequest, RetryPolicy};
 #[cfg(feature = "rtsp")]
 use cheetah_media_api::ids::{AppName, MediaKey, ProxyId, StreamName, VhostName};
 #[cfg(feature = "rtsp")]
-use cheetah_media_api::model::{OutputPolicy, ProxyState, TranscodePolicy};
+use cheetah_media_api::model::{OutputPolicy, ProxyState};
 #[cfg(feature = "rtsp")]
 use cheetah_media_api::port::{MediaRequestContext, ProxyApi};
+#[cfg(feature = "rtsp")]
+use cheetah_media_api::processing::ProcessingPolicy;
 #[cfg(feature = "rtsp")]
 use cheetah_proxy_module::ProxyModuleFactory;
 #[cfg(feature = "rtsp")]
@@ -79,7 +81,7 @@ fn pull_request(source_url: &str, destination: MediaKey) -> PullProxyRequest {
         retry_policy: RetryPolicy::default(),
         heartbeat_ms: None,
         timeout_ms: 10_000,
-        transcode_policy: TranscodePolicy::default(),
+        processing_policy: ProcessingPolicy::default(),
         output_policy: OutputPolicy::default(),
         record_policy: None,
     }

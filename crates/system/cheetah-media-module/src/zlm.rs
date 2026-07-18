@@ -421,8 +421,6 @@ impl ZlmMediaHttpService {
             (HttpMethod::Post, "/api/delStreamProxy") => Some("proxy.pull.delete"),
             (HttpMethod::Post, "/api/addStreamPusherProxy") => Some("proxy.push.create"),
             (HttpMethod::Post, "/api/delStreamPusherProxy") => Some("proxy.push.delete"),
-            (HttpMethod::Post, "/api/addFFmpegSource") => Some("proxy.ffmpeg.create"),
-            (HttpMethod::Post, "/api/delFFmpegSource") => Some("proxy.ffmpeg.delete"),
             (HttpMethod::Post, "/api/startRecord") | (HttpMethod::Post, "/api/startRecordTask") => {
                 Some("record.start")
             }
@@ -588,15 +586,6 @@ impl ModuleHttpService for ZlmMediaHttpService {
                 }
                 (HttpMethod::Get, "/api/getProxyPusherInfo") => {
                     self.get_proxy_pusher_info(&ctx, req).await
-                }
-                (HttpMethod::Post, "/api/addFFmpegSource") => {
-                    self.add_ffmpeg_source(&ctx, req).await
-                }
-                (HttpMethod::Post, "/api/delFFmpegSource") => {
-                    self.del_ffmpeg_source(&ctx, req).await
-                }
-                (HttpMethod::Get, "/api/listFFmpegSource") => {
-                    self.list_ffmpeg_source(&ctx, req).await
                 }
                 (HttpMethod::Post, "/api/startRecord") => self.record_start(&ctx, req).await,
                 (HttpMethod::Post, "/api/startRecordTask") => {

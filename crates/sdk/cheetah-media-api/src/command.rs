@@ -402,8 +402,10 @@ pub struct PullProxyRequest {
     pub heartbeat_ms: Option<u64>,
     #[serde(default)]
     pub timeout_ms: u64,
-    #[serde(default)]
-    pub transcode_policy: TranscodePolicy,
+    /// How the pulled stream should be processed before it is published to
+    /// `destination`.
+    #[serde(default, alias = "transcode_policy")]
+    pub processing_policy: crate::processing::ProcessingPolicy,
     #[serde(default)]
     pub output_policy: OutputPolicy,
     #[serde(default)]
@@ -422,23 +424,6 @@ pub struct PushProxyRequest {
     pub retry_policy: RetryPolicy,
     #[serde(default)]
     pub protocol_options: HashMap<String, String>,
-}
-
-/// FFmpeg proxy request.
-///
-/// FFmpeg 代理请求。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FfmpegProxyRequest {
-    pub source_url: String,
-    pub destination: MediaKey,
-    #[serde(default)]
-    pub input_options: Vec<String>,
-    #[serde(default)]
-    pub output_options: Vec<String>,
-    #[serde(default)]
-    pub transcode_policy: TranscodePolicy,
-    #[serde(default)]
-    pub output_policy: OutputPolicy,
 }
 
 /// Retry policy.

@@ -1,9 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use cheetah_media_api::command::{
-    FfmpegProxyRequest, ProxyQuery, PullProxyRequest, PushProxyRequest,
-};
+use cheetah_media_api::command::{ProxyQuery, PullProxyRequest, PushProxyRequest};
 use cheetah_media_api::error::{MediaError, Result};
 use cheetah_media_api::ids::{MediaKey, ProxyId};
 use cheetah_media_api::model::{Page, ProxyInfo, ProxyKind, ProxyState};
@@ -14,7 +12,7 @@ use tracing::{debug, warn};
 use crate::config::ProxyModuleConfig;
 use crate::registry::{ProxyEntry, ProxyRegistry};
 use crate::ssrf::{resolve_and_validate_url, IpNetwork};
-use crate::task::{spawn_proxy_task, validate_ffmpeg_options, ProxySessionSpec};
+use crate::task::{spawn_proxy_task, ProxySessionSpec};
 
 /// Bridge that exposes the proxy registry as a [`ProxyApi`] provider.
 ///
@@ -107,6 +105,8 @@ impl ProxyApi for ProxyMediaProvider {
                 source_url: resolved_source.url,
                 source_peer: resolved_source.peer,
                 destination: info.destination.clone(),
+                processing_policy: request.processing_policy,
+                output_policy: request.output_policy,
             },
         )
         .map_err(|e| MediaError::internal(format!("failed to spawn proxy task: {e}")))?;
@@ -229,108 +229,6 @@ impl ProxyApi for ProxyMediaProvider {
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
         delete_proxy_of_kind(&self.registry, id, ProxyKind::Push)
-    }
-
-    async fn create_ffmpeg_proxy(
-        &self,
-        ctx: &MediaRequestContext,
-        request: FfmpegProxyRequest,
-    ) -> Result<ProxyInfo> {
-        Deadline::from_context(ctx)
-            .check()
-            .map_err(|e| MediaError::unavailable(e.to_string()))?;
-        if !self.ctx.ffmpeg_api.is_available() {
-            return Err(MediaError::unavailable("ffmpeg executor not available"));
-        }
-
-        let resolved_source = resolve_and_validate_url(
-            &request.source_url,
-            &self.ssrf_allowlist,
-            &self.ctx.runtime_api,
-        )
-        .await?;
-        validate_ffmpeg_options(&request.input_options, &request.output_options)
-            .map_err(MediaError::invalid_argument)?;
-
-        let proxy_id = self.ensure_idempotency_or_create_id(
-            ctx,
-            ProxyKind::Ffmpeg,
-            &request.source_url,
-            &request.destination,
-        )?;
-
-        if let Some(existing) = self.registry.get(&proxy_id) {
-            return Ok(existing.info);
-        }
-
-        if self.registry.is_full() {
-            return Err(MediaError::unavailable("proxy capacity exceeded"));
-        }
-
-        let info = build_proxy_info(
-            proxy_id.clone(),
-            ProxyKind::Ffmpeg,
-            request.source_url.clone(),
-            request.destination.clone(),
-        );
-
-        let entry = ProxyEntry {
-            info: info.clone(),
-            cancel: None,
-        };
-
-        if self.registry.insert(entry).is_some() {
-            warn!(proxy_id = %proxy_id.0, "proxy id collision after idempotency check");
-        }
-
-        let job_id = format!("ffmpeg-{}", proxy_id.0);
-        let cancel = spawn_proxy_task(
-            self.ctx.clone(),
-            self.registry.clone(),
-            proxy_id.clone(),
-            self.config.clone(),
-            ProxySessionSpec::Ffmpeg {
-                source_url: resolved_source.url,
-                source_peer: resolved_source.peer,
-                destination: request.destination,
-                input_options: request.input_options,
-                output_options: request.output_options,
-                job_id,
-            },
-        )
-        .map_err(|e| MediaError::internal(format!("failed to spawn ffmpeg proxy task: {e}")))?;
-        self.registry.set_cancel(&proxy_id, cancel);
-
-        debug!(proxy_id = %info.proxy_id.0, "created ffmpeg proxy");
-        Ok(info)
-    }
-
-    async fn delete_ffmpeg_proxy(&self, ctx: &MediaRequestContext, id: &ProxyId) -> Result<()> {
-        Deadline::from_context(ctx)
-            .check()
-            .map_err(|e| MediaError::unavailable(e.to_string()))?;
-        delete_proxy_of_kind(&self.registry, id, ProxyKind::Ffmpeg)
-    }
-
-    async fn get_ffmpeg_proxy(
-        &self,
-        _ctx: &MediaRequestContext,
-        id: &ProxyId,
-    ) -> Result<ProxyInfo> {
-        self.registry
-            .get(id)
-            .filter(|e| e.info.kind == ProxyKind::Ffmpeg)
-            .map(|e| e.info)
-            .ok_or_else(|| MediaError::not_found(format!("ffmpeg proxy not found: {}", id.0)))
-    }
-
-    async fn list_ffmpeg_proxies(
-        &self,
-        _ctx: &MediaRequestContext,
-        mut query: ProxyQuery,
-    ) -> Result<Page<ProxyInfo>> {
-        query.clamp_page_size();
-        list_proxies(&self.registry, query, ProxyKind::Ffmpeg)
     }
 }
 

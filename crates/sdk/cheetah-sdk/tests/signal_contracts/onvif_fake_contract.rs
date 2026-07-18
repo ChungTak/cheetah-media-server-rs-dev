@@ -4,6 +4,7 @@ use std::sync::Arc;
 use cheetah_media_api::command::*;
 use cheetah_media_api::ids::*;
 use cheetah_media_api::model::*;
+use cheetah_media_api::processing::ProcessingPolicy;
 use cheetah_sdk::MediaServices;
 
 use crate::fake_support::{ctx, FakeMediaProvider};
@@ -35,7 +36,7 @@ async fn onvif_flow(services: MediaServices) {
                 retry_policy: RetryPolicy::default(),
                 heartbeat_ms: Some(10_000),
                 timeout_ms: 30_000,
-                transcode_policy: TranscodePolicy::default(),
+                processing_policy: ProcessingPolicy::default(),
                 output_policy: OutputPolicy::default(),
                 record_policy: None,
             },

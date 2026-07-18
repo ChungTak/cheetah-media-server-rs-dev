@@ -1,18 +1,14 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use cheetah_config::ConfigStore;
 use cheetah_engine::EngineBuilder;
-use cheetah_media_api::command::{
-    FfmpegProxyRequest, ProxyQuery, PullProxyRequest, PushProxyRequest, RetryPolicy,
-};
+use cheetah_media_api::command::{ProxyQuery, PullProxyRequest, PushProxyRequest, RetryPolicy};
 use cheetah_media_api::ids::{AppName, MediaKey, ProxyId, StreamName, VhostName};
-use cheetah_media_api::model::{OutputPolicy, ProxyKind, TranscodePolicy};
+use cheetah_media_api::model::{OutputPolicy, ProxyKind};
 use cheetah_media_api::port::{MediaFacade, MediaRequestContext, ProxyApi};
-use cheetah_media_api::MediaCapability;
+use cheetah_media_api::processing::ProcessingPolicy;
 use cheetah_proxy_module::ProxyModuleFactory;
 use cheetah_runtime_tokio::TokioRuntime;
-use cheetah_sdk::{FfmpegApi, FfmpegJobHandle, FfmpegJobSpec, FfmpegJobStatus, SdkError};
 use serde_json::json;
 
 fn make_key() -> MediaKey {
@@ -42,7 +38,7 @@ fn pull_request(url: &str) -> PullProxyRequest {
         retry_policy: RetryPolicy::default(),
         heartbeat_ms: None,
         timeout_ms: 10_000,
-        transcode_policy: TranscodePolicy::default(),
+        processing_policy: ProcessingPolicy::default(),
         output_policy: OutputPolicy::default(),
         record_policy: None,
     }
@@ -266,102 +262,5 @@ async fn malformed_allowlist_fails_engine_start() {
     assert!(
         msg.contains("invalid ssrf_allowlist_cidrs") || msg.contains("InvalidArgument"),
         "expected invalid allowlist error, got {msg}"
-    );
-}
-
-/// FFmpeg API stub that reports itself as unavailable.
-struct NoopFfmpegApi;
-
-#[async_trait]
-impl FfmpegApi for NoopFfmpegApi {
-    async fn submit(
-        &self,
-        _job_id: String,
-        _spec: FfmpegJobSpec,
-    ) -> Result<FfmpegJobHandle, SdkError> {
-        unimplemented!("noop ffmpeg submit")
-    }
-
-    async fn get(&self, _job_id: &str) -> Result<FfmpegJobStatus, SdkError> {
-        unimplemented!("noop ffmpeg get")
-    }
-
-    async fn list(&self) -> Vec<FfmpegJobStatus> {
-        unimplemented!("noop ffmpeg list")
-    }
-
-    async fn wait(&self, _job_id: &str) -> Result<FfmpegJobStatus, SdkError> {
-        unimplemented!("noop ffmpeg wait")
-    }
-
-    async fn cancel(&self, _job_id: &str) -> Result<(), SdkError> {
-        unimplemented!("noop ffmpeg cancel")
-    }
-
-    async fn remove(&self, _job_id: &str) -> Result<(), SdkError> {
-        unimplemented!("noop ffmpeg remove")
-    }
-
-    fn is_available(&self) -> bool {
-        false
-    }
-}
-
-fn make_engine_with_ffmpeg(ffmpeg: Arc<dyn FfmpegApi>) -> Arc<cheetah_engine::Engine> {
-    let config = Arc::new(ConfigStore::new());
-    config.set_global_default(json!({}));
-    let runtime = Arc::new(TokioRuntime::new());
-    let engine = EngineBuilder::new(config.clone(), config, runtime)
-        .register_module_factory(Arc::new(ProxyModuleFactory))
-        .with_ffmpeg_api(ffmpeg)
-        .build()
-        .expect("engine build");
-    Arc::new(engine)
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn proxy_capability_includes_ffmpeg_when_executor_available() {
-    let engine = make_engine();
-    engine.start().await.expect("engine start");
-
-    let caps = engine.media_facade().capabilities();
-    let proxy_ops = caps
-        .operations
-        .get(&MediaCapability::Proxy)
-        .expect("proxy operations should be advertised");
-    assert!(proxy_ops.contains(&"create_pull".to_string()));
-    assert!(proxy_ops.contains(&"delete_pull".to_string()));
-    assert!(proxy_ops.contains(&"create_ffmpeg".to_string()));
-    assert!(proxy_ops.contains(&"delete_ffmpeg".to_string()));
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn proxy_capability_omits_ffmpeg_when_executor_unavailable() {
-    let engine = make_engine_with_ffmpeg(Arc::new(NoopFfmpegApi));
-    engine.start().await.expect("engine start");
-
-    let caps = engine.media_facade().capabilities();
-    let proxy_ops = caps
-        .operations
-        .get(&MediaCapability::Proxy)
-        .expect("proxy operations should be advertised");
-    assert!(proxy_ops.contains(&"create_pull".to_string()));
-    assert!(!proxy_ops.contains(&"create_ffmpeg".to_string()));
-    assert!(!proxy_ops.contains(&"delete_ffmpeg".to_string()));
-
-    let facade = engine.media_facade();
-    let ctx = MediaRequestContext::default();
-    let req = FfmpegProxyRequest {
-        source_url: "rtmp://example.com/live/source".to_string(),
-        destination: make_key(),
-        input_options: Vec::new(),
-        output_options: Vec::new(),
-        transcode_policy: TranscodePolicy::default(),
-        output_policy: OutputPolicy::default(),
-    };
-    let result = facade.create_ffmpeg_proxy(&ctx, req).await;
-    assert!(
-        result.is_err(),
-        "create_ffmpeg_proxy should fail when ffmpeg executor is unavailable"
     );
 }

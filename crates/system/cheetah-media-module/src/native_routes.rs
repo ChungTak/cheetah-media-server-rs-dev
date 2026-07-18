@@ -115,7 +115,7 @@ pub fn native_http_routes() -> Vec<HttpRouteDescriptor> {
             method: HttpMethod::Get,
             path: "/files/{file_id}/download".to_string(),
         },
-        // proxies — pull / push / ffmpeg
+        // proxies — pull / push
         HttpRouteDescriptor {
             method: HttpMethod::Get,
             path: "/proxies/pull".to_string(),
@@ -147,22 +147,6 @@ pub fn native_http_routes() -> Vec<HttpRouteDescriptor> {
         HttpRouteDescriptor {
             method: HttpMethod::Delete,
             path: "/proxies/push/{proxy_id}".to_string(),
-        },
-        HttpRouteDescriptor {
-            method: HttpMethod::Get,
-            path: "/proxies/ffmpeg".to_string(),
-        },
-        HttpRouteDescriptor {
-            method: HttpMethod::Post,
-            path: "/proxies/ffmpeg".to_string(),
-        },
-        HttpRouteDescriptor {
-            method: HttpMethod::Get,
-            path: "/proxies/ffmpeg/{proxy_id}".to_string(),
-        },
-        HttpRouteDescriptor {
-            method: HttpMethod::Delete,
-            path: "/proxies/ffmpeg/{proxy_id}".to_string(),
         },
         // rtp
         HttpRouteDescriptor {
@@ -332,14 +316,6 @@ pub fn native_required_scope(method: HttpMethod, path: &str) -> Option<MediaScop
         (HttpMethod::Delete, path) if path.starts_with("/proxies/push/") => {
             Some(MediaScope::MediaControl)
         }
-        (HttpMethod::Get, "/proxies/ffmpeg") => Some(MediaScope::MediaRead),
-        (HttpMethod::Post, "/proxies/ffmpeg") => Some(MediaScope::MediaPublish),
-        (HttpMethod::Get, path) if path.starts_with("/proxies/ffmpeg/") => {
-            Some(MediaScope::MediaRead)
-        }
-        (HttpMethod::Delete, path) if path.starts_with("/proxies/ffmpeg/") => {
-            Some(MediaScope::MediaControl)
-        }
         (HttpMethod::Post, "/rtp/receivers") => Some(MediaScope::MediaPublish),
         (HttpMethod::Post, _)
             if path.starts_with("/rtp/receivers/") && path.ends_with("/connect") =>
@@ -475,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn proxy_routes_cover_pull_push_ffmpeg() {
+    fn proxy_routes_cover_pull_push() {
         assert_eq!(
             native_required_scope(HttpMethod::Post, "/proxies/pull"),
             Some(MediaScope::MediaPublish)
@@ -483,10 +459,6 @@ mod tests {
         assert_eq!(
             native_required_scope(HttpMethod::Post, "/proxies/push"),
             Some(MediaScope::MediaConsume)
-        );
-        assert_eq!(
-            native_required_scope(HttpMethod::Delete, "/proxies/ffmpeg/id-1"),
-            Some(MediaScope::MediaControl)
         );
         assert_eq!(
             native_required_scope(HttpMethod::Get, "/proxies/pull/id-1"),
@@ -501,7 +473,6 @@ mod tests {
         assert!(paths.contains(&(HttpMethod::Get, "/media/{vhost}/{app}/{stream}/urls")));
         assert!(paths.contains(&(HttpMethod::Post, "/proxies/pull")));
         assert!(paths.contains(&(HttpMethod::Delete, "/proxies/push/{proxy_id}")));
-        assert!(paths.contains(&(HttpMethod::Post, "/proxies/ffmpeg")));
         assert!(paths.contains(&(HttpMethod::Post, "/rtp/receivers/{receiver_id}/connect")));
         assert!(paths.contains(&(HttpMethod::Get, "/rtp/sessions/{session_id}")));
         assert!(paths.contains(&(HttpMethod::Patch, "/rtp/sessions/{session_id}")));
@@ -525,7 +496,7 @@ mod tests {
         assert!(paths.contains(&(HttpMethod::Patch, "/processing/jobs/{job_id}")));
         assert!(paths.contains(&(HttpMethod::Post, "/processing/jobs/{job_id}/stop")));
         assert!(paths.contains(&(HttpMethod::Delete, "/processing/jobs/{job_id}")));
-        assert_eq!(routes.len(), 58);
+        assert_eq!(routes.len(), 54);
     }
 
     #[test]

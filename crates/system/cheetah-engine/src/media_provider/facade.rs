@@ -538,69 +538,6 @@ impl ProxyApi for EngineMediaFacade {
             .ok_or_else(|| MediaError::unavailable("proxy"))?;
         provider.delete_push_proxy(ctx, id).await
     }
-
-    async fn create_ffmpeg_proxy(
-        &self,
-        ctx: &MediaRequestContext,
-        request: FfmpegProxyRequest,
-    ) -> MediaResult<ProxyInfo> {
-        let protocol = request
-            .source_url
-            .split_once("://")
-            .map(|(scheme, _)| scheme.to_string())
-            .unwrap_or_else(|| "http".to_string());
-        self.check_admission(
-            ctx,
-            AdmissionAction::CreateFfmpegProxy,
-            request.destination.clone(),
-            protocol,
-            Some(request.source_url.clone()),
-            HashMap::new(),
-        )
-        .await?;
-        let provider = self
-            .services
-            .proxy()
-            .ok_or_else(|| MediaError::unavailable("proxy"))?;
-        provider.create_ffmpeg_proxy(ctx, request).await
-    }
-
-    async fn delete_ffmpeg_proxy(
-        &self,
-        ctx: &MediaRequestContext,
-        id: &ProxyId,
-    ) -> MediaResult<()> {
-        let provider = self
-            .services
-            .proxy()
-            .ok_or_else(|| MediaError::unavailable("proxy"))?;
-        provider.delete_ffmpeg_proxy(ctx, id).await
-    }
-
-    async fn get_ffmpeg_proxy(
-        &self,
-        ctx: &MediaRequestContext,
-        id: &ProxyId,
-    ) -> MediaResult<ProxyInfo> {
-        let provider = self
-            .services
-            .proxy()
-            .ok_or_else(|| MediaError::unavailable("proxy"))?;
-        provider.get_ffmpeg_proxy(ctx, id).await
-    }
-
-    async fn list_ffmpeg_proxies(
-        &self,
-        ctx: &MediaRequestContext,
-        mut query: ProxyQuery,
-    ) -> MediaResult<Page<ProxyInfo>> {
-        query.clamp_page_size();
-        let provider = self
-            .services
-            .proxy()
-            .ok_or_else(|| MediaError::unavailable("proxy"))?;
-        provider.list_ffmpeg_proxies(ctx, query).await
-    }
 }
 
 #[async_trait]

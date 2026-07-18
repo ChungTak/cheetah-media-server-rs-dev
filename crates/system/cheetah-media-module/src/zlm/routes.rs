@@ -211,27 +211,6 @@ const ZLM_ROUTES: &[ZlmRoute] = &[
         level: ZlmRouteLevel::L1,
         required: true,
     },
-    ZlmRoute {
-        method: HttpMethod::Post,
-        path: "/api/addFFmpegSource",
-        scope: MediaScope::MediaPublish,
-        level: ZlmRouteLevel::L2,
-        required: true,
-    },
-    ZlmRoute {
-        method: HttpMethod::Post,
-        path: "/api/delFFmpegSource",
-        scope: MediaScope::MediaControl,
-        level: ZlmRouteLevel::L2,
-        required: true,
-    },
-    ZlmRoute {
-        method: HttpMethod::Get,
-        path: "/api/listFFmpegSource",
-        scope: MediaScope::MediaRead,
-        level: ZlmRouteLevel::L2,
-        required: true,
-    },
     // 3.4 RTP server/client (L1 + L2)
     ZlmRoute {
         method: HttpMethod::Get,

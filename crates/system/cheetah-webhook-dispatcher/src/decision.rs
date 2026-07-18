@@ -229,9 +229,7 @@ impl MediaAdmissionApi for WebhookDecisionClient {
                 ));
                 self.request_decision(event).await
             }
-            AdmissionAction::CreatePullProxy
-            | AdmissionAction::CreatePushProxy
-            | AdmissionAction::CreateFfmpegProxy => {
+            AdmissionAction::CreatePullProxy | AdmissionAction::CreatePushProxy => {
                 // Proxy creates are treated as publish-side resource allocation.
                 let event = MediaEvent::StreamPublished(build_stream_published(
                     self.next_seq(),

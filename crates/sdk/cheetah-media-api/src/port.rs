@@ -288,32 +288,6 @@ pub trait ProxyApi: Send + Sync {
     ) -> Result<ProxyInfo>;
 
     async fn delete_push_proxy(&self, ctx: &MediaRequestContext, id: &ProxyId) -> Result<()>;
-
-    async fn create_ffmpeg_proxy(
-        &self,
-        ctx: &MediaRequestContext,
-        request: FfmpegProxyRequest,
-    ) -> Result<ProxyInfo>;
-
-    async fn delete_ffmpeg_proxy(&self, _ctx: &MediaRequestContext, _id: &ProxyId) -> Result<()> {
-        Err(MediaError::unsupported_capability("delete_ffmpeg_proxy"))
-    }
-
-    async fn get_ffmpeg_proxy(
-        &self,
-        _ctx: &MediaRequestContext,
-        _id: &ProxyId,
-    ) -> Result<ProxyInfo> {
-        Err(MediaError::unsupported_capability("get_ffmpeg_proxy"))
-    }
-
-    async fn list_ffmpeg_proxies(
-        &self,
-        _ctx: &MediaRequestContext,
-        _query: ProxyQuery,
-    ) -> Result<Page<ProxyInfo>> {
-        Err(MediaError::unsupported_capability("list_ffmpeg_proxies"))
-    }
 }
 
 /// Media processing job operations.
