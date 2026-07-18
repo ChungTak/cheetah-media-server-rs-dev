@@ -4,7 +4,7 @@
 //! stream before connecting to the remote RTMP server, and creates a
 //! `ProcessingJobSpec::Transcode` job when needed.
 
-use cheetah_codec::{CodecId, MediaKind, TrackId, TrackInfo};
+use cheetah_codec::{CodecId, MediaKind, MonoTime, TrackId, TrackInfo};
 use cheetah_sdk::media_api::ids::{MediaKey, StreamKeyBridge};
 use cheetah_sdk::media_api::port::MediaRequestContext;
 use cheetah_sdk::media_api::processing::{
@@ -79,6 +79,14 @@ pub async fn ensure_derived_push_source(
     .map_err(|e| SdkError::InvalidArgument(format!("invalid derived media key: {e}")))?;
     let derived_stream_key = StreamKey::new(source.namespace.clone(), derived_stream_name);
 
+    // Give any previous transcode job on this derived key time to release its
+    // publisher lease before we try to acquire a new one.
+    if let Err(err) = wait_for_publisher_release(engine, &derived_stream_key, cancel).await {
+        return Err(SdkError::Internal(format!(
+            "transcode target still has a publisher: {err}"
+        )));
+    }
+
     let ctx = MediaRequestContext::default();
     let spec = ProcessingJobSpec::Transcode {
         source: source_key,
@@ -129,6 +137,34 @@ pub async fn stop_derived_push_job(engine: &EngineContext, job_id: cheetah_sdk::
     if let Some(processing_api) = engine.media_services.processing() {
         let ctx = MediaRequestContext::default();
         let _ = processing_api.delete_job(&ctx, &job_id).await;
+    }
+}
+
+/// Wait until the target stream has no active publisher or no longer exists.
+/// This avoids a publisher-lease Conflict when recreating a transcode job on the
+/// same derived key after the previous job was stopped.
+pub async fn wait_for_publisher_release(
+    engine: &EngineContext,
+    stream_key: &StreamKey,
+    cancel: &CancellationToken,
+) -> Result<(), SdkError> {
+    let timeout_us = engine.runtime_api.now().as_micros() + 5_000_000;
+    while engine.runtime_api.now().as_micros() < timeout_us && !cancel.is_cancelled() {
+        match engine.stream_manager_api.get_stream(stream_key).await {
+            Ok(None) => return Ok(()),
+            Ok(Some(snapshot)) if !snapshot.publisher_active => return Ok(()),
+            Ok(Some(_)) => {}
+            Err(_) => return Ok(()),
+        }
+        let sleep_deadline = MonoTime::from_micros(engine.runtime_api.now().as_micros() + 100_000);
+        engine.runtime_api.sleep_until(sleep_deadline).wait().await;
+    }
+    if cancel.is_cancelled() {
+        Err(SdkError::Internal("cancelled".into()))
+    } else {
+        Err(SdkError::Internal(
+            "timeout waiting for derived stream publisher release".into(),
+        ))
     }
 }
 
