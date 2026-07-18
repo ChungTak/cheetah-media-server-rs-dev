@@ -140,8 +140,9 @@ fn build_rtmp_transcode_target(
     }
 }
 
-/// For `Auto`, emit H.264/AAC targets only when the corresponding source track
-/// is not already in the desired codec.
+/// For `Auto`, emit H.264/AAC targets when the source is not already in the
+/// desired codec. If any track needs transcoding, include targets for all selected
+/// tracks so the transcode worker does not drop the already-conformant track.
 fn build_auto_target(
     tracks: &[TrackInfo],
     track_selection: TrackSelection,
@@ -152,10 +153,18 @@ fn build_auto_target(
     let source_video = tracks.iter().find(|t| t.media_kind == MediaKind::Video);
     let source_audio = tracks.iter().find(|t| t.media_kind == MediaKind::Audio);
 
-    let video = if include_video
+    let needs_video_transcode = include_video
         && source_video.is_some()
-        && source_video.is_none_or(|t| t.codec != CodecId::H264)
-    {
+        && source_video.is_none_or(|t| t.codec != CodecId::H264);
+    let needs_audio_transcode = include_audio
+        && source_audio.is_some()
+        && source_audio.is_none_or(|t| t.codec != CodecId::AAC);
+
+    if !needs_video_transcode && !needs_audio_transcode {
+        return None;
+    }
+
+    let video = if include_video && source_video.is_some() {
         Some(VideoTarget {
             codec: VideoCodec::H264,
             width: source_video.and_then(|t| t.width),
@@ -170,10 +179,7 @@ fn build_auto_target(
         None
     };
 
-    let audio = if include_audio
-        && source_audio.is_some()
-        && source_audio.is_none_or(|t| t.codec != CodecId::AAC)
-    {
+    let audio = if include_audio && source_audio.is_some() {
         Some(AudioTarget {
             codec: AudioCodec::Aac,
             sample_rate: source_audio.and_then(|t| t.sample_rate),
@@ -184,11 +190,7 @@ fn build_auto_target(
         None
     };
 
-    if video.is_none() && audio.is_none() {
-        None
-    } else {
-        Some(ProcessingTarget { video, audio })
-    }
+    Some(ProcessingTarget { video, audio })
 }
 
 /// Apply `TrackSelection` to an explicit `ProcessingTarget`.
@@ -320,5 +322,39 @@ mod tests {
         .unwrap();
         assert!(target.video.is_none());
         assert!(target.audio.is_some());
+    }
+
+    #[test]
+    fn auto_keeps_h264_when_audio_needs_transcode() {
+        let tracks = vec![video_track(CodecId::H264), audio_track(CodecId::Opus)];
+        let target = build_rtmp_transcode_target(
+            &tracks,
+            &ProcessingPolicy::Auto {
+                preset: cheetah_sdk::ProcessingPreset::Balanced,
+            },
+            TrackSelection::All,
+        )
+        .unwrap();
+        assert!(target.video.is_some());
+        assert!(target.audio.is_some());
+        assert_eq!(target.video.as_ref().unwrap().codec, VideoCodec::H264);
+        assert_eq!(target.audio.as_ref().unwrap().codec, AudioCodec::Aac);
+    }
+
+    #[test]
+    fn auto_keeps_aac_when_video_needs_transcode() {
+        let tracks = vec![video_track(CodecId::H265), audio_track(CodecId::AAC)];
+        let target = build_rtmp_transcode_target(
+            &tracks,
+            &ProcessingPolicy::Auto {
+                preset: cheetah_sdk::ProcessingPreset::Balanced,
+            },
+            TrackSelection::All,
+        )
+        .unwrap();
+        assert!(target.video.is_some());
+        assert!(target.audio.is_some());
+        assert_eq!(target.video.as_ref().unwrap().codec, VideoCodec::H264);
+        assert_eq!(target.audio.as_ref().unwrap().codec, AudioCodec::Aac);
     }
 }
