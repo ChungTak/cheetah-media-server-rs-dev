@@ -85,15 +85,25 @@ impl ResourceLeakObserver {
             };
             query.clamp_page_size();
             let ctx = MediaRequestContext::default();
-            let page = processing.list_jobs(&ctx, query).await?;
-            for job in page.items {
-                if !matches!(
-                    job.state,
-                    ProcessingJobState::Stopped | ProcessingJobState::Failed
-                ) {
-                    report
-                        .active_processing_job_ids
-                        .push(job.job_id.to_string());
+            let mut collected = 0u64;
+            loop {
+                let mut page_query = query.clone();
+                page_query.page = (collected / query.page_size) + 1;
+                let page = processing.list_jobs(&ctx, page_query).await?;
+                let page_len = page.items.len() as u64;
+                for job in page.items {
+                    if !matches!(
+                        job.state,
+                        ProcessingJobState::Stopped | ProcessingJobState::Failed
+                    ) {
+                        report
+                            .active_processing_job_ids
+                            .push(job.job_id.to_string());
+                    }
+                }
+                collected += page_len;
+                if collected >= page.total || page_len == 0 {
+                    break;
                 }
             }
         }
