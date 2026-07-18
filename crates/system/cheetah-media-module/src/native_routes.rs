@@ -222,6 +222,35 @@ pub fn native_http_routes() -> Vec<HttpRouteDescriptor> {
             method: HttpMethod::Post,
             path: "/webhook/profiles/{profile_id}/test".to_string(),
         },
+        // processing jobs
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/processing/preflight".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Post,
+            path: "/processing/jobs".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/processing/jobs".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Get,
+            path: "/processing/jobs/{job_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Patch,
+            path: "/processing/jobs/{job_id}".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Post,
+            path: "/processing/jobs/{job_id}/stop".to_string(),
+        },
+        HttpRouteDescriptor {
+            method: HttpMethod::Delete,
+            path: "/processing/jobs/{job_id}".to_string(),
+        },
     ]
 }
 
@@ -349,6 +378,25 @@ pub fn native_required_scope(method: HttpMethod, path: &str) -> Option<MediaScop
         (HttpMethod::Delete, _) if path.starts_with("/webhook/profiles/") => {
             Some(MediaScope::ServerAdmin)
         }
+        (HttpMethod::Get, "/processing/preflight") => Some(MediaScope::MediaRead),
+        (HttpMethod::Post, "/processing/jobs") => Some(MediaScope::MediaControl),
+        (HttpMethod::Get, "/processing/jobs") => Some(MediaScope::MediaRead),
+        (HttpMethod::Get, _)
+            if path.starts_with("/processing/jobs/") && !path.ends_with("/stop") =>
+        {
+            Some(MediaScope::MediaRead)
+        }
+        (HttpMethod::Patch, _) if path.starts_with("/processing/jobs/") => {
+            Some(MediaScope::MediaControl)
+        }
+        (HttpMethod::Post, _)
+            if path.starts_with("/processing/jobs/") && path.ends_with("/stop") =>
+        {
+            Some(MediaScope::MediaControl)
+        }
+        (HttpMethod::Delete, _) if path.starts_with("/processing/jobs/") => {
+            Some(MediaScope::MediaControl)
+        }
         _ => None,
     }
 }
@@ -470,7 +518,14 @@ mod tests {
         assert!(paths.contains(&(HttpMethod::Get, "/playback/sessions/{session_id}")));
         assert!(paths.contains(&(HttpMethod::Post, "/playback/sessions/{session_id}/control")));
         assert!(paths.contains(&(HttpMethod::Post, "/playback/sessions/{session_id}/stop")));
-        assert_eq!(routes.len(), 51);
+        assert!(paths.contains(&(HttpMethod::Get, "/processing/preflight")));
+        assert!(paths.contains(&(HttpMethod::Post, "/processing/jobs")));
+        assert!(paths.contains(&(HttpMethod::Get, "/processing/jobs")));
+        assert!(paths.contains(&(HttpMethod::Get, "/processing/jobs/{job_id}")));
+        assert!(paths.contains(&(HttpMethod::Patch, "/processing/jobs/{job_id}")));
+        assert!(paths.contains(&(HttpMethod::Post, "/processing/jobs/{job_id}/stop")));
+        assert!(paths.contains(&(HttpMethod::Delete, "/processing/jobs/{job_id}")));
+        assert_eq!(routes.len(), 58);
     }
 
     #[test]
@@ -522,6 +577,38 @@ mod tests {
         assert_eq!(
             native_required_scope(HttpMethod::Post, "/webhook/profiles/uuid/test"),
             Some(MediaScope::ServerAdmin)
+        );
+    }
+
+    #[test]
+    fn processing_routes_require_correct_scopes() {
+        assert_eq!(
+            native_required_scope(HttpMethod::Get, "/processing/preflight"),
+            Some(MediaScope::MediaRead)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Get, "/processing/jobs"),
+            Some(MediaScope::MediaRead)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Get, "/processing/jobs/uuid"),
+            Some(MediaScope::MediaRead)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Post, "/processing/jobs"),
+            Some(MediaScope::MediaControl)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Patch, "/processing/jobs/uuid"),
+            Some(MediaScope::MediaControl)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Post, "/processing/jobs/uuid/stop"),
+            Some(MediaScope::MediaControl)
+        );
+        assert_eq!(
+            native_required_scope(HttpMethod::Delete, "/processing/jobs/uuid"),
+            Some(MediaScope::MediaControl)
         );
     }
 }
