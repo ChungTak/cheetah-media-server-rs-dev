@@ -18,8 +18,8 @@ use cheetah_sdk::media_api::output::MediaOutputEndpoint;
 use cheetah_sdk::{
     BootstrapPolicy, CancellationToken, ConfigEffect, EngineContext, Module, ModuleCapability,
     ModuleConfigChange, ModuleFactory, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
-    ModuleSchemaRegistration, ModuleState, OneShotReceiver, PublisherOptions, RuntimeApi, SdkError,
-    ServiceDescriptor, StreamKey, SubscriberOptions, TrackSelection,
+    ModuleSchemaRegistration, ModuleState, OneShotReceiver, ProcessingPolicy, PublisherOptions,
+    RuntimeApi, SdkError, ServiceDescriptor, StreamKey, SubscriberOptions, TrackSelection,
 };
 use cheetah_sdk::{HttpMethod, HttpRequest, HttpResponse, HttpRouteDescriptor, ModuleHttpService};
 use futures::{pin_mut, select_biased, FutureExt};
@@ -36,6 +36,10 @@ use crate::egress::{
 use crate::ingest::{
     apply_metadata_to_tracks, handle_audio_ingest_with_alert_threshold, handle_data_ingest,
     handle_video_ingest_with_alert_threshold, should_emit_alert_threshold,
+};
+use crate::processing::{
+    ensure_derived_push_source, is_derived_job_alive, stop_derived_push_job,
+    tracks_codec_signature, DerivedPushSource,
 };
 use crate::route::{parse_stream_key_spec, parse_stream_route, RtmpPlayMode, StreamRoute};
 use crate::session::{
@@ -847,18 +851,105 @@ async fn run_push_job_supervisor(
     let max_backoff_ms = job.max_retry_backoff_ms.max(base_backoff_ms);
     let mut backoff_ms = base_backoff_ms;
 
+    // Reuse one derived source across reconnects. For `Auto` we re-resolve
+    // only when the source track codecs actually change.
+    let mut derived_source: Option<DerivedPushSource> = None;
+    let mut last_codec_signature: Option<Vec<(cheetah_codec::TrackId, MediaKind, CodecId)>> = None;
+
     while !cancel.is_cancelled() {
+        let current_signature = engine
+            .stream_manager_api
+            .get_stream(&source_stream_key)
+            .await
+            .ok()
+            .flatten()
+            .map(|snapshot| tracks_codec_signature(&snapshot.tracks));
+
+        // If the derived transcode job has died (source ended/worker failed),
+        // tear it down so the next iteration creates a fresh one.
+        if let Some(derived) = derived_source.as_ref() {
+            if let Some(job_id) = &derived.processing_job_id {
+                if !is_derived_job_alive(&engine, job_id).await {
+                    tracing::info!(
+                        job_name = job.name,
+                        stream_key = %source_stream_key,
+                        "derived transcode job is no longer alive, re-resolving"
+                    );
+                    if let Some(derived) = derived_source.take() {
+                        if let Some(job_id) = derived.processing_job_id {
+                            stop_derived_push_job(&engine, job_id).await;
+                        }
+                    }
+                    last_codec_signature = None;
+                }
+            }
+        }
+
+        let needs_resolve = derived_source.is_none()
+            || (matches!(job.processing_policy, ProcessingPolicy::Auto { .. })
+                && current_signature.is_some()
+                && current_signature.as_ref() != last_codec_signature.as_ref());
+
+        if needs_resolve {
+            if let Some(derived) = derived_source.take() {
+                if let Some(job_id) = derived.processing_job_id {
+                    stop_derived_push_job(&engine, job_id).await;
+                }
+            }
+            last_codec_signature = current_signature;
+
+            match ensure_derived_push_source(
+                &engine,
+                job.name.as_str(),
+                source_stream_key.clone(),
+                &job.processing_policy,
+                job.track_selection,
+                &cancel,
+            )
+            .await
+            {
+                Ok(derived) => derived_source = Some(derived),
+                Err(err) => {
+                    tracing::warn!(
+                        job_name = job.name,
+                        stream_key = %source_stream_key,
+                        "push job failed to resolve derived source: {err}"
+                    );
+                    if cancel.is_cancelled() {
+                        break;
+                    }
+                    if wait_or_cancel(
+                        &engine.runtime_api,
+                        &cancel,
+                        Duration::from_millis(backoff_ms),
+                    )
+                    .await
+                    {
+                        break;
+                    }
+                    backoff_ms = next_retry_backoff_ms(backoff_ms, max_backoff_ms);
+                    continue;
+                }
+            }
+        }
+
+        let derived = match derived_source.as_ref() {
+            Some(derived) => derived,
+            None => continue,
+        };
+
         run_push_job_once(
             &engine,
             &module_config,
             job.name.as_str(),
-            source_stream_key.clone(),
+            derived.stream_key.clone(),
             target_url.clone(),
             job.track_selection == TrackSelection::AudioOnly,
             job.track_selection == TrackSelection::VideoOnly,
             cancel.child_token(),
         )
         .await;
+
         if cancel.is_cancelled() {
             break;
         }
@@ -872,6 +963,12 @@ async fn run_push_job_supervisor(
             break;
         }
         backoff_ms = next_retry_backoff_ms(backoff_ms, max_backoff_ms);
+    }
+
+    if let Some(derived) = derived_source {
+        if let Some(job_id) = derived.processing_job_id {
+            stop_derived_push_job(&engine, job_id).await;
+        }
     }
 }
 
