@@ -1211,29 +1211,27 @@ impl CaptionExtractWorker {
         F: FnOnce(&mut ProcessingJob),
     {
         if let Some(p) = progress {
-            if let Ok(mut guard) = p.lock() {
-                f(&mut guard);
-                guard.updated_at = now_ms();
-            }
+            let mut guard = p.lock().unwrap_or_else(|e| e.into_inner());
+            f(&mut guard);
+            guard.updated_at = now_ms();
         }
     }
 
     fn finish_progress(progress: &Option<Arc<Mutex<ProcessingJob>>>, last_error: Option<&str>) {
         if let Some(p) = progress {
-            if let Ok(mut guard) = p.lock() {
-                let finished_at = now_ms();
-                guard.finished_at = Some(finished_at);
-                if let Some(err) = last_error {
-                    guard.last_error = Some(err.to_string());
-                }
-                if guard.state == ProcessingJobState::Running {
-                    guard.state = if last_error.is_some() {
-                        ProcessingJobState::Failed
-                    } else {
-                        ProcessingJobState::Stopped
-                    };
-                    guard.updated_at = finished_at;
-                }
+            let mut guard = p.lock().unwrap_or_else(|e| e.into_inner());
+            let finished_at = now_ms();
+            guard.finished_at = Some(finished_at);
+            if let Some(err) = last_error {
+                guard.last_error = Some(err.to_string());
+            }
+            if guard.state == ProcessingJobState::Running {
+                guard.state = if last_error.is_some() {
+                    ProcessingJobState::Failed
+                } else {
+                    ProcessingJobState::Stopped
+                };
+                guard.updated_at = finished_at;
             }
         }
     }
