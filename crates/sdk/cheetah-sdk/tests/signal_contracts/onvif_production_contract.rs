@@ -143,7 +143,7 @@ async fn onvif_proxy_rejects_internal_target_and_lists_empty() {
                 retry_policy: Default::default(),
                 heartbeat_ms: None,
                 timeout_ms: 1000,
-                transcode_policy: Default::default(),
+                processing_policy: cheetah_media_api::processing::ProcessingPolicy::default(),
                 output_policy: Default::default(),
                 record_policy: None,
             },
