@@ -33,8 +33,6 @@ struct VariantContext {
     target: StreamKey,
     sender: TranscodeQueueSender,
     worker_error: Arc<Mutex<Option<String>>>,
-    handle: Box<dyn JoinHandle>,
-    lease: PublishLease,
 }
 
 /// Spawn an ABR ladder worker that publishes 1-4 derived renditions of `source`.
@@ -48,25 +46,37 @@ pub async fn spawn_abr_ladder_worker(
     cancel: CancellationToken,
     job: Option<Arc<Mutex<ProcessingJob>>>,
 ) -> Result<(), SdkError> {
+    if variants.is_empty() {
+        return Err(SdkError::InvalidArgument(
+            "ABR ladder requires at least one variant".into(),
+        ));
+    }
+    if variants.len() > 4 {
+        return Err(SdkError::InvalidArgument(
+            "ABR ladder supports at most four variants".into(),
+        ));
+    }
+
     let finish_job_ref = job.clone();
     let publisher_api = engine.publisher_api.clone();
 
-    let result = async move {
-        if variants.is_empty() {
-            return Err(SdkError::InvalidArgument(
-                "ABR ladder requires at least one variant".into(),
-            ));
-        }
+    // Split publishers so leases can be released even if sinks are consumed by
+    // worker creation and the body exits early.
+    let (leases, mut sinks): (Vec<PublishLease>, Vec<Box<dyn PublisherSink>>) =
+        publishers.into_iter().unzip();
+    let mut handles: Vec<Box<dyn JoinHandle>> = Vec::with_capacity(variants.len());
+    let mut contexts: Vec<VariantContext> = Vec::with_capacity(variants.len());
 
+    let result = async {
         let need_audio = variants.iter().any(|v| v.audio.is_some());
         let (source_video, source_audio) =
             wait_for_source_tracks(&engine, &source, &TrackSelection::All, true, need_audio)
                 .await?;
 
-        let mut contexts = Vec::with_capacity(variants.len());
-        for (variant, (lease, publisher)) in variants.into_iter().zip(publishers.into_iter()) {
+        for variant in &variants {
             let (namespace, path) = StreamKeyBridge::to_namespace_path(&variant.target);
             let target = StreamKey::new(namespace, path);
+            let publisher = sinks.remove(0);
 
             let worker = TranscodeWorker::new(
                 &config,
@@ -109,18 +119,17 @@ pub async fn spawn_abr_ladder_worker(
                 )
                 .map_err(|e| SdkError::Internal(format!("spawn abr variant worker: {e}")))?;
 
+            handles.push(handle);
             contexts.push(VariantContext {
                 target,
                 sender,
                 worker_error,
-                handle,
-                lease,
             });
         }
 
         let media_filter = MediaFilter {
             enable_video: true,
-            enable_audio: need_audio,
+            enable_audio: variants.iter().any(|v| v.audio.is_some()),
         };
         let subscriber_options = SubscriberOptions {
             queue_capacity: 256,
@@ -203,37 +212,43 @@ pub async fn spawn_abr_ladder_worker(
             }
         }
 
-        // Flush and close every variant. Drop the sender first so the blocking
-        // worker wakes up and exits its receive loop.
-        let mut worker_error: Option<String> = None;
-        for ctx in contexts {
-            let VariantContext {
-                target,
-                sender,
-                worker_error: we,
-                handle,
-                lease,
-            } = ctx;
-            drop(sender);
-            let _ = handle.wait().await;
-            if let Some(err) = we.lock().unwrap().take() {
-                if worker_error.is_none() {
-                    worker_error = Some(format!("{target}: {err}"));
-                }
-            }
-            let _ = publisher_api.release_publisher(&lease).await;
-        }
-
         if let Some(err) = subscriber_error {
             return Err(err);
-        }
-        if let Some(err) = worker_error {
-            return Err(SdkError::Internal(err));
         }
         Ok(())
     }
     .await;
 
-    finish_job(&finish_job_ref, result.as_ref().err());
-    result
+    // Cleanup runs regardless of whether the body returned early or succeeded.
+    // Drop senders first so blocking workers wake up, then join them, then
+    // release every publisher lease.
+    let mut worker_error: Option<String> = None;
+    for ((ctx, handle), lease) in contexts
+        .into_iter()
+        .zip(handles.into_iter())
+        .zip(leases.into_iter())
+    {
+        let VariantContext {
+            target,
+            sender,
+            worker_error: we,
+        } = ctx;
+        drop(sender);
+        let _ = handle.wait().await;
+        if let Some(err) = we.lock().unwrap().take() {
+            if worker_error.is_none() {
+                worker_error = Some(format!("{target}: {err}"));
+            }
+        }
+        let _ = publisher_api.release_publisher(&lease).await;
+    }
+
+    let final_result = match (result, worker_error) {
+        (Err(e), _) => Err(e),
+        (Ok(_), Some(err)) => Err(SdkError::Internal(err)),
+        (Ok(_), None) => Ok(()),
+    };
+
+    finish_job(&finish_job_ref, final_result.as_ref().err());
+    final_result
 }
