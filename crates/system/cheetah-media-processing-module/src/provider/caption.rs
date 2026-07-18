@@ -108,20 +108,110 @@ impl MediaProcessingProvider {
         }
     }
 
-    /// Publish per-kind/state/profile job gauges and zero out stale keys.
+    fn job_primary_media_and_codec(spec: &ProcessingJobSpec) -> (&'static str, String) {
+        match spec {
+            ProcessingJobSpec::Transcode { video, audio, .. } => match (video, audio) {
+                (Some(_), Some(_)) => ("mixed", "mixed".to_string()),
+                (Some(v), None) => ("video", format!("{0:?}", v.codec).to_lowercase()),
+                (None, Some(a)) => ("audio", format!("{0:?}", a.codec).to_lowercase()),
+                (None, None) => ("none", "none".to_string()),
+            },
+            ProcessingJobSpec::AbrLadder { variants, .. } => {
+                if variants.is_empty() {
+                    ("video", "none".to_string())
+                } else if variants.iter().any(|v| v.audio.is_some()) {
+                    ("mixed", "mixed".to_string())
+                } else {
+                    let mut codecs: HashSet<String> = HashSet::new();
+                    for v in variants {
+                        codecs.insert(format!("{0:?}", v.video.codec).to_lowercase());
+                    }
+                    (
+                        "video",
+                        if codecs.len() == 1 {
+                            codecs.into_iter().next().unwrap()
+                        } else {
+                            "mixed".to_string()
+                        },
+                    )
+                }
+            }
+            ProcessingJobSpec::AudioMix { output, .. } => {
+                ("audio", format!("{0:?}", output.codec).to_lowercase())
+            }
+            ProcessingJobSpec::VideoMosaic { layout, .. } => (
+                "video",
+                format!(
+                    "{0:?}",
+                    layout
+                        .video_codec
+                        .unwrap_or(cheetah_media_api::processing::VideoCodec::H264)
+                )
+                .to_lowercase(),
+            ),
+            ProcessingJobSpec::CaptionExtract { .. } => ("video", "unknown".to_string()),
+        }
+    }
+
+    /// Publish processing gauges/counters and zero out stale keys.
     pub fn publish_job_metrics(&self) {
         let jobs = self.jobs.lock().unwrap();
         let mut counts: HashMap<String, u64> = HashMap::new();
+        let mut shared_refs: u64 = 0;
+        let mut restarts: u64 = 0;
+        let mut reserved_publishers: u64 = 0;
+        let mut reserved_subscribers: u64 = 0;
+
         for entry in jobs.values() {
             let guard = entry.job.lock().unwrap();
             let kind = Self::job_kind_label(&guard.spec);
+            let (media, codec) = Self::job_primary_media_and_codec(&guard.spec);
             let state = format!("{0:?}", guard.state).to_lowercase();
-            let key = format!(
+
+            let job_key = format!(
                 "media_processing_jobs{{kind={kind},state={state},profile={}}}",
                 guard.profile
             );
-            *counts.entry(key).or_insert(0) += 1;
+            *counts.entry(job_key).or_insert(0) += 1;
+
+            let frames_in_key = format!(
+                "media_processing_frames_total{{direction=ingress,media={media},codec={codec}}}"
+            );
+            *counts.entry(frames_in_key).or_insert(0) += guard.frames_in;
+
+            let frames_out_key = format!(
+                "media_processing_frames_total{{direction=egress,media={media},codec={codec}}}"
+            );
+            *counts.entry(frames_out_key).or_insert(0) += guard.frames_out;
+
+            let drops_key = format!("media_processing_drops_total{{reason=policy,media={media}}}");
+            *counts.entry(drops_key).or_insert(0) += guard.drops;
+
+            let pending_key = "media_processing_pending_total{stage=frame}".to_string();
+            *counts.entry(pending_key).or_insert(0) += guard.pending;
+
+            let queue_key = "media_processing_queue_depth{stage=frame}".to_string();
+            *counts.entry(queue_key).or_insert(0) += guard.pending;
+
+            shared_refs += guard.ref_count;
+            restarts += guard.restart_count as u64;
+            reserved_publishers += guard.output_keys.len() as u64;
+            reserved_subscribers += guard.input_keys.len() as u64;
         }
+
+        counts.insert("media_processing_shared_refs".to_string(), shared_refs);
+        counts.insert(
+            "media_processing_restarts_total{reason=failure}".to_string(),
+            restarts,
+        );
+        counts.insert(
+            "media_processing_resource_reserved{kind=publisher}".to_string(),
+            reserved_publishers,
+        );
+        counts.insert(
+            "media_processing_resource_reserved{kind=subscriber}".to_string(),
+            reserved_subscribers,
+        );
 
         let mut emitted = self.metric_keys.lock().unwrap();
         let new_keys: HashSet<String> = counts.keys().cloned().collect();
@@ -1403,5 +1493,143 @@ mod tests {
             settings: None,
         };
         assert!(worker.push_cue(&publisher, cue).is_ok());
+    }
+
+    #[test]
+    fn job_primary_media_and_codec_labels() {
+        use cheetah_media_api::processing::{
+            AudioCodec, AudioTarget, CaptionConfig, MosaicCell, MosaicLayout, VideoCodec,
+            VideoTarget,
+        };
+
+        let source = MediaKey::new("__internal", "app", "src", None).unwrap();
+        let target = MediaKey::new("__internal", "app", "dst", None).unwrap();
+
+        let transcode_video = ProcessingJobSpec::Transcode {
+            source: source.clone(),
+            target: target.clone(),
+            track_selection: TrackSelection::All,
+            audio: None,
+            video: Some(VideoTarget {
+                codec: VideoCodec::H265,
+                width: None,
+                height: None,
+                frame_rate_num: None,
+                frame_rate_den: None,
+                bit_rate: None,
+                gop_size: None,
+                profile: None,
+            }),
+            overlays: vec![],
+        };
+        assert_eq!(
+            MediaProcessingProvider::job_primary_media_and_codec(&transcode_video),
+            ("video", "h265".to_string())
+        );
+
+        let transcode_audio = ProcessingJobSpec::Transcode {
+            source: source.clone(),
+            target: target.clone(),
+            track_selection: TrackSelection::All,
+            audio: Some(AudioTarget {
+                codec: AudioCodec::Opus,
+                sample_rate: None,
+                channels: None,
+                bit_rate: None,
+            }),
+            video: None,
+            overlays: vec![],
+        };
+        assert_eq!(
+            MediaProcessingProvider::job_primary_media_and_codec(&transcode_audio),
+            ("audio", "opus".to_string())
+        );
+
+        let abr = ProcessingJobSpec::AbrLadder {
+            source: source.clone(),
+            variants: vec![AbrVariant {
+                target: target.clone(),
+                video: VideoTarget {
+                    codec: VideoCodec::H264,
+                    width: None,
+                    height: None,
+                    frame_rate_num: None,
+                    frame_rate_den: None,
+                    bit_rate: None,
+                    gop_size: None,
+                    profile: None,
+                },
+                audio: None,
+            }],
+        };
+        assert_eq!(
+            MediaProcessingProvider::job_primary_media_and_codec(&abr),
+            ("video", "h264".to_string())
+        );
+
+        let mosaic = ProcessingJobSpec::VideoMosaic {
+            inputs: vec![VideoMosaicInput {
+                source: source.clone(),
+                cell: MosaicCell {
+                    column: 0,
+                    row: 0,
+                    z_order: 0,
+                },
+                audio_gain_db: None,
+                fit: None,
+                label: None,
+            }],
+            target: target.clone(),
+            layout: MosaicLayout {
+                columns: 1,
+                rows: 1,
+                cell_width: 64,
+                cell_height: 64,
+                background: None,
+                frame_rate_num: None,
+                frame_rate_den: None,
+                bit_rate: None,
+                gop_size: None,
+                video_codec: Some(VideoCodec::H265),
+                fit: None,
+            },
+            audio_mix: None,
+            overlays: vec![],
+        };
+        assert_eq!(
+            MediaProcessingProvider::job_primary_media_and_codec(&mosaic),
+            ("video", "h265".to_string())
+        );
+
+        let mix = ProcessingJobSpec::AudioMix {
+            inputs: vec![AudioMixInput {
+                source: source.clone(),
+                gain_db: None,
+            }],
+            target: target.clone(),
+            output: AudioTarget {
+                codec: AudioCodec::Aac,
+                sample_rate: None,
+                channels: None,
+                bit_rate: None,
+            },
+        };
+        assert_eq!(
+            MediaProcessingProvider::job_primary_media_and_codec(&mix),
+            ("audio", "aac".to_string())
+        );
+
+        let caption = ProcessingJobSpec::CaptionExtract {
+            source,
+            target,
+            caption: CaptionConfig {
+                source_streams: vec!["src".to_string()],
+                languages: vec!["eng".to_string()],
+            },
+        };
+        assert_eq!(
+            MediaProcessingProvider::job_primary_media_and_codec(&caption),
+            ("video", "unknown".to_string())
+        );
     }
 }
