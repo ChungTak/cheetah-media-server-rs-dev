@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use cheetah_codec::{
     frame::FrameOrigin,
     track::{MediaKind, TrackReadiness},
-    AVFrame, CodecId, MonoTime, Rational32,
+    AVFrame, CodecExtradata, CodecId, MonoTime, Rational32,
 };
 use cheetah_media_api::{
     ids::StreamKeyBridge,
@@ -312,9 +312,11 @@ fn run_mosaicker(
     let mut mosaicker = VideoMosaicker::new(config, inputs, layout, source_tracks)
         .map_err(|e| SdkError::Internal(format!("create video mosaicker: {e}")))?;
 
-    if let Err(e) = publisher.update_tracks(vec![mosaicker.output_track().clone()]) {
+    let initial_track = mosaicker.output_track().clone();
+    if let Err(e) = publisher.update_tracks(vec![initial_track.clone()]) {
         return Err(SdkError::Internal(format!("update output tracks: {e}")));
     }
+    let mut last_announced_extradata = Some(initial_track.extradata.clone());
 
     let output_fps = mosaicker
         .output_track()
@@ -354,7 +356,13 @@ fn run_mosaicker(
                 let frames = mosaicker
                     .tick()
                     .map_err(|e| SdkError::Internal(format!("mosaic tick: {e}")))?;
-                publish_frames(frames, mosaicker.output_track(), publisher, job)?;
+                publish_frames(
+                    frames,
+                    mosaicker.output_track(),
+                    publisher,
+                    job,
+                    &mut last_announced_extradata,
+                )?;
                 break;
             }
         }
@@ -362,7 +370,13 @@ fn run_mosaicker(
         let frames = mosaicker
             .tick()
             .map_err(|e| SdkError::Internal(format!("mosaic tick: {e}")))?;
-        publish_frames(frames, mosaicker.output_track(), publisher, job)?;
+        publish_frames(
+            frames,
+            mosaicker.output_track(),
+            publisher,
+            job,
+            &mut last_announced_extradata,
+        )?;
 
         next_tick = Instant::now() + interval;
     }
@@ -370,7 +384,13 @@ fn run_mosaicker(
     let flushed = mosaicker
         .flush()
         .map_err(|e| SdkError::Internal(format!("flush mosaicker: {e}")))?;
-    publish_frames(flushed, mosaicker.output_track(), publisher, job)?;
+    publish_frames(
+        flushed,
+        mosaicker.output_track(),
+        publisher,
+        job,
+        &mut last_announced_extradata,
+    )?;
 
     info!("video mosaic worker finished");
     Ok(())
@@ -381,11 +401,18 @@ fn publish_frames(
     output_track: &cheetah_codec::track::TrackInfo,
     publisher: &mut dyn PublisherSink,
     job: &Option<Arc<Mutex<ProcessingJob>>>,
+    last_announced_extradata: &mut Option<CodecExtradata>,
 ) -> Result<(), SdkError> {
-    if let Err(e) = publisher.update_tracks(vec![output_track.clone()]) {
-        return Err(SdkError::Internal(format!(
-            "update mosaic output tracks: {e}"
-        )));
+    if frames.is_empty() {
+        return Ok(());
+    }
+    if last_announced_extradata.as_ref() != Some(&output_track.extradata) {
+        if let Err(e) = publisher.update_tracks(vec![output_track.clone()]) {
+            return Err(SdkError::Internal(format!(
+                "update mosaic output tracks: {e}"
+            )));
+        }
+        *last_announced_extradata = Some(output_track.extradata.clone());
     }
     for mut f in frames {
         let payload_len = f.payload.len() as u64;
