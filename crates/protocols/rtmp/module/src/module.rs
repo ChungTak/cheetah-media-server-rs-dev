@@ -887,6 +887,7 @@ async fn run_push_job_supervisor(
 
         let needs_resolve = derived_source.is_none()
             || (matches!(job.processing_policy, ProcessingPolicy::Auto { .. })
+                && current_signature.is_some()
                 && current_signature.as_ref() != last_codec_signature.as_ref());
 
         if needs_resolve {
