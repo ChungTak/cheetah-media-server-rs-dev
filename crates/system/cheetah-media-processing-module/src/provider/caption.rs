@@ -125,7 +125,7 @@ impl MediaProcessingProvider {
             MediaCapability::VideoProcessing,
             "caption extraction / video transcode / abr ladder",
         );
-        #[cfg(feature = "media-processing-audio")]
+        #[cfg(feature = "media-processing-cpu")]
         {
             set.add(MediaCapability::AudioProcessing, 1);
             set.set_reason(MediaCapability::AudioProcessing, "audio transcode");
