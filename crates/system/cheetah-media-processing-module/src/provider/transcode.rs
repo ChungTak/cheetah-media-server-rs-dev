@@ -6,10 +6,12 @@
 //! Only compiled when `media-processing-cpu` is enabled so that both the video
 //! and audio transcode sessions are available.
 
-use std::sync::{Arc, Mutex};
+use std::collections::VecDeque;
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cheetah_codec::{
+    frame::FrameFlags,
     track::{CodecId, MediaKind, TrackInfo},
     AVFrame,
 };
@@ -106,6 +108,119 @@ fn default_audio_bitrate(codec: CodecId) -> u32 {
 enum TranscodeInput {
     Video(Arc<AVFrame>),
     Audio(Arc<AVFrame>),
+}
+
+impl TranscodeInput {
+    fn is_keyframe(&self) -> bool {
+        match self {
+            TranscodeInput::Video(frame) => frame.flags.contains(FrameFlags::KEY),
+            TranscodeInput::Audio(_) => false,
+        }
+    }
+}
+
+/// Bounded queue between the async feeder and the blocking worker.
+///
+/// Non-keyframe drops are returned to the caller so they can be counted. When a
+/// keyframe arrives and the queue is full, droppable frames at the front are
+/// evicted; if the queue is still full, it is cleared and the keyframe is kept,
+/// so the decoder can always resynchronize on a fresh access point.
+struct QueueState {
+    items: VecDeque<TranscodeInput>,
+    closed: bool,
+}
+
+struct TranscodeQueueSender {
+    inner: Arc<Mutex<QueueState>>,
+    condvar: Arc<Condvar>,
+    cap: usize,
+}
+
+struct TranscodeQueueReceiver {
+    inner: Arc<Mutex<QueueState>>,
+    condvar: Arc<Condvar>,
+}
+
+fn transcode_queue(cap: usize) -> (TranscodeQueueSender, TranscodeQueueReceiver) {
+    let inner = Arc::new(Mutex::new(QueueState {
+        items: VecDeque::new(),
+        closed: false,
+    }));
+    let condvar = Arc::new(Condvar::new());
+    let sender = TranscodeQueueSender {
+        inner: inner.clone(),
+        condvar: condvar.clone(),
+        cap,
+    };
+    let receiver = TranscodeQueueReceiver { inner, condvar };
+    (sender, receiver)
+}
+
+impl TranscodeQueueSender {
+    /// Try to enqueue an input. Returns `Ok(evicted)` on success where `evicted`
+    /// is the number of previously queued droppable frames that were dropped to
+    /// make room for a keyframe, and `Err(input)` if the input itself was dropped.
+    fn try_send(&self, input: TranscodeInput) -> Result<usize, TranscodeInput> {
+        let mut guard = self.inner.lock().unwrap();
+        if guard.closed {
+            return Err(input);
+        }
+
+        if guard.items.len() < self.cap {
+            guard.items.push_back(input);
+            self.condvar.notify_one();
+            return Ok(0);
+        }
+
+        if !input.is_keyframe() {
+            return Err(input);
+        }
+
+        // Evict droppable frames from the front to make room for the keyframe.
+        let mut evicted = 0;
+        while guard.items.len() >= self.cap
+            && guard
+                .items
+                .front()
+                .is_some_and(|front| !front.is_keyframe())
+        {
+            guard.items.pop_front();
+            evicted += 1;
+        }
+
+        if guard.items.len() >= self.cap {
+            // The queue is full of keyframes; start fresh with the newest one.
+            evicted += guard.items.len();
+            guard.items.clear();
+        }
+
+        guard.items.push_back(input);
+        self.condvar.notify_one();
+        Ok(evicted)
+    }
+}
+
+impl Drop for TranscodeQueueSender {
+    fn drop(&mut self) {
+        let mut guard = self.inner.lock().unwrap();
+        guard.closed = true;
+        self.condvar.notify_all();
+    }
+}
+
+impl TranscodeQueueReceiver {
+    fn recv(&self) -> Option<TranscodeInput> {
+        let mut guard = self.inner.lock().unwrap();
+        loop {
+            if let Some(item) = guard.items.pop_front() {
+                return Some(item);
+            }
+            if guard.closed {
+                return None;
+            }
+            guard = self.condvar.wait(guard).unwrap();
+        }
+    }
 }
 
 /// Synchronous worker that owns the transcode sessions and publisher sink.
@@ -358,7 +473,7 @@ pub async fn spawn_transcode_worker(
         )
         .map_err(|e| SdkError::Internal(format!("create transcode worker: {e}")))?;
 
-        let (tx, rx) = std::sync::mpsc::sync_channel::<TranscodeInput>(64);
+        let (tx, rx) = transcode_queue(64);
         let worker_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let worker_error_clone = worker_error.clone();
 
@@ -368,15 +483,20 @@ pub async fn spawn_transcode_worker(
                 "transcode-worker",
                 Box::new(move || {
                     let mut worker = worker;
-                    while let Ok(input) = rx.recv() {
+                    let mut process_error: Option<String> = None;
+                    while let Some(input) = rx.recv() {
                         if let Err(e) = worker.process(input) {
                             warn!("transcode worker stopping: {e}");
+                            process_error = Some(format!("{e}"));
                             break;
                         }
                     }
                     if let Err(e) = worker.flush_and_close() {
                         warn!("transcode worker flush/close failed: {e}");
-                        *worker_error_clone.lock().unwrap() = Some(format!("{e}"));
+                        process_error.get_or_insert_with(|| format!("{e}"));
+                    }
+                    if let Some(err) = process_error {
+                        *worker_error_clone.lock().unwrap() = Some(err);
                     }
                 }),
             )
@@ -415,9 +535,16 @@ pub async fn spawn_transcode_worker(
                     } else {
                         TranscodeInput::Audio(frame)
                     };
-                    if tx.try_send(input).is_err() {
-                        warn!("transcode input queue full; dropping frame");
-                        update_progress(&job, |job| job.drops += 1);
+                    match tx.try_send(input) {
+                        Ok(evicted) => {
+                            if evicted > 0 {
+                                update_progress(&job, |job| job.drops += evicted as u64);
+                            }
+                        }
+                        Err(_) => {
+                            warn!("transcode input queue full; dropping frame");
+                            update_progress(&job, |job| job.drops += 1);
+                        }
                     }
                 }
                 Ok(None) => break,
