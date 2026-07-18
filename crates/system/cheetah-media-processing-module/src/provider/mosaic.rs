@@ -134,24 +134,16 @@ pub async fn spawn_video_mosaic_worker(
 
         let source_tracks = wait_for_source_tracks(&engine, &inputs).await?;
 
-        let mosaicker = VideoMosaicker::new(&config, &inputs, &layout, &source_tracks)
-            .map_err(|e| SdkError::Internal(format!("create video mosaicker: {e}")))?;
-
-        if let Err(e) = publisher_sink.update_tracks(vec![mosaicker.output_track().clone()]) {
-            return Err(SdkError::Internal(format!("update output tracks: {e}")));
-        }
-
-        let output_fps = mosaicker
-            .output_track()
-            .fps
-            .unwrap_or(Rational32::new(30, 1));
-
         let (sender, receiver) =
             std::sync::mpsc::sync_channel::<MosaicInput>(MOSAIC_QUEUE_CAPACITY);
 
         let worker_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let worker_error_clone = worker_error.clone();
 
+        let config_for_worker = config.clone();
+        let inputs_for_worker = inputs.clone();
+        let layout_for_worker = layout.clone();
+        let source_tracks_for_worker = source_tracks.clone();
         let job_for_worker = job.clone();
 
         let handle: Box<dyn JoinHandle> = engine
@@ -160,8 +152,10 @@ pub async fn spawn_video_mosaic_worker(
                 "video-mosaic-worker",
                 Box::new(move || {
                     if let Err(e) = run_mosaicker(
-                        mosaicker,
-                        output_fps,
+                        &config_for_worker,
+                        &inputs_for_worker,
+                        &layout_for_worker,
+                        &source_tracks_for_worker,
                         receiver,
                         &mut *publisher_sink,
                         &job_for_worker,
@@ -283,12 +277,25 @@ pub async fn spawn_video_mosaic_worker(
 }
 
 fn run_mosaicker(
-    mut mosaicker: VideoMosaicker,
-    output_fps: Rational32,
+    config: &MediaProcessingModuleConfig,
+    inputs: &[VideoMosaicInput],
+    layout: &MosaicLayout,
+    source_tracks: &[cheetah_codec::track::TrackInfo],
     receiver: std::sync::mpsc::Receiver<MosaicInput>,
     publisher: &mut dyn PublisherSink,
     job: &Option<Arc<Mutex<ProcessingJob>>>,
 ) -> Result<(), SdkError> {
+    let mut mosaicker = VideoMosaicker::new(config, inputs, layout, source_tracks)
+        .map_err(|e| SdkError::Internal(format!("create video mosaicker: {e}")))?;
+
+    if let Err(e) = publisher.update_tracks(vec![mosaicker.output_track().clone()]) {
+        return Err(SdkError::Internal(format!("update output tracks: {e}")));
+    }
+
+    let output_fps = mosaicker
+        .output_track()
+        .fps
+        .unwrap_or(Rational32::new(30, 1));
     let interval = if output_fps.num > 0 {
         Duration::from_secs_f64(output_fps.den as f64 / output_fps.num as f64)
     } else {
@@ -334,6 +341,10 @@ fn run_mosaicker(
         publish_frames(frames, mosaicker.output_track(), publisher, job)?;
 
         next_tick += interval;
+        if next_tick < Instant::now() {
+            warn!("video mosaic falling behind; skipping catch-up ticks");
+            next_tick = Instant::now();
+        }
     }
 
     let flushed = mosaicker

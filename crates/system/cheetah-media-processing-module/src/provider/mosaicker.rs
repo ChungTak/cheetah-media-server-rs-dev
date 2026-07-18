@@ -44,6 +44,8 @@ pub(crate) struct VideoMosaicker {
     sources: Vec<SourceState>,
     pts: i64,
     output_param_cache: ParameterSetCache,
+    gop_size: u32,
+    frame_count: u64,
 }
 
 struct SourceState {
@@ -203,6 +205,8 @@ impl VideoMosaicker {
         output_track.bitrate = Some(output_bitrate);
         output_track.readiness = TrackReadiness::Ready;
 
+        let gop_size = layout.gop_size.unwrap_or(30);
+
         Ok(Self {
             registry,
             output_codec,
@@ -216,6 +220,8 @@ impl VideoMosaicker {
             sources,
             pts: 0,
             output_param_cache: ParameterSetCache::default(),
+            gop_size,
+            frame_count: 0,
         })
     }
 
@@ -376,7 +382,11 @@ impl VideoMosaicker {
         );
         canvas.pts = Some(self.pts);
         canvas.dts = Some(self.pts);
-        canvas.flags = ImageFlags::KEY;
+        let force_key = self.frame_count == 0
+            || (self.gop_size > 0 && self.frame_count.is_multiple_of(self.gop_size as u64));
+        if force_key {
+            canvas.flags = ImageFlags::KEY;
+        }
 
         self.encoder
             .submit_frame(canvas)
@@ -385,6 +395,7 @@ impl VideoMosaicker {
         let mut out = Vec::new();
         drain_encoder(self, &mut out)?;
         self.pts += 1;
+        self.frame_count += 1;
         Ok(out)
     }
 
@@ -454,7 +465,6 @@ fn drain_encoder(mosaicker: &mut VideoMosaicker, out: &mut Vec<AVFrame>) -> Resu
                     &packet,
                 )?;
                 frame.origin = FrameOrigin::Generated;
-                let _ = frame.set_duration(mosaicker.output_frame_duration);
                 let _ = frame.set_duration(mosaicker.output_frame_duration);
                 if mosaicker.output_frame_format == FrameFormat::CanonicalH26x {
                     mosaicker

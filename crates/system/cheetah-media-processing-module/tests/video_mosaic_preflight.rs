@@ -1,3 +1,5 @@
+#![allow(unused_imports)]
+
 use std::sync::Arc;
 
 use cheetah_config::ConfigStore;
@@ -5,8 +7,7 @@ use cheetah_engine::EngineBuilder;
 use cheetah_media_api::ids::MediaKey;
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_media_api::processing::{
-    CreateProcessingJob, MosaicCell, MosaicLayout, ProcessingJobId, ProcessingJobSpec,
-    VideoMosaicInput,
+    CreateProcessingJob, MosaicCell, MosaicLayout, ProcessingJobSpec, VideoMosaicInput,
 };
 use cheetah_media_processing_module::config::MediaProcessingModuleConfig;
 use cheetah_media_processing_module::MediaProcessingModuleFactory;
@@ -78,7 +79,6 @@ async fn video_mosaic_create_job_unsupported_without_cpu_feature() {
         idempotency_key: None,
         deadline_ms: None,
         spec: ProcessingJobSpec::VideoMosaic {
-            id: ProcessingJobId::new(),
             inputs: vec![
                 VideoMosaicInput {
                     source: MediaKey::with_default_vhost("app", "src1", None).unwrap(),
