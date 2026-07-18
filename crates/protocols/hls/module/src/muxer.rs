@@ -1445,18 +1445,18 @@ impl StreamMuxer {
         let Some(mux) = self.vtt_mux.as_mut() else {
             return;
         };
-        let before = mux.segments().len();
         if mux.close_segment(end_ms).is_err() {
             return;
         }
-        let after = mux.segments().len();
-        for segment in mux.segments().range(before..after) {
+        // `close_segment` appends exactly one segment; take it directly so we do
+        // not miss it once the muxer's internal ring starts evicting old ones.
+        if let Some(segment) = mux.segments().back().cloned() {
             self.pending_vtt_outputs
                 .push(MuxerOutput::VttSegmentReady(segment.clone()));
             if self.vtt_segments.len() >= self.config.segment_count.max(1) {
                 self.vtt_segments.pop_front();
             }
-            self.vtt_segments.push_back(segment.clone());
+            self.vtt_segments.push_back(segment);
         }
         if !self.vtt_segments.is_empty() {
             self.vtt_ready = true;
@@ -2405,6 +2405,44 @@ mod tests {
             cheetah_hls_core::PlaylistBuilder::build_vtt_media(muxer.vtt_mux().unwrap(), Some(42));
         assert!(m3u8.contains("#EXTM3U"));
         assert!(m3u8.contains("sub0.vtt?uid=42"));
+    }
+
+    #[test]
+    fn vtt_segments_captured_after_internal_ring_is_full() {
+        let mut config = make_config_llhls();
+        config.segment_duration_ms = 1000;
+        config.vtt_config = Some(VttMuxConfig {
+            segment_duration_ms: 1000,
+            max_segments: 2,
+        });
+        let mut muxer = StreamMuxer::new(config);
+        let mut track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90000);
+        track.extradata = CodecExtradata::H264 {
+            sps: vec![Bytes::from_static(&[0x67, 0x42, 0x00, 0x1e])],
+            pps: vec![Bytes::from_static(&[0x68, 0xce, 0x38])],
+            avcc: None,
+        };
+        muxer.set_tracks(&[track]);
+
+        let mut vtt_count = 0;
+        for i in 0..5 {
+            let dts_us = i * 1_000_000;
+            let outputs = muxer.push_frame(&make_video_frame(dts_us, true));
+            vtt_count += outputs
+                .iter()
+                .filter(|o| matches!(o, MuxerOutput::VttSegmentReady(_)))
+                .count();
+        }
+        assert_eq!(
+            vtt_count, 4,
+            "expected one VTT segment per closed video segment"
+        );
+        assert!(muxer.vtt_segments().len() <= 3);
+        assert_eq!(
+            muxer.vtt_segments().back().unwrap().sequence,
+            3,
+            "latest segment should be sub3 even after internal ring eviction"
+        );
     }
 
     #[test]
