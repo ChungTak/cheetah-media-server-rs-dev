@@ -92,7 +92,7 @@ pub async fn ensure_derived_push_source(
         .create_job(
             &ctx,
             CreateProcessingJob {
-                idempotency_key: Some(format!("rtmp_push_{}_{}", source, job_name)),
+                idempotency_key: Some(format!("rtmp_push_{source}_{job_name}")),
                 deadline_ms: None,
                 spec,
             },
@@ -101,14 +101,19 @@ pub async fn ensure_derived_push_source(
         .map_err(|e| SdkError::Internal(format!("create transcode job for rtmp push: {e}")))?;
 
     // Wait briefly for the transcode job to be running.
-    wait_for_running_job(
+    if let Err(err) = wait_for_running_job(
         processing_api.as_ref(),
         &ctx,
         &job.job_id,
         cancel,
         engine.runtime_api.clone(),
     )
-    .await?;
+    .await
+    {
+        // The job is never handed to the caller, so delete it here to avoid leaks.
+        let _ = processing_api.delete_job(&ctx, &job.job_id).await;
+        return Err(err);
+    }
 
     Ok(DerivedPushSource {
         stream_key: derived_stream_key,
@@ -116,11 +121,14 @@ pub async fn ensure_derived_push_source(
     })
 }
 
-/// Stop a derived processing job when the push job exits.
+/// Delete a derived processing job when the push job exits.
+///
+/// `delete_job` removes the entry from the provider's registry, unlike
+/// `stop_job`, which leaves stopped jobs in memory.
 pub async fn stop_derived_push_job(engine: &EngineContext, job_id: cheetah_sdk::ProcessingJobId) {
     if let Some(processing_api) = engine.media_services.processing() {
         let ctx = MediaRequestContext::default();
-        let _ = processing_api.stop_job(&ctx, &job_id).await;
+        let _ = processing_api.delete_job(&ctx, &job_id).await;
     }
 }
 
