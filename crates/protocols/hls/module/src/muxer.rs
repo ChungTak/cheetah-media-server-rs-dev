@@ -1528,6 +1528,18 @@ impl StreamMuxer {
         &self.vtt_segments
     }
 
+    /// Fetch a completed WebVTT segment by name, optionally stripping the `.vtt`
+    /// extension used in playlist URIs.
+    ///
+    /// 按名称获取已完成的 WebVTT 分段。
+    pub fn get_vtt_segment(&self, name: &str) -> Option<Bytes> {
+        let key = name.strip_suffix(".vtt").unwrap_or(name);
+        self.vtt_segments
+            .iter()
+            .find(|s| s.name == key)
+            .map(|s| Bytes::from(s.payload.clone()))
+    }
+
     /// Whether the subtitle track has produced at least one segment.
     ///
     /// 字幕轨道是否已产出至少一个分段。

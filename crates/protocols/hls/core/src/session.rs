@@ -222,6 +222,26 @@ pub enum HlsCoreEvent {
         session_id: Option<u64>,
         key_token: Option<String>,
     },
+    /// WebVTT subtitle media playlist requested.
+    ///
+    /// WebVTT 字幕媒体播放列表被请求。
+    SubtitleMediaPlaylistRequested {
+        connection_id: u64,
+        stream_key: StreamKeyParts,
+        session_id: Option<u64>,
+        key_token: Option<String>,
+        headers: HlsRequestHeaders,
+    },
+    /// WebVTT subtitle segment requested.
+    ///
+    /// WebVTT 字幕分段被请求。
+    SubtitleSegmentRequested {
+        connection_id: u64,
+        stream_key: StreamKeyParts,
+        segment_name: String,
+        session_id: Option<u64>,
+        key_token: Option<String>,
+    },
 }
 
 /// The HLS core state machine.
@@ -464,6 +484,37 @@ impl HlsCore {
                     session_id,
                     key_token,
                 })]
+            }
+            Ok(HlsRequestKind::SubtitleMediaPlaylist {
+                stream_key,
+                session_id,
+                key_token,
+            }) => {
+                vec![HlsCoreOutput::Event(
+                    HlsCoreEvent::SubtitleMediaPlaylistRequested {
+                        connection_id,
+                        stream_key,
+                        session_id,
+                        key_token,
+                        headers,
+                    },
+                )]
+            }
+            Ok(HlsRequestKind::SubtitleSegment {
+                stream_key,
+                segment_name,
+                session_id,
+                key_token,
+            }) => {
+                vec![HlsCoreOutput::Event(
+                    HlsCoreEvent::SubtitleSegmentRequested {
+                        connection_id,
+                        stream_key,
+                        segment_name,
+                        session_id,
+                        key_token,
+                    },
+                )]
             }
             Err(_) => {
                 vec![HlsCoreOutput::SendResponse {

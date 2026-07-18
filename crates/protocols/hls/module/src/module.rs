@@ -17,10 +17,18 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use cheetah_hls_core::{HlsContainer, PlaylistBuilder, StreamKeyParts};
+use cheetah_codec::{subtitle::WebVttCue, MonoTime};
+use cheetah_hls_core::{
+    HlsContainer, PlaylistBuilder, StreamKeyParts, SubtitleRenditionInfo, VttMuxConfig,
+};
 use cheetah_hls_driver_tokio::{
     start_server, HlsCommandSender, HlsConnectionId, HlsCoreEvent, HlsDriverCommand,
     HlsDriverConfig, HlsDriverEvent, HlsServerHandle,
+};
+use cheetah_sdk::media_api::{
+    ids::{MediaKey, StreamKeyBridge},
+    port::MediaRequestContext,
+    processing::{ProcessingJobQuery, ProcessingJobSpec, ProcessingJobState},
 };
 use cheetah_sdk::{
     BootstrapPolicy, CancellationToken, ConfigEffect, EngineContext, Module, ModuleCapability,
@@ -559,6 +567,7 @@ async fn run_server_loop(
                             &sessions,
                             &pending,
                             &cmd_tx,
+                            cancel.clone(),
                             connection_id,
                             event,
                             &content_notify_tx,
@@ -639,6 +648,7 @@ async fn handle_core_event(
     sessions: &SessionMap,
     pending: &PendingMap,
     cmd_tx: &HlsCommandSender,
+    cancel: CancellationToken,
     connection_id: HlsConnectionId,
     event: HlsCoreEvent,
     content_notify_tx: &futures::channel::mpsc::Sender<String>,
@@ -700,6 +710,7 @@ async fn handle_core_event(
                 muxers,
                 pending,
                 cmd_tx,
+                cancel.clone(),
                 &stream_key,
                 content_notify_tx,
             );
@@ -791,6 +802,7 @@ async fn handle_core_event(
                 muxers,
                 pending,
                 cmd_tx,
+                cancel.clone(),
                 &stream_key,
                 content_notify_tx,
             );
@@ -1128,6 +1140,7 @@ async fn handle_core_event(
                 muxers,
                 pending,
                 cmd_tx,
+                cancel.clone(),
                 &stream_key,
                 content_notify_tx,
             );
@@ -1628,6 +1641,7 @@ async fn handle_core_event(
                 muxers,
                 pending,
                 cmd_tx,
+                cancel.clone(),
                 &stream_key,
                 content_notify_tx,
             );
@@ -1735,23 +1749,178 @@ async fn handle_core_event(
                     .await;
             }
         }
+        HlsCoreEvent::SubtitleMediaPlaylistRequested {
+            stream_key,
+            session_id,
+            key_token,
+            ..
+        } => {
+            let key = stream_key_string(&stream_key);
+            refresh_session_activity(
+                sessions,
+                &key,
+                session_id,
+                engine.runtime_api.now().as_micros(),
+            );
+            ensure_muxer(
+                engine,
+                config,
+                muxers,
+                pending,
+                cmd_tx,
+                cancel.clone(),
+                &stream_key,
+                content_notify_tx,
+            );
+
+            if config.stream_key_validation {
+                let valid = {
+                    let map = muxers.lock();
+                    map.get(&key)
+                        .map(|m| {
+                            let expected = m.lock().stream_key().to_owned();
+                            key_token.as_deref() == Some(&expected)
+                        })
+                        .unwrap_or(false)
+                };
+                if !valid {
+                    let _ = cmd_tx
+                        .send(HlsDriverCommand::SendResponse {
+                            connection_id,
+                            status: 404,
+                            content_type: "text/plain",
+                            body: bytes::Bytes::from_static(b"Not Found"),
+                            headers: cors_headers(),
+                        })
+                        .await;
+                    return;
+                }
+            }
+
+            let playlist = {
+                let map = muxers.lock();
+                map.get(&key).map(|m| {
+                    let mux = m.lock();
+                    if let Some(vtt_mux) = mux.vtt_mux() {
+                        cheetah_hls_core::PlaylistBuilder::build_vtt_media(vtt_mux, session_id)
+                    } else {
+                        String::new()
+                    }
+                })
+            };
+
+            let content = playlist.unwrap_or_else(|| {
+                "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n"
+                    .to_string()
+            });
+            let _ = cmd_tx
+                .send(HlsDriverCommand::SendResponse {
+                    connection_id,
+                    status: 200,
+                    content_type: "application/vnd.apple.mpegurl",
+                    body: bytes::Bytes::from(content),
+                    headers: cors_headers_with_max_age(config.cache_control.chunklist_max_age),
+                })
+                .await;
+        }
+        HlsCoreEvent::SubtitleSegmentRequested {
+            stream_key,
+            segment_name,
+            session_id,
+            key_token,
+            ..
+        } => {
+            let key = stream_key_string(&stream_key);
+            if let Some(uid) = session_id {
+                let now_us = engine.runtime_api.now().as_micros();
+                sessions
+                    .lock()
+                    .entry(key.clone())
+                    .or_default()
+                    .entry(uid)
+                    .and_modify(|s| s.last_request_us = now_us)
+                    .or_insert(SessionState {
+                        last_request_us: now_us,
+                        bytes_sent: 0,
+                    });
+            }
+
+            if config.stream_key_validation {
+                let valid = {
+                    let map = muxers.lock();
+                    map.get(&key)
+                        .map(|m| {
+                            let expected = m.lock().stream_key().to_owned();
+                            key_token.as_deref() == Some(&expected)
+                        })
+                        .unwrap_or(false)
+                };
+                if !valid {
+                    let _ = cmd_tx
+                        .send(HlsDriverCommand::SendResponse {
+                            connection_id,
+                            status: 404,
+                            content_type: "text/plain",
+                            body: bytes::Bytes::from_static(b"Not Found"),
+                            headers: cors_headers(),
+                        })
+                        .await;
+                    return;
+                }
+            }
+
+            let segment_data = {
+                let map = muxers.lock();
+                map.get(&key)
+                    .and_then(|m| m.lock().get_vtt_segment(&segment_name))
+            };
+
+            match segment_data {
+                Some(data) => {
+                    let _ = cmd_tx
+                        .send(HlsDriverCommand::SendResponse {
+                            connection_id,
+                            status: 200,
+                            content_type: "text/vtt",
+                            body: data,
+                            headers: segment_response_headers(
+                                &segment_name,
+                                config.cache_control.segment_max_age,
+                            ),
+                        })
+                        .await;
+                }
+                None => {
+                    let _ = cmd_tx
+                        .send(HlsDriverCommand::SendResponse {
+                            connection_id,
+                            status: 404,
+                            content_type: "text/plain",
+                            body: bytes::Bytes::from_static(b"Subtitle Segment Not Found"),
+                            headers: cors_headers(),
+                        })
+                        .await;
+                }
+            }
+        }
     }
 }
 
 /// Create the muxer and subscriber task for a stream if not present.
 ///
 /// Called on the first playlist request for a stream. It inserts a `StreamMuxer`
-/// and spawns a subscriber that pulls frames from the engine.
+/// and spawns a subscriber that pulls frames from the engine, plus a caption
+/// discovery task if a `MediaProcessingApi` is registered.
 ///
 /// 如果尚不存在，则为流创建复用器和订阅任务。
-///
-/// 在首次播放列表请求时调用，插入 `StreamMuxer` 并启动从引擎拉取帧的订阅者。
+#[allow(clippy::too_many_arguments)]
 fn ensure_muxer(
     engine: &EngineContext,
     config: &HlsModuleConfig,
     muxers: &MuxerMap,
     pending: &PendingMap,
     cmd_tx: &HlsCommandSender,
+    cancel: CancellationToken,
     stream_key: &StreamKeyParts,
     content_notify_tx: &futures::channel::mpsc::Sender<String>,
 ) {
@@ -1779,7 +1948,7 @@ fn ensure_muxer(
         ),
         origin_mode: config.origin_mode,
         stream_name: key.clone(),
-        vtt_config: None,
+        vtt_config: Some(VttMuxConfig::default()),
     })));
     map.insert(key.clone(), muxer.clone());
 
@@ -1799,11 +1968,12 @@ fn ensure_muxer(
     let notify_tx = content_notify_tx.clone();
 
     let runtime_api = engine.runtime_api.clone();
+    let muxer_for_subscriber = muxer.clone();
     let _ = runtime_api.spawn(Box::pin(async move {
         run_subscriber(
             engine2,
             sdk_stream_key,
-            muxer,
+            muxer_for_subscriber,
             key,
             muxers_ref,
             pending_ref,
@@ -1818,6 +1988,15 @@ fn ensure_muxer(
             notify_tx,
         )
         .await;
+    }));
+
+    // Spawn caption discovery/subscriber task for this stream.
+    let engine3 = engine.clone();
+    let stream_key2 = stream_key.clone();
+    let cancel2 = cancel.clone();
+    let muxer_for_caption = muxer.clone();
+    let _ = runtime_api.spawn(Box::pin(async move {
+        run_caption_subscriber(engine3, stream_key2, muxer_for_caption, cancel2).await;
     }));
 }
 
@@ -2049,6 +2228,180 @@ async fn run_subscriber(
     }
     muxers.lock().remove(&muxer_key);
     debug!("HLS subscriber ended for {muxer_key}");
+}
+
+/// Discover a running `CaptionExtract` job for the source stream, subscribe to its
+/// target stream, and push deserialized `WebVttCue` frames into the HLS muxer.
+///
+/// Loops while the stream/muxer is alive: it retries discovery when no job is found,
+/// resubscribes if the caption publisher goes away, and stops when the cancellation
+/// token fires.
+///
+/// 发现并订阅 `CaptionExtract` 派生字幕流，将 `WebVttCue` 推入 HLS 复用器。
+async fn run_caption_subscriber(
+    engine: EngineContext,
+    stream_key: StreamKeyParts,
+    muxer: Arc<Mutex<StreamMuxer>>,
+    cancel: CancellationToken,
+) {
+    let processing_api = match engine.media_services.processing() {
+        Some(api) => api,
+        None => return,
+    };
+
+    let source_key = match StreamKeyBridge::from_namespace_path(
+        &stream_key.namespace,
+        &stream_key.stream_path,
+    ) {
+        Ok(k) => k,
+        Err(e) => {
+            warn!("hls caption subscriber: invalid stream key {stream_key:?}: {e}");
+            return;
+        }
+    };
+
+    const DISCOVERY_INTERVAL_US: u64 = 2_000_000;
+    const SUBSCRIBE_RETRY_INTERVAL_MS: u64 = 200;
+    const SUBSCRIBE_RETRY_TOTAL: usize = 30;
+    let ctx = MediaRequestContext::default();
+
+    while !cancel.is_cancelled() {
+        // Discovery loop: wait for a running CaptionExtract job whose source matches.
+        let mut target_key: Option<MediaKey> = None;
+        while target_key.is_none() && !cancel.is_cancelled() {
+            let mut query = ProcessingJobQuery {
+                vhost: Some(source_key.vhost.0.clone()),
+                app: Some(source_key.app.0.clone()),
+                stream: Some(source_key.stream.0.clone()),
+                state: Some(ProcessingJobState::Running),
+                page: 1,
+                page_size: 20,
+            };
+            query.clamp_page_size();
+
+            if let Ok(page) = processing_api.list_jobs(&ctx, query).await {
+                target_key = page.items.into_iter().find_map(|j| match j.spec {
+                    ProcessingJobSpec::CaptionExtract { target, .. } => Some(target),
+                    _ => None,
+                });
+            }
+
+            if target_key.is_none() {
+                let deadline = MonoTime::from_micros(
+                    engine.runtime_api.now().as_micros() + DISCOVERY_INTERVAL_US,
+                );
+                let mut timer = engine.runtime_api.sleep_until(deadline);
+                let timer_fut = timer.wait().fuse();
+                let cancel_fut = cancel.cancelled().fuse();
+                pin_mut!(cancel_fut, timer_fut);
+                select_biased! {
+                    _ = cancel_fut => break,
+                    _ = timer_fut => {}
+                }
+            }
+        }
+
+        let Some(target) = target_key else { break };
+        let (ns, path) = StreamKeyBridge::to_namespace_path(&target);
+        let target_stream_key = StreamKey::new(&ns, &path);
+
+        // Try to subscribe to the caption target stream.
+        let mut subscriber = None;
+        for attempt in 0..SUBSCRIBE_RETRY_TOTAL {
+            match engine
+                .subscriber_api
+                .subscribe(
+                    target_stream_key.clone(),
+                    SubscriberOptions {
+                        queue_capacity: 256,
+                        bootstrap_policy: BootstrapPolicy::live_tail(150, Some(5_000)),
+                        ..Default::default()
+                    },
+                )
+                .await
+            {
+                Ok(s) => {
+                    subscriber = Some(s);
+                    break;
+                }
+                Err(SdkError::NotFound(_)) if attempt + 1 < SUBSCRIBE_RETRY_TOTAL => {
+                    let deadline = MonoTime::from_micros(
+                        engine.runtime_api.now().as_micros() + SUBSCRIBE_RETRY_INTERVAL_MS * 1000,
+                    );
+                    let mut timer = engine.runtime_api.sleep_until(deadline);
+                    let timer_fut = timer.wait().fuse();
+                    let cancel_fut = cancel.cancelled().fuse();
+                    pin_mut!(cancel_fut, timer_fut);
+                    select_biased! {
+                        _ = cancel_fut => break,
+                        _ = timer_fut => {}
+                    }
+                }
+                Err(e) => {
+                    warn!("hls caption subscriber: subscribe to {ns}/{path} failed: {e}");
+                    break;
+                }
+            }
+        }
+
+        let Some(mut sub) = subscriber else {
+            // Pause before re-discovering in case the target stream name changed.
+            let deadline =
+                MonoTime::from_micros(engine.runtime_api.now().as_micros() + DISCOVERY_INTERVAL_US);
+            let mut timer = engine.runtime_api.sleep_until(deadline);
+            let timer_fut = timer.wait().fuse();
+            let cancel_fut = cancel.cancelled().fuse();
+            pin_mut!(cancel_fut, timer_fut);
+            select_biased! {
+                _ = cancel_fut => break,
+                _ = timer_fut => {}
+            }
+            continue;
+        };
+
+        // Feed cues into the muxer until the caption stream ends or we are cancelled.
+        let mut cancelled_while_receiving = false;
+        while !cancelled_while_receiving {
+            let cancel_fut = cancel.cancelled().fuse();
+            let recv_fut = sub.recv().fuse();
+            pin_mut!(cancel_fut, recv_fut);
+
+            let frame = select_biased! {
+                _ = cancel_fut => {
+                    cancelled_while_receiving = true;
+                    None
+                }
+                frame = recv_fut => Some(frame),
+            };
+
+            let Some(frame) = frame else {
+                break;
+            };
+
+            match frame {
+                Ok(Some(frame))
+                    if frame.media_kind == cheetah_codec::MediaKind::Subtitle
+                        && frame.codec == cheetah_codec::CodecId::WebVtt =>
+                {
+                    match serde_json::from_slice::<WebVttCue>(&frame.payload) {
+                        Ok(cue) => {
+                            if let Err(e) = muxer.lock().push_cue(cue) {
+                                warn!("hls caption subscriber: push_cue failed: {e}");
+                            }
+                        }
+                        Err(e) => warn!("hls caption subscriber: invalid WebVTT cue payload: {e}"),
+                    }
+                }
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => break,
+            }
+        }
+
+        let _ = sub.close().await;
+        if cancelled_while_receiving {
+            return;
+        }
+    }
 }
 
 /// Release pending blocking requests that are now satisfied or timed out.
@@ -2435,6 +2788,14 @@ fn build_master_playlist_content(
     session_id: u64,
     include_stream_key: bool,
 ) -> String {
+    let subtitle_info = muxer
+        .filter(|m| m.vtt_ready())
+        .map(|_| SubtitleRenditionInfo {
+            name: "English".to_string(),
+            language: "en".to_string(),
+            is_default: true,
+            autoselect: true,
+        });
     if let Some(mux) = muxer {
         if mux.is_demuxed() {
             let sk = if include_stream_key {
@@ -2443,7 +2804,7 @@ fn build_master_playlist_content(
                 String::new()
             };
             let (w, h) = mux.video_dimensions();
-            return cheetah_hls_core::DemuxedMasterPlaylist::build(
+            return cheetah_hls_core::DemuxedMasterPlaylist::build_with_subtitles(
                 Some(&cheetah_hls_core::MediaRenditionInfo {
                     codecs: codec_string(mux.video_codec(), mux.video_extradata()),
                     bandwidth: 2000000,
@@ -2460,6 +2821,7 @@ fn build_master_playlist_content(
                     frame_rate: None,
                     channels: Some(mux.audio_channels()),
                 }),
+                subtitle_info.as_ref(),
                 &stream_key.stream_path,
                 Some(session_id),
                 include_stream_key,
@@ -2467,7 +2829,11 @@ fn build_master_playlist_content(
             );
         }
     }
-    PlaylistBuilder::build_master(&stream_key.stream_path, session_id)
+    PlaylistBuilder::build_master_with_subtitles(
+        &stream_key.stream_path,
+        session_id,
+        subtitle_info.as_ref(),
+    )
 }
 
 /// Wait briefly for the demuxed muxer to be ready before building a master playlist.
@@ -2680,8 +3046,8 @@ fn cors_headers_cdn() -> Vec<(&'static str, String)> {
 mod tests {
     use bytes::Bytes;
     use cheetah_codec::{
-        AVFrame, CodecExtradata, CodecId, FrameFlags, FrameFormat, MediaKind, Timebase, TrackId,
-        TrackInfo,
+        subtitle::WebVttCue, AVFrame, CodecExtradata, CodecId, FrameFlags, FrameFormat, MediaKind,
+        Timebase, TrackId, TrackInfo,
     };
 
     use crate::muxer::generate_stream_validation_key;
@@ -2702,7 +3068,7 @@ mod tests {
             ll_hls_packaging_mode: cheetah_hls_core::LlHlsPackagingMode::VideoOnly,
             origin_mode: false,
             stream_name: String::new(),
-            vtt_config: None,
+            vtt_config: Some(VttMuxConfig::default()),
         });
         let mut track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90000);
         track.extradata = CodecExtradata::H264 {
@@ -2745,7 +3111,7 @@ mod tests {
             ll_hls_packaging_mode: cheetah_hls_core::LlHlsPackagingMode::DemuxedAv,
             origin_mode: false,
             stream_name: String::new(),
-            vtt_config: None,
+            vtt_config: Some(VttMuxConfig::default()),
         });
         let mut video = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90000);
         video.width = Some(1920);
@@ -2779,6 +3145,76 @@ mod tests {
         assert!(content.contains("chunklist_audio.m3u8?uid=7"));
         assert!(content.contains("chunklist_video.m3u8?uid=7"));
         assert!(!content.contains("index.m3u8"));
+    }
+
+    #[test]
+    fn master_playlist_content_includes_subtitle_rendition_when_vtt_ready() {
+        let mut muxer = ready_demuxed_muxer();
+        muxer.push_cue(WebVttCue {
+            id: None,
+            start_ms: 500,
+            end_ms: 2_500,
+            payload: "caption".to_string(),
+            settings: None,
+        });
+
+        let mut frame = AVFrame::new(
+            TrackId(1),
+            MediaKind::Video,
+            CodecId::H264,
+            FrameFormat::CanonicalH26x,
+            2_000_000,
+            2_000_000,
+            Timebase::new(1, 1_000_000),
+            Bytes::from_static(&[0, 0, 0, 1, 0x65, 0xaa, 0xbb]),
+        );
+        frame.flags |= FrameFlags::KEY;
+        muxer.push_frame(&frame);
+        muxer.conclude();
+
+        let stream_key = StreamKeyParts {
+            namespace: "live".to_string(),
+            stream_path: "test".to_string(),
+        };
+
+        let content = build_master_playlist_content(&stream_key, Some(&muxer), 7, false);
+
+        assert!(content.contains("#EXT-X-MEDIA:TYPE=SUBTITLES"));
+        assert!(content.contains("chunklist_subtitles.m3u8?uid=7"));
+        assert!(content.contains("SUBTITLES=\"subs\""));
+    }
+
+    #[test]
+    fn subtitle_media_playlist_and_segment_can_be_served_from_muxer() {
+        let mut muxer = ready_muxer();
+        muxer.push_cue(WebVttCue {
+            id: None,
+            start_ms: 500,
+            end_ms: 2_500,
+            payload: "caption".to_string(),
+            settings: None,
+        });
+
+        let mut frame = AVFrame::new(
+            TrackId(1),
+            MediaKind::Video,
+            CodecId::H264,
+            FrameFormat::CanonicalH26x,
+            2_000_000,
+            2_000_000,
+            Timebase::new(1, 1_000_000),
+            Bytes::from_static(&[0, 0, 0, 1, 0x65, 0xaa, 0xbb]),
+        );
+        frame.flags |= FrameFlags::KEY;
+        muxer.push_frame(&frame);
+        muxer.conclude();
+
+        let vtt_mux = muxer.vtt_mux().unwrap();
+        let playlist = cheetah_hls_core::PlaylistBuilder::build_vtt_media(vtt_mux, Some(7));
+        assert!(playlist.contains("sub0.vtt?uid=7"));
+
+        let segment = muxer.get_vtt_segment("sub0.vtt").expect("sub0.vtt");
+        assert!(String::from_utf8_lossy(&segment).contains("WEBVTT"));
     }
 
     #[test]

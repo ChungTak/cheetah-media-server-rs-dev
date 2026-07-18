@@ -152,6 +152,24 @@ pub enum HlsRequestKind {
         session_id: Option<u64>,
         key_token: Option<String>,
     },
+    /// WebVTT subtitle media playlist: `/{ns}/{stream}/subtitle.m3u8` or
+    /// `/{ns}/{stream}/chunklist_subtitles.m3u8`.
+    ///
+    /// WebVTT 字幕媒体播放列表。
+    SubtitleMediaPlaylist {
+        stream_key: StreamKeyParts,
+        session_id: Option<u64>,
+        key_token: Option<String>,
+    },
+    /// WebVTT subtitle segment: `/{ns}/{stream}/sub{N}.vtt`
+    ///
+    /// WebVTT 字幕分段。
+    SubtitleSegment {
+        stream_key: StreamKeyParts,
+        segment_name: String,
+        session_id: Option<u64>,
+        key_token: Option<String>,
+    },
     /// Embedded hls.js player page: `/{namespace}/{stream}/`
     ///
     /// 嵌入式 hls.js 播放器页面：`/{namespace}/{stream}/`
@@ -222,7 +240,13 @@ pub fn parse_hls_request(target: &str) -> Result<HlsRequestKind, HlsCoreError> {
             if file.ends_with(".m3u8") {
                 // Per-track chunklist: chunklist_video.m3u8 / chunklist_audio.m3u8
                 let base = file.strip_suffix(".m3u8").unwrap_or("");
-                if let Some(lane) = parse_chunklist_lane(base) {
+                if base == "subtitle" || base == "chunklist_subtitles" {
+                    Ok(HlsRequestKind::SubtitleMediaPlaylist {
+                        stream_key,
+                        session_id: params.uid,
+                        key_token: params.key_token,
+                    })
+                } else if let Some(lane) = parse_chunklist_lane(base) {
                     Ok(HlsRequestKind::TrackMediaPlaylist {
                         stream_key,
                         lane,
@@ -316,6 +340,14 @@ pub fn parse_hls_request(target: &str) -> Result<HlsRequestKind, HlsCoreError> {
                 Ok(HlsRequestKind::Segment {
                     stream_key,
                     segment_name: seg_name.to_string(),
+                    session_id: params.uid,
+                    key_token: params.key_token,
+                })
+            } else if file.ends_with(".vtt") {
+                let seg_name = file.strip_suffix(".vtt").unwrap_or(file);
+                Ok(HlsRequestKind::SubtitleSegment {
+                    stream_key,
+                    segment_name: format!("{seg_name}.vtt"),
                     session_id: params.uid,
                     key_token: params.key_token,
                 })
@@ -746,5 +778,44 @@ mod tests {
         // index.m3u8 still parses as MediaPlaylist
         let req = parse_hls_request("/live/stream/index.m3u8").unwrap();
         assert!(matches!(req, HlsRequestKind::MediaPlaylist { .. }));
+    }
+
+    #[test]
+    fn parse_subtitle_media_playlist() {
+        for name in ["subtitle.m3u8", "chunklist_subtitles.m3u8"] {
+            let req = parse_hls_request(&format!("/live/stream/{name}?uid=42")).unwrap();
+            match req {
+                HlsRequestKind::SubtitleMediaPlaylist {
+                    stream_key,
+                    session_id,
+                    key_token,
+                } => {
+                    assert_eq!(stream_key.namespace, "live");
+                    assert_eq!(stream_key.stream_path, "stream");
+                    assert_eq!(session_id, Some(42));
+                    assert!(key_token.is_none());
+                }
+                _ => panic!("expected SubtitleMediaPlaylist, got {req:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_subtitle_segment_request() {
+        let req = parse_hls_request("/live/stream/sub0.vtt?uid=42").unwrap();
+        match req {
+            HlsRequestKind::SubtitleSegment {
+                stream_key,
+                segment_name,
+                session_id,
+                ..
+            } => {
+                assert_eq!(stream_key.namespace, "live");
+                assert_eq!(stream_key.stream_path, "stream");
+                assert_eq!(segment_name, "sub0.vtt");
+                assert_eq!(session_id, Some(42));
+            }
+            _ => panic!("expected SubtitleSegment, got {req:?}"),
+        }
     }
 }
