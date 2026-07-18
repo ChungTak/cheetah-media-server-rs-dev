@@ -187,8 +187,10 @@ pub struct VideoMosaicInput {
     /// 增益，单位为分贝。
     pub audio_gain_db: Option<i32>,
     /// Tile fit policy. Overrides [`MosaicLayout::fit`] when set.
+    #[serde(default)]
     pub fit: Option<MosaicFit>,
     /// Optional per-tile label.
+    #[serde(default)]
     pub label: Option<String>,
 }
 
