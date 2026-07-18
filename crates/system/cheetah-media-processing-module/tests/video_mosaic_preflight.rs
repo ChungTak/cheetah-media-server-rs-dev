@@ -7,7 +7,7 @@ use cheetah_engine::EngineBuilder;
 use cheetah_media_api::ids::MediaKey;
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_media_api::processing::{
-    AudioCodec, AudioMixInput, AudioTarget, CreateProcessingJob, ProcessingJobId, ProcessingJobSpec,
+    CreateProcessingJob, MosaicCell, MosaicLayout, ProcessingJobSpec, VideoMosaicInput,
 };
 use cheetah_media_processing_module::config::MediaProcessingModuleConfig;
 use cheetah_media_processing_module::MediaProcessingModuleFactory;
@@ -16,7 +16,7 @@ use cheetah_sdk::ModuleId;
 
 #[cfg(feature = "media-processing-cpu")]
 #[tokio::test]
-async fn preflight_includes_audio_mix_when_cpu_feature_enabled() {
+async fn preflight_includes_video_mosaic_when_cpu_feature_enabled() {
     let config = Arc::new(ConfigStore::new());
     config.set_global_default(serde_json::json!({}));
     config.register_module_default(
@@ -43,8 +43,8 @@ async fn preflight_includes_audio_mix_when_cpu_feature_enabled() {
         .expect("preflight");
 
     assert!(
-        report.operations.contains(&"audio_mix".to_string()),
-        "audio_mix should be advertised when media-processing-cpu is enabled: {:?}",
+        report.operations.contains(&"video_mosaic".to_string()),
+        "video_mosaic should be advertised when media-processing-cpu is enabled: {:?}",
         report.operations
     );
 }
@@ -54,7 +54,7 @@ async fn preflight_includes_audio_mix_when_cpu_feature_enabled() {
     not(feature = "media-processing-cpu")
 ))]
 #[tokio::test]
-async fn audio_mix_create_job_unsupported_without_cpu_feature() {
+async fn video_mosaic_create_job_unsupported_without_cpu_feature() {
     let config = Arc::new(ConfigStore::new());
     config.set_global_default(serde_json::json!({}));
     config.register_module_default(
@@ -78,24 +78,47 @@ async fn audio_mix_create_job_unsupported_without_cpu_feature() {
     let request = CreateProcessingJob {
         idempotency_key: None,
         deadline_ms: None,
-        spec: ProcessingJobSpec::AudioMix {
+        spec: ProcessingJobSpec::VideoMosaic {
             inputs: vec![
-                AudioMixInput {
+                VideoMosaicInput {
                     source: MediaKey::with_default_vhost("app", "src1", None).unwrap(),
-                    gain_db: None,
+                    cell: MosaicCell {
+                        column: 0,
+                        row: 0,
+                        z_order: 0,
+                    },
+                    audio_gain_db: None,
+                    fit: None,
+                    label: None,
                 },
-                AudioMixInput {
+                VideoMosaicInput {
                     source: MediaKey::with_default_vhost("app", "src2", None).unwrap(),
-                    gain_db: None,
+                    cell: MosaicCell {
+                        column: 1,
+                        row: 0,
+                        z_order: 0,
+                    },
+                    audio_gain_db: None,
+                    fit: None,
+                    label: None,
                 },
             ],
             target: MediaKey::with_default_vhost("app", "out", None).unwrap(),
-            output: AudioTarget {
-                codec: AudioCodec::Aac,
-                sample_rate: Some(8_000),
-                channels: Some(1),
-                bit_rate: Some(64_000),
+            layout: MosaicLayout {
+                columns: 2,
+                rows: 1,
+                cell_width: 320,
+                cell_height: 240,
+                background: None,
+                frame_rate_num: None,
+                frame_rate_den: None,
+                bit_rate: None,
+                gop_size: None,
+                video_codec: None,
+                fit: None,
             },
+            audio_mix: None,
+            overlays: vec![],
         },
     };
 
@@ -104,7 +127,7 @@ async fn audio_mix_create_job_unsupported_without_cpu_feature() {
         .await;
     assert!(
         result.is_err(),
-        "AudioMix should be unsupported without media-processing-cpu"
+        "VideoMosaic should be unsupported without media-processing-cpu"
     );
     let err = result.unwrap_err();
     assert!(

@@ -35,7 +35,19 @@ pub mod abr;
 pub mod mix;
 
 #[cfg(feature = "media-processing-cpu")]
+pub mod mosaic;
+
+#[cfg(feature = "media-processing-cpu")]
 pub(crate) mod mixer;
+
+#[cfg(feature = "media-processing-cpu")]
+pub(crate) mod mosaicker;
+
+#[cfg(feature = "media-processing-cpu")]
+pub(crate) mod mosaic_canvas;
+
+#[cfg(all(test, feature = "media-processing-cpu"))]
+mod mosaicker_tests;
 
 #[cfg(feature = "media-processing-caption")]
 pub use caption::MediaProcessingProvider;

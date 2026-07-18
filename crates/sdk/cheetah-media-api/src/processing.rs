@@ -186,6 +186,27 @@ pub struct VideoMosaicInput {
     ///
     /// 增益，单位为分贝。
     pub audio_gain_db: Option<i32>,
+    /// Tile fit policy. Overrides [`MosaicLayout::fit`] when set.
+    #[serde(default)]
+    pub fit: Option<MosaicFit>,
+    /// Optional per-tile label.
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// Aspect-ratio fitting mode for a mosaic tile.
+///
+/// 宫格单元的内容填充模式。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MosaicFit {
+    /// Preserve aspect ratio and pad to the cell (letterbox).
+    Contain,
+    /// Preserve aspect ratio and crop to fill the cell.
+    #[default]
+    Cover,
+    /// Stretch to fill the cell exactly.
+    Stretch,
 }
 
 /// Mosaic layout.
@@ -198,6 +219,24 @@ pub struct MosaicLayout {
     pub cell_width: u32,
     pub cell_height: u32,
     pub background: Option<String>,
+    /// Output frame rate numerator.
+    #[serde(default)]
+    pub frame_rate_num: Option<u32>,
+    /// Output frame rate denominator.
+    #[serde(default)]
+    pub frame_rate_den: Option<u32>,
+    /// Output bitrate in bits per second.
+    #[serde(default)]
+    pub bit_rate: Option<u64>,
+    /// Output GOP size in frames.
+    #[serde(default)]
+    pub gop_size: Option<u32>,
+    /// Output video codec.
+    #[serde(default)]
+    pub video_codec: Option<VideoCodec>,
+    /// Default tile fit policy.
+    #[serde(default)]
+    pub fit: Option<MosaicFit>,
 }
 
 /// Mosaic cell assignment.

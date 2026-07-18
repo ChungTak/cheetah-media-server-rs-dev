@@ -239,8 +239,8 @@ pub async fn spawn_audio_mix_worker(
                                         engine.runtime_api.now().as_micros() + 1_000,
                                     );
                                     let mut sleep = engine.runtime_api.sleep_until(deadline);
-                                    let mut eos_cancel_fut = cancel.cancelled().fuse();
-                                    let mut eos_sleep_fut = sleep.wait().fuse();
+                                    let eos_cancel_fut = cancel.cancelled().fuse();
+                                    let eos_sleep_fut = sleep.wait().fuse();
                                     futures::pin_mut!(eos_cancel_fut, eos_sleep_fut);
                                     let eos_cancelled = futures::select_biased! {
                                         _ = eos_cancel_fut => true,
