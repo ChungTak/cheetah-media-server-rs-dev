@@ -1,8 +1,14 @@
 //! Module lifecycle for `cheetah-media-processing-module`.
 
 use std::sync::Arc;
+#[cfg(feature = "media-processing-caption")]
+use std::sync::Mutex;
 
 use async_trait::async_trait;
+#[cfg(feature = "media-processing-caption")]
+use cheetah_codec::MonoTime;
+#[cfg(feature = "media-processing-caption")]
+use cheetah_sdk::JoinHandle;
 use cheetah_sdk::{
     CancellationToken, ConfigEffect, EngineContext, Module, ModuleCapability, ModuleConfigChange,
     ModuleFactory, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
@@ -54,8 +60,11 @@ pub struct MediaProcessingModule {
     config: MediaProcessingModuleConfig,
     image_process_registration: Option<ProviderRegistration>,
     processing_registration: Option<ProviderRegistration>,
+    metrics_cancel: Option<CancellationToken>,
     #[cfg(feature = "media-processing-caption")]
     processing_provider: Option<Arc<crate::provider::MediaProcessingProvider>>,
+    #[cfg(feature = "media-processing-caption")]
+    metrics_handle: Option<Mutex<Box<dyn JoinHandle>>>,
 }
 
 impl MediaProcessingModule {
@@ -66,8 +75,11 @@ impl MediaProcessingModule {
             config: MediaProcessingModuleConfig::default(),
             image_process_registration: None,
             processing_registration: None,
+            metrics_cancel: None,
             #[cfg(feature = "media-processing-caption")]
             processing_provider: None,
+            #[cfg(feature = "media-processing-caption")]
+            metrics_handle: None,
         }
     }
 }
@@ -146,6 +158,36 @@ impl Module for MediaProcessingModule {
 
     async fn start(&mut self, _cancel: CancellationToken) -> Result<(), SdkError> {
         self.state = ModuleState::Running;
+
+        #[cfg(feature = "media-processing-caption")]
+        if let Some(provider) = self.processing_provider.clone() {
+            let Some(ctx) = self.ctx.as_ref() else {
+                return Ok(());
+            };
+            let runtime = ctx.runtime_api.clone();
+            let metrics_cancel = _cancel.child_token();
+            let loop_cancel = metrics_cancel.clone();
+            let runtime_for_loop = runtime.clone();
+            self.metrics_cancel = Some(metrics_cancel);
+            self.metrics_handle = Some(Mutex::new(runtime.spawn(Box::pin(async move {
+                let publish_interval_us = 5_000_000;
+                loop {
+                    provider.publish_job_metrics();
+                    let deadline = MonoTime::from_micros(
+                        runtime_for_loop
+                            .now()
+                            .as_micros()
+                            .saturating_add(publish_interval_us),
+                    );
+                    let mut timer = runtime_for_loop.sleep_until(deadline);
+                    timer.wait().await;
+                    if loop_cancel.is_cancelled() {
+                        break;
+                    }
+                }
+            }))));
+        }
+
         Ok(())
     }
 
@@ -158,6 +200,13 @@ impl Module for MediaProcessingModule {
         #[cfg(feature = "media-processing-caption")]
         if let Some(provider) = self.processing_provider.take() {
             provider.cancel_all().await;
+        }
+        if let Some(cancel) = self.metrics_cancel.take() {
+            cancel.cancel();
+        }
+        #[cfg(feature = "media-processing-caption")]
+        if let Some(handle) = self.metrics_handle.take() {
+            handle.lock().unwrap().abort();
         }
         if let Some(reg) = self.processing_registration.take() {
             if let Some(ctx) = self.ctx.as_ref() {

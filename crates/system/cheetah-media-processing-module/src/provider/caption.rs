@@ -3,7 +3,7 @@
 //! Implements `MediaProcessingApi` for `CaptionExtract` and, when compiled with
 //! `media-processing-cpu`, `Transcode` jobs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex,
@@ -78,6 +78,7 @@ pub struct MediaProcessingProvider {
     config: MediaProcessingModuleConfig,
     jobs: Arc<Mutex<HashMap<ProcessingJobId, JobEntry>>>,
     id_counter: AtomicU64,
+    metric_keys: Arc<Mutex<HashSet<String>>>,
 }
 
 impl MediaProcessingProvider {
@@ -87,7 +88,51 @@ impl MediaProcessingProvider {
             config,
             jobs: Arc::new(Mutex::new(HashMap::new())),
             id_counter: AtomicU64::new(0),
+            metric_keys: Arc::new(Mutex::new(HashSet::new())),
         }
+    }
+
+    fn job_kind_label(spec: &ProcessingJobSpec) -> &'static str {
+        match spec {
+            ProcessingJobSpec::CaptionExtract { .. } => "caption",
+            #[cfg(feature = "media-processing-cpu")]
+            ProcessingJobSpec::Transcode { .. } => "transcode",
+            #[cfg(feature = "media-processing-cpu")]
+            ProcessingJobSpec::AbrLadder { .. } => "abr",
+            #[cfg(feature = "media-processing-cpu")]
+            ProcessingJobSpec::AudioMix { .. } => "mix",
+            #[cfg(feature = "media-processing-cpu")]
+            ProcessingJobSpec::VideoMosaic { .. } => "mosaic",
+            #[cfg(not(feature = "media-processing-cpu"))]
+            _ => "unknown",
+        }
+    }
+
+    /// Publish per-kind/state/profile job gauges and zero out stale keys.
+    pub fn publish_job_metrics(&self) {
+        let jobs = self.jobs.lock().unwrap();
+        let mut counts: HashMap<String, u64> = HashMap::new();
+        for entry in jobs.values() {
+            let guard = entry.job.lock().unwrap();
+            let kind = Self::job_kind_label(&guard.spec);
+            let state = format!("{0:?}", guard.state).to_lowercase();
+            let key = format!(
+                "media_processing_jobs{{kind={kind},state={state},profile={}}}",
+                guard.profile
+            );
+            *counts.entry(key).or_insert(0) += 1;
+        }
+
+        let mut emitted = self.metric_keys.lock().unwrap();
+        let new_keys: HashSet<String> = counts.keys().cloned().collect();
+        for (key, count) in counts {
+            self.ctx.metrics_api.set(&key, count);
+            emitted.insert(key);
+        }
+        for stale in emitted.difference(&new_keys) {
+            self.ctx.metrics_api.set(stale, 0);
+        }
+        *emitted = new_keys;
     }
 
     fn media_key_to_stream_key(key: &MediaKey) -> StreamKey {
