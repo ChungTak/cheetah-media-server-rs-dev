@@ -389,7 +389,7 @@ impl VideoTranscodeSession {
             .with_memory_domain(avcodec::core::MemoryDomain::Host);
 
         let dst_time_base =
-            avcodec::core::TimeBase::new(self.output_timebase.den, self.output_timebase.num);
+            avcodec::core::TimeBase::new(self.output_timebase.num, self.output_timebase.den);
         let encoder_cfg = avcodec::core::EncoderConfig::new(
             dst_av_codec,
             self.output_track.width.unwrap_or(64),
@@ -795,6 +795,7 @@ mod tests {
 
         assert!(!total.is_empty());
         assert!(total.iter().any(|f| f.is_key_frame()));
+        assert_eq!(total[0].timebase, Timebase::new(1, 30));
         assert_eq!(session.output_track().codec, CodecId::H264);
         assert_eq!(session.output_track().width, Some(64));
         assert_eq!(session.output_track().height, Some(64));
