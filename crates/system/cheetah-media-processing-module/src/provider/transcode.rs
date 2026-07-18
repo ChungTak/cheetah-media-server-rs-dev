@@ -228,6 +228,7 @@ struct TranscodeWorker {
     video_session: Option<VideoTranscodeSession>,
     audio_session: Option<AudioTranscodeSession>,
     publisher: Box<dyn PublisherSink>,
+    last_announced_tracks: Vec<TrackInfo>,
     job: Option<Arc<Mutex<ProcessingJob>>>,
 }
 
@@ -271,15 +272,38 @@ impl TranscodeWorker {
         };
 
         publisher
-            .update_tracks(tracks)
+            .update_tracks(tracks.clone())
             .map_err(|e| MediaError::internal(format!("update publisher tracks failed: {e}")))?;
 
         Ok(Self {
             video_session,
             audio_session,
             publisher,
+            last_announced_tracks: tracks,
             job,
         })
+    }
+
+    fn current_output_tracks(&self) -> Vec<TrackInfo> {
+        let mut tracks = Vec::new();
+        if let Some(session) = self.video_session.as_ref() {
+            tracks.push(session.output_track().clone());
+        }
+        if let Some(session) = self.audio_session.as_ref() {
+            tracks.push(session.output_track().clone());
+        }
+        tracks
+    }
+
+    fn announce_tracks(&mut self) -> Result<(), SdkError> {
+        let tracks = self.current_output_tracks();
+        if tracks != self.last_announced_tracks {
+            self.publisher
+                .update_tracks(tracks.clone())
+                .map_err(|e| SdkError::Internal(format!("update publisher tracks failed: {e}")))?;
+            self.last_announced_tracks = tracks;
+        }
+        Ok(())
     }
 
     fn process(&mut self, input: TranscodeInput) -> Result<(), SdkError> {
@@ -320,6 +344,7 @@ impl TranscodeWorker {
         for frame in output {
             self.push_frame(frame)?;
         }
+        self.announce_tracks()?;
         Ok(())
     }
 
@@ -341,6 +366,7 @@ impl TranscodeWorker {
         for frame in output {
             self.push_frame(frame)?;
         }
+        self.announce_tracks()?;
         Ok(())
     }
 
@@ -387,6 +413,7 @@ impl TranscodeWorker {
                 self.push_frame(frame)?;
             }
         }
+        self.announce_tracks()?;
         self.publisher.close()
     }
 }
@@ -518,6 +545,7 @@ pub async fn spawn_transcode_worker(
             .await
             .map_err(|e| SdkError::Internal(format!("subscribe failed: {e}")))?;
 
+        let mut subscriber_error: Option<SdkError> = None;
         loop {
             let cancel_fut = cancel.cancelled().fuse();
             let recv_fut = subscriber.recv().fuse();
@@ -550,6 +578,7 @@ pub async fn spawn_transcode_worker(
                 Ok(None) => break,
                 Err(e) => {
                     warn!("transcode subscriber error: {e}");
+                    subscriber_error = Some(SdkError::Internal(format!("subscriber error: {e}")));
                     break;
                 }
             }
@@ -559,6 +588,9 @@ pub async fn spawn_transcode_worker(
         let _ = handle.wait().await;
         if let Some(err) = worker_error.lock().unwrap().take() {
             return Err(SdkError::Internal(err));
+        }
+        if let Some(err) = subscriber_error {
+            return Err(err);
         }
         Ok(())
     }
