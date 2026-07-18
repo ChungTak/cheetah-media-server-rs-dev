@@ -411,7 +411,7 @@ fn drain_audio_transcoder(
     Ok(())
 }
 
-fn map_input_format(
+pub(crate) fn map_input_format(
     format: FrameFormat,
     codec: CodecId,
 ) -> Option<(avcodec::core::CodecId, avcodec::core::BitstreamFormat)> {
@@ -444,7 +444,7 @@ fn map_input_format(
     }
 }
 
-fn map_output_codec(codec: CodecId) -> Option<(avcodec::core::CodecId, FrameFormat)> {
+pub(crate) fn map_output_codec(codec: CodecId) -> Option<(avcodec::core::CodecId, FrameFormat)> {
     match codec {
         CodecId::G711A => Some((avcodec::core::CodecId::G711A, FrameFormat::G711Packet)),
         CodecId::G711U => Some((avcodec::core::CodecId::G711U, FrameFormat::G711Packet)),
@@ -454,7 +454,7 @@ fn map_output_codec(codec: CodecId) -> Option<(avcodec::core::CodecId, FrameForm
     }
 }
 
-fn channel_layout(channels: u8) -> avcodec::core::AudioChannelLayout {
+pub(crate) fn channel_layout(channels: u8) -> avcodec::core::AudioChannelLayout {
     match channels {
         1 => avcodec::core::AudioChannelLayout::Mono,
         2 => avcodec::core::AudioChannelLayout::Stereo,
@@ -462,7 +462,7 @@ fn channel_layout(channels: u8) -> avcodec::core::AudioChannelLayout {
     }
 }
 
-fn audio_extra_data(track: &TrackInfo) -> Option<avcodec::core::BufferSlice> {
+pub(crate) fn audio_extra_data(track: &TrackInfo) -> Option<avcodec::core::BufferSlice> {
     use cheetah_codec::CodecExtradata;
     let bytes: Option<Bytes> = match &track.extradata {
         CodecExtradata::AAC { asc } => Some(asc.clone()),
@@ -496,7 +496,7 @@ fn audio_extra_data(track: &TrackInfo) -> Option<avcodec::core::BufferSlice> {
     })
 }
 
-fn default_bitrate(codec: CodecId) -> u32 {
+pub(crate) fn default_bitrate(codec: CodecId) -> u32 {
     match codec {
         CodecId::G711A | CodecId::G711U => 64_000,
         CodecId::Opus => 64_000,
@@ -505,7 +505,7 @@ fn default_bitrate(codec: CodecId) -> u32 {
     }
 }
 
-fn with_audio_profile(
+pub(crate) fn with_audio_profile(
     cfg: avcodec::core::AudioEncoderConfig,
     codec: CodecId,
 ) -> avcodec::core::AudioEncoderConfig {
@@ -516,7 +516,7 @@ fn with_audio_profile(
     }
 }
 
-fn with_audio_frame_size(
+pub(crate) fn with_audio_frame_size(
     cfg: avcodec::core::AudioEncoderConfig,
     codec: CodecId,
     sample_rate: u32,
@@ -524,13 +524,13 @@ fn with_audio_frame_size(
     match codec {
         // AAC-LC requires 1024 samples per frame.
         CodecId::AAC => cfg.with_frame_size(Some(1024)),
-        // Opus uses 20 ms frames; at 48 kHz that is 960 samples.
-        CodecId::Opus if sample_rate == 48_000 => cfg.with_frame_size(Some(960)),
+        // Opus uses 20 ms frames; the frame size in samples is sample_rate / 50.
+        CodecId::Opus => cfg.with_frame_size(Some(sample_rate / 50)),
         _ => cfg,
     }
 }
 
-fn output_codec_extradata(
+pub(crate) fn output_codec_extradata(
     codec: CodecId,
     sample_rate: u32,
     channels: u8,
@@ -555,7 +555,7 @@ fn output_codec_extradata(
     }
 }
 
-fn aac_sample_rate_index(sample_rate: u32) -> Option<u8> {
+pub(crate) fn aac_sample_rate_index(sample_rate: u32) -> Option<u8> {
     match sample_rate {
         96_000 => Some(0),
         88_200 => Some(1),
@@ -574,7 +574,7 @@ fn aac_sample_rate_index(sample_rate: u32) -> Option<u8> {
     }
 }
 
-fn av_frame_from_packet(
+pub(crate) fn av_frame_from_packet(
     track_id: TrackId,
     codec: CodecId,
     format: FrameFormat,
@@ -605,6 +605,199 @@ fn av_frame_from_packet(
         let _ = frame.set_duration(duration);
     }
     Ok(frame)
+}
+
+/// Convert an [`avcodec::core::AudioFrame`] to interleaved `f32` samples.
+pub(crate) fn audio_frame_to_f32_interleaved(
+    frame: &avcodec::core::AudioFrame,
+) -> Result<Vec<f32>> {
+    use avcodec::core::AudioSampleFormat;
+
+    let channels = frame.channels as usize;
+    let samples = frame.samples_per_channel as usize;
+    if channels == 0 || samples == 0 {
+        return Ok(Vec::new());
+    }
+    let mut out = vec![0.0_f32; channels * samples];
+
+    match frame.format {
+        AudioSampleFormat::S16 => {
+            let plane = frame
+                .plane_host_bytes(0)
+                .map_err(|e| MediaError::internal(format!("read S16 audio plane: {e}")))?
+                .ok_or_else(|| MediaError::internal("missing S16 audio plane"))?;
+            for i in 0..samples * channels {
+                let bytes = &plane[i * 2..i * 2 + 2];
+                let sample = i16::from_ne_bytes([bytes[0], bytes[1]]) as f32 / i16::MAX as f32;
+                out[i] = sample.clamp(-1.0, 1.0);
+            }
+        }
+        AudioSampleFormat::F32 => {
+            let plane = frame
+                .plane_host_bytes(0)
+                .map_err(|e| MediaError::internal(format!("read F32 audio plane: {e}")))?
+                .ok_or_else(|| MediaError::internal("missing F32 audio plane"))?;
+            for i in 0..samples * channels {
+                let bytes = &plane[i * 4..i * 4 + 4];
+                out[i] = f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            }
+        }
+        AudioSampleFormat::S16Planar | AudioSampleFormat::F32Planar => {
+            // For planar formats de-interleave into output interleaved buffer.
+            for c in 0..channels {
+                let plane = frame
+                    .plane_host_bytes(c)
+                    .map_err(|e| MediaError::internal(format!("read planar audio plane {c}: {e}")))?
+                    .ok_or_else(|| {
+                        MediaError::internal(format!("missing planar audio plane {c}"))
+                    })?;
+                match frame.format {
+                    AudioSampleFormat::S16Planar => {
+                        for s in 0..samples {
+                            let bytes = &plane[s * 2..s * 2 + 2];
+                            let sample =
+                                i16::from_ne_bytes([bytes[0], bytes[1]]) as f32 / i16::MAX as f32;
+                            out[s * channels + c] = sample.clamp(-1.0, 1.0);
+                        }
+                    }
+                    AudioSampleFormat::F32Planar => {
+                        for s in 0..samples {
+                            let bytes = &plane[s * 4..s * 4 + 4];
+                            out[s * channels + c] =
+                                f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+        _ => {
+            return Err(MediaError::unsupported(format!(
+                "unsupported decoded audio sample format: {:?}",
+                frame.format
+            )))
+        }
+    }
+    Ok(out)
+}
+
+/// Clamp and convert interleaved `f32` samples to host-endian `i16` bytes.
+pub(crate) fn f32_interleaved_to_s16_bytes(samples: &[f32]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(samples.len() * 2);
+    for sample in samples {
+        let clamped = sample.clamp(-1.0, 1.0);
+        let value = (clamped * i16::MAX as f32) as i16;
+        bytes.extend_from_slice(&value.to_ne_bytes());
+    }
+    bytes
+}
+
+/// Build an [`avcodec::core::AudioEncoder`] for the requested output codec and
+/// return its configuration and target [`FrameFormat`].
+pub(crate) fn create_audio_encoder(
+    registry: &avcodec::core::Registry,
+    output_codec: CodecId,
+    sample_rate: u32,
+    channels: u8,
+    bitrate: u32,
+) -> Result<(
+    Box<dyn avcodec::core::AudioEncoder>,
+    avcodec::core::AudioEncoderConfig,
+    FrameFormat,
+    TrackInfo,
+)> {
+    let (dst_av_codec, frame_format) = map_output_codec(output_codec).ok_or_else(|| {
+        MediaError::unsupported(format!("unsupported output audio codec: {output_codec:?}"))
+    })?;
+    if channels == 0 || channels > 2 {
+        return Err(MediaError::unsupported(
+            "audio output channel count must be 1 or 2",
+        ));
+    }
+
+    let dst_time_base = avcodec::core::TimeBase::new(1, sample_rate);
+    let mut encoder_cfg = avcodec::core::AudioEncoderConfig::new(
+        dst_av_codec,
+        sample_rate,
+        channels as u16,
+        channel_layout(channels),
+        avcodec::core::AudioSampleFormat::S16,
+        bitrate,
+        dst_time_base,
+    )
+    .with_memory_domain(avcodec::core::MemoryDomain::Host)
+    .with_allow_staging(false);
+    encoder_cfg = with_audio_profile(encoder_cfg, output_codec);
+    encoder_cfg = with_audio_frame_size(encoder_cfg, output_codec, sample_rate);
+
+    let encoder = registry
+        .create_audio_encoder(&encoder_cfg)
+        .map_err(|e| MediaError::unsupported(format!("create audio encoder: {e}")))?;
+
+    let mut output_track = TrackInfo::new(TrackId(0), MediaKind::Audio, output_codec, sample_rate);
+    output_track.sample_rate = Some(sample_rate);
+    output_track.channels = Some(channels);
+    output_track.bitrate = Some(bitrate);
+    output_track.extradata =
+        output_codec_extradata(output_codec, sample_rate, channels).unwrap_or(CodecExtradata::None);
+    output_track.readiness = TrackReadiness::Ready;
+
+    Ok((encoder, encoder_cfg, frame_format, output_track))
+}
+
+/// Submit a single frame of interleaved `f32` PCM to an [`avcodec::core::AudioEncoder`]
+/// and drain all produced compressed packets into [`AVFrame`]s.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn encode_pcm_frame(
+    encoder: &mut dyn avcodec::core::AudioEncoder,
+    output_codec: CodecId,
+    frame_format: FrameFormat,
+    sample_rate: u32,
+    channels: u8,
+    samples_per_channel: u32,
+    pts: i64,
+    samples: &[f32],
+) -> Result<Vec<AVFrame>> {
+    let s16_bytes = f32_interleaved_to_s16_bytes(samples);
+    let audio_frame = avcodec::core::AudioFrame::new_host_interleaved_s16(
+        sample_rate,
+        channel_layout(channels),
+        channels as u16,
+        samples_per_channel,
+        s16_bytes,
+    )
+    .map_err(|e| MediaError::invalid_argument(format!("build audio encoder input frame: {e}")))?;
+    let mut frame = audio_frame;
+    frame.pts = Some(pts);
+    frame.dts = Some(pts);
+    frame.duration = Some(samples_per_channel as i64);
+
+    encoder
+        .submit_frame(frame)
+        .map_err(|e| MediaError::invalid_argument(format!("submit audio frame: {e}")))?;
+
+    let mut out = Vec::new();
+    loop {
+        match encoder.poll_packet() {
+            Ok(avcodec::core::Poll::Ready(packet)) => {
+                out.push(av_frame_from_packet(
+                    TrackId(0),
+                    output_codec,
+                    frame_format,
+                    sample_rate,
+                    &packet,
+                )?);
+            }
+            Ok(avcodec::core::Poll::Pending) => break,
+            Ok(avcodec::core::Poll::EndOfStream) => break,
+            Err(e) => {
+                return Err(MediaError::invalid_argument(format!(
+                    "poll audio packet: {e}"
+                )))
+            }
+        }
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

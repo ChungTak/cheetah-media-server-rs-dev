@@ -31,5 +31,11 @@ pub mod transcode;
 #[cfg(feature = "media-processing-cpu")]
 pub mod abr;
 
+#[cfg(feature = "media-processing-cpu")]
+pub mod mix;
+
+#[cfg(feature = "media-processing-cpu")]
+pub(crate) mod mixer;
+
 #[cfg(feature = "media-processing-caption")]
 pub use caption::MediaProcessingProvider;

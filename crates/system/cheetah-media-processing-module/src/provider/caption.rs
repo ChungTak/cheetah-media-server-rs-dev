@@ -21,14 +21,16 @@ use cheetah_codec::{
     video::{AccessUnitAssembler, AccessUnitTiming},
     AVFrame,
 };
+#[cfg(feature = "media-processing-cpu")]
+use cheetah_media_api::processing::{AbrVariant, AudioMix, AudioMixInput, TrackSelection};
 use cheetah_media_api::{
     error::{MediaError, Result as MediaResult},
     ids::{MediaKey, ProcessingJobId, StreamKeyBridge},
     model::{AdmissionAction, AdmissionRequest, Decision, Page},
     port::MediaProcessingApi,
     processing::{
-        AbrVariant, CreateProcessingJob, ProcessingJob, ProcessingJobQuery, ProcessingJobSpec,
-        ProcessingJobState, ProcessingPreflightReport, TrackSelection, UpdateProcessingJob,
+        CreateProcessingJob, ProcessingJob, ProcessingJobQuery, ProcessingJobSpec,
+        ProcessingJobState, ProcessingPreflightReport, UpdateProcessingJob,
     },
     MediaCapability, MediaCapabilitySet, MediaRequestContext,
 };
@@ -47,6 +49,9 @@ use crate::provider::transcode::spawn_transcode_worker;
 
 #[cfg(feature = "media-processing-cpu")]
 use crate::provider::abr::spawn_abr_ladder_worker;
+
+#[cfg(feature = "media-processing-cpu")]
+use crate::provider::mix::spawn_audio_mix_worker;
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -131,7 +136,10 @@ impl MediaProcessingProvider {
         #[cfg(feature = "media-processing-cpu")]
         {
             set.add(MediaCapability::AudioProcessing, 1);
-            set.set_reason(MediaCapability::AudioProcessing, "audio transcode");
+            set.set_reason(
+                MediaCapability::AudioProcessing,
+                "audio transcode / audio mix",
+            );
         }
         set
     }
@@ -168,7 +176,12 @@ impl MediaProcessingProvider {
                 ProcessingJobSpec::CaptionExtract { source, .. }
                 | ProcessingJobSpec::Transcode { source, .. }
                 | ProcessingJobSpec::AbrLadder { source, .. } => vec![source.clone()],
-                _ => Vec::new(),
+                ProcessingJobSpec::AudioMix { inputs, .. } => {
+                    inputs.iter().map(|i| i.source.clone()).collect()
+                }
+                ProcessingJobSpec::VideoMosaic { inputs, .. } => {
+                    inputs.iter().map(|i| i.source.clone()).collect()
+                }
             },
             output_keys: match &request.spec {
                 ProcessingJobSpec::CaptionExtract { target, .. }
@@ -176,7 +189,8 @@ impl MediaProcessingProvider {
                 ProcessingJobSpec::AbrLadder { variants, .. } => {
                     variants.iter().map(|v| v.target.clone()).collect()
                 }
-                _ => Vec::new(),
+                ProcessingJobSpec::AudioMix { target, .. } => vec![target.clone()],
+                ProcessingJobSpec::VideoMosaic { target, .. } => vec![target.clone()],
             },
             ref_count: 1,
             restart_count: 0,
@@ -343,10 +357,10 @@ impl MediaProcessingProvider {
         let job = Arc::new(Mutex::new(
             self.build_job(&request, ProcessingJobState::Running),
         ));
-        let job_id = job.lock().unwrap().job_id.clone();
-        let job_snapshot = job.lock().unwrap().clone();
+        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
+        let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
-        self.jobs.lock().unwrap().insert(
+        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
             job_id.clone(),
             JobEntry {
                 job: job.clone(),
@@ -455,10 +469,10 @@ impl MediaProcessingProvider {
         let job = Arc::new(Mutex::new(
             self.build_job(&request, ProcessingJobState::Running),
         ));
-        let job_id = job.lock().unwrap().job_id.clone();
-        let job_snapshot = job.lock().unwrap().clone();
+        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
+        let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
-        self.jobs.lock().unwrap().insert(
+        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
             job_id.clone(),
             JobEntry {
                 job: job.clone(),
@@ -494,6 +508,90 @@ impl MediaProcessingProvider {
         info!(job_id = %job_id, "abr ladder job started");
         Ok(job_snapshot)
     }
+
+    #[cfg(feature = "media-processing-cpu")]
+    async fn create_audio_mix_job(
+        &self,
+        ctx: &MediaRequestContext,
+        request: CreateProcessingJob,
+        inputs: &[AudioMixInput],
+        mix: &AudioMix,
+    ) -> MediaResult<ProcessingJob> {
+        if inputs.len() < 2 || inputs.len() > 16 {
+            return Err(MediaError::invalid_argument(
+                "audio mix requires 2-16 sources",
+            ));
+        }
+
+        // Authorize play on every source and publish on the output target.
+        for input in inputs {
+            self.authorize(ctx, AdmissionAction::Play, &input.source)
+                .await?;
+        }
+        self.authorize(ctx, AdmissionAction::Publish, &mix.target)
+            .await?;
+
+        let target_key = Self::media_key_to_stream_key(&mix.target);
+        let pub_options = PublisherOptions {
+            announce_tracks: true,
+            protocol: "audio-mix".to_string(),
+            remote_endpoint: None,
+        };
+        let (lease, publisher) = self
+            .ctx
+            .publisher_api
+            .acquire_publisher(target_key, pub_options)
+            .await
+            .map_err(|e| MediaError::internal(format!("acquire publisher failed: {e}")))?;
+
+        let cancel = CancellationToken::new();
+        let cancel_child = cancel.child_token();
+        let runtime = self.ctx.runtime_api.clone();
+
+        let job = Arc::new(Mutex::new(
+            self.build_job(&request, ProcessingJobState::Running),
+        ));
+        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
+        let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
+
+        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
+            job_id.clone(),
+            JobEntry {
+                job: job.clone(),
+                cancel,
+                handle: None,
+            },
+        );
+
+        let config = self.config.clone();
+        let engine = self.ctx.clone();
+        let spawned_job_id = job_id.clone();
+        let inputs = inputs.to_vec();
+        let mix = mix.clone();
+        let handle = runtime.spawn(Box::pin(async move {
+            let result = spawn_audio_mix_worker(
+                engine,
+                config,
+                inputs,
+                mix,
+                lease,
+                publisher,
+                cancel_child,
+                Some(job.clone()),
+            )
+            .await;
+            if let Err(e) = result {
+                warn!(job_id = %spawned_job_id, "audio mix worker failed: {e}");
+            }
+        }));
+
+        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+            entry.handle = Some(handle);
+        }
+
+        info!(job_id = %job_id, "audio mix job started");
+        Ok(job_snapshot)
+    }
 }
 
 #[async_trait]
@@ -510,11 +608,13 @@ impl MediaProcessingApi for MediaProcessingProvider {
                 "media-processing-caption feature not compiled".to_string(),
             );
         }
+        #[allow(unused_mut)]
         let mut operations = vec!["caption_extract".to_string()];
         #[cfg(feature = "media-processing-cpu")]
         {
             operations.push("transcode".to_string());
             operations.push("abr_ladder".to_string());
+            operations.push("audio_mix".to_string());
         }
         Ok(ProcessingPreflightReport {
             profile: self.config.profile.clone(),
@@ -564,8 +664,24 @@ impl MediaProcessingApi for MediaProcessingProvider {
                 self.create_abr_ladder_job(ctx, request, source, variants)
                     .await
             }
+            #[cfg(feature = "media-processing-cpu")]
+            ProcessingJobSpec::AudioMix {
+                inputs,
+                target,
+                output,
+            } => {
+                let mix = AudioMix {
+                    target: target.clone(),
+                    output: output.clone(),
+                };
+                self.create_audio_mix_job(ctx, request, inputs, &mix).await
+            }
+            ProcessingJobSpec::VideoMosaic { .. } => Err(MediaError::unsupported(
+                "video mosaic is not supported in this release",
+            )),
+            #[cfg(not(feature = "media-processing-cpu"))]
             _ => Err(MediaError::unsupported(
-                "only CaptionExtract, Transcode and AbrLadder processing jobs are supported",
+                "processing job type is not compiled in this build",
             )),
         }
     }
