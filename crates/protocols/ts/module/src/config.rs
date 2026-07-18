@@ -259,31 +259,37 @@ mod tests {
 
     #[test]
     fn invalid_listen_rejected() {
-        let mut config = TsModuleConfig::default();
-        config.listen = "not-an-address".to_string();
+        let config = TsModuleConfig {
+            listen: "not-an-address".to_string(),
+            ..Default::default()
+        };
         let err = config.validate().unwrap_err();
         assert!(err.contains("invalid listen address"));
     }
 
     #[test]
     fn tls_enabled_empty_cert_rejected() {
-        let mut config = TsModuleConfig::default();
-        config.tls = Some(TsTlsConfig {
-            enabled: true,
-            listen: "0.0.0.0:8443".to_string(),
-            cert_path: "".to_string(),
-            key_path: "/path/to/key".to_string(),
-            handshake_timeout_ms: 5000,
-        });
+        let config = TsModuleConfig {
+            tls: Some(TsTlsConfig {
+                enabled: true,
+                listen: "0.0.0.0:8443".to_string(),
+                cert_path: "".to_string(),
+                key_path: "/path/to/key".to_string(),
+                handshake_timeout_ms: 5000,
+            }),
+            ..Default::default()
+        };
         let err = config.validate().unwrap_err();
         assert!(err.contains("cert_path must not be empty"));
     }
 
     #[test]
     fn subscriber_queue_less_than_bootstrap_rejected() {
-        let mut config = TsModuleConfig::default();
-        config.bootstrap_max_frames = 200;
-        config.subscriber_queue_capacity = 100;
+        let config = TsModuleConfig {
+            bootstrap_max_frames: 200,
+            subscriber_queue_capacity: 100,
+            ..Default::default()
+        };
         let err = config.validate().unwrap_err();
         assert!(err.contains("subscriber_queue_capacity"));
     }

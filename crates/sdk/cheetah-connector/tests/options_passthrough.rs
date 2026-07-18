@@ -54,15 +54,15 @@ async fn connector_pull_options_queue_capacity_zero_returns_invalid_argument(
         .build()?;
     connector.start().await?;
 
-    let mut subscriber = cheetah_sdk::SubscriberOptions::default();
-    subscriber.queue_capacity = 0;
-
     let err = connector
         .open_pull(
             Protocol::HttpFlv,
             "http://127.0.0.1:1/live/test.flv",
             ConnectorPullOptions {
-                subscriber,
+                subscriber: cheetah_sdk::SubscriberOptions {
+                    queue_capacity: 0,
+                    ..Default::default()
+                },
                 cancel: None,
                 peer: None,
                 protocol: ProtocolPullExtras::HttpFlv {
@@ -96,15 +96,16 @@ async fn connector_pull_options_http_flv_extras_reach_adapter(
     connector.start().await?;
 
     let cancel = CancellationToken::new();
-    let mut subscriber = cheetah_sdk::SubscriberOptions::default();
-    subscriber.queue_capacity = 42;
 
     let mut subscriber = connector
         .open_pull(
             Protocol::HttpFlv,
             "http://127.0.0.1:1/live/test.flv",
             ConnectorPullOptions {
-                subscriber,
+                subscriber: cheetah_sdk::SubscriberOptions {
+                    queue_capacity: 42,
+                    ..Default::default()
+                },
                 cancel: Some(cancel.clone()),
                 peer: None,
                 protocol: ProtocolPullExtras::HttpFlv {
@@ -139,14 +140,16 @@ async fn connector_push_options_rtmp_extras_reach_adapter() -> Result<(), Box<dy
         .build()?;
     connector.start().await?;
 
-    let mut options = ConnectorPushOptions::default();
-    options.protocol = ProtocolPushExtras::Rtmp(RtmpPushExtras {
-        command_queue_capacity: Some(64),
-        write_queue_capacity: Some(64),
-        read_buffer_size: Some(1024),
-        chunk_size: Some(128),
-        ack_window_size: Some(1000),
-    });
+    let options = ConnectorPushOptions {
+        protocol: ProtocolPushExtras::Rtmp(RtmpPushExtras {
+            command_queue_capacity: Some(64),
+            write_queue_capacity: Some(64),
+            read_buffer_size: Some(1024),
+            chunk_size: Some(128),
+            ack_window_size: Some(1000),
+        }),
+        ..Default::default()
+    };
 
     let err = connector
         .open_push(Protocol::Rtmp, "rtmp://127.0.0.1:1/live/test", options)
@@ -177,10 +180,12 @@ async fn loopback_options_engine_only_respects_queue_capacity(
         .build()?;
     connector.start().await?;
 
-    let mut zero_options = LoopbackOptions::default();
-    zero_options.stream_name = "engine_zero".to_string();
-    zero_options.preferred_layer = LoopbackLayer::EngineOnlyBypassWire;
-    zero_options.queue_capacity = 0;
+    let zero_options = LoopbackOptions {
+        stream_name: "engine_zero".to_string(),
+        preferred_layer: LoopbackLayer::EngineOnlyBypassWire,
+        queue_capacity: 0,
+        ..Default::default()
+    };
 
     let err = connector
         .open_in_memory_loopback(zero_options)
@@ -192,10 +197,12 @@ async fn loopback_options_engine_only_respects_queue_capacity(
     ));
     assert!(err.to_string().contains("queue_capacity"));
 
-    let mut options = LoopbackOptions::default();
-    options.stream_name = "engine".to_string();
-    options.preferred_layer = LoopbackLayer::EngineOnlyBypassWire;
-    options.tracks = vec![h264_track()];
+    let options = LoopbackOptions {
+        stream_name: "engine".to_string(),
+        preferred_layer: LoopbackLayer::EngineOnlyBypassWire,
+        tracks: vec![h264_track()],
+        ..Default::default()
+    };
 
     let mut pair = connector.open_in_memory_loopback(options).await?;
     assert_eq!(

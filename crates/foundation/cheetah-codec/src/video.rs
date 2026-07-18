@@ -1324,7 +1324,9 @@ mod tests {
     fn parameter_set_max_size_constant_is_reasonable() {
         // Verify the constant is at least large enough for real-world parameter sets
         // (typical SPS is 20-100 bytes) but bounded
-        assert!(PARAMETER_SET_MAX_SIZE >= 1024);
-        assert!(PARAMETER_SET_MAX_SIZE <= 8192);
+        const {
+            assert!(PARAMETER_SET_MAX_SIZE >= 1024);
+            assert!(PARAMETER_SET_MAX_SIZE <= 8192);
+        }
     }
 }

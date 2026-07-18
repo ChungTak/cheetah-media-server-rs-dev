@@ -12,53 +12,6 @@ pub(crate) struct SrtHttpService {
     pub metrics: Arc<SrtModuleMetrics>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cheetah_srt_core::SrtStreamMode;
-
-    #[test]
-    fn prometheus_metrics_endpoint_renders_current_snapshot() {
-        let metrics = SrtModuleMetrics::new();
-        metrics.inc_connection(SrtStreamMode::Publish);
-        metrics.inc_driver_error("SRT send queue full");
-        let service = SrtHttpService { metrics };
-
-        let response = futures::executor::block_on(service.handle(HttpRequest {
-            method: HttpMethod::Get,
-            path: "/metrics".to_string(),
-            query: None,
-            headers: Vec::new(),
-            body: Default::default(),
-        }))
-        .expect("metrics response");
-
-        assert_eq!(response.status, 200);
-        let body = std::str::from_utf8(&response.body).expect("metrics body utf8");
-        assert!(body.contains("# TYPE srt_connections_active gauge"));
-        assert!(body.contains("srt_connections_active 1"));
-        assert!(body.contains("srt_send_queue_full_total 1"));
-    }
-
-    #[test]
-    fn unknown_http_route_returns_404() {
-        let service = SrtHttpService {
-            metrics: SrtModuleMetrics::new(),
-        };
-
-        let response = futures::executor::block_on(service.handle(HttpRequest {
-            method: HttpMethod::Get,
-            path: "/unknown".to_string(),
-            query: None,
-            headers: Vec::new(),
-            body: Default::default(),
-        }))
-        .expect("404 response");
-
-        assert_eq!(response.status, 404);
-    }
-}
-
 /// `ModuleHttpService` implementation: route `/metrics` and `/metrics.json`.
 ///
 /// `ModuleHttpService` 实现：路由 `/metrics` 与 `/metrics.json`。
@@ -245,5 +198,52 @@ impl SrtHttpService {
         serde_json::to_vec(&self.metrics.snapshot())
             .map(HttpResponse::ok_json)
             .map_err(|err| SdkError::Internal(format!("render SRT metrics failed: {err}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cheetah_srt_core::SrtStreamMode;
+
+    #[test]
+    fn prometheus_metrics_endpoint_renders_current_snapshot() {
+        let metrics = SrtModuleMetrics::new();
+        metrics.inc_connection(SrtStreamMode::Publish);
+        metrics.inc_driver_error("SRT send queue full");
+        let service = SrtHttpService { metrics };
+
+        let response = futures::executor::block_on(service.handle(HttpRequest {
+            method: HttpMethod::Get,
+            path: "/metrics".to_string(),
+            query: None,
+            headers: Vec::new(),
+            body: Default::default(),
+        }))
+        .expect("metrics response");
+
+        assert_eq!(response.status, 200);
+        let body = std::str::from_utf8(&response.body).expect("metrics body utf8");
+        assert!(body.contains("# TYPE srt_connections_active gauge"));
+        assert!(body.contains("srt_connections_active 1"));
+        assert!(body.contains("srt_send_queue_full_total 1"));
+    }
+
+    #[test]
+    fn unknown_http_route_returns_404() {
+        let service = SrtHttpService {
+            metrics: SrtModuleMetrics::new(),
+        };
+
+        let response = futures::executor::block_on(service.handle(HttpRequest {
+            method: HttpMethod::Get,
+            path: "/unknown".to_string(),
+            query: None,
+            headers: Vec::new(),
+            body: Default::default(),
+        }))
+        .expect("404 response");
+
+        assert_eq!(response.status, 404);
     }
 }

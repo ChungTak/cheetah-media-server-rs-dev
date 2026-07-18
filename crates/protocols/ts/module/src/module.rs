@@ -568,14 +568,16 @@ mod tests {
 
     #[test]
     fn enabled_tls_config_is_passed_to_driver() {
-        let mut config = TsModuleConfig::default();
-        config.tls = Some(TsTlsConfig {
-            enabled: true,
-            listen: "127.0.0.1:18443".to_string(),
-            cert_path: "cert.pem".to_string(),
-            key_path: "key.pem".to_string(),
-            handshake_timeout_ms: 1234,
-        });
+        let config = TsModuleConfig {
+            tls: Some(TsTlsConfig {
+                enabled: true,
+                listen: "127.0.0.1:18443".to_string(),
+                cert_path: "cert.pem".to_string(),
+                key_path: "key.pem".to_string(),
+                handshake_timeout_ms: 1234,
+            }),
+            ..Default::default()
+        };
 
         let tls = driver_tls_config(&config)
             .expect("valid tls config")
@@ -588,14 +590,16 @@ mod tests {
 
     #[test]
     fn disabled_tls_config_is_not_passed_to_driver() {
-        let mut config = TsModuleConfig::default();
-        config.tls = Some(TsTlsConfig {
-            enabled: false,
-            listen: "127.0.0.1:18443".to_string(),
-            cert_path: "cert.pem".to_string(),
-            key_path: "key.pem".to_string(),
-            handshake_timeout_ms: 1234,
-        });
+        let config = TsModuleConfig {
+            tls: Some(TsTlsConfig {
+                enabled: false,
+                listen: "127.0.0.1:18443".to_string(),
+                cert_path: "cert.pem".to_string(),
+                key_path: "key.pem".to_string(),
+                handshake_timeout_ms: 1234,
+            }),
+            ..Default::default()
+        };
 
         assert!(driver_tls_config(&config)
             .expect("disabled tls config should be accepted")

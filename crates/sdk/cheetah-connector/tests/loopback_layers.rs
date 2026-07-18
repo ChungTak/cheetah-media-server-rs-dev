@@ -79,13 +79,15 @@ async fn engine_only_bypass_wire_roundtrips_frames() -> Result<(), Box<dyn std::
         .build()?;
     connector.start().await?;
 
-    let mut options = LoopbackOptions::default();
-    options.stream_name = "engine_layer".to_string();
-    options.topology = LoopbackTopology::SameProtocol {
-        protocol: Protocol::Rtmp,
+    let options = LoopbackOptions {
+        stream_name: "engine_layer".to_string(),
+        topology: LoopbackTopology::SameProtocol {
+            protocol: Protocol::Rtmp,
+        },
+        preferred_layer: LoopbackLayer::EngineOnlyBypassWire,
+        tracks: vec![h264_track(), aac_track()],
+        ..Default::default()
     };
-    options.preferred_layer = LoopbackLayer::EngineOnlyBypassWire;
-    options.tracks = vec![h264_track(), aac_track()];
 
     let mut pair = connector.open_in_memory_loopback(options).await?;
     assert_eq!(pair.layer, LoopbackLayer::EngineOnlyBypassWire);
@@ -151,10 +153,12 @@ modules:
         .build()?;
     connector.start().await?;
 
-    let mut options = LoopbackOptions::default();
-    options.stream_name = "framing_layer".to_string();
-    options.preferred_layer = LoopbackLayer::ProtocolFraming;
-    options.tracks = vec![h264_track(), aac_track()];
+    let options = LoopbackOptions {
+        stream_name: "framing_layer".to_string(),
+        preferred_layer: LoopbackLayer::ProtocolFraming,
+        tracks: vec![h264_track(), aac_track()],
+        ..Default::default()
+    };
 
     let mut pair = connector.open_in_memory_loopback(options).await?;
     assert_eq!(pair.layer, LoopbackLayer::ProtocolFraming);
@@ -191,10 +195,12 @@ async fn unsupported_protocol_framing_for_webrtc_same_protocol(
         .build()?;
     connector.start().await?;
 
-    let mut options = LoopbackOptions::default();
-    options.stream_name = "webrtc_default".to_string();
-    options.topology = LoopbackTopology::SameProtocol {
-        protocol: Protocol::WebRtc,
+    let options = LoopbackOptions {
+        stream_name: "webrtc_default".to_string(),
+        topology: LoopbackTopology::SameProtocol {
+            protocol: Protocol::WebRtc,
+        },
+        ..Default::default()
     };
     // default preferred_layer is ProtocolFraming, which is not supported for WebRTC
 

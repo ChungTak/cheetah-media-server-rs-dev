@@ -141,8 +141,8 @@ fn spawn_fixed_responses(
     let (tx, rx) = mpsc::channel::<Received>(16);
 
     tokio::spawn(async move {
-        let mut responses = responses.into_iter();
-        while let Some(response) = responses.next() {
+        let responses = responses.into_iter();
+        for response in responses {
             if let Ok((mut stream, _)) = listener.accept().await {
                 if let Some(received) = read_request(&mut stream).await {
                     let _ = tx.send(received).await;

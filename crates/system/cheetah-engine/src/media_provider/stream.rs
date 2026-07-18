@@ -590,8 +590,10 @@ mod tests {
             .unwrap();
         assert_eq!(handle.media_key, key);
 
-        let mut query = SessionQuery::default();
-        query.kind = Some(SessionKind::Publisher);
+        let query = SessionQuery {
+            kind: Some(SessionKind::Publisher),
+            ..Default::default()
+        };
         let page = provider.list_sessions(&ctx, query).await.unwrap();
         assert_eq!(page.total, 1);
         assert_eq!(page.items[0].kind, SessionKind::Publisher);
@@ -600,8 +602,10 @@ mod tests {
             .kick_session(&ctx, &handle.session_id, CloseReason::Kicked)
             .await
             .unwrap();
-        let mut query = SessionQuery::default();
-        query.kind = Some(SessionKind::Publisher);
+        let query = SessionQuery {
+            kind: Some(SessionKind::Publisher),
+            ..Default::default()
+        };
         let page = provider.list_sessions(&ctx, query).await.unwrap();
         assert!(page.items.is_empty());
     }
@@ -639,8 +643,10 @@ mod tests {
             .unwrap();
         assert_eq!(sub.media_key, key);
 
-        let mut query = SessionQuery::default();
-        query.kind = Some(SessionKind::Player);
+        let query = SessionQuery {
+            kind: Some(SessionKind::Player),
+            ..Default::default()
+        };
         let page = provider.list_sessions(&ctx, query).await.unwrap();
         assert_eq!(page.total, 1);
         assert_eq!(page.items[0].kind, SessionKind::Player);

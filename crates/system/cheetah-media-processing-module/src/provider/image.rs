@@ -1028,7 +1028,7 @@ mod tests {
             let artifact = provider
                 .process(&MediaRequestContext::default(), request.clone())
                 .await
-                .expect(&format!("process iteration {i} should succeed"));
+                .unwrap_or_else(|_| panic!("process iteration {i} should succeed"));
             assert!(!artifact.payload.is_empty());
         }
     }
@@ -1056,9 +1056,11 @@ mod tests {
     #[tokio::test]
     async fn rejects_oversized_resize_before_allocating() {
         let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
-        let mut config = MediaProcessingModuleConfig::default();
-        config.max_image_width = 64;
-        config.max_image_height = 64;
+        let config = MediaProcessingModuleConfig {
+            max_image_width: 64,
+            max_image_height: 64,
+            ..Default::default()
+        };
 
         let provider = ImageProcessProvider::new(runtime, None, config);
         let request = ImageProcessRequest::new(
@@ -1083,11 +1085,13 @@ mod tests {
     #[tokio::test]
     async fn rejects_rotation_that_swaps_dimensions_over_limit() {
         let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
-        let mut config = MediaProcessingModuleConfig::default();
         // Fixture is 4x4; after 90° rotation it is still 4x4, so use limits
         // smaller than one axis to force the swapped axis over the limit.
-        config.max_image_width = 8;
-        config.max_image_height = 3;
+        let config = MediaProcessingModuleConfig {
+            max_image_width: 8,
+            max_image_height: 3,
+            ..Default::default()
+        };
 
         let provider = ImageProcessProvider::new(runtime, None, config);
         let request = ImageProcessRequest::new(
@@ -1128,9 +1132,11 @@ mod tests {
     #[tokio::test]
     async fn rejects_oversized_encoded_input_before_decode() {
         let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
-        let mut config = MediaProcessingModuleConfig::default();
-        config.max_image_width = 8;
-        config.max_image_height = 8;
+        let config = MediaProcessingModuleConfig {
+            max_image_width: 8,
+            max_image_height: 8,
+            ..Default::default()
+        };
 
         // Craft a PNG IHDR that declares 100x100, which is over the 8x8 limit.
         let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
@@ -1294,9 +1300,11 @@ mod tests {
     #[tokio::test]
     async fn rejects_oversized_blend_overlay() {
         let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
-        let mut config = MediaProcessingModuleConfig::default();
-        config.max_image_width = 8;
-        config.max_image_height = 8;
+        let config = MediaProcessingModuleConfig {
+            max_image_width: 8,
+            max_image_height: 8,
+            ..Default::default()
+        };
 
         // 100x100 PNG declaration.
         let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];

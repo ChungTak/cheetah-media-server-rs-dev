@@ -118,8 +118,10 @@ async fn t_rtsp_04_cancel_ends_recv_cleanly() {
     connector.start().await.expect("start engine");
 
     let cancel = CancellationToken::new();
-    let mut options = ConnectorPullOptions::default();
-    options.cancel = Some(cancel.clone());
+    let options = ConnectorPullOptions {
+        cancel: Some(cancel.clone()),
+        ..Default::default()
+    };
 
     let mut pull = connector
         .open_pull(Protocol::Rtsp, &source_uri, options)

@@ -397,16 +397,14 @@ async fn caller_payload_reaches_listener() {
             }
             _ => {}
             },
-            event = recv_with_timeout(&mut listener_events) => match event {
-            SrtDriverEvent::Connected {
+            event = recv_with_timeout(&mut listener_events) => if let SrtDriverEvent::Connected {
                 peer_id,
                 stream_id,
                 ..
-            } => {
+            } = event
+            {
                 listener_peer = Some(peer_id);
                 assert_eq!(stream_id.as_deref(), Some("#!::r=live/test,m=publish"));
-            }
-            _ => {}
             }
         }
         if caller_connected && listener_peer.is_some() {
