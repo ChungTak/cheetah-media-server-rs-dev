@@ -436,6 +436,10 @@ fn map_input_format(
             avcodec::core::CodecId::Opus,
             avcodec::core::BitstreamFormat::OpusPacket,
         )),
+        (FrameFormat::Mp3Frame, CodecId::MP3) | (FrameFormat::Unknown, CodecId::MP3) => Some((
+            avcodec::core::CodecId::Mp3,
+            avcodec::core::BitstreamFormat::Mp3Frame,
+        )),
         _ => None,
     }
 }
@@ -770,8 +774,16 @@ mod tests {
         };
         let mut session = AudioTranscodeSession::new(&track, &spec, &cfg)
             .expect("create audio transcode session");
-        let output = session.submit(&frame).expect("submit g711a frame");
+
+        let mut output = Vec::new();
+        for i in 0..10 {
+            let mut frame = frame.clone();
+            frame.pts = i * 160;
+            frame.dts = i * 160;
+            output.extend(session.submit(&frame).expect("submit g711a frame"));
+        }
         assert!(!output.is_empty(), "session should produce opus output");
+        assert!(output.iter().all(|f| f.codec == CodecId::Opus));
         assert_eq!(session.output_track().codec, CodecId::Opus);
         assert_eq!(session.output_track().sample_rate, Some(48_000));
         assert_eq!(session.output_track().channels, Some(1));

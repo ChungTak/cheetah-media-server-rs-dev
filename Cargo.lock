@@ -244,7 +244,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 [[package]]
 name = "avcodec"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "avcodec-backend-fdk-aac",
  "avcodec-backend-ffmpeg",
@@ -267,7 +267,7 @@ dependencies = [
 [[package]]
 name = "avcodec-backend-fdk-aac"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "avcodec-core-model",
  "fdk-aac",
@@ -276,7 +276,7 @@ dependencies = [
 [[package]]
 name = "avcodec-backend-ffmpeg"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "avcodec-codec-ffmpeg",
  "avcodec-core-model",
@@ -285,7 +285,7 @@ dependencies = [
 [[package]]
 name = "avcodec-backend-g711"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "audio-codec",
  "avcodec-core-model",
@@ -294,7 +294,7 @@ dependencies = [
 [[package]]
 name = "avcodec-backend-jpeg"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "avcodec-core-model",
  "jpeg-decoder",
@@ -304,7 +304,7 @@ dependencies = [
 [[package]]
 name = "avcodec-backend-libyuv"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "avcodec-core-model",
  "shiguredo_libyuv",
@@ -313,7 +313,7 @@ dependencies = [
 [[package]]
 name = "avcodec-backend-opencv"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "avcodec-core-model",
  "opencv",
@@ -322,7 +322,7 @@ dependencies = [
 [[package]]
 name = "avcodec-backend-opus"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "avcodec-core-model",
  "shiguredo_opus",
@@ -331,7 +331,7 @@ dependencies = [
 [[package]]
 name = "avcodec-backend-rust-h264"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "avcodec-core-model",
  "rust_h264",
@@ -341,7 +341,7 @@ dependencies = [
 [[package]]
 name = "avcodec-backend-rust-h265"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "avcodec-core-model",
  "oxideav-core",
@@ -352,7 +352,7 @@ dependencies = [
 [[package]]
 name = "avcodec-backend-zune"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "ab_glyph",
  "avcodec-core-model",
@@ -366,7 +366,7 @@ dependencies = [
 [[package]]
 name = "avcodec-codec-ffmpeg"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "ffmpeg-sys-next",
 ]
@@ -374,7 +374,7 @@ dependencies = [
 [[package]]
 name = "avcodec-core-model"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "smallvec",
  "spin",
@@ -383,7 +383,7 @@ dependencies = [
 [[package]]
 name = "avcodec-core-pipeline"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "avcodec-core-model",
  "parking_lot",
@@ -392,7 +392,7 @@ dependencies = [
 [[package]]
 name = "avcodec-core-plugin-api"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "avcodec-core-model",
 ]
@@ -400,7 +400,7 @@ dependencies = [
 [[package]]
 name = "avcodec-runtime-native"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "avcodec-core-model",
  "avcodec-core-pipeline",
@@ -409,7 +409,7 @@ dependencies = [
 [[package]]
 name = "avcodec-runtime-web"
 version = "0.2.0"
-source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=dd3190008f2b544b51a74a9f4a225d52befc120a#dd3190008f2b544b51a74a9f4a225d52befc120a"
+source = "git+https://github.com/TimothyWalker6922/avcodec-rs-develop.git?rev=c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f#c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f"
 dependencies = [
  "avcodec-core-model",
  "avcodec-core-pipeline",

@@ -48,6 +48,7 @@ media-processing-cpu = [
     "media-processing-image-overlay",
     "media-processing-caption",
     "avcodec-profile-native-free",
+    "avcodec-profile-software",
 ]
 
 [dependencies]
@@ -59,7 +60,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
-avcodec = { git = "https://github.com/TimothyWalker6922/avcodec-rs-develop.git", rev = "dd3190008f2b544b51a74a9f4a225d52befc120a", version = "0.2.0", default-features = false, optional = true }
+avcodec = { git = "https://github.com/TimothyWalker6922/avcodec-rs-develop.git", rev = "c6a40f4428c39990f4bdb3bed0a1dcfea0838e3f", version = "0.2.0", default-features = false, optional = true }
 
 cheetah-codec = { path = "../../foundation/cheetah-codec" }
 cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
