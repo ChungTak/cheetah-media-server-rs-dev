@@ -117,6 +117,7 @@ pub async fn spawn_video_mosaic_worker(
     job: Option<Arc<Mutex<ProcessingJob>>>,
 ) -> Result<(), SdkError> {
     let publisher_api = engine.publisher_api.clone();
+    let job_for_state = job.clone();
 
     let result = async move {
         if inputs.len() < MIN_SOURCES {
@@ -272,6 +273,24 @@ pub async fn spawn_video_mosaic_worker(
     }
     .await;
 
+    if let Some(job) = job_for_state.as_ref() {
+        let mut guard = job.lock().unwrap_or_else(|e| e.into_inner());
+        match &result {
+            Ok(()) => {
+                if guard.state == cheetah_media_api::processing::ProcessingJobState::Running {
+                    guard.state = cheetah_media_api::processing::ProcessingJobState::Stopped;
+                }
+            }
+            Err(e) => {
+                guard.state = cheetah_media_api::processing::ProcessingJobState::Failed;
+                guard.last_error = Some(format!("{e}"));
+            }
+        }
+        let ts = now_ms();
+        guard.updated_at = ts;
+        guard.finished_at = Some(ts);
+    }
+
     let _ = publisher_api.release_publisher(&publisher_lease).await;
     result
 }
@@ -400,4 +419,12 @@ where
         let mut guard = job.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut *guard);
     }
+}
+
+fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
 }
