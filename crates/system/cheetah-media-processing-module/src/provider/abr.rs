@@ -85,7 +85,7 @@ pub async fn spawn_abr_ladder_worker(
                 source_audio.as_ref(),
                 Some(&variant.video),
                 variant.audio.as_ref(),
-                publisher,
+                Arc::from(publisher),
                 job.clone(),
                 false,
             )
