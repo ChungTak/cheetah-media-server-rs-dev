@@ -172,6 +172,15 @@ jobs:
         with:
           toolchain: 1.94.1
 
+      - name: S6 - Install FFmpeg and OpenCV dev libraries
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libavutil-dev libavcodec-dev libavformat-dev libswscale-dev \
+            libavdevice-dev libavfilter-dev libswresample-dev libpostproc-dev \
+            libopencv-dev
+
       - name: S6 - Default build has no avcodec dependency
         run: |
           set -euo pipefail
