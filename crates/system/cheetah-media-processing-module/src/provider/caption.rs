@@ -321,8 +321,15 @@ impl MediaProcessingProvider {
         ProcessingJobId(format!("job-{ts}-{n}"))
     }
 
-    fn check_job_capacity(&self) -> MediaResult<()> {
-        let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+    fn reserve_job_slot(
+        &self,
+        request: &CreateProcessingJob,
+    ) -> MediaResult<(
+        ProcessingJobId,
+        Arc<Mutex<ProcessingJob>>,
+        CancellationToken,
+    )> {
+        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         let running = jobs
             .values()
             .filter(|e| {
@@ -335,7 +342,40 @@ impl MediaProcessingProvider {
                 self.config.max_concurrent_jobs
             )));
         }
-        Ok(())
+
+        let job = Arc::new(Mutex::new(
+            self.build_job(request, ProcessingJobState::Running),
+        ));
+        let cancel = CancellationToken::new();
+        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
+        jobs.insert(
+            job_id.clone(),
+            JobEntry {
+                job: job.clone(),
+                cancel: cancel.clone(),
+                handle: None,
+            },
+        );
+        Ok((job_id, job, cancel))
+    }
+
+    fn fail_reserved_job(
+        &self,
+        job_id: &ProcessingJobId,
+        job: Arc<Mutex<ProcessingJob>>,
+        error: &MediaError,
+    ) {
+        let mut guard = job.lock().unwrap_or_else(|e| e.into_inner());
+        let now = now_ms();
+        guard.state = ProcessingJobState::Failed;
+        guard.last_error = Some(error.to_string());
+        guard.finished_at = Some(now);
+        guard.updated_at = now;
+        drop(guard);
+        self.jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(job_id);
     }
 
     pub fn default_capabilities() -> MediaCapabilitySet {
@@ -435,13 +475,18 @@ impl MediaProcessingProvider {
         let _ = futures::future::join_all(handles.into_iter().map(|h| h.wait())).await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn create_caption_job(
         &self,
         ctx: &MediaRequestContext,
         request: CreateProcessingJob,
         source: &MediaKey,
         target: &MediaKey,
+        job_id: &ProcessingJobId,
+        job: Arc<Mutex<ProcessingJob>>,
+        cancel: CancellationToken,
     ) -> MediaResult<ProcessingJob> {
+        let _ = request;
         let source_key = Self::media_key_to_stream_key(source);
         let target_key = Self::media_key_to_stream_key(target);
 
@@ -490,26 +535,10 @@ impl MediaProcessingProvider {
             return Err(MediaError::internal(format!("update tracks failed: {e}")));
         }
 
-        let cancel = CancellationToken::new();
         let cancel_child = cancel.child_token();
         let runtime = self.ctx.runtime_api.clone();
 
-        let job = Arc::new(Mutex::new(
-            self.build_job(&request, ProcessingJobState::Running),
-        ));
-        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
         let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
-
-        // Insert the job record before spawning the worker so that a very fast
-        // completion (or failure) still finds the entry and transitions it.
-        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
-            job_id.clone(),
-            JobEntry {
-                job: job.clone(),
-                cancel,
-                handle: None,
-            },
-        );
 
         let publisher_api = self.ctx.publisher_api.clone();
         let spawned_job_id = job_id.clone();
@@ -527,8 +556,9 @@ impl MediaProcessingProvider {
             .jobs
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&job_id)
+            .get_mut(job_id)
         {
+            entry.cancel = cancel;
             entry.handle = Some(handle);
         }
 
@@ -547,7 +577,11 @@ impl MediaProcessingProvider {
         track_selection: TrackSelection,
         video: &Option<cheetah_media_api::processing::VideoTarget>,
         audio: &Option<cheetah_media_api::processing::AudioTarget>,
+        job_id: &ProcessingJobId,
+        job: Arc<Mutex<ProcessingJob>>,
+        cancel: CancellationToken,
     ) -> MediaResult<ProcessingJob> {
+        let _ = request;
         let source_key = Self::media_key_to_stream_key(source);
         let target_key = Self::media_key_to_stream_key(target);
 
@@ -567,24 +601,10 @@ impl MediaProcessingProvider {
             .await
             .map_err(|e| MediaError::internal(format!("acquire publisher failed: {e}")))?;
 
-        let cancel = CancellationToken::new();
         let cancel_child = cancel.child_token();
         let runtime = self.ctx.runtime_api.clone();
 
-        let job = Arc::new(Mutex::new(
-            self.build_job(&request, ProcessingJobState::Running),
-        ));
-        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
         let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
-
-        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
-            job_id.clone(),
-            JobEntry {
-                job: job.clone(),
-                cancel,
-                handle: None,
-            },
-        );
 
         let config = self.config.clone();
         let engine = self.ctx.clone();
@@ -615,8 +635,9 @@ impl MediaProcessingProvider {
             .jobs
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&job_id)
+            .get_mut(job_id)
         {
+            entry.cancel = cancel;
             entry.handle = Some(handle);
         }
 
@@ -625,13 +646,18 @@ impl MediaProcessingProvider {
     }
 
     #[cfg(feature = "media-processing-cpu")]
+    #[allow(clippy::too_many_arguments)]
     async fn create_abr_ladder_job(
         &self,
         ctx: &MediaRequestContext,
         request: CreateProcessingJob,
         source: &MediaKey,
         variants: &[AbrVariant],
+        job_id: &ProcessingJobId,
+        job: Arc<Mutex<ProcessingJob>>,
+        cancel: CancellationToken,
     ) -> MediaResult<ProcessingJob> {
+        let _ = request;
         if variants.is_empty() || variants.len() > 4 {
             return Err(MediaError::invalid_argument(
                 "ABR ladder requires 1-4 variants",
@@ -684,24 +710,10 @@ impl MediaProcessingProvider {
             }
         }
 
-        let cancel = CancellationToken::new();
         let cancel_child = cancel.child_token();
         let runtime = self.ctx.runtime_api.clone();
 
-        let job = Arc::new(Mutex::new(
-            self.build_job(&request, ProcessingJobState::Running),
-        ));
-        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
         let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
-
-        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
-            job_id.clone(),
-            JobEntry {
-                job: job.clone(),
-                cancel,
-                handle: None,
-            },
-        );
 
         let config = self.config.clone();
         let engine = self.ctx.clone();
@@ -727,8 +739,9 @@ impl MediaProcessingProvider {
             .jobs
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&job_id)
+            .get_mut(job_id)
         {
+            entry.cancel = cancel;
             entry.handle = Some(handle);
         }
 
@@ -737,13 +750,18 @@ impl MediaProcessingProvider {
     }
 
     #[cfg(feature = "media-processing-cpu")]
+    #[allow(clippy::too_many_arguments)]
     async fn create_audio_mix_job(
         &self,
         ctx: &MediaRequestContext,
         request: CreateProcessingJob,
         inputs: &[AudioMixInput],
         mix: &AudioMix,
+        job_id: &ProcessingJobId,
+        job: Arc<Mutex<ProcessingJob>>,
+        cancel: CancellationToken,
     ) -> MediaResult<ProcessingJob> {
+        let _ = request;
         if inputs.len() < 2 || inputs.len() > 16 {
             return Err(MediaError::invalid_argument(
                 "audio mix requires 2-16 sources",
@@ -771,24 +789,10 @@ impl MediaProcessingProvider {
             .await
             .map_err(|e| MediaError::internal(format!("acquire publisher failed: {e}")))?;
 
-        let cancel = CancellationToken::new();
         let cancel_child = cancel.child_token();
         let runtime = self.ctx.runtime_api.clone();
 
-        let job = Arc::new(Mutex::new(
-            self.build_job(&request, ProcessingJobState::Running),
-        ));
-        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
         let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
-
-        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
-            job_id.clone(),
-            JobEntry {
-                job: job.clone(),
-                cancel,
-                handle: None,
-            },
-        );
 
         let config = self.config.clone();
         let engine = self.ctx.clone();
@@ -816,8 +820,9 @@ impl MediaProcessingProvider {
             .jobs
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&job_id)
+            .get_mut(job_id)
         {
+            entry.cancel = cancel;
             entry.handle = Some(handle);
         }
 
@@ -836,7 +841,11 @@ impl MediaProcessingProvider {
         target: &MediaKey,
         audio_mix: &Option<AudioMix>,
         overlays: &[Overlay],
+        job_id: &ProcessingJobId,
+        job: Arc<Mutex<ProcessingJob>>,
+        cancel: CancellationToken,
     ) -> MediaResult<ProcessingJob> {
+        let _ = request;
         if inputs.len() < 2 || inputs.len() > 9 {
             return Err(MediaError::invalid_argument(
                 "video mosaic requires 2-9 sources",
@@ -873,24 +882,10 @@ impl MediaProcessingProvider {
             .await
             .map_err(|e| MediaError::internal(format!("acquire publisher failed: {e}")))?;
 
-        let cancel = CancellationToken::new();
         let cancel_child = cancel.child_token();
         let runtime = self.ctx.runtime_api.clone();
 
-        let job = Arc::new(Mutex::new(
-            self.build_job(&request, ProcessingJobState::Running),
-        ));
-        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
         let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
-
-        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
-            job_id.clone(),
-            JobEntry {
-                job: job.clone(),
-                cancel,
-                handle: None,
-            },
-        );
 
         let config = self.config.clone();
         let engine = self.ctx.clone();
@@ -918,8 +913,9 @@ impl MediaProcessingProvider {
             .jobs
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .get_mut(&job_id)
+            .get_mut(job_id)
         {
+            entry.cancel = cancel;
             entry.handle = Some(handle);
         }
 
@@ -989,11 +985,20 @@ impl MediaProcessingApi for MediaProcessingProvider {
         ctx: &MediaRequestContext,
         request: CreateProcessingJob,
     ) -> MediaResult<ProcessingJob> {
-        self.check_job_capacity()?;
+        let (job_id, job, cancel) = self.reserve_job_slot(&request)?;
         let spec = request.spec.clone();
-        match &spec {
+        let result = match &spec {
             ProcessingJobSpec::CaptionExtract { source, target, .. } => {
-                self.create_caption_job(ctx, request, source, target).await
+                self.create_caption_job(
+                    ctx,
+                    request,
+                    source,
+                    target,
+                    &job_id,
+                    job.clone(),
+                    cancel.clone(),
+                )
+                .await
             }
             #[cfg(feature = "media-processing-cpu")]
             ProcessingJobSpec::Transcode {
@@ -1017,13 +1022,24 @@ impl MediaProcessingApi for MediaProcessingProvider {
                     *track_selection,
                     video,
                     audio,
+                    &job_id,
+                    job.clone(),
+                    cancel.clone(),
                 )
                 .await
             }
             #[cfg(feature = "media-processing-cpu")]
             ProcessingJobSpec::AbrLadder { source, variants } => {
-                self.create_abr_ladder_job(ctx, request, source, variants)
-                    .await
+                self.create_abr_ladder_job(
+                    ctx,
+                    request,
+                    source,
+                    variants,
+                    &job_id,
+                    job.clone(),
+                    cancel.clone(),
+                )
+                .await
             }
             #[cfg(feature = "media-processing-cpu")]
             ProcessingJobSpec::AudioMix {
@@ -1035,7 +1051,16 @@ impl MediaProcessingApi for MediaProcessingProvider {
                     target: target.clone(),
                     output: output.clone(),
                 };
-                self.create_audio_mix_job(ctx, request, inputs, &mix).await
+                self.create_audio_mix_job(
+                    ctx,
+                    request,
+                    inputs,
+                    &mix,
+                    &job_id,
+                    job.clone(),
+                    cancel.clone(),
+                )
+                .await
             }
             #[cfg(feature = "media-processing-cpu")]
             ProcessingJobSpec::VideoMosaic {
@@ -1046,7 +1071,16 @@ impl MediaProcessingApi for MediaProcessingProvider {
                 overlays,
             } => {
                 self.create_video_mosaic_job(
-                    ctx, request, inputs, layout, target, audio_mix, overlays,
+                    ctx,
+                    request,
+                    inputs,
+                    layout,
+                    target,
+                    audio_mix,
+                    overlays,
+                    &job_id,
+                    job.clone(),
+                    cancel.clone(),
                 )
                 .await
             }
@@ -1054,7 +1088,11 @@ impl MediaProcessingApi for MediaProcessingProvider {
             _ => Err(MediaError::unsupported(
                 "processing job type is not compiled in this build",
             )),
+        };
+        if let Err(ref e) = result {
+            self.fail_reserved_job(&job_id, job, e);
         }
+        result
     }
 
     async fn get_job(
