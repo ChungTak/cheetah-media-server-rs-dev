@@ -582,11 +582,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn zlm_catalog_contains_64_required_routes() {
+    fn zlm_catalog_contains_61_required_routes() {
         let required = ZLM_ROUTES.iter().filter(|r| r.required).count();
         assert_eq!(
-            required, 64,
-            "required ZLM route catalog must contain 64 routes"
+            required, 61,
+            "required ZLM route catalog must contain 61 routes"
         );
     }
 

@@ -55,16 +55,6 @@ fn post(path: &str, body: serde_json::Value) -> HttpRequest {
     }
 }
 
-fn get(path: &str, query: Option<String>) -> HttpRequest {
-    HttpRequest {
-        method: HttpMethod::Get,
-        path: path.to_string(),
-        query,
-        headers: vec![],
-        body: Bytes::new(),
-    }
-}
-
 fn body_json(resp: &cheetah_sdk::HttpResponse) -> serde_json::Value {
     serde_json::from_slice(&resp.body).unwrap_or_else(|_| json!({}))
 }

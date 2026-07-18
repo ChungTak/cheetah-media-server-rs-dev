@@ -139,7 +139,7 @@ pub(crate) async fn start_derived_stream(
         .await
         .map_err(|e| format!("create processing job: {e}"))?;
 
-    wait_for_job_state(
+    if let Err(e) = wait_for_job_state(
         processing_api.as_ref(),
         &media_ctx,
         &job.job_id,
@@ -148,7 +148,12 @@ pub(crate) async fn start_derived_stream(
         &ctx.runtime_api,
         cancel,
     )
-    .await?;
+    .await
+    {
+        let _ = processing_api.stop_job(&media_ctx, &job.job_id).await;
+        let _ = processing_api.delete_job(&media_ctx, &job.job_id).await;
+        return Err(e);
+    }
 
     Ok(job.job_id)
 }
