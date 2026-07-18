@@ -696,7 +696,7 @@ fn fill_yuv420p_black(buf: &mut [u8], width: u32, height: u32) {
     let uv_stride = align_up(cw, STRIDE_ALIGNMENT);
     let y_size = y_stride * h;
     let uv_size = uv_stride * ch;
-    buf[..y_size].fill(0);
+    buf[..y_size].fill(16);
     buf[y_size..y_size + uv_size].fill(128);
     buf[y_size + uv_size..y_size + uv_size * 2].fill(128);
 }
