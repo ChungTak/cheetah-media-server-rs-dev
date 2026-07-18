@@ -175,7 +175,7 @@ jobs:
       - name: S6 - Default build has no avcodec dependency
         run: |
           set -euo pipefail
-          cargo tree -p cheetah-server --no-default-features | ( ! grep -qi "avcodec" )
+          cargo tree -p cheetah-server | ( ! grep -qi "avcodec" )
 
       - name: S6 - Server builds with media-processing feature
         run: |
