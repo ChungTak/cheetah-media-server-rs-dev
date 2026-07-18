@@ -559,8 +559,8 @@ fn pad_yuv420p_to_cell(content: Image, cell_w: u32, cell_h: u32) -> avcodec::cor
         *uv = 128;
     }
 
-    let off_x = (cell_w - content_w) / 2;
-    let off_y = (cell_h - content_h) / 2;
+    let off_x = ((cell_w - content_w) / 2) & !1;
+    let off_y = ((cell_h - content_h) / 2) & !1;
 
     let y_plane = content.planes[0].ok_or(avcodec::core::AvError::InvalidArgument)?;
     let u_plane = content.planes[1].ok_or(avcodec::core::AvError::InvalidArgument)?;
