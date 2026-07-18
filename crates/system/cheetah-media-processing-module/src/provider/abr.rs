@@ -33,6 +33,7 @@ struct VariantContext {
     target: StreamKey,
     sender: TranscodeQueueSender,
     worker_error: Arc<Mutex<Option<String>>>,
+    has_audio: bool,
 }
 
 /// Spawn an ABR ladder worker that publishes 1-4 derived renditions of `source`.
@@ -124,6 +125,7 @@ pub async fn spawn_abr_ladder_worker(
                 target,
                 sender,
                 worker_error,
+                has_audio: variant.audio.is_some(),
             });
         }
 
@@ -172,6 +174,10 @@ pub async fn spawn_abr_ladder_worker(
                     });
 
                     for ctx in &contexts {
+                        if matches!(input, TranscodeInput::Audio(_)) && !ctx.has_audio {
+                            continue;
+                        }
+
                         if ctx.worker_error.lock().unwrap().is_some() {
                             subscriber_error = Some(SdkError::Internal(format!(
                                 "abr variant for {} failed",
@@ -222,16 +228,15 @@ pub async fn spawn_abr_ladder_worker(
     // Cleanup runs regardless of whether the body returned early or succeeded.
     // Drop senders first so blocking workers wake up, then join them, then
     // release every publisher lease.
+    // Join every started variant worker after dropping its sender so it can
+    // flush and exit. Collect the first worker error for reporting.
     let mut worker_error: Option<String> = None;
-    for ((ctx, handle), lease) in contexts
-        .into_iter()
-        .zip(handles.into_iter())
-        .zip(leases.into_iter())
-    {
+    for (ctx, handle) in contexts.into_iter().zip(handles.into_iter()) {
         let VariantContext {
             target,
             sender,
             worker_error: we,
+            has_audio: _,
         } = ctx;
         drop(sender);
         let _ = handle.wait().await;
@@ -239,7 +244,12 @@ pub async fn spawn_abr_ladder_worker(
             if worker_error.is_none() {
                 worker_error = Some(format!("{target}: {err}"));
             }
-        }
+        };
+    }
+
+    // Release every publisher lease, including those for variants that never
+    // started, so a failed ladder never permanently reserves rendition streams.
+    for lease in leases {
         let _ = publisher_api.release_publisher(&lease).await;
     }
 
