@@ -1010,23 +1010,24 @@ impl MediaProcessingApi for MediaProcessingProvider {
                 overlays,
             } => {
                 if !overlays.is_empty() {
-                    return Err(MediaError::unsupported(
+                    Err(MediaError::unsupported(
                         "transcode overlays are not supported in this release",
-                    ));
+                    ))
+                } else {
+                    self.create_transcode_job(
+                        ctx,
+                        request,
+                        source,
+                        target,
+                        *track_selection,
+                        video,
+                        audio,
+                        &job_id,
+                        job.clone(),
+                        cancel.clone(),
+                    )
+                    .await
                 }
-                self.create_transcode_job(
-                    ctx,
-                    request,
-                    source,
-                    target,
-                    *track_selection,
-                    video,
-                    audio,
-                    &job_id,
-                    job.clone(),
-                    cancel.clone(),
-                )
-                .await
             }
             #[cfg(feature = "media-processing-cpu")]
             ProcessingJobSpec::AbrLadder { source, variants } => {
