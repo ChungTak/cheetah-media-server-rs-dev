@@ -5,7 +5,7 @@
 
 use crate::ll_hls::LowLatencyState;
 use crate::segment::SegmentRing;
-use crate::vtt_mux::{VttMux, VttMuxConfig, VttSegment};
+use crate::vtt_mux::{VttMux, VttSegment};
 
 /// Container mode for playlist generation.
 ///
@@ -715,7 +715,8 @@ mod tests {
 
     #[test]
     fn vtt_media_playlist_from_mux() {
-        use super::{PlaylistBuilder, VttMux, VttMuxConfig};
+        use super::{PlaylistBuilder, VttMux};
+        use crate::VttMuxConfig;
         use cheetah_codec::subtitle::WebVttCue;
 
         let mut mux = VttMux::new(VttMuxConfig {
