@@ -9,14 +9,17 @@
 //! 缓存播放列表及 DVR 回退元数据。
 //!
 
+use std::collections::VecDeque;
+
 use bytes::Bytes;
 use cheetah_codec::{
-    aac_channel_count_from_asc, adts_wrap, h26x_length_prefixed_from_payload, AVFrame,
-    AacAudioSpecificConfig, CodecExtradata, CodecId, FrameFlags, MediaKind, TrackInfo,
+    aac_channel_count_from_asc, adts_wrap, h26x_length_prefixed_from_payload, subtitle::WebVttCue,
+    AVFrame, AacAudioSpecificConfig, CodecExtradata, CodecId, FrameFlags, MediaKind, TrackInfo,
 };
 use cheetah_hls_core::{
-    Fmp4Muxer, Fmp4Sample, Fmp4TrackDesc, HlsContainer, HlsPart, LlHlsPackagingMode,
-    LowLatencyState, PlaylistBuilder, SegmentRing, TrackLane, TsMuxer,
+    Fmp4Muxer, Fmp4Sample, Fmp4TrackDesc, HlsContainer, HlsCoreError, HlsPart, LlHlsPackagingMode,
+    LowLatencyState, PlaylistBuilder, SegmentRing, TrackLane, TsMuxer, VttMux, VttMuxConfig,
+    VttSegment,
 };
 
 use crate::demuxed_muxer::{DemuxedMuxerConfig, DemuxedStreamMuxer};
@@ -45,6 +48,10 @@ pub struct StreamMuxerConfig {
     pub origin_mode: bool,
     #[allow(dead_code)]
     pub stream_name: String,
+    /// Optional WebVTT subtitle muxer configuration.
+    ///
+    /// 可选的 WebVTT 字幕复用器配置。
+    pub vtt_config: Option<VttMuxConfig>,
 }
 
 /// Lightweight segment metadata kept for DVR/rewind playlist generation.
@@ -62,13 +69,15 @@ pub struct SegmentMeta {
 
 /// Output event produced by the stream muxer.
 ///
-/// Either a completed segment or a finalized LL-HLS part.
+/// Either a completed segment, a finalized LL-HLS part, or a new WebVTT
+/// subtitle segment.
 ///
 /// 流复用器产生的事件。
 ///
-/// 一个已完成的分段或最终化的 LL-HLS 分片。
+/// 一个已完成的分段、最终化的 LL-HLS 分片或新的 WebVTT 字幕分段。
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
+#[allow(clippy::enum_variant_names)]
 pub enum MuxerOutput {
     SegmentReady {
         name: String,
@@ -76,13 +85,14 @@ pub enum MuxerOutput {
         data: Bytes,
     },
     PartReady(HlsPart),
+    VttSegmentReady(VttSegment),
 }
 
 /// Per-stream HLS muxer state.
 ///
-/// Owns either a TS or fMP4 muxer, optional LL-HLS state, a segment ring, and a
-/// demuxed sub-muxer. It normalizes AAC and H.26x payload formats and keeps rewind
-/// metadata for DVR playlists.
+/// Owns either a TS or fMP4 muxer, optional LL-HLS state, a segment ring, a
+/// demuxed sub-muxer, and an optional WebVTT subtitle muxer. It normalizes AAC
+/// and H.26x payload formats and keeps rewind metadata for DVR playlists.
 ///
 /// 每个流的 HLS 复用器状态。
 ///
@@ -126,8 +136,13 @@ pub struct StreamMuxer {
     rewind_history: Vec<SegmentMeta>,
     pending_markers: Vec<cheetah_hls_core::CueMarker>,
     demuxed: Option<DemuxedStreamMuxer>,
+    vtt_mux: Option<VttMux>,
+    vtt_ready: bool,
+    vtt_segments: VecDeque<VttSegment>,
+    pending_vtt_outputs: Vec<MuxerOutput>,
 }
 
+#[allow(dead_code)]
 impl StreamMuxer {
     pub fn new(config: StreamMuxerConfig) -> Self {
         let ll_state = if config.ll_hls_enabled && config.container == HlsContainer::Fmp4 {
@@ -139,6 +154,7 @@ impl StreamMuxer {
             None
         };
         let stream_key = generate_stream_validation_key();
+        let vtt_mux = config.vtt_config.map(VttMux::new);
         Self {
             ring: SegmentRing::new(config.segment_count),
             config,
@@ -177,6 +193,10 @@ impl StreamMuxer {
             rewind_history: Vec::new(),
             pending_markers: Vec::new(),
             demuxed: None,
+            vtt_mux,
+            vtt_ready: false,
+            vtt_segments: VecDeque::new(),
+            pending_vtt_outputs: Vec::new(),
         }
     }
 
@@ -351,75 +371,88 @@ impl StreamMuxer {
             return Vec::new();
         }
 
-        // Delegate to demuxed muxer when active
+        // Delegate to demuxed muxer when active; close aligned VTT segments on
+        // video segment boundaries so live captions are not silently dropped.
+        let is_video = frame.media_kind == MediaKind::Video;
+        let mut outputs;
         if let Some(ref mut demuxed) = self.demuxed {
-            let outputs = demuxed.push_frame(frame);
+            outputs = demuxed.push_frame(frame);
             if !outputs.is_empty() && !self.ready {
                 self.ready = demuxed.is_ready();
             }
-            return outputs;
-        }
-
-        // Extract AAC config from CONFIG frames (before NON_PICTURE skip)
-        if frame.flags.contains(FrameFlags::CONFIG) {
-            if frame.media_kind == MediaKind::Audio && frame.codec == CodecId::AAC {
-                if self.aac_config.is_none() {
-                    self.aac_config = AacAudioSpecificConfig::from_bytes(&frame.payload);
+        } else {
+            // Extract AAC config from CONFIG frames (before NON_PICTURE skip)
+            if frame.flags.contains(FrameFlags::CONFIG) {
+                if frame.media_kind == MediaKind::Audio && frame.codec == CodecId::AAC {
+                    if self.aac_config.is_none() {
+                        self.aac_config = AacAudioSpecificConfig::from_bytes(&frame.payload);
+                    }
+                    // Resolve channel count from the ASC (PCE-aware). FLV/RTMP sources commonly
+                    // arrive at the muxer with track.channels still defaulted to 1 or 2 because
+                    // the AMF metadata "stereo" flag predates the AAC config; fall back to whatever
+                    // we already learned from the track if PCE parsing fails.
+                    if let Some(resolved) = aac_channel_count_from_asc(&frame.payload) {
+                        if resolved > 0 {
+                            self.audio_channels = resolved;
+                        }
+                    }
+                    // Backfill ch_cfg=0 ASC (PCE-only multichannel) so ADTS frames carry
+                    // a valid channel_configuration that decoders can use, even if the
+                    // original snapshot already produced an aac_config with ch_cfg=0.
+                    self.aac_config =
+                        patch_aac_config_channels(self.aac_config, self.audio_channels);
+                    self.audio_codec = CodecId::AAC;
                 }
-                // Resolve channel count from the ASC (PCE-aware). FLV/RTMP sources commonly
-                // arrive at the muxer with track.channels still defaulted to 1 or 2 because
-                // the AMF metadata "stereo" flag predates the AAC config; fall back to whatever
-                // we already learned from the track if PCE parsing fails.
-                if let Some(resolved) = aac_channel_count_from_asc(&frame.payload) {
-                    if resolved > 0 {
-                        self.audio_channels = resolved;
+                // Extract video parameter sets (SPS/PPS/VPS) from CONFIG frames
+                if frame.media_kind == MediaKind::Video && self.parameter_sets.is_none() {
+                    self.video_codec = frame.codec;
+                    if !frame.payload.is_empty() {
+                        self.parameter_sets = Some(Bytes::from(to_annexb(&frame.payload)));
+                        self.video_extradata = frame.payload.clone();
                     }
                 }
-                // Backfill ch_cfg=0 ASC (PCE-only multichannel) so ADTS frames carry
-                // a valid channel_configuration that decoders can use, even if the
-                // original snapshot already produced an aac_config with ch_cfg=0.
-                self.aac_config = patch_aac_config_channels(self.aac_config, self.audio_channels);
-                self.audio_codec = CodecId::AAC;
+                return Vec::new();
             }
-            // Extract video parameter sets (SPS/PPS/VPS) from CONFIG frames
-            if frame.media_kind == MediaKind::Video && self.parameter_sets.is_none() {
-                self.video_codec = frame.codec;
-                if !frame.payload.is_empty() {
-                    self.parameter_sets = Some(Bytes::from(to_annexb(&frame.payload)));
-                    self.video_extradata = frame.payload.clone();
-                }
+
+            // Skip SEI/metadata NALs
+            if frame.flags.contains(FrameFlags::NON_PICTURE) {
+                return Vec::new();
             }
-            return Vec::new();
-        }
 
-        // Skip SEI/metadata NALs
-        if frame.flags.contains(FrameFlags::NON_PICTURE) {
-            return Vec::new();
-        }
+            if self.waiting_for_initial_video_keyframe(frame) {
+                return Vec::new();
+            }
 
-        if self.waiting_for_initial_video_keyframe(frame) {
-            return Vec::new();
-        }
-
-        match self.config.container {
-            HlsContainer::Ts => {
-                let produced = self.push_frame_ts(frame);
-                if produced {
-                    if let Some(seg) = self.ring.latest() {
-                        vec![MuxerOutput::SegmentReady {
-                            name: seg.name.clone(),
-                            duration_secs: seg.duration_secs,
-                            data: seg.data.clone(),
-                        }]
+            outputs = match self.config.container {
+                HlsContainer::Ts => {
+                    let produced = self.push_frame_ts(frame);
+                    if produced {
+                        if let Some(seg) = self.ring.latest() {
+                            vec![MuxerOutput::SegmentReady {
+                                name: seg.name.clone(),
+                                duration_secs: seg.duration_secs,
+                                data: seg.data.clone(),
+                            }]
+                        } else {
+                            Vec::new()
+                        }
                     } else {
                         Vec::new()
                     }
-                } else {
-                    Vec::new()
                 }
-            }
-            HlsContainer::Fmp4 => self.push_frame_fmp4(frame),
+                HlsContainer::Fmp4 => self.push_frame_fmp4(frame),
+            };
         }
+
+        if is_video
+            && outputs
+                .iter()
+                .any(|o| matches!(o, MuxerOutput::SegmentReady { .. }))
+        {
+            self.close_vtt_segment(frame.dts_us.max(0) as u64 / 1000);
+        }
+        outputs.extend(self.take_vtt_outputs());
+        outputs
     }
 
     /// Push a frame through the fMP4 muxing path.
@@ -858,6 +891,9 @@ impl StreamMuxer {
     pub fn conclude(&mut self) {
         if let Some(ref mut demuxed) = self.demuxed {
             demuxed.conclude();
+            // Flush any remaining captions for demuxed streams; non-demuxed path
+            // already finalizes the VTT segment inside `self.flush()`.
+            self.flush_vtt();
         } else {
             self.flush();
         }
@@ -1356,6 +1392,10 @@ impl StreamMuxer {
         };
         let duration_secs = duration_us as f64 / 1_000_000.0;
 
+        // Close the aligned WebVTT subtitle segment when present.
+        let end_us = next_video_start_dts_us.unwrap_or(start_dts.saturating_add(duration_us));
+        self.close_vtt_segment(end_us / 1000);
+
         // Compute wallclock offset on first segment
         let segment_start_dts_ms = (start_dts / 1000) as i64;
         if self.wallclock_offset_ms.is_none() {
@@ -1410,6 +1450,128 @@ impl StreamMuxer {
             self.ready = true;
         }
         self.rebuild_playlist_cache();
+    }
+
+    /// Flush any pending cues into a final WebVTT segment and emit it.
+    ///
+    /// 在流结束时将剩余 cue 刷成最终 WebVTT 分段。
+    fn flush_vtt(&mut self) {
+        let Some(mux) = self.vtt_mux.as_mut() else {
+            return;
+        };
+        if mux.flush(None).is_err() {
+            return;
+        }
+        if let Some(segment) = mux.segments().back().cloned() {
+            self.pending_vtt_outputs
+                .push(MuxerOutput::VttSegmentReady(segment.clone()));
+            if self.vtt_segments.len() >= self.config.segment_count.max(1) {
+                self.vtt_segments.pop_front();
+            }
+            self.vtt_segments.push_back(segment);
+        }
+        if !self.vtt_segments.is_empty() {
+            self.vtt_ready = true;
+        }
+    }
+
+    /// Close a WebVTT subtitle segment aligned with the video segment boundary.
+    ///
+    /// 在与视频分段边界对齐处关闭 WebVTT 字幕分段。
+    fn close_vtt_segment(&mut self, end_ms: u64) {
+        let Some(mux) = self.vtt_mux.as_mut() else {
+            return;
+        };
+        if mux.close_segment(end_ms).is_err() {
+            return;
+        }
+        // `close_segment` appends exactly one segment; take it directly so we do
+        // not miss it once the muxer's internal ring starts evicting old ones.
+        if let Some(segment) = mux.segments().back().cloned() {
+            self.pending_vtt_outputs
+                .push(MuxerOutput::VttSegmentReady(segment.clone()));
+            if self.vtt_segments.len() >= self.config.segment_count.max(1) {
+                self.vtt_segments.pop_front();
+            }
+            self.vtt_segments.push_back(segment);
+        }
+        if !self.vtt_segments.is_empty() {
+            self.vtt_ready = true;
+        }
+    }
+
+    /// Push a WebVTT cue into the subtitle muxer.
+    ///
+    /// Cues are retained until the next video segment boundary closes the VTT segment.
+    ///
+    /// 向字幕复用器推入一条 WebVTT cue。
+    ///
+    /// cue 会被保留到下一个视频分段边界关闭 VTT 分段。
+    pub fn push_cue(&mut self, cue: WebVttCue) -> Result<(), HlsCoreError> {
+        if let Some(mux) = self.vtt_mux.as_mut() {
+            mux.push_cue(cue)?;
+        }
+        Ok(())
+    }
+
+    /// Return the configured subtitle muxer, if any.
+    ///
+    /// 返回配置的字幕复用器（如有）。
+    pub fn vtt_mux(&self) -> Option<&VttMux> {
+        self.vtt_mux.as_ref()
+    }
+
+    /// Return completed WebVTT subtitle segments, oldest first.
+    ///
+    /// 返回已完成的 WebVTT 字幕分段，最旧的在前。
+    pub fn vtt_segments(&self) -> &VecDeque<VttSegment> {
+        &self.vtt_segments
+    }
+
+    /// Fetch a completed WebVTT segment by name, optionally stripping the `.vtt`
+    /// extension used in playlist URIs.
+    ///
+    /// 按名称获取已完成的 WebVTT 分段。
+    pub fn get_vtt_segment(&self, name: &str) -> Option<Bytes> {
+        let key = name.strip_suffix(".vtt").unwrap_or(name);
+        self.vtt_segments
+            .iter()
+            .find(|s| s.name == key)
+            .map(|s| Bytes::from(s.payload.clone()))
+    }
+
+    /// Generate a signed WebVTT media playlist from the internal subtitle muxer.
+    ///
+    /// When `include_stream_key` is true, segment URIs are appended with the
+    /// stream-key token so they pass the segment handler's validation.
+    ///
+    /// 生成签名后的 WebVTT 媒体播放列表。
+    pub fn vtt_media_playlist(
+        &self,
+        session_id: Option<u64>,
+        include_stream_key: bool,
+    ) -> Option<String> {
+        let vtt_mux = self.vtt_mux.as_ref()?;
+        let playlist = PlaylistBuilder::build_vtt_media(vtt_mux, session_id);
+        if include_stream_key {
+            Some(append_stream_key_to_playlist_uris(
+                &playlist,
+                &self.stream_key,
+            ))
+        } else {
+            Some(playlist)
+        }
+    }
+
+    /// Whether the subtitle track has produced at least one segment.
+    ///
+    /// 字幕轨道是否已产出至少一个分段。
+    pub fn vtt_ready(&self) -> bool {
+        self.vtt_ready
+    }
+
+    fn take_vtt_outputs(&mut self) -> Vec<MuxerOutput> {
+        std::mem::take(&mut self.pending_vtt_outputs)
     }
 }
 
@@ -1898,9 +2060,10 @@ impl Default for MuxerHealth {
 mod tests {
     use super::*;
     use cheetah_codec::{
-        CodecExtradata, CodecId, FrameFlags, FrameFormat, MediaKind, Timebase, TrackId, TrackInfo,
+        subtitle::WebVttCue, CodecExtradata, CodecId, FrameFlags, FrameFormat, MediaKind, Timebase,
+        TrackId, TrackInfo,
     };
-    use cheetah_hls_core::{Fmp4DemuxEvent, Fmp4Demuxer};
+    use cheetah_hls_core::{Fmp4DemuxEvent, Fmp4Demuxer, VttMuxConfig};
 
     fn make_config_llhls() -> StreamMuxerConfig {
         StreamMuxerConfig {
@@ -1916,6 +2079,7 @@ mod tests {
             ll_hls_packaging_mode: LlHlsPackagingMode::VideoOnly,
             origin_mode: false,
             stream_name: String::new(),
+            vtt_config: None,
         }
     }
 
@@ -2238,6 +2402,178 @@ mod tests {
     }
 
     #[test]
+    fn vtt_segments_produced_on_video_segment_boundary() {
+        let mut config = make_config_llhls();
+        config.vtt_config = Some(VttMuxConfig::default());
+        let mut muxer = StreamMuxer::new(config);
+        let mut track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90000);
+        track.width = Some(1920);
+        track.height = Some(1080);
+        track.extradata = CodecExtradata::H264 {
+            sps: vec![Bytes::from_static(&[0x67, 0x42, 0x00, 0x1e])],
+            pps: vec![Bytes::from_static(&[0x68, 0xce, 0x38])],
+            avcc: None,
+        };
+        muxer.set_tracks(&[track]);
+
+        muxer
+            .push_cue(WebVttCue {
+                id: None,
+                start_ms: 500,
+                end_ms: 3_500,
+                payload: "Hello".to_string(),
+                settings: None,
+            })
+            .unwrap();
+
+        for i in 0..2 {
+            let dts_us = i * 2_000_000;
+            let keyframe = i == 0 || i == 1;
+            let outputs = muxer.push_frame(&make_video_frame(dts_us, keyframe));
+            if i == 1 {
+                assert!(
+                    outputs
+                        .iter()
+                        .any(|o| matches!(o, MuxerOutput::VttSegmentReady(_))),
+                    "expected a VTT segment when the first video segment closes"
+                );
+            }
+        }
+
+        assert_eq!(muxer.vtt_segments().len(), 1);
+        let seg = muxer.vtt_segments().back().unwrap();
+        assert!(seg.payload.contains("Hello"));
+        assert!(seg.payload.contains("00:00:00.500 --> 00:00:02.000"));
+        assert!(muxer.vtt_ready());
+        assert!(muxer.vtt_mux().is_some());
+    }
+
+    #[test]
+    fn vtt_media_playlist_can_be_built_from_muxer() {
+        let mut config = make_config_llhls();
+        config.vtt_config = Some(VttMuxConfig::default());
+        let mut muxer = StreamMuxer::new(config);
+        let mut track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90000);
+        track.extradata = CodecExtradata::H264 {
+            sps: vec![Bytes::from_static(&[0x67, 0x42, 0x00, 0x1e])],
+            pps: vec![Bytes::from_static(&[0x68, 0xce, 0x38])],
+            avcc: None,
+        };
+        muxer.set_tracks(&[track]);
+
+        muxer
+            .push_cue(WebVttCue {
+                id: None,
+                start_ms: 500,
+                end_ms: 3_500,
+                payload: "Hello".to_string(),
+                settings: None,
+            })
+            .unwrap();
+        muxer.push_frame(&make_video_frame(0, true));
+        muxer.push_frame(&make_video_frame(2_000_000, true));
+
+        let m3u8 =
+            cheetah_hls_core::PlaylistBuilder::build_vtt_media(muxer.vtt_mux().unwrap(), Some(42));
+        assert!(m3u8.contains("#EXTM3U"));
+        assert!(m3u8.contains("sub0.vtt?uid=42"));
+    }
+
+    #[test]
+    fn vtt_segments_captured_after_internal_ring_is_full() {
+        let mut config = make_config_llhls();
+        config.segment_duration_ms = 1000;
+        config.vtt_config = Some(VttMuxConfig {
+            segment_duration_ms: 1000,
+            max_segments: 2,
+        });
+        let mut muxer = StreamMuxer::new(config);
+        let mut track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90000);
+        track.extradata = CodecExtradata::H264 {
+            sps: vec![Bytes::from_static(&[0x67, 0x42, 0x00, 0x1e])],
+            pps: vec![Bytes::from_static(&[0x68, 0xce, 0x38])],
+            avcc: None,
+        };
+        muxer.set_tracks(&[track]);
+
+        let mut vtt_count = 0;
+        for i in 0..5 {
+            let dts_us = i * 1_000_000;
+            let outputs = muxer.push_frame(&make_video_frame(dts_us, true));
+            vtt_count += outputs
+                .iter()
+                .filter(|o| matches!(o, MuxerOutput::VttSegmentReady(_)))
+                .count();
+        }
+        assert_eq!(
+            vtt_count, 4,
+            "expected one VTT segment per closed video segment"
+        );
+        assert!(muxer.vtt_segments().len() <= 3);
+        assert_eq!(
+            muxer.vtt_segments().back().unwrap().sequence,
+            3,
+            "latest segment should be sub3 even after internal ring eviction"
+        );
+    }
+
+    #[test]
+    fn vtt_segments_produced_in_demuxed_mode() {
+        let mut config = make_config_llhls();
+        config.ll_hls_packaging_mode = LlHlsPackagingMode::DemuxedAv;
+        config.vtt_config = Some(VttMuxConfig::default());
+        let mut muxer = StreamMuxer::new(config);
+
+        let mut video = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90000);
+        video.width = Some(1920);
+        video.height = Some(1080);
+        video.extradata = CodecExtradata::H264 {
+            sps: vec![Bytes::from_static(&[0x67, 0x42, 0x00, 0x1e])],
+            pps: vec![Bytes::from_static(&[0x68, 0xce, 0x38])],
+            avcc: None,
+        };
+        let mut audio = TrackInfo::new(TrackId(2), MediaKind::Audio, CodecId::AAC, 48000);
+        audio.sample_rate = Some(48000);
+        audio.channels = Some(2);
+        audio.extradata = CodecExtradata::AAC {
+            asc: Bytes::from_static(&[0x11, 0x90]),
+        };
+        muxer.set_tracks(&[video, audio]);
+
+        muxer
+            .push_cue(WebVttCue {
+                id: None,
+                start_ms: 500,
+                end_ms: 3_500,
+                payload: "Hello".to_string(),
+                settings: None,
+            })
+            .unwrap();
+
+        let mut vtt_count = 0;
+        for i in 0..3 {
+            let dts_us = i * 1_000_000;
+            let keyframe = i == 0 || i == 2;
+            vtt_count += muxer
+                .push_frame(&make_video_frame(dts_us, keyframe))
+                .iter()
+                .filter(|o| matches!(o, MuxerOutput::VttSegmentReady(_)))
+                .count();
+            muxer.push_frame(&make_audio_frame(dts_us));
+        }
+
+        assert_eq!(
+            vtt_count, 1,
+            "expected one VTT segment when the 2s video segment boundary closes"
+        );
+        assert!(muxer.vtt_ready());
+        assert_eq!(muxer.vtt_segments().len(), 1);
+        let seg = muxer.vtt_segments().back().unwrap();
+        assert!(seg.payload.contains("Hello"));
+        assert_eq!(seg.sequence, 0);
+    }
+
+    #[test]
     fn concluded_llhls_stream_satisfies_blocking_playlist_request() {
         let mut muxer = setup_muxer();
 
@@ -2271,6 +2607,7 @@ mod tests {
             ll_hls_packaging_mode: LlHlsPackagingMode::VideoOnly,
             origin_mode: false,
             stream_name: String::new(),
+            vtt_config: None,
         };
         let mut muxer = StreamMuxer::new(config);
         let mut track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90000);
