@@ -1948,7 +1948,10 @@ fn ensure_muxer(
         ),
         origin_mode: config.origin_mode,
         stream_name: key.clone(),
-        vtt_config: Some(VttMuxConfig::default()),
+        vtt_config: Some(VttMuxConfig {
+            segment_duration_ms: config.segment_duration_ms,
+            max_segments: config.segment_count.max(1),
+        }),
     })));
     map.insert(key.clone(), muxer.clone());
 
@@ -1991,10 +1994,12 @@ fn ensure_muxer(
     }));
 
     // Spawn caption discovery/subscriber task for this stream.
+    // Use a Weak reference so the task exits when the muxer is removed from the map,
+    // preventing leaked background tasks that poll forever after the stream ends.
     let engine3 = engine.clone();
     let stream_key2 = stream_key.clone();
     let cancel2 = cancel.clone();
-    let muxer_for_caption = muxer.clone();
+    let muxer_for_caption = Arc::downgrade(&muxer);
     let _ = runtime_api.spawn(Box::pin(async move {
         run_caption_subscriber(engine3, stream_key2, muxer_for_caption, cancel2).await;
     }));
@@ -2241,7 +2246,7 @@ async fn run_subscriber(
 async fn run_caption_subscriber(
     engine: EngineContext,
     stream_key: StreamKeyParts,
-    muxer: Arc<Mutex<StreamMuxer>>,
+    muxer: std::sync::Weak<Mutex<StreamMuxer>>,
     cancel: CancellationToken,
 ) {
     let processing_api = match engine.media_services.processing() {
@@ -2269,6 +2274,11 @@ async fn run_caption_subscriber(
         // Discovery loop: wait for a running CaptionExtract job whose source matches.
         let mut target_key: Option<MediaKey> = None;
         while target_key.is_none() && !cancel.is_cancelled() {
+            // Exit if the muxer/stream is no longer alive.
+            if muxer.upgrade().is_none() {
+                return;
+            }
+
             let mut query = ProcessingJobQuery {
                 vhost: Some(source_key.vhost.0.clone()),
                 app: Some(source_key.app.0.clone()),
@@ -2345,6 +2355,11 @@ async fn run_caption_subscriber(
         }
 
         let Some(mut sub) = subscriber else {
+            // Exit if the muxer/stream is no longer alive.
+            if muxer.upgrade().is_none() {
+                return;
+            }
+
             // Pause before re-discovering in case the target stream name changed.
             let deadline =
                 MonoTime::from_micros(engine.runtime_api.now().as_micros() + DISCOVERY_INTERVAL_US);
@@ -2360,22 +2375,18 @@ async fn run_caption_subscriber(
         };
 
         // Feed cues into the muxer until the caption stream ends or we are cancelled.
-        let mut cancelled_while_receiving = false;
-        while !cancelled_while_receiving {
+        let mut stop_task = false;
+        loop {
             let cancel_fut = cancel.cancelled().fuse();
             let recv_fut = sub.recv().fuse();
             pin_mut!(cancel_fut, recv_fut);
 
             let frame = select_biased! {
                 _ = cancel_fut => {
-                    cancelled_while_receiving = true;
-                    None
+                    stop_task = true;
+                    break;
                 }
-                frame = recv_fut => Some(frame),
-            };
-
-            let Some(frame) = frame else {
-                break;
+                frame = recv_fut => frame,
             };
 
             match frame {
@@ -2385,8 +2396,13 @@ async fn run_caption_subscriber(
                 {
                     match serde_json::from_slice::<WebVttCue>(&frame.payload) {
                         Ok(cue) => {
-                            if let Err(e) = muxer.lock().push_cue(cue) {
-                                warn!("hls caption subscriber: push_cue failed: {e}");
+                            if let Some(m) = muxer.upgrade() {
+                                if let Err(e) = m.lock().push_cue(cue) {
+                                    warn!("hls caption subscriber: push_cue failed: {e}");
+                                }
+                            } else {
+                                stop_task = true;
+                                break;
                             }
                         }
                         Err(e) => warn!("hls caption subscriber: invalid WebVTT cue payload: {e}"),
@@ -2398,7 +2414,7 @@ async fn run_caption_subscriber(
         }
 
         let _ = sub.close().await;
-        if cancelled_while_receiving {
+        if stop_task || cancel.is_cancelled() {
             return;
         }
     }
