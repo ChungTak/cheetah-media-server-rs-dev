@@ -837,16 +837,18 @@ impl MediaProcessingApi for MediaProcessingProvider {
         &self,
         _ctx: &MediaRequestContext,
     ) -> MediaResult<ProcessingPreflightReport> {
-        let available = true;
         let mut diagnostics = HashMap::new();
-        if !cfg!(feature = "media-processing-caption") {
+        let mut operations = Vec::new();
+
+        if cfg!(feature = "media-processing-caption") {
+            operations.push("caption_extract".to_string());
+        } else {
             diagnostics.insert(
-                "caption".to_string(),
+                "caption_extract".to_string(),
                 "media-processing-caption feature not compiled".to_string(),
             );
         }
-        #[allow(unused_mut)]
-        let mut operations = vec!["caption_extract".to_string()];
+
         #[cfg(feature = "media-processing-cpu")]
         {
             operations.push("transcode".to_string());
@@ -854,8 +856,21 @@ impl MediaProcessingApi for MediaProcessingProvider {
             operations.push("audio_mix".to_string());
             operations.push("video_mosaic".to_string());
         }
+
+        let profile = self.config.profile.clone();
+        let available = !operations.is_empty();
+
+        for op in &operations {
+            let key = format!("media_processing_preflight{{profile={profile},operation={op}}}");
+            self.ctx.metrics_api.set(&key, 1);
+        }
+        for op in diagnostics.keys() {
+            let key = format!("media_processing_preflight{{profile={profile},operation={op}}}");
+            self.ctx.metrics_api.set(&key, 0);
+        }
+
         Ok(ProcessingPreflightReport {
-            profile: self.config.profile.clone(),
+            profile,
             available,
             operations,
             diagnostics,
