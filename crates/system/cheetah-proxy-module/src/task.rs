@@ -334,6 +334,9 @@ async fn run_pull_rtsp(
                     Ok(id) => job_id = Some(id),
                     Err(e) => {
                         let _ = handle.close().await;
+                        if cancel.is_cancelled() {
+                            return RunOnceOutcome::Stopped;
+                        }
                         return RunOnceOutcome::Failed(e);
                     }
                 }
@@ -503,6 +506,9 @@ async fn run_pull_http_flv(
                                     Err(e) => {
                                         let _ = publisher.close().await;
                                         let _ = pull.close().await;
+                                        if cancel.is_cancelled() {
+                                            return RunOnceOutcome::Stopped;
+                                        }
                                         return RunOnceOutcome::Failed(e);
                                     }
                                 }
