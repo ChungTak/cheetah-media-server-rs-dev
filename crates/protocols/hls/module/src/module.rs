@@ -1779,6 +1779,7 @@ fn ensure_muxer(
         ),
         origin_mode: config.origin_mode,
         stream_name: key.clone(),
+        vtt_config: None,
     })));
     map.insert(key.clone(), muxer.clone());
 
@@ -2701,6 +2702,7 @@ mod tests {
             ll_hls_packaging_mode: cheetah_hls_core::LlHlsPackagingMode::VideoOnly,
             origin_mode: false,
             stream_name: String::new(),
+            vtt_config: None,
         });
         let mut track = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90000);
         track.extradata = CodecExtradata::H264 {
@@ -2743,6 +2745,7 @@ mod tests {
             ll_hls_packaging_mode: cheetah_hls_core::LlHlsPackagingMode::DemuxedAv,
             origin_mode: false,
             stream_name: String::new(),
+            vtt_config: None,
         });
         let mut video = TrackInfo::new(TrackId(1), MediaKind::Video, CodecId::H264, 90000);
         video.width = Some(1920);

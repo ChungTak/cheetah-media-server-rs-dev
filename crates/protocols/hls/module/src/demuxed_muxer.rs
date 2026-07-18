@@ -44,11 +44,13 @@ pub struct DemuxedStreamMuxer {
     video: Option<TrackMuxer>,
     audio: Option<TrackMuxer>,
     wallclock_offset_ms: Option<i64>,
+    #[allow(dead_code)]
     dts_origin_ms: Option<u64>,
     waiting_for_keyframe: bool,
     concluded: bool,
 }
 
+#[allow(dead_code)]
 impl DemuxedStreamMuxer {
     pub fn new(config: DemuxedMuxerConfig) -> Self {
         Self {

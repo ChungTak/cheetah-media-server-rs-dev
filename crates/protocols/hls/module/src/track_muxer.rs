@@ -27,8 +27,10 @@ use cheetah_hls_core::{
 /// 能够生成独立的每轨分片列表。
 pub struct TrackMuxer {
     pub lane: TrackLane,
+    #[allow(dead_code)]
     pub source_track_id: TrackId,
     pub media_kind: MediaKind,
+    #[allow(dead_code)]
     pub codec: CodecId,
     fmp4_muxer: Fmp4Muxer,
     pub init_segment: Bytes,
@@ -60,6 +62,7 @@ pub enum TrackMuxerOutput {
     SegmentReady { name: String, duration_secs: f64 },
 }
 
+#[allow(dead_code)]
 impl TrackMuxer {
     pub fn new(
         lane: TrackLane,
