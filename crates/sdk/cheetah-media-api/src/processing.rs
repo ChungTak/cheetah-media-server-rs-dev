@@ -325,6 +325,8 @@ pub struct CreateProcessingJob {
 /// 更新处理任务的请求。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UpdateProcessingJob {
+    #[serde(default)]
+    pub job_id: ProcessingJobId,
     pub expected_generation: u64,
     pub spec: ProcessingJobSpec,
 }
