@@ -1,18 +1,18 @@
 //! Resource leak observer for the in-memory engine.
 //!
-//! Gathers snapshots of tasks, streams, modules, FFmpeg jobs and media sessions
-//! so tests and operators can assert that cancellation, stop and restart paths
-//! do not leave orphan runtime objects behind.
+//! Gathers snapshots of tasks, streams, modules and media sessions so tests and
+//! operators can assert that cancellation, stop and restart paths do not leave
+//! orphan runtime objects behind.
 //!
 //! 资源泄漏观测器。
-//! 汇总任务、流、模块、FFmpeg 任务与媒体会话的快照，用于验证取消、停止与重启后没有遗留运行时对象。
+//! 汇总任务、流、模块与媒体会话的快照，用于验证取消、停止与重启后没有遗留运行时对象。
 
 use cheetah_media_api::command::SessionQuery;
 use cheetah_media_api::model::SessionState;
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_sdk::{
-    FfmpegApi, MediaSessionDirectoryApi, ModuleManagerApi, ModuleState, StreamManagerApi,
-    StreamSnapshot, TaskState, TaskSystemApi,
+    MediaSessionDirectoryApi, ModuleManagerApi, ModuleState, StreamManagerApi, StreamSnapshot,
+    TaskState, TaskSystemApi,
 };
 
 /// Summary of runtime objects that are still alive when they should have been
@@ -24,25 +24,23 @@ pub struct ResourceLeakReport {
     pub active_task_ids: Vec<String>,
     pub active_stream_keys: Vec<String>,
     pub running_module_ids: Vec<String>,
-    pub active_ffmpeg_job_ids: Vec<String>,
     pub active_session_ids: Vec<String>,
 }
 
 impl ResourceLeakReport {
-    /// True when no tasks, streams, FFmpeg jobs or media sessions are still alive.
+    /// True when no tasks, streams or media sessions are still alive.
     ///
     /// Running modules are intentionally excluded: the report is meant to detect
     /// orphan runtime objects, and modules are expected to be `Running` while the
     /// engine is live. Use `running_module_ids` directly when you need to assert
     /// module shutdown.
     ///
-    /// 当没有仍在运行的任务、流、FFmpeg 任务或媒体会话时返回 true。
+    /// 当没有仍在运行的任务、流或媒体会话时返回 true。
     /// 运行中的模块被排除在外，因为引擎存活时模块本就应该运行；
     /// 如需验证模块已停止，请直接使用 `running_module_ids`。
     pub fn is_clean(&self) -> bool {
         self.active_task_ids.is_empty()
             && self.active_stream_keys.is_empty()
-            && self.active_ffmpeg_job_ids.is_empty()
             && self.active_session_ids.is_empty()
     }
 }
@@ -54,7 +52,6 @@ impl ResourceLeakObserver {
         task_system: &dyn TaskSystemApi,
         stream_manager: &dyn StreamManagerApi,
         module_manager: &dyn ModuleManagerApi,
-        ffmpeg: &dyn FfmpegApi,
         session_directory: &dyn MediaSessionDirectoryApi,
     ) -> anyhow::Result<ResourceLeakReport> {
         let mut report = ResourceLeakReport::default();
@@ -74,12 +71,6 @@ impl ResourceLeakObserver {
         for stream in stream_manager.list_streams().await? {
             if is_stream_active(&stream) {
                 report.active_stream_keys.push(stream.key.to_string());
-            }
-        }
-
-        for job in ffmpeg.list().await {
-            if !job.state.is_terminal() {
-                report.active_ffmpeg_job_ids.push(job.job_id.clone());
             }
         }
 

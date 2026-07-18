@@ -12,8 +12,8 @@ use crate::ids::ModuleId;
 use crate::media_data_plane::MediaDataPlaneApi;
 use crate::media_session::MediaSessionDirectoryApi;
 use crate::service::{
-    ClusterApi, DatabaseApi, FfmpegApi, HealthApi, MetricsApi, ModuleManagerApi, ProxyManager,
-    RoomServiceApi, ServiceRegistry,
+    ClusterApi, DatabaseApi, HealthApi, MetricsApi, ModuleManagerApi, ProxyManager, RoomServiceApi,
+    ServiceRegistry,
 };
 use crate::stream::{CoreAdaptersApi, PublisherApi, StreamManagerApi, SubscriberApi};
 use crate::task::{CancellationToken, TaskSystemApi};
@@ -203,7 +203,6 @@ pub struct EngineContext {
     pub database_api: Arc<dyn DatabaseApi>,
     pub proxy_manager: Arc<dyn ProxyManager>,
     pub cluster_api: Arc<dyn ClusterApi>,
-    pub ffmpeg_api: Arc<dyn FfmpegApi>,
     pub media_services: MediaServices,
     pub media_session_directory: Arc<dyn MediaSessionDirectoryApi>,
     pub media_data_plane: Arc<dyn MediaDataPlaneApi>,

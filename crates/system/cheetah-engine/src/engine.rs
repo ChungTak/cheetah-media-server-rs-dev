@@ -6,7 +6,7 @@ use cheetah_media_api::event::{
 };
 use cheetah_sdk::{
     CancellationToken, ClusterApi, ConfigApplyApi, ConfigProvider, ConfigSchemaRegistry,
-    CoreAdaptersApi, DatabaseApi, EngineContext, EventBus, FfmpegApi, HealthApi, MediaDataPlaneApi,
+    CoreAdaptersApi, DatabaseApi, EngineContext, EventBus, HealthApi, MediaDataPlaneApi,
     MediaFileStoreApi, MediaServices, MediaSessionDirectoryApi, MetricsApi, ModuleFactory,
     ModuleManagerApi, PublisherApi, RoomServiceApi, RuntimeApi, SdkError, ServiceRegistry,
     StreamManagerApi, SubscriberApi, SystemEvent, SystemLifecycleEvent, TaskSystemApi,
@@ -17,7 +17,6 @@ use crate::cluster::LocalCluster;
 use crate::core_adapters::LocalCoreAdapters;
 use crate::database::InMemoryDatabase;
 use crate::event::LocalEventBus;
-use crate::ffmpeg::LocalFfmpegService;
 use crate::health::HealthService;
 use crate::media_provider::{
     EngineMediaDataPlane, EngineMediaFacade, EngineMediaFileStore, EngineMediaSessionDirectory,
@@ -36,12 +35,12 @@ use crate::task::TaskSystem;
 ///
 /// The builder wires all in-memory engine services (event bus, task system, stream
 /// manager, module manager, room, metrics, health, registry, database, proxy, cluster,
-/// ffmpeg, core adapters) before returning a ready `Engine`.
+/// core adapters) before returning a ready `Engine`.
 ///
 /// 组装 `Engine` 的构建器，用于注入运行时、配置和模块。
 ///
 /// 构建器在返回就绪的 `Engine` 之前连接所有内存引擎服务（事件总线、任务系统、流管理器、
-/// 模块管理器、房间、指标、健康、注册表、数据库、代理、集群、ffmpeg、核心适配器）。
+/// 模块管理器、房间、指标、健康、注册表、数据库、代理、集群、核心适配器）。
 pub struct EngineBuilder {
     config_provider: Arc<dyn ConfigProvider>,
     config_apply_api: Arc<dyn ConfigApplyApi>,
@@ -51,7 +50,6 @@ pub struct EngineBuilder {
     ring_capacity: usize,
     dispatcher_mode: DispatcherMode,
     factories: Vec<Arc<dyn ModuleFactory>>,
-    ffmpeg_api: Option<Arc<dyn FfmpegApi>>,
 }
 
 impl EngineBuilder {
@@ -72,7 +70,6 @@ impl EngineBuilder {
             ring_capacity: 2048,
             dispatcher_mode: DispatcherMode::PerStream,
             factories: Vec::new(),
-            ffmpeg_api: None,
         }
     }
 
@@ -116,18 +113,6 @@ impl EngineBuilder {
         self
     }
 
-    /// Inject a custom FFmpeg API provider.
-    ///
-    /// When omitted, the engine creates a `LocalFfmpegService` with the default
-    /// `ffmpeg` profile.
-    ///
-    /// 注入自定义 FFmpeg API provider。省略时引擎将使用默认 `ffmpeg` profile
-    /// 创建 `LocalFfmpegService`。
-    pub fn with_ffmpeg_api(mut self, ffmpeg_api: Arc<dyn FfmpegApi>) -> Self {
-        self.ffmpeg_api = Some(ffmpeg_api);
-        self
-    }
-
     /// Build the engine and wire all services.
     ///
     /// This registers module schemas, registers module factories, and creates the
@@ -157,9 +142,6 @@ impl EngineBuilder {
         let database = Arc::new(InMemoryDatabase::default());
         let proxy_manager = Arc::new(LocalProxyManager::default());
         let cluster = Arc::new(LocalCluster::default());
-        let ffmpeg: Arc<dyn FfmpegApi> = self
-            .ffmpeg_api
-            .unwrap_or_else(|| Arc::new(LocalFfmpegService::default()));
 
         if let Some(registry) = &self.config_schema_registry {
             for factory in &self.factories {
@@ -247,7 +229,6 @@ impl EngineBuilder {
             database,
             proxy_manager,
             cluster,
-            ffmpeg,
             core_adapters,
             media_facade,
             media_services,
@@ -289,7 +270,6 @@ pub struct Engine {
     database: Arc<InMemoryDatabase>,
     proxy_manager: Arc<LocalProxyManager>,
     cluster: Arc<LocalCluster>,
-    ffmpeg: Arc<dyn FfmpegApi>,
     core_adapters: Arc<LocalCoreAdapters>,
     media_facade: Arc<crate::media_provider::EngineMediaFacade>,
     media_services: MediaServices,
@@ -329,7 +309,6 @@ impl Engine {
             database_api: self.database.clone(),
             proxy_manager: self.proxy_manager.clone(),
             cluster_api: self.cluster.clone(),
-            ffmpeg_api: self.ffmpeg.clone(),
             media_services: self.media_services.clone(),
             media_session_directory: self.session_directory.clone(),
             media_data_plane: self.media_data_plane.clone(),
@@ -514,10 +493,6 @@ impl Engine {
         self.cluster.clone()
     }
 
-    pub fn ffmpeg_api(&self) -> Arc<dyn FfmpegApi> {
-        self.ffmpeg.clone()
-    }
-
     /// Capture a snapshot of runtime objects that are still alive.
     ///
     /// 抓取仍在运行的运行时对象快照，用于检测资源泄漏。
@@ -526,7 +501,6 @@ impl Engine {
             &*self.task_system,
             &*self.stream_manager,
             &*self.module_manager,
-            &*self.ffmpeg,
             &*self.session_directory,
         )
         .await

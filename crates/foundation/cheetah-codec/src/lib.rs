@@ -58,19 +58,6 @@ pub(crate) mod prelude {
         }
     }
 
-    /// Compute the ceiling of an `f64`.
-    #[inline]
-    pub fn ceil_f64(x: f64) -> f64 {
-        #[cfg(feature = "std")]
-        {
-            x.ceil()
-        }
-        #[cfg(not(feature = "std"))]
-        {
-            libm::ceil(x)
-        }
-    }
-
     /// Clamp an `f64` between `min` and `max`.
     #[inline]
     pub fn clamp_f64(x: f64, min: f64, max: f64) -> f64 {
@@ -105,7 +92,6 @@ pub mod subtitle;
 pub mod time;
 pub mod track;
 pub mod traits;
-pub mod transcode;
 pub mod ts_common;
 pub mod ts_demux;
 pub mod ts_mux;
@@ -209,11 +195,6 @@ pub use track::{
     AacRtpPacketization, CodecConfigError, CodecConfigPayload, CodecConfigRequirement,
     CodecConfigView, CodecExtradata, CodecId, MediaKind, Rational32, TrackId, TrackInfo,
     TrackInfoError, TrackReadiness,
-};
-pub use transcode::{
-    g711_decode, g711a_decode, g711u_decode, pcm16_to_g711a, pcm16_to_g711u, resample_nearest,
-    AacDecoder, AacEncoder, AacToG711Transcoder, AacToOpusTranscoder, G711ToAacTranscoder,
-    G711ToOpusTranscoder, OpusDecoder, OpusEncoder, OpusToAacTranscoder,
 };
 pub use ts_common::{
     codec_from_stream_type, crc32_mpeg2, decode_timestamp, encode_timestamp, find_sync,
