@@ -16,7 +16,9 @@ use cheetah_codec::{
     PsDemuxerConfig, RtpHeader, RtpPacket, Timebase, TrackId, TrackInfo,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
+#[cfg(feature = "rtp")]
+use tokio::net::UdpSocket;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::process::{Child, Command};
 use tokio::time::{sleep, timeout};
 
@@ -174,6 +176,7 @@ pub async fn http_get(host: &str, port: u16, path: &str) -> (u16, Vec<u8>) {
     read_http_response(&mut stream).await
 }
 
+#[cfg(feature = "rtp")]
 pub async fn http_post(
     host: &str,
     port: u16,
@@ -192,6 +195,7 @@ pub async fn http_post(
     read_http_response(&mut stream).await
 }
 
+#[cfg(feature = "rtp")]
 pub async fn http_delete(host: &str, port: u16, path: &str) -> (u16, Vec<u8>) {
     let mut stream = TcpStream::connect((host, port))
         .await
@@ -207,6 +211,7 @@ pub fn parse_json(body: &[u8]) -> serde_json::Value {
         .unwrap_or_else(|e| panic!("invalid json: {e}; body: {}", String::from_utf8_lossy(body)))
 }
 
+#[cfg(feature = "rtp")]
 pub fn media_key(vhost: &str, app: &str, stream: &str) -> serde_json::Value {
     serde_json::json!({
         "vhost": vhost,
@@ -216,6 +221,7 @@ pub fn media_key(vhost: &str, app: &str, stream: &str) -> serde_json::Value {
     })
 }
 
+#[cfg(feature = "rtp")]
 pub fn rtp_receiver_request(
     media_key: serde_json::Value,
     port: Option<u16>,
@@ -237,6 +243,7 @@ pub fn rtp_receiver_request(
     })
 }
 
+#[cfg(all(feature = "rtp", feature = "record"))]
 pub fn start_record_request(media_key: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "media_key": media_key,
@@ -248,6 +255,7 @@ pub fn start_record_request(media_key: serde_json::Value) -> serde_json::Value {
     })
 }
 
+#[cfg(feature = "rtp")]
 pub async fn wait_for_online(
     host: &str,
     control_port: u16,
@@ -350,10 +358,12 @@ pub fn encode_rtp(
     packet.encode()
 }
 
+#[cfg(feature = "rtp")]
 pub async fn bind_udp_socket() -> UdpSocket {
     UdpSocket::bind("127.0.0.1:0").await.expect("bind udp")
 }
 
+#[cfg(feature = "rtp")]
 pub async fn send_rtp(
     socket: &UdpSocket,
     dest: std::net::SocketAddr,
@@ -367,6 +377,7 @@ pub async fn send_rtp(
     socket.send_to(&packet, dest).await.expect("send rtp");
 }
 
+#[cfg(feature = "rtp")]
 pub async fn recv_rtp(
     socket: &UdpSocket,
     timeout_after: Duration,
