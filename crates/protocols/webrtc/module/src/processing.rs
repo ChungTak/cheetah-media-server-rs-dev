@@ -342,7 +342,11 @@ fn is_video_codec_playable(codec: CodecId, profile: CodecProfileWire) -> bool {
             codec,
             CodecId::H264 | CodecId::VP8 | CodecId::VP9 | CodecId::AV1
         ),
-        CodecProfileWire::Device | CodecProfileWire::Passthrough => true,
+        CodecProfileWire::Device => matches!(
+            codec,
+            CodecId::H264 | CodecId::H265 | CodecId::VP8 | CodecId::VP9 | CodecId::AV1
+        ),
+        CodecProfileWire::Passthrough => true,
     }
 }
 
