@@ -592,6 +592,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-common"
+version = "8.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16659fa8b234cea26a2230e6d73818b9d79655497172acc6102ded1147d359f2"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -661,6 +670,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cc-data"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "678774354f8443e54f9eaf1c8b9d77fb9302bb0132b99d3a5c22577e1a2b69e6"
+dependencies = [
+ "broadcast-common",
+ "thiserror",
+]
+
+[[package]]
 name = "ccm"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -717,12 +736,15 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "bitflags",
+ "broadcast-common",
  "bytes",
+ "cc-data",
  "criterion",
  "dhat",
  "hashbrown 0.17.1",
  "libm",
  "proptest",
+ "serde",
  "smallvec",
  "thiserror",
 ]

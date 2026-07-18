@@ -80,6 +80,8 @@ pub(crate) mod prelude {
 
 pub mod adapter;
 pub mod audio;
+#[cfg(feature = "cea")]
+pub mod cea;
 pub mod compat;
 pub mod egress;
 pub mod flv;
@@ -99,6 +101,7 @@ pub mod record;
 pub mod rtp;
 pub mod rtp_reorder;
 pub mod sdp;
+pub mod subtitle;
 pub mod time;
 pub mod track;
 pub mod traits;
