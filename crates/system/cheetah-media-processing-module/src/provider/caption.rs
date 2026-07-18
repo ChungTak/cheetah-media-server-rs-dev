@@ -27,7 +27,7 @@ use cheetah_media_api::{
     model::{AdmissionAction, AdmissionRequest, Decision, Page},
     port::MediaProcessingApi,
     processing::{
-        CreateProcessingJob, ProcessingJob, ProcessingJobQuery, ProcessingJobSpec,
+        AbrVariant, CreateProcessingJob, ProcessingJob, ProcessingJobQuery, ProcessingJobSpec,
         ProcessingJobState, ProcessingPreflightReport, TrackSelection, UpdateProcessingJob,
     },
     MediaCapability, MediaCapabilitySet, MediaRequestContext,
@@ -44,6 +44,9 @@ use crate::config::MediaProcessingModuleConfig;
 
 #[cfg(feature = "media-processing-cpu")]
 use crate::provider::transcode::spawn_transcode_worker;
+
+#[cfg(feature = "media-processing-cpu")]
+use crate::provider::abr::spawn_abr_ladder_worker;
 
 fn now_ms() -> i64 {
     SystemTime::now()
@@ -163,12 +166,16 @@ impl MediaProcessingProvider {
             finished_at: None,
             input_keys: match &request.spec {
                 ProcessingJobSpec::CaptionExtract { source, .. }
-                | ProcessingJobSpec::Transcode { source, .. } => vec![source.clone()],
+                | ProcessingJobSpec::Transcode { source, .. }
+                | ProcessingJobSpec::AbrLadder { source, .. } => vec![source.clone()],
                 _ => Vec::new(),
             },
             output_keys: match &request.spec {
                 ProcessingJobSpec::CaptionExtract { target, .. }
                 | ProcessingJobSpec::Transcode { target, .. } => vec![target.clone()],
+                ProcessingJobSpec::AbrLadder { variants, .. } => {
+                    variants.iter().map(|v| v.target.clone()).collect()
+                }
                 _ => Vec::new(),
             },
             ref_count: 1,
@@ -380,6 +387,113 @@ impl MediaProcessingProvider {
         info!(job_id = %job_id, "transcode job started");
         Ok(job_snapshot)
     }
+
+    #[cfg(feature = "media-processing-cpu")]
+    async fn create_abr_ladder_job(
+        &self,
+        ctx: &MediaRequestContext,
+        request: CreateProcessingJob,
+        source: &MediaKey,
+        variants: &[AbrVariant],
+    ) -> MediaResult<ProcessingJob> {
+        if variants.is_empty() || variants.len() > 4 {
+            return Err(MediaError::invalid_argument(
+                "ABR ladder requires 1-4 variants",
+            ));
+        }
+
+        let source_key = Self::media_key_to_stream_key(source);
+
+        // Authorize play on the source before allocating anything.
+        self.authorize(ctx, AdmissionAction::Play, source).await?;
+
+        // Detect duplicate target keys and authorize each publish.
+        let mut seen_targets = std::collections::HashSet::new();
+        for variant in variants {
+            if !seen_targets.insert(variant.target.clone()) {
+                return Err(MediaError::invalid_argument(format!(
+                    "duplicate ABR ladder target: {}",
+                    variant.target
+                )));
+            }
+            self.authorize(ctx, AdmissionAction::Publish, &variant.target)
+                .await?;
+        }
+
+        // Acquire all publishers before starting; roll back on any failure.
+        let pub_options = PublisherOptions {
+            announce_tracks: true,
+            protocol: "abr-ladder".to_string(),
+            remote_endpoint: None,
+        };
+        let mut publishers = Vec::with_capacity(variants.len());
+        for variant in variants {
+            let target_key = Self::media_key_to_stream_key(&variant.target);
+            match self
+                .ctx
+                .publisher_api
+                .acquire_publisher(target_key, pub_options.clone())
+                .await
+            {
+                Ok(pair) => publishers.push(pair),
+                Err(e) => {
+                    for (lease, _publisher) in publishers {
+                        let _ = self.ctx.publisher_api.release_publisher(&lease).await;
+                    }
+                    return Err(MediaError::internal(format!(
+                        "acquire publisher for {} failed: {e}",
+                        variant.target
+                    )));
+                }
+            }
+        }
+
+        let cancel = CancellationToken::new();
+        let cancel_child = cancel.child_token();
+        let runtime = self.ctx.runtime_api.clone();
+
+        let job = Arc::new(Mutex::new(
+            self.build_job(&request, ProcessingJobState::Running),
+        ));
+        let job_id = job.lock().unwrap().job_id.clone();
+        let job_snapshot = job.lock().unwrap().clone();
+
+        self.jobs.lock().unwrap().insert(
+            job_id.clone(),
+            JobEntry {
+                job: job.clone(),
+                cancel,
+                handle: None,
+            },
+        );
+
+        let config = self.config.clone();
+        let engine = self.ctx.clone();
+        let spawned_job_id = job_id.clone();
+        let variants = variants.to_vec();
+        let handle = runtime.spawn(Box::pin(async move {
+            let result = spawn_abr_ladder_worker(
+                engine,
+                config,
+                source_key,
+                variants,
+                publishers,
+                cancel_child,
+                Some(job.clone()),
+            )
+            .await;
+            if let Err(e) = result {
+                warn!(job_id = %spawned_job_id, "abr ladder worker failed: {e}");
+            }
+        }));
+
+        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+            entry.handle = Some(handle);
+        }
+
+        info!(job_id = %job_id, "abr ladder job started");
+        Ok(job_snapshot)
+    }
 }
 
 #[async_trait]
@@ -398,7 +512,10 @@ impl MediaProcessingApi for MediaProcessingProvider {
         }
         let mut operations = vec!["caption_extract".to_string()];
         #[cfg(feature = "media-processing-cpu")]
-        operations.push("transcode".to_string());
+        {
+            operations.push("transcode".to_string());
+            operations.push("abr_ladder".to_string());
+        }
         Ok(ProcessingPreflightReport {
             profile: self.config.profile.clone(),
             available,
@@ -442,8 +559,13 @@ impl MediaProcessingApi for MediaProcessingProvider {
                 )
                 .await
             }
+            #[cfg(feature = "media-processing-cpu")]
+            ProcessingJobSpec::AbrLadder { source, variants } => {
+                self.create_abr_ladder_job(ctx, request, source, variants)
+                    .await
+            }
             _ => Err(MediaError::unsupported(
-                "only CaptionExtract and Transcode processing jobs are supported",
+                "only CaptionExtract, Transcode and AbrLadder processing jobs are supported",
             )),
         }
     }

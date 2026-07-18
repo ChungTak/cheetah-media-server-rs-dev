@@ -54,7 +54,7 @@ fn audio_codec_to_codec_id(codec: AudioCodec) -> Option<CodecId> {
     }
 }
 
-fn video_target_to_spec(target: &VideoTarget) -> MediaResult<VideoTranscodeSpec> {
+pub(crate) fn video_target_to_spec(target: &VideoTarget) -> MediaResult<VideoTranscodeSpec> {
     let codec = video_codec_to_codec_id(target.codec).ok_or_else(|| {
         MediaError::unsupported(format!(
             "unsupported video target codec: {codec:?}",
@@ -74,7 +74,7 @@ fn video_target_to_spec(target: &VideoTarget) -> MediaResult<VideoTranscodeSpec>
     Ok(spec)
 }
 
-fn audio_target_to_spec(target: &AudioTarget) -> MediaResult<AudioTranscodeSpec> {
+pub(crate) fn audio_target_to_spec(target: &AudioTarget) -> MediaResult<AudioTranscodeSpec> {
     let codec = audio_codec_to_codec_id(target.codec).ok_or_else(|| {
         MediaError::unsupported(format!(
             "unsupported audio target codec: {codec:?}",
@@ -95,7 +95,7 @@ fn audio_target_to_spec(target: &AudioTarget) -> MediaResult<AudioTranscodeSpec>
     })
 }
 
-fn default_audio_bitrate(codec: CodecId) -> u32 {
+pub(crate) fn default_audio_bitrate(codec: CodecId) -> u32 {
     match codec {
         CodecId::G711A | CodecId::G711U => 64_000,
         CodecId::Opus => 64_000,
@@ -105,13 +105,13 @@ fn default_audio_bitrate(codec: CodecId) -> u32 {
 }
 
 /// Input sent from the async feeder to the blocking transcode worker.
-enum TranscodeInput {
+pub(crate) enum TranscodeInput {
     Video(Arc<AVFrame>),
     Audio(Arc<AVFrame>),
 }
 
 impl TranscodeInput {
-    fn is_keyframe(&self) -> bool {
+    pub(crate) fn is_keyframe(&self) -> bool {
         match self {
             TranscodeInput::Video(frame) => frame.flags.contains(FrameFlags::KEY),
             TranscodeInput::Audio(_) => false,
@@ -125,23 +125,23 @@ impl TranscodeInput {
 /// keyframe arrives and the queue is full, droppable frames at the front are
 /// evicted; if the queue is still full, it is cleared and the keyframe is kept,
 /// so the decoder can always resynchronize on a fresh access point.
-struct QueueState {
+pub(crate) struct QueueState {
     items: VecDeque<TranscodeInput>,
     closed: bool,
 }
 
-struct TranscodeQueueSender {
+pub(crate) struct TranscodeQueueSender {
     inner: Arc<Mutex<QueueState>>,
     condvar: Arc<Condvar>,
     cap: usize,
 }
 
-struct TranscodeQueueReceiver {
+pub(crate) struct TranscodeQueueReceiver {
     inner: Arc<Mutex<QueueState>>,
     condvar: Arc<Condvar>,
 }
 
-fn transcode_queue(cap: usize) -> (TranscodeQueueSender, TranscodeQueueReceiver) {
+pub(crate) fn transcode_queue(cap: usize) -> (TranscodeQueueSender, TranscodeQueueReceiver) {
     let inner = Arc::new(Mutex::new(QueueState {
         items: VecDeque::new(),
         closed: false,
@@ -160,7 +160,7 @@ impl TranscodeQueueSender {
     /// Try to enqueue an input. Returns `Ok(evicted)` on success where `evicted`
     /// is the number of previously queued droppable frames that were dropped to
     /// make room for a keyframe, and `Err(input)` if the input itself was dropped.
-    fn try_send(&self, input: TranscodeInput) -> Result<usize, TranscodeInput> {
+    pub(crate) fn try_send(&self, input: TranscodeInput) -> Result<usize, TranscodeInput> {
         let mut guard = self.inner.lock().unwrap();
         if guard.closed {
             return Err(input);
@@ -209,7 +209,7 @@ impl Drop for TranscodeQueueSender {
 }
 
 impl TranscodeQueueReceiver {
-    fn recv(&self) -> Option<TranscodeInput> {
+    pub(crate) fn recv(&self) -> Option<TranscodeInput> {
         let mut guard = self.inner.lock().unwrap();
         loop {
             if let Some(item) = guard.items.pop_front() {
@@ -224,16 +224,18 @@ impl TranscodeQueueReceiver {
 }
 
 /// Synchronous worker that owns the transcode sessions and publisher sink.
-struct TranscodeWorker {
+pub(crate) struct TranscodeWorker {
     video_session: Option<VideoTranscodeSession>,
     audio_session: Option<AudioTranscodeSession>,
     publisher: Box<dyn PublisherSink>,
     last_announced_tracks: Vec<TrackInfo>,
+    count_input: bool,
     job: Option<Arc<Mutex<ProcessingJob>>>,
 }
 
 impl TranscodeWorker {
-    fn new(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
         config: &MediaProcessingModuleConfig,
         source_video: Option<&TrackInfo>,
         source_audio: Option<&TrackInfo>,
@@ -241,6 +243,7 @@ impl TranscodeWorker {
         audio_target: Option<&AudioTarget>,
         publisher: Box<dyn PublisherSink>,
         job: Option<Arc<Mutex<ProcessingJob>>>,
+        count_input: bool,
     ) -> MediaResult<Self> {
         let mut tracks = Vec::new();
         let video_session = if let Some(target) = video_target {
@@ -280,11 +283,12 @@ impl TranscodeWorker {
             audio_session,
             publisher,
             last_announced_tracks: tracks,
+            count_input,
             job,
         })
     }
 
-    fn current_output_tracks(&self) -> Vec<TrackInfo> {
+    pub(crate) fn current_output_tracks(&self) -> Vec<TrackInfo> {
         let mut tracks = Vec::new();
         if let Some(session) = self.video_session.as_ref() {
             tracks.push(session.output_track().clone());
@@ -295,7 +299,7 @@ impl TranscodeWorker {
         tracks
     }
 
-    fn announce_tracks(&mut self) -> Result<(), SdkError> {
+    pub(crate) fn announce_tracks(&mut self) -> Result<(), SdkError> {
         let tracks = self.current_output_tracks();
         if tracks != self.last_announced_tracks {
             self.publisher
@@ -306,18 +310,20 @@ impl TranscodeWorker {
         Ok(())
     }
 
-    fn process(&mut self, input: TranscodeInput) -> Result<(), SdkError> {
+    pub(crate) fn process(&mut self, input: TranscodeInput) -> Result<(), SdkError> {
         match input {
             TranscodeInput::Video(frame) => self.process_video(&frame),
             TranscodeInput::Audio(frame) => self.process_audio(&frame),
         }
     }
 
-    fn process_video(&mut self, frame: &AVFrame) -> Result<(), SdkError> {
-        update_progress(&self.job, |job| {
-            job.frames_in += 1;
-            job.bytes_in += frame.payload.len() as u64;
-        });
+    pub(crate) fn process_video(&mut self, frame: &AVFrame) -> Result<(), SdkError> {
+        if self.count_input {
+            update_progress(&self.job, |job| {
+                job.frames_in += 1;
+                job.bytes_in += frame.payload.len() as u64;
+            });
+        }
 
         // Flush the previous GOP on each keyframe so the encoder emits output and
         // the session is reset for the next group of pictures.
@@ -348,11 +354,13 @@ impl TranscodeWorker {
         Ok(())
     }
 
-    fn process_audio(&mut self, frame: &AVFrame) -> Result<(), SdkError> {
-        update_progress(&self.job, |job| {
-            job.frames_in += 1;
-            job.bytes_in += frame.payload.len() as u64;
-        });
+    pub(crate) fn process_audio(&mut self, frame: &AVFrame) -> Result<(), SdkError> {
+        if self.count_input {
+            update_progress(&self.job, |job| {
+                job.frames_in += 1;
+                job.bytes_in += frame.payload.len() as u64;
+            });
+        }
 
         let session = self
             .audio_session
@@ -370,7 +378,7 @@ impl TranscodeWorker {
         Ok(())
     }
 
-    fn push_frame(&mut self, mut frame: AVFrame) -> Result<(), SdkError> {
+    pub(crate) fn push_frame(&mut self, mut frame: AVFrame) -> Result<(), SdkError> {
         frame.origin = cheetah_codec::frame::FrameOrigin::Generated;
         let bytes_out = frame.payload.len() as u64;
         match self.publisher.push_frame(Arc::new(frame)) {
@@ -396,7 +404,7 @@ impl TranscodeWorker {
         }
     }
 
-    fn flush_and_close(mut self) -> Result<(), SdkError> {
+    pub(crate) fn flush_and_close(mut self) -> Result<(), SdkError> {
         if let Some(session) = self.video_session.as_mut() {
             for frame in session
                 .flush()
@@ -418,14 +426,14 @@ impl TranscodeWorker {
     }
 }
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
 }
 
-fn update_progress<F>(job: &Option<Arc<Mutex<ProcessingJob>>>, f: F)
+pub(crate) fn update_progress<F>(job: &Option<Arc<Mutex<ProcessingJob>>>, f: F)
 where
     F: FnOnce(&mut ProcessingJob),
 {
@@ -437,7 +445,7 @@ where
     }
 }
 
-fn finish_job(job: &Option<Arc<Mutex<ProcessingJob>>>, last_error: Option<&SdkError>) {
+pub(crate) fn finish_job(job: &Option<Arc<Mutex<ProcessingJob>>>, last_error: Option<&SdkError>) {
     if let Some(job) = job.as_ref() {
         if let Ok(mut guard) = job.lock() {
             let finished_at = now_ms();
@@ -497,6 +505,7 @@ pub async fn spawn_transcode_worker(
             audio_target.as_ref(),
             publisher,
             job.clone(),
+            true,
         )
         .map_err(|e| SdkError::Internal(format!("create transcode worker: {e}")))?;
 
@@ -603,7 +612,7 @@ pub async fn spawn_transcode_worker(
     result
 }
 
-async fn wait_for_source_tracks(
+pub(crate) async fn wait_for_source_tracks(
     engine: &EngineContext,
     source: &StreamKey,
     track_selection: &TrackSelection,
