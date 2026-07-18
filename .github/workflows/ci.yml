@@ -158,3 +158,36 @@ jobs:
         with:
           name: cheetah-server-release
           path: target/release/cheetah-server
+
+  s6-media-processing:
+    name: S6 - Media processing matrix and dependency boundary
+    needs: s0-toolchain
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Install Rust 1.94.1
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88
+        with:
+          toolchain: 1.94.1
+
+      - name: S6 - Default build has no avcodec dependency
+        run: |
+          set -euo pipefail
+          cargo tree -p cheetah-server --no-default-features | ( ! grep -qi "avcodec" )
+
+      - name: S6 - Server builds with media-processing feature
+        run: |
+          set -euo pipefail
+          cargo build -p cheetah-server --no-default-features --features media-processing
+
+      - name: S6 - Media processing module unit tests
+        run: |
+          set -euo pipefail
+          cargo test -p cheetah-media-processing-module --features media-processing-cpu -- --test-threads=4
+
+      - name: S6 - Media processing release build
+        run: |
+          set -euo pipefail
+          cargo build --release -p cheetah-server --no-default-features --features media-processing
