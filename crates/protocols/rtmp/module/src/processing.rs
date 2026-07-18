@@ -4,7 +4,7 @@
 //! stream before connecting to the remote RTMP server, and creates a
 //! `ProcessingJobSpec::Transcode` job when needed.
 
-use cheetah_codec::{CodecId, MediaKind, TrackInfo};
+use cheetah_codec::{CodecId, MediaKind, TrackId, TrackInfo};
 use cheetah_sdk::media_api::ids::{MediaKey, StreamKeyBridge};
 use cheetah_sdk::media_api::port::MediaRequestContext;
 use cheetah_sdk::media_api::processing::{
@@ -217,6 +217,18 @@ fn apply_track_selection(
             audio: None,
         },
     }
+}
+
+/// Stable signature of the codec kinds present on a stream, used to detect
+/// source track changes for `ProcessingPolicy::Auto` without re-resolving
+/// on every reconnect.
+pub(crate) fn tracks_codec_signature(tracks: &[TrackInfo]) -> Vec<(TrackId, MediaKind, CodecId)> {
+    let mut signature: Vec<_> = tracks
+        .iter()
+        .map(|t| (t.track_id, t.media_kind, t.codec))
+        .collect();
+    signature.sort_by(|a, b| a.0.cmp(&b.0));
+    signature
 }
 
 fn stream_key_to_media_key(stream_key: &StreamKey) -> Result<MediaKey, SdkError> {
