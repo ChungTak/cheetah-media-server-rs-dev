@@ -1540,6 +1540,29 @@ impl StreamMuxer {
             .map(|s| Bytes::from(s.payload.clone()))
     }
 
+    /// Generate a signed WebVTT media playlist from the internal subtitle muxer.
+    ///
+    /// When `include_stream_key` is true, segment URIs are appended with the
+    /// stream-key token so they pass the segment handler's validation.
+    ///
+    /// 生成签名后的 WebVTT 媒体播放列表。
+    pub fn vtt_media_playlist(
+        &self,
+        session_id: Option<u64>,
+        include_stream_key: bool,
+    ) -> Option<String> {
+        let vtt_mux = self.vtt_mux.as_ref()?;
+        let playlist = PlaylistBuilder::build_vtt_media(vtt_mux, session_id);
+        if include_stream_key {
+            Some(append_stream_key_to_playlist_uris(
+                &playlist,
+                &self.stream_key,
+            ))
+        } else {
+            Some(playlist)
+        }
+    }
+
     /// Whether the subtitle track has produced at least one segment.
     ///
     /// 字幕轨道是否已产出至少一个分段。

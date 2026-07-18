@@ -32,7 +32,7 @@ impl PlaylistBuilder {
     ///
     /// 生成主播放列表，重定向到带会话 UID 的媒体播放列表。
     pub fn build_master(stream_name: &str, session_id: u64) -> String {
-        Self::build_master_with_subtitles(stream_name, session_id, None)
+        Self::build_master_with_subtitles(stream_name, session_id, None, None)
     }
 
     /// Generate a master playlist with an optional WebVTT subtitle rendition.
@@ -42,16 +42,22 @@ impl PlaylistBuilder {
         stream_name: &str,
         session_id: u64,
         subtitle: Option<&SubtitleRenditionInfo>,
+        subtitle_token: Option<&str>,
     ) -> String {
         let mut out = String::with_capacity(256);
         out.push_str("#EXTM3U\n");
         if let Some(sub) = subtitle {
             let default = if sub.is_default { "YES" } else { "NO" };
             let autoselect = if sub.autoselect { "YES" } else { "NO" };
+            let uid_suffix = format!("?uid={session_id}");
+            let key_suffix = subtitle_token
+                .filter(|t| !t.is_empty())
+                .map(|t| format!("&k={t}"))
+                .unwrap_or_default();
             out.push_str(&format!(
                 "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"{}\",\
                  LANGUAGE=\"{}\",DEFAULT={default},AUTOSELECT={autoselect},\
-                 URI=\"{stream_name}/subtitle.m3u8?uid={session_id}\"\n",
+                 URI=\"{stream_name}/subtitle.m3u8{uid_suffix}{key_suffix}\"\n",
                 sub.name, sub.language
             ));
         }

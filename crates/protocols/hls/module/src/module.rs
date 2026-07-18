@@ -1797,22 +1797,18 @@ async fn handle_core_event(
                 }
             }
 
-            let playlist = {
+            let content = {
                 let map = muxers.lock();
-                map.get(&key).map(|m| {
-                    let mux = m.lock();
-                    if let Some(vtt_mux) = mux.vtt_mux() {
-                        cheetah_hls_core::PlaylistBuilder::build_vtt_media(vtt_mux, session_id)
-                    } else {
-                        String::new()
-                    }
-                })
+                map.get(&key)
+                    .and_then(|m| {
+                        let mux = m.lock();
+                        mux.vtt_media_playlist(session_id, config.stream_key_validation)
+                    })
+                    .unwrap_or_else(|| {
+                        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n"
+                            .to_string()
+                    })
             };
-
-            let content = playlist.unwrap_or_else(|| {
-                "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n"
-                    .to_string()
-            });
             let _ = cmd_tx
                 .send(HlsDriverCommand::SendResponse {
                     connection_id,
@@ -2845,10 +2841,12 @@ fn build_master_playlist_content(
             );
         }
     }
+    let subtitle_token = muxer.filter(|_| include_stream_key).map(|m| m.stream_key());
     PlaylistBuilder::build_master_with_subtitles(
         &stream_key.stream_path,
         session_id,
         subtitle_info.as_ref(),
+        subtitle_token,
     )
 }
 
