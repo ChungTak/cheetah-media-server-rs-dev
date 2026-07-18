@@ -1,4 +1,4 @@
-//! Proxy module: manages pull, push, and FFmpeg stream proxies.
+//! Proxy module: manages pull and push stream proxies.
 //!
 //! Provides a real [`ProxyApi`] implementation registered with
 //! [`cheetah_sdk::MediaServices`] so that the engine facade can delegate ZLM

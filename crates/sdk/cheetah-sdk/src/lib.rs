@@ -87,10 +87,9 @@ pub use module::{
 };
 pub use output::{InMemoryMediaOutputRegistry, MediaOutputEndpoint, OutputRegistryRegistration};
 pub use service::{
-    ClusterApi, ClusterNode, DatabaseApi, FfmpegApi, FfmpegInput, FfmpegJobHandle, FfmpegJobSpec,
-    FfmpegJobState, FfmpegJobStatus, FfmpegOutput, FfmpegResourceLimits, HealthApi, MetricsApi,
-    ModuleConfigApplyReport, ModuleManagerApi, ProxyManager, ProxyRoute, RoomParticipant,
-    RoomServiceApi, RoomSnapshot, ServiceDescriptor, ServiceRegistry,
+    ClusterApi, ClusterNode, DatabaseApi, HealthApi, MetricsApi, ModuleConfigApplyReport,
+    ModuleManagerApi, ProxyManager, ProxyRoute, RoomParticipant, RoomServiceApi, RoomSnapshot,
+    ServiceDescriptor, ServiceRegistry,
 };
 pub use stream::{
     BackpressurePolicy, BootstrapMode, BootstrapPolicy, CoreAdaptersApi, DispatchResult,

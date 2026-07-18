@@ -187,8 +187,6 @@ pub fn default_operations(capability: MediaCapability) -> Vec<String> {
             "list_pull".to_string(),
             "create_push".to_string(),
             "delete_push".to_string(),
-            "create_ffmpeg".to_string(),
-            "delete_ffmpeg".to_string(),
         ],
         MediaCapability::Rtp => vec![
             "open_receiver".to_string(),
@@ -543,7 +541,6 @@ mod tests {
             .find(|d| d.capability == MediaCapability::Proxy)
             .expect("proxy descriptor");
         assert_eq!(descriptor.operations, vec!["create_pull", "delete_pull"]);
-        assert!(!descriptor.operations.contains(&"create_ffmpeg".to_string()));
     }
 
     #[test]

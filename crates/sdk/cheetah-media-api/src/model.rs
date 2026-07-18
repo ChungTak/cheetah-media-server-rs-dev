@@ -464,19 +464,6 @@ pub enum OutputPolicy {
     Rtsp,
 }
 
-/// Transcode / filter policy.
-///
-/// 转码/过滤策略。
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct TranscodePolicy {
-    pub disable_video: bool,
-    pub disable_audio: bool,
-    pub out_width: Option<u32>,
-    pub out_height: Option<u32>,
-    pub g711_to_aac: bool,
-    pub h264_decode_encode: bool,
-}
-
 /// Storage policy.
 ///
 /// 存储策略。

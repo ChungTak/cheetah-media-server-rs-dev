@@ -1659,7 +1659,7 @@ fn webhook_profile_id_from_path(path: &str) -> Option<WebhookProfileId> {
 fn path_last_segment(path: &str) -> Option<&str> {
     path.rsplit('/')
         .find(|s| !s.is_empty())
-        .filter(|s| *s != "pull" && *s != "push" && *s != "ffmpeg")
+        .filter(|s| *s != "pull" && *s != "push")
 }
 
 fn parse_query<T: DeserializeOwned + Default>(req: &HttpRequest) -> Result<T, AdapterError> {
