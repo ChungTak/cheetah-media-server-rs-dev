@@ -214,6 +214,7 @@ pub fn transcode_video_frame(
 ///
 /// 有状态的流式视频转码 session。从第一个源关键帧创建，之后逐帧送入压缩
 /// 视频帧，通过 `submit` 与 `flush` 产出输出帧。
+#[cfg(feature = "media-processing-cpu")]
 pub struct VideoTranscodeSession {
     config: MediaProcessingModuleConfig,
     source_track: TrackInfo,
@@ -225,6 +226,7 @@ pub struct VideoTranscodeSession {
     output_track: TrackInfo,
 }
 
+#[cfg(feature = "media-processing-cpu")]
 impl VideoTranscodeSession {
     /// Create a new streaming transcode session for a source video track.
     ///
@@ -767,6 +769,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "media-processing-cpu")]
     fn streaming_session_produces_video_output() {
         let cfg = MediaProcessingModuleConfig::default();
         let (frame1, track) = encode_input(CodecId::H264, 64, 64);

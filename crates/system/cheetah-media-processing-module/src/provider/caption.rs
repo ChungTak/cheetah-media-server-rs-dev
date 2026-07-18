@@ -1615,6 +1615,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "media-processing-cpu")]
     fn job_primary_media_and_codec_labels() {
         use cheetah_media_api::processing::{
             AudioCodec, AudioTarget, CaptionConfig, MosaicCell, MosaicLayout, VideoCodec,
