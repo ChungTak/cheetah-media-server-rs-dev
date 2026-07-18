@@ -299,8 +299,10 @@ pub async fn spawn_video_mosaic_worker(
                 }
             }
             Err(e) => {
-                guard.state = cheetah_media_api::processing::ProcessingJobState::Failed;
-                guard.last_error = Some(format!("{e}"));
+                if guard.state == cheetah_media_api::processing::ProcessingJobState::Running {
+                    guard.state = cheetah_media_api::processing::ProcessingJobState::Failed;
+                    guard.last_error = Some(format!("{e}"));
+                }
             }
         }
         let ts = now_ms();
