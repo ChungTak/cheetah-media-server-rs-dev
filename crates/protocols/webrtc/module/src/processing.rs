@@ -220,14 +220,29 @@ fn build_webrtc_transcode_target(
     // If any track is being transcoded, make sure the other selected track is
     // also emitted by the transcode job. This prevents the worker from dropping
     // the already-conformant track because its target is `None`.
+    //
+    // If the conformant track cannot be copied by the processing backend and
+    // the strategy is Auto, fall back to source playback so the play loop can
+    // drop only the incompatible track instead of failing the whole session.
+    let can_fall_back = audio_strategy == AudioOutputStrategy::Auto
+        && codec_profile != CodecProfileWire::Passthrough;
+
     if needs_video_transcode && audio_target.is_none() {
         if let Some(source_audio) = source_audio {
-            audio_target = audio_passthrough_target(source_audio)?;
+            match audio_passthrough_target(source_audio) {
+                Ok(t) => audio_target = t,
+                Err(_) if can_fall_back => return Ok(None),
+                Err(e) => return Err(e),
+            }
         }
     }
     if needs_audio_transcode && video_target.is_none() {
         if let Some(source_video) = source_video {
-            video_target = video_passthrough_target(source_video)?;
+            match video_passthrough_target(source_video) {
+                Ok(t) => video_target = t,
+                Err(_) if can_fall_back => return Ok(None),
+                Err(e) => return Err(e),
+            }
         }
     }
 
@@ -585,5 +600,22 @@ mod tests {
         .unwrap();
         assert!(target.audio.is_some());
         assert_eq!(target.audio.as_ref().unwrap().codec, AudioCodec::Opus);
+    }
+
+    #[test]
+    fn auto_falls_back_when_conformant_track_cannot_be_passed_through() {
+        // Browser-playable VP8 video + AAC audio cannot be combined in one
+        // transcode job because the processing backend cannot copy VP8.
+        // Auto should fall back to source playback rather than fail.
+        let tracks = vec![video_track(CodecId::VP8), audio_track(CodecId::AAC)];
+        let target = build_webrtc_transcode_target(
+            &tracks,
+            AudioOutputStrategy::Auto,
+            CodecProfileWire::Browser,
+            "h264",
+            "opus",
+        )
+        .unwrap();
+        assert!(target.is_none());
     }
 }
