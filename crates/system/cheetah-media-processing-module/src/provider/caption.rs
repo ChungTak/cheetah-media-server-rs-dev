@@ -1,8 +1,7 @@
-//! Caption extraction job provider and worker.
+//! Caption extraction and transcoding job provider, plus the caption worker.
 //!
-//! Implements `MediaProcessingApi` for `CaptionExtract` jobs: subscribe to a
-//! source H.264/H.265 stream, parse CEA-608/708 closed captions with the Sans-I/O
-//! `CeaParser`, and publish derived `WebVttCue` frames on a target stream.
+//! Implements `MediaProcessingApi` for `CaptionExtract` and, when compiled with
+//! `media-processing-cpu`, `Transcode` jobs.
 
 use std::collections::HashMap;
 use std::sync::{
@@ -29,7 +28,7 @@ use cheetah_media_api::{
     port::MediaProcessingApi,
     processing::{
         CreateProcessingJob, ProcessingJob, ProcessingJobQuery, ProcessingJobSpec,
-        ProcessingJobState, ProcessingPreflightReport, UpdateProcessingJob,
+        ProcessingJobState, ProcessingPreflightReport, TrackSelection, UpdateProcessingJob,
     },
     MediaCapability, MediaCapabilitySet, MediaRequestContext,
 };
@@ -43,6 +42,9 @@ use tracing::{info, warn};
 
 use crate::config::MediaProcessingModuleConfig;
 
+#[cfg(feature = "media-processing-cpu")]
+use crate::provider::transcode::spawn_transcode_worker;
+
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -50,14 +52,14 @@ fn now_ms() -> i64 {
         .as_millis() as i64
 }
 
-/// In-memory handle for a running or stopped caption job.
+/// In-memory handle for a running or stopped processing job.
 struct JobEntry {
     job: Arc<Mutex<ProcessingJob>>,
     cancel: CancellationToken,
     handle: Option<Box<dyn cheetah_sdk::JoinHandle>>,
 }
 
-/// `MediaProcessingApi` provider that currently supports `CaptionExtract` jobs.
+/// `MediaProcessingApi` provider for caption extraction and stream transcoding jobs.
 pub struct MediaProcessingProvider {
     ctx: EngineContext,
     config: MediaProcessingModuleConfig,
@@ -94,7 +96,7 @@ impl MediaProcessingProvider {
                         action,
                         principal: ctx.principal.clone(),
                         resource: resource.clone(),
-                        protocol: "caption-extract".to_string(),
+                        protocol: "media-processing".to_string(),
                         source_address: None,
                         params: HashMap::new(),
                     },
@@ -113,7 +115,7 @@ impl MediaProcessingProvider {
             .unwrap_or_default()
             .as_millis();
         let n = self.id_counter.fetch_add(1, Ordering::Relaxed);
-        ProcessingJobId(format!("cap-{ts}-{n}"))
+        ProcessingJobId(format!("job-{ts}-{n}"))
     }
 
     pub fn default_capabilities() -> MediaCapabilitySet {
@@ -121,8 +123,13 @@ impl MediaProcessingProvider {
         set.add(MediaCapability::VideoProcessing, 1);
         set.set_reason(
             MediaCapability::VideoProcessing,
-            "caption extraction (H.264/H.265 -> WebVTT)",
+            "caption extraction / video transcode / abr ladder",
         );
+        #[cfg(feature = "media-processing-cpu")]
+        {
+            set.add(MediaCapability::AudioProcessing, 1);
+            set.set_reason(MediaCapability::AudioProcessing, "audio transcode");
+        }
         set
     }
 
@@ -155,11 +162,13 @@ impl MediaProcessingProvider {
             started_at: Some(now),
             finished_at: None,
             input_keys: match &request.spec {
-                ProcessingJobSpec::CaptionExtract { source, .. } => vec![source.clone()],
+                ProcessingJobSpec::CaptionExtract { source, .. }
+                | ProcessingJobSpec::Transcode { source, .. } => vec![source.clone()],
                 _ => Vec::new(),
             },
             output_keys: match &request.spec {
-                ProcessingJobSpec::CaptionExtract { target, .. } => vec![target.clone()],
+                ProcessingJobSpec::CaptionExtract { target, .. }
+                | ProcessingJobSpec::Transcode { target, .. } => vec![target.clone()],
                 _ => Vec::new(),
             },
             ref_count: 1,
@@ -192,46 +201,14 @@ impl MediaProcessingProvider {
         };
         let _ = futures::future::join_all(handles.into_iter().map(|h| h.wait())).await;
     }
-}
 
-#[async_trait]
-impl MediaProcessingApi for MediaProcessingProvider {
-    async fn preflight(
-        &self,
-        _ctx: &MediaRequestContext,
-    ) -> MediaResult<ProcessingPreflightReport> {
-        let available = true;
-        let mut diagnostics = HashMap::new();
-        if !cfg!(feature = "media-processing-caption") {
-            diagnostics.insert(
-                "caption".to_string(),
-                "media-processing-caption feature not compiled".to_string(),
-            );
-        }
-        Ok(ProcessingPreflightReport {
-            profile: self.config.profile.clone(),
-            available,
-            operations: vec!["caption_extract".to_string()],
-            diagnostics,
-        })
-    }
-
-    async fn create_job(
+    async fn create_caption_job(
         &self,
         ctx: &MediaRequestContext,
         request: CreateProcessingJob,
+        source: &MediaKey,
+        target: &MediaKey,
     ) -> MediaResult<ProcessingJob> {
-        let ProcessingJobSpec::CaptionExtract {
-            source,
-            target,
-            caption: _,
-        } = &request.spec
-        else {
-            return Err(MediaError::unsupported(
-                "only CaptionExtract processing jobs are supported",
-            ));
-        };
-
         let source_key = Self::media_key_to_stream_key(source);
         let target_key = Self::media_key_to_stream_key(target);
 
@@ -321,6 +298,156 @@ impl MediaProcessingApi for MediaProcessingProvider {
         Ok(job_snapshot)
     }
 
+    #[cfg(feature = "media-processing-cpu")]
+    #[allow(clippy::too_many_arguments)]
+    async fn create_transcode_job(
+        &self,
+        ctx: &MediaRequestContext,
+        request: CreateProcessingJob,
+        source: &MediaKey,
+        target: &MediaKey,
+        track_selection: TrackSelection,
+        video: &Option<cheetah_media_api::processing::VideoTarget>,
+        audio: &Option<cheetah_media_api::processing::AudioTarget>,
+    ) -> MediaResult<ProcessingJob> {
+        let source_key = Self::media_key_to_stream_key(source);
+        let target_key = Self::media_key_to_stream_key(target);
+
+        self.authorize(ctx, AdmissionAction::Play, source).await?;
+        self.authorize(ctx, AdmissionAction::Publish, target)
+            .await?;
+
+        let pub_options = PublisherOptions {
+            announce_tracks: true,
+            protocol: "transcode".to_string(),
+            remote_endpoint: None,
+        };
+        let (lease, publisher) = self
+            .ctx
+            .publisher_api
+            .acquire_publisher(target_key.clone(), pub_options)
+            .await
+            .map_err(|e| MediaError::internal(format!("acquire publisher failed: {e}")))?;
+
+        let cancel = CancellationToken::new();
+        let cancel_child = cancel.child_token();
+        let runtime = self.ctx.runtime_api.clone();
+
+        let job = Arc::new(Mutex::new(
+            self.build_job(&request, ProcessingJobState::Running),
+        ));
+        let job_id = job.lock().unwrap().job_id.clone();
+        let job_snapshot = job.lock().unwrap().clone();
+
+        self.jobs.lock().unwrap().insert(
+            job_id.clone(),
+            JobEntry {
+                job: job.clone(),
+                cancel,
+                handle: None,
+            },
+        );
+
+        let config = self.config.clone();
+        let engine = self.ctx.clone();
+        let spawned_job_id = job_id.clone();
+        let video = video.clone();
+        let audio = audio.clone();
+        let handle = runtime.spawn(Box::pin(async move {
+            let result = spawn_transcode_worker(
+                engine,
+                config,
+                source_key,
+                target_key,
+                track_selection,
+                video,
+                audio,
+                lease,
+                publisher,
+                cancel_child,
+                Some(job.clone()),
+            )
+            .await;
+            if let Err(e) = result {
+                warn!(job_id = %spawned_job_id, "transcode worker failed: {e}");
+            }
+        }));
+
+        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+            entry.handle = Some(handle);
+        }
+
+        info!(job_id = %job_id, "transcode job started");
+        Ok(job_snapshot)
+    }
+}
+
+#[async_trait]
+impl MediaProcessingApi for MediaProcessingProvider {
+    async fn preflight(
+        &self,
+        _ctx: &MediaRequestContext,
+    ) -> MediaResult<ProcessingPreflightReport> {
+        let available = true;
+        let mut diagnostics = HashMap::new();
+        if !cfg!(feature = "media-processing-caption") {
+            diagnostics.insert(
+                "caption".to_string(),
+                "media-processing-caption feature not compiled".to_string(),
+            );
+        }
+        let mut operations = vec!["caption_extract".to_string()];
+        #[cfg(feature = "media-processing-cpu")]
+        operations.push("transcode".to_string());
+        Ok(ProcessingPreflightReport {
+            profile: self.config.profile.clone(),
+            available,
+            operations,
+            diagnostics,
+        })
+    }
+
+    async fn create_job(
+        &self,
+        ctx: &MediaRequestContext,
+        request: CreateProcessingJob,
+    ) -> MediaResult<ProcessingJob> {
+        let spec = request.spec.clone();
+        match &spec {
+            ProcessingJobSpec::CaptionExtract { source, target, .. } => {
+                self.create_caption_job(ctx, request, source, target).await
+            }
+            #[cfg(feature = "media-processing-cpu")]
+            ProcessingJobSpec::Transcode {
+                source,
+                target,
+                track_selection,
+                video,
+                audio,
+                overlays,
+            } => {
+                if !overlays.is_empty() {
+                    return Err(MediaError::unsupported(
+                        "transcode overlays are not supported in this release",
+                    ));
+                }
+                self.create_transcode_job(
+                    ctx,
+                    request,
+                    source,
+                    target,
+                    *track_selection,
+                    video,
+                    audio,
+                )
+                .await
+            }
+            _ => Err(MediaError::unsupported(
+                "only CaptionExtract and Transcode processing jobs are supported",
+            )),
+        }
+    }
+
     async fn get_job(
         &self,
         _ctx: &MediaRequestContext,
@@ -385,7 +512,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
         _request: UpdateProcessingJob,
     ) -> MediaResult<ProcessingJob> {
         Err(MediaError::unsupported(
-            "update is not supported for caption extract jobs",
+            "update is not supported for processing jobs",
         ))
     }
 

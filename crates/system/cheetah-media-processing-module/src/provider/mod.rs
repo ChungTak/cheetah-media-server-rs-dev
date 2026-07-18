@@ -25,5 +25,8 @@ pub use image::ImageProcessProvider;
 #[cfg(feature = "media-processing-caption")]
 pub mod caption;
 
+#[cfg(feature = "media-processing-cpu")]
+pub mod transcode;
+
 #[cfg(feature = "media-processing-caption")]
 pub use caption::MediaProcessingProvider;
