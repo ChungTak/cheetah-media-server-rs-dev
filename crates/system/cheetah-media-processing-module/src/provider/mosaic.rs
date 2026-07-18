@@ -87,9 +87,14 @@ async fn subscribe_to_sources(
         let (namespace, path) = StreamKeyBridge::to_namespace_path(&input.source);
         let key = StreamKey::new(namespace, path);
         let options = SubscriberOptions {
-            queue_capacity: 32,
+            queue_capacity: 64,
             backpressure: BackpressurePolicy::DropDroppableFirst,
-            bootstrap_policy: BootstrapPolicy::default(),
+            bootstrap_policy: BootstrapPolicy {
+                mode: cheetah_sdk::BootstrapMode::LiveTail,
+                max_bootstrap_age_ms: Some(1_500),
+                max_bootstrap_frames: 32,
+                wait_for_next_random_access_point: true,
+            },
             media_filter: MediaFilter {
                 enable_video: true,
                 enable_audio: false,
@@ -320,38 +325,38 @@ fn run_mosaicker(
     } else {
         Duration::from_millis(33)
     };
-    let mut next_tick = Instant::now();
-    let mut running = true;
+    let mut next_tick = Instant::now() + interval;
 
-    while running {
-        let deadline = next_tick.max(Instant::now());
-        while Instant::now() < deadline {
-            let timeout = deadline - Instant::now();
-            match receiver.recv_timeout(timeout) {
-                Ok(MosaicInput::Frame { source, frame }) => {
-                    mosaicker
-                        .submit_source_frame(source, &frame)
-                        .map_err(|e| SdkError::Internal(format!("submit source frame: {e}")))?;
-                }
-                Ok(MosaicInput::EndOfStream { source }) => {
-                    mosaicker
-                        .mark_source_eos(source)
-                        .map_err(|e| SdkError::Internal(format!("mark source eos: {e}")))?;
-                    if mosaicker.all_sources_eos() {
-                        running = false;
-                        break;
-                    }
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    running = false;
-                    break;
+    loop {
+        let timeout = next_tick.saturating_duration_since(Instant::now());
+        match receiver.recv_timeout(timeout) {
+            Ok(MosaicInput::Frame { source, frame }) => {
+                mosaicker
+                    .submit_source_frame(source, &frame)
+                    .map_err(|e| SdkError::Internal(format!("submit source frame: {e}")))?;
+                if Instant::now() < next_tick {
+                    continue;
                 }
             }
-        }
-
-        if !running {
-            break;
+            Ok(MosaicInput::EndOfStream { source }) => {
+                mosaicker
+                    .mark_source_eos(source)
+                    .map_err(|e| SdkError::Internal(format!("mark source eos: {e}")))?;
+                if mosaicker.all_sources_eos() {
+                    break;
+                }
+                if Instant::now() < next_tick {
+                    continue;
+                }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                let frames = mosaicker
+                    .tick()
+                    .map_err(|e| SdkError::Internal(format!("mosaic tick: {e}")))?;
+                publish_frames(frames, mosaicker.output_track(), publisher, job)?;
+                break;
+            }
         }
 
         let frames = mosaicker
@@ -359,11 +364,7 @@ fn run_mosaicker(
             .map_err(|e| SdkError::Internal(format!("mosaic tick: {e}")))?;
         publish_frames(frames, mosaicker.output_track(), publisher, job)?;
 
-        next_tick += interval;
-        if next_tick < Instant::now() {
-            warn!("video mosaic falling behind; skipping catch-up ticks");
-            next_tick = Instant::now();
-        }
+        next_tick = Instant::now() + interval;
     }
 
     let flushed = mosaicker
@@ -427,4 +428,202 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+    use std::thread;
+    use std::time::Duration;
+
+    use super::*;
+    use cheetah_codec::{track::TrackId, track::TrackInfo};
+    use cheetah_media_api::ids::MediaKey;
+    use cheetah_media_api::processing::{MosaicCell, ProcessingJobSpec, ProcessingJobState};
+
+    fn two_source_tracks() -> Vec<TrackInfo> {
+        let mut tracks = vec![
+            TrackInfo::new(TrackId(0), MediaKind::Video, CodecId::H264, 30),
+            TrackInfo::new(TrackId(0), MediaKind::Video, CodecId::H264, 30),
+        ];
+        for track in &mut tracks {
+            track.readiness = TrackReadiness::Ready;
+            track.width = Some(160);
+            track.height = Some(120);
+            track.fps = Some(Rational32::new(30, 1));
+        }
+        tracks
+    }
+
+    fn two_source_inputs() -> Vec<VideoMosaicInput> {
+        vec![
+            VideoMosaicInput {
+                source: MediaKey::new("_", "app", "s1", None).unwrap(),
+                cell: MosaicCell {
+                    column: 0,
+                    row: 0,
+                    z_order: 0,
+                },
+                audio_gain_db: None,
+                fit: None,
+                label: None,
+            },
+            VideoMosaicInput {
+                source: MediaKey::new("_", "app", "s2", None).unwrap(),
+                cell: MosaicCell {
+                    column: 1,
+                    row: 0,
+                    z_order: 0,
+                },
+                audio_gain_db: None,
+                fit: None,
+                label: None,
+            },
+        ]
+    }
+
+    fn fast_layout() -> MosaicLayout {
+        MosaicLayout {
+            columns: 2,
+            rows: 1,
+            cell_width: 80,
+            cell_height: 60,
+            background: None,
+            frame_rate_num: Some(1000),
+            frame_rate_den: Some(1),
+            bit_rate: None,
+            gop_size: None,
+            video_codec: None,
+            fit: None,
+        }
+    }
+
+    fn dummy_job() -> Arc<Mutex<ProcessingJob>> {
+        Arc::new(Mutex::new(ProcessingJob {
+            job_id: cheetah_media_api::processing::ProcessingJobId::default(),
+            spec: ProcessingJobSpec::VideoMosaic {
+                inputs: vec![],
+                target: MediaKey::new("_", "app", "out", None).unwrap(),
+                layout: fast_layout(),
+                audio_mix: None,
+                overlays: vec![],
+            },
+            state: ProcessingJobState::Running,
+            generation: 0,
+            profile: "software".to_string(),
+            created_at: 0,
+            updated_at: 0,
+            started_at: None,
+            finished_at: None,
+            input_keys: vec![],
+            output_keys: vec![],
+            ref_count: 1,
+            restart_count: 0,
+            frames_in: 0,
+            frames_out: 0,
+            bytes_in: 0,
+            bytes_out: 0,
+            drops: 0,
+            pending: 0,
+            flushes: 0,
+            resets: 0,
+            last_error: None,
+        }))
+    }
+
+    struct MockPublisher {
+        result: DispatchResult,
+        tracks: Arc<Mutex<Vec<cheetah_codec::track::TrackInfo>>>,
+    }
+
+    impl MockPublisher {
+        fn new(result: DispatchResult) -> Self {
+            Self {
+                result,
+                tracks: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+    }
+
+    impl PublisherSink for MockPublisher {
+        fn update_tracks(&self, tracks: Vec<TrackInfo>) -> Result<(), SdkError> {
+            *self.tracks.lock().unwrap() = tracks;
+            Ok(())
+        }
+
+        fn push_frame(&self, _frame: Arc<AVFrame>) -> Result<DispatchResult, SdkError> {
+            Ok(self.result)
+        }
+
+        fn close(&self) -> Result<(), SdkError> {
+            Ok(())
+        }
+
+        fn take_keyframe_requests(&self) -> u64 {
+            0
+        }
+    }
+
+    fn run_with_publisher(
+        result: DispatchResult,
+    ) -> Result<(Arc<Mutex<ProcessingJob>>, String), SdkError> {
+        let config = MediaProcessingModuleConfig {
+            profile: "software".to_string(),
+            ..Default::default()
+        };
+        let layout = fast_layout();
+        let inputs = two_source_inputs();
+        let tracks = two_source_tracks();
+        let job = dummy_job();
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<MosaicInput>(8);
+        let mut publisher = MockPublisher::new(result);
+
+        let err: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let err_clone = err.clone();
+        let job_for_worker = job.clone();
+
+        thread::scope(|s| {
+            s.spawn(|| {
+                if let Err(e) = run_mosaicker(
+                    &config,
+                    &inputs,
+                    &layout,
+                    &tracks,
+                    receiver,
+                    &mut publisher,
+                    &Some(job_for_worker),
+                ) {
+                    *err_clone.lock().unwrap() = Some(format!("{e}"));
+                }
+            });
+            thread::sleep(Duration::from_millis(5));
+            drop(sender);
+        });
+
+        let msg = err.lock().unwrap().clone().unwrap_or_default();
+        if msg.is_empty() {
+            Ok((job, msg))
+        } else {
+            Err(SdkError::Internal(msg))
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "media-processing-cpu")]
+    fn run_mosaicker_stops_when_publisher_closed() {
+        let result = run_with_publisher(DispatchResult::RejectedClosed);
+        assert!(
+            result.is_err(),
+            "run_mosaicker should fail when publisher is closed"
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "media-processing-cpu")]
+    fn run_mosaicker_counts_dropped_by_policy() {
+        let (job, _) = run_with_publisher(DispatchResult::DroppedByPolicy).unwrap();
+        let guard = job.lock().unwrap();
+        assert_eq!(guard.frames_out, 0, "no frames should be accepted");
+        assert!(guard.drops > 0, "dropped frames should be counted");
+    }
 }

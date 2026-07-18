@@ -21,12 +21,12 @@ use crate::provider::video::{
     av_frame_from_packet, default_video_bitrate, map_input_format, map_output_codec,
 };
 
+use avcodec::core::FitMode;
 use avcodec::core::{
     BufferHandle, Decoder, DecoderConfig, Encoder, EncoderConfig, Image, ImageFlags, ImageInfo,
     ImageOp, ImageOpKind, ImagePlane, ImageProcessRequest, ImageProcessor, ImageProcessorConfig,
-    MemoryDomain, PacketFlags, Poll, SampleLayout, ScaleFilter, TimeBase,
+    MemoryDomain, PacketFlags, Poll, Rect, SampleLayout, TimeBase,
 };
-use avcodec::core::{FitMode, PadAlign, PadColor};
 
 const MIN_SOURCES: usize = 2;
 const MAX_SOURCES: usize = 9;
@@ -174,7 +174,7 @@ impl VideoMosaicker {
             proc_cfg.memory_domain = MemoryDomain::Host;
             proc_cfg.allow_staging = false;
             proc_cfg.output_format = Some(ImageInfo::Yuv420p);
-            proc_cfg.target_op = Some(ImageOpKind::ResizePad);
+            proc_cfg.target_op = Some(ImageOpKind::CropResize);
             let processor = registry
                 .create_image_processor(&proc_cfg)
                 .map_err(|e| MediaError::unsupported(format!("create image processor: {e}")))?;
@@ -430,27 +430,196 @@ fn build_decoder(registry: &avcodec::core::Registry, frame: &AVFrame) -> Result<
 }
 
 fn process_tile(image: Image, state: &mut SourceState) -> Result<Image> {
+    let (crop, dst_w, dst_h) =
+        compute_tile_geometry(&image, state.cell_width, state.cell_height, state.fit);
+
     let req = ImageProcessRequest::new(
         image,
-        ImageOp::ResizePad {
-            dst_width: state.cell_width,
-            dst_height: state.cell_height,
-            fit: state.fit,
-            align: PadAlign::Center,
-            fill: PadColor::BLACK,
-            filter: ScaleFilter::Bilinear,
+        ImageOp::CropResize {
+            src: crop,
+            dst_width: dst_w,
+            dst_height: dst_h,
         },
     );
     state
         .processor
         .submit(req)
         .map_err(|e| MediaError::internal(format!("submit tile processor: {e}")))?;
-    match state.processor.poll_image() {
-        Ok(Poll::Ready(img)) => Ok(img),
-        Ok(Poll::Pending) => Err(MediaError::internal("tile processor returned pending")),
-        Ok(Poll::EndOfStream) => Err(MediaError::internal("tile processor ended without output")),
-        Err(e) => Err(MediaError::internal(format!("poll tile image: {e}"))),
+    let scaled = match state.processor.poll_image() {
+        Ok(Poll::Ready(img)) => img,
+        Ok(Poll::Pending) => return Err(MediaError::internal("tile processor returned pending")),
+        Ok(Poll::EndOfStream) => {
+            return Err(MediaError::internal("tile processor ended without output"))
+        }
+        Err(e) => return Err(MediaError::internal(format!("poll tile image: {e}"))),
+    };
+
+    if state.fit == FitMode::Contain && (dst_w < state.cell_width || dst_h < state.cell_height) {
+        pad_yuv420p_to_cell(scaled, state.cell_width, state.cell_height)
+            .map_err(|e| MediaError::internal(format!("pad mosaic tile: {e}")))
+    } else {
+        Ok(scaled)
     }
+}
+
+fn even_dim(v: u32) -> u32 {
+    v & !1
+}
+
+fn centered_even_rect(x: u32, y: u32, mut w: u32, mut h: u32, max_w: u32, max_h: u32) -> Rect {
+    w = even_dim(w).max(2);
+    h = even_dim(h).max(2);
+    if w > max_w {
+        w = even_dim(max_w).max(2);
+    }
+    if h > max_h {
+        h = even_dim(max_h).max(2);
+    }
+    let mut cx = x + (max_w.saturating_sub(w)) / 2;
+    let mut cy = y + (max_h.saturating_sub(h)) / 2;
+    if cx + w > max_w {
+        cx = max_w.saturating_sub(w);
+    }
+    if cy + h > max_h {
+        cy = max_h.saturating_sub(h);
+    }
+    cx &= !1;
+    cy &= !1;
+    Rect {
+        x: cx,
+        y: cy,
+        width: w,
+        height: h,
+    }
+}
+
+fn compute_tile_geometry(
+    image: &Image,
+    cell_w: u32,
+    cell_h: u32,
+    fit: FitMode,
+) -> (Rect, u32, u32) {
+    let src_x = image.visible.x;
+    let src_y = image.visible.y;
+    let src_w = image.visible.width;
+    let src_h = image.visible.height;
+    let max_w = image.coded_width;
+    let max_h = image.coded_height;
+
+    match fit {
+        FitMode::Stretch => {
+            let crop = centered_even_rect(src_x, src_y, src_w, src_h, max_w, max_h);
+            (crop, even_dim(cell_w).max(2), even_dim(cell_h).max(2))
+        }
+        FitMode::Cover => {
+            let cell_aspect = cell_w as f64 / cell_h.max(1) as f64;
+            let src_aspect = src_w as f64 / src_h.max(1) as f64;
+            let (crop_w, crop_h) = if src_aspect > cell_aspect {
+                let h = src_h;
+                let w = ((src_h as f64 * cell_aspect) as u32).max(1);
+                (w, h)
+            } else {
+                let w = src_w;
+                let h = ((src_w as f64 / cell_aspect) as u32).max(1);
+                (w, h)
+            };
+            let crop = centered_even_rect(src_x, src_y, crop_w, crop_h, max_w, max_h);
+            (crop, even_dim(cell_w).max(2), even_dim(cell_h).max(2))
+        }
+        FitMode::Contain => {
+            let scale =
+                (cell_w as f64 / src_w.max(1) as f64).min(cell_h as f64 / src_h.max(1) as f64);
+            let content_w = ((src_w as f64 * scale) as u32).max(1);
+            let content_h = ((src_h as f64 * scale) as u32).max(1);
+            let crop = centered_even_rect(src_x, src_y, src_w, src_h, max_w, max_h);
+            (crop, even_dim(content_w).max(2), even_dim(content_h).max(2))
+        }
+    }
+}
+
+fn pad_yuv420p_to_cell(content: Image, cell_w: u32, cell_h: u32) -> avcodec::core::AvResult<Image> {
+    let content_w = content.visible.width;
+    let content_h = content.visible.height;
+    if content_w == cell_w && content_h == cell_h {
+        return Ok(content);
+    }
+
+    let cw = cell_w as usize;
+    let ch = cell_h as usize;
+    let uv_h = ch.div_ceil(2);
+    let y_len = cw * ch;
+    let uv_len = (cw / 2) * uv_h;
+    let total = y_len + uv_len * 2;
+    let mut buf = avcodec::core::buffer::allocate_host_vec(total);
+
+    for y in &mut buf[0..y_len] {
+        *y = 16;
+    }
+    for uv in &mut buf[y_len..y_len + uv_len * 2] {
+        *uv = 128;
+    }
+
+    let off_x = (cell_w - content_w) / 2;
+    let off_y = (cell_h - content_h) / 2;
+
+    let tile_y = content
+        .plane_host_bytes(0)?
+        .ok_or(avcodec::core::AvError::InvalidArgument)?;
+    let tile_u = content
+        .plane_host_bytes(1)?
+        .ok_or(avcodec::core::AvError::InvalidArgument)?;
+    let tile_v = content
+        .plane_host_bytes(2)?
+        .ok_or(avcodec::core::AvError::InvalidArgument)?;
+
+    for row in 0..content_h as usize {
+        let src = row * content_w as usize;
+        let dst = (off_y as usize + row) * cw + off_x as usize;
+        buf[dst..dst + content_w as usize].copy_from_slice(&tile_y[src..src + content_w as usize]);
+    }
+
+    let content_uv_w = (content_w / 2) as usize;
+    let content_uv_h = (content_h / 2) as usize;
+    let uv_off_x = (off_x / 2) as usize;
+    let uv_off_y = (off_y / 2) as usize;
+    let uv_stride = cw / 2;
+
+    for row in 0..content_uv_h {
+        let src = row * content_uv_w;
+        let dst_u = y_len + (uv_off_y + row) * uv_stride + uv_off_x;
+        buf[dst_u..dst_u + content_uv_w].copy_from_slice(&tile_u[src..src + content_uv_w]);
+        let dst_v = y_len + uv_len + (uv_off_y + row) * uv_stride + uv_off_x;
+        buf[dst_v..dst_v + content_uv_w].copy_from_slice(&tile_v[src..src + content_uv_w]);
+    }
+
+    let handle = BufferHandle::from_host_bytes(avcodec::core::utils::next_buffer_id(), buf);
+    let mut image =
+        Image::new(ImageInfo::Yuv420p, cell_w, cell_h, handle).with_layout(SampleLayout::Planar);
+    image.set_plane(
+        0,
+        ImagePlane {
+            offset: 0,
+            stride: cw,
+            len: y_len,
+        },
+    );
+    image.set_plane(
+        1,
+        ImagePlane {
+            offset: y_len,
+            stride: uv_stride,
+            len: uv_len,
+        },
+    );
+    image.set_plane(
+        2,
+        ImagePlane {
+            offset: y_len + uv_len,
+            stride: uv_stride,
+            len: uv_len,
+        },
+    );
+    Ok(image)
 }
 
 fn drain_encoder(mosaicker: &mut VideoMosaicker, out: &mut Vec<AVFrame>) -> Result<()> {
@@ -602,7 +771,7 @@ fn composite_tile(
     let u_plane = tile.planes[1].ok_or(avcodec::core::AvError::InvalidArgument)?;
     let v_plane = tile.planes[2].ok_or(avcodec::core::AvError::InvalidArgument)?;
 
-    let y_src_start = y_plane.offset + visible.y as usize * y_plane.stride + visible.x as usize;
+    let y_src_start = visible.y as usize * y_plane.stride + visible.x as usize;
     let y_dst_start = dst_y as usize * y_stride + dst_x as usize;
     for row in 0..copy_h as usize {
         let src = y_src_start + row * y_plane.stride;
@@ -617,8 +786,7 @@ fn composite_tile(
     let y_size = y_stride * canvas_h;
     let uv_size = uv_stride * ch;
 
-    let u_src_start =
-        u_plane.offset + (visible.y as usize / 2) * u_plane.stride + (visible.x as usize / 2);
+    let u_src_start = (visible.y as usize / 2) * u_plane.stride + (visible.x as usize / 2);
     let u_dst_start = y_size + (dst_y as usize / 2) * uv_stride + (dst_x as usize / 2);
     for row in 0..copy_ch {
         let src = u_src_start + row * u_plane.stride;
@@ -626,8 +794,7 @@ fn composite_tile(
         canvas_buf[dst..dst + copy_cw].copy_from_slice(&tile_u[src..src + copy_cw]);
     }
 
-    let v_src_start =
-        v_plane.offset + (visible.y as usize / 2) * v_plane.stride + (visible.x as usize / 2);
+    let v_src_start = (visible.y as usize / 2) * v_plane.stride + (visible.x as usize / 2);
     let v_dst_start = y_size + uv_size + (dst_y as usize / 2) * uv_stride + (dst_x as usize / 2);
     for row in 0..copy_ch {
         let src = v_src_start + row * v_plane.stride;
@@ -667,6 +834,8 @@ fn map_mosaic_fit(fit: MosaicFit) -> FitMode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use avcodec::core::{BitstreamFormat, CodecId as AvCodecId, Packet, Poll, TimeBase};
+    use avcodec::{VideoDecoderRequest, VideoProfile, VideoSdk};
 
     #[test]
     fn mosaicker_rejects_too_few_sources() {
@@ -825,5 +994,110 @@ mod tests {
             assert_eq!(frame.media_kind, MediaKind::Video);
             assert_eq!(frame.format, FrameFormat::CanonicalH26x);
         }
+    }
+
+    #[test]
+    #[cfg(feature = "media-processing-cpu")]
+    fn mosaicker_output_decodes_back_to_image() {
+        let config = MediaProcessingModuleConfig {
+            profile: "software".to_string(),
+            ..Default::default()
+        };
+        let layout = MosaicLayout {
+            columns: 1,
+            rows: 2,
+            cell_width: 160,
+            cell_height: 120,
+            background: None,
+            frame_rate_num: Some(30),
+            frame_rate_den: Some(1),
+            bit_rate: None,
+            gop_size: None,
+            video_codec: None,
+            fit: None,
+        };
+        let inputs = vec![
+            VideoMosaicInput {
+                source: cheetah_media_api::ids::MediaKey::new("_", "app", "s1", None).unwrap(),
+                cell: MosaicCell {
+                    column: 0,
+                    row: 0,
+                    z_order: 0,
+                },
+                audio_gain_db: None,
+                fit: None,
+                label: None,
+            },
+            VideoMosaicInput {
+                source: cheetah_media_api::ids::MediaKey::new("_", "app", "s2", None).unwrap(),
+                cell: MosaicCell {
+                    column: 0,
+                    row: 1,
+                    z_order: 0,
+                },
+                audio_gain_db: None,
+                fit: None,
+                label: None,
+            },
+        ];
+        let mut tracks = vec![
+            TrackInfo::new(TrackId(0), MediaKind::Video, CheetahCodecId::H264, 30),
+            TrackInfo::new(TrackId(0), MediaKind::Video, CheetahCodecId::H264, 30),
+        ];
+        for track in &mut tracks {
+            track.readiness = TrackReadiness::Ready;
+            track.width = Some(160);
+            track.height = Some(120);
+            track.fps = Some(Rational32::new(30, 1));
+        }
+
+        let mut mosaicker = VideoMosaicker::new(&config, &inputs, &layout, &tracks).unwrap();
+        let mut all_frames = Vec::new();
+        for _ in 0..3 {
+            all_frames.extend(mosaicker.tick().unwrap());
+        }
+        all_frames.extend(mosaicker.flush().unwrap());
+
+        assert!(
+            !all_frames.is_empty(),
+            "mosaic should produce encoded frames"
+        );
+
+        let sdk = VideoSdk::new().expect("video sdk");
+        let mut decoder = sdk
+            .create_decoder(
+                VideoProfile::Software,
+                VideoDecoderRequest::new(AvCodecId::H264, TimeBase::new(1, 30)).unwrap(),
+            )
+            .expect("create h264 decoder")
+            .into_session();
+
+        for frame in &all_frames {
+            let mut packet = Packet::from_host_bytes(
+                avcodec::core::utils::next_buffer_id(),
+                AvCodecId::H264,
+                BitstreamFormat::H264AnnexB,
+                frame.payload.to_vec(),
+            );
+            packet.pts = Some(frame.pts);
+            packet.dts = Some(frame.dts);
+            packet.time_base = Some(TimeBase::new(frame.timebase.num, frame.timebase.den));
+            decoder.submit_packet(packet).expect("submit mosaic packet");
+
+            for _ in 0..5 {
+                match decoder.poll_image().expect("poll decoded image") {
+                    Poll::Ready(img) => {
+                        assert_eq!(img.format, ImageInfo::Yuv420p);
+                        assert_eq!(img.visible.width, mosaicker.output_width);
+                        assert_eq!(img.visible.height, mosaicker.output_height);
+                        return;
+                    }
+                    Poll::Pending => {}
+                    Poll::EndOfStream => break,
+                }
+            }
+        }
+
+        panic!("did not decode any mosaic output frame");
     }
 }
