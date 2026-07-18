@@ -13,16 +13,17 @@ use cheetah_media_api::command::{
     SnapshotRequest, StartRecordRequest, StopRecordRequest, UpdateRtpRequest,
 };
 use cheetah_media_api::ids::{
-    FileHandle, MediaKey, PlaybackSessionId, ProxyId, RecordFileId, RecordTaskId, RtpSessionId,
-    SessionId,
+    FileHandle, MediaKey, PlaybackSessionId, ProcessingJobId, ProxyId, RecordFileId, RecordTaskId,
+    RtpSessionId, SessionId,
 };
 use cheetah_media_api::model::{
     AdmissionAction, AdmissionRequest, CloseReason, Decision, RtpTcpMode,
 };
 use cheetah_media_api::port::{
-    ControlAuthApi, MediaControlApi, MediaRequestContext, PlaybackApi, ProxyApi, RecordApi, RtpApi,
-    SnapshotApi, WebhookAdminApi,
+    ControlAuthApi, MediaControlApi, MediaProcessingApi, MediaRequestContext, PlaybackApi,
+    ProxyApi, RecordApi, RtpApi, SnapshotApi, WebhookAdminApi,
 };
+use cheetah_media_api::processing::{CreateProcessingJob, ProcessingJobQuery, UpdateProcessingJob};
 use cheetah_media_api::webhook::{
     CreateWebhookProfileRequest, UpdateWebhookProfileRequest, WebhookProfileId,
     WebhookProfileListResponse, WebhookProfileResponse, WebhookTestResponse,
@@ -215,6 +216,14 @@ impl NativeMediaHttpService {
         self.ctx.media_services.playback().ok_or_else(|| {
             AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
                 "playback not available",
+            ))
+        })
+    }
+
+    fn processing(&self) -> Result<Arc<dyn MediaProcessingApi>, AdapterError> {
+        self.ctx.media_services.processing().ok_or_else(|| {
+            AdapterError::Media(cheetah_media_api::error::MediaError::unavailable(
+                "media processing not available",
             ))
         })
     }
@@ -413,6 +422,19 @@ impl NativeMediaHttpService {
                 if path.starts_with("/webhook/profiles/") && path.ends_with("/test") =>
             {
                 Some("webhook.profile.test")
+            }
+            (HttpMethod::Get, "/processing/preflight") => Some("processing.preflight"),
+            (HttpMethod::Post, "/processing/jobs") => Some("processing.create"),
+            (HttpMethod::Post, _)
+                if path.starts_with("/processing/jobs/") && path.ends_with("/stop") =>
+            {
+                Some("processing.stop")
+            }
+            (HttpMethod::Patch, _) if path.starts_with("/processing/jobs/") => {
+                Some("processing.update")
+            }
+            (HttpMethod::Delete, _) if path.starts_with("/processing/jobs/") => {
+                Some("processing.delete")
             }
             _ => None,
         }
@@ -746,6 +768,102 @@ impl NativeMediaHttpService {
             .ok_or_else(|| AdapterError::InvalidRequest("missing session_id".to_string()))?;
         api.stop_playback(ctx, &PlaybackSessionId(id)).await?;
         Ok(json_response(&serde_json::json!({ "stopped": true })))
+    }
+
+    fn processing_job_id_from_path(
+        path: &str,
+        prefix: &str,
+        suffix: &str,
+    ) -> Option<ProcessingJobId> {
+        let rest = path.strip_prefix(prefix)?;
+        let id = if suffix.is_empty() {
+            rest
+        } else {
+            rest.strip_suffix(suffix)?
+        };
+        if id.is_empty() {
+            return None;
+        }
+        Some(ProcessingJobId(crate::util::percent_decode(id)))
+    }
+
+    async fn processing_preflight(
+        &self,
+        ctx: &MediaRequestContext,
+        _req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let report = self.processing()?.preflight(ctx).await?;
+        Ok(json_response(&report))
+    }
+
+    async fn processing_create_job(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let mut request: CreateProcessingJob = parse_body(&req)?;
+        if request.idempotency_key.is_none() {
+            request.idempotency_key = ctx.idempotency_key.clone();
+        }
+        let job = self.processing()?.create_job(ctx, request).await?;
+        Ok(json_response(&job))
+    }
+
+    async fn processing_list_jobs(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let mut query: ProcessingJobQuery = parse_query(&req)?;
+        query.clamp_page_size();
+        let page = self.processing()?.list_jobs(ctx, query).await?;
+        Ok(json_response(&page))
+    }
+
+    async fn processing_get_job(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let id = Self::processing_job_id_from_path(&req.path, "/processing/jobs/", "")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing job_id".to_string()))?;
+        let job = self.processing()?.get_job(ctx, &id).await?;
+        Ok(json_response(&job))
+    }
+
+    async fn processing_update_job(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let id = Self::processing_job_id_from_path(&req.path, "/processing/jobs/", "")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing job_id".to_string()))?;
+        let mut request: UpdateProcessingJob = parse_body(&req)?;
+        request.job_id = id;
+        let job = self.processing()?.update_job(ctx, request).await?;
+        Ok(json_response(&job))
+    }
+
+    async fn processing_stop_job(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let id = Self::processing_job_id_from_path(&req.path, "/processing/jobs/", "/stop")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing job_id".to_string()))?;
+        let job = self.processing()?.stop_job(ctx, &id).await?;
+        Ok(json_response(&job))
+    }
+
+    async fn processing_delete_job(
+        &self,
+        ctx: &MediaRequestContext,
+        req: HttpRequest,
+    ) -> Result<HttpResponse, AdapterError> {
+        let id = Self::processing_job_id_from_path(&req.path, "/processing/jobs/", "")
+            .ok_or_else(|| AdapterError::InvalidRequest("missing job_id".to_string()))?;
+        self.processing()?.delete_job(ctx, &id).await?;
+        Ok(no_content_response())
     }
 
     async fn rtp_receivers(
@@ -1380,6 +1498,29 @@ impl ModuleHttpService for NativeMediaHttpService {
                 }
                 (HttpMethod::Get, path) if path.starts_with("/playback/sessions/") => {
                     self.playback_get(&ctx, req).await
+                }
+                (HttpMethod::Get, "/processing/preflight") => {
+                    self.processing_preflight(&ctx, req).await
+                }
+                (HttpMethod::Post, "/processing/jobs") => {
+                    self.processing_create_job(&ctx, req).await
+                }
+                (HttpMethod::Get, "/processing/jobs") => self.processing_list_jobs(&ctx, req).await,
+                (HttpMethod::Get, path)
+                    if path.starts_with("/processing/jobs/") && !path.ends_with("/stop") =>
+                {
+                    self.processing_get_job(&ctx, req).await
+                }
+                (HttpMethod::Patch, path) if path.starts_with("/processing/jobs/") => {
+                    self.processing_update_job(&ctx, req).await
+                }
+                (HttpMethod::Post, path)
+                    if path.starts_with("/processing/jobs/") && path.ends_with("/stop") =>
+                {
+                    self.processing_stop_job(&ctx, req).await
+                }
+                (HttpMethod::Delete, path) if path.starts_with("/processing/jobs/") => {
+                    self.processing_delete_job(&ctx, req).await
                 }
                 (HttpMethod::Post, "/snapshots") => self.snapshot_create(&ctx, req).await,
                 (HttpMethod::Get, "/snapshots") => self.snapshot_list(&ctx, req).await,
