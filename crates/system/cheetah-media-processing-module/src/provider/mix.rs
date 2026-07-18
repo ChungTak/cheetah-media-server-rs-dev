@@ -181,7 +181,9 @@ pub async fn spawn_audio_mix_worker(
             Ok(s) => s,
             Err(e) => {
                 drop(sender);
-                let _ = handle.wait().await;
+                if let Err(join_err) = handle.wait().await {
+                    warn!("audio mix worker joined with error after subscribe failure: {join_err}");
+                }
                 return Err(e);
             }
         };
@@ -270,7 +272,11 @@ pub async fn spawn_audio_mix_worker(
         .await?;
 
         drop(sender);
-        let _ = handle.wait().await;
+        if let Err(join_err) = handle.wait().await {
+            return Err(SdkError::Internal(format!(
+                "audio mix worker joined with error: {join_err}"
+            )));
+        }
 
         if let Some(err) = worker_error
             .lock()

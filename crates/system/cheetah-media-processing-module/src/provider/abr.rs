@@ -114,7 +114,8 @@ pub async fn spawn_abr_ladder_worker(
                             process_error.get_or_insert_with(|| format!("{e}"));
                         }
                         if let Some(err) = process_error {
-                            *worker_error_clone.lock().unwrap() = Some(err);
+                            *worker_error_clone.lock().unwrap_or_else(|e| e.into_inner()) =
+                                Some(err);
                         }
                     }),
                 )
@@ -178,7 +179,12 @@ pub async fn spawn_abr_ladder_worker(
                             continue;
                         }
 
-                        if ctx.worker_error.lock().unwrap().is_some() {
+                        if ctx
+                            .worker_error
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .is_some()
+                        {
                             subscriber_error = Some(SdkError::Internal(format!(
                                 "abr variant for {} failed",
                                 ctx.target
@@ -239,12 +245,15 @@ pub async fn spawn_abr_ladder_worker(
             has_audio: _,
         } = ctx;
         drop(sender);
-        let _ = handle.wait().await;
-        if let Some(err) = we.lock().unwrap().take() {
+        let join_result = handle.wait().await;
+        if let Some(err) = we.lock().unwrap_or_else(|e| e.into_inner()).take() {
             if worker_error.is_none() {
                 worker_error = Some(format!("{target}: {err}"));
             }
         };
+        if let Err(e) = join_result {
+            worker_error.get_or_insert_with(|| format!("{target}: worker joined with error: {e}"));
+        }
     }
 
     // Release every publisher lease, including those for variants that never

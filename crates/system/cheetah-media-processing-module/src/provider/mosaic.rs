@@ -178,7 +178,9 @@ pub async fn spawn_video_mosaic_worker(
             Ok(s) => s,
             Err(e) => {
                 drop(sender);
-                let _ = handle.wait().await;
+                if let Err(join_err) = handle.wait().await {
+                    warn!("video mosaic worker joined with error after subscribe failure: {join_err}");
+                }
                 return Err(e);
             }
         };
@@ -262,7 +264,11 @@ pub async fn spawn_video_mosaic_worker(
         .await?;
 
         drop(sender);
-        let _ = handle.wait().await;
+        if let Err(join_err) = handle.wait().await {
+            return Err(SdkError::Internal(format!(
+                "video mosaic worker joined with error: {join_err}"
+            )));
+        }
 
         if let Some(err) = worker_error
             .lock()

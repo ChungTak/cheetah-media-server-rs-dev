@@ -206,7 +206,9 @@ impl Module for MediaProcessingModule {
         }
         #[cfg(feature = "media-processing-caption")]
         if let Some(handle) = self.metrics_handle.take() {
-            handle.lock().unwrap().abort();
+            if let Ok(guard) = handle.lock() {
+                guard.abort();
+            }
         }
         if let Some(reg) = self.processing_registration.take() {
             if let Some(ctx) = self.ctx.as_ref() {

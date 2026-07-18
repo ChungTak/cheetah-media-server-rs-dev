@@ -162,7 +162,7 @@ impl TranscodeQueueSender {
     /// is the number of previously queued droppable frames that were dropped to
     /// make room for a keyframe, and `Err(input)` if the input itself was dropped.
     pub(crate) fn try_send(&self, input: TranscodeInput) -> Result<usize, TranscodeInput> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if guard.closed {
             return Err(input);
         }
@@ -203,7 +203,7 @@ impl TranscodeQueueSender {
 
 impl Drop for TranscodeQueueSender {
     fn drop(&mut self) {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         guard.closed = true;
         self.condvar.notify_all();
     }
@@ -211,7 +211,7 @@ impl Drop for TranscodeQueueSender {
 
 impl TranscodeQueueReceiver {
     pub(crate) fn recv(&self) -> Option<TranscodeInput> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         loop {
             if let Some(item) = guard.items.pop_front() {
                 return Some(item);
@@ -219,7 +219,7 @@ impl TranscodeQueueReceiver {
             if guard.closed {
                 return None;
             }
-            guard = self.condvar.wait(guard).unwrap();
+            guard = self.condvar.wait(guard).unwrap_or_else(|e| e.into_inner());
         }
     }
 }
@@ -535,7 +535,9 @@ pub async fn spawn_transcode_worker(
                         process_error.get_or_insert_with(|| format!("{e}"));
                     }
                     if let Some(err) = process_error {
-                        *worker_error_clone.lock().unwrap() = Some(err);
+                        *worker_error_clone
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner()) = Some(err);
                     }
                 }),
             )
@@ -610,9 +612,18 @@ pub async fn spawn_transcode_worker(
         }
 
         drop(tx);
-        let _ = handle.wait().await;
-        if let Some(err) = worker_error.lock().unwrap().take() {
+        let join_result = handle.wait().await;
+        if let Some(err) = worker_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             return Err(SdkError::Internal(err));
+        }
+        if let Err(e) = join_result {
+            return Err(SdkError::Internal(format!(
+                "transcode worker joined with error: {e}"
+            )));
         }
         if let Some(err) = subscriber_error {
             return Err(err);
