@@ -501,6 +501,7 @@ impl Engine {
             &*self.task_system,
             &*self.stream_manager,
             &*self.module_manager,
+            &self.media_services,
             &*self.session_directory,
         )
         .await
