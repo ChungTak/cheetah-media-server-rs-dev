@@ -493,6 +493,7 @@ pub async fn spawn_transcode_worker(
             &track_selection,
             video_target.is_some(),
             audio_target.is_some(),
+            &cancel,
         )
         .await?;
 
@@ -641,9 +642,15 @@ pub(crate) async fn wait_for_source_tracks(
     track_selection: &TrackSelection,
     need_video: bool,
     need_audio: bool,
+    cancel: &CancellationToken,
 ) -> Result<(Option<TrackInfo>, Option<TrackInfo>), SdkError> {
     let deadline = engine.runtime_api.now().as_micros() + 5_000_000;
     while engine.runtime_api.now().as_micros() < deadline {
+        if cancel.is_cancelled() {
+            return Err(SdkError::Internal(
+                "wait for source tracks cancelled".to_string(),
+            ));
+        }
         if let Ok(Some(snapshot)) = engine.stream_manager_api.get_stream(source).await {
             let mut video = None;
             let mut audio = None;

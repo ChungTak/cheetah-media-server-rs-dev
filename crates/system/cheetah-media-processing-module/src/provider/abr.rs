@@ -70,9 +70,15 @@ pub async fn spawn_abr_ladder_worker(
 
     let result = async {
         let need_audio = variants.iter().any(|v| v.audio.is_some());
-        let (source_video, source_audio) =
-            wait_for_source_tracks(&engine, &source, &TrackSelection::All, true, need_audio)
-                .await?;
+        let (source_video, source_audio) = wait_for_source_tracks(
+            &engine,
+            &source,
+            &TrackSelection::All,
+            true,
+            need_audio,
+            &cancel,
+        )
+        .await?;
 
         for variant in &variants {
             let (namespace, path) = StreamKeyBridge::to_namespace_path(&variant.target);

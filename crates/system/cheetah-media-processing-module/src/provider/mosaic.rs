@@ -45,6 +45,7 @@ enum MosaicInput {
 async fn wait_for_source_tracks(
     engine: &EngineContext,
     inputs: &[VideoMosaicInput],
+    cancel: &CancellationToken,
 ) -> Result<Vec<cheetah_codec::track::TrackInfo>, SdkError> {
     let mut tracks = Vec::with_capacity(inputs.len());
     for input in inputs {
@@ -53,6 +54,11 @@ async fn wait_for_source_tracks(
         let deadline_us = engine.runtime_api.now().as_micros() + 5_000_000;
         let mut found = None;
         while engine.runtime_api.now().as_micros() < deadline_us {
+            if cancel.is_cancelled() {
+                return Err(SdkError::Internal(
+                    "wait for source tracks cancelled".to_string(),
+                ));
+            }
             if let Ok(Some(snapshot)) = engine.stream_manager_api.get_stream(&key).await {
                 if let Some(video) = snapshot.tracks.into_iter().find(|t| {
                     t.media_kind == MediaKind::Video
@@ -138,7 +144,7 @@ pub async fn spawn_video_mosaic_worker(
             )));
         }
 
-        let source_tracks = wait_for_source_tracks(&engine, &inputs).await?;
+        let source_tracks = wait_for_source_tracks(&engine, &inputs, &cancel).await?;
 
         let (sender, receiver) =
             std::sync::mpsc::sync_channel::<MosaicInput>(MOSAIC_QUEUE_CAPACITY);
