@@ -132,6 +132,25 @@ pub async fn stop_derived_push_job(engine: &EngineContext, job_id: cheetah_sdk::
     }
 }
 
+/// Returns `false` when a derived processing job has reached a terminal state
+/// or disappeared from the provider, indicating the derived stream is dead.
+pub async fn is_derived_job_alive(
+    engine: &EngineContext,
+    job_id: &cheetah_sdk::ProcessingJobId,
+) -> bool {
+    let Some(processing_api) = engine.media_services.processing() else {
+        return false;
+    };
+    let ctx = MediaRequestContext::default();
+    match processing_api.get_job(&ctx, job_id).await {
+        Ok(job) => !matches!(
+            job.state,
+            ProcessingJobState::Stopped | ProcessingJobState::Failed
+        ),
+        Err(_) => false,
+    }
+}
+
 /// Build the transcode target for RTMP output, returning `None` when no
 /// transcode is required.
 fn build_rtmp_transcode_target(

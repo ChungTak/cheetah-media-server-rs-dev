@@ -38,7 +38,8 @@ use crate::ingest::{
     handle_video_ingest_with_alert_threshold, should_emit_alert_threshold,
 };
 use crate::processing::{
-    ensure_derived_push_source, stop_derived_push_job, tracks_codec_signature, DerivedPushSource,
+    ensure_derived_push_source, is_derived_job_alive, stop_derived_push_job,
+    tracks_codec_signature, DerivedPushSource,
 };
 use crate::route::{parse_stream_key_spec, parse_stream_route, RtmpPlayMode, StreamRoute};
 use crate::session::{
@@ -863,6 +864,26 @@ async fn run_push_job_supervisor(
             .ok()
             .flatten()
             .map(|snapshot| tracks_codec_signature(&snapshot.tracks));
+
+        // If the derived transcode job has died (source ended/worker failed),
+        // tear it down so the next iteration creates a fresh one.
+        if let Some(derived) = derived_source.as_ref() {
+            if let Some(job_id) = &derived.processing_job_id {
+                if !is_derived_job_alive(&engine, job_id).await {
+                    tracing::info!(
+                        job_name = job.name,
+                        stream_key = %source_stream_key,
+                        "derived transcode job is no longer alive, re-resolving"
+                    );
+                    if let Some(derived) = derived_source.take() {
+                        if let Some(job_id) = derived.processing_job_id {
+                            stop_derived_push_job(&engine, job_id).await;
+                        }
+                    }
+                    last_codec_signature = None;
+                }
+            }
+        }
 
         let needs_resolve = derived_source.is_none()
             || (matches!(job.processing_policy, ProcessingPolicy::Auto { .. })
