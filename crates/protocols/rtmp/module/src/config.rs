@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use cheetah_rtmp_core::RtmpUrl;
-use cheetah_sdk::{BackpressurePolicy, SdkError};
+use cheetah_sdk::{BackpressurePolicy, ProcessingPolicy, SdkError, TrackSelection};
 use serde::{Deserialize, Serialize};
 
 use crate::route::parse_stream_key_spec;
@@ -68,10 +68,10 @@ pub struct RtmpPullJobConfig {
     pub source_url: String,
     /// 拉流写入到本地的目标流标识。
     pub target_stream_key: String,
-    /// 禁用视频轨（只拉取音频）。
-    pub disable_video: bool,
-    /// 禁用音频轨（只拉取视频）。
-    pub disable_audio: bool,
+    /// 选择要保留的轨道（All / AudioOnly / VideoOnly）。
+    pub track_selection: TrackSelection,
+    /// 处理策略：Passthrough、Auto 或 Transcode。
+    pub processing_policy: ProcessingPolicy,
     /// 首次/基础重试退避时间（毫秒）。
     pub retry_backoff_ms: u64,
     /// 最大重试退避时间（毫秒）。
@@ -92,10 +92,10 @@ pub struct RtmpPushJobConfig {
     pub source_stream_key: String,
     /// 目标 RTMP URL，例如 `rtmp://host/app/stream`。
     pub target_url: String,
-    /// 禁用视频轨（只推送音频）。
-    pub disable_video: bool,
-    /// 禁用音频轨（只推送视频）。
-    pub disable_audio: bool,
+    /// 选择要保留的轨道（All / AudioOnly / VideoOnly）。
+    pub track_selection: TrackSelection,
+    /// 处理策略：Passthrough、Auto 或 Transcode。
+    pub processing_policy: ProcessingPolicy,
     /// 首次/基础重试退避时间（毫秒）。
     pub retry_backoff_ms: u64,
     /// 最大重试退避时间（毫秒）。
@@ -163,8 +163,8 @@ impl Default for RtmpPullJobConfig {
             enabled: true,
             source_url: String::new(),
             target_stream_key: String::new(),
-            disable_video: false,
-            disable_audio: false,
+            track_selection: TrackSelection::All,
+            processing_policy: ProcessingPolicy::Passthrough,
             retry_backoff_ms: 500,
             max_retry_backoff_ms: 5_000,
         }
@@ -178,8 +178,8 @@ impl Default for RtmpPushJobConfig {
             enabled: true,
             source_stream_key: String::new(),
             target_url: String::new(),
-            disable_video: false,
-            disable_audio: false,
+            track_selection: TrackSelection::All,
+            processing_policy: ProcessingPolicy::Passthrough,
             retry_backoff_ms: 500,
             max_retry_backoff_ms: 5_000,
         }
@@ -427,6 +427,7 @@ impl RtmpModuleConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cheetah_sdk::ProcessingPreset;
 
     #[test]
     fn default_has_alert_thresholds() {
@@ -472,5 +473,23 @@ mod tests {
         assert!(err
             .to_string()
             .contains("rtmp.alert_thresholds.startup_timeout_ms"));
+    }
+
+    #[test]
+    fn job_config_serializes_track_selection_and_processing_policy() {
+        let push = RtmpPushJobConfig {
+            name: "test".to_string(),
+            track_selection: TrackSelection::AudioOnly,
+            processing_policy: ProcessingPolicy::Auto {
+                preset: ProcessingPreset::Balanced,
+            },
+            ..RtmpPushJobConfig::default()
+        };
+        let json = serde_json::to_string(&push).unwrap();
+        assert!(json.contains("\"track_selection\""));
+        assert!(json.contains("\"processing_policy\""));
+        let de: RtmpPushJobConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(de.track_selection, TrackSelection::AudioOnly);
+        assert_eq!(de.processing_policy, push.processing_policy);
     }
 }

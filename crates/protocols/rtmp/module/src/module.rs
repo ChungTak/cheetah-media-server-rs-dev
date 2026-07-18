@@ -19,7 +19,7 @@ use cheetah_sdk::{
     BootstrapPolicy, CancellationToken, ConfigEffect, EngineContext, Module, ModuleCapability,
     ModuleConfigChange, ModuleFactory, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
     ModuleSchemaRegistration, ModuleState, OneShotReceiver, PublisherOptions, RuntimeApi, SdkError,
-    ServiceDescriptor, StreamKey, SubscriberOptions,
+    ServiceDescriptor, StreamKey, SubscriberOptions, TrackSelection,
 };
 use cheetah_sdk::{HttpMethod, HttpRequest, HttpResponse, HttpRouteDescriptor, ModuleHttpService};
 use futures::{pin_mut, select_biased, FutureExt};
@@ -742,8 +742,16 @@ async fn run_pull_job_once(
                     ..
                 } => {
                     let frame = match media_type {
-                        RtmpMediaType::Video if job.disable_video => None,
-                        RtmpMediaType::Audio if job.disable_audio => None,
+                        RtmpMediaType::Video
+                            if job.track_selection == TrackSelection::AudioOnly =>
+                        {
+                            None
+                        }
+                        RtmpMediaType::Audio
+                            if job.track_selection == TrackSelection::VideoOnly =>
+                        {
+                            None
+                        }
                         RtmpMediaType::Video => handle_video_ingest_with_alert_threshold(
                             &mut session,
                             timestamp_ms,
@@ -846,8 +854,8 @@ async fn run_push_job_supervisor(
             job.name.as_str(),
             source_stream_key.clone(),
             target_url.clone(),
-            job.disable_video,
-            job.disable_audio,
+            job.track_selection == TrackSelection::AudioOnly,
+            job.track_selection == TrackSelection::VideoOnly,
             cancel.child_token(),
         )
         .await;
@@ -1034,7 +1042,7 @@ async fn run_push_job_once(
                     RtmpPlayMode::Normal,
                     &current_tracks,
                 ) {
-                    // Skip disabled media types.
+                    // Skip media types filtered out by track selection.
                     if disable_video && frame.media_kind == MediaKind::Video {
                         continue;
                     }
@@ -1534,8 +1542,8 @@ async fn run_relay_job_supervisor(
         enabled: true,
         source_url: job.source_url.clone(),
         target_stream_key: stream_key_str.clone(),
-        disable_video: false,
-        disable_audio: false,
+        track_selection: TrackSelection::All,
+        processing_policy: cheetah_sdk::ProcessingPolicy::Passthrough,
         retry_backoff_ms: job.retry_backoff_ms,
         max_retry_backoff_ms: job.max_retry_backoff_ms,
     };
@@ -1544,8 +1552,8 @@ async fn run_relay_job_supervisor(
         enabled: true,
         source_stream_key: stream_key_str,
         target_url: job.target_url.clone(),
-        disable_video: false,
-        disable_audio: false,
+        track_selection: TrackSelection::All,
+        processing_policy: cheetah_sdk::ProcessingPolicy::Passthrough,
         retry_backoff_ms: job.retry_backoff_ms,
         max_retry_backoff_ms: job.max_retry_backoff_ms,
     };
