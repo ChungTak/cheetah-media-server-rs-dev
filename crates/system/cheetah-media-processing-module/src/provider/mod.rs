@@ -21,3 +21,9 @@ mod semaphore;
 
 #[cfg(feature = "media-processing-image")]
 pub use image::ImageProcessProvider;
+
+#[cfg(feature = "media-processing-caption")]
+pub mod caption;
+
+#[cfg(feature = "media-processing-caption")]
+pub use caption::MediaProcessingProvider;
