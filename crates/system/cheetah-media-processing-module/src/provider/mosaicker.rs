@@ -562,6 +562,10 @@ fn pad_yuv420p_to_cell(content: Image, cell_w: u32, cell_h: u32) -> avcodec::cor
     let off_x = (cell_w - content_w) / 2;
     let off_y = (cell_h - content_h) / 2;
 
+    let y_plane = content.planes[0].ok_or(avcodec::core::AvError::InvalidArgument)?;
+    let u_plane = content.planes[1].ok_or(avcodec::core::AvError::InvalidArgument)?;
+    let v_plane = content.planes[2].ok_or(avcodec::core::AvError::InvalidArgument)?;
+
     let tile_y = content
         .plane_host_bytes(0)?
         .ok_or(avcodec::core::AvError::InvalidArgument)?;
@@ -572,8 +576,9 @@ fn pad_yuv420p_to_cell(content: Image, cell_w: u32, cell_h: u32) -> avcodec::cor
         .plane_host_bytes(2)?
         .ok_or(avcodec::core::AvError::InvalidArgument)?;
 
+    let y_src_start = content.visible.y as usize * y_plane.stride + content.visible.x as usize;
     for row in 0..content_h as usize {
-        let src = row * content_w as usize;
+        let src = y_src_start + row * y_plane.stride;
         let dst = (off_y as usize + row) * cw + off_x as usize;
         buf[dst..dst + content_w as usize].copy_from_slice(&tile_y[src..src + content_w as usize]);
     }
@@ -584,12 +589,17 @@ fn pad_yuv420p_to_cell(content: Image, cell_w: u32, cell_h: u32) -> avcodec::cor
     let uv_off_y = (off_y / 2) as usize;
     let uv_stride = cw / 2;
 
+    let uv_src_start =
+        (content.visible.y as usize / 2) * u_plane.stride + (content.visible.x as usize / 2);
     for row in 0..content_uv_h {
-        let src = row * content_uv_w;
+        let src = uv_src_start + row * u_plane.stride;
         let dst_u = y_len + (uv_off_y + row) * uv_stride + uv_off_x;
         buf[dst_u..dst_u + content_uv_w].copy_from_slice(&tile_u[src..src + content_uv_w]);
         let dst_v = y_len + uv_len + (uv_off_y + row) * uv_stride + uv_off_x;
-        buf[dst_v..dst_v + content_uv_w].copy_from_slice(&tile_v[src..src + content_uv_w]);
+        let v_src = (content.visible.y as usize / 2) * v_plane.stride
+            + (content.visible.x as usize / 2)
+            + row * v_plane.stride;
+        buf[dst_v..dst_v + content_uv_w].copy_from_slice(&tile_v[v_src..v_src + content_uv_w]);
     }
 
     let handle = BufferHandle::from_host_bytes(avcodec::core::utils::next_buffer_id(), buf);
@@ -808,7 +818,7 @@ fn composite_tile(
 fn resolve_output_fps(layout: &MosaicLayout) -> Rational32 {
     let num = layout.frame_rate_num.unwrap_or(30);
     let den = layout.frame_rate_den.unwrap_or(1);
-    if den == 0 {
+    if num == 0 || den == 0 {
         Rational32::new(30, 1)
     } else {
         Rational32::new(num, den)
