@@ -22,8 +22,8 @@ use cheetah_media_api::{
     MediaError,
 };
 use cheetah_sdk::{
-    CancellationToken, EngineContext, MediaFilter, PublishLease, PublisherSink, SdkError,
-    StreamKey, SubscriberOptions,
+    CancellationToken, DispatchResult, EngineContext, MediaFilter, PublishLease, PublisherSink,
+    SdkError, StreamKey, SubscriberOptions,
 };
 use futures::{pin_mut, select_biased, FutureExt};
 use tracing::warn;
@@ -233,12 +233,20 @@ impl TranscodeWorker {
         frame.origin = cheetah_codec::frame::FrameOrigin::Generated;
         let bytes_out = frame.payload.len() as u64;
         match self.publisher.push_frame(Arc::new(frame)) {
-            Ok(_) => {
+            Ok(DispatchResult::Accepted) => {
                 update_progress(&self.job, |job| {
                     job.frames_out += 1;
                     job.bytes_out += bytes_out;
                 });
                 Ok(())
+            }
+            Ok(DispatchResult::DroppedByPolicy) => {
+                update_progress(&self.job, |job| job.drops += 1);
+                Ok(())
+            }
+            Ok(DispatchResult::RejectedClosed) => {
+                update_progress(&self.job, |job| job.drops += 1);
+                Err(SdkError::Internal("publisher closed".into()))
             }
             Err(e) => {
                 update_progress(&self.job, |job| job.drops += 1);
@@ -253,7 +261,7 @@ impl TranscodeWorker {
                 .flush()
                 .map_err(|e| SdkError::Internal(format!("video flush failed: {e}")))?
             {
-                let _ = self.push_frame(frame);
+                self.push_frame(frame)?;
             }
         }
         if let Some(session) = self.audio_session.as_mut() {
@@ -261,7 +269,7 @@ impl TranscodeWorker {
                 .flush()
                 .map_err(|e| SdkError::Internal(format!("audio flush failed: {e}")))?
             {
-                let _ = self.push_frame(frame);
+                self.push_frame(frame)?;
             }
         }
         self.publisher.close()
@@ -362,7 +370,8 @@ pub async fn spawn_transcode_worker(
                     let mut worker = worker;
                     while let Ok(input) = rx.recv() {
                         if let Err(e) = worker.process(input) {
-                            warn!("transcode worker dropped frame: {e}");
+                            warn!("transcode worker stopping: {e}");
+                            break;
                         }
                     }
                     if let Err(e) = worker.flush_and_close() {
