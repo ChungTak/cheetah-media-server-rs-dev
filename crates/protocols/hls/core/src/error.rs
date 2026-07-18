@@ -25,4 +25,9 @@ pub enum HlsCoreError {
     /// 播放列表尚未就绪，因为前几个分片仍在生成中。
     #[error("not ready: waiting for initial segments")]
     NotReady,
+    /// Timestamp or cue timing is invalid (e.g. end before start, or non-monotonic segment boundary).
+    ///
+    /// 时间戳或 cue 时间无效。
+    #[error("invalid timestamp")]
+    InvalidTimestamp,
 }
