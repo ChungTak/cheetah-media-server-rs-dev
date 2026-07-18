@@ -73,14 +73,19 @@ pub trait RoomServiceApi: Send + Sync {
     fn snapshot(&self) -> Vec<RoomSnapshot>;
 }
 
-/// API for rendering metrics in text format and recording counters.
+/// API for rendering metrics in text format and recording counters and gauges.
 ///
-/// 以文本格式渲染指标并记录计数器的 API。
+/// 以文本格式渲染指标并记录计数器和仪表盘的 API。
 pub trait MetricsApi: Send + Sync {
     /// Increment a monotonic counter by the given delta.
     ///
     /// 按给定增量递增单调计数器。
     fn inc(&self, key: &str, value: u64);
+
+    /// Overwrite a gauge with the latest snapshot value.
+    ///
+    /// 用最新快照值覆盖仪表盘。
+    fn set(&self, _key: &str, _value: u64) {}
 
     fn render(&self) -> String;
 }

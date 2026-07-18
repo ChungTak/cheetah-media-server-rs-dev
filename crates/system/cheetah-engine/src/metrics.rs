@@ -78,6 +78,10 @@ impl MetricsApi for MetricsRegistry {
         MetricsRegistry::inc(self, key, value);
     }
 
+    fn set(&self, key: &str, value: u64) {
+        MetricsRegistry::set_gauge(self, key, value as f64);
+    }
+
     /// Render all counters and gauges as simple key-value lines.
     ///
     /// 将所有计数器和仪表盘渲染为简单键值行。
