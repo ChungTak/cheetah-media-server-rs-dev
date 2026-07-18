@@ -38,7 +38,7 @@ cheetah 的目标不是只做一个“能跑的 Rust 流媒体服务”，而是
 ├─────────────────────────────────────────────────────────────┤
 │                   Infrastructure Layer                      │
 │   HTTP Server · gRPC · Database · Config · Event System    │
-│   FFmpeg · Network/QUIC · User System · Admin UI           │
+│   Media Processing · Network/QUIC · User System · Admin UI │
 ├─────────────────────────────────────────────────────────────┤
 │                 Engine Built-in Services                    │
 │   StreamManager · ModuleManager · RoomService              │
@@ -66,7 +66,7 @@ cheetah 的目标不是只做一个“能跑的 Rust 流媒体服务”，而是
 - `cheetah-sdk` 在 `cheetah-codec` 之上定义模块契约与引擎能力注入接口。
 - 各个协议/功能模块通过 `cheetah-sdk` 与引擎交互，通过 `cheetah-codec` 共享统一媒体模型。
 - 引擎内建服务负责流管理、任务管理、模块管理和基础调度。
-- 基础设施层提供 HTTP/gRPC、数据库、配置、FFmpeg、QUIC、管理面等外部支撑能力。
+- 基础设施层提供 HTTP/gRPC、数据库、配置、avcodec-rs、QUIC、管理面等外部支撑能力。
 
 ### 2.2 分层收益
 
@@ -347,7 +347,7 @@ loop {
 - 协议状态机
 - 数据库、引擎服务、业务逻辑
 - 原始像素 YUV / PCM 解码处理
-- FFmpeg 生命周期管理
+- avcodec-rs / media processing 生命周期管理
 
 ### 5.1 设计原则
 
@@ -924,7 +924,6 @@ pub struct EngineContext {
     pub database_api: std::sync::Arc<dyn DatabaseApi>,
     pub proxy_manager: std::sync::Arc<dyn ProxyManager>,
     pub cluster_api: std::sync::Arc<dyn ClusterApi>,
-    pub ffmpeg_api: std::sync::Arc<dyn FfmpegApi>,
     pub media_services: MediaServices,
     pub media_session_directory: std::sync::Arc<dyn MediaSessionDirectoryApi>,
     pub media_data_plane: std::sync::Arc<dyn MediaDataPlaneApi>,
@@ -1183,8 +1182,8 @@ cheetah-gb28181-module
 
 录制、转码、截图、SEI、混流等属于模块级能力，但不要侵入协议 core 和 `cheetah-codec` 热路径。
 
-- FFmpeg 仅放在系统外缘或工作任务中使用
-- `ffmpeg-next` 只作为 Rust 侧桥接接口
+- 媒体处理通过顶层 `avcodec` crate 在 `cheetah-media-processing-module` 内部完成
+- 协议模块与引擎热路径不直接依赖 `ffmpeg-next` 或 FFmpeg 可执行文件
 - 解码/转码/录制属于 `Job/Work` 型任务，不直接挤入每包必经路径
 
 ---
@@ -1308,7 +1307,7 @@ YAML 配置文件
 
 ---
 
-## 14. TLS、密码学与 FFmpeg
+## 14. TLS、密码学与媒体处理后端
 
 ### 14.1 TLS / DTLS / SRTP 后端可插拔
 
@@ -1323,15 +1322,15 @@ YAML 配置文件
 - 控制面、集群面与媒体面加密能力可按场景替换
 - 尽量避免把某个具体加密后端写死到协议 core 中
 
-### 14.2 FFmpeg 作为边缘能力
+### 14.2 avcodec-rs 作为可选媒体处理后端
 
-`ffmpeg-next` 作为 Rust 接口层接入，但 FFmpeg 原生库依赖不应侵入热路径。
+Cheetah 直接依赖顶层 `avcodec` crate，固定 version + git revision，`default-features = false`。avcodec-rs 的 Software profile 可能在内部使用 FFmpeg backend，但该实现细节不得泄漏到 Cheetah 公共类型、日志契约或调用点。
 
 建议：
 
 - 转码、截图、录制、封装转换作为 `Job/Work` 型任务
-- `cheetah-codec` 只定义统一压缩媒体语义，不绑定 FFmpeg 生命周期
-- 协议模块与引擎热路径不直接依赖 FFmpeg
+- `cheetah-codec` 只定义统一压缩媒体语义，不绑定 avcodec-rs 生命周期
+- 协议模块与引擎热路径不直接依赖 avcodec-rs 或 FFmpeg
 
 ---
 
@@ -1451,7 +1450,7 @@ YAML 配置文件
 | 密码学 | `ring` / RustCrypto | 可切换后端 |
 | 序列化 | `serde` + `prost` | JSON/YAML + Protobuf |
 | 日志 | `tracing` | 结构化日志与 span |
-| FFmpeg 绑定 | `ffmpeg-next` | 边缘能力接入 |
+| 媒体处理后端 | `avcodec` | 边缘能力接入 |
 
 ---
 
@@ -1497,7 +1496,7 @@ cheetah 不只是一个流媒体引擎，还包括完整的交付面：
 - `EngineContext` 必须是完整能力注入：
   - 包含 `runtime_api`、`publisher_api`、`subscriber_api`、`core_adapters_api`
   - 包含 `config_provider` 与 `config_apply_api`
-  - 包含 `service_registry`、`database_api`、`proxy_manager`、`cluster_api`、`ffmpeg_api`
+  - 包含 `service_registry`、`database_api`、`proxy_manager`、`cluster_api`
   - 包含 `media_services`、`media_session_directory`、`media_data_plane`、`media_file_store`、`media_event_bus`、`control_auth_api`、`audit_api`
 - `control` 必须形成闭环：
   - `PATCH /api/v1/config` 与 `PATCH /api/v1/config/modules/:module_id` 在写入配置后，触发模块配置应用
@@ -1565,5 +1564,5 @@ cheetah 的核心回答只有一句话：
 - rsip: <https://crates.io/crates/rsip>
 - shiguredo_srt: <https://crates.io/crates/shiguredo_srt>
 - rustls: <https://github.com/rustls/rustls>
-- ffmpeg-next: <https://crates.io/crates/ffmpeg-next>
+- avcodec-rs: <https://github.com/TimothyWalker6922/avcodec-rs-develop>
 - simple-media-server: <https://gitee.com/inyeme/simple-media-server>
