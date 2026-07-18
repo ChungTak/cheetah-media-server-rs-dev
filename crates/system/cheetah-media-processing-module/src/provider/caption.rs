@@ -876,10 +876,20 @@ impl MediaProcessingApi for MediaProcessingProvider {
 
         #[cfg(feature = "media-processing-cpu")]
         {
-            operations.push("transcode".to_string());
-            operations.push("abr_ladder".to_string());
-            operations.push("audio_mix".to_string());
-            operations.push("video_mosaic".to_string());
+            match crate::provider::avcodec_registry::build_registry(&self.config) {
+                Ok(_) => {
+                    operations.push("transcode".to_string());
+                    operations.push("abr_ladder".to_string());
+                    operations.push("audio_mix".to_string());
+                    operations.push("video_mosaic".to_string());
+                }
+                Err(e) => {
+                    let reason = format!("avcodec registry unavailable for profile: {e}");
+                    for op in ["transcode", "abr_ladder", "audio_mix", "video_mosaic"] {
+                        diagnostics.insert(op.to_string(), reason.clone());
+                    }
+                }
+            }
         }
 
         let profile = self.config.profile.clone();
