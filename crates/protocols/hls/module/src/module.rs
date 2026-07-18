@@ -19,7 +19,8 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use cheetah_codec::{subtitle::WebVttCue, MonoTime};
 use cheetah_hls_core::{
-    HlsContainer, PlaylistBuilder, StreamKeyParts, SubtitleRenditionInfo, VttMuxConfig,
+    HlsContainer, MediaRenditionInfo, PlaylistBuilder, StreamKeyParts, SubtitleRenditionInfo,
+    VariantRenditionInfo, VttMuxConfig,
 };
 use cheetah_hls_driver_tokio::{
     start_server, HlsCommandSender, HlsConnectionId, HlsCoreEvent, HlsDriverCommand,
@@ -28,7 +29,10 @@ use cheetah_hls_driver_tokio::{
 use cheetah_sdk::media_api::{
     ids::{MediaKey, StreamKeyBridge},
     port::MediaRequestContext,
-    processing::{ProcessingJobQuery, ProcessingJobSpec, ProcessingJobState},
+    processing::{
+        AbrVariant, AudioCodec, AudioTarget, ProcessingJobQuery, ProcessingJobSpec,
+        ProcessingJobState, VideoCodec, VideoTarget,
+    },
 };
 use cheetah_sdk::{
     BootstrapPolicy, CancellationToken, ConfigEffect, EngineContext, Module, ModuleCapability,
@@ -720,6 +724,18 @@ async fn handle_core_event(
                 }
             }
             wait_for_demuxed_master_muxer(engine, config, muxers, &key).await;
+            let variants = collect_abr_variant_renditions(
+                engine,
+                config,
+                muxers,
+                pending,
+                cmd_tx,
+                content_notify_tx,
+                cancel.clone(),
+                &stream_key,
+                session_id,
+            )
+            .await;
 
             let content = {
                 let map = muxers.lock();
@@ -727,6 +743,7 @@ async fn handle_core_event(
                 build_master_playlist_content(
                     &stream_key,
                     muxer.as_deref(),
+                    &variants,
                     session_id,
                     config.stream_key_validation,
                 )
@@ -2797,6 +2814,7 @@ fn push_gzip_response_headers(headers: &mut Vec<(&'static str, String)>) {
 fn build_master_playlist_content(
     stream_key: &StreamKeyParts,
     muxer: Option<&StreamMuxer>,
+    variants: &[VariantRenditionInfo],
     session_id: u64,
     include_stream_key: bool,
 ) -> String {
@@ -2841,6 +2859,28 @@ fn build_master_playlist_content(
             );
         }
     }
+
+    if !variants.is_empty() {
+        let subtitle_token = muxer.filter(|_| include_stream_key).map(|m| m.stream_key());
+        let subtitle_uri = subtitle_info.as_ref().map(|_| {
+            let token = subtitle_token.unwrap_or("");
+            let key_suffix = if include_stream_key && !token.is_empty() {
+                format!("&k={token}")
+            } else {
+                String::new()
+            };
+            format!(
+                "{}/subtitle.m3u8?uid={session_id}{key_suffix}",
+                stream_key.stream_path
+            )
+        });
+        return PlaylistBuilder::build_master_with_variants(
+            variants,
+            subtitle_info.as_ref(),
+            subtitle_uri.as_deref(),
+        );
+    }
+
     let subtitle_token = muxer.filter(|_| include_stream_key).map(|m| m.stream_key());
     PlaylistBuilder::build_master_with_subtitles(
         &stream_key.stream_path,
@@ -2944,6 +2984,240 @@ fn codec_string(codec: cheetah_codec::CodecId, extradata: &[u8]) -> String {
         CodecId::MP3 => "mp4a.40.34".to_string(),
         _ => String::new(),
     }
+}
+
+/// Build an HLS video codec string from a processing `VideoTarget`.
+///
+/// Returns an empty string for codecs that are not usable in HLS (e.g. MJPEG).
+fn hls_video_codec_string(video: &VideoTarget) -> String {
+    match video.codec {
+        VideoCodec::H264 => hls_h264_profile_string(video.profile.as_deref()),
+        VideoCodec::H265 => "hvc1.1.6.L93.B0".to_string(),
+        VideoCodec::MJPEG => String::new(),
+    }
+}
+
+/// Pick a conservative H.264 codec string from a textual profile name.
+fn hls_h264_profile_string(profile: Option<&str>) -> String {
+    match profile {
+        Some(p) if p.eq_ignore_ascii_case("baseline") => "avc1.42001e".to_string(),
+        Some(p) if p.eq_ignore_ascii_case("main") => "avc1.4d001e".to_string(),
+        Some(p) if p.eq_ignore_ascii_case("high") => "avc1.64001f".to_string(),
+        _ => "avc1.64001f".to_string(),
+    }
+}
+
+/// Build an HLS audio codec string from a processing `AudioTarget`.
+fn hls_audio_codec_string(audio: &AudioTarget) -> String {
+    match audio.codec {
+        AudioCodec::Aac => "mp4a.40.2".to_string(),
+        AudioCodec::Opus => "Opus".to_string(),
+        _ => String::new(),
+    }
+}
+
+/// Compute the frame rate in Hz from a processing `VideoTarget`.
+fn hls_frame_rate(video: &VideoTarget) -> Option<f64> {
+    match (video.frame_rate_num, video.frame_rate_den) {
+        (Some(n), Some(d)) if d != 0 => Some(f64::from(n) / f64::from(d)),
+        _ => None,
+    }
+}
+
+/// Compute a variant bandwidth in bits per second from the video/audio targets.
+fn hls_variant_bandwidth(video: &VideoTarget, audio: Option<&AudioTarget>) -> u64 {
+    let video_bw = video
+        .bit_rate
+        .unwrap_or_else(|| match (video.width, video.height) {
+            (Some(w), Some(h)) => default_bit_rate_for_resolution(w, h),
+            _ => 1_000_000,
+        });
+    let audio_bw = audio.and_then(|a| a.bit_rate).unwrap_or(128000);
+    video_bw + audio_bw
+}
+
+/// Conservative default bit rate for H.264 ABR variants when not configured.
+fn default_bit_rate_for_resolution(width: u32, height: u32) -> u64 {
+    let pixels = u64::from(width) * u64::from(height);
+    if pixels >= 1920 * 1080 {
+        4500000
+    } else if pixels >= 1280 * 720 {
+        2500000
+    } else if pixels >= 854 * 480 {
+        1200000
+    } else if pixels >= 640 * 360 {
+        800000
+    } else {
+        500000
+    }
+}
+
+/// Build the `MediaRenditionInfo` attributes for an `AbrVariant`.
+fn build_variant_rendition_info(variant: &AbrVariant) -> Option<MediaRenditionInfo> {
+    let video_codec = hls_video_codec_string(&variant.video);
+    if video_codec.is_empty() {
+        return None;
+    }
+    let audio_codec = variant
+        .audio
+        .as_ref()
+        .map(hls_audio_codec_string)
+        .filter(|s| !s.is_empty());
+    let codecs = match audio_codec {
+        Some(ref audio) => format!("{video_codec},{audio}"),
+        None => video_codec,
+    };
+    let bandwidth = hls_variant_bandwidth(&variant.video, variant.audio.as_ref());
+    Some(MediaRenditionInfo {
+        codecs,
+        bandwidth,
+        width: variant.video.width,
+        height: variant.video.height,
+        frame_rate: hls_frame_rate(&variant.video),
+        channels: None,
+    })
+}
+
+/// Build the media-playlist URI for a variant.
+///
+/// `token` is the variant muxer's `stream_key()` validation token. It is only
+/// embedded when `include_stream_key` is true.
+fn build_variant_media_uri(
+    source: &StreamKeyParts,
+    variant_ns: &str,
+    variant_path: &str,
+    session_id: u64,
+    include_stream_key: bool,
+    token: Option<&str>,
+) -> String {
+    let base = if variant_ns == source.namespace {
+        format!("{variant_path}/index.m3u8")
+    } else {
+        format!("../{variant_ns}/{variant_path}/index.m3u8")
+    };
+    let mut uri = format!("{base}?uid={session_id}");
+    if include_stream_key {
+        if let Some(t) = token {
+            uri.push_str(&format!("&k={t}"));
+        }
+    }
+    uri
+}
+
+/// Query `MediaProcessingApi` for running `AbrLadder` jobs whose source is the requested stream.
+///
+/// If the processing API is unavailable or the source key is invalid, returns an empty list.
+async fn collect_abr_variants(
+    engine: &EngineContext,
+    stream_key: &StreamKeyParts,
+) -> Vec<AbrVariant> {
+    let processing_api = match engine.media_services.processing() {
+        Some(api) => api,
+        None => return Vec::new(),
+    };
+    let source_key = match StreamKeyBridge::from_namespace_path(
+        &stream_key.namespace,
+        &stream_key.stream_path,
+    ) {
+        Ok(k) => k,
+        Err(e) => {
+            warn!("hls master: invalid source stream key {stream_key:?}: {e}");
+            return Vec::new();
+        }
+    };
+    let mut query = ProcessingJobQuery {
+        vhost: Some(source_key.vhost.0.clone()),
+        app: Some(source_key.app.0.clone()),
+        stream: Some(source_key.stream.0.clone()),
+        state: Some(ProcessingJobState::Running),
+        page: 1,
+        page_size: 20,
+    };
+    query.clamp_page_size();
+
+    let ctx = MediaRequestContext::default();
+    let page = match processing_api.list_jobs(&ctx, query).await {
+        Ok(p) => p,
+        Err(e) => {
+            warn!("hls master: failed to list processing jobs: {e}");
+            return Vec::new();
+        }
+    };
+
+    let mut variants = Vec::new();
+    for job in page.items {
+        if job.state != ProcessingJobState::Running {
+            continue;
+        }
+        if let ProcessingJobSpec::AbrLadder {
+            variants: ref ladder,
+            ..
+        } = job.spec
+        {
+            for variant in ladder {
+                variants.push(variant.clone());
+            }
+        }
+    }
+    variants
+}
+
+/// Collect running ABR variants, ensure a `StreamMuxer` exists for each variant output,
+/// and build `VariantRenditionInfo` entries using each variant muxer's validation token.
+#[allow(clippy::too_many_arguments)]
+async fn collect_abr_variant_renditions(
+    engine: &EngineContext,
+    config: &HlsModuleConfig,
+    muxers: &MuxerMap,
+    pending: &PendingMap,
+    cmd_tx: &HlsCommandSender,
+    content_notify_tx: &futures::channel::mpsc::Sender<String>,
+    cancel: CancellationToken,
+    stream_key: &StreamKeyParts,
+    session_id: u64,
+) -> Vec<VariantRenditionInfo> {
+    let abr_variants = collect_abr_variants(engine, stream_key).await;
+    let include_stream_key = config.stream_key_validation;
+    let mut renditions = Vec::new();
+    for variant in abr_variants {
+        let Some(info) = build_variant_rendition_info(&variant) else {
+            continue;
+        };
+        let (variant_ns, variant_path) = StreamKeyBridge::to_namespace_path(&variant.target);
+        let variant_key_str = format!("{variant_ns}/{variant_path}");
+        let variant_parts = StreamKeyParts {
+            namespace: variant_ns.clone(),
+            stream_path: variant_path.clone(),
+        };
+        ensure_muxer(
+            engine,
+            config,
+            muxers,
+            pending,
+            cmd_tx,
+            cancel.child_token(),
+            &variant_parts,
+            content_notify_tx,
+        );
+        let token = if include_stream_key {
+            muxers
+                .lock()
+                .get(&variant_key_str)
+                .map(|m| m.lock().stream_key().to_owned())
+        } else {
+            None
+        };
+        let uri = build_variant_media_uri(
+            stream_key,
+            &variant_ns,
+            &variant_path,
+            session_id,
+            include_stream_key,
+            token.as_deref(),
+        );
+        renditions.push(VariantRenditionInfo { info, uri });
+    }
+    renditions
 }
 
 /// Build default CORS headers for HLS responses.
@@ -3153,7 +3427,7 @@ mod tests {
             stream_path: "test".to_string(),
         };
 
-        let content = build_master_playlist_content(&stream_key, Some(&muxer), 7, false);
+        let content = build_master_playlist_content(&stream_key, Some(&muxer), &[], 7, false);
 
         assert!(content.contains("#EXT-X-MEDIA:TYPE=AUDIO"));
         assert!(content.contains("chunklist_audio.m3u8?uid=7"));
@@ -3164,7 +3438,7 @@ mod tests {
     #[test]
     fn master_playlist_content_includes_subtitle_rendition_when_vtt_ready() {
         let mut muxer = ready_demuxed_muxer();
-        muxer.push_cue(WebVttCue {
+        let _ = muxer.push_cue(WebVttCue {
             id: None,
             start_ms: 500,
             end_ms: 2_500,
@@ -3191,7 +3465,7 @@ mod tests {
             stream_path: "test".to_string(),
         };
 
-        let content = build_master_playlist_content(&stream_key, Some(&muxer), 7, false);
+        let content = build_master_playlist_content(&stream_key, Some(&muxer), &[], 7, false);
 
         assert!(content.contains("#EXT-X-MEDIA:TYPE=SUBTITLES"));
         assert!(content.contains("chunklist_subtitles.m3u8?uid=7"));
@@ -3201,7 +3475,7 @@ mod tests {
     #[test]
     fn subtitle_media_playlist_and_segment_can_be_served_from_muxer() {
         let mut muxer = ready_muxer();
-        muxer.push_cue(WebVttCue {
+        let _ = muxer.push_cue(WebVttCue {
             id: None,
             start_ms: 500,
             end_ms: 2_500,
@@ -3436,11 +3710,112 @@ mod tests {
 
     #[test]
     fn origin_mode_disables_driver_session_cookies() {
-        let mut config = HlsModuleConfig::default();
-        config.origin_mode = true;
+        let config = HlsModuleConfig {
+            origin_mode: true,
+            ..Default::default()
+        };
 
         let driver_config = hls_driver_config(&config);
 
         assert!(!driver_config.set_session_cookie);
+    }
+
+    #[test]
+    fn variant_rendition_builds_relative_uri_and_codec_string() {
+        let target = MediaKey::with_default_vhost("live", "test_480p", None).unwrap();
+        let video = VideoTarget {
+            codec: VideoCodec::H264,
+            width: Some(854),
+            height: Some(480),
+            frame_rate_num: Some(30),
+            frame_rate_den: Some(1),
+            bit_rate: Some(1_200_000),
+            gop_size: None,
+            profile: Some("high".to_string()),
+        };
+        let audio = AudioTarget {
+            codec: AudioCodec::Aac,
+            sample_rate: Some(48000),
+            channels: Some(2),
+            bit_rate: Some(128000),
+        };
+        let variant = AbrVariant {
+            target,
+            video,
+            audio: Some(audio),
+        };
+        let source = StreamKeyParts {
+            namespace: "live".to_string(),
+            stream_path: "test".to_string(),
+        };
+
+        let info = build_variant_rendition_info(&variant).expect("rendition");
+        let uri = build_variant_media_uri(&source, "live", "test_480p", 5, true, Some("deadbeef"));
+
+        assert!(uri.contains("test_480p/index.m3u8?uid=5&k=deadbeef"));
+        assert!(info.codecs.contains("avc1.64001f"));
+        assert!(info.codecs.contains("mp4a.40.2"));
+        assert_eq!(info.width, Some(854));
+        assert_eq!(info.height, Some(480));
+        assert!(info.bandwidth >= 1_200_000 + 128_000);
+    }
+
+    #[test]
+    fn master_playlist_with_abr_variants_lists_each_variant() {
+        let target = MediaKey::with_default_vhost("live", "test_480p", None).unwrap();
+        let variant = AbrVariant {
+            target,
+            video: VideoTarget {
+                codec: VideoCodec::H264,
+                width: Some(854),
+                height: Some(480),
+                frame_rate_num: Some(30),
+                frame_rate_den: Some(1),
+                bit_rate: Some(1_200_000),
+                gop_size: None,
+                profile: Some("high".to_string()),
+            },
+            audio: Some(AudioTarget {
+                codec: AudioCodec::Aac,
+                sample_rate: Some(48000),
+                channels: Some(2),
+                bit_rate: Some(128000),
+            }),
+        };
+        let source = StreamKeyParts {
+            namespace: "live".to_string(),
+            stream_path: "test".to_string(),
+        };
+        let info = build_variant_rendition_info(&variant).unwrap();
+        let uri = build_variant_media_uri(&source, "live", "test_480p", 7, false, None);
+        let variants = vec![VariantRenditionInfo { info, uri }];
+
+        let content = build_master_playlist_content(&source, None, &variants, 7, false);
+
+        assert!(content.contains("#EXT-X-STREAM-INF:BANDWIDTH="));
+        assert!(content.contains("test_480p/index.m3u8?uid=7"));
+        assert!(content.contains("CODECS=\"avc1.64001f,mp4a.40.2\""));
+        assert!(content.contains("RESOLUTION=854x480"));
+    }
+
+    #[test]
+    fn mjpeg_variant_is_excluded_from_master_playlist() {
+        let target = MediaKey::with_default_vhost("live", "test_mjpeg", None).unwrap();
+        let variant = AbrVariant {
+            target,
+            video: VideoTarget {
+                codec: VideoCodec::MJPEG,
+                width: Some(640),
+                height: Some(360),
+                frame_rate_num: Some(30),
+                frame_rate_den: Some(1),
+                bit_rate: Some(500_000),
+                gop_size: None,
+                profile: None,
+            },
+            audio: None,
+        };
+
+        assert!(build_variant_rendition_info(&variant).is_none());
     }
 }

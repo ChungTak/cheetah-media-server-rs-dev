@@ -80,7 +80,7 @@ pub use parser::{
 pub use player::{BandwidthStrategy, HlsPlayerState};
 pub use playlist::{
     format_iso8601, DemuxedMasterPlaylist, HlsContainer, MediaRenditionInfo, PlaylistBuilder,
-    SegmentFileEntry, SubtitleRenditionInfo,
+    SegmentFileEntry, SubtitleRenditionInfo, VariantRenditionInfo,
 };
 pub use request::{parse_hls_request, BlockingParams, HlsRequestKind, SkipMode, StreamKeyParts};
 pub use segment::{Segment, SegmentRing};
