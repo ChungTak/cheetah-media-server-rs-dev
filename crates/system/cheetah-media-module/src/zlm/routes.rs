@@ -211,27 +211,6 @@ const ZLM_ROUTES: &[ZlmRoute] = &[
         level: ZlmRouteLevel::L1,
         required: true,
     },
-    ZlmRoute {
-        method: HttpMethod::Post,
-        path: "/api/addFFmpegSource",
-        scope: MediaScope::MediaPublish,
-        level: ZlmRouteLevel::L2,
-        required: true,
-    },
-    ZlmRoute {
-        method: HttpMethod::Post,
-        path: "/api/delFFmpegSource",
-        scope: MediaScope::MediaControl,
-        level: ZlmRouteLevel::L2,
-        required: true,
-    },
-    ZlmRoute {
-        method: HttpMethod::Get,
-        path: "/api/listFFmpegSource",
-        scope: MediaScope::MediaRead,
-        level: ZlmRouteLevel::L2,
-        required: true,
-    },
     // 3.4 RTP server/client (L1 + L2)
     ZlmRoute {
         method: HttpMethod::Get,
@@ -603,11 +582,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn zlm_catalog_contains_64_required_routes() {
+    fn zlm_catalog_contains_61_required_routes() {
         let required = ZLM_ROUTES.iter().filter(|r| r.required).count();
         assert_eq!(
-            required, 64,
-            "required ZLM route catalog must contain 64 routes"
+            required, 61,
+            "required ZLM route catalog must contain 61 routes"
         );
     }
 

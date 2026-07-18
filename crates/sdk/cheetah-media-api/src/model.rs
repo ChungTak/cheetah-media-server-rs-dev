@@ -308,7 +308,6 @@ pub struct ProxyInfo {
 pub enum ProxyKind {
     Pull,
     Push,
-    Ffmpeg,
 }
 
 /// RTP session information.
@@ -525,7 +524,6 @@ pub enum AdmissionAction {
     Play,
     CreatePullProxy,
     CreatePushProxy,
-    CreateFfmpegProxy,
     OpenRtpReceiver,
     OpenRtpSender,
 }
@@ -585,7 +583,7 @@ mod tests {
     fn admission_action_round_trips() {
         for action in [
             AdmissionAction::CreatePullProxy,
-            AdmissionAction::CreateFfmpegProxy,
+            AdmissionAction::CreatePushProxy,
             AdmissionAction::OpenRtpSender,
         ] {
             let json = serde_json::to_string(&action).unwrap();

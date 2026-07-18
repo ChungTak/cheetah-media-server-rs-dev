@@ -477,33 +477,6 @@ impl ProxyApi for FakeMediaProvider {
     ) -> MediaResult<()> {
         Ok(())
     }
-
-    async fn create_ffmpeg_proxy(
-        &self,
-        _ctx: &MediaRequestContext,
-        request: FfmpegProxyRequest,
-    ) -> MediaResult<ProxyInfo> {
-        Ok(ProxyInfo {
-            proxy_id: ProxyId("proxy-1".to_string()),
-            kind: ProxyKind::Ffmpeg,
-            source: request.source_url,
-            destination: request.destination,
-            state: ProxyState::Created,
-            retry_count: 0,
-            last_error: None,
-            created_at: 0,
-            updated_at: 0,
-            output_urls: Vec::new(),
-        })
-    }
-
-    async fn delete_ffmpeg_proxy(
-        &self,
-        _ctx: &MediaRequestContext,
-        _id: &ProxyId,
-    ) -> MediaResult<()> {
-        Ok(())
-    }
 }
 
 #[async_trait]

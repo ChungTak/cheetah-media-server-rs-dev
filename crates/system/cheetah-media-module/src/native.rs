@@ -6,11 +6,11 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_media_api::audit::{AuditApi, AuditEvent, AuditResult};
 use cheetah_media_api::command::{
-    DeleteRecordRequest, DeleteSnapshotRequest, FfmpegProxyRequest, MediaQuery,
-    OpenPlaybackRequest, PlaybackControl, PlaybackQuery, ProxyQuery, PullProxyRequest,
-    PushProxyRequest, RecordFileQuery, RecordPlaybackCommand, RecordTaskQuery, RtpConnectRequest,
-    RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, SessionQuery, SnapshotQuery,
-    SnapshotRequest, StartRecordRequest, StopRecordRequest, UpdateRtpRequest,
+    DeleteRecordRequest, DeleteSnapshotRequest, MediaQuery, OpenPlaybackRequest, PlaybackControl,
+    PlaybackQuery, ProxyQuery, PullProxyRequest, PushProxyRequest, RecordFileQuery,
+    RecordPlaybackCommand, RecordTaskQuery, RtpConnectRequest, RtpQuery, RtpReceiverRequest,
+    RtpSenderMode, RtpSenderRequest, SessionQuery, SnapshotQuery, SnapshotRequest,
+    StartRecordRequest, StopRecordRequest, UpdateRtpRequest,
 };
 use cheetah_media_api::ids::{
     FileHandle, MediaKey, PlaybackSessionId, ProcessingJobId, ProxyId, RecordFileId, RecordTaskId,
@@ -376,10 +376,6 @@ impl NativeMediaHttpService {
             (HttpMethod::Post, "/proxies/push") => Some("proxy.push.create"),
             (HttpMethod::Delete, path) if path.starts_with("/proxies/push/") => {
                 Some("proxy.push.delete")
-            }
-            (HttpMethod::Post, "/proxies/ffmpeg") => Some("proxy.ffmpeg.create"),
-            (HttpMethod::Delete, path) if path.starts_with("/proxies/ffmpeg/") => {
-                Some("proxy.ffmpeg.delete")
             }
             (HttpMethod::Post, "/rtp/receivers") => Some("rtp.receiver.open"),
             (HttpMethod::Post, _)
@@ -1325,70 +1321,6 @@ impl NativeMediaHttpService {
         Ok(json_response(&serde_json::json!({ "deleted": true })))
     }
 
-    async fn proxy_ffmpeg_list(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let mut query: ProxyQuery = parse_query(&req)?;
-        query.clamp_page_size();
-        let page = self.proxy()?.list_ffmpeg_proxies(ctx, query).await?;
-        Ok(json_response(&page))
-    }
-
-    async fn proxy_ffmpeg_create(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let request: FfmpegProxyRequest = parse_body(&req)?;
-        let protocol = request
-            .source_url
-            .split_once("://")
-            .map(|(scheme, _)| scheme.to_lowercase())
-            .unwrap_or_else(|| "http".to_string());
-        let mut params = HashMap::new();
-        params.insert("source_url".to_string(), request.source_url.clone());
-        self.check_admission(
-            ctx,
-            AdmissionAction::CreateFfmpegProxy,
-            request.destination.clone(),
-            protocol,
-            None,
-            params,
-        )
-        .await?;
-        let info = self.proxy()?.create_ffmpeg_proxy(ctx, request).await?;
-        Ok(json_response(&info))
-    }
-
-    async fn proxy_ffmpeg_get(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let id = path_last_segment(&req.path)
-            .ok_or_else(|| AdapterError::InvalidRequest("missing ffmpeg proxy id".to_string()))?;
-        let info = self
-            .proxy()?
-            .get_ffmpeg_proxy(ctx, &ProxyId(id.to_string()))
-            .await?;
-        Ok(json_response(&info))
-    }
-
-    async fn proxy_ffmpeg_delete(
-        &self,
-        ctx: &MediaRequestContext,
-        req: HttpRequest,
-    ) -> Result<HttpResponse, AdapterError> {
-        let id = path_last_segment(&req.path)
-            .ok_or_else(|| AdapterError::InvalidRequest("missing ffmpeg proxy id".to_string()))?;
-        self.proxy()?
-            .delete_ffmpeg_proxy(ctx, &ProxyId(id.to_string()))
-            .await?;
-        Ok(json_response(&serde_json::json!({ "deleted": true })))
-    }
-
     async fn capabilities(
         &self,
         _ctx: &MediaRequestContext,
@@ -1552,14 +1484,6 @@ impl ModuleHttpService for NativeMediaHttpService {
                 }
                 (HttpMethod::Delete, path) if path.starts_with("/proxies/push/") => {
                     self.proxy_push_delete(&ctx, req).await
-                }
-                (HttpMethod::Get, "/proxies/ffmpeg") => self.proxy_ffmpeg_list(&ctx, req).await,
-                (HttpMethod::Post, "/proxies/ffmpeg") => self.proxy_ffmpeg_create(&ctx, req).await,
-                (HttpMethod::Get, path) if path.starts_with("/proxies/ffmpeg/") => {
-                    self.proxy_ffmpeg_get(&ctx, req).await
-                }
-                (HttpMethod::Delete, path) if path.starts_with("/proxies/ffmpeg/") => {
-                    self.proxy_ffmpeg_delete(&ctx, req).await
                 }
                 (HttpMethod::Post, "/rtp/receivers") => self.rtp_receivers(&ctx, req).await,
                 (HttpMethod::Post, path)

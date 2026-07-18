@@ -5,8 +5,8 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use cheetah_engine::EngineMediaFacade;
 use cheetah_media_api::command::{
-    FfmpegProxyRequest, PublishRequest, PullProxyRequest, PushProxyRequest, RetryPolicy,
-    RtpReceiverRequest, RtpSenderRequest, SubscribeRequest,
+    PublishRequest, PullProxyRequest, PushProxyRequest, RetryPolicy, RtpReceiverRequest,
+    RtpSenderRequest, SubscribeRequest,
 };
 use cheetah_media_api::error::{MediaErrorCode, Result as MediaResult};
 use cheetah_media_api::event::{
@@ -191,50 +191,6 @@ impl ProxyApi for FakeProxy {
         _id: &ProxyId,
     ) -> MediaResult<()> {
         Ok(())
-    }
-
-    async fn create_ffmpeg_proxy(
-        &self,
-        _ctx: &MediaRequestContext,
-        request: FfmpegProxyRequest,
-    ) -> MediaResult<ProxyInfo> {
-        self.called.store(true, Ordering::SeqCst);
-        Ok(ProxyInfo {
-            proxy_id: ProxyId("ffmpeg-1".to_string()),
-            kind: ProxyKind::Ffmpeg,
-            source: request.source_url,
-            destination: request.destination,
-            state: ProxyState::Created,
-            retry_count: 0,
-            last_error: None,
-            created_at: 0,
-            updated_at: 0,
-            output_urls: Vec::<MediaUrl>::new(),
-        })
-    }
-
-    async fn delete_ffmpeg_proxy(
-        &self,
-        _ctx: &MediaRequestContext,
-        _id: &ProxyId,
-    ) -> MediaResult<()> {
-        Ok(())
-    }
-
-    async fn get_ffmpeg_proxy(
-        &self,
-        _ctx: &MediaRequestContext,
-        _id: &ProxyId,
-    ) -> MediaResult<ProxyInfo> {
-        unimplemented!()
-    }
-
-    async fn list_ffmpeg_proxies(
-        &self,
-        _ctx: &MediaRequestContext,
-        mut _query: cheetah_media_api::command::ProxyQuery,
-    ) -> MediaResult<cheetah_media_api::model::Page<ProxyInfo>> {
-        unimplemented!()
     }
 }
 
@@ -526,7 +482,7 @@ async fn admission_deny_blocks_pull_proxy() {
                 },
                 heartbeat_ms: None,
                 timeout_ms: 0,
-                transcode_policy: Default::default(),
+                processing_policy: cheetah_media_api::processing::ProcessingPolicy::default(),
                 output_policy: Default::default(),
                 record_policy: None,
             },
@@ -564,7 +520,7 @@ async fn admission_defaults_schemeless_proxy_source_to_http_protocol() {
                 },
                 heartbeat_ms: None,
                 timeout_ms: 0,
-                transcode_policy: Default::default(),
+                processing_policy: cheetah_media_api::processing::ProcessingPolicy::default(),
                 output_policy: Default::default(),
                 record_policy: None,
             },
@@ -602,33 +558,6 @@ async fn admission_deny_blocks_push_proxy() {
         )
         .await
         .expect_err("denied push proxy should fail");
-
-    assert_eq!(err.code, MediaErrorCode::PermissionDenied);
-    assert!(!proxy.called.load(Ordering::SeqCst));
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn admission_deny_blocks_ffmpeg_proxy() {
-    let admission = Arc::new(FakeAdmission::new(deny()));
-    let ps = Arc::new(FakePublishSubscribe::default());
-    let proxy = Arc::new(FakeProxy::default());
-    let rtp = Arc::new(FakeRtp::default());
-    let facade = facade(Some(admission), ps.clone(), proxy.clone(), rtp.clone());
-
-    let err = facade
-        .create_ffmpeg_proxy(
-            &ctx(),
-            FfmpegProxyRequest {
-                source_url: "http://example.com/live.flv".to_string(),
-                destination: key(),
-                input_options: Vec::new(),
-                output_options: Vec::new(),
-                transcode_policy: Default::default(),
-                output_policy: Default::default(),
-            },
-        )
-        .await
-        .expect_err("denied ffmpeg proxy should fail");
 
     assert_eq!(err.code, MediaErrorCode::PermissionDenied);
     assert!(!proxy.called.load(Ordering::SeqCst));

@@ -55,64 +55,8 @@ fn post(path: &str, body: serde_json::Value) -> HttpRequest {
     }
 }
 
-fn get(path: &str, query: Option<String>) -> HttpRequest {
-    HttpRequest {
-        method: HttpMethod::Get,
-        path: path.to_string(),
-        query,
-        headers: vec![],
-        body: Bytes::new(),
-    }
-}
-
 fn body_json(resp: &cheetah_sdk::HttpResponse) -> serde_json::Value {
     serde_json::from_slice(&resp.body).unwrap_or_else(|_| json!({}))
-}
-
-#[tokio::test(flavor = "current_thread")]
-async fn zlm_ffmpeg_source_l2_lifecycle() {
-    let engine = make_engine();
-    engine.start().await.expect("engine start");
-
-    let mount = engine
-        .module_manager_api()
-        .http_mounts()
-        .into_iter()
-        .find(|m| m.module_id.0 == "media-http-zlm")
-        .expect("zlm mount");
-    let service = mount.service.clone();
-
-    let add = post(
-        "/api/addFFmpegSource",
-        json!({
-            "src_url": "http://example.com/live.flv",
-            "vhost": "__defaultVhost__",
-            "app": "live",
-            "stream": "ffmpeg"
-        }),
-    );
-    let resp = service.handle(add).await.expect("add ffmpeg source");
-    let body = body_json(&resp);
-    assert_eq!(body["code"], 0, "add ffmpeg source failed: {body}");
-    let key = body["data"]["key"]
-        .as_str()
-        .expect("key in response")
-        .to_string();
-
-    let list = get("/api/listFFmpegSource", None);
-    let resp = service.handle(list).await.expect("list ffmpeg source");
-    let body = body_json(&resp);
-    assert_eq!(body["data"].as_array().map(|a| a.len()).unwrap_or(0), 1);
-
-    let del = post("/api/delFFmpegSource", json!({"key": key}));
-    let resp = service.handle(del).await.expect("del ffmpeg source");
-    let body = body_json(&resp);
-    assert_eq!(body["code"], 0);
-
-    let list = get("/api/listFFmpegSource", None);
-    let resp = service.handle(list).await.expect("list after delete");
-    let body = body_json(&resp);
-    assert_eq!(body["data"].as_array().map(|a| a.len()).unwrap_or(0), 0);
 }
 
 #[tokio::test(flavor = "current_thread")]

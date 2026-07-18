@@ -108,17 +108,13 @@ impl Module for ProxyModule {
         )?);
 
         let mut capabilities = cheetah_media_api::MediaCapabilitySet::empty();
-        let mut proxy_operations = vec![
+        let proxy_operations = vec![
             "create_pull".to_string(),
             "delete_pull".to_string(),
             "list_pull".to_string(),
             "create_push".to_string(),
             "delete_push".to_string(),
         ];
-        if ctx.engine.ffmpeg_api.is_available() {
-            proxy_operations.push("create_ffmpeg".to_string());
-            proxy_operations.push("delete_ffmpeg".to_string());
-        }
         capabilities.add_with_operations(
             cheetah_media_api::MediaCapability::Proxy,
             1,

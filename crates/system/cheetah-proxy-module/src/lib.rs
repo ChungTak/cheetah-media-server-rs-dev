@@ -8,12 +8,14 @@
 //! - `rtsp` — RTSP pull publishes into the destination engine stream
 //! - `http-flv` — HTTP-FLV pull bridges frames into an engine publisher
 //! - `rtmp` — RTMP push bridges an engine subscriber to a remote publish URL
-//! - FFmpeg jobs are always available as typed `FfmpegApi` registrations with
-//!   option validation (no shell execution)
+//! - `processing` — pull streams can be routed through `ProcessingPolicy` derived
+//!   transcode jobs when the source codec is not compatible with the destination
 
 pub mod config;
 pub mod media_provider;
 pub mod module;
+#[allow(dead_code)]
+pub(crate) mod processing;
 pub mod registry;
 pub(crate) mod ssrf;
 pub mod task;
