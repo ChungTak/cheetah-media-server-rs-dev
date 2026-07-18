@@ -38,6 +38,7 @@ pub mod ome_ws;
 pub mod p2p;
 pub mod p2p_jobs;
 pub mod play_disconnect;
+pub(crate) mod processing;
 pub mod session;
 
 /// Re-export of the WHIP/WHEP HTTP client, which now lives in the

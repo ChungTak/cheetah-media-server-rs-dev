@@ -94,6 +94,7 @@ impl WebRtcHttpService {
             None => return,
         };
         let bridges = self.bridges.clone();
+        let registry = self.registry.clone();
         let (
             bootstrap_frames,
             bootstrap_max_age_ms,
@@ -101,6 +102,10 @@ impl WebRtcHttpService {
             h264_bframe_filter,
             audio_policy,
             timing_policy,
+            audio_strategy,
+            codec_profile,
+            prefer_video_codec,
+            prefer_audio_codec,
         ) = {
             let cfg = self.config.lock();
             (
@@ -117,39 +122,93 @@ impl WebRtcHttpService {
                     playout_delay_min_ms: cfg.playout_delay_min_ms,
                     playout_delay_max_ms: cfg.playout_delay_max_ms,
                 },
+                cfg.audio_strategy(),
+                cfg.codec_profile,
+                cfg.prefer_video_codec.clone(),
+                cfg.prefer_audio_codec.clone(),
             )
         };
         let cancel = cheetah_sdk::CancellationToken::new();
         bridges.lock().insert_play(session_id, cancel.clone());
         let runtime_api = engine.runtime_api.clone();
-        let driver = driver.clone();
+        let driver_for_task = driver.clone();
         let stream_key_clone = stream_key.clone();
         runtime_api.spawn(Box::pin(async move {
             let start_instant = std::time::Instant::now();
-            if let Err(err) = crate::bridge::spawn_play_subscriber(
-                engine,
-                driver.clone(),
-                bridges,
-                session_id,
+            let derived = match crate::processing::ensure_derived_play_source(
+                &engine,
+                &format!("{session_id}"),
                 stream_key_clone,
+                audio_strategy,
+                codec_profile,
+                &prefer_video_codec,
+                &prefer_audio_codec,
+                &cancel,
+            )
+            .await
+            {
+                Ok(d) => d,
+                Err(err) => {
+                    warn!(job_name = %session_id, stream = %stream_key, "WebRTC play derived source failed: {err}");
+                    driver_for_task
+                        .send_command(WebRtcDriverCommand::StopSession {
+                            session_id,
+                            reason: cheetah_webrtc_core::WebRtcCloseReason::Internal(
+                                err.to_string(),
+                            ),
+                        })
+                        .await;
+                    return;
+                }
+            };
+
+            {
+                let mut reg = registry.lock();
+                if let Some(session) = reg.sessions.get_mut(&session_id) {
+                    session.derived_stream_key = Some(derived.stream_key.clone());
+                    session.processing_job_id = derived.processing_job_id.clone();
+                }
+            }
+
+            let play_stream_key = derived.stream_key;
+            let processing_job_id = derived.processing_job_id;
+            let cancel_for_subscriber = cancel.child_token();
+            let result = crate::bridge::spawn_play_subscriber(
+                engine.clone(),
+                driver_for_task.clone(),
+                bridges.clone(),
+                session_id,
+                play_stream_key,
                 bootstrap_frames,
                 bootstrap_max_age_ms,
                 wait_stream_timeout_ms,
                 h264_bframe_filter,
                 audio_policy,
                 timing_policy,
-                cancel,
+                cancel_for_subscriber,
                 start_instant,
             )
-            .await
-            {
-                warn!("WebRTC play subscriber failed for {stream_key}: {err}");
-                driver
+            .await;
+
+            if let Err(err) = result {
+                warn!(session_id = %session_id, stream = %stream_key, "WebRTC play subscriber failed: {err}");
+                if let Some(job_id) = processing_job_id {
+                    crate::processing::stop_derived_play_job(&engine, job_id).await;
+                }
+                driver_for_task
                     .send_command(WebRtcDriverCommand::StopSession {
                         session_id,
                         reason: cheetah_webrtc_core::WebRtcCloseReason::Internal(err.to_string()),
                     })
                     .await;
+                return;
+            }
+
+            // `spawn_play_subscriber` has started the pump; keep the derived job
+            // alive until the session is cancelled.
+            cancel.cancelled().await;
+            if let Some(job_id) = processing_job_id {
+                crate::processing::stop_derived_play_job(&engine, job_id).await;
             }
         }));
     }
@@ -1667,18 +1726,24 @@ impl WebRtcHttpService {
                 })
                 .await;
         }
-        let mut reg = self.registry.lock();
-        let removed = reg.remove(session_id);
-        drop(reg);
-        let mut bridges = self.bridges.lock();
-        if let Some(bridge) = bridges.remove_publish(session_id) {
-            bridge.close();
-        }
-        if let Some(cancel) = bridges.remove_play(session_id) {
+        let removed = {
+            let mut reg = self.registry.lock();
+            reg.remove(session_id)
+        };
+        let play_cancel = {
+            let mut bridges = self.bridges.lock();
+            if let Some(bridge) = bridges.remove_publish(session_id) {
+                bridge.close();
+            }
+            bridges.remove_play(session_id)
+        };
+        if let Some(cancel) = play_cancel {
             cancel.cancel();
         }
-        drop(bridges);
         if let (Some(session), Some(engine)) = (removed.as_ref(), self.engine.as_ref()) {
+            if let Some(job_id) = session.processing_job_id.as_ref() {
+                crate::processing::stop_derived_play_job(engine, job_id.clone()).await;
+            }
             let min_duration = {
                 let cfg = self.config.lock();
                 std::time::Duration::from_millis(cfg.play_disconnect_min_duration_ms)

@@ -228,7 +228,7 @@ impl TranscodeQueueReceiver {
 pub(crate) struct TranscodeWorker {
     video_session: Option<VideoTranscodeSession>,
     audio_session: Option<AudioTranscodeSession>,
-    publisher: Box<dyn PublisherSink>,
+    publisher: Arc<dyn PublisherSink>,
     last_announced_tracks: Vec<TrackInfo>,
     count_input: bool,
     job: Option<Arc<Mutex<ProcessingJob>>>,
@@ -242,7 +242,7 @@ impl TranscodeWorker {
         source_audio: Option<&TrackInfo>,
         video_target: Option<&VideoTarget>,
         audio_target: Option<&AudioTarget>,
-        publisher: Box<dyn PublisherSink>,
+        publisher: Arc<dyn PublisherSink>,
         job: Option<Arc<Mutex<ProcessingJob>>>,
         count_input: bool,
     ) -> MediaResult<Self> {
@@ -498,13 +498,15 @@ pub async fn spawn_transcode_worker(
         )
         .await?;
 
+        let publisher: Arc<dyn PublisherSink> = Arc::from(publisher);
+        let worker_publisher = Arc::clone(&publisher);
         let worker = TranscodeWorker::new(
             &config,
             source_video.as_ref(),
             source_audio.as_ref(),
             video_target.as_ref(),
             audio_target.as_ref(),
-            publisher,
+            worker_publisher,
             job.clone(),
             true,
         )
@@ -549,6 +551,7 @@ pub async fn spawn_transcode_worker(
             bootstrap_policy: cheetah_sdk::BootstrapPolicy::default(),
             media_filter,
         };
+        let source_key_for_request = source.clone();
         let mut subscriber = engine
             .subscriber_api
             .subscribe(source, subscriber_options)
@@ -557,6 +560,16 @@ pub async fn spawn_transcode_worker(
 
         let mut subscriber_error: Option<SdkError> = None;
         loop {
+            if publisher.take_keyframe_requests() > 0 {
+                if let Err(err) = engine
+                    .stream_manager_api
+                    .request_keyframe(&source_key_for_request)
+                    .await
+                {
+                    warn!("transcode keyframe request to source {source_key_for_request} failed: {err}");
+                }
+            }
+
             let cancel_fut = cancel.cancelled().fuse();
             let recv_fut = subscriber.recv().fuse();
             pin_mut!(cancel_fut, recv_fut);

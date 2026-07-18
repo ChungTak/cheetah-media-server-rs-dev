@@ -766,6 +766,7 @@ async fn run_ome_ws_connection(
             engine.clone(),
             driver.clone(),
             bridges.clone(),
+            registry.clone(),
             config.clone(),
             session_id,
             stream_key,
@@ -883,6 +884,7 @@ async fn spawn_ome_ws_play(
     engine: EngineContext,
     driver: Arc<WebRtcDriverHandle>,
     bridges: Arc<Mutex<WebRtcBridgeRegistry>>,
+    registry: Arc<Mutex<WebRtcSessionRegistry>>,
     config: Arc<Mutex<WebRtcModuleConfig>>,
     session_id: WebRtcSessionId,
     stream_key: StreamKey,
@@ -894,6 +896,10 @@ async fn spawn_ome_ws_play(
         h264_bframe_filter,
         audio_policy,
         timing_policy,
+        audio_strategy,
+        codec_profile,
+        prefer_video_codec,
+        prefer_audio_codec,
     ) = {
         let cfg = config.lock();
         (
@@ -910,32 +916,79 @@ async fn spawn_ome_ws_play(
                 playout_delay_min_ms: cfg.playout_delay_min_ms,
                 playout_delay_max_ms: cfg.playout_delay_max_ms,
             },
+            cfg.audio_strategy(),
+            cfg.codec_profile,
+            cfg.prefer_video_codec.clone(),
+            cfg.prefer_audio_codec.clone(),
         )
     };
     let cancel = CancellationToken::new();
     bridges.lock().insert_play(session_id, cancel.clone());
     let runtime_api = engine.runtime_api.clone();
     let driver_for_task = driver.clone();
+    let stream_key_clone = stream_key.clone();
     runtime_api.spawn(Box::pin(async move {
         let start_instant = std::time::Instant::now();
-        if let Err(err) = crate::bridge::spawn_play_subscriber(
-            engine,
+        let derived = match crate::processing::ensure_derived_play_source(
+            &engine,
+            &format!("{session_id}"),
+            stream_key_clone,
+            audio_strategy,
+            codec_profile,
+            &prefer_video_codec,
+            &prefer_audio_codec,
+            &cancel,
+        )
+        .await
+        {
+            Ok(d) => d,
+            Err(err) => {
+                warn!(job_name = %session_id, stream = %stream_key, "OME WebSocket play derived source failed: {err}");
+                driver_for_task
+                    .send_command(
+                        cheetah_webrtc_driver_tokio::WebRtcDriverCommand::StopSession {
+                            session_id,
+                            reason: WebRtcCloseReason::Internal(err.to_string()),
+                        },
+                    )
+                    .await;
+                return;
+            }
+        };
+
+        {
+            let mut reg = registry.lock();
+            if let Some(session) = reg.sessions.get_mut(&session_id) {
+                session.derived_stream_key = Some(derived.stream_key.clone());
+                session.processing_job_id = derived.processing_job_id.clone();
+            }
+        }
+
+        let play_stream_key = derived.stream_key;
+        let processing_job_id = derived.processing_job_id;
+        let cancel_for_subscriber = cancel.child_token();
+        let result = crate::bridge::spawn_play_subscriber(
+            engine.clone(),
             driver_for_task.clone(),
-            bridges,
+            bridges.clone(),
             session_id,
-            stream_key.clone(),
+            play_stream_key,
             bootstrap_frames,
             bootstrap_max_age_ms,
             wait_stream_timeout_ms,
             h264_bframe_filter,
             audio_policy,
             timing_policy,
-            cancel,
+            cancel_for_subscriber,
             start_instant,
         )
-        .await
-        {
-            warn!("OME WebSocket play subscriber failed for {stream_key}: {err}");
+        .await;
+
+        if let Err(err) = result {
+            warn!(session_id = %session_id, stream = %stream_key, "OME WebSocket play subscriber failed: {err}");
+            if let Some(job_id) = processing_job_id {
+                crate::processing::stop_derived_play_job(&engine, job_id).await;
+            }
             driver_for_task
                 .send_command(
                     cheetah_webrtc_driver_tokio::WebRtcDriverCommand::StopSession {
@@ -944,6 +997,12 @@ async fn spawn_ome_ws_play(
                     },
                 )
                 .await;
+            return;
+        }
+
+        cancel.cancelled().await;
+        if let Some(job_id) = processing_job_id {
+            crate::processing::stop_derived_play_job(&engine, job_id).await;
         }
     }));
 }
@@ -996,12 +1055,17 @@ enum PeriodicFirTarget {
 }
 
 fn collect_periodic_fir_targets(
-    sessions: &[(WebRtcSessionId, WebRtcSessionRole, StreamKey)],
+    sessions: &[(
+        WebRtcSessionId,
+        WebRtcSessionRole,
+        StreamKey,
+        Option<StreamKey>,
+    )],
     bridges: &WebRtcBridgeRegistry,
 ) -> Vec<PeriodicFirTarget> {
     let mut targets = Vec::new();
     let mut upstream_seen = std::collections::BTreeSet::<StreamKey>::new();
-    for (session_id, role, stream_key) in sessions {
+    for (session_id, role, stream_key, derived_stream_key) in sessions {
         if matches!(
             role,
             WebRtcSessionRole::Publisher | WebRtcSessionRole::Bidirectional
@@ -1018,11 +1082,13 @@ fn collect_periodic_fir_targets(
         if matches!(
             role,
             WebRtcSessionRole::Player | WebRtcSessionRole::Bidirectional
-        ) && upstream_seen.insert(stream_key.clone())
-        {
-            targets.push(PeriodicFirTarget::UpstreamStream {
-                stream_key: stream_key.clone(),
-            });
+        ) {
+            let key = derived_stream_key.as_ref().unwrap_or(stream_key);
+            if upstream_seen.insert(key.clone()) {
+                targets.push(PeriodicFirTarget::UpstreamStream {
+                    stream_key: key.clone(),
+                });
+            }
         }
     }
     targets
@@ -1058,7 +1124,12 @@ async fn run_periodic_fir_worker(
         if !ticked {
             break;
         }
-        let connected_sessions: Vec<(WebRtcSessionId, WebRtcSessionRole, StreamKey)> = {
+        let connected_sessions: Vec<(
+            WebRtcSessionId,
+            WebRtcSessionRole,
+            StreamKey,
+            Option<StreamKey>,
+        )> = {
             let reg = registry.lock();
             reg.sessions
                 .iter()
@@ -1066,7 +1137,12 @@ async fn run_periodic_fir_worker(
                     if !matches!(session.state, WebRtcModuleSessionState::Connected) {
                         return None;
                     }
-                    Some((*session_id, session.role, session.stream_key.clone()))
+                    Some((
+                        *session_id,
+                        session.role,
+                        session.stream_key.clone(),
+                        session.derived_stream_key.clone(),
+                    ))
                 })
                 .collect()
         };
@@ -1157,21 +1233,27 @@ async fn run_driver_event_worker(
             }
             Some(WebRtcDriverEvent::SessionClosed { session_id, reason }) => {
                 debug!("WebRTC driver closed session {session_id}: {reason:?}");
-                let mut reg = registry.lock();
-                if let Some(session) = reg.sessions.get_mut(&session_id) {
-                    session.state = WebRtcModuleSessionState::Closed;
-                }
-                let removed = reg.remove(session_id);
-                drop(reg);
-                let mut bridges_guard = bridges.lock();
-                if let Some(bridge) = bridges_guard.remove_publish(session_id) {
-                    bridge.close();
-                }
-                if let Some(cancel) = bridges_guard.remove_play(session_id) {
+                let removed = {
+                    let mut reg = registry.lock();
+                    if let Some(session) = reg.sessions.get_mut(&session_id) {
+                        session.state = WebRtcModuleSessionState::Closed;
+                    }
+                    reg.remove(session_id)
+                };
+                let play_cancel = {
+                    let mut bridges_guard = bridges.lock();
+                    if let Some(bridge) = bridges_guard.remove_publish(session_id) {
+                        bridge.close();
+                    }
+                    bridges_guard.remove_play(session_id)
+                };
+                if let Some(cancel) = play_cancel {
                     cancel.cancel();
                 }
-                drop(bridges_guard);
                 if let Some(session) = removed.as_ref() {
+                    if let Some(job_id) = session.processing_job_id.as_ref() {
+                        crate::processing::stop_derived_play_job(&ctx, job_id.clone()).await;
+                    }
                     let min_duration = {
                         let cfg = config.lock();
                         std::time::Duration::from_millis(cfg.play_disconnect_min_duration_ms)
@@ -1256,7 +1338,11 @@ async fn run_driver_event_worker(
                         }
                         let stream_key_opt = {
                             let reg = registry.lock();
-                            reg.sessions.get(session_id).map(|s| s.stream_key.clone())
+                            reg.sessions.get(session_id).map(|s| {
+                                s.derived_stream_key
+                                    .clone()
+                                    .unwrap_or_else(|| s.stream_key.clone())
+                            })
                         };
                         if let Some(stream_key) = stream_key_opt {
                             let stream_manager = ctx.stream_manager_api.clone();
@@ -1731,12 +1817,19 @@ mod tests {
                     publisher_id,
                     WebRtcSessionRole::Publisher,
                     stream_key.clone(),
+                    None,
                 ),
-                (player_id, WebRtcSessionRole::Player, stream_key.clone()),
+                (
+                    player_id,
+                    WebRtcSessionRole::Player,
+                    stream_key.clone(),
+                    None,
+                ),
                 (
                     bidirectional_id,
                     WebRtcSessionRole::Bidirectional,
                     stream_key.clone(),
+                    None,
                 ),
             ],
             &bridges,

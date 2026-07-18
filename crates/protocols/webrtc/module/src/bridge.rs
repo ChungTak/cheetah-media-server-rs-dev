@@ -1271,7 +1271,7 @@ pub async fn spawn_play_subscriber(
     driver: Arc<cheetah_webrtc_driver_tokio::WebRtcDriverHandle>,
     bridges: Arc<Mutex<WebRtcBridgeRegistry>>,
     session_id: WebRtcSessionId,
-    stream_key: cheetah_sdk::StreamKey,
+    play_stream_key: cheetah_sdk::StreamKey,
     bootstrap_frames: usize,
     bootstrap_max_age_ms: u64,
     wait_stream_timeout_ms: u64,
@@ -1303,7 +1303,7 @@ pub async fn spawn_play_subscriber(
     let mut subscriber = loop {
         match ctx
             .subscriber_api
-            .subscribe(stream_key.clone(), opts.clone())
+            .subscribe(play_stream_key.clone(), opts.clone())
             .await
         {
             Ok(sub) => break sub,
@@ -1325,7 +1325,7 @@ pub async fn spawn_play_subscriber(
                     .record_play_timeout(session_id, wait_stream_timeout_ms);
                 warn!(
                     session_id = %session_id,
-                    stream = %stream_key,
+                    stream = %play_stream_key,
                     timeout_ms = wait_stream_timeout_ms,
                     "play subscriber wait timeout expired without stream becoming available; \
                      no keyframe could be delivered to the new subscriber"
@@ -1369,7 +1369,7 @@ pub async fn spawn_play_subscriber(
                                         if !skipped_audio_codecs.contains(&frame.codec) {
                                             warn!(
                                                 session_id = %session_id,
-                                                stream = %stream_key,
+                                                stream = %play_stream_key,
                                                 codec = ?frame.codec,
                                                 error = %err,
                                                 "dropping unsupported audio frames while keeping WebRTC video playback active"
@@ -1380,7 +1380,7 @@ pub async fn spawn_play_subscriber(
                                     }
                                     warn!(
                                         session_id = %session_id,
-                                        stream = %stream_key,
+                                        stream = %play_stream_key,
                                         error = %err,
                                         "play subscriber stopped because audio output cannot be produced"
                                     );
@@ -1510,7 +1510,7 @@ pub async fn spawn_play_subscriber(
         if !bootstrap_view.has_sent_decodable_keyframe() {
             warn!(
                 session_id = %session_id,
-                stream = %stream_key,
+                stream = %play_stream_key,
                 "play subscriber closed without receiving a decodable keyframe; \
                  client may have experienced black screen"
             );
@@ -1559,6 +1559,13 @@ fn playback_codec_for_frame(
     audio_policy: PlaybackAudioPolicy,
 ) -> Result<Option<PlaybackCodecMapping>, SdkError> {
     if media_kind != cheetah_codec::MediaKind::Audio {
+        // Browser profile does not negotiate H265; drop it here so Auto can
+        // keep going with audio when video transcoding is unavailable.
+        if audio_policy.profile == crate::config::CodecProfileWire::Browser
+            && codec == cheetah_codec::CodecId::H265
+        {
+            return Ok(None);
+        }
         let Some(mapped) = map_codec_id_to_kind(codec) else {
             return Ok(None);
         };

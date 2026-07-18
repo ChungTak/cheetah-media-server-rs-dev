@@ -263,6 +263,10 @@ pub struct WebRtcModuleSession {
     pub last_activity_at: Instant,
     pub publish_lease: Option<PublishLease>,
     pub subscriber_cancel: Option<CancellationToken>,
+    /// If a processing job was created for this play session, the derived
+    /// stream key and job id so cleanup can stop it.
+    pub derived_stream_key: Option<StreamKey>,
+    pub processing_job_id: Option<cheetah_sdk::ProcessingJobId>,
     pub echo: WebRtcEchoConfig,
     pub telemetry: WebRtcSessionTelemetry,
     /// Remote peer address observed from the selected ICE candidate
@@ -294,6 +298,8 @@ impl WebRtcModuleSession {
             last_activity_at: now,
             publish_lease: None,
             subscriber_cancel: None,
+            derived_stream_key: None,
+            processing_job_id: None,
             echo: WebRtcEchoConfig::default(),
             telemetry: WebRtcSessionTelemetry::default(),
             remote_addr: None,
