@@ -129,6 +129,7 @@ impl Module for SnapshotModule {
         if ctx.engine.media_services.image_process().is_none() {
             let provider = Arc::new(ImageProcessProvider::new(
                 ctx.engine.runtime_api.clone(),
+                Some(ctx.engine.media_file_store.clone()),
                 MediaProcessingModuleConfig::default(),
             ));
             self.image_process_registration =

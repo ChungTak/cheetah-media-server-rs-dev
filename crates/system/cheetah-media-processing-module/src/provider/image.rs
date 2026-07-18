@@ -9,11 +9,12 @@ use bytes::Bytes;
 use cheetah_codec::{video_payload_is_random_access, ParameterSetCache};
 use cheetah_codec::{CodecId as CheetahCodecId, MediaKind, TrackInfo};
 use cheetah_media_api::{
-    error::Result, ImageArtifact, ImageFormat, ImageInput, ImageOperation, ImageProcessApi,
-    ImageProcessRequest, MediaError, MediaRequestContext,
+    error::Result, ids::FileHandle, ImageArtifact, ImageFormat, ImageInput, ImageOperation,
+    ImageProcessApi, ImageProcessRequest, MediaError, MediaFileStoreApi, MediaRequestContext,
 };
 use cheetah_runtime_api::RuntimeApi;
 use futures::channel::oneshot;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::instrument;
 
 use crate::config::MediaProcessingModuleConfig;
@@ -23,15 +24,21 @@ use crate::provider::semaphore::Semaphore;
 /// Image processing provider using an avcodec `Registry`.
 pub struct ImageProcessProvider {
     runtime: Arc<dyn RuntimeApi>,
+    file_store: Option<Arc<dyn MediaFileStoreApi>>,
     config: MediaProcessingModuleConfig,
     semaphore: Semaphore,
 }
 
 impl ImageProcessProvider {
-    pub fn new(runtime: Arc<dyn RuntimeApi>, config: MediaProcessingModuleConfig) -> Self {
+    pub fn new(
+        runtime: Arc<dyn RuntimeApi>,
+        file_store: Option<Arc<dyn MediaFileStoreApi>>,
+        config: MediaProcessingModuleConfig,
+    ) -> Self {
         let max_jobs = config.max_concurrent_jobs as usize;
         Self {
             runtime,
+            file_store,
             config,
             semaphore: Semaphore::new(max_jobs),
         }
@@ -40,17 +47,19 @@ impl ImageProcessProvider {
 
 #[async_trait]
 impl ImageProcessApi for ImageProcessProvider {
-    #[instrument(skip(self, _ctx, request), fields(request_id = ?_ctx.request_id))]
+    #[instrument(skip(self, ctx, request), fields(request_id = ?ctx.request_id))]
     async fn process(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         request: ImageProcessRequest,
     ) -> Result<ImageArtifact> {
         // Acquire a concurrency permit before scheduling blocking work.
         let permit = self.semaphore.acquire().await;
 
         let runtime = Arc::clone(&self.runtime);
+        let file_store = self.file_store.clone();
         let config = self.config.clone();
+        let ctx = ctx.clone();
 
         let (tx, rx) = oneshot::channel::<Result<ImageArtifact>>();
         runtime
@@ -59,7 +68,7 @@ impl ImageProcessApi for ImageProcessProvider {
                 Box::new(move || {
                     // Hold the permit for the lifetime of the blocking task.
                     let _permit = permit;
-                    let result = process_blocking(request, &config);
+                    let result = process_blocking(request, &config, &ctx, file_store.as_deref());
                     let _ = tx.send(result);
                 }),
             )
@@ -73,6 +82,8 @@ impl ImageProcessApi for ImageProcessProvider {
 fn process_blocking(
     request: ImageProcessRequest,
     config: &MediaProcessingModuleConfig,
+    ctx: &MediaRequestContext,
+    file_store: Option<&dyn MediaFileStoreApi>,
 ) -> Result<ImageArtifact> {
     use avcodec::core::{
         ImageProcessRequest as AvImageProcessRequest, ImageProcessor, ImageProcessorConfig, Poll,
@@ -94,7 +105,9 @@ fn process_blocking(
     }
 
     let mut image = match request.input {
-        ImageInput::Encoded { data, format } => decode_encoded_image(&registry, &data, format)?,
+        ImageInput::Encoded { data, format } => {
+            decode_encoded_image(&registry, &data, format, avcodec::core::ImageInfo::Rgb24)?
+        }
         ImageInput::Frame { frame, track } => {
             decode_video_frame(&registry, &frame, &track, config)?
         }
@@ -110,14 +123,19 @@ fn process_blocking(
 
     for (index, op) in request.operations.iter().enumerate() {
         validate_operation_dimensions(op, &image, config, index)?;
-        let av_op = map_image_operation(op, &image)
-            .map_err(|e| MediaError::unsupported(format!("operation #{index}: {e}")))?;
-        let cfg = ImageProcessorConfig::new().with_target_op(discriminant_of(&av_op));
+
+        let mapped = map_image_operation(op, &image, &registry, config, ctx, file_store)
+            .map_err(|e| MediaError::invalid_argument(format!("operation #{index}: {e}")))?;
+        let cfg = ImageProcessorConfig::new().with_target_op(discriminant_of(&mapped.op));
         let mut processor: Box<dyn ImageProcessor> = registry
             .create_image_processor(&cfg)
-            .map_err(|e| MediaError::internal(format!("create image processor: {e}")))?;
+            .map_err(|e| map_image_processor_error(&e))?;
+        let mut av_req = AvImageProcessRequest::new(image, mapped.op);
+        if let Some(aux) = mapped.aux {
+            av_req = av_req.with_aux(aux);
+        }
         processor
-            .submit(AvImageProcessRequest::new(image, av_op))
+            .submit(av_req)
             .map_err(|e| MediaError::internal(format!("submit image operation: {e}")))?;
         image = match processor
             .poll_image()
@@ -153,14 +171,26 @@ fn process_blocking(
     }
 }
 
+fn map_image_processor_error(e: &avcodec::core::AvError) -> MediaError {
+    use avcodec::core::AvErrorKind;
+    let message = format!("create image processor: {e}");
+    match e.kind() {
+        AvErrorKind::SelectionFailed | AvErrorKind::Unsupported => {
+            MediaError::unsupported(format!("image processor unavailable: {e}"))
+        }
+        _ => MediaError::internal(message),
+    }
+}
+
 fn decode_encoded_image(
     registry: &avcodec::core::Registry,
     data: &Bytes,
     format: ImageFormat,
+    target_info: avcodec::core::ImageInfo,
 ) -> Result<avcodec::core::Image> {
     use avcodec::core::{
         BufferHandle, BufferSlice, EncodedImage, EncodedImageFormat, ImageDecoder,
-        ImageDecoderConfig, ImageInfo, Poll,
+        ImageDecoderConfig, Poll,
     };
 
     let encoded_format = match format {
@@ -168,7 +198,7 @@ fn decode_encoded_image(
         ImageFormat::Png => EncodedImageFormat::Png,
     };
 
-    let cfg = ImageDecoderConfig::new(ImageInfo::Rgb24).with_format(encoded_format);
+    let cfg = ImageDecoderConfig::new(target_info).with_format(encoded_format);
     let mut decoder: Box<dyn ImageDecoder> = registry
         .create_image_decoder(&cfg)
         .map_err(|e| MediaError::internal(format!("create image decoder: {e}")))?;
@@ -209,7 +239,12 @@ fn decode_video_frame(
 
     // MJPEG payloads are simply independent JPEG images.
     if frame.codec == CheetahCodecId::MJPEG {
-        return decode_encoded_image(registry, &frame.payload, ImageFormat::Jpeg);
+        return decode_encoded_image(
+            registry,
+            &frame.payload,
+            ImageFormat::Jpeg,
+            avcodec::core::ImageInfo::Rgb24,
+        );
     }
 
     let av_codec = avcodec_codec_id(frame.codec).ok_or_else(|| {
@@ -456,10 +491,22 @@ fn validate_operation_dimensions(
                 return Ok(());
             }
         }
-        ImageOperation::Flip { .. }
-        | ImageOperation::Csc { .. }
-        | ImageOperation::Blend { .. }
-        | ImageOperation::Text { .. } => return Ok(()),
+        ImageOperation::Blend { overlay, .. } => {
+            if let Some(format) = detect_overlay_format(overlay) {
+                if let Some((w, h)) = encoded_dimensions(overlay, format) {
+                    if exceeds(w, h) {
+                        return Err(MediaError::invalid_argument(format!(
+                            "operation #{index} blend overlay {w}x{h} exceeds configured limit {}x{}",
+                            config.max_image_width, config.max_image_height
+                        )));
+                    }
+                }
+            }
+            return Ok(());
+        }
+        ImageOperation::Flip { .. } | ImageOperation::Csc { .. } | ImageOperation::Text { .. } => {
+            return Ok(())
+        }
     };
 
     if exceeds(target_w, target_h) {
@@ -472,11 +519,20 @@ fn validate_operation_dimensions(
     Ok(())
 }
 
+struct MappedOperation {
+    op: avcodec::core::ImageOp,
+    aux: Option<avcodec::core::Image>,
+}
+
 fn map_image_operation(
     op: &ImageOperation,
     image: &avcodec::core::Image,
-) -> std::result::Result<avcodec::core::ImageOp, String> {
-    use avcodec::core::{ImageOp, PadColor, Rect, Rotation, ScaleFilter};
+    registry: &avcodec::core::Registry,
+    config: &MediaProcessingModuleConfig,
+    ctx: &MediaRequestContext,
+    file_store: Option<&dyn MediaFileStoreApi>,
+) -> std::result::Result<MappedOperation, String> {
+    use avcodec::core::{ImageOp, OsdFontData, PadColor, Rect, Rotation, ScaleFilter};
 
     match op {
         ImageOperation::Crop {
@@ -484,24 +540,36 @@ fn map_image_operation(
             y,
             width,
             height,
-        } => Ok(ImageOp::Crop(Rect::new(*x, *y, *width, *height))),
-        ImageOperation::Resize { width, height } => Ok(ImageOp::Resize {
-            width: *width,
-            height: *height,
+        } => Ok(MappedOperation {
+            op: ImageOp::Crop(Rect::new(*x, *y, *width, *height)),
+            aux: None,
+        }),
+        ImageOperation::Resize { width, height } => Ok(MappedOperation {
+            op: ImageOp::Resize {
+                width: *width,
+                height: *height,
+            },
+            aux: None,
         }),
         ImageOperation::Fit { width, height } => {
             if *width == 0 && *height == 0 {
-                return Ok(ImageOp::Copy);
+                return Ok(MappedOperation {
+                    op: ImageOp::Copy,
+                    aux: None,
+                });
             }
             let (dst_w, dst_h) =
                 fit_dimensions(image.coded_width, image.coded_height, *width, *height);
-            Ok(ImageOp::ResizePad {
-                dst_width: dst_w,
-                dst_height: dst_h,
-                fit: avcodec::core::FitMode::Contain,
-                align: avcodec::core::PadAlign::Center,
-                fill: PadColor::BLACK,
-                filter: ScaleFilter::Bilinear,
+            Ok(MappedOperation {
+                op: ImageOp::ResizePad {
+                    dst_width: dst_w,
+                    dst_height: dst_h,
+                    fit: avcodec::core::FitMode::Contain,
+                    align: avcodec::core::PadAlign::Center,
+                    fill: PadColor::BLACK,
+                    filter: ScaleFilter::Bilinear,
+                },
+                aux: None,
             })
         }
         ImageOperation::Rotate { degrees } => {
@@ -511,18 +579,30 @@ fn map_image_operation(
                 270 => Rotation::R270,
                 _ => return Err(format!("unsupported rotation angle: {degrees}")),
             };
-            Ok(ImageOp::Rotate(rotation))
+            Ok(MappedOperation {
+                op: ImageOp::Rotate(rotation),
+                aux: None,
+            })
         }
         ImageOperation::Flip {
             horizontal,
             vertical,
         } => match (horizontal, vertical) {
-            (true, false) => Ok(ImageOp::Flip(avcodec::core::FlipAxis::Horizontal)),
-            (false, true) => Ok(ImageOp::Flip(avcodec::core::FlipAxis::Vertical)),
+            (true, false) => Ok(MappedOperation {
+                op: ImageOp::Flip(avcodec::core::FlipAxis::Horizontal),
+                aux: None,
+            }),
+            (false, true) => Ok(MappedOperation {
+                op: ImageOp::Flip(avcodec::core::FlipAxis::Vertical),
+                aux: None,
+            }),
             (true, true) => {
                 Err("simultaneous horizontal and vertical flip is not supported".to_string())
             }
-            (false, false) => Ok(ImageOp::Copy),
+            (false, false) => Ok(MappedOperation {
+                op: ImageOp::Copy,
+                aux: None,
+            }),
         },
         ImageOperation::Pad {
             top,
@@ -535,17 +615,23 @@ fn map_image_operation(
                 .as_ref()
                 .and_then(|s| parse_pad_color(s))
                 .unwrap_or(PadColor::BLACK);
-            Ok(ImageOp::Pad {
-                left: *left,
-                right: *right,
-                top: *top,
-                bottom: *bottom,
-                color: pad_color,
+            Ok(MappedOperation {
+                op: ImageOp::Pad {
+                    left: *left,
+                    right: *right,
+                    top: *top,
+                    bottom: *bottom,
+                    color: pad_color,
+                },
+                aux: None,
             })
         }
         ImageOperation::Csc { format } => {
             let info = parse_image_info(format)?;
-            Ok(ImageOp::Csc { dst_format: info })
+            Ok(MappedOperation {
+                op: ImageOp::Csc { dst_format: info },
+                aux: None,
+            })
         }
         ImageOperation::ResizePad {
             width,
@@ -556,17 +642,79 @@ fn map_image_operation(
                 .as_ref()
                 .and_then(|s| parse_pad_color(s))
                 .unwrap_or(PadColor::BLACK);
-            Ok(ImageOp::ResizePad {
-                dst_width: *width,
-                dst_height: *height,
-                fit: avcodec::core::FitMode::Contain,
-                align: avcodec::core::PadAlign::Center,
-                fill: pad_color,
-                filter: ScaleFilter::Bilinear,
+            Ok(MappedOperation {
+                op: ImageOp::ResizePad {
+                    dst_width: *width,
+                    dst_height: *height,
+                    fit: avcodec::core::FitMode::Contain,
+                    align: avcodec::core::PadAlign::Center,
+                    fill: pad_color,
+                    filter: ScaleFilter::Bilinear,
+                },
+                aux: None,
             })
         }
-        ImageOperation::Blend { .. } => Err("blend is not yet supported".to_string()),
-        ImageOperation::Text { .. } => Err("text overlay is not yet supported".to_string()),
+        ImageOperation::Blend {
+            overlay,
+            x,
+            y,
+            opacity,
+        } => {
+            let format = detect_overlay_format(overlay)
+                .ok_or_else(|| "blend overlay is not a recognized JPEG/PNG image".to_string())?;
+            let (ov_w, ov_h) = encoded_dimensions(overlay, format)
+                .ok_or_else(|| "blend overlay has no parseable dimensions".to_string())?;
+            if ov_w > config.max_image_width || ov_h > config.max_image_height {
+                return Err(format!(
+                    "blend overlay {ov_w}x{ov_h} exceeds configured limit {}x{}",
+                    config.max_image_width, config.max_image_height
+                ));
+            }
+            let aux = decode_overlay_image(registry, overlay, format, config)?;
+            let x = u32::try_from(*x)
+                .map_err(|_| "blend x coordinate must be non-negative".to_string())?;
+            let y = u32::try_from(*y)
+                .map_err(|_| "blend y coordinate must be non-negative".to_string())?;
+            Ok(MappedOperation {
+                op: ImageOp::Blend {
+                    x,
+                    y,
+                    global_alpha: opacity.unwrap_or(255),
+                },
+                aux: Some(aux),
+            })
+        }
+        ImageOperation::Text {
+            text,
+            font_handle,
+            x,
+            y,
+            size,
+            color,
+        } => {
+            if font_handle.is_empty() {
+                return Err("text overlay requires a non-empty font_handle".to_string());
+            }
+            let file_store = file_store.ok_or_else(|| {
+                "text overlay requires a MediaFileStore but none is configured".to_string()
+            })?;
+            let font_data = resolve_font(ctx, file_store, font_handle)?;
+            let color = color
+                .as_ref()
+                .and_then(|s| parse_pad_color(s))
+                .unwrap_or(PadColor([255, 255, 255, 255]));
+            Ok(MappedOperation {
+                op: ImageOp::OsdText {
+                    x: *x,
+                    y: *y,
+                    text: text.clone(),
+                    size_px: *size,
+                    color,
+                    font: OsdFontData::new(font_data),
+                },
+                aux: None,
+            })
+        }
     }
 }
 
@@ -609,11 +757,30 @@ fn parse_image_info(s: &str) -> std::result::Result<avcodec::core::ImageInfo, St
 
 fn parse_pad_color(s: &str) -> Option<avcodec::core::PadColor> {
     let s = s.trim();
-    if s.starts_with('#') && s.len() == 7 && s.is_ascii() {
-        let r = u8::from_str_radix(&s[1..3], 16).ok()?;
-        let g = u8::from_str_radix(&s[3..5], 16).ok()?;
-        let b = u8::from_str_radix(&s[5..7], 16).ok()?;
-        Some(avcodec::core::PadColor([r, g, b, 255]))
+    if s.starts_with('#') && s.is_ascii() {
+        match s.len() {
+            7 => {
+                let r = u8::from_str_radix(&s[1..3], 16).ok()?;
+                let g = u8::from_str_radix(&s[3..5], 16).ok()?;
+                let b = u8::from_str_radix(&s[5..7], 16).ok()?;
+                Some(avcodec::core::PadColor([r, g, b, 255]))
+            }
+            9 => {
+                let r = u8::from_str_radix(&s[1..3], 16).ok()?;
+                let g = u8::from_str_radix(&s[3..5], 16).ok()?;
+                let b = u8::from_str_radix(&s[5..7], 16).ok()?;
+                let a = u8::from_str_radix(&s[7..9], 16).ok()?;
+                Some(avcodec::core::PadColor([r, g, b, a]))
+            }
+            5 => {
+                let r = u8::from_str_radix(&s[1..2], 16).ok()? * 17;
+                let g = u8::from_str_radix(&s[2..3], 16).ok()? * 17;
+                let b = u8::from_str_radix(&s[3..4], 16).ok()? * 17;
+                let a = u8::from_str_radix(&s[4..5], 16).ok()? * 17;
+                Some(avcodec::core::PadColor([r, g, b, a]))
+            }
+            _ => None,
+        }
     } else if s.eq_ignore_ascii_case("black") {
         Some(avcodec::core::PadColor::BLACK)
     } else if s.eq_ignore_ascii_case("white") {
@@ -690,6 +857,58 @@ fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
     None
 }
 
+/// Detects the encoded image format of an overlay payload from its magic bytes.
+fn detect_overlay_format(data: &[u8]) -> Option<ImageFormat> {
+    if data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8 {
+        Some(ImageFormat::Jpeg)
+    } else if data.len() >= 8 && data[..8] == [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A] {
+        Some(ImageFormat::Png)
+    } else {
+        None
+    }
+}
+
+/// Decodes an overlay payload into a host-memory `Image` for blending.
+fn decode_overlay_image(
+    registry: &avcodec::core::Registry,
+    data: &Bytes,
+    format: ImageFormat,
+    config: &MediaProcessingModuleConfig,
+) -> std::result::Result<avcodec::core::Image, String> {
+    use avcodec::core::ImageInfo;
+    let target_info = match format {
+        ImageFormat::Jpeg => ImageInfo::Rgb24,
+        // Preserve per-pixel alpha for PNG overlays so OpenCV Blend can use it.
+        ImageFormat::Png => ImageInfo::Rgba,
+    };
+    let image = decode_encoded_image(registry, data, format, target_info)
+        .map_err(|e| format!("decode overlay image: {e}"))?;
+    if image.coded_width > config.max_image_width || image.coded_height > config.max_image_height {
+        return Err(format!(
+            "decoded overlay {}x{} exceeds configured limit {}x{}",
+            image.coded_width, image.coded_height, config.max_image_width, config.max_image_height
+        ));
+    }
+    Ok(image)
+}
+
+/// Loads a font file referenced by an authorized `FileHandle`.
+fn resolve_font(
+    ctx: &MediaRequestContext,
+    file_store: &dyn MediaFileStoreApi,
+    handle: &str,
+) -> std::result::Result<Vec<u8>, String> {
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let entry = file_store
+        .resolve_for_read(ctx, &FileHandle(handle.to_string()), None, now_ms)
+        .map_err(|e| format!("resolve font handle {handle}: {e}"))?;
+    std::fs::read(&entry.absolute_path)
+        .map_err(|e| format!("read font file {}: {e}", entry.absolute_path))
+}
+
 #[cfg(all(test, feature = "media-processing-image"))]
 mod tests {
     use super::*;
@@ -698,7 +917,10 @@ mod tests {
         AVFrame, CodecId as CheetahCodecId, FrameFlags, FrameFormat, MediaKind, Timebase, TrackId,
         TrackInfo,
     };
-    use cheetah_media_api::{ImageFormat, ImageInput, ImageProcessRequest, MediaErrorCode};
+    use cheetah_media_api::{
+        ids::FileHandle, FileDownload, FileStoreEntry, ImageFormat, ImageInput,
+        ImageProcessRequest, MediaErrorCode, MediaFileStoreApi,
+    };
     use cheetah_runtime_api::RuntimeApi;
     use cheetah_runtime_tokio::TokioRuntime;
 
@@ -753,7 +975,8 @@ mod tests {
     #[tokio::test]
     async fn decodes_and_resizes_jpeg() {
         let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
-        let provider = ImageProcessProvider::new(runtime, MediaProcessingModuleConfig::default());
+        let provider =
+            ImageProcessProvider::new(runtime, None, MediaProcessingModuleConfig::default());
         let request = ImageProcessRequest::new(
             ImageInput::Encoded {
                 data: make_jpeg_fixture(),
@@ -787,7 +1010,8 @@ mod tests {
     #[tokio::test]
     async fn repeated_process_runs_are_stable() {
         let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
-        let provider = ImageProcessProvider::new(runtime, MediaProcessingModuleConfig::default());
+        let provider =
+            ImageProcessProvider::new(runtime, None, MediaProcessingModuleConfig::default());
         let request = ImageProcessRequest::new(
             ImageInput::Encoded {
                 data: make_jpeg_fixture(),
@@ -812,7 +1036,8 @@ mod tests {
     #[tokio::test]
     async fn rejects_png_output() {
         let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
-        let provider = ImageProcessProvider::new(runtime, MediaProcessingModuleConfig::default());
+        let provider =
+            ImageProcessProvider::new(runtime, None, MediaProcessingModuleConfig::default());
         let request = ImageProcessRequest::new(
             ImageInput::Encoded {
                 data: make_jpeg_fixture(),
@@ -835,7 +1060,7 @@ mod tests {
         config.max_image_width = 64;
         config.max_image_height = 64;
 
-        let provider = ImageProcessProvider::new(runtime, config);
+        let provider = ImageProcessProvider::new(runtime, None, config);
         let request = ImageProcessRequest::new(
             ImageInput::Encoded {
                 data: make_jpeg_fixture(),
@@ -864,7 +1089,7 @@ mod tests {
         config.max_image_width = 8;
         config.max_image_height = 3;
 
-        let provider = ImageProcessProvider::new(runtime, config);
+        let provider = ImageProcessProvider::new(runtime, None, config);
         let request = ImageProcessRequest::new(
             ImageInput::Encoded {
                 data: make_jpeg_fixture(),
@@ -915,7 +1140,7 @@ mod tests {
         png.extend_from_slice(&100u32.to_be_bytes());
         png.extend_from_slice(&[8, 2, 0, 0, 0, 0, 0, 0, 0]);
 
-        let provider = ImageProcessProvider::new(runtime, config);
+        let provider = ImageProcessProvider::new(runtime, None, config);
         let request = ImageProcessRequest::new(
             ImageInput::Encoded {
                 data: Bytes::from(png),
@@ -935,6 +1160,8 @@ mod tests {
     fn parse_pad_color_understands_hex_and_names() {
         let c = parse_pad_color("#ff00aa").unwrap();
         assert_eq!(c.0, [255, 0, 170, 255]);
+        assert_eq!(parse_pad_color("#ff00aacc").unwrap().0, [255, 0, 170, 204]);
+        assert_eq!(parse_pad_color("#f0ac").unwrap().0, [255, 0, 170, 204]);
         assert_eq!(parse_pad_color("black").unwrap().0, [0, 0, 0, 255]);
         assert_eq!(parse_pad_color("white").unwrap().0, [255, 255, 255, 255]);
         assert!(parse_pad_color("not-a-color").is_none());
@@ -991,7 +1218,8 @@ mod tests {
     #[tokio::test]
     async fn decodes_h264_video_frame_to_jpeg() {
         let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
-        let provider = ImageProcessProvider::new(runtime, MediaProcessingModuleConfig::default());
+        let provider =
+            ImageProcessProvider::new(runtime, None, MediaProcessingModuleConfig::default());
 
         let (width, height) = (64u32, 48u32);
         let payload = make_h264_keyframe_fixture(width, height);
@@ -1027,6 +1255,243 @@ mod tests {
         assert_eq!(artifact.format, ImageFormat::Jpeg);
         assert_eq!(artifact.width, width);
         assert_eq!(artifact.height, height);
+        assert!(!artifact.payload.is_empty());
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "media-processing-image-overlay")]
+    async fn blends_jpeg_overlay_onto_jpeg() {
+        let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
+        let provider =
+            ImageProcessProvider::new(runtime, None, MediaProcessingModuleConfig::default());
+        let overlay = make_jpeg_fixture();
+        let request = ImageProcessRequest {
+            input: ImageInput::Encoded {
+                data: make_jpeg_fixture(),
+                format: ImageFormat::Jpeg,
+            },
+            operations: vec![ImageOperation::Blend {
+                overlay,
+                x: 0,
+                y: 0,
+                opacity: Some(128),
+            }],
+            output_format: ImageFormat::Jpeg,
+            quality: 80,
+        };
+
+        let artifact = provider
+            .process(&MediaRequestContext::default(), request)
+            .await
+            .expect("blend should produce jpeg");
+
+        assert_eq!(artifact.format, ImageFormat::Jpeg);
+        assert_eq!(artifact.width, 4);
+        assert_eq!(artifact.height, 4);
+        assert!(!artifact.payload.is_empty());
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_blend_overlay() {
+        let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
+        let mut config = MediaProcessingModuleConfig::default();
+        config.max_image_width = 8;
+        config.max_image_height = 8;
+
+        // 100x100 PNG declaration.
+        let mut png = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        png.extend_from_slice(&13u32.to_be_bytes());
+        png.extend_from_slice(b"IHDR");
+        png.extend_from_slice(&100u32.to_be_bytes());
+        png.extend_from_slice(&100u32.to_be_bytes());
+        png.extend_from_slice(&[8, 2, 0, 0, 0, 0, 0, 0, 0]);
+
+        let provider = ImageProcessProvider::new(runtime, None, config);
+        let request = ImageProcessRequest {
+            input: ImageInput::Encoded {
+                data: make_jpeg_fixture(),
+                format: ImageFormat::Jpeg,
+            },
+            operations: vec![ImageOperation::Blend {
+                overlay: Bytes::from(png),
+                x: 0,
+                y: 0,
+                opacity: None,
+            }],
+            output_format: ImageFormat::Jpeg,
+            quality: 80,
+        };
+
+        let err = provider
+            .process(&MediaRequestContext::default(), request)
+            .await
+            .expect_err("oversized blend overlay should be rejected");
+        assert_eq!(err.code, MediaErrorCode::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn text_overlay_requires_file_store() {
+        let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
+        let provider =
+            ImageProcessProvider::new(runtime, None, MediaProcessingModuleConfig::default());
+        let request = ImageProcessRequest {
+            input: ImageInput::Encoded {
+                data: make_jpeg_fixture(),
+                format: ImageFormat::Jpeg,
+            },
+            operations: vec![ImageOperation::Text {
+                text: "hello".to_string(),
+                font_handle: "test-font".to_string(),
+                x: 0,
+                y: 0,
+                size: 12,
+                color: Some("#ffffffff".to_string()),
+            }],
+            output_format: ImageFormat::Jpeg,
+            quality: 80,
+        };
+
+        let err = provider
+            .process(&MediaRequestContext::default(), request)
+            .await
+            .expect_err("text overlay without file store should fail");
+        assert_eq!(err.code, MediaErrorCode::InvalidArgument);
+    }
+
+    struct MockFontStore {
+        path: String,
+    }
+
+    impl MediaFileStoreApi for MockFontStore {
+        fn register_file(
+            &self,
+            _ctx: &MediaRequestContext,
+            _entry: FileStoreEntry,
+        ) -> cheetah_media_api::error::Result<FileHandle> {
+            Err(MediaError::unsupported("register_file not implemented"))
+        }
+
+        fn resolve_for_read(
+            &self,
+            _ctx: &MediaRequestContext,
+            handle: &FileHandle,
+            _resource_scope: Option<&cheetah_media_api::MediaKey>,
+            _now_ms: i64,
+        ) -> cheetah_media_api::error::Result<FileStoreEntry> {
+            if handle.0 == "serif" {
+                Ok(FileStoreEntry {
+                    absolute_path: self.path.clone(),
+                    ..FileStoreEntry::default()
+                })
+            } else {
+                Err(MediaError::invalid_argument(format!(
+                    "unknown font handle: {}",
+                    handle.0
+                )))
+            }
+        }
+
+        fn delete(
+            &self,
+            _ctx: &MediaRequestContext,
+            _handle: &FileHandle,
+            _now_ms: i64,
+        ) -> cheetah_media_api::error::Result<()> {
+            Err(MediaError::unsupported("delete not implemented"))
+        }
+
+        fn delete_batch(
+            &self,
+            _ctx: &MediaRequestContext,
+            _query: cheetah_media_api::FileStoreQuery,
+            _batch_limit: u32,
+            _now_ms: i64,
+        ) -> cheetah_media_api::error::Result<cheetah_media_api::DeleteBatchResult> {
+            Err(MediaError::unsupported("delete_batch not implemented"))
+        }
+
+        fn resolve_download(
+            &self,
+            _ctx: &MediaRequestContext,
+            _handle: &FileHandle,
+            _range: Option<cheetah_media_api::FileRange>,
+            _filename: Option<String>,
+            _now_ms: i64,
+        ) -> cheetah_media_api::error::Result<FileDownload> {
+            Err(MediaError::unsupported("resolve_download not implemented"))
+        }
+    }
+
+    fn is_font_path(p: &std::path::Path) -> bool {
+        matches!(
+            p.extension()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_ascii_lowercase())
+                .as_deref(),
+            Some("ttf") | Some("otf")
+        )
+    }
+
+    fn find_test_font() -> Option<String> {
+        let candidates = ["/usr/share/fonts", "/usr/local/share/fonts"];
+        for root in candidates {
+            let Ok(entries) = std::fs::read_dir(root) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Ok(sub) = std::fs::read_dir(&path) {
+                        for e in sub.flatten() {
+                            let p = e.path();
+                            if is_font_path(&p) {
+                                return Some(p.to_string_lossy().to_string());
+                            }
+                        }
+                    }
+                } else if is_font_path(&path) {
+                    return Some(path.to_string_lossy().to_string());
+                }
+            }
+        }
+        None
+    }
+
+    #[tokio::test]
+    async fn text_overlay_renders_with_font() {
+        let Some(font_path) = find_test_font() else {
+            return;
+        };
+        let runtime: Arc<dyn RuntimeApi> = Arc::new(TokioRuntime::new());
+        let store: Arc<dyn MediaFileStoreApi> = Arc::new(MockFontStore { path: font_path });
+        let provider =
+            ImageProcessProvider::new(runtime, Some(store), MediaProcessingModuleConfig::default());
+
+        let request = ImageProcessRequest {
+            input: ImageInput::Encoded {
+                data: make_jpeg_fixture(),
+                format: ImageFormat::Jpeg,
+            },
+            operations: vec![ImageOperation::Text {
+                text: "A".to_string(),
+                font_handle: "serif".to_string(),
+                x: 0,
+                y: 0,
+                size: 12,
+                color: Some("#ffffffff".to_string()),
+            }],
+            output_format: ImageFormat::Jpeg,
+            quality: 80,
+        };
+
+        let artifact = provider
+            .process(&MediaRequestContext::default(), request)
+            .await
+            .expect("text overlay should render");
+
+        assert_eq!(artifact.format, ImageFormat::Jpeg);
+        assert_eq!(artifact.width, 4);
+        assert_eq!(artifact.height, 4);
         assert!(!artifact.payload.is_empty());
     }
 }

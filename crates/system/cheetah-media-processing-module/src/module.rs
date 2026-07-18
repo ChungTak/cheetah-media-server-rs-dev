@@ -97,15 +97,18 @@ impl Module for MediaProcessingModule {
         {
             let provider = Arc::new(crate::provider::ImageProcessProvider::new(
                 ctx.engine.runtime_api.clone(),
+                Some(ctx.engine.media_file_store.clone()),
                 self.config.clone(),
             ));
 
             let mut capabilities = cheetah_media_api::MediaCapabilitySet::empty();
             capabilities.add(cheetah_media_api::MediaCapability::ImageProcessing, 1);
-            capabilities.set_reason(
-                cheetah_media_api::MediaCapability::ImageProcessing,
-                "jpeg input/output; crop/resize/fit/rotate/flip/pad/csc/resize-pad",
-            );
+            let reason = if cfg!(feature = "media-processing-image-overlay") {
+                "jpeg input/output; crop/resize/fit/rotate/flip/pad/csc/resize-pad/text/blend"
+            } else {
+                "jpeg input/output; crop/resize/fit/rotate/flip/pad/csc/resize-pad/text"
+            };
+            capabilities.set_reason(cheetah_media_api::MediaCapability::ImageProcessing, reason);
 
             self.image_process_registration = Some(
                 ctx.engine

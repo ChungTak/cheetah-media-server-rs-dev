@@ -37,6 +37,7 @@ fn filter_native_free_registry() -> avcodec::core::Registry {
         "jpeg",
         "zune",
         "libyuv",
+        "opencv",
         // video
         "rust-h264",
         "rust-h265",

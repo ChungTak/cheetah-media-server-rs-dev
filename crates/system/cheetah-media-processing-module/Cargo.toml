@@ -31,6 +31,11 @@ media-processing-image = [
     "avcodec?/rust-h265",
 ]
 
+media-processing-image-overlay = [
+    "dep:avcodec",
+    "avcodec?/opencv",
+]
+
 avcodec-profile-native-free = ["avcodec?/profile-native-free"]
 avcodec-profile-software = ["avcodec?/profile-software"]
 
@@ -38,6 +43,7 @@ media-processing-cpu = [
     "media-processing-audio",
     "media-processing-video",
     "media-processing-image",
+    "media-processing-image-overlay",
     "avcodec-profile-native-free",
 ]
 
