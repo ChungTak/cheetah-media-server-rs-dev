@@ -26,6 +26,10 @@ pub mod module;
 ///
 /// NAL 单元辅助函数：提取并校验 H.264/H.265 的 NAL 长度大小。
 pub(crate) mod nal;
+/// RTMP processing helpers: derived AAC/H.264 streams.
+///
+/// RTMP 处理辅助函数：派生 AAC/H.264 流。
+pub(crate) mod processing;
 /// RTMP stream route parsing and play mode selection.
 ///
 /// RTMP 流路由解析与播放模式选择。

@@ -37,6 +37,7 @@ use crate::ingest::{
     apply_metadata_to_tracks, handle_audio_ingest_with_alert_threshold, handle_data_ingest,
     handle_video_ingest_with_alert_threshold, should_emit_alert_threshold,
 };
+use crate::processing::{ensure_derived_push_source, stop_derived_push_job};
 use crate::route::{parse_stream_key_spec, parse_stream_route, RtmpPlayMode, StreamRoute};
 use crate::session::{
     with_publish_session, FrameRateEstimator, KeepaliveSession, PlaySession, PublishSession,
@@ -848,17 +849,54 @@ async fn run_push_job_supervisor(
     let mut backoff_ms = base_backoff_ms;
 
     while !cancel.is_cancelled() {
+        let derived = match ensure_derived_push_source(
+            &engine,
+            job.name.as_str(),
+            source_stream_key.clone(),
+            &job.processing_policy,
+            job.track_selection,
+            &cancel,
+        )
+        .await
+        {
+            Ok(derived) => derived,
+            Err(err) => {
+                tracing::warn!(
+                    job_name = job.name,
+                    stream_key = %source_stream_key,
+                    "push job failed to resolve derived source: {err}"
+                );
+                if cancel.is_cancelled() {
+                    break;
+                }
+                if wait_or_cancel(
+                    &engine.runtime_api,
+                    &cancel,
+                    Duration::from_millis(backoff_ms),
+                )
+                .await
+                {
+                    break;
+                }
+                backoff_ms = next_retry_backoff_ms(backoff_ms, max_backoff_ms);
+                continue;
+            }
+        };
+
         run_push_job_once(
             &engine,
             &module_config,
             job.name.as_str(),
-            source_stream_key.clone(),
+            derived.stream_key.clone(),
             target_url.clone(),
             job.track_selection == TrackSelection::AudioOnly,
             job.track_selection == TrackSelection::VideoOnly,
             cancel.child_token(),
         )
         .await;
+        if let Some(job_id) = derived.processing_job_id {
+            stop_derived_push_job(&engine, job_id).await;
+        }
         if cancel.is_cancelled() {
             break;
         }
