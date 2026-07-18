@@ -155,7 +155,7 @@ impl MediaProcessingProvider {
 
     /// Publish processing gauges/counters and zero out stale keys.
     pub fn publish_job_metrics(&self) {
-        let jobs = self.jobs.lock().unwrap();
+        let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         let mut counts: HashMap<String, u64> = HashMap::new();
         let mut shared_refs: u64 = 0;
         let mut restarts: u64 = 0;
@@ -163,7 +163,7 @@ impl MediaProcessingProvider {
         let mut reserved_subscribers: u64 = 0;
 
         for entry in jobs.values() {
-            let guard = entry.job.lock().unwrap();
+            let guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
             let kind = Self::job_kind_label(&guard.spec);
             let (media, codec) = Self::job_primary_media_and_codec(&guard.spec);
             let state = format!("{0:?}", guard.state).to_lowercase();
@@ -213,7 +213,7 @@ impl MediaProcessingProvider {
             reserved_subscribers,
         );
 
-        let mut emitted = self.metric_keys.lock().unwrap();
+        let mut emitted = self.metric_keys.lock().unwrap_or_else(|e| e.into_inner());
         let new_keys: HashSet<String> = counts.keys().cloned().collect();
         for (key, count) in counts {
             self.ctx.metrics_api.set(&key, count);
@@ -349,10 +349,10 @@ impl MediaProcessingProvider {
     /// Cancel every running job and wait for the worker tasks to complete.
     pub async fn cancel_all(&self) {
         let handles = {
-            let mut jobs = self.jobs.lock().unwrap();
+            let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
             for entry in jobs.values_mut() {
                 entry.cancel.cancel();
-                let mut guard = entry.job.lock().unwrap();
+                let mut guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
                 guard.state = ProcessingJobState::Stopped;
                 guard.updated_at = now_ms();
             }
@@ -425,12 +425,12 @@ impl MediaProcessingProvider {
         let job = Arc::new(Mutex::new(
             self.build_job(&request, ProcessingJobState::Running),
         ));
-        let job_id = job.lock().unwrap().job_id.clone();
-        let job_snapshot = job.lock().unwrap().clone();
+        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
+        let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
         // Insert the job record before spawning the worker so that a very fast
         // completion (or failure) still finds the entry and transitions it.
-        self.jobs.lock().unwrap().insert(
+        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
             job_id.clone(),
             JobEntry {
                 job: job.clone(),
@@ -451,7 +451,12 @@ impl MediaProcessingProvider {
             let _ = publisher_api.release_publisher(&lease).await;
         }));
 
-        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+        if let Some(entry) = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&job_id)
+        {
             entry.handle = Some(handle);
         }
 
@@ -534,7 +539,12 @@ impl MediaProcessingProvider {
             }
         }));
 
-        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+        if let Some(entry) = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&job_id)
+        {
             entry.handle = Some(handle);
         }
 
@@ -641,7 +651,12 @@ impl MediaProcessingProvider {
             }
         }));
 
-        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+        if let Some(entry) = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&job_id)
+        {
             entry.handle = Some(handle);
         }
 
@@ -725,7 +740,12 @@ impl MediaProcessingProvider {
             }
         }));
 
-        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+        if let Some(entry) = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&job_id)
+        {
             entry.handle = Some(handle);
         }
 
@@ -822,7 +842,12 @@ impl MediaProcessingProvider {
             }
         }));
 
-        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+        if let Some(entry) = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(&job_id)
+        {
             entry.handle = Some(handle);
         }
 
@@ -954,9 +979,9 @@ impl MediaProcessingApi for MediaProcessingProvider {
         _ctx: &MediaRequestContext,
         id: &ProcessingJobId,
     ) -> MediaResult<ProcessingJob> {
-        let jobs = self.jobs.lock().unwrap();
+        let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         jobs.get(id)
-            .map(|e| e.job.lock().unwrap().clone())
+            .map(|e| e.job.lock().unwrap_or_else(|e| e.into_inner()).clone())
             .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))
     }
 
@@ -966,10 +991,10 @@ impl MediaProcessingApi for MediaProcessingProvider {
         mut query: ProcessingJobQuery,
     ) -> MediaResult<Page<ProcessingJob>> {
         query.clamp_page_size();
-        let jobs = self.jobs.lock().unwrap();
+        let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         let mut items: Vec<ProcessingJob> = jobs
             .values()
-            .map(|e| e.job.lock().unwrap().clone())
+            .map(|e| e.job.lock().unwrap_or_else(|e| e.into_inner()).clone())
             .filter(|j| {
                 query.state.is_none_or(|s| j.state == s)
                     && query.vhost.as_ref().is_none_or(|v| {
@@ -1022,12 +1047,12 @@ impl MediaProcessingApi for MediaProcessingProvider {
         _ctx: &MediaRequestContext,
         id: &ProcessingJobId,
     ) -> MediaResult<ProcessingJob> {
-        let mut jobs = self.jobs.lock().unwrap();
+        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         let entry = jobs
             .get_mut(id)
             .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))?;
         entry.cancel.cancel();
-        let mut guard = entry.job.lock().unwrap();
+        let mut guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
         guard.state = ProcessingJobState::Stopped;
         guard.updated_at = now_ms();
         Ok(guard.clone())
@@ -1038,7 +1063,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
         _ctx: &MediaRequestContext,
         id: &ProcessingJobId,
     ) -> MediaResult<()> {
-        let mut jobs = self.jobs.lock().unwrap();
+        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         let entry = jobs
             .get_mut(id)
             .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))?;
