@@ -78,7 +78,16 @@ pub struct MediaProcessingProvider {
     config: MediaProcessingModuleConfig,
     jobs: Arc<Mutex<HashMap<ProcessingJobId, JobEntry>>>,
     id_counter: AtomicU64,
-    metric_keys: Arc<Mutex<HashSet<String>>>,
+    gauge_keys: Arc<Mutex<HashSet<String>>>,
+    last_metric_counts: Arc<Mutex<HashMap<ProcessingJobId, MetricSnapshot>>>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct MetricSnapshot {
+    frames_in: u64,
+    frames_out: u64,
+    drops: u64,
+    restarts: u64,
 }
 
 impl MediaProcessingProvider {
@@ -88,7 +97,8 @@ impl MediaProcessingProvider {
             config,
             jobs: Arc::new(Mutex::new(HashMap::new())),
             id_counter: AtomicU64::new(0),
-            metric_keys: Arc::new(Mutex::new(HashSet::new())),
+            gauge_keys: Arc::new(Mutex::new(HashSet::new())),
+            last_metric_counts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -153,17 +163,23 @@ impl MediaProcessingProvider {
         }
     }
 
-    /// Publish processing gauges/counters and zero out stale keys.
+    /// Publish processing gauges/counters and zero out stale gauge keys.
+    ///
+    /// Counters (`*_total`) are incremented by the delta since the last publish
+    /// so they stay monotonic. Gauges are overwritten and stale keys are zeroed.
     pub fn publish_job_metrics(&self) {
         let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
-        let mut counts: HashMap<String, u64> = HashMap::new();
+        let active_ids: HashSet<ProcessingJobId> = jobs.keys().cloned().collect();
+        let mut gauge_values: HashMap<String, u64> = HashMap::new();
+        let mut counter_deltas: HashMap<String, u64> = HashMap::new();
+        let mut current_counts: HashMap<ProcessingJobId, MetricSnapshot> = HashMap::new();
         let mut shared_refs: u64 = 0;
-        let mut restarts: u64 = 0;
         let mut reserved_publishers: u64 = 0;
         let mut reserved_subscribers: u64 = 0;
 
         for entry in jobs.values() {
             let guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
+            let job_id = guard.job_id.clone();
             let kind = Self::job_kind_label(&guard.spec);
             let (media, codec) = Self::job_primary_media_and_codec(&guard.spec);
             let state = format!("{0:?}", guard.state).to_lowercase();
@@ -172,57 +188,96 @@ impl MediaProcessingProvider {
                 "media_processing_jobs{{kind={kind},state={state},profile={}}}",
                 guard.profile
             );
-            *counts.entry(job_key).or_insert(0) += 1;
+            *gauge_values.entry(job_key).or_insert(0) += 1;
 
-            let frames_in_key = format!(
-                "media_processing_frames_total{{direction=ingress,media={media},codec={codec}}}"
-            );
-            *counts.entry(frames_in_key).or_insert(0) += guard.frames_in;
+            let prev = self
+                .last_metric_counts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&job_id)
+                .copied()
+                .unwrap_or_default();
+            let frames_in_delta = guard.frames_in.saturating_sub(prev.frames_in);
+            let frames_out_delta = guard.frames_out.saturating_sub(prev.frames_out);
+            let drops_delta = guard.drops.saturating_sub(prev.drops);
+            let restarts_delta = (guard.restart_count as u64).saturating_sub(prev.restarts);
 
-            let frames_out_key = format!(
-                "media_processing_frames_total{{direction=egress,media={media},codec={codec}}}"
-            );
-            *counts.entry(frames_out_key).or_insert(0) += guard.frames_out;
+            *counter_deltas
+                .entry(format!(
+                    "media_processing_frames_total{{direction=ingress,media={media},codec={codec}}}"
+                ))
+                .or_insert(0) += frames_in_delta;
+            *counter_deltas
+                .entry(format!(
+                    "media_processing_frames_total{{direction=egress,media={media},codec={codec}}}"
+                ))
+                .or_insert(0) += frames_out_delta;
+            *counter_deltas
+                .entry(format!(
+                    "media_processing_drops_total{{reason=policy,media={media}}}"
+                ))
+                .or_insert(0) += drops_delta;
+            *counter_deltas
+                .entry("media_processing_restarts_total{reason=failure}".to_string())
+                .or_insert(0) += restarts_delta;
 
-            let drops_key = format!("media_processing_drops_total{{reason=policy,media={media}}}");
-            *counts.entry(drops_key).or_insert(0) += guard.drops;
-
-            let pending_key = "media_processing_pending_total{stage=frame}".to_string();
-            *counts.entry(pending_key).or_insert(0) += guard.pending;
-
-            let queue_key = "media_processing_queue_depth{stage=frame}".to_string();
-            *counts.entry(queue_key).or_insert(0) += guard.pending;
+            *gauge_values
+                .entry("media_processing_pending_total{stage=frame}".to_string())
+                .or_insert(0) += guard.pending;
+            *gauge_values
+                .entry("media_processing_queue_depth{stage=frame}".to_string())
+                .or_insert(0) += guard.pending;
 
             shared_refs += guard.ref_count;
-            restarts += guard.restart_count as u64;
             reserved_publishers += guard.output_keys.len() as u64;
             reserved_subscribers += guard.input_keys.len() as u64;
+
+            current_counts.insert(
+                job_id,
+                MetricSnapshot {
+                    frames_in: guard.frames_in,
+                    frames_out: guard.frames_out,
+                    drops: guard.drops,
+                    restarts: guard.restart_count as u64,
+                },
+            );
         }
 
-        counts.insert("media_processing_shared_refs".to_string(), shared_refs);
-        counts.insert(
-            "media_processing_restarts_total{reason=failure}".to_string(),
-            restarts,
-        );
-        counts.insert(
+        gauge_values.insert("media_processing_shared_refs".to_string(), shared_refs);
+        gauge_values.insert(
             "media_processing_resource_reserved{kind=publisher}".to_string(),
             reserved_publishers,
         );
-        counts.insert(
+        gauge_values.insert(
             "media_processing_resource_reserved{kind=subscriber}".to_string(),
             reserved_subscribers,
         );
 
-        let mut emitted = self.metric_keys.lock().unwrap_or_else(|e| e.into_inner());
-        let new_keys: HashSet<String> = counts.keys().cloned().collect();
-        for (key, count) in counts {
-            self.ctx.metrics_api.set(&key, count);
+        for (key, delta) in counter_deltas {
+            if delta > 0 {
+                self.ctx.metrics_api.inc(&key, delta);
+            }
+        }
+
+        let mut emitted = self.gauge_keys.lock().unwrap_or_else(|e| e.into_inner());
+        let new_keys: HashSet<String> = gauge_values.keys().cloned().collect();
+        for (key, value) in gauge_values {
+            self.ctx.metrics_api.set(&key, value);
             emitted.insert(key);
         }
         for stale in emitted.difference(&new_keys) {
             self.ctx.metrics_api.set(stale, 0);
         }
         *emitted = new_keys;
+
+        let mut last_counts = self
+            .last_metric_counts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        last_counts.retain(|id, _| active_ids.contains(id));
+        for (id, snap) in current_counts {
+            last_counts.insert(id, snap);
+        }
     }
 
     fn media_key_to_stream_key(key: &MediaKey) -> StreamKey {
