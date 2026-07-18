@@ -7,6 +7,7 @@
 //! and audio transcode sessions are available.
 
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use cheetah_codec::{
     track::{CodecId, MediaKind, TrackInfo},
@@ -14,7 +15,10 @@ use cheetah_codec::{
 };
 use cheetah_media_api::{
     error::Result as MediaResult,
-    processing::{AudioCodec, AudioTarget, ProcessingJob, TrackSelection, VideoCodec, VideoTarget},
+    processing::{
+        AudioCodec, AudioTarget, ProcessingJob, ProcessingJobState, TrackSelection, VideoCodec,
+        VideoTarget,
+    },
     MediaError,
 };
 use cheetah_sdk::{
@@ -264,6 +268,13 @@ impl TranscodeWorker {
     }
 }
 
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
 fn update_progress<F>(job: &Option<Arc<Mutex<ProcessingJob>>>, f: F)
 where
     F: FnOnce(&mut ProcessingJob),
@@ -271,6 +282,25 @@ where
     if let Some(job) = job.as_ref() {
         if let Ok(mut guard) = job.lock() {
             f(&mut guard);
+            guard.updated_at = now_ms();
+        }
+    }
+}
+
+fn finish_job(job: &Option<Arc<Mutex<ProcessingJob>>>, last_error: Option<&SdkError>) {
+    if let Some(job) = job.as_ref() {
+        if let Ok(mut guard) = job.lock() {
+            let finished_at = now_ms();
+            guard.finished_at = Some(finished_at);
+            guard.last_error = last_error.map(|e| e.to_string());
+            guard.updated_at = finished_at;
+            if guard.state == ProcessingJobState::Running {
+                guard.state = if last_error.is_some() {
+                    ProcessingJobState::Failed
+                } else {
+                    ProcessingJobState::Stopped
+                };
+            }
         }
     }
 }
@@ -293,99 +323,114 @@ pub async fn spawn_transcode_worker(
     cancel: CancellationToken,
     job: Option<Arc<Mutex<ProcessingJob>>>,
 ) -> Result<(), SdkError> {
-    let (source_video, source_audio) = wait_for_source_tracks(
-        &engine,
-        &source,
-        &track_selection,
-        video_target.is_some(),
-        audio_target.is_some(),
-    )
-    .await?;
+    // Run the worker body and then transition the shared job to a terminal
+    // state regardless of whether it completed or failed early.
+    let publisher_api = engine.publisher_api.clone();
+    let release_lease = publisher_lease.clone();
+    let finish_job_ref = job.clone();
 
-    let worker = TranscodeWorker::new(
-        &config,
-        source_video.as_ref(),
-        source_audio.as_ref(),
-        video_target.as_ref(),
-        audio_target.as_ref(),
-        publisher,
-        job.clone(),
-    )
-    .map_err(|e| SdkError::Internal(format!("create transcode worker: {e}")))?;
+    let result = async move {
+        let (source_video, source_audio) = wait_for_source_tracks(
+            &engine,
+            &source,
+            &track_selection,
+            video_target.is_some(),
+            audio_target.is_some(),
+        )
+        .await?;
 
-    let (tx, rx) = std::sync::mpsc::sync_channel::<TranscodeInput>(64);
+        let worker = TranscodeWorker::new(
+            &config,
+            source_video.as_ref(),
+            source_audio.as_ref(),
+            video_target.as_ref(),
+            audio_target.as_ref(),
+            publisher,
+            job.clone(),
+        )
+        .map_err(|e| SdkError::Internal(format!("create transcode worker: {e}")))?;
 
-    let handle = engine
-        .runtime_api
-        .spawn_blocking(
-            "transcode-worker",
-            Box::new(move || {
-                let mut worker = worker;
-                while let Ok(input) = rx.recv() {
-                    if let Err(e) = worker.process(input) {
-                        warn!("transcode worker dropped frame: {e}");
+        let (tx, rx) = std::sync::mpsc::sync_channel::<TranscodeInput>(64);
+        let worker_error: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let worker_error_clone = worker_error.clone();
+
+        let handle = engine
+            .runtime_api
+            .spawn_blocking(
+                "transcode-worker",
+                Box::new(move || {
+                    let mut worker = worker;
+                    while let Ok(input) = rx.recv() {
+                        if let Err(e) = worker.process(input) {
+                            warn!("transcode worker dropped frame: {e}");
+                        }
+                    }
+                    if let Err(e) = worker.flush_and_close() {
+                        warn!("transcode worker flush/close failed: {e}");
+                        *worker_error_clone.lock().unwrap() = Some(format!("{e}"));
+                    }
+                }),
+            )
+            .map_err(|e| SdkError::Internal(format!("spawn transcode worker: {e}")))?;
+
+        let media_filter = MediaFilter {
+            enable_video: video_target.is_some(),
+            enable_audio: audio_target.is_some(),
+        };
+        let subscriber_options = SubscriberOptions {
+            queue_capacity: 256,
+            backpressure: cheetah_sdk::BackpressurePolicy::DropDroppableFirst,
+            bootstrap_policy: cheetah_sdk::BootstrapPolicy::default(),
+            media_filter,
+        };
+        let mut subscriber = engine
+            .subscriber_api
+            .subscribe(source, subscriber_options)
+            .await
+            .map_err(|e| SdkError::Internal(format!("subscribe failed: {e}")))?;
+
+        loop {
+            let cancel_fut = cancel.cancelled().fuse();
+            let recv_fut = subscriber.recv().fuse();
+            pin_mut!(cancel_fut, recv_fut);
+
+            let frame = select_biased! {
+                _ = cancel_fut => break,
+                frame = recv_fut => frame,
+            };
+
+            match frame {
+                Ok(Some(frame)) => {
+                    let input = if frame.media_kind == MediaKind::Video {
+                        TranscodeInput::Video(frame)
+                    } else {
+                        TranscodeInput::Audio(frame)
+                    };
+                    if tx.try_send(input).is_err() {
+                        warn!("transcode input queue full; dropping frame");
+                        update_progress(&job, |job| job.drops += 1);
                     }
                 }
-                if let Err(e) = worker.flush_and_close() {
-                    warn!("transcode worker flush/close failed: {e}");
+                Ok(None) => break,
+                Err(e) => {
+                    warn!("transcode subscriber error: {e}");
+                    break;
                 }
-            }),
-        )
-        .map_err(|e| SdkError::Internal(format!("spawn transcode worker: {e}")))?;
-
-    let media_filter = MediaFilter {
-        enable_video: video_target.is_some(),
-        enable_audio: audio_target.is_some(),
-    };
-    let subscriber_options = SubscriberOptions {
-        queue_capacity: 256,
-        backpressure: cheetah_sdk::BackpressurePolicy::DropDroppableFirst,
-        bootstrap_policy: cheetah_sdk::BootstrapPolicy::default(),
-        media_filter,
-    };
-    let mut subscriber = engine
-        .subscriber_api
-        .subscribe(source, subscriber_options)
-        .await
-        .map_err(|e| SdkError::Internal(format!("subscribe failed: {e}")))?;
-
-    loop {
-        let cancel_fut = cancel.cancelled().fuse();
-        let recv_fut = subscriber.recv().fuse();
-        pin_mut!(cancel_fut, recv_fut);
-
-        let frame = select_biased! {
-            _ = cancel_fut => break,
-            frame = recv_fut => frame,
-        };
-
-        match frame {
-            Ok(Some(frame)) => {
-                let input = if frame.media_kind == MediaKind::Video {
-                    TranscodeInput::Video(frame)
-                } else {
-                    TranscodeInput::Audio(frame)
-                };
-                if tx.try_send(input).is_err() {
-                    warn!("transcode input queue full; dropping frame");
-                    update_progress(&job, |job| job.drops += 1);
-                }
-            }
-            Ok(None) => break,
-            Err(e) => {
-                warn!("transcode subscriber error: {e}");
-                break;
             }
         }
-    }
 
-    drop(tx);
-    let _ = handle.wait().await;
-    let _ = engine
-        .publisher_api
-        .release_publisher(&publisher_lease)
-        .await;
-    Ok(())
+        drop(tx);
+        let _ = handle.wait().await;
+        if let Some(err) = worker_error.lock().unwrap().take() {
+            return Err(SdkError::Internal(err));
+        }
+        Ok(())
+    }
+    .await;
+
+    finish_job(&finish_job_ref, result.as_ref().err());
+    let _ = publisher_api.release_publisher(&release_lease).await;
+    result
 }
 
 async fn wait_for_source_tracks(
