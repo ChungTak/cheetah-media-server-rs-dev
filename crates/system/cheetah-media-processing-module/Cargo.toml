@@ -19,6 +19,7 @@ media-processing-video = [
     "dep:avcodec",
     "avcodec?/rust-h264",
     "avcodec?/rust-h265",
+    "avcodec?/jpeg",
     "avcodec?/libyuv",
 ]
 media-processing-image = [
