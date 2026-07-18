@@ -266,6 +266,23 @@ impl MediaProcessingProvider {
         ProcessingJobId(format!("job-{ts}-{n}"))
     }
 
+    fn check_job_capacity(&self) -> MediaResult<()> {
+        let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        let running = jobs
+            .values()
+            .filter(|e| {
+                e.job.lock().unwrap_or_else(|e| e.into_inner()).state == ProcessingJobState::Running
+            })
+            .count();
+        if running >= self.config.max_concurrent_jobs as usize {
+            return Err(MediaError::unavailable(format!(
+                "max concurrent processing jobs ({}) reached",
+                self.config.max_concurrent_jobs
+            )));
+        }
+        Ok(())
+    }
+
     pub fn default_capabilities() -> MediaCapabilitySet {
         let mut set = MediaCapabilitySet::empty();
         set.add(MediaCapability::VideoProcessing, 1);
@@ -917,6 +934,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
         ctx: &MediaRequestContext,
         request: CreateProcessingJob,
     ) -> MediaResult<ProcessingJob> {
+        self.check_job_capacity()?;
         let spec = request.spec.clone();
         match &spec {
             ProcessingJobSpec::CaptionExtract { source, target, .. } => {
