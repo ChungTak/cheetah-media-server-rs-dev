@@ -424,8 +424,13 @@ impl MediaProcessingApi for MediaProcessingProvider {
                 track_selection,
                 video,
                 audio,
-                ..
+                overlays,
             } => {
+                if !overlays.is_empty() {
+                    return Err(MediaError::unsupported(
+                        "transcode overlays are not supported in this release",
+                    ));
+                }
                 self.create_transcode_job(
                     ctx,
                     request,
