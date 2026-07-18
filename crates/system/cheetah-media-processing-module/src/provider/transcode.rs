@@ -450,14 +450,14 @@ pub(crate) fn finish_job(job: &Option<Arc<Mutex<ProcessingJob>>>, last_error: Op
         let mut guard = job.lock().unwrap_or_else(|e| e.into_inner());
         let finished_at = now_ms();
         guard.finished_at = Some(finished_at);
-        guard.last_error = last_error.map(|e| e.to_string());
-        guard.updated_at = finished_at;
         if guard.state == ProcessingJobState::Running {
-            guard.state = if last_error.is_some() {
-                ProcessingJobState::Failed
+            if let Some(err) = last_error {
+                guard.last_error = Some(err.to_string());
+                guard.state = ProcessingJobState::Failed;
             } else {
-                ProcessingJobState::Stopped
-            };
+                guard.state = ProcessingJobState::Stopped;
+            }
+            guard.updated_at = finished_at;
         }
     }
 }

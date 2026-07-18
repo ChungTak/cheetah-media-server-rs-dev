@@ -1305,15 +1305,13 @@ impl CaptionExtractWorker {
             let mut guard = p.lock().unwrap_or_else(|e| e.into_inner());
             let finished_at = now_ms();
             guard.finished_at = Some(finished_at);
-            if let Some(err) = last_error {
-                guard.last_error = Some(err.to_string());
-            }
             if guard.state == ProcessingJobState::Running {
-                guard.state = if last_error.is_some() {
-                    ProcessingJobState::Failed
+                if let Some(err) = last_error {
+                    guard.last_error = Some(err.to_string());
+                    guard.state = ProcessingJobState::Failed;
                 } else {
-                    ProcessingJobState::Stopped
-                };
+                    guard.state = ProcessingJobState::Stopped;
+                }
                 guard.updated_at = finished_at;
             }
         }
