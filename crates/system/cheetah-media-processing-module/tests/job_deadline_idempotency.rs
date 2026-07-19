@@ -9,6 +9,7 @@ use cheetah_codec::{
 };
 use cheetah_config::ConfigStore;
 use cheetah_engine::EngineBuilder;
+use cheetah_media_api::auth::{MediaScope, Principal};
 use cheetah_media_api::error::MediaErrorCode;
 use cheetah_media_api::ids::MediaKey;
 use cheetah_media_api::port::MediaRequestContext;
@@ -22,7 +23,11 @@ fn ctx(idempotency_key: Option<&str>, deadline: Option<i64>) -> MediaRequestCont
     MediaRequestContext {
         request_id: cheetah_media_api::ids::RequestId("test".to_string()),
         correlation_id: None,
-        principal: None,
+        principal: Some(Principal {
+            identity: "test".to_string(),
+            scopes: vec![MediaScope::MediaRead],
+            resource_grants: Vec::new(),
+        }),
         source_adapter: "test".to_string(),
         trace_context: None,
         deadline,

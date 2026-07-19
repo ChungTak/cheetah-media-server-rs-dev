@@ -1135,8 +1135,10 @@ impl MediaProcessingProvider {
                 MediaErrorCode::Busy,
                 "idempotency operation in progress".to_string(),
             ),
-            IdempotencyError::OperationFailed(msg) => serde_json::from_str::<MediaError>(&msg)
-                .unwrap_or_else(|_| MediaError::new(MediaErrorCode::Internal, msg)),
+            IdempotencyError::OperationFailed(msg) | IdempotencyError::Retryable(msg) => {
+                serde_json::from_str::<MediaError>(&msg)
+                    .unwrap_or_else(|_| MediaError::new(MediaErrorCode::Internal, msg))
+            }
         }
     }
 
@@ -1341,14 +1343,12 @@ impl MediaProcessingApi for MediaProcessingProvider {
             .as_ref()
             .or(ctx.idempotency_key.as_ref())
             .cloned();
-        if let Some(key) = idem_key {
+        // Idempotency keys are scoped to a principal; unauthenticated callers
+        // must not share a key namespace.
+        if let (Some(key), Some(principal)) = (idem_key, ctx.principal.as_ref()) {
             let idem = self.ctx.media_services.idempotency();
-            let principal = ctx
-                .principal
-                .as_ref()
-                .map(|p| p.identity.clone())
-                .unwrap_or_default();
-            let idem_key = IdempotencyKey::new(principal, "processing.create_job", key);
+            let idem_key =
+                IdempotencyKey::new(principal.identity.clone(), "processing.create_job", key);
             let fingerprint = serde_json::to_vec(&(&request.spec, &request.deadline_ms))
                 .map(canonical_hash)
                 .map_err(|e| {
@@ -1363,7 +1363,18 @@ impl MediaProcessingApi for MediaProcessingProvider {
                     .map_err(|e| {
                         let encoded = serde_json::to_string(&e)
                             .unwrap_or_else(|_| format!("internal: {}", e));
-                        IdempotencyError::OperationFailed(encoded)
+                        if e.retryable
+                            || matches!(
+                                e.code,
+                                MediaErrorCode::Busy
+                                    | MediaErrorCode::Timeout
+                                    | MediaErrorCode::Unavailable
+                            )
+                        {
+                            IdempotencyError::Retryable(encoded)
+                        } else {
+                            IdempotencyError::OperationFailed(encoded)
+                        }
                     })
             })
             .await
