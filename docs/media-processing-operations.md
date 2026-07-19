@@ -18,13 +18,11 @@ curl -s http://localhost:8080/api/v1/processing/preflight | jq .
 
 Response fields:
 
-- `revision`: pinned `avcodec` git revision.
 - `profile`: active profile (`native-free` or `software`).
-- `operations`: list of operations with `available`, `kind`, `codec`, `reason`.
-
-An operation with `available: false` and a `reason` such as
-`NoCandidateBackendMatched` means the requested codec/operator is not compiled or
-not supported by the active profile.
+- `available`: top-level boolean, `true` only when at least one operation is ready.
+- `operations`: list of available operation names (e.g. `transcode`, `caption_extract`).
+- `diagnostics`: map of unavailable operation name -> free-form reason (feature not
+  compiled, profile unsupported, backend selection failed, etc.).
 
 ## Creating and stopping a job
 
@@ -87,13 +85,14 @@ Prometheus metrics are published by `MediaProcessingProvider`:
 - `media_processing_jobs{kind, state, profile}` — job count by state.
 - `media_processing_frames_total{direction, media, codec}` — `ingress`/`egress` frames.
 - `media_processing_bytes_total{direction, media, codec}` — `ingress`/`egress` bytes.
-- `media_processing_drops_total{reason, media}` — dropped frames/packets.
-- `media_processing_pending_total{stage}` — `input`/`output` pending count.
-- `media_processing_queue_depth{stage}` — input/output queue high watermark.
-- `media_processing_latency_ms{stage}` — `startup`, `first_output`, `drain`.
+- `media_processing_drops_total{reason=policy, media}` — dropped frames/packets.
+- `media_processing_pending_total{stage=frame}` — pending frame count.
+- `media_processing_queue_depth{stage=frame}` — queue depth (same as pending count here).
+- `media_processing_latency_ms{stage, kind, profile}` — `startup`, `first_output`, `drain`.
 - `media_processing_preflight{profile, operation}` — available capability probes.
-- `media_processing_restarts_total{reason}` — module/job restarts.
-- `media_processing_resource_reserved{kind}` — reserved slots/semaphores.
+- `media_processing_restarts_total{reason=failure}` — module/job restarts.
+- `media_processing_resource_reserved{kind=publisher|subscriber}` — reserved publisher
+  and subscriber leases.
 - `media_processing_shared_refs` — shared derived-job reference count.
 
 Labels never contain the job id, full `StreamKey`, or other high-cardinality
