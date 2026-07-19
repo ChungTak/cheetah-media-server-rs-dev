@@ -156,16 +156,27 @@ impl SortTimestamp {
 /// Stable sort key for a single resource.
 ///
 /// Ordering is `(timestamp, resource_handle)` with `resource_handle` as the
-/// final tie-breaker. A unique handle is required for every resource in the
-/// queried scope so pagination is stable.
+/// final tie-breaker. The `updated_at`/`created_at` timestamp source is not
+/// part of the ordering; only the millisecond value matters. A unique handle is
+/// required for every resource in the queried scope so pagination is stable.
 ///
 /// 单个资源的稳定排序键。排序规则为 `(timestamp, resource_handle)`，
-/// `resource_handle` 作为最终 tie-breaker。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// `resource_handle` 作为最终 tie-breaker。`updated_at`/`created_at` 来源
+/// 不影响排序位置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SortKey {
     pub timestamp: SortTimestamp,
     pub resource_handle: String,
 }
+
+impl PartialEq for SortKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.timestamp.millis() == other.timestamp.millis()
+            && self.resource_handle == other.resource_handle
+    }
+}
+
+impl Eq for SortKey {}
 
 impl SortKey {
     /// Create a new sort key using the preferred `updated_at` timestamp.
@@ -425,6 +436,14 @@ mod tests {
         assert!(a < b);
         assert!(b < c);
         assert!(c < d);
+    }
+
+    #[test]
+    fn sort_key_treats_timestamp_source_as_equal_for_ordering() {
+        let updated = SortKey::updated_at(2, "a");
+        let created = SortKey::created_at(2, "a");
+        assert_eq!(updated, created);
+        assert_eq!(updated.cmp(&created), Ordering::Equal);
     }
 
     #[test]
