@@ -31,7 +31,7 @@ pub use auth::{AuthCredentials, MediaScope, Principal};
 pub use capability::{
     MediaCapability, MediaCapabilityDescriptor, MediaCapabilityReport, MediaCapabilitySet,
 };
-pub use error::{MediaError, MediaErrorCode};
+pub use error::{EffectOutcome, FieldViolation, MediaError, MediaErrorCode};
 pub use event::MediaEvent;
 pub use fencing::ControlledResourceRef;
 pub use ids::{
