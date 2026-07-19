@@ -1135,9 +1135,8 @@ impl MediaProcessingProvider {
                 MediaErrorCode::Busy,
                 "idempotency operation in progress".to_string(),
             ),
-            IdempotencyError::OperationFailed(msg) => {
-                MediaError::new(MediaErrorCode::Internal, msg)
-            }
+            IdempotencyError::OperationFailed(msg) => serde_json::from_str::<MediaError>(&msg)
+                .unwrap_or_else(|_| MediaError::new(MediaErrorCode::Internal, msg)),
         }
     }
 
@@ -1160,13 +1159,15 @@ impl MediaProcessingProvider {
         let (job_id, job, cancel) = self.reserve_job_slot(&request, owner)?;
 
         // Cancel the job if the request deadline is reached.
-        let deadline_token =
-            deadline.cancellation_child(self.ctx.runtime_api.as_ref(), &CancellationToken::new());
-        let cancel_for_deadline = cancel.clone();
-        let _ = self.ctx.runtime_api.spawn(Box::pin(async move {
-            deadline_token.cancelled().await;
-            cancel_for_deadline.cancel();
-        }));
+        if deadline.remaining_ms().is_some() {
+            let deadline_token = deadline
+                .cancellation_child(self.ctx.runtime_api.as_ref(), &CancellationToken::new());
+            let cancel_for_deadline = cancel.clone();
+            let _ = self.ctx.runtime_api.spawn(Box::pin(async move {
+                deadline_token.cancelled().await;
+                cancel_for_deadline.cancel();
+            }));
+        }
         let spec = request.spec.clone();
         let result = match &spec {
             ProcessingJobSpec::CaptionExtract { source, target, .. } => {
@@ -1363,7 +1364,11 @@ impl MediaProcessingApi for MediaProcessingProvider {
             idem.execute(idem_key, fingerprint, ttl, || async move {
                 self.create_job_impl(ctx, request.clone())
                     .await
-                    .map_err(|e| IdempotencyError::OperationFailed(e.to_string()))
+                    .map_err(|e| {
+                        let encoded = serde_json::to_string(&e)
+                            .unwrap_or_else(|_| format!("internal: {}", e));
+                        IdempotencyError::OperationFailed(encoded)
+                    })
             })
             .await
             .map_err(Self::map_idempotency_error)
