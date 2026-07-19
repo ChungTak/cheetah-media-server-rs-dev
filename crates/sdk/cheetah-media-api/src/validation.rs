@@ -77,8 +77,13 @@ impl MediaMutationContext {
             ));
         }
 
-        let _ = self.source_signaling_node_id.as_str();
-        let _ = self.target_media_node_id.as_str();
+        if self.source_signaling_node_id.as_str().is_empty()
+            || self.target_media_node_id.as_str().is_empty()
+        {
+            return Err(MediaError::invalid_argument(
+                "source_signaling_node_id and target_media_node_id are required",
+            ));
+        }
 
         if self.operation_id.as_str().is_empty() || self.operation_step_id.as_str().is_empty() {
             return Err(MediaError::invalid_argument(
@@ -100,7 +105,7 @@ impl MediaMutationContext {
             return Err(MediaError::invalid_argument("owner_epoch must be non-zero"));
         }
 
-        Ok(ValidationStep::TenantScope)
+        Ok(ValidationStep::OwnerEpoch)
     }
 
     /// Return true if the request targets the given node instance.
@@ -233,6 +238,13 @@ impl<'a> MutationGuard<'a> {
     ///
     /// 针对已有受控资源进行校验，成功时返回下一个 generation。
     pub fn validate_against(&self, resource: &ControlledResourceRef) -> Result<ResourceGeneration> {
+        if self.ctx.target_media_node_instance_epoch != resource.node_instance_epoch {
+            return Err(MediaError::new(
+                MediaErrorCode::StaleOwner,
+                "resource node_instance_epoch does not match the request target",
+            ));
+        }
+
         if self.ctx.owner_epoch.0 < resource.owner_epoch.0 {
             return Err(MediaError::new(
                 MediaErrorCode::StaleOwner,
@@ -272,9 +284,8 @@ impl<'a> MutationGuard<'a> {
         }
 
         if self.ctx.owner_epoch.0 > resource.owner_epoch.0 {
-            // Higher epoch takeover: reset generation to 0 and let the caller
-            // bump it to 1 after the side effect is applied.
-            return Ok(ResourceGeneration(0));
+            // Higher epoch takeover: reset generation to 1 after the side effect.
+            return Ok(ResourceGeneration(1));
         }
 
         Ok(ResourceGeneration(resource.generation.0 + 1))
@@ -363,7 +374,7 @@ mod tests {
     #[test]
     fn adapter_validation_passes_for_valid_context() {
         let ctx = ctx(&node_id(), 42);
-        assert_eq!(ctx.validate_adapter().unwrap(), ValidationStep::TenantScope);
+        assert_eq!(ctx.validate_adapter().unwrap(), ValidationStep::OwnerEpoch);
     }
 
     #[test]
@@ -512,6 +523,6 @@ mod tests {
         };
         let guard = MutationGuard::new(&ctx, &node);
         let next = guard.validate_against(&resource).unwrap();
-        assert_eq!(next, ResourceGeneration(0));
+        assert_eq!(next, ResourceGeneration(1));
     }
 }
