@@ -1299,8 +1299,8 @@ impl MediaProcessingApi for MediaProcessingProvider {
         &self,
         _ctx: &MediaRequestContext,
     ) -> MediaResult<ProcessingPreflightReport> {
-        let report = crate::provider::preflight::preflight_processing(&self.ctx, &self.config())
-            .await?;
+        let report =
+            crate::provider::preflight::preflight_processing(&self.ctx, &self.config()).await?;
 
         for op in &report.operations {
             let key = format!(
