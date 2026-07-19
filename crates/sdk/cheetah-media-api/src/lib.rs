@@ -14,6 +14,7 @@ pub mod audit;
 pub mod auth;
 pub mod capability;
 pub mod command;
+pub mod cursor;
 pub mod error;
 pub mod event;
 pub mod ids;
@@ -30,6 +31,7 @@ pub use auth::{AuthCredentials, MediaScope, Principal};
 pub use capability::{
     MediaCapability, MediaCapabilityDescriptor, MediaCapabilityReport, MediaCapabilitySet,
 };
+pub use cursor::{CursorPage, CursorPageRequest, OpaqueCursor};
 pub use error::{MediaError, MediaErrorCode};
 pub use event::MediaEvent;
 pub use ids::{
