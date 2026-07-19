@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use bytes::Bytes;
 use cheetah_codec::{
@@ -179,7 +182,9 @@ async fn build_engine_with_root() -> (Arc<Engine>, PathBuf) {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("cheetah_snap_mod_{ts}"));
+    let n = TEST_DIR_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let root =
+        std::env::temp_dir().join(format!("cheetah_snap_mod_{}_{ts}_{n}", std::process::id()));
     let _ = std::fs::create_dir_all(&root);
     config
         .apply_module_patch(
