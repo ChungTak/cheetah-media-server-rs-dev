@@ -263,6 +263,28 @@ impl MediaProcessingProvider {
                     restarts: guard.restart_count as u64,
                 },
             );
+
+            let created = guard.created_at;
+            let mut record_latency = |stage: &'static str, at: i64| {
+                let lat = (at.saturating_sub(created)).max(0) as u64;
+                let key = format!(
+                    "media_processing_latency_ms{{stage={stage},kind={kind},profile={}}}",
+                    guard.profile
+                );
+                gauge_values
+                    .entry(key)
+                    .and_modify(|v| *v = (*v).max(lat))
+                    .or_insert(lat);
+            };
+            if let Some(started) = guard.started_at {
+                record_latency("startup", started);
+            }
+            if let Some(first) = guard.first_output_at {
+                record_latency("first_output", first);
+            }
+            if let Some(finished) = guard.finished_at {
+                record_latency("drain", finished);
+            }
         }
 
         gauge_values.insert("media_processing_shared_refs".to_string(), shared_refs);
@@ -669,7 +691,8 @@ impl MediaProcessingProvider {
             profile: self.config.profile.clone(),
             created_at: now,
             updated_at: now,
-            started_at: Some(now),
+            started_at: None,
+            first_output_at: None,
             finished_at: None,
             input_keys: match &request.spec {
                 ProcessingJobSpec::CaptionExtract { source, .. }
@@ -1658,7 +1681,14 @@ impl CaptionExtractWorker {
         if let Some(p) = progress {
             let mut guard = p.lock().unwrap_or_else(|e| e.into_inner());
             f(&mut guard);
-            guard.updated_at = now_ms();
+            let now = now_ms();
+            guard.updated_at = now;
+            if guard.started_at.is_none() {
+                guard.started_at = Some(now);
+            }
+            if guard.frames_out > 0 && guard.first_output_at.is_none() {
+                guard.first_output_at = Some(now);
+            }
         }
     }
 

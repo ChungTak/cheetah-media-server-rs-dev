@@ -441,7 +441,14 @@ where
     if let Some(job) = job.as_ref() {
         let mut guard = job.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut guard);
-        guard.updated_at = now_ms();
+        let now = now_ms();
+        guard.updated_at = now;
+        if guard.started_at.is_none() {
+            guard.started_at = Some(now);
+        }
+        if guard.frames_out > 0 && guard.first_output_at.is_none() {
+            guard.first_output_at = Some(now);
+        }
     }
 }
 
