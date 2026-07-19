@@ -1155,19 +1155,15 @@ impl MediaProcessingProvider {
         Self::validate_no_reserved_targets(&request.spec)?;
         self.validate_spec(&request.spec)?;
         self.authorize_create(ctx, &request.spec).await?;
+        if deadline.is_expired() {
+            return Err(MediaError::new(
+                MediaErrorCode::Timeout,
+                "request deadline exceeded".to_string(),
+            ));
+        }
         let owner = Self::owner_from_ctx(ctx);
         let (job_id, job, cancel) = self.reserve_job_slot(&request, owner)?;
 
-        // Cancel the job if the request deadline is reached.
-        if deadline.remaining_ms().is_some() {
-            let deadline_token = deadline
-                .cancellation_child(self.ctx.runtime_api.as_ref(), &CancellationToken::new());
-            let cancel_for_deadline = cancel.clone();
-            let _ = self.ctx.runtime_api.spawn(Box::pin(async move {
-                deadline_token.cancelled().await;
-                cancel_for_deadline.cancel();
-            }));
-        }
         let spec = request.spec.clone();
         let result = match &spec {
             ProcessingJobSpec::CaptionExtract { source, target, .. } => {
