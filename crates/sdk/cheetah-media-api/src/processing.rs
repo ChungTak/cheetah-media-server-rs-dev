@@ -9,7 +9,7 @@ use bytes::Bytes;
 use cheetah_codec::{AVFrame, TrackInfo};
 use serde::{Deserialize, Serialize};
 
-use crate::ids::MediaKey;
+use crate::ids::{FileHandle, MediaKey};
 use crate::image::ImageFormat;
 
 pub use crate::ids::ProcessingJobId;
@@ -275,8 +275,13 @@ pub struct Overlay {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum OverlayKind {
-    Text { text: String, font_handle: String },
-    Image { image_handle: String },
+    Text {
+        text: String,
+        font_handle: FileHandle,
+    },
+    Image {
+        image_handle: FileHandle,
+    },
 }
 
 /// Overlay position.
@@ -478,7 +483,7 @@ pub enum ImageOperation {
     },
     Text {
         text: String,
-        font_handle: String,
+        font_handle: FileHandle,
         x: i32,
         y: i32,
         size: u32,
