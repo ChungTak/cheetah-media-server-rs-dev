@@ -699,6 +699,12 @@ fn map_image_operation(
             size,
             color,
         } => {
+            if *size > config.max_overlay_font_size {
+                return Err(format!(
+                    "text font size {size} exceeds configured max_overlay_font_size {}",
+                    config.max_overlay_font_size
+                ));
+            }
             if font_handle.is_empty() {
                 return Err("text overlay requires a non-empty font_handle".to_string());
             }

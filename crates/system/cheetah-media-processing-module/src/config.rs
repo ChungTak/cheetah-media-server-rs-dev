@@ -43,7 +43,7 @@ impl Default for MediaProcessingModuleConfig {
             max_processing_overlays: 8,
             max_overlay_text_length: 1_024,
             max_overlay_font_size: 128,
-            max_video_pixel_rate: 1_000_000_000,
+            max_video_pixel_rate: 100_000_000_000,
             max_encoded_frame_bytes: 16 * 1024 * 1024,
             default_jpeg_quality: 85,
             profile: "native-free".to_string(),

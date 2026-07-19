@@ -21,10 +21,11 @@ use cheetah_codec::{
     video::{AccessUnitAssembler, AccessUnitTiming},
     AVFrame,
 };
+#[cfg(feature = "media-processing-cpu")]
 use cheetah_media_api::processing::{
-    AbrVariant, AudioMix, AudioMixInput, MosaicLayout, Overlay, OverlayKind, TrackSelection,
-    VideoMosaicInput,
+    AbrVariant, AudioMix, AudioMixInput, MosaicLayout, TrackSelection, VideoMosaicInput,
 };
+use cheetah_media_api::processing::{Overlay, OverlayKind};
 use cheetah_media_api::{
     auth::MediaScope,
     error::{MediaError, MediaErrorCode, Result as MediaResult},
@@ -465,14 +466,19 @@ impl MediaProcessingProvider {
                     cfg.max_image_width, cfg.max_image_height
                 )));
             }
-            let num = video.frame_rate_num.unwrap_or(1).max(1) as u128;
-            let den = video.frame_rate_den.unwrap_or(1).max(1) as u128;
-            let pixel_rate = (width as u128) * (height as u128) * num / den;
-            if pixel_rate > cfg.max_video_pixel_rate as u128 {
-                return Err(MediaError::invalid_argument(format!(
-                    "video target pixel rate {pixel_rate} exceeds configured limit {}",
-                    cfg.max_video_pixel_rate
-                )));
+            if let (Some(num), Some(den)) = (video.frame_rate_num, video.frame_rate_den) {
+                if den == 0 {
+                    return Err(MediaError::invalid_argument(
+                        "video target frame_rate_den must be non-zero".to_string(),
+                    ));
+                }
+                let pixel_rate = (width as u128) * (height as u128) * (num as u128) / (den as u128);
+                if pixel_rate > cfg.max_video_pixel_rate as u128 {
+                    return Err(MediaError::invalid_argument(format!(
+                        "video target pixel rate {pixel_rate} exceeds configured limit {}",
+                        cfg.max_video_pixel_rate
+                    )));
+                }
             }
         }
         Ok(())
