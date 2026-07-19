@@ -4,6 +4,10 @@ This guide covers day-to-day operation of the optional `cheetah-media-processing
 backed by `avcodec-rs`. It assumes the module is enabled; without the relevant Cargo
 features the endpoints return `Unavailable`.
 
+The HTTP routes used below are provided by the native media HTTP module
+(`cheetah-media-module`) under its `/api/v1` prefix; the media-processing module
+itself only registers a `BackgroundJob` capability and does not expose HTTP routes.
+
 ## Capability and preflight
 
 Query what the running instance can do before creating jobs:
