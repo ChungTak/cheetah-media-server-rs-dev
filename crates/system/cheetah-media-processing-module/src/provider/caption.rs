@@ -112,6 +112,20 @@ impl MediaProcessingProvider {
         }
     }
 
+    /// Current resource usage of active processing jobs.
+    ///
+    /// Used by `apply_config` to decide whether a lowered configuration bound
+    /// can be applied live or requires a module restart.
+    pub fn usage_snapshot(&self) -> crate::provider::usage::ProcessingUsageSnapshot {
+        let mut usage = crate::provider::usage::ProcessingUsageSnapshot::default();
+        let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        for entry in jobs.values() {
+            let guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
+            crate::provider::usage::usage_from_job(&guard, &mut usage);
+        }
+        usage
+    }
+
     /// Publish processing gauges/counters and zero out stale gauge keys.
     ///
     /// Counters (`*_total`) are incremented by the delta since the last publish
