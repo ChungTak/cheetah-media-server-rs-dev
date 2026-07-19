@@ -7,13 +7,14 @@
 //!
 //! `cheetah-media-api` 定义了 Cheetah 流媒体服务器使用的媒体领域端口、模型、事件和错误。
 //!
-//! 本 crate 刻意保持运行时无关：不依赖 Tokio、Axum、任何具体协议 module 或 `cheetah-sdk`。
+//! 本 crate 刻意保持运行时无关：不依赖 Tokio、Axum、任何具体 protocol module 或 `cheetah-sdk`。
 //! 它提供稳定的类型化契约，供 adapter 和 provider 实现。
 
 pub mod audit;
 pub mod auth;
 pub mod capability;
 pub mod command;
+pub mod cursor;
 pub mod error;
 pub mod event;
 pub mod fencing;
@@ -32,6 +33,7 @@ pub use auth::{AuthCredentials, MediaScope, Principal};
 pub use capability::{
     MediaCapability, MediaCapabilityDescriptor, MediaCapabilityReport, MediaCapabilitySet,
 };
+pub use cursor::{CursorPage, CursorPageRequest, OpaqueCursor};
 pub use error::{EffectOutcome, FieldViolation, MediaError, MediaErrorCode};
 pub use event::MediaEvent;
 pub use fencing::{
