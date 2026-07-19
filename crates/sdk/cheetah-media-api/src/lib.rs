@@ -28,6 +28,7 @@ pub mod output;
 pub mod port;
 pub mod processing;
 pub mod resource_filter;
+pub mod resource_view;
 pub mod subtitle;
 pub mod validation;
 pub mod webhook;
@@ -76,6 +77,7 @@ pub use processing::{
     VideoMosaicInput, VideoTarget,
 };
 pub use resource_filter::{ResourceFilter, ResourceState};
+pub use resource_view::{ControlledResourceMeta, ControlledResourceView};
 pub use subtitle::{WebVttCue, WebVttFrame};
 pub use validation::{GuardOutcome, MutationGuard, OperationIntent, ValidationStep};
 pub use webhook::{
