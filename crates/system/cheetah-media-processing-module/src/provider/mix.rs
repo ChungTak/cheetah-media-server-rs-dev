@@ -486,6 +486,7 @@ mod tests {
         };
         Arc::new(Mutex::new(ProcessingJob {
             job_id: ProcessingJobId::default(),
+            owner: None,
             spec: ProcessingJobSpec::AudioMix {
                 inputs: vec![],
                 target: MediaKey::with_default_vhost("app", "out", None).unwrap(),
