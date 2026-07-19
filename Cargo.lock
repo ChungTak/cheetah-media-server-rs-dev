@@ -1079,6 +1079,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "cheetah-media-control-plane"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cheetah-media-api",
+ "cheetah-runtime-api",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tracing",
+]
+
+[[package]]
 name = "cheetah-media-module"
 version = "0.1.0"
 dependencies = [

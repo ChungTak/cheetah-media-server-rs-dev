@@ -59,6 +59,7 @@ members = [
   "crates/system/cheetah-config",
   "crates/system/cheetah-control",
   "crates/system/cheetah-engine",
+  "crates/system/cheetah-media-control-plane",
   "crates/system/cheetah-media-module",
   "crates/system/cheetah-media-processing-module",
   "crates/system/cheetah-proxy-module",

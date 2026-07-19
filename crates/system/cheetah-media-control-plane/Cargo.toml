@@ -1,0 +1,15 @@
+[package]
+name = "cheetah-media-control-plane"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
+cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
+serde = { workspace = true }
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
