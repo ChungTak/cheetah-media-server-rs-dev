@@ -27,6 +27,7 @@ use futures::{
 use tracing::{info, warn};
 
 use crate::config::MediaProcessingModuleConfig;
+use crate::logging::log_job_lifecycle;
 use crate::provider::mixer::AudioMixer;
 
 /// Maximum number of audio sources the mixer accepts.
@@ -431,13 +432,16 @@ where
 {
     if let Some(job) = job.as_ref() {
         let mut guard = job.lock().unwrap_or_else(|e| e.into_inner());
+        let created = guard.created_at;
         f(&mut *guard);
         let now = now_ms();
-        if guard.started_at.is_none() {
+        if guard.started_at.is_none() && (guard.frames_in + guard.frames_out + guard.drops) > 0 {
             guard.started_at = Some(now);
+            log_job_lifecycle(&guard, "started", Some(now.saturating_sub(created)));
         }
         if guard.frames_out > 0 && guard.first_output_at.is_none() {
             guard.first_output_at = Some(now);
+            log_job_lifecycle(&guard, "first_output", Some(now.saturating_sub(created)));
         }
     }
 }
