@@ -27,6 +27,7 @@ use futures::{
 use tracing::{info, warn};
 
 use crate::config::MediaProcessingModuleConfig;
+use crate::logging::log_job_lifecycle;
 use crate::provider::mixer::AudioMixer;
 
 /// Maximum number of audio sources the mixer accepts.
@@ -316,6 +317,12 @@ pub async fn spawn_audio_mix_worker(
         let ts = now_ms();
         guard.updated_at = ts;
         guard.finished_at = Some(ts);
+        let stage = if guard.state == cheetah_media_api::processing::ProcessingJobState::Failed {
+            "failed"
+        } else {
+            "stopped"
+        };
+        log_job_lifecycle(&guard, stage, Some(ts.saturating_sub(guard.created_at)));
     }
 
     let _ = publisher_api.release_publisher(&publisher_lease).await;
@@ -431,13 +438,21 @@ where
 {
     if let Some(job) = job.as_ref() {
         let mut guard = job.lock().unwrap_or_else(|e| e.into_inner());
+        let created = guard.created_at;
         f(&mut *guard);
-        let now = now_ms();
-        if guard.started_at.is_none() {
-            guard.started_at = Some(now);
-        }
-        if guard.frames_out > 0 && guard.first_output_at.is_none() {
-            guard.first_output_at = Some(now);
+        let total = guard.frames_in + guard.frames_out + guard.drops;
+        let started = guard.started_at.is_none() && total > 0;
+        let first_output = guard.frames_out > 0 && guard.first_output_at.is_none();
+        if started || first_output {
+            let now = now_ms();
+            if started {
+                guard.started_at = Some(now);
+                log_job_lifecycle(&guard, "started", Some(now.saturating_sub(created)));
+            }
+            if first_output {
+                guard.first_output_at = Some(now);
+                log_job_lifecycle(&guard, "first_output", Some(now.saturating_sub(created)));
+            }
         }
     }
 }

@@ -12,7 +12,9 @@
 pub mod config;
 pub mod module;
 
+mod logging;
 mod provider;
+mod spec_labels;
 
 pub use module::{MediaProcessingModule, MediaProcessingModuleFactory};
 

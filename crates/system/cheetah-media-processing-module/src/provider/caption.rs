@@ -47,6 +47,8 @@ use futures::FutureExt;
 use tracing::{info, warn};
 
 use crate::config::MediaProcessingModuleConfig;
+use crate::logging::log_job_lifecycle;
+use crate::spec_labels::{job_kind_label, job_media_codec};
 
 #[cfg(feature = "media-processing-cpu")]
 use crate::provider::transcode::spawn_transcode_worker;
@@ -110,67 +112,6 @@ impl MediaProcessingProvider {
         }
     }
 
-    fn job_kind_label(spec: &ProcessingJobSpec) -> &'static str {
-        match spec {
-            ProcessingJobSpec::CaptionExtract { .. } => "caption",
-            #[cfg(feature = "media-processing-cpu")]
-            ProcessingJobSpec::Transcode { .. } => "transcode",
-            #[cfg(feature = "media-processing-cpu")]
-            ProcessingJobSpec::AbrLadder { .. } => "abr",
-            #[cfg(feature = "media-processing-cpu")]
-            ProcessingJobSpec::AudioMix { .. } => "mix",
-            #[cfg(feature = "media-processing-cpu")]
-            ProcessingJobSpec::VideoMosaic { .. } => "mosaic",
-            #[cfg(not(feature = "media-processing-cpu"))]
-            _ => "unknown",
-        }
-    }
-
-    fn job_primary_media_and_codec(spec: &ProcessingJobSpec) -> (&'static str, String) {
-        match spec {
-            ProcessingJobSpec::Transcode { video, audio, .. } => match (video, audio) {
-                (Some(_), Some(_)) => ("mixed", "mixed".to_string()),
-                (Some(v), None) => ("video", format!("{0:?}", v.codec).to_lowercase()),
-                (None, Some(a)) => ("audio", format!("{0:?}", a.codec).to_lowercase()),
-                (None, None) => ("none", "none".to_string()),
-            },
-            ProcessingJobSpec::AbrLadder { variants, .. } => {
-                if variants.is_empty() {
-                    ("video", "none".to_string())
-                } else if variants.iter().any(|v| v.audio.is_some()) {
-                    ("mixed", "mixed".to_string())
-                } else {
-                    let mut codecs: HashSet<String> = HashSet::new();
-                    for v in variants {
-                        codecs.insert(format!("{0:?}", v.video.codec).to_lowercase());
-                    }
-                    (
-                        "video",
-                        if codecs.len() == 1 {
-                            codecs.into_iter().next().unwrap()
-                        } else {
-                            "mixed".to_string()
-                        },
-                    )
-                }
-            }
-            ProcessingJobSpec::AudioMix { output, .. } => {
-                ("audio", format!("{0:?}", output.codec).to_lowercase())
-            }
-            ProcessingJobSpec::VideoMosaic { layout, .. } => (
-                "video",
-                format!(
-                    "{0:?}",
-                    layout
-                        .video_codec
-                        .unwrap_or(cheetah_media_api::processing::VideoCodec::H264)
-                )
-                .to_lowercase(),
-            ),
-            ProcessingJobSpec::CaptionExtract { .. } => ("video", "unknown".to_string()),
-        }
-    }
-
     /// Publish processing gauges/counters and zero out stale gauge keys.
     ///
     /// Counters (`*_total`) are incremented by the delta since the last publish
@@ -188,8 +129,8 @@ impl MediaProcessingProvider {
         for entry in jobs.values() {
             let guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
             let job_id = guard.job_id.clone();
-            let kind = Self::job_kind_label(&guard.spec);
-            let (media, codec) = Self::job_primary_media_and_codec(&guard.spec);
+            let kind = job_kind_label(&guard.spec);
+            let (media, codec) = job_media_codec(&guard.spec);
             let state = format!("{0:?}", guard.state).to_lowercase();
 
             let job_key = format!(
@@ -635,6 +576,7 @@ impl MediaProcessingProvider {
         guard.last_error = Some(error.to_string());
         guard.finished_at = Some(now);
         guard.updated_at = now;
+        log_job_lifecycle(&guard, "failed", None);
         drop(guard);
         self.jobs
             .lock()
@@ -1204,6 +1146,10 @@ impl MediaProcessingProvider {
         }
         let owner = Self::owner_from_ctx(ctx);
         let (job_id, job, cancel) = self.reserve_job_slot(&request, owner)?;
+        {
+            let guard = job.lock().unwrap_or_else(|e| e.into_inner());
+            log_job_lifecycle(&guard, "created", None);
+        }
 
         let spec = request.spec.clone();
         let result = match &spec {
@@ -1680,14 +1626,18 @@ impl CaptionExtractWorker {
     {
         if let Some(p) = progress {
             let mut guard = p.lock().unwrap_or_else(|e| e.into_inner());
+            let created = guard.created_at;
             f(&mut guard);
             let now = now_ms();
             guard.updated_at = now;
-            if guard.started_at.is_none() {
+            if guard.started_at.is_none() && (guard.frames_in + guard.frames_out + guard.drops) > 0
+            {
                 guard.started_at = Some(now);
+                log_job_lifecycle(&guard, "started", Some(now.saturating_sub(created)));
             }
             if guard.frames_out > 0 && guard.first_output_at.is_none() {
                 guard.first_output_at = Some(now);
+                log_job_lifecycle(&guard, "first_output", Some(now.saturating_sub(created)));
             }
         }
     }
@@ -1706,6 +1656,16 @@ impl CaptionExtractWorker {
                 }
                 guard.updated_at = finished_at;
             }
+            let stage = if guard.state == ProcessingJobState::Failed {
+                "failed"
+            } else {
+                "stopped"
+            };
+            log_job_lifecycle(
+                &guard,
+                stage,
+                Some(finished_at.saturating_sub(guard.created_at)),
+            );
         }
     }
 
@@ -2035,7 +1995,7 @@ mod tests {
             overlays: vec![],
         };
         assert_eq!(
-            MediaProcessingProvider::job_primary_media_and_codec(&transcode_video),
+            crate::spec_labels::job_media_codec(&transcode_video),
             ("video", "h265".to_string())
         );
 
@@ -2053,7 +2013,7 @@ mod tests {
             overlays: vec![],
         };
         assert_eq!(
-            MediaProcessingProvider::job_primary_media_and_codec(&transcode_audio),
+            crate::spec_labels::job_media_codec(&transcode_audio),
             ("audio", "opus".to_string())
         );
 
@@ -2075,7 +2035,7 @@ mod tests {
             }],
         };
         assert_eq!(
-            MediaProcessingProvider::job_primary_media_and_codec(&abr),
+            crate::spec_labels::job_media_codec(&abr),
             ("video", "h264".to_string())
         );
 
@@ -2109,7 +2069,7 @@ mod tests {
             overlays: vec![],
         };
         assert_eq!(
-            MediaProcessingProvider::job_primary_media_and_codec(&mosaic),
+            crate::spec_labels::job_media_codec(&mosaic),
             ("video", "h265".to_string())
         );
 
@@ -2127,7 +2087,7 @@ mod tests {
             },
         };
         assert_eq!(
-            MediaProcessingProvider::job_primary_media_and_codec(&mix),
+            crate::spec_labels::job_media_codec(&mix),
             ("audio", "aac".to_string())
         );
 
@@ -2140,7 +2100,7 @@ mod tests {
             },
         };
         assert_eq!(
-            MediaProcessingProvider::job_primary_media_and_codec(&caption),
+            crate::spec_labels::job_media_codec(&caption),
             ("video", "unknown".to_string())
         );
     }
