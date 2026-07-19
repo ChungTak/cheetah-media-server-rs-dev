@@ -93,11 +93,16 @@ fn apply_video_target(video: &VideoTarget, usage: &mut ProcessingUsageSnapshot) 
         usage.max_image_height = usage.max_image_height.max(h);
         // Only contribute a pixel-rate figure when the spec explicitly sets a
         // frame rate, matching the validation in `validate_video_target`.
-        if let Some(fps) = fps_from(&video.frame_rate_num, &video.frame_rate_den) {
-            let pixel_rate = (w as u64)
-                .saturating_mul(h as u64)
-                .saturating_mul(fps.max(0.0) as u64);
-            usage.max_video_pixel_rate = usage.max_video_pixel_rate.max(pixel_rate);
+        if let (Some(num), Some(den)) = (video.frame_rate_num, video.frame_rate_den) {
+            if den != 0 {
+                let pixel_rate = (w as u128)
+                    .saturating_mul(h as u128)
+                    .saturating_mul(num as u128)
+                    .saturating_div(den as u128);
+                usage.max_video_pixel_rate = usage
+                    .max_video_pixel_rate
+                    .max(pixel_rate.min(u64::MAX as u128) as u64);
+            }
         }
     }
 }
@@ -110,11 +115,16 @@ fn apply_mosaic_layout(layout: &MosaicLayout, usage: &mut ProcessingUsageSnapsho
     usage.max_image_height = usage.max_image_height.max(h);
     // Only contribute a pixel-rate figure when the spec explicitly sets a
     // frame rate, matching the validation in `validate_video_target`.
-    if let Some(fps) = fps_from(&layout.frame_rate_num, &layout.frame_rate_den) {
-        let pixel_rate = (w as u64)
-            .saturating_mul(h as u64)
-            .saturating_mul(fps.max(0.0) as u64);
-        usage.max_video_pixel_rate = usage.max_video_pixel_rate.max(pixel_rate);
+    if let (Some(num), Some(den)) = (layout.frame_rate_num, layout.frame_rate_den) {
+        if den != 0 {
+            let pixel_rate = (w as u128)
+                .saturating_mul(h as u128)
+                .saturating_mul(num as u128)
+                .saturating_div(den as u128);
+            usage.max_video_pixel_rate = usage
+                .max_video_pixel_rate
+                .max(pixel_rate.min(u64::MAX as u128) as u64);
+        }
     }
 }
 
@@ -136,14 +146,6 @@ fn apply_overlay(overlay: &Overlay, usage: &mut ProcessingUsageSnapshot) {
     if let OverlayKind::Text { text, .. } = &overlay.kind {
         let chars = text.chars().count() as u32;
         usage.max_overlay_text_length = usage.max_overlay_text_length.max(chars);
-    }
-}
-
-#[cfg(any(test, feature = "media-processing-caption"))]
-fn fps_from(num: &Option<u32>, den: &Option<u32>) -> Option<f64> {
-    match (num, den) {
-        (Some(n), Some(d)) if *d != 0 => Some(*n as f64 / *d as f64),
-        _ => None,
     }
 }
 
