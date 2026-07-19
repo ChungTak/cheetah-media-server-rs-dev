@@ -354,16 +354,58 @@ The legacy `FfmpegApi`, local process executor, FFmpeg proxy routes/configuratio
 an internal upstream backend, but that detail must not restore a Cheetah FFmpeg API or leak into
 public contracts.
 
+Preflight and capability honesty:
+
+- `MediaProcessingApi::preflight` probes each compiled profile for the requested codec
+  decode/encode pairs, image operators, audio resample/channel adaptation, flush/reset support,
+  memory domain, and buffer path.
+- `ProcessingPreflightReport` records the avcodec revision, profile, operation, availability,
+  selection trace, and reason for any failure.
+- A single failed operation removes only that operation; the provider still advertises the remaining
+  ones. If the core provider cannot initialize, module startup fails and health reports `Disabled`
+  or `Degraded` rather than treating a missing feature as an error.
+
 Observability:
 
 - `MetricsApi` exposes `inc` and `set` (gauge). `MediaProcessingProvider` publishes
   `media_processing_jobs`, `media_processing_frames_total`, `media_processing_drops_total`,
-  `media_processing_pending_total`, `media_processing_queue_depth`, `media_processing_shared_refs`,
+  `media_processing_bytes_total`, `media_processing_pending_total`,
+  `media_processing_queue_depth`, `media_processing_latency_ms`, `media_processing_shared_refs`,
   `media_processing_restarts_total`, `media_processing_resource_reserved`, and
   `media_processing_preflight` with low-cardinality labels. Stale metric keys are zeroed on each
   publish so gauges do not outlive the jobs they describe.
-- `ResourceLeakReport` includes `active_processing_job_ids`, collected by paginating through
-  `MediaProcessingApi::list_jobs` for non-terminal jobs.
+- `ResourceLeakReport` includes `active_processing_job_ids`, live blocking workers, derived
+  publishers/subscribers, shared-task references, and reserved processing resources, collected by
+  paginating through `MediaProcessingApi::list_jobs` for non-terminal jobs and querying engine
+  task/stream state.
+
+Structured lifecycle logging:
+
+- Each job emits one structured log at creation, startup, first output, drain, and terminal state.
+- Log fields include job id/kind/owner/generation, avcodec revision/profile, sanitized source/target
+  keys, codec, dimensions, memory domain, backend selection summary, latency, packet/frame/byte
+  counters, pending/drops/flushes/resets, shared refcount, terminal state, and a stable error code.
+- Raw payloads, credentials, URL parameters, and font contents are never logged. Per-frame info or
+  warn logs are avoided on the normal path; high-frequency errors are aggregated and emitted by
+  threshold.
+
+Hot config reload:
+
+- Pure upper-bound increases (max concurrent jobs, image dimensions, pixel rate, frame bytes,
+  overlay counts, etc.) are applied immediately via `ModuleConfigChange`.
+- Profile, default backend, or any bound decrease that would drop below current usage returns
+  `ModuleRestartRequired`; the engine stops and recreates the module, releasing old workers and
+  re-registering the provider. The module does not implement a private restart bypass.
+
+Fault injection and diagnostics:
+
+- `tests/fault_injection.rs` exercises backend selection failure, unsupported output codecs,
+  corrupt input packets, worker spawn failure, worker panic, output queue backpressure, deadline
+  rejection, cancellation, module restart, and engine shutdown.
+- Every scenario terminates in a stable `Stopped`/`Failed` state with a non-panicking process and an
+  empty `ResourceLeakReport`; no derived stream is left behind.
+- Runtime-level faults are injected by a `FaultRuntime` test double that overrides
+  `RuntimeApi::spawn_blocking` without modifying production code.
 
 ## 3.11 Admission API
 
