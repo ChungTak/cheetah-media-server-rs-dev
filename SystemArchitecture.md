@@ -354,6 +354,17 @@ The legacy `FfmpegApi`, local process executor, FFmpeg proxy routes/configuratio
 an internal upstream backend, but that detail must not restore a Cheetah FFmpeg API or leak into
 public contracts.
 
+Observability:
+
+- `MetricsApi` exposes `inc` and `set` (gauge). `MediaProcessingProvider` publishes
+  `media_processing_jobs`, `media_processing_frames_total`, `media_processing_drops_total`,
+  `media_processing_pending_total`, `media_processing_queue_depth`, `media_processing_shared_refs`,
+  `media_processing_restarts_total`, `media_processing_resource_reserved`, and
+  `media_processing_preflight` with low-cardinality labels. Stale metric keys are zeroed on each
+  publish so gauges do not outlive the jobs they describe.
+- `ResourceLeakReport` includes `active_processing_job_ids`, collected by paginating through
+  `MediaProcessingApi::list_jobs` for non-terminal jobs.
+
 ## 3.11 Admission API
 
 Synchronous admission decisions gate side-effecting media operations before they allocate resources.

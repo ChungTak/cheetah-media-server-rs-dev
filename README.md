@@ -40,6 +40,12 @@ cargo run -p cheetah-server --features fmp4
 cargo run -p cheetah-server --features "rtsp,http-flv,hls,fmp4"
 ```
 
+启用可选媒体处理模块（依赖 avcodec-rs，需要系统已安装 FFmpeg 和 OpenCV 开发库）：
+
+```bash
+cargo run -p cheetah-server --features media-processing
+```
+
 如果你想只启用 RTSP、禁用默认 RTMP：
 
 ```bash
@@ -52,7 +58,7 @@ cargo run -p cheetah-server --no-default-features --features rtsp
 2. 加载配置
 3. 构建 engine
 4. 启动 control 服务
-5. 按已启用的 module 启动 RTMP / RTSP 服务
+5. 按已启用的 module 启动 RTMP / RTSP / 媒体处理服务
 
 ## 2. 修改配置
 
