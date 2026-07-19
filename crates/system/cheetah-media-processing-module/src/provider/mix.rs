@@ -317,6 +317,12 @@ pub async fn spawn_audio_mix_worker(
         let ts = now_ms();
         guard.updated_at = ts;
         guard.finished_at = Some(ts);
+        let stage = if guard.state == cheetah_media_api::processing::ProcessingJobState::Failed {
+            "failed"
+        } else {
+            "stopped"
+        };
+        log_job_lifecycle(&guard, stage, Some(ts.saturating_sub(guard.created_at)));
     }
 
     let _ = publisher_api.release_publisher(&publisher_lease).await;
