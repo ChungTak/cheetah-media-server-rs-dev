@@ -96,8 +96,8 @@ fn apply_video_target(video: &VideoTarget, usage: &mut ProcessingUsageSnapshot) 
 }
 
 fn apply_mosaic_layout(layout: &MosaicLayout, usage: &mut ProcessingUsageSnapshot) {
-    let w = layout.cell_width;
-    let h = layout.cell_height;
+    let w = layout.columns.saturating_mul(layout.cell_width);
+    let h = layout.rows.saturating_mul(layout.cell_height);
     usage.max_image_width = usage.max_image_width.max(w);
     usage.max_image_height = usage.max_image_height.max(h);
     let fps = fps_from(&layout.frame_rate_num, &layout.frame_rate_den).unwrap_or(30.0);
@@ -252,9 +252,9 @@ mod tests {
         );
         assert_eq!(usage.active_jobs, 1);
         assert_eq!(usage.max_inputs, 2);
-        assert_eq!(usage.max_image_width, 640);
+        assert_eq!(usage.max_image_width, 1280);
         assert_eq!(usage.max_image_height, 360);
-        assert_eq!(usage.max_video_pixel_rate, 640 * 360 * 30);
+        assert_eq!(usage.max_video_pixel_rate, 1280 * 360 * 30);
     }
 
     #[test]
