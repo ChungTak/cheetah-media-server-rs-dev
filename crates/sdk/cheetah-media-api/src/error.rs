@@ -183,6 +183,7 @@ pub struct FieldViolation {
 ///
 /// 媒体 API 操作返回的领域错误。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "MediaErrorRepr")]
 pub struct MediaError {
     pub code: MediaErrorCode,
     pub message: StrBox,
@@ -202,6 +203,50 @@ pub struct MediaError {
     /// Field-level violations for InvalidArgument / CursorExpired responses.
     #[serde(default)]
     pub violations: Box<Vec<FieldViolation>>,
+}
+
+/// Deserialization representation that re-derives `outcome` from `code` when the
+/// field is missing, so legacy payloads are interpreted consistently with freshly
+/// constructed errors.
+///
+/// 反序列化表示：当 `outcome` 缺失时从 `code` 重新推导，保证旧 payload 与新建错误语义一致。
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct MediaErrorRepr {
+    code: MediaErrorCode,
+    message: String,
+    #[serde(default)]
+    retryable: bool,
+    #[serde(default)]
+    request_id: Option<String>,
+    #[serde(default)]
+    correlation_id: Option<String>,
+    #[serde(default)]
+    details: HashMap<String, serde_json::Value>,
+    #[serde(default)]
+    outcome: Option<EffectOutcome>,
+    #[serde(default)]
+    resource_ref: Option<Box<ControlledResourceRef>>,
+    #[serde(default)]
+    retry_after_ms: Option<u64>,
+    #[serde(default)]
+    violations: Vec<FieldViolation>,
+}
+
+impl From<MediaErrorRepr> for MediaError {
+    fn from(repr: MediaErrorRepr) -> Self {
+        Self {
+            code: repr.code,
+            message: repr.message.into_boxed_str(),
+            retryable: repr.retryable,
+            request_id: repr.request_id.map(|s| s.into_boxed_str()),
+            correlation_id: repr.correlation_id.map(|s| s.into_boxed_str()),
+            details: Box::new(repr.details),
+            outcome: repr.outcome.unwrap_or_else(|| repr.code.into()),
+            resource_ref: repr.resource_ref,
+            retry_after_ms: repr.retry_after_ms,
+            violations: Box::new(repr.violations),
+        }
+    }
 }
 
 impl MediaError {
@@ -478,5 +523,13 @@ mod tests {
     #[test]
     fn effect_outcome_default_is_unknown() {
         assert_eq!(EffectOutcome::default(), EffectOutcome::Unknown);
+    }
+
+    #[test]
+    fn legacy_error_deserializes_outcome_from_code() {
+        let json = r#"{"code":"invalid_argument","message":"bad input","retryable":false}"#;
+        let decoded: MediaError = serde_json::from_str(json).unwrap();
+        assert_eq!(decoded.code, MediaErrorCode::InvalidArgument);
+        assert_eq!(decoded.outcome, EffectOutcome::NotApplied);
     }
 }
