@@ -14,6 +14,7 @@ pub mod audit;
 pub mod auth;
 pub mod capability;
 pub mod command;
+pub mod controlled_event;
 pub mod cursor;
 pub mod error;
 pub mod event;
@@ -33,6 +34,11 @@ pub mod webhook;
 pub use auth::{AuthCredentials, MediaScope, Principal};
 pub use capability::{
     MediaCapability, MediaCapabilityDescriptor, MediaCapabilityReport, MediaCapabilitySet,
+};
+pub use controlled_event::{
+    ControlledEventHeader, ControlledEventPayload, ControlledMediaEvent, NodeLifecycle,
+    PlaybackCompleted, ProcessingCompleted, ProxyStateChanged, RecordCompleted,
+    ResourceStateChanged, RtpSessionTimeout, SnapshotCompleted, StreamOffline, StreamOnline,
 };
 pub use cursor::{CursorPage, CursorPageRequest, OpaqueCursor};
 pub use error::{EffectOutcome, FieldViolation, MediaError, MediaErrorCode};
