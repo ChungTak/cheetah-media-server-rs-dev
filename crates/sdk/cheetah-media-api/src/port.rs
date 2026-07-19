@@ -2,8 +2,10 @@ use async_trait::async_trait;
 
 use crate::auth::{AuthCredentials, Principal};
 use crate::command::*;
+use crate::credential::CredentialLease;
 use crate::error::{MediaError, Result};
 use crate::event::{MediaEvent, MediaEventSender, MediaEventSubscription};
+use crate::fencing::ControlledResourceRef;
 use crate::ids::*;
 use crate::model::{AdmissionRequest, Decision, *};
 use crate::processing::{
@@ -559,4 +561,24 @@ pub trait WebhookAdminApi: Send + Sync {
         ctx: &MediaRequestContext,
         id: &WebhookProfileId,
     ) -> Result<WebhookTestReport>;
+}
+
+/// Runtime-neutral credential exchange used by proxy/snapshot modules to obtain
+/// short-lived secrets without embedding provider details.
+///
+/// Proxy/Snapshot module 通过此接口获取短期凭据，无需嵌入 provider 细节。
+#[async_trait]
+pub trait CredentialExchangeApi: Send + Sync {
+    /// Exchange a `CredentialHandle` for a short-lived, purpose-bound lease.
+    ///
+    /// The returned `CredentialLease` is tied to the tenant, `resource_ref`,
+    /// `operation_step_id` and `purpose`; it must not be cached beyond its TTL,
+    /// reused across resources, or persisted.
+    async fn exchange(
+        &self,
+        ctx: &MediaRequestContext,
+        handle: &CredentialHandle,
+        purpose: &str,
+        resource_ref: &ControlledResourceRef,
+    ) -> Result<CredentialLease>;
 }

@@ -15,6 +15,7 @@ pub mod auth;
 pub mod capability;
 pub mod command;
 pub mod controlled_event;
+pub mod credential;
 pub mod cursor;
 pub mod error;
 pub mod event;
@@ -42,6 +43,7 @@ pub use controlled_event::{
     PlaybackCompleted, ProcessingCompleted, ProxyStateChanged, RecordCompleted,
     ResourceStateChanged, RtpSessionTimeout, SnapshotCompleted, StreamOffline, StreamOnline,
 };
+pub use credential::{CredentialLease, CredentialMaterial, CredentialPurpose};
 pub use cursor::{CursorPage, CursorPageRequest, OpaqueCursor};
 pub use error::{EffectOutcome, FieldViolation, MediaError, MediaErrorCode};
 pub use event::MediaEvent;
@@ -66,10 +68,10 @@ pub use node::{
 };
 pub use output::{EndpointState, MediaOutputEndpoint};
 pub use port::{
-    ControlAuthApi, MediaAdmissionApi, MediaControlApi, MediaFacade, MediaMutationContext,
-    MediaOutputRegistryApi, MediaProcessingApi, MediaRequestContext, MediaUrlResolverApi,
-    PlaybackApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookAdminApi,
-    WebhookApi,
+    ControlAuthApi, CredentialExchangeApi, MediaAdmissionApi, MediaControlApi, MediaFacade,
+    MediaMutationContext, MediaOutputRegistryApi, MediaProcessingApi, MediaRequestContext,
+    MediaUrlResolverApi, PlaybackApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi,
+    SnapshotApi, WebhookAdminApi, WebhookApi,
 };
 pub use processing::{
     AbrVariant, AudioCodec, AudioMix, AudioMixInput, AudioTarget, CaptionConfig,
