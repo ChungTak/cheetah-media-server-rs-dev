@@ -7,6 +7,7 @@
 //! 资源泄漏观测器。
 //! 汇总任务、流、模块与媒体会话的快照，用于验证取消、停止与重启后没有遗留运行时对象。
 
+use cheetah_media_api::auth::{MediaScope, Principal};
 use cheetah_media_api::command::SessionQuery;
 use cheetah_media_api::model::SessionState;
 use cheetah_media_api::port::MediaRequestContext;
@@ -84,7 +85,15 @@ impl ResourceLeakObserver {
                 ..Default::default()
             };
             query.clamp_page_size();
-            let ctx = MediaRequestContext::default();
+            let ctx = MediaRequestContext {
+                principal: Some(Principal {
+                    identity: "__system".to_string(),
+                    scopes: vec![MediaScope::ServerAdmin],
+                    resource_grants: Vec::new(),
+                }),
+                source_adapter: "resource-leak-observer".to_string(),
+                ..Default::default()
+            };
             let mut collected = 0u64;
             loop {
                 let mut page_query = query.clone();

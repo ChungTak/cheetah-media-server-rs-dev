@@ -542,6 +542,7 @@ mod tests {
     fn dummy_job() -> Arc<Mutex<ProcessingJob>> {
         Arc::new(Mutex::new(ProcessingJob {
             job_id: cheetah_media_api::processing::ProcessingJobId::default(),
+            owner: None,
             spec: ProcessingJobSpec::VideoMosaic {
                 inputs: vec![],
                 target: MediaKey::new("_", "app", "out", None).unwrap(),

@@ -26,7 +26,8 @@ use cheetah_media_api::processing::{
     AbrVariant, AudioMix, AudioMixInput, MosaicLayout, Overlay, TrackSelection, VideoMosaicInput,
 };
 use cheetah_media_api::{
-    error::{MediaError, Result as MediaResult},
+    auth::MediaScope,
+    error::{MediaError, MediaErrorCode, Result as MediaResult},
     ids::{MediaKey, ProcessingJobId, StreamKeyBridge},
     model::{AdmissionAction, AdmissionRequest, Decision, Page},
     port::MediaProcessingApi,
@@ -64,6 +65,10 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
         .as_millis() as i64
 }
+
+/// Reserved namespace for internally-derived streams. External API callers may not
+/// publish or create processing jobs targeting this namespace.
+const RESERVED_DERIVED_NAMESPACE: &str = "__cheetah_derived";
 
 /// In-memory handle for a running or stopped processing job.
 struct JobEntry {
@@ -312,6 +317,51 @@ impl MediaProcessingProvider {
         Ok(())
     }
 
+    fn owner_from_ctx(ctx: &MediaRequestContext) -> Option<String> {
+        ctx.principal.as_ref().map(|p| p.identity.clone())
+    }
+
+    /// Returns true if the request principal is the job owner, has server admin
+    /// scope, or holds a `MediaControl` resource grant for one of the job's keys.
+    fn job_accessible(&self, job: &ProcessingJob, ctx: &MediaRequestContext) -> bool {
+        match (&job.owner, &ctx.principal) {
+            (None, None) => true,
+            (Some(owner), Some(principal)) if owner == &principal.identity => true,
+            (_, Some(principal)) if principal.has_scope(&MediaScope::ServerAdmin) => true,
+            (_, Some(principal)) => {
+                let scope = &MediaScope::MediaControl;
+                job.input_keys
+                    .iter()
+                    .chain(&job.output_keys)
+                    .any(|key| principal.authorizes(scope, Some(key)))
+            }
+            _ => false,
+        }
+    }
+
+    /// Reject external job requests that target the reserved derived-stream
+    /// namespace. Internal/auto tasks are expected to use the provider directly.
+    fn validate_no_reserved_targets(spec: &ProcessingJobSpec) -> MediaResult<()> {
+        let targets: Vec<&MediaKey> = match spec {
+            ProcessingJobSpec::CaptionExtract { target, .. }
+            | ProcessingJobSpec::Transcode { target, .. }
+            | ProcessingJobSpec::AudioMix { target, .. }
+            | ProcessingJobSpec::VideoMosaic { target, .. } => vec![target],
+            ProcessingJobSpec::AbrLadder { variants, .. } => {
+                variants.iter().map(|v| &v.target).collect()
+            }
+        };
+        for target in targets {
+            let (namespace, _) = StreamKeyBridge::to_namespace_path(target);
+            if namespace == RESERVED_DERIVED_NAMESPACE {
+                return Err(MediaError::invalid_argument(format!(
+                    "processing job target uses reserved namespace '{RESERVED_DERIVED_NAMESPACE}'"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     fn new_job_id(&self) -> ProcessingJobId {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -324,6 +374,7 @@ impl MediaProcessingProvider {
     fn reserve_job_slot(
         &self,
         request: &CreateProcessingJob,
+        owner: Option<String>,
     ) -> MediaResult<(
         ProcessingJobId,
         Arc<Mutex<ProcessingJob>>,
@@ -343,9 +394,11 @@ impl MediaProcessingProvider {
             )));
         }
 
-        let job = Arc::new(Mutex::new(
-            self.build_job(request, ProcessingJobState::Running),
-        ));
+        let job = Arc::new(Mutex::new(self.build_job(
+            request,
+            ProcessingJobState::Running,
+            owner,
+        )));
         let cancel = CancellationToken::new();
         let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
         jobs.insert(
@@ -412,7 +465,12 @@ impl MediaProcessingProvider {
         }
     }
 
-    fn build_job(&self, request: &CreateProcessingJob, state: ProcessingJobState) -> ProcessingJob {
+    fn build_job(
+        &self,
+        request: &CreateProcessingJob,
+        state: ProcessingJobState,
+        owner: Option<String>,
+    ) -> ProcessingJob {
         let now = now_ms();
         ProcessingJob {
             job_id: self.new_job_id(),
@@ -444,6 +502,7 @@ impl MediaProcessingProvider {
                 ProcessingJobSpec::AudioMix { target, .. } => vec![target.clone()],
                 ProcessingJobSpec::VideoMosaic { target, .. } => vec![target.clone()],
             },
+            owner,
             ref_count: 1,
             restart_count: 0,
             frames_in: 0,
@@ -985,7 +1044,9 @@ impl MediaProcessingApi for MediaProcessingProvider {
         ctx: &MediaRequestContext,
         request: CreateProcessingJob,
     ) -> MediaResult<ProcessingJob> {
-        let (job_id, job, cancel) = self.reserve_job_slot(&request)?;
+        Self::validate_no_reserved_targets(&request.spec)?;
+        let owner = Self::owner_from_ctx(ctx);
+        let (job_id, job, cancel) = self.reserve_job_slot(&request, owner)?;
         let spec = request.spec.clone();
         let result = match &spec {
             ProcessingJobSpec::CaptionExtract { source, target, .. } => {
@@ -1098,18 +1159,26 @@ impl MediaProcessingApi for MediaProcessingProvider {
 
     async fn get_job(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         id: &ProcessingJobId,
     ) -> MediaResult<ProcessingJob> {
         let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
-        jobs.get(id)
+        let job = jobs
+            .get(id)
             .map(|e| e.job.lock().unwrap_or_else(|e| e.into_inner()).clone())
-            .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))
+            .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))?;
+        if !self.job_accessible(&job, ctx) {
+            return Err(MediaError::new(
+                MediaErrorCode::PermissionDenied,
+                format!("job {id} not accessible"),
+            ));
+        }
+        Ok(job)
     }
 
     async fn list_jobs(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         mut query: ProcessingJobQuery,
     ) -> MediaResult<Page<ProcessingJob>> {
         query.clamp_page_size();
@@ -1117,6 +1186,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
         let mut items: Vec<ProcessingJob> = jobs
             .values()
             .map(|e| e.job.lock().unwrap_or_else(|e| e.into_inner()).clone())
+            .filter(|j| self.job_accessible(j, ctx))
             .filter(|j| {
                 query.state.is_none_or(|s| j.state == s)
                     && query.vhost.as_ref().is_none_or(|v| {
@@ -1166,13 +1236,19 @@ impl MediaProcessingApi for MediaProcessingProvider {
 
     async fn stop_job(
         &self,
-        _ctx: &MediaRequestContext,
+        ctx: &MediaRequestContext,
         id: &ProcessingJobId,
     ) -> MediaResult<ProcessingJob> {
         let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         let entry = jobs
             .get_mut(id)
             .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))?;
+        if !self.job_accessible(&entry.job.lock().unwrap_or_else(|e| e.into_inner()), ctx) {
+            return Err(MediaError::new(
+                MediaErrorCode::PermissionDenied,
+                format!("job {id} not accessible"),
+            ));
+        }
         entry.cancel.cancel();
         let mut guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
         guard.state = ProcessingJobState::Stopped;
@@ -1180,15 +1256,17 @@ impl MediaProcessingApi for MediaProcessingProvider {
         Ok(guard.clone())
     }
 
-    async fn delete_job(
-        &self,
-        _ctx: &MediaRequestContext,
-        id: &ProcessingJobId,
-    ) -> MediaResult<()> {
+    async fn delete_job(&self, ctx: &MediaRequestContext, id: &ProcessingJobId) -> MediaResult<()> {
         let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         let entry = jobs
             .get_mut(id)
             .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))?;
+        if !self.job_accessible(&entry.job.lock().unwrap_or_else(|e| e.into_inner()), ctx) {
+            return Err(MediaError::new(
+                MediaErrorCode::PermissionDenied,
+                format!("job {id} not accessible"),
+            ));
+        }
         entry.cancel.cancel();
         jobs.remove(id);
         Ok(())

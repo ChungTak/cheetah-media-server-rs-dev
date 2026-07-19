@@ -326,6 +326,8 @@ pub enum ProcessingJobState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProcessingJob {
     pub job_id: ProcessingJobId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
     pub spec: ProcessingJobSpec,
     pub state: ProcessingJobState,
     pub generation: u64,

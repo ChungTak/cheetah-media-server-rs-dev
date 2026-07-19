@@ -27,6 +27,7 @@ use cheetah_hls_driver_tokio::{
     HlsDriverConfig, HlsDriverEvent, HlsServerHandle,
 };
 use cheetah_sdk::media_api::{
+    auth::{MediaScope, Principal},
     ids::{MediaKey, StreamKeyBridge},
     port::MediaRequestContext,
     processing::{
@@ -48,6 +49,20 @@ use crate::config::HlsModuleConfig;
 use crate::muxer::{MuxerOutput, StreamMuxer, StreamMuxerConfig};
 
 const MODULE_ID: &str = "hls";
+
+/// Request context used for internal HLS module calls that need to enumerate
+/// all processing jobs regardless of tenant ownership.
+fn admin_request_context() -> MediaRequestContext {
+    MediaRequestContext {
+        principal: Some(Principal {
+            identity: "__system".to_string(),
+            scopes: vec![MediaScope::ServerAdmin],
+            resource_grants: Vec::new(),
+        }),
+        source_adapter: "hls-module".to_string(),
+        ..Default::default()
+    }
+}
 
 /// A blocking playlist request waiting for a specific MSN/Part.
 ///
@@ -2281,7 +2296,7 @@ async fn run_caption_subscriber(
     const DISCOVERY_INTERVAL_US: u64 = 2_000_000;
     const SUBSCRIBE_RETRY_INTERVAL_MS: u64 = 200;
     const SUBSCRIBE_RETRY_TOTAL: usize = 30;
-    let ctx = MediaRequestContext::default();
+    let ctx = admin_request_context();
 
     while !cancel.is_cancelled() {
         // Discovery loop: wait for a running CaptionExtract job whose source matches.
@@ -3135,7 +3150,7 @@ async fn collect_abr_variants(
     };
     query.clamp_page_size();
 
-    let ctx = MediaRequestContext::default();
+    let ctx = admin_request_context();
     let page = match processing_api.list_jobs(&ctx, query).await {
         Ok(p) => p,
         Err(e) => {
