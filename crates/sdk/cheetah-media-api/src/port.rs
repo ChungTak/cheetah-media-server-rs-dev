@@ -29,6 +29,11 @@ pub struct MediaRequestContext {
     /// Idempotency key supplied by the client for create operations.
     /// Only used by routes that start tasks, sessions, proxies, etc.
     pub idempotency_key: Option<String>,
+    /// Cluster signaling context for control-plane mutations and reads.
+    ///
+    /// Local adapters do not populate this; they use `source_adapter` and the
+    /// principal to identify ownership.
+    pub mutation: Option<MediaMutationContext>,
 }
 
 impl Default for MediaRequestContext {
@@ -41,8 +46,30 @@ impl Default for MediaRequestContext {
             trace_context: None,
             deadline: None,
             idempotency_key: None,
+            mutation: None,
         }
     }
+}
+
+/// Cluster control-plane context carried inside a [`MediaRequestContext`].
+///
+/// Required for all cluster-side mutations and reads: it identifies the tenant,
+/// signaling source node, target node/instance, operation, and contract version.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaMutationContext {
+    pub tenant_id: TenantId,
+    pub message_id: MessageId,
+    pub source_signaling_node_id: MediaNodeId,
+    pub owner_epoch: OwnerEpoch,
+    pub target_media_node_id: MediaNodeId,
+    pub target_media_node_instance_epoch: MediaNodeInstanceEpoch,
+    pub operation_id: OperationId,
+    pub operation_step_id: OperationStepId,
+    pub media_session_id: Option<MediaSessionId>,
+    pub media_binding_id: Option<MediaBindingId>,
+    pub contract_version: String,
+    pub traceparent: Option<String>,
+    pub tracestate: Option<String>,
 }
 
 /// Framework-neutral authentication and authorization API for control-plane
