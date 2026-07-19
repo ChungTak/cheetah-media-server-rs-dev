@@ -516,7 +516,7 @@ mod tests {
             },
             state: ProcessingJobState::Running,
             generation: 0,
-            profile: "software".to_string(),
+            profile: "native-free".to_string(),
             created_at: 0,
             updated_at: 0,
             started_at: None,
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn run_mixer_stops_when_publisher_closed() {
         let mut config = MediaProcessingModuleConfig::default();
-        config.profile = "software".to_string();
+        config.profile = "native-free".to_string();
 
         let inputs = vec![
             AudioMixInput {
@@ -633,7 +633,7 @@ mod tests {
     #[test]
     fn run_mixer_counts_dropped_by_policy_and_finishes() {
         let mut config = MediaProcessingModuleConfig::default();
-        config.profile = "software".to_string();
+        config.profile = "native-free".to_string();
 
         let inputs = vec![
             AudioMixInput {

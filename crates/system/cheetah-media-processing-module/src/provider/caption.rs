@@ -80,6 +80,16 @@ struct JobEntry {
     handle: Option<Box<dyn cheetah_sdk::JoinHandle>>,
 }
 
+/// Result of atomically attaching to a shared job or reserving a new slot.
+enum ReserveOrAttach {
+    Attached(Box<ProcessingJob>),
+    Reserved {
+        job_id: ProcessingJobId,
+        job: Arc<Mutex<ProcessingJob>>,
+        cancel: CancellationToken,
+    },
+}
+
 /// `MediaProcessingApi` provider for caption extraction and stream transcoding jobs.
 pub struct MediaProcessingProvider {
     ctx: EngineContext,
@@ -424,19 +434,29 @@ impl MediaProcessingProvider {
                 }
             }
             ProcessingJobSpec::Transcode {
-                video, overlays, ..
+                video,
+                audio,
+                overlays,
+                ..
             } => {
                 if let Some(video) = video {
                     self.validate_video_target(video)?;
+                }
+                if let Some(audio) = audio {
+                    self.validate_audio_target(audio)?;
                 }
                 self.validate_overlays(overlays)?;
             }
             ProcessingJobSpec::AbrLadder { variants, .. } => {
                 for variant in variants {
                     self.validate_video_target(&variant.video)?;
+                    if let Some(audio) = &variant.audio {
+                        self.validate_audio_target(audio)?;
+                    }
                 }
             }
-            ProcessingJobSpec::AudioMix { inputs, .. } => {
+            ProcessingJobSpec::AudioMix { inputs, output, .. } => {
+                self.validate_audio_target(output)?;
                 if inputs.len() > cfg.max_processing_inputs as usize {
                     return Err(MediaError::invalid_argument(format!(
                         "audio mix inputs exceed max_processing_inputs ({})",
@@ -491,6 +511,24 @@ impl MediaProcessingProvider {
             }
         }
         Ok(())
+    }
+
+    fn validate_audio_target(
+        &self,
+        audio: &cheetah_media_api::processing::AudioTarget,
+    ) -> MediaResult<()> {
+        use cheetah_media_api::processing::AudioCodec;
+        match audio.codec {
+            // Encode targets supported by the native-free + software audio matrix.
+            AudioCodec::G711A | AudioCodec::G711U | AudioCodec::Aac | AudioCodec::Opus => Ok(()),
+            // MP3 encode is not implemented (decode-only via software/FFmpeg when present).
+            AudioCodec::Mp3 => Err(MediaError::unsupported(
+                "MP3 encode is not supported; use AAC/Opus/G711 as output codec (MP3→Opus decode requires software profile)",
+            )),
+            AudioCodec::Pcm => Err(MediaError::unsupported(
+                "PCM audio target is not supported for processing jobs",
+            )),
+        }
     }
 
     fn validate_mosaic_layout(
@@ -553,17 +591,41 @@ impl MediaProcessingProvider {
         ProcessingJobId(format!("job-{ts}-{n}"))
     }
 
-    fn reserve_job_slot(
+    /// Attach to a shared Running job or reserve a new slot under one lock.
+    ///
+    /// Attach and create used to be separate critical sections, which allowed two
+    /// concurrent identical fingerprints to both miss attach and spawn duplicate workers.
+    fn reserve_or_attach_job(
         &self,
         request: &CreateProcessingJob,
         owner: Option<String>,
-    ) -> MediaResult<(
-        ProcessingJobId,
-        Arc<Mutex<ProcessingJob>>,
-        CancellationToken,
-    )> {
+    ) -> MediaResult<ReserveOrAttach> {
         let cfg = self.config();
         let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+
+        if let Some(key) = Self::shareable_transcode_key(&request.spec) {
+            for entry in jobs.values() {
+                let mut guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
+                if guard.state != ProcessingJobState::Running {
+                    continue;
+                }
+                let Some(existing_key) = Self::shareable_transcode_key(&guard.spec) else {
+                    continue;
+                };
+                if existing_key != key {
+                    continue;
+                }
+                guard.ref_count = guard.ref_count.saturating_add(1);
+                guard.updated_at = now_ms();
+                info!(
+                    job_id = %guard.job_id,
+                    ref_count = guard.ref_count,
+                    "attached to shared processing job"
+                );
+                return Ok(ReserveOrAttach::Attached(Box::new(guard.clone())));
+            }
+        }
+
         let running = jobs
             .values()
             .filter(|e| {
@@ -592,7 +654,11 @@ impl MediaProcessingProvider {
                 handle: None,
             },
         );
-        Ok((job_id, job, cancel))
+        Ok(ReserveOrAttach::Reserved {
+            job_id,
+            job,
+            cancel,
+        })
     }
 
     fn fail_reserved_job(
@@ -617,12 +683,28 @@ impl MediaProcessingProvider {
 
     pub fn default_capabilities() -> MediaCapabilitySet {
         let mut set = MediaCapabilitySet::empty();
-        set.add(MediaCapability::VideoProcessing, 1);
-        set.set_reason(
-            MediaCapability::VideoProcessing,
-            "caption extraction / video transcode / abr ladder",
-        );
-        #[cfg(feature = "media-processing-cpu")]
+        #[cfg(feature = "media-processing-caption")]
+        {
+            // Caption extraction is available whenever the caption feature is on.
+            // Video transcode/ABR require the CPU convenience set (or full video path).
+            #[cfg(feature = "media-processing-cpu")]
+            {
+                set.add(MediaCapability::VideoProcessing, 1);
+                set.set_reason(
+                    MediaCapability::VideoProcessing,
+                    "caption extraction / video transcode / abr ladder / video mosaic",
+                );
+            }
+            #[cfg(not(feature = "media-processing-cpu"))]
+            {
+                set.add(MediaCapability::VideoProcessing, 1);
+                set.set_reason(
+                    MediaCapability::VideoProcessing,
+                    "caption extraction (CEA → WebVTT)",
+                );
+            }
+        }
+        #[cfg(all(feature = "media-processing-cpu", feature = "media-processing-audio"))]
         {
             set.add(MediaCapability::AudioProcessing, 1);
             set.set_reason(
@@ -631,6 +713,27 @@ impl MediaProcessingProvider {
             );
         }
         set
+    }
+
+    /// Fingerprint used to share auto-derived transcode jobs across consumers.
+    ///
+    /// Target MediaKey is intentionally excluded so protocol modules that pick
+    /// different stream names for the same conversion still attach to one worker.
+    fn shareable_transcode_key(spec: &ProcessingJobSpec) -> Option<String> {
+        match spec {
+            ProcessingJobSpec::Transcode {
+                source,
+                track_selection,
+                audio,
+                video,
+                overlays,
+                ..
+            } if overlays.is_empty() => Some(format!(
+                "transcode|{}|{:?}|{:?}|{:?}",
+                source, track_selection, audio, video
+            )),
+            _ => None,
+        }
     }
 
     async fn source_has_video(&self, source: &MediaKey) -> MediaResult<bool> {
@@ -1175,8 +1278,19 @@ impl MediaProcessingProvider {
                 "request deadline exceeded".to_string(),
             ));
         }
+        // Reuse or reserve under one lock so concurrent creates cannot double-spawn.
+        // Callers must publish/subscribe via the returned job's output_keys when attached.
         let owner = Self::owner_from_ctx(ctx);
-        let (job_id, job, cancel) = self.reserve_job_slot(&request, owner)?;
+        let (job_id, job, cancel) = match self.reserve_or_attach_job(&request, owner)? {
+            ReserveOrAttach::Attached(shared) => {
+                return Ok(((*shared).clone(), Some(shared.job_id.to_string())));
+            }
+            ReserveOrAttach::Reserved {
+                job_id,
+                job,
+                cancel,
+            } => (job_id, job, cancel),
+        };
         {
             let guard = job.lock().unwrap_or_else(|e| e.into_inner());
             log_job_lifecycle(&guard, "created", None);
@@ -1206,8 +1320,11 @@ impl MediaProcessingProvider {
                 overlays,
             } => {
                 if !overlays.is_empty() {
+                    // Streaming video watermark is not wired into the decode→encode
+                    // path yet. Static ImageProcessApi Text/Blend remains available
+                    // for JPEG snapshots and offline process.
                     Err(MediaError::unsupported(
-                        "transcode overlays are not supported in this release",
+                        "streaming transcode overlays are not supported; use ImageProcessApi for static JPEG watermark, or omit overlays for stream transcode",
                     ))
                 } else {
                     self.create_transcode_job(
@@ -1455,36 +1572,80 @@ impl MediaProcessingApi for MediaProcessingProvider {
         ctx: &MediaRequestContext,
         id: &ProcessingJobId,
     ) -> MediaResult<ProcessingJob> {
-        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = jobs
-            .get_mut(id)
-            .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))?;
-        if !self.job_accessible(&entry.job.lock().unwrap_or_else(|e| e.into_inner()), ctx) {
-            return Err(MediaError::new(
-                MediaErrorCode::PermissionDenied,
-                format!("job {id} not accessible"),
-            ));
+        let (snapshot, handle) = {
+            let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+            let entry = jobs
+                .get_mut(id)
+                .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))?;
+            if !self.job_accessible(&entry.job.lock().unwrap_or_else(|e| e.into_inner()), ctx) {
+                return Err(MediaError::new(
+                    MediaErrorCode::PermissionDenied,
+                    format!("job {id} not accessible"),
+                ));
+            }
+            let mut guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
+            if guard.ref_count > 1 {
+                guard.ref_count -= 1;
+                guard.updated_at = now_ms();
+                info!(
+                    job_id = %id,
+                    ref_count = guard.ref_count,
+                    "released shared processing job reference"
+                );
+                return Ok(guard.clone());
+            }
+            guard.ref_count = 0;
+            guard.state = ProcessingJobState::Stopped;
+            guard.updated_at = now_ms();
+            let snapshot = guard.clone();
+            drop(guard);
+            entry.cancel.cancel();
+            // Take the join handle so we can wait for worker cleanup outside the lock.
+            (snapshot, entry.handle.take())
+        };
+        if let Some(handle) = handle {
+            let _ = handle.wait().await;
         }
-        entry.cancel.cancel();
-        let mut guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
-        guard.state = ProcessingJobState::Stopped;
-        guard.updated_at = now_ms();
-        Ok(guard.clone())
+        Ok(snapshot)
     }
 
     async fn delete_job(&self, ctx: &MediaRequestContext, id: &ProcessingJobId) -> MediaResult<()> {
-        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = jobs
-            .get_mut(id)
-            .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))?;
-        if !self.job_accessible(&entry.job.lock().unwrap_or_else(|e| e.into_inner()), ctx) {
-            return Err(MediaError::new(
-                MediaErrorCode::PermissionDenied,
-                format!("job {id} not accessible"),
-            ));
+        let handle = {
+            let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+            let entry = jobs
+                .get_mut(id)
+                .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))?;
+            if !self.job_accessible(&entry.job.lock().unwrap_or_else(|e| e.into_inner()), ctx) {
+                return Err(MediaError::new(
+                    MediaErrorCode::PermissionDenied,
+                    format!("job {id} not accessible"),
+                ));
+            }
+            {
+                let mut guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
+                if guard.ref_count > 1 {
+                    guard.ref_count -= 1;
+                    guard.updated_at = now_ms();
+                    info!(
+                        job_id = %id,
+                        ref_count = guard.ref_count,
+                        "released shared processing job reference on delete"
+                    );
+                    return Ok(());
+                }
+                guard.ref_count = 0;
+                guard.state = ProcessingJobState::Stopped;
+                guard.updated_at = now_ms();
+            }
+            entry.cancel.cancel();
+            let handle = entry.handle.take();
+            jobs.remove(id);
+            handle
+        };
+        // Wait for the feeder/worker to release publisher leases before returning.
+        if let Some(handle) = handle {
+            let _ = handle.wait().await;
         }
-        entry.cancel.cancel();
-        jobs.remove(id);
         Ok(())
     }
 }

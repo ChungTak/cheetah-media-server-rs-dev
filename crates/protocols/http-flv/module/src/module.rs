@@ -508,13 +508,36 @@ async fn run_play_session(
         return;
     };
 
+    // Auto-derive H.264/AAC when source is not already FLV-playable; share job with RTMP play.
+    let mut play_stream_key = stream_key.clone();
+    let mut processing_job_id = None;
+    match crate::processing::ensure_derived_play_source(&engine, stream_key.clone(), &cancel).await
+    {
+        Ok(derived) => {
+            play_stream_key = derived.stream_key;
+            processing_job_id = derived.processing_job_id;
+            if processing_job_id.is_some() {
+                if let Ok(Some(derived_snapshot)) =
+                    engine.stream_manager_api.get_stream(&play_stream_key).await
+                {
+                    if !derived_snapshot.tracks.is_empty() {
+                        snapshot = derived_snapshot;
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            warn!(%stream_key, %connection_id, %err, "http-flv derived play source failed; using source");
+        }
+    }
+
     let queue_capacity = config
         .subscriber_queue_capacity
         .max(config.bootstrap_max_frames.max(1));
     let mut subscriber = match engine
         .subscriber_api
         .subscribe(
-            stream_key.clone(),
+            play_stream_key.clone(),
             SubscriberOptions {
                 queue_capacity,
                 backpressure: config.subscriber_backpressure,
@@ -526,7 +549,10 @@ async fn run_play_session(
     {
         Ok(subscriber) => subscriber,
         Err(err) => {
-            warn!(%stream_key, %connection_id, %err, "http-flv subscribe failed");
+            if let Some(job_id) = processing_job_id.take() {
+                crate::processing::stop_derived_job(&engine, job_id).await;
+            }
+            warn!(%play_stream_key, %connection_id, %err, "http-flv subscribe failed");
             let _ = command_tx.close_connection(connection_id).await;
             return;
         }
@@ -543,6 +569,9 @@ async fn run_play_session(
     .is_err()
     {
         let _ = subscriber.close().await;
+        if let Some(job_id) = processing_job_id.take() {
+            crate::processing::stop_derived_job(&engine, job_id).await;
+        }
         return;
     }
 
@@ -559,7 +588,7 @@ async fn run_play_session(
             Ok(Some(frame)) => {
                 if frame.is_key_frame() {
                     if let Ok(Some(next_snapshot)) =
-                        engine.stream_manager_api.get_stream(&stream_key).await
+                        engine.stream_manager_api.get_stream(&play_stream_key).await
                     {
                         if next_snapshot.tracks != snapshot.tracks {
                             snapshot = next_snapshot;
@@ -583,7 +612,7 @@ async fn run_play_session(
                     map_frame_to_rtmp_flv_payload(frame.as_ref(), play_mode, &snapshot.tracks);
                 if payload.is_none() {
                     if let Ok(Some(next_snapshot)) =
-                        engine.stream_manager_api.get_stream(&stream_key).await
+                        engine.stream_manager_api.get_stream(&play_stream_key).await
                     {
                         snapshot = next_snapshot;
                         payload = map_frame_to_rtmp_flv_payload(
@@ -616,13 +645,16 @@ async fn run_play_session(
             }
             Ok(None) => break,
             Err(err) => {
-                warn!(%stream_key, %connection_id, %err, "http-flv subscriber recv failed");
+                warn!(%play_stream_key, %connection_id, %err, "http-flv subscriber recv failed");
                 break;
             }
         }
     }
 
     let _ = subscriber.close().await;
+    if let Some(job_id) = processing_job_id.take() {
+        crate::processing::stop_derived_job(&engine, job_id).await;
+    }
     let _ = command_tx.close_connection(connection_id).await;
 }
 

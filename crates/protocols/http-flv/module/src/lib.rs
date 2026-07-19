@@ -13,6 +13,7 @@ pub mod module;
 /// HTTP-FLV 拉流客户端与监管器。
 pub mod pull;
 
+pub(crate) mod processing;
 pub(crate) mod route;
 pub(crate) mod session;
 

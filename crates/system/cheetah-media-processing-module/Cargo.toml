@@ -8,12 +8,18 @@ description = "Media processing module: image/audio/video transcoding, snapshot,
 [features]
 default = []
 
+# Marker feature enabling the MediaProcessingApi job registry (transcode/mix/…).
+# Enabled transitively by audio, video, caption, or the cpu convenience set.
+media-processing-jobs = []
+
 media-processing-audio = [
     "dep:avcodec",
     "avcodec?/g711",
     "avcodec?/opus",
     "avcodec?/fdk-aac",
     "avcodec?/audio-resample-rubato",
+    "media-processing-jobs",
+    "media-processing-caption",
 ]
 media-processing-video = [
     "dep:avcodec",
@@ -21,6 +27,8 @@ media-processing-video = [
     "avcodec?/rust-h265",
     "avcodec?/jpeg",
     "avcodec?/libyuv",
+    "media-processing-jobs",
+    "media-processing-caption",
 ]
 media-processing-image = [
     "dep:avcodec",
@@ -39,15 +47,23 @@ media-processing-image-overlay = [
 avcodec-profile-native-free = ["avcodec?/profile-native-free"]
 avcodec-profile-software = ["avcodec?/profile-software"]
 
-media-processing-caption = ["cheetah-codec/cea"]
+# Caption/CEA extraction; also pulls in the job registry used by stream jobs.
+media-processing-caption = ["cheetah-codec/cea", "media-processing-jobs"]
 
+# Single-stream + job convenience set without optional OpenCV/Software deps.
+# OpenCV blend and FFmpeg software backends are opt-in (see media-processing-full).
 media-processing-cpu = [
     "media-processing-audio",
     "media-processing-video",
     "media-processing-image",
-    "media-processing-image-overlay",
     "media-processing-caption",
     "avcodec-profile-native-free",
+]
+
+# Full product matrix: CPU set + OpenCV overlay + software profile backends.
+media-processing-full = [
+    "media-processing-cpu",
+    "media-processing-image-overlay",
     "avcodec-profile-software",
 ]
 

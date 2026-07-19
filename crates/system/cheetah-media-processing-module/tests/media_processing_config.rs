@@ -41,10 +41,17 @@ async fn profile_change_requires_module_restart() {
     let engine = make_engine_with_config(config.clone());
     engine.start().await.expect("engine start");
 
+    // software profile is only valid when avcodec-profile-software is compiled.
+    // When it is not, lowering max_encoded_frame_bytes still forces a restart.
+    let patch = if cfg!(feature = "avcodec-profile-software") {
+        json!({ "profile": "software" })
+    } else {
+        json!({ "max_encoded_frame_bytes": 1024 })
+    };
     let outcome = config
         .apply_module_patch(
             &ModuleId::new("media-processing"),
-            json!({ "profile": "software" }),
+            patch,
             ConfigEffect::ModuleRestartRequired,
         )
         .expect("patch config");

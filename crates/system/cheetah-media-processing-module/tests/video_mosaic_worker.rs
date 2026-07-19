@@ -39,7 +39,7 @@ fn encode_source_clip(width: u32, height: u32, fps: u32, count: usize) -> Vec<AV
     let sdk = VideoSdk::new().expect("video sdk");
     let mut encoder = sdk
         .create_encoder(
-            VideoProfile::Software,
+            VideoProfile::NativeFree,
             VideoEncoderRequest {
                 codec: AvCodecId::H264,
                 width,
@@ -173,7 +173,7 @@ async fn video_mosaic_job_publishes_decodable_output_and_releases_lease_on_stop(
     let config = Arc::new(ConfigStore::new());
     config.set_global_default(serde_json::json!({}));
     let module_config = MediaProcessingModuleConfig {
-        profile: "software".to_string(),
+        profile: "native-free".to_string(),
         ..Default::default()
     };
     config.register_module_default(
@@ -294,7 +294,7 @@ async fn video_mosaic_job_publishes_decodable_output_and_releases_lease_on_stop(
     let sdk = VideoSdk::new().expect("video sdk");
     let mut decoder = sdk
         .create_decoder(
-            VideoProfile::Software,
+            VideoProfile::NativeFree,
             VideoDecoderRequest::new(AvCodecId::H264, TimeBase::new(1, 30)).unwrap(),
         )
         .expect("create h264 decoder")
@@ -320,6 +320,19 @@ async fn video_mosaic_job_publishes_decodable_output_and_releases_lease_on_stop(
             }
             Poll::Pending => {}
             Poll::EndOfStream => break,
+        }
+    }
+    if decoded.is_none() {
+        decoder.flush().expect("flush decoder");
+        for _ in 0..20 {
+            match decoder.poll_image().expect("poll flushed image") {
+                Poll::Ready(img) => {
+                    decoded = Some(img);
+                    break;
+                }
+                Poll::Pending => {}
+                Poll::EndOfStream => break,
+            }
         }
     }
     let img = decoded.expect("decoded mosaic output frame");

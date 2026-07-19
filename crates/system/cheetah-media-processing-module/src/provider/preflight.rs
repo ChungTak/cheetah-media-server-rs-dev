@@ -296,6 +296,20 @@ fn probe_cpu_capabilities(config: &MediaProcessingModuleConfig) -> CpuProbeResul
             audio_decode_selections.join(", "),
         );
     }
+    // MP3 decode is software-profile only (FFmpeg backend). Make that explicit
+    // when native-free preflight fails for mp3 so Auto/WebRTC does not advertise it.
+    if config.profile == "native-free"
+        && diagnostics.contains_key("audio_decode:mp3")
+        && !audio_decode_selections
+            .iter()
+            .any(|s| s.starts_with("mp3:"))
+    {
+        diagnostics.insert(
+            "audio_decode:mp3".to_string(),
+            "MP3 decode requires avcodec software profile (not in native-free allow-list)"
+                .to_string(),
+        );
+    }
 
     let mut audio_encode_selections = Vec::new();
     for (codec, name) in &audio_encoders {

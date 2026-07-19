@@ -46,6 +46,12 @@ pub struct WebRtcRenditionSnapshot {
 pub struct PlaybackAudioPolicy {
     pub profile: crate::config::CodecProfileWire,
     pub strategy: crate::codec_policy::AudioOutputStrategy,
+    /// Whether a production media-processing provider can transcode audio.
+    ///
+    /// When play already rewrote the stream to Opus via a derived job, this can
+    /// still be `true` so residual non-Opus frames surface as configuration errors
+    /// under `TranscodeToOpus`. Under `Auto`, unavailable codecs are dropped.
+    pub transcode_available: bool,
 }
 
 /// Playout timing policy for a play subscriber.
@@ -1582,7 +1588,7 @@ fn playback_codec_for_frame(
         codec,
         audio_policy.profile,
         audio_policy.strategy,
-        false,
+        audio_policy.transcode_available,
         true,
     );
     match decision {
@@ -2260,6 +2266,7 @@ mod bootstrap_stats_tests {
         let policy = PlaybackAudioPolicy {
             profile: crate::config::CodecProfileWire::Browser,
             strategy: crate::codec_policy::AudioOutputStrategy::TranscodeToOpus,
+            transcode_available: false,
         };
 
         let err = playback_codec_for_frame(cheetah_codec::CodecId::AAC, MediaKind::Audio, policy)
@@ -2272,6 +2279,7 @@ mod bootstrap_stats_tests {
         let policy = PlaybackAudioPolicy {
             profile: crate::config::CodecProfileWire::Browser,
             strategy: crate::codec_policy::AudioOutputStrategy::Auto,
+            transcode_available: false,
         };
 
         let err = playback_codec_for_frame(cheetah_codec::CodecId::AAC, MediaKind::Audio, policy)
@@ -2288,6 +2296,7 @@ mod bootstrap_stats_tests {
             PlaybackAudioPolicy {
                 profile: crate::config::CodecProfileWire::Browser,
                 strategy: crate::codec_policy::AudioOutputStrategy::TranscodeToOpus,
+                transcode_available: false,
             }
         ));
     }
@@ -2297,6 +2306,7 @@ mod bootstrap_stats_tests {
         let policy = PlaybackAudioPolicy {
             profile: crate::config::CodecProfileWire::Browser,
             strategy: crate::codec_policy::AudioOutputStrategy::Passthrough,
+            transcode_available: false,
         };
 
         let mapped =

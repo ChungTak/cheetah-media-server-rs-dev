@@ -9,7 +9,7 @@ use cheetah_media_api::processing::{MosaicCell, MosaicLayout, VideoMosaicInput};
 #[test]
 fn mosaicker_rejects_too_few_sources() {
     let config = MediaProcessingModuleConfig {
-        profile: "software".to_string(),
+        profile: "native-free".to_string(),
         ..Default::default()
     };
     let layout = MosaicLayout {
@@ -44,7 +44,7 @@ fn mosaicker_rejects_too_few_sources() {
 #[test]
 fn mosaicker_rejects_odd_cell_dimensions() {
     let config = MediaProcessingModuleConfig {
-        profile: "software".to_string(),
+        profile: "native-free".to_string(),
         ..Default::default()
     };
     let layout = MosaicLayout {
@@ -96,7 +96,7 @@ fn mosaicker_rejects_odd_cell_dimensions() {
 #[cfg(feature = "media-processing-cpu")]
 fn mosaicker_produces_h264_output_from_black_canvas() {
     let config = MediaProcessingModuleConfig {
-        profile: "software".to_string(),
+        profile: "native-free".to_string(),
         ..Default::default()
     };
     let layout = MosaicLayout {
@@ -169,7 +169,7 @@ fn mosaicker_produces_h264_output_from_black_canvas() {
 #[cfg(feature = "media-processing-cpu")]
 fn mosaicker_output_decodes_back_to_image() {
     let config = MediaProcessingModuleConfig {
-        profile: "software".to_string(),
+        profile: "native-free".to_string(),
         ..Default::default()
     };
     let layout = MosaicLayout {
@@ -238,7 +238,7 @@ fn mosaicker_output_decodes_back_to_image() {
     let sdk = VideoSdk::new().expect("video sdk");
     let mut decoder = sdk
         .create_decoder(
-            VideoProfile::Software,
+            VideoProfile::NativeFree,
             VideoDecoderRequest::new(AvCodecId::H264, TimeBase::new(1, 30)).unwrap(),
         )
         .expect("create h264 decoder")
@@ -256,7 +256,7 @@ fn mosaicker_output_decodes_back_to_image() {
         packet.time_base = Some(TimeBase::new(frame.timebase.num, frame.timebase.den));
         decoder.submit_packet(packet).expect("submit mosaic packet");
 
-        for _ in 0..5 {
+        for _ in 0..8 {
             match decoder.poll_image().expect("poll decoded image") {
                 Poll::Ready(img) => {
                     assert_eq!(img.format, ImageInfo::Yuv420p);
@@ -267,6 +267,21 @@ fn mosaicker_output_decodes_back_to_image() {
                 Poll::Pending => {}
                 Poll::EndOfStream => break,
             }
+        }
+    }
+
+    // Drain delayed native-free decoder output after all packets.
+    decoder.flush().expect("flush decoder");
+    for _ in 0..16 {
+        match decoder.poll_image().expect("poll flushed image") {
+            Poll::Ready(img) => {
+                assert_eq!(img.format, ImageInfo::Yuv420p);
+                assert_eq!(img.visible.width, output_width);
+                assert_eq!(img.visible.height, output_height);
+                return;
+            }
+            Poll::Pending => {}
+            Poll::EndOfStream => break,
         }
     }
 

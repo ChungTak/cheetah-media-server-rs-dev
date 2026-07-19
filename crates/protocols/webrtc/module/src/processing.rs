@@ -88,11 +88,8 @@ pub async fn ensure_derived_play_source(
     };
 
     let source_key = stream_key_to_media_key(&source)?;
-    let derived_stream_name = format!(
-        "{}_webrtc_{}",
-        sanitize_stream_name(&source.path),
-        sanitize_stream_name(job_name)
-    );
+    // Stable name so concurrent WHEP sessions share one derived Opus/H.264 job.
+    let derived_stream_name = stable_webrtc_derived_name(&source, &target);
     let target_key = MediaKey::new(
         source_key.vhost.0.clone(),
         source_key.app.0.clone(),
@@ -100,7 +97,7 @@ pub async fn ensure_derived_play_source(
         None,
     )
     .map_err(|e| SdkError::InvalidArgument(format!("invalid derived media key: {e}")))?;
-    let derived_stream_key = StreamKey::new(source.namespace.clone(), derived_stream_name);
+    let derived_stream_key = StreamKey::new(source.namespace.clone(), derived_stream_name.clone());
 
     if let Err(err) = wait_for_publisher_release(engine, &derived_stream_key, cancel).await {
         return Err(SdkError::Internal(format!(
@@ -113,11 +110,12 @@ pub async fn ensure_derived_play_source(
         source: source_key,
         target: target_key,
         track_selection: cheetah_sdk::media_api::processing::TrackSelection::All,
-        audio: target.audio,
-        video: target.video,
+        audio: target.audio.clone(),
+        video: target.video.clone(),
         overlays: Vec::new(),
     };
-    let idempotency_key = format!("webrtc_play_{source}_{job_name}");
+    let _ = job_name;
+    let idempotency_key = format!("webrtc_play_{source}_{derived_stream_name}");
     let job = processing_api
         .create_job(
             &ctx,
@@ -130,7 +128,16 @@ pub async fn ensure_derived_play_source(
         .await
         .map_err(|e| SdkError::Internal(format!("create transcode job for webrtc play: {e}")))?;
 
-    if let Err(err) = wait_for_running_job(
+    let derived_stream_key = job
+        .output_keys
+        .first()
+        .map(|k| {
+            let (namespace, path) = StreamKeyBridge::to_namespace_path(k);
+            StreamKey::new(namespace, path)
+        })
+        .unwrap_or(derived_stream_key);
+
+    if let Err(err) = wait_for_job_first_output(
         processing_api.as_ref(),
         &ctx,
         &job.job_id,
@@ -469,30 +476,72 @@ fn sanitize_stream_name(name: &str) -> String {
         .collect()
 }
 
-async fn wait_for_running_job(
+fn stable_webrtc_derived_name(source: &StreamKey, target: &ProcessingTarget) -> String {
+    let video = target
+        .video
+        .as_ref()
+        .map(|v| format!("{:?}", v.codec).to_ascii_lowercase())
+        .unwrap_or_else(|| "na".into());
+    let audio = target
+        .audio
+        .as_ref()
+        .map(|a| format!("{:?}", a.codec).to_ascii_lowercase())
+        .unwrap_or_else(|| "na".into());
+    format!(
+        "{}_webrtc_{}_{}",
+        sanitize_stream_name(&source.path),
+        video,
+        audio
+    )
+}
+
+/// Wait until the job has produced first output (tracks ready), not merely Running.
+async fn wait_for_job_first_output(
     processing_api: &dyn MediaProcessingApi,
     ctx: &MediaRequestContext,
     job_id: &cheetah_sdk::ProcessingJobId,
     cancel: &CancellationToken,
     runtime_api: std::sync::Arc<dyn cheetah_sdk::RuntimeApi>,
 ) -> Result<(), SdkError> {
-    let deadline = runtime_api.now().as_micros() + 5_000_000;
+    let deadline = runtime_api.now().as_micros() + 10_000_000;
     while runtime_api.now().as_micros() < deadline && !cancel.is_cancelled() {
         match processing_api.get_job(ctx, job_id).await {
-            Ok(job) if job.state == ProcessingJobState::Running => return Ok(()),
             Ok(job) if job.state == ProcessingJobState::Failed => {
                 return Err(SdkError::Internal(format!(
                     "transcode job {job_id} failed: {}",
                     job.last_error.unwrap_or_default()
                 )));
             }
+            Ok(job) if job.state == ProcessingJobState::Stopped => {
+                return Err(SdkError::Internal(format!(
+                    "transcode job {job_id} stopped before first output"
+                )));
+            }
+            Ok(job)
+                if job.state == ProcessingJobState::Running
+                    && (job.first_output_at.is_some() || job.frames_out > 0) =>
+            {
+                // Do not treat `started_at` (first input/drop) as media-ready.
+                return Ok(());
+            }
             Ok(_) => {}
-            Err(_) => break,
+            Err(e) => {
+                return Err(SdkError::Internal(format!(
+                    "failed to poll transcode job {job_id}: {e}"
+                )));
+            }
         }
         let sleep_deadline = MonoTime::from_micros(runtime_api.now().as_micros() + 200_000);
         runtime_api.sleep_until(sleep_deadline).wait().await;
     }
-    Ok(())
+    if cancel.is_cancelled() {
+        return Err(SdkError::Internal(
+            "cancelled waiting for transcode job".into(),
+        ));
+    }
+    Err(SdkError::Internal(format!(
+        "timeout waiting for first output from transcode job {job_id}"
+    )))
 }
 
 #[cfg(test)]

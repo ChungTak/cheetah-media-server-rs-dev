@@ -910,6 +910,7 @@ async fn spawn_ome_ws_play(
             crate::bridge::PlaybackAudioPolicy {
                 profile: cfg.codec_profile,
                 strategy: cfg.audio_strategy(),
+                transcode_available: false,
             },
             crate::bridge::PlaybackTimingPolicy {
                 jitter_buffer_ms: cfg.play_jitter_buffer_ms,
@@ -922,6 +923,8 @@ async fn spawn_ome_ws_play(
             cfg.prefer_audio_codec.clone(),
         )
     };
+    let mut audio_policy = audio_policy;
+    audio_policy.transcode_available = engine.media_services.processing().is_some();
     let cancel = CancellationToken::new();
     bridges.lock().insert_play(session_id, cancel.clone());
     let runtime_api = engine.runtime_api.clone();

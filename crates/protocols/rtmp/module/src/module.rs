@@ -38,8 +38,8 @@ use crate::ingest::{
     handle_video_ingest_with_alert_threshold, should_emit_alert_threshold,
 };
 use crate::processing::{
-    ensure_derived_push_source, is_derived_job_alive, stop_derived_push_job,
-    tracks_codec_signature, DerivedPushSource,
+    ensure_derived_play_source, ensure_derived_push_source, is_derived_job_alive,
+    stop_derived_push_job, tracks_codec_signature, DerivedPushSource,
 };
 use crate::route::{parse_stream_key_spec, parse_stream_route, RtmpPlayMode, StreamRoute};
 use crate::session::{
@@ -1950,21 +1950,25 @@ async fn handle_driver_event(
 
                 match snapshot_opt {
                     Some(snapshot) => {
-                        if !track_list_has_supported_playback_codec(&snapshot.tracks) {
-                            send_reject_then_close(
-                                runtime_api,
-                                command_tx,
+                        // Native RTMP/FLV-playable tracks: bootstrap immediately when ready.
+                        // Non-playable tracks (e.g. G711-only / H.265) go through run_play_stream
+                        // so Auto-derived H.264/AAC can be requested from MediaProcessingApi.
+                        if snapshot.tracks.is_empty() {
+                            let pending = spawn_pending_play(
+                                engine.clone(),
+                                config.clone(),
+                                runtime_api.clone(),
+                                command_tx.clone(),
                                 connection_id,
-                                RtmpCoreCommand::RejectPlay {
-                                    stream_id,
-                                    description: "stream has no RTMP/FLV playable media track"
-                                        .to_string(),
-                                },
-                            )
-                            .await;
+                                stream_id,
+                                route.clone(),
+                            );
+                            replace_play_session(&play_sessions, connection_id, pending);
                             return;
                         }
-                        if !track_list_ready_for_rtmp_play_bootstrap(&snapshot.tracks) {
+                        if track_list_has_supported_playback_codec(&snapshot.tracks)
+                            && !track_list_ready_for_rtmp_play_bootstrap(&snapshot.tracks)
+                        {
                             let pending = spawn_pending_play(
                                 engine.clone(),
                                 config.clone(),
@@ -2536,12 +2540,60 @@ async fn run_play_stream(
         subscribe_reject_description,
     } = ctx;
 
+    // Auto-derive H.264/AAC when the source is not RTMP/FLV-playable as-is.
+    // Shared processing jobs are reused across concurrent play sessions.
+    let mut play_stream_key = route.stream_key.clone();
+    let mut processing_job_id: Option<cheetah_sdk::ProcessingJobId> = None;
+    match ensure_derived_play_source(&engine, route.stream_key.clone(), &play_cancel_child).await {
+        Ok(derived) => {
+            play_stream_key = derived.stream_key;
+            processing_job_id = derived.processing_job_id;
+            if processing_job_id.is_some() {
+                if let Ok(Some(snapshot)) =
+                    engine.stream_manager_api.get_stream(&play_stream_key).await
+                {
+                    if !snapshot.tracks.is_empty() {
+                        current_tracks = snapshot.tracks;
+                    }
+                }
+            }
+        }
+        Err(err) => {
+            // Only fail hard when the source has no native RTMP-playable tracks
+            // and processing could not produce a derived stream.
+            if !track_list_has_supported_playback_codec(&current_tracks) {
+                tracing::warn!(
+                    %connection_id,
+                    stream_id,
+                    stream_key = %route.stream_key,
+                    "rtmp play derived source failed: {err}"
+                );
+                send_reject_then_close(
+                    &runtime_api,
+                    &command_tx,
+                    connection_id,
+                    RtmpCoreCommand::RejectPlay {
+                        stream_id,
+                        description: format!("derived play source unavailable: {err}"),
+                    },
+                )
+                .await;
+                return;
+            }
+            tracing::debug!(
+                %connection_id,
+                stream_key = %route.stream_key,
+                "rtmp play continuing on source after derived resolve error: {err}"
+            );
+        }
+    }
+
     let bootstrap_max_frames = play_bootstrap_max_frames(&config, &current_tracks);
     let queue_capacity = play_subscriber_queue_capacity(&config, bootstrap_max_frames);
     let mut subscriber = match engine
         .subscriber_api
         .subscribe(
-            route.stream_key.clone(),
+            play_stream_key.clone(),
             SubscriberOptions {
                 queue_capacity,
                 backpressure: config.subscriber_backpressure,
@@ -2553,6 +2605,9 @@ async fn run_play_stream(
     {
         Ok(subscriber) => subscriber,
         Err(err) => {
+            if let Some(job_id) = processing_job_id.take() {
+                stop_derived_push_job(&engine, job_id).await;
+            }
             let description = subscribe_reject_description
                 .map(str::to_owned)
                 .unwrap_or_else(|| err.to_string());
@@ -2604,7 +2659,7 @@ async fn run_play_stream(
     }
 
     let stream_api = engine.stream_manager_api.clone();
-    let stream_key_for_task = route.stream_key;
+    let stream_key_for_task = play_stream_key;
     let play_mode = route.play_mode;
     let enable_add_mute = config.enable_add_mute;
     let emit_play_metadata = config.emit_play_metadata;
@@ -2877,6 +2932,9 @@ async fn run_play_stream(
     }
 
     let _ = subscriber.close().await;
+    if let Some(job_id) = processing_job_id.take() {
+        stop_derived_push_job(&engine, job_id).await;
+    }
     if force_close_connection {
         let _ = command_tx.close_connection(connection_id).await;
     } else {
@@ -2927,22 +2985,12 @@ fn spawn_pending_play(
                 if track_list_ready_for_rtmp_play_bootstrap(&snapshot.tracks) {
                     break snapshot;
                 }
+                // Tracks present but not natively RTMP-playable: let run_play_stream
+                // attempt Auto-derived H.264/AAC instead of rejecting immediately.
                 if !snapshot.tracks.is_empty()
                     && !track_list_has_supported_playback_codec(&snapshot.tracks)
                 {
-                    let _ = command_tx
-                        .send_core(
-                            connection_id,
-                            RtmpCoreCommand::RejectPlay {
-                                stream_id,
-                                description: "stream has no RTMP/FLV playable media track"
-                                    .to_string(),
-                            },
-                        )
-                        .await;
-                    runtime_sleep(&runtime_api_in_task, Duration::from_millis(50)).await;
-                    let _ = command_tx.close_connection(connection_id).await;
-                    return;
+                    break snapshot;
                 }
             } else if let Some(timeout) = source_wait_timeout {
                 let now = runtime_now_micros(&runtime_api_in_task);

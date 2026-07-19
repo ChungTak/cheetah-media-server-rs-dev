@@ -139,12 +139,11 @@ pub(crate) async fn start_derived_stream(
         .await
         .map_err(|e| format!("create processing job: {e}"))?;
 
-    if let Err(e) = wait_for_job_state(
+    if let Err(e) = wait_for_job_ready(
         processing_api.as_ref(),
         &media_ctx,
         &job.job_id,
-        ProcessingJobState::Running,
-        5_000,
+        10_000,
         &ctx.runtime_api,
         cancel,
     )
@@ -178,11 +177,14 @@ pub(crate) async fn stop_derived_stream(
     Ok(())
 }
 
-async fn wait_for_job_state(
+/// Wait until the processing job has started producing media (or announced activity).
+///
+/// `Running` alone is not sufficient: workers mark Running before the first
+/// output frame, so consumers must wait for `started_at` / first output.
+async fn wait_for_job_ready(
     processing_api: &dyn MediaProcessingApi,
     ctx: &MediaRequestContext,
     job_id: &ProcessingJobId,
-    desired: ProcessingJobState,
     timeout_ms: u64,
     runtime_api: &Arc<dyn RuntimeApi>,
     cancel: &CancellationToken,
@@ -195,14 +197,20 @@ async fn wait_for_job_state(
         }
         match processing_api.get_job(ctx, job_id).await {
             Ok(job) => {
-                if job.state == desired {
-                    return Ok(());
-                }
                 if matches!(
                     job.state,
                     ProcessingJobState::Failed | ProcessingJobState::Stopped
                 ) {
-                    return Err(format!("processing job ended in state {:?}", job.state));
+                    return Err(format!(
+                        "processing job ended in state {:?} error={:?}",
+                        job.state, job.last_error
+                    ));
+                }
+                if job.state == ProcessingJobState::Running
+                    && (job.first_output_at.is_some() || job.frames_out > 0)
+                {
+                    // `started_at` alone means input activity, not encoded output.
+                    return Ok(());
                 }
             }
             Err(e) => {
@@ -210,7 +218,7 @@ async fn wait_for_job_state(
             }
         }
         if runtime_api.now().as_micros().saturating_sub(start) >= timeout_us {
-            return Err("timed out waiting for processing job to start".into());
+            return Err("timed out waiting for processing job first output".into());
         }
         let deadline = MonoTime::from_micros(runtime_api.now().as_micros() + 100_000);
         let mut timer = runtime_api.sleep_until(deadline);

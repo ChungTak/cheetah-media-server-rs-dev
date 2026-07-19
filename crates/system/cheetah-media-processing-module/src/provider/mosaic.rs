@@ -574,7 +574,7 @@ mod tests {
             },
             state: ProcessingJobState::Running,
             generation: 0,
-            profile: "software".to_string(),
+            profile: "native-free".to_string(),
             created_at: 0,
             updated_at: 0,
             started_at: None,
@@ -633,7 +633,7 @@ mod tests {
         result: DispatchResult,
     ) -> Result<(Arc<Mutex<ProcessingJob>>, String), SdkError> {
         let config = MediaProcessingModuleConfig {
-            profile: "software".to_string(),
+            profile: "native-free".to_string(),
             ..Default::default()
         };
         let layout = fast_layout();

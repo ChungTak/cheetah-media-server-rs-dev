@@ -19,6 +19,7 @@ use cheetah_codec::{
 };
 use cheetah_config::ConfigStore;
 use cheetah_engine::EngineBuilder;
+use cheetah_media_api::error::MediaErrorCode;
 use cheetah_media_api::ids::MediaKey;
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_media_api::processing::{
@@ -250,7 +251,7 @@ fn encode_h264_clip(width: u32, height: u32, count: usize) -> Vec<AVFrame> {
     let sdk = VideoSdk::new().expect("video sdk");
     let mut encoder = sdk
         .create_encoder(
-            VideoProfile::Software,
+            VideoProfile::NativeFree,
             VideoEncoderRequest {
                 codec: AvCodecId::H264,
                 width,
@@ -548,37 +549,26 @@ async fn backend_selection_failure_reports_failed_job() {
     let source = MediaKey::with_default_vhost("app", "g711src", None).expect("source key");
     let target = MediaKey::with_default_vhost("app", "mp3out", None).expect("target key");
 
-    // MP3 encode is not in the native-free backend allow-list, so transcoder
-    // construction should fail before any output is produced.
-    let feed = start_source_publisher(
-        &engine,
-        _source_key.clone(),
-        vec![g711_frame(0)],
-        g711_audio_track(),
-        Duration::from_millis(50),
-    )
-    .await;
-
+    // MP3 encode is rejected at create (not a supported output target).
     let processing = engine
         .media_services()
         .processing()
         .expect("processing provider registered");
 
-    let job = processing
+    let err = processing
         .create_job(
             &MediaRequestContext::default(),
             transcode_request(source, target, None, Some(audio_mp3_target())),
         )
         .await
-        .expect("create job");
-
-    let job = wait_for_job_terminal(&engine, &job.job_id).await;
+        .expect_err("MP3 encode target must be rejected at create");
+    assert_eq!(err.code, MediaErrorCode::Unsupported);
     assert!(
-        matches!(job.state, ProcessingJobState::Failed),
-        "expected failed job, got {job:?}"
+        err.message.to_ascii_lowercase().contains("mp3"),
+        "error should mention MP3: {err}"
     );
 
-    let _ = timeout(Duration::from_secs(3), feed).await;
+    let _ = _source_key;
     engine.stop().await;
     assert_clean_leak_report(&engine).await;
 }

@@ -4,18 +4,19 @@
 //! `avcodec-rs` when the corresponding Cargo features are enabled. All blocking
 //! codec work is scheduled through `RuntimeApi::spawn_blocking`.
 //!
-//! `media-processing-cpu` is a convenience feature that enables all single-stream
-//! capabilities and selects `avcodec/profile-native-free`. Real profile selection
-//! should be explicit; the default feature set is empty so the module does not
-//! compile `avcodec` by default.
+//! `media-processing-cpu` is a convenience feature that enables single-stream
+//! audio/video/image/caption jobs and selects `avcodec/profile-native-free`.
+//! OpenCV overlay and software profile backends are opt-in via
+//! `media-processing-full`. The default feature set is empty so the module does
+//! not compile `avcodec` by default.
 
 pub mod config;
 pub mod module;
 
-#[cfg(any(feature = "media-processing-cpu", feature = "media-processing-caption"))]
+#[cfg(any(feature = "media-processing-cpu", feature = "media-processing-jobs"))]
 mod logging;
 mod provider;
-#[cfg(any(feature = "media-processing-cpu", feature = "media-processing-caption"))]
+#[cfg(any(feature = "media-processing-cpu", feature = "media-processing-jobs"))]
 mod spec_labels;
 
 pub use module::{MediaProcessingModule, MediaProcessingModuleFactory};

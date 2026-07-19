@@ -469,7 +469,7 @@ mod tests {
     #[test]
     fn mix_two_g711_sources_to_aac() {
         let mut config = MediaProcessingModuleConfig::default();
-        config.profile = "software".to_string();
+        config.profile = "native-free".to_string();
 
         let inputs = vec![
             AudioMixInput {
@@ -511,7 +511,7 @@ mod tests {
     #[test]
     fn flush_terminates_after_all_sources_eos() {
         let mut config = MediaProcessingModuleConfig::default();
-        config.profile = "software".to_string();
+        config.profile = "native-free".to_string();
 
         let inputs = vec![
             AudioMixInput {
@@ -556,7 +556,7 @@ mod tests {
     #[test]
     fn per_source_buffer_is_capped_when_a_source_stalls() {
         let mut config = MediaProcessingModuleConfig::default();
-        config.profile = "software".to_string();
+        config.profile = "native-free".to_string();
 
         let inputs = vec![
             AudioMixInput {

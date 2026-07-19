@@ -3164,13 +3164,30 @@ async fn collect_abr_variants(
         if job.state != ProcessingJobState::Running {
             continue;
         }
+        // Do not advertise ladders that have not produced any media yet.
+        if job.first_output_at.is_none() && job.frames_out == 0 {
+            continue;
+        }
         if let ProcessingJobSpec::AbrLadder {
             variants: ref ladder,
             ..
         } = job.spec
         {
             for variant in ladder {
-                variants.push(variant.clone());
+                // Skip rungs whose derived publisher is not active yet.
+                let (ns, path) = StreamKeyBridge::to_namespace_path(&variant.target);
+                let stream_key = StreamKey::new(ns, path);
+                match engine.stream_manager_api.get_stream(&stream_key).await {
+                    Ok(Some(snapshot))
+                        if snapshot.publisher_active && !snapshot.tracks.is_empty() =>
+                    {
+                        variants.push(variant.clone());
+                    }
+                    _ => {
+                        // Incomplete ladder: omit this rung so master does not
+                        // advertise empty media playlists.
+                    }
+                }
             }
         }
     }

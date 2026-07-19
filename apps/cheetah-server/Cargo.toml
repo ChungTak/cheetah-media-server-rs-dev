@@ -27,7 +27,13 @@ proxy-rtsp = ["proxy", "cheetah-proxy-module/rtsp"]
 proxy-rtmp = ["proxy", "cheetah-proxy-module/rtmp"]
 proxy-http-flv = ["proxy", "cheetah-proxy-module/http-flv"]
 snapshot = ["dep:cheetah-snapshot-module"]
+# Core media processing (audio/video/image/caption, native-free). Does not pull OpenCV or software/FFmpeg backends.
 media-processing = ["dep:cheetah-media-processing-module", "cheetah-media-processing-module/media-processing-cpu"]
+# Optional: OpenCV blend + avcodec software profile (needs system OpenCV/FFmpeg headers).
+media-processing-full = [
+    "media-processing",
+    "cheetah-media-processing-module/media-processing-full",
+]
 media-control-full = ["rtmp", "rtsp", "http-flv", "hls", "ts", "fmp4", "mp4", "rtp", "gb28181", "record", "webrtc", "srt", "proxy", "proxy-rtsp", "proxy-rtmp", "proxy-http-flv", "snapshot"]
 tokio-console = ["dep:console-subscriber", "tokio/tracing"]
 

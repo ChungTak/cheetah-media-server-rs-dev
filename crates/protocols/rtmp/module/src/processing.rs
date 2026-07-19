@@ -45,11 +45,6 @@ pub async fn ensure_derived_push_source(
         });
     }
 
-    let processing_api = engine
-        .media_services
-        .processing()
-        .ok_or_else(|| SdkError::Internal("media processing provider is not registered".into()))?;
-
     let snapshot = engine
         .stream_manager_api
         .get_stream(&source)
@@ -64,12 +59,24 @@ pub async fn ensure_derived_push_source(
         });
     };
 
+    let Some(processing_api) = engine.media_services.processing() else {
+        // Auto: degrade to passthrough when processing is unavailable.
+        // Explicit Transcode must fail closed.
+        if matches!(policy, ProcessingPolicy::Transcode { .. }) {
+            return Err(SdkError::Unavailable(
+                "media processing provider is not registered but Transcode policy requires it"
+                    .into(),
+            ));
+        }
+        return Ok(DerivedPushSource {
+            stream_key: source,
+            processing_job_id: None,
+        });
+    };
+
     let source_key = stream_key_to_media_key(&source)?;
-    let derived_stream_name = format!(
-        "{}_rtmp_{}",
-        sanitize_stream_name(&source.path),
-        sanitize_stream_name(job_name)
-    );
+    // Stable name so concurrent push/play consumers share one derived job.
+    let derived_stream_name = stable_rtmp_derived_name(&source, &target, track_selection);
     let target_key = MediaKey::new(
         source_key.vhost.0.clone(),
         source_key.app.0.clone(),
@@ -100,7 +107,12 @@ pub async fn ensure_derived_push_source(
         .create_job(
             &ctx,
             CreateProcessingJob {
-                idempotency_key: Some(format!("rtmp_push_{source}_{job_name}")),
+                // Stable idempotency key for Auto/Transcode so retries attach.
+                idempotency_key: Some(format!(
+                    "rtmp_derived_{}_{}",
+                    source,
+                    sanitize_stream_name(job_name)
+                )),
                 deadline_ms: None,
                 spec,
             },
@@ -108,8 +120,18 @@ pub async fn ensure_derived_push_source(
         .await
         .map_err(|e| SdkError::Internal(format!("create transcode job for rtmp push: {e}")))?;
 
-    // Wait briefly for the transcode job to be running.
-    if let Err(err) = wait_for_running_job(
+    // Prefer the job's registered output key (shared attach may return an older target).
+    let derived_stream_key = job
+        .output_keys
+        .first()
+        .map(|k| {
+            let (namespace, path) = StreamKeyBridge::to_namespace_path(k);
+            StreamKey::new(namespace, path)
+        })
+        .unwrap_or(derived_stream_key);
+
+    // Wait until the job has produced its first output (tracks ready), not just Running.
+    if let Err(err) = wait_for_job_first_output(
         processing_api.as_ref(),
         &ctx,
         &job.job_id,
@@ -127,6 +149,28 @@ pub async fn ensure_derived_push_source(
         stream_key: derived_stream_key,
         processing_job_id: Some(job.job_id),
     })
+}
+
+/// Resolve a derived H.264/AAC play source for RTMP/HTTP-FLV consumers.
+///
+/// Uses `ProcessingPolicy::Auto` semantics: create a shared transcode job only when
+/// the source has tracks that are not already RTMP-playable as H.264/AAC.
+pub async fn ensure_derived_play_source(
+    engine: &EngineContext,
+    source: StreamKey,
+    cancel: &CancellationToken,
+) -> Result<DerivedPushSource, SdkError> {
+    ensure_derived_push_source(
+        engine,
+        "play",
+        source,
+        &ProcessingPolicy::Auto {
+            preset: cheetah_sdk::media_api::processing::ProcessingPreset::Conservative,
+        },
+        TrackSelection::All,
+        cancel,
+    )
+    .await
 }
 
 /// Delete a derived processing job when the push job exits.
@@ -303,32 +347,81 @@ fn sanitize_stream_name(name: &str) -> String {
         .collect()
 }
 
-/// Poll the processing job until it reaches `Running` or a short timeout passes.
-async fn wait_for_running_job(
+/// Stable derived stream name for RTMP/HTTP-FLV so concurrent consumers share one job.
+fn stable_rtmp_derived_name(
+    source: &StreamKey,
+    target: &ProcessingTarget,
+    track_selection: TrackSelection,
+) -> String {
+    let video = target
+        .video
+        .as_ref()
+        .map(|v| format!("{:?}", v.codec).to_ascii_lowercase())
+        .unwrap_or_else(|| "na".into());
+    let audio = target
+        .audio
+        .as_ref()
+        .map(|a| format!("{:?}", a.codec).to_ascii_lowercase())
+        .unwrap_or_else(|| "na".into());
+    let sel = format!("{track_selection:?}").to_ascii_lowercase();
+    format!(
+        "{}_rtmp_{}_{}_{}",
+        sanitize_stream_name(&source.path),
+        video,
+        audio,
+        sel
+    )
+}
+
+/// Poll the processing job until it has produced first output, or fail on timeout.
+async fn wait_for_job_first_output(
     processing_api: &dyn MediaProcessingApi,
     ctx: &MediaRequestContext,
     job_id: &cheetah_sdk::ProcessingJobId,
     cancel: &CancellationToken,
     runtime_api: std::sync::Arc<dyn cheetah_sdk::RuntimeApi>,
 ) -> Result<(), SdkError> {
-    let deadline = runtime_api.now().as_micros() + 5_000_000;
+    let deadline = runtime_api.now().as_micros() + 10_000_000;
     while runtime_api.now().as_micros() < deadline && !cancel.is_cancelled() {
         match processing_api.get_job(ctx, job_id).await {
-            Ok(job) if job.state == ProcessingJobState::Running => return Ok(()),
             Ok(job) if job.state == ProcessingJobState::Failed => {
                 return Err(SdkError::Internal(format!(
                     "transcode job {job_id} failed: {}",
                     job.last_error.unwrap_or_default()
                 )));
             }
+            Ok(job) if job.state == ProcessingJobState::Stopped => {
+                return Err(SdkError::Internal(format!(
+                    "transcode job {job_id} stopped before first output"
+                )));
+            }
+            Ok(job)
+                if job.state == ProcessingJobState::Running
+                    && (job.first_output_at.is_some() || job.frames_out > 0) =>
+            {
+                // Only first encoded output means consumers can attach safely.
+                // `started_at` fires on first input/drop and is not media-ready.
+                return Ok(());
+            }
             Ok(_) => {}
-            Err(_) => break,
+            Err(e) => {
+                return Err(SdkError::Internal(format!(
+                    "failed to poll transcode job {job_id}: {e}"
+                )));
+            }
         }
         let sleep_deadline =
             cheetah_codec::MonoTime::from_micros(runtime_api.now().as_micros() + 200_000);
         runtime_api.sleep_until(sleep_deadline).wait().await;
     }
-    Ok(())
+    if cancel.is_cancelled() {
+        return Err(SdkError::Internal(
+            "cancelled waiting for transcode job".into(),
+        ));
+    }
+    Err(SdkError::Internal(format!(
+        "timeout waiting for first output from transcode job {job_id}"
+    )))
 }
 
 #[cfg(test)]
