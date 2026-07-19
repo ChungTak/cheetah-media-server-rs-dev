@@ -92,6 +92,8 @@ pub struct MediaProcessingProvider {
 struct MetricSnapshot {
     frames_in: u64,
     frames_out: u64,
+    bytes_in: u64,
+    bytes_out: u64,
     drops: u64,
     restarts: u64,
 }
@@ -205,6 +207,8 @@ impl MediaProcessingProvider {
                 .unwrap_or_default();
             let frames_in_delta = guard.frames_in.saturating_sub(prev.frames_in);
             let frames_out_delta = guard.frames_out.saturating_sub(prev.frames_out);
+            let bytes_in_delta = guard.bytes_in.saturating_sub(prev.bytes_in);
+            let bytes_out_delta = guard.bytes_out.saturating_sub(prev.bytes_out);
             let drops_delta = guard.drops.saturating_sub(prev.drops);
             let restarts_delta = (guard.restart_count as u64).saturating_sub(prev.restarts);
 
@@ -218,6 +222,16 @@ impl MediaProcessingProvider {
                     "media_processing_frames_total{{direction=egress,media={media},codec={codec}}}"
                 ))
                 .or_insert(0) += frames_out_delta;
+            *counter_deltas
+                .entry(format!(
+                    "media_processing_bytes_total{{direction=ingress,media={media},codec={codec}}}"
+                ))
+                .or_insert(0) += bytes_in_delta;
+            *counter_deltas
+                .entry(format!(
+                    "media_processing_bytes_total{{direction=egress,media={media},codec={codec}}}"
+                ))
+                .or_insert(0) += bytes_out_delta;
             *counter_deltas
                 .entry(format!(
                     "media_processing_drops_total{{reason=policy,media={media}}}"
@@ -243,6 +257,8 @@ impl MediaProcessingProvider {
                 MetricSnapshot {
                     frames_in: guard.frames_in,
                     frames_out: guard.frames_out,
+                    bytes_in: guard.bytes_in,
+                    bytes_out: guard.bytes_out,
                     drops: guard.drops,
                     restarts: guard.restart_count as u64,
                 },
