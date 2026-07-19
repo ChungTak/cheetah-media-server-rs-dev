@@ -895,8 +895,8 @@ fn decode_overlay_image(
 /// Loads a font file referenced by an authorized `FileHandle`.
 ///
 /// Errors are sanitized: the returned `String` never contains the server-side
-/// absolute path or font payload. Paths and read failures are logged at warn
-/// level instead.
+/// absolute path, font payload, or store-layer error detail. Those details are
+/// logged at warn level for operators while callers receive a generic message.
 fn resolve_font(
     ctx: &MediaRequestContext,
     file_store: &dyn MediaFileStoreApi,
@@ -908,7 +908,10 @@ fn resolve_font(
         .unwrap_or(0);
     let entry = file_store
         .resolve_for_read(ctx, handle, None, now_ms)
-        .map_err(|e| format!("resolve font handle {handle}: {e}"))?;
+        .map_err(|e| {
+            warn!(font_handle = %handle, "resolve font handle failed: {e}");
+            format!("font handle {handle} is not authorized or not found")
+        })?;
     std::fs::read(&entry.absolute_path).map_err(|e| {
         warn!(
             font_handle = %handle,
