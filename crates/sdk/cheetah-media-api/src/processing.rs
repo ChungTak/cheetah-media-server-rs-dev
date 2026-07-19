@@ -423,6 +423,10 @@ pub struct ProcessingPreflightReport {
     pub available: bool,
     pub operations: Vec<String>,
     pub diagnostics: HashMap<String, String>,
+    pub avcodec_revision: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
+    pub selection: HashMap<String, String>,
 }
 
 /// Input to an image process operation.

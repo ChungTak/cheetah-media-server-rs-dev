@@ -1268,54 +1268,25 @@ impl MediaProcessingApi for MediaProcessingProvider {
         &self,
         _ctx: &MediaRequestContext,
     ) -> MediaResult<ProcessingPreflightReport> {
-        let mut diagnostics = HashMap::new();
-        let mut operations = Vec::new();
+        let report =
+            crate::provider::preflight::preflight_processing(&self.ctx, &self.config).await?;
 
-        if cfg!(feature = "media-processing-caption") {
-            operations.push("caption_extract".to_string());
-        } else {
-            diagnostics.insert(
-                "caption_extract".to_string(),
-                "media-processing-caption feature not compiled".to_string(),
+        for op in &report.operations {
+            let key = format!(
+                "media_processing_preflight{{profile={},operation={op}}}",
+                report.profile
             );
-        }
-
-        #[cfg(feature = "media-processing-cpu")]
-        {
-            match crate::provider::avcodec_registry::build_registry(&self.config) {
-                Ok(_) => {
-                    operations.push("transcode".to_string());
-                    operations.push("abr_ladder".to_string());
-                    operations.push("audio_mix".to_string());
-                    operations.push("video_mosaic".to_string());
-                }
-                Err(e) => {
-                    let reason = format!("avcodec registry unavailable for profile: {e}");
-                    for op in ["transcode", "abr_ladder", "audio_mix", "video_mosaic"] {
-                        diagnostics.insert(op.to_string(), reason.clone());
-                    }
-                }
-            }
-        }
-
-        let profile = self.config.profile.clone();
-        let available = !operations.is_empty();
-
-        for op in &operations {
-            let key = format!("media_processing_preflight{{profile={profile},operation={op}}}");
             self.ctx.metrics_api.set(&key, 1);
         }
-        for op in diagnostics.keys() {
-            let key = format!("media_processing_preflight{{profile={profile},operation={op}}}");
+        for op in report.diagnostics.keys() {
+            let key = format!(
+                "media_processing_preflight{{profile={},operation={op}}}",
+                report.profile
+            );
             self.ctx.metrics_api.set(&key, 0);
         }
 
-        Ok(ProcessingPreflightReport {
-            profile,
-            available,
-            operations,
-            diagnostics,
-        })
+        Ok(report)
     }
 
     async fn create_job(
