@@ -377,6 +377,7 @@ impl ZlmMediaHttpService {
             trace_context: header_value(&req.headers, "x-trace-context").map(|s| s.to_string()),
             deadline,
             idempotency_key: header_value(&req.headers, "idempotency-key").map(|s| s.to_string()),
+            mutation: None,
         })
     }
 

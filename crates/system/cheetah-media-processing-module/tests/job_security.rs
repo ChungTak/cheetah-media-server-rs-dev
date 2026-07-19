@@ -33,6 +33,7 @@ fn ctx(principal: Option<Principal>) -> MediaRequestContext {
         trace_context: None,
         deadline: None,
         idempotency_key: None,
+        mutation: None,
     }
 }
 
