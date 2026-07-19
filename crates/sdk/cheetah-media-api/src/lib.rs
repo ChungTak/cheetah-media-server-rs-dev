@@ -38,7 +38,7 @@ pub use capability::{
     MediaCapability, MediaCapabilityDescriptor, MediaCapabilityReport, MediaCapabilitySet,
 };
 pub use controlled_event::{
-    ControlledEventHeader, ControlledEventPayload, ControlledMediaEvent, NodeLifecycle,
+    ControlledEventHeader, ControlledEventPayload, ControlledMediaEvent, EventGap, NodeLifecycle,
     PlaybackCompleted, ProcessingCompleted, ProxyStateChanged, RecordCompleted,
     ResourceStateChanged, RtpSessionTimeout, SnapshotCompleted, StreamOffline, StreamOnline,
 };
