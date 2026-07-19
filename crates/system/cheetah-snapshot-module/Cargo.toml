@@ -25,6 +25,5 @@ cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
 [dev-dependencies]
 cheetah-config = { path = "../cheetah-config" }
 cheetah-engine = { path = "../cheetah-engine" }
-image.workspace = true
 cheetah-runtime-tokio = { path = "../../runtime/cheetah-runtime-tokio" }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

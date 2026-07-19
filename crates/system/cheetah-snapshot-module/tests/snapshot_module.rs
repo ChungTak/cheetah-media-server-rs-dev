@@ -1,7 +1,9 @@
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 use bytes::Bytes;
 use cheetah_codec::{
@@ -32,13 +34,9 @@ fn golden_key() -> MediaKey {
     MediaKey::with_default_vhost("live", "snap-test", None).expect("valid key")
 }
 
-fn make_jpeg_payload(width: u32, height: u32) -> Bytes {
-    let img = image::RgbaImage::new(width, height);
-    let mut buf = Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(img)
-        .write_to(&mut buf, image::ImageFormat::Jpeg)
-        .expect("encode jpeg");
-    Bytes::from(buf.into_inner())
+fn make_jpeg_payload() -> Bytes {
+    // Fixed 8x6 JPEG fixture generated with PIL; sha256 = 9208189deaa2dd9c36f36506932f3512bd1c1d30df2feb0a76c574c2ed1d8614.
+    Bytes::from_static(include_bytes!("testdata/golden_8x6.jpg"))
 }
 
 struct FixtureModule {
@@ -115,7 +113,7 @@ impl Module for FixtureModule {
         let cancel = cancel.child_token();
         let _ = runtime.spawn(Box::pin(async move {
             let mut pts = 0i64;
-            let payload = make_jpeg_payload(8, 6);
+            let payload = make_jpeg_payload();
             let timebase = Timebase::new(1, 30);
             loop {
                 if cancel.is_cancelled() {
@@ -184,7 +182,9 @@ async fn build_engine_with_root() -> (Arc<Engine>, PathBuf) {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root = std::env::temp_dir().join(format!("cheetah_snap_mod_{ts}"));
+    let n = TEST_DIR_COUNTER.fetch_add(1, Ordering::SeqCst);
+    let root =
+        std::env::temp_dir().join(format!("cheetah_snap_mod_{}_{ts}_{n}", std::process::id()));
     let _ = std::fs::create_dir_all(&root);
     config
         .apply_module_patch(
