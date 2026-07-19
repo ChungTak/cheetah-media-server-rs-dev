@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{MediaError, MediaErrorCode};
+use crate::fencing::MediaNodeLease;
 use crate::ids::{MediaNodeId, MediaNodeInstanceEpoch, MediaNodeInstanceId, OwnerEpoch};
 
 /// Stable, deployment-level identity of a media node.
@@ -35,6 +36,31 @@ pub struct NodeIdentity {
     pub contract_checksum: String,
     /// Capability generation reported by this node.
     pub capability_generation: u64,
+}
+
+/// Request to register or re-register a media node with the signaling registry.
+///
+/// 向信号注册中心注册或重新注册媒体节点的请求。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeRegistrationRequest {
+    pub node_identity: NodeIdentity,
+    /// Previous lease ID, if re-registering within the lease validity window.
+    pub previous_lease_id: Option<String>,
+}
+
+/// Response returned by the signaling registry for a successful node registration.
+///
+/// 信号注册中心成功注册节点后返回的响应。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeRegistrationResponse {
+    /// Instance epoch assigned by the registry for this process incarnation.
+    pub instance_epoch: MediaNodeInstanceEpoch,
+    /// Lease granted by the registry.
+    pub lease: MediaNodeLease,
+    /// Contract version accepted by the registry.
+    pub accepted_contract_version: String,
+    /// Cluster time at lease issuance, as a UTC millisecond timestamp.
+    pub cluster_time_ms: i64,
 }
 
 impl NodeIdentity {
@@ -125,5 +151,34 @@ mod tests {
     fn owner_epoch_derives_from_instance_epoch() {
         let id = identity();
         assert_eq!(id.owner_epoch(), OwnerEpoch(42));
+    }
+
+    #[test]
+    fn registration_request_and_response_round_trip() {
+        let req = NodeRegistrationRequest {
+            node_identity: identity(),
+            previous_lease_id: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: NodeRegistrationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, decoded);
+
+        let resp = NodeRegistrationResponse {
+            instance_epoch: MediaNodeInstanceEpoch(7),
+            lease: MediaNodeLease {
+                lease_id: "lease-1".to_string(),
+                status: crate::fencing::LeaseStatus::Active,
+                deadline_ms: 1_000_000,
+                heartbeat_interval_ms: 5_000,
+                cluster_time_ms: 0,
+                accepted_contract_version: "v1".to_string(),
+                accepted_instance_epoch: MediaNodeInstanceEpoch(7),
+            },
+            accepted_contract_version: "v1".to_string(),
+            cluster_time_ms: 0,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let decoded: NodeRegistrationResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(resp, decoded);
     }
 }
