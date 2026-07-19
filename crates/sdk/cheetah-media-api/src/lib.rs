@@ -60,7 +60,7 @@ pub use media_file_store::{
     MediaFileStoreApi,
 };
 pub use model::{AdmissionAction, AdmissionRequest, Decision};
-pub use node::NodeIdentity;
+pub use node::{NodeIdentity, NodeRegistrationRequest, NodeRegistrationResponse};
 pub use output::{EndpointState, MediaOutputEndpoint};
 pub use port::{
     ControlAuthApi, MediaAdmissionApi, MediaControlApi, MediaFacade, MediaMutationContext,
