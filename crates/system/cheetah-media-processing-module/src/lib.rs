@@ -12,8 +12,12 @@
 pub mod config;
 pub mod module;
 
-mod logging;
 mod provider;
+
+#[cfg(feature = "media-processing-caption")]
+mod logging;
+
+#[cfg(feature = "media-processing-caption")]
 mod spec_labels;
 
 pub use module::{MediaProcessingModule, MediaProcessingModuleFactory};

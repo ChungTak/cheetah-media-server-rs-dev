@@ -22,6 +22,7 @@ async fn identical_config_is_immediate() {
     );
 }
 
+#[cfg(feature = "avcodec-profile-software")]
 #[tokio::test(flavor = "current_thread")]
 async fn profile_change_requires_restart() {
     let mut module = MediaProcessingModule::new();

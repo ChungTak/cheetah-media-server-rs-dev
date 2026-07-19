@@ -3,6 +3,7 @@
 //! Used by `apply_config` to decide whether a lowered bound can be applied
 //! immediately or requires a module restart.
 
+#[cfg(any(test, feature = "media-processing-caption"))]
 use cheetah_media_api::processing::{
     AbrVariant, AudioTarget, MosaicLayout, Overlay, OverlayKind, ProcessingJob, ProcessingJobSpec,
     ProcessingJobState, VideoTarget,
@@ -19,6 +20,7 @@ pub(crate) struct ProcessingUsageSnapshot {
     pub max_overlay_text_length: u32,
 }
 
+#[cfg(any(test, feature = "media-processing-caption"))]
 pub(crate) fn usage_from_job(job: &ProcessingJob, usage: &mut ProcessingUsageSnapshot) {
     if matches!(
         job.state,
@@ -30,6 +32,7 @@ pub(crate) fn usage_from_job(job: &ProcessingJob, usage: &mut ProcessingUsageSna
     apply_spec(&job.spec, usage);
 }
 
+#[cfg(any(test, feature = "media-processing-caption"))]
 fn apply_spec(spec: &ProcessingJobSpec, usage: &mut ProcessingUsageSnapshot) {
     match spec {
         ProcessingJobSpec::Transcode {
@@ -83,6 +86,7 @@ fn apply_spec(spec: &ProcessingJobSpec, usage: &mut ProcessingUsageSnapshot) {
     }
 }
 
+#[cfg(any(test, feature = "media-processing-caption"))]
 fn apply_video_target(video: &VideoTarget, usage: &mut ProcessingUsageSnapshot) {
     if let (Some(w), Some(h)) = (video.width, video.height) {
         usage.max_image_width = usage.max_image_width.max(w);
@@ -95,6 +99,7 @@ fn apply_video_target(video: &VideoTarget, usage: &mut ProcessingUsageSnapshot) 
     }
 }
 
+#[cfg(any(test, feature = "media-processing-caption"))]
 fn apply_mosaic_layout(layout: &MosaicLayout, usage: &mut ProcessingUsageSnapshot) {
     let w = layout.columns.saturating_mul(layout.cell_width);
     let h = layout.rows.saturating_mul(layout.cell_height);
@@ -107,6 +112,7 @@ fn apply_mosaic_layout(layout: &MosaicLayout, usage: &mut ProcessingUsageSnapsho
     usage.max_video_pixel_rate = usage.max_video_pixel_rate.max(pixel_rate);
 }
 
+#[cfg(any(test, feature = "media-processing-caption"))]
 fn apply_abr_variant(variant: &AbrVariant, usage: &mut ProcessingUsageSnapshot) {
     apply_video_target(&variant.video, usage);
     if let Some(audio) = &variant.audio {
@@ -114,10 +120,12 @@ fn apply_abr_variant(variant: &AbrVariant, usage: &mut ProcessingUsageSnapshot) 
     }
 }
 
+#[cfg(any(test, feature = "media-processing-caption"))]
 fn apply_audio_target(_audio: &AudioTarget, _usage: &mut ProcessingUsageSnapshot) {
     // Encoded frame size for audio is not tracked at the job spec level.
 }
 
+#[cfg(any(test, feature = "media-processing-caption"))]
 fn apply_overlay(overlay: &Overlay, usage: &mut ProcessingUsageSnapshot) {
     if let OverlayKind::Text { text, .. } = &overlay.kind {
         let chars = text.chars().count() as u32;
@@ -125,6 +133,7 @@ fn apply_overlay(overlay: &Overlay, usage: &mut ProcessingUsageSnapshot) {
     }
 }
 
+#[cfg(any(test, feature = "media-processing-caption"))]
 fn fps_from(num: &Option<u32>, den: &Option<u32>) -> Option<f64> {
     match (num, den) {
         (Some(n), Some(d)) if *d != 0 => Some(*n as f64 / *d as f64),
