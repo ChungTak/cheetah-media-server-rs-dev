@@ -25,6 +25,7 @@ pub mod output;
 pub mod port;
 pub mod processing;
 pub mod subtitle;
+pub mod validation;
 pub mod webhook;
 
 pub use auth::{AuthCredentials, MediaScope, Principal};
@@ -64,6 +65,7 @@ pub use processing::{
     VideoMosaicInput, VideoTarget,
 };
 pub use subtitle::{WebVttCue, WebVttFrame};
+pub use validation::{GuardOutcome, MutationGuard, OperationIntent, ValidationStep};
 pub use webhook::{
     CreateWebhookProfileRequest, UpdateWebhookProfileRequest, WebhookFailurePolicy, WebhookProfile,
     WebhookProfileId, WebhookProfileListResponse, WebhookProfileMode, WebhookProfileResponse,
