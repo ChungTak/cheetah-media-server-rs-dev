@@ -33,7 +33,10 @@ pub use capability::{
 pub use error::{MediaError, MediaErrorCode};
 pub use event::MediaEvent;
 pub use ids::{
-    AppName, MediaKey, MediaSchema, PlaybackSessionId, ProcessingJobId, StreamName, VhostName,
+    AppName, CredentialHandle, MediaBindingId, MediaKey, MediaNodeId, MediaNodeInstanceEpoch,
+    MediaNodeInstanceId, MediaSchema, MediaSessionId, MessageId, OperationId, OperationStepId,
+    OwnerEpoch, PlaybackSessionId, ProcessingJobId, ResourceGeneration, StreamName, TenantId,
+    VhostName,
 };
 pub use image::{ImageArtifact, ImageEncodeApi, ImageEncodeRequest, ImageFormat, ImageProcessApi};
 pub use media_file_store::{
