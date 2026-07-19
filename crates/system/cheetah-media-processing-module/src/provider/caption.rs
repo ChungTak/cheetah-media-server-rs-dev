@@ -362,6 +362,41 @@ impl MediaProcessingProvider {
         Ok(())
     }
 
+    /// Authorize the principal to play all source streams and publish all target
+    /// streams before any job slot, subscriber, publisher, or worker is allocated.
+    async fn authorize_create(
+        &self,
+        ctx: &MediaRequestContext,
+        spec: &ProcessingJobSpec,
+    ) -> MediaResult<()> {
+        let (sources, targets) = match spec {
+            ProcessingJobSpec::CaptionExtract { source, target, .. }
+            | ProcessingJobSpec::Transcode { source, target, .. } => {
+                (vec![source.clone()], vec![target.clone()])
+            }
+            ProcessingJobSpec::AbrLadder { source, variants } => {
+                let targets = variants.iter().map(|v| v.target.clone()).collect();
+                (vec![source.clone()], targets)
+            }
+            ProcessingJobSpec::AudioMix { inputs, target, .. } => {
+                let sources = inputs.iter().map(|i| i.source.clone()).collect();
+                (sources, vec![target.clone()])
+            }
+            ProcessingJobSpec::VideoMosaic { inputs, target, .. } => {
+                let sources = inputs.iter().map(|i| i.source.clone()).collect();
+                (sources, vec![target.clone()])
+            }
+        };
+        for source in sources {
+            self.authorize(ctx, AdmissionAction::Play, &source).await?;
+        }
+        for target in targets {
+            self.authorize(ctx, AdmissionAction::Publish, &target)
+                .await?;
+        }
+        Ok(())
+    }
+
     fn new_job_id(&self) -> ProcessingJobId {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -537,7 +572,7 @@ impl MediaProcessingProvider {
     #[allow(clippy::too_many_arguments)]
     async fn create_caption_job(
         &self,
-        ctx: &MediaRequestContext,
+        _ctx: &MediaRequestContext,
         request: CreateProcessingJob,
         source: &MediaKey,
         target: &MediaKey,
@@ -548,11 +583,6 @@ impl MediaProcessingProvider {
         let _ = request;
         let source_key = Self::media_key_to_stream_key(source);
         let target_key = Self::media_key_to_stream_key(target);
-
-        // Admission check must happen before any stream resource is allocated.
-        self.authorize(ctx, AdmissionAction::Play, source).await?;
-        self.authorize(ctx, AdmissionAction::Publish, target)
-            .await?;
 
         if !self.source_has_video(source).await? {
             return Err(MediaError::invalid_argument(format!(
@@ -629,7 +659,7 @@ impl MediaProcessingProvider {
     #[allow(clippy::too_many_arguments)]
     async fn create_transcode_job(
         &self,
-        ctx: &MediaRequestContext,
+        _ctx: &MediaRequestContext,
         request: CreateProcessingJob,
         source: &MediaKey,
         target: &MediaKey,
@@ -643,10 +673,6 @@ impl MediaProcessingProvider {
         let _ = request;
         let source_key = Self::media_key_to_stream_key(source);
         let target_key = Self::media_key_to_stream_key(target);
-
-        self.authorize(ctx, AdmissionAction::Play, source).await?;
-        self.authorize(ctx, AdmissionAction::Publish, target)
-            .await?;
 
         let pub_options = PublisherOptions {
             announce_tracks: true,
@@ -708,7 +734,7 @@ impl MediaProcessingProvider {
     #[allow(clippy::too_many_arguments)]
     async fn create_abr_ladder_job(
         &self,
-        ctx: &MediaRequestContext,
+        _ctx: &MediaRequestContext,
         request: CreateProcessingJob,
         source: &MediaKey,
         variants: &[AbrVariant],
@@ -725,10 +751,7 @@ impl MediaProcessingProvider {
 
         let source_key = Self::media_key_to_stream_key(source);
 
-        // Authorize play on the source before allocating anything.
-        self.authorize(ctx, AdmissionAction::Play, source).await?;
-
-        // Detect duplicate target keys and authorize each publish.
+        // Detect duplicate target keys.
         let mut seen_targets = std::collections::HashSet::new();
         for variant in variants {
             if !seen_targets.insert(variant.target.clone()) {
@@ -737,8 +760,6 @@ impl MediaProcessingProvider {
                     variant.target
                 )));
             }
-            self.authorize(ctx, AdmissionAction::Publish, &variant.target)
-                .await?;
         }
 
         // Acquire all publishers before starting; roll back on any failure.
@@ -812,7 +833,7 @@ impl MediaProcessingProvider {
     #[allow(clippy::too_many_arguments)]
     async fn create_audio_mix_job(
         &self,
-        ctx: &MediaRequestContext,
+        _ctx: &MediaRequestContext,
         request: CreateProcessingJob,
         inputs: &[AudioMixInput],
         mix: &AudioMix,
@@ -826,14 +847,6 @@ impl MediaProcessingProvider {
                 "audio mix requires 2-16 sources",
             ));
         }
-
-        // Authorize play on every source and publish on the output target.
-        for input in inputs {
-            self.authorize(ctx, AdmissionAction::Play, &input.source)
-                .await?;
-        }
-        self.authorize(ctx, AdmissionAction::Publish, &mix.target)
-            .await?;
 
         let target_key = Self::media_key_to_stream_key(&mix.target);
         let pub_options = PublisherOptions {
@@ -893,7 +906,7 @@ impl MediaProcessingProvider {
     #[allow(clippy::too_many_arguments)]
     async fn create_video_mosaic_job(
         &self,
-        ctx: &MediaRequestContext,
+        _ctx: &MediaRequestContext,
         request: CreateProcessingJob,
         inputs: &[VideoMosaicInput],
         layout: &MosaicLayout,
@@ -920,13 +933,6 @@ impl MediaProcessingProvider {
                 "video mosaic overlays are not supported in this release",
             ));
         }
-
-        for input in inputs {
-            self.authorize(ctx, AdmissionAction::Play, &input.source)
-                .await?;
-        }
-        self.authorize(ctx, AdmissionAction::Publish, target)
-            .await?;
 
         let target_key = Self::media_key_to_stream_key(target);
         let pub_options = PublisherOptions {
@@ -1045,6 +1051,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
         request: CreateProcessingJob,
     ) -> MediaResult<ProcessingJob> {
         Self::validate_no_reserved_targets(&request.spec)?;
+        self.authorize_create(ctx, &request.spec).await?;
         let owner = Self::owner_from_ctx(ctx);
         let (job_id, job, cancel) = self.reserve_job_slot(&request, owner)?;
         let spec = request.spec.clone();
