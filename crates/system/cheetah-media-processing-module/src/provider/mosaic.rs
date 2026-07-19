@@ -460,8 +460,12 @@ where
     if let Some(job) = job.as_ref() {
         let mut guard = job.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut *guard);
+        let now = now_ms();
+        if guard.started_at.is_none() {
+            guard.started_at = Some(now);
+        }
         if guard.frames_out > 0 && guard.first_output_at.is_none() {
-            guard.first_output_at = Some(now_ms());
+            guard.first_output_at = Some(now);
         }
     }
 }

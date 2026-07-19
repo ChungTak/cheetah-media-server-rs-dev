@@ -675,7 +675,7 @@ impl MediaProcessingProvider {
             profile: self.config.profile.clone(),
             created_at: now,
             updated_at: now,
-            started_at: Some(now),
+            started_at: None,
             first_output_at: None,
             finished_at: None,
             input_keys: match &request.spec {
@@ -1667,6 +1667,9 @@ impl CaptionExtractWorker {
             f(&mut guard);
             let now = now_ms();
             guard.updated_at = now;
+            if guard.started_at.is_none() {
+                guard.started_at = Some(now);
+            }
             if guard.frames_out > 0 && guard.first_output_at.is_none() {
                 guard.first_output_at = Some(now);
             }
