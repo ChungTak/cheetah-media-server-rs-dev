@@ -50,6 +50,7 @@ pub enum ControlledEventPayload {
     PlaybackCompleted(PlaybackCompleted),
     ProcessingCompleted(ProcessingCompleted),
     NodeLifecycle(NodeLifecycle),
+    Gap(EventGap),
 }
 
 /// A controlled-media event with a fixed header and typed payload.
@@ -88,7 +89,8 @@ impl ControlledMediaEvent {
             | ControlledEventPayload::SnapshotCompleted(_)
             | ControlledEventPayload::PlaybackCompleted(_)
             | ControlledEventPayload::ProcessingCompleted(_)
-            | ControlledEventPayload::NodeLifecycle(_) => None,
+            | ControlledEventPayload::NodeLifecycle(_)
+            | ControlledEventPayload::Gap(_) => None,
         }
     }
 }
@@ -181,6 +183,18 @@ pub struct NodeLifecycle {
     pub instance_epoch: MediaNodeInstanceEpoch,
 }
 
+/// Gap event delivered when a subscriber's resume sequence is older than the
+/// journal retention floor.
+///
+/// 当订阅者的恢复 sequence 早于 journal 保留底限时发送的 gap 事件。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventGap {
+    pub requested_sequence: u64,
+    pub first_available_sequence: u64,
+    pub instance_epoch: MediaNodeInstanceEpoch,
+    pub reconciliation_required: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,6 +282,23 @@ mod tests {
                 },
             }),
         };
+        assert!(event.resource_ref().is_none());
+    }
+
+    #[test]
+    fn gap_event_round_trips() {
+        let event = ControlledMediaEvent {
+            header: header(),
+            payload: ControlledEventPayload::Gap(EventGap {
+                requested_sequence: 1,
+                first_available_sequence: 100,
+                instance_epoch: MediaNodeInstanceEpoch(42),
+                reconciliation_required: true,
+            }),
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        let decoded: ControlledMediaEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(event, decoded);
         assert!(event.resource_ref().is_none());
     }
 }
