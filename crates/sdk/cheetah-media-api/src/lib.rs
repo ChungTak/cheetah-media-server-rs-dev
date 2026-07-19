@@ -23,6 +23,7 @@ pub mod ids;
 pub mod image;
 pub mod media_file_store;
 pub mod model;
+pub mod node;
 pub mod output;
 pub mod port;
 pub mod processing;
@@ -58,6 +59,7 @@ pub use media_file_store::{
     MediaFileStoreApi,
 };
 pub use model::{AdmissionAction, AdmissionRequest, Decision};
+pub use node::NodeIdentity;
 pub use output::{EndpointState, MediaOutputEndpoint};
 pub use port::{
     ControlAuthApi, MediaAdmissionApi, MediaControlApi, MediaFacade, MediaMutationContext,
