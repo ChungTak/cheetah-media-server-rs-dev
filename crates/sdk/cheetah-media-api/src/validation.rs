@@ -120,24 +120,32 @@ impl MediaMutationContext {
 impl MediaRequestContext {
     /// Require a cluster mutation context and run adapter validation.
     ///
-    /// 要求存在集群 mutation 上下文并执行 adapter 校验。
+    /// Runs the fixed adapter sequence first, then checks the request-level
+    /// deadline, so errors are reported in the declared `ValidationStep` order.
+    ///
+    /// 要求存在集群 mutation 上下文并执行 adapter 校验。按固定 adapter 顺序执行，
+    /// 最后检查请求级 deadline，使错误按声明的 `ValidationStep` 顺序返回。
     pub fn validate_mutation_adapter(&self) -> Result<&MediaMutationContext> {
+        let ctx = match &self.mutation {
+            Some(ctx) => ctx,
+            None => {
+                return Err(MediaError::new(
+                    MediaErrorCode::InvalidArgument,
+                    "mutation context is required for cluster mutations",
+                ))
+            }
+        };
+
+        ctx.validate_adapter()?;
+
         if self.deadline.is_none() {
             return Err(MediaError::new(
                 MediaErrorCode::InvalidArgument,
                 "deadline is required for cluster mutations",
             ));
         }
-        match &self.mutation {
-            Some(ctx) => {
-                ctx.validate_adapter()?;
-                Ok(ctx)
-            }
-            None => Err(MediaError::new(
-                MediaErrorCode::InvalidArgument,
-                "mutation context is required for cluster mutations",
-            )),
-        }
+
+        Ok(ctx)
     }
 }
 
@@ -259,28 +267,18 @@ impl<'a> MutationGuard<'a> {
             ));
         }
 
-        if let (Some(req_binding), Some(res_binding)) = (
-            self.ctx.media_binding_id.as_ref(),
-            resource.media_binding_id.as_ref(),
-        ) {
-            if req_binding != res_binding {
-                return Err(MediaError::new(
-                    MediaErrorCode::PermissionDenied,
-                    "media_binding_id does not match the controlled resource",
-                ));
-            }
+        if self.ctx.media_binding_id != resource.media_binding_id {
+            return Err(MediaError::new(
+                MediaErrorCode::PermissionDenied,
+                "media_binding_id does not match the controlled resource",
+            ));
         }
 
-        if let (Some(req_session), Some(res_session)) = (
-            self.ctx.media_session_id.as_ref(),
-            resource.media_session_id.as_ref(),
-        ) {
-            if req_session != res_session {
-                return Err(MediaError::new(
-                    MediaErrorCode::PermissionDenied,
-                    "media_session_id does not match the controlled resource",
-                ));
-            }
+        if self.ctx.media_session_id != resource.media_session_id {
+            return Err(MediaError::new(
+                MediaErrorCode::PermissionDenied,
+                "media_session_id does not match the controlled resource",
+            ));
         }
 
         if self.ctx.owner_epoch.0 > resource.owner_epoch.0 {
