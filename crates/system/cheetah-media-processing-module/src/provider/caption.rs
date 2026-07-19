@@ -1354,9 +1354,9 @@ impl MediaProcessingApi for MediaProcessingProvider {
                 .map_err(|e| {
                     MediaError::internal(format!("idempotency fingerprint failed: {e}"))
                 })?;
-            let ttl = Deadline::from_context(ctx)
-                .remaining_ms()
-                .unwrap_or(3_600_000);
+            // Idempotency retention is independent of the request deadline so retries
+            // after a timeout can still be deduplicated.
+            let ttl = 3_600_000;
             idem.execute(idem_key, fingerprint, ttl, || async move {
                 self.create_job_impl(ctx, request.clone())
                     .await
