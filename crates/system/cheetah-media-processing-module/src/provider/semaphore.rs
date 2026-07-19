@@ -1,24 +1,24 @@
 //! Runtime-neutral async semaphore used to cap image-processing concurrency.
 //!
-//! Only compiled when `media-processing-image` is enabled. The limit tracks
-//! `max_concurrent_jobs` from the shared module configuration and wakes waiters
-//! when the limit increases, so hot-reloaded concurrency bounds take effect
-//! without a module restart.
+//! Only compiled when `media-processing-image` is enabled. The limit is stored
+//! inside the same mutex that tracks active permits, so hot-reloaded
+//! `max_concurrent_jobs` updates and waiter wakeups are atomic and cannot miss
+//! a slot that has just become available.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use futures::channel::oneshot;
 
-use crate::config::{MediaProcessingModuleConfig, MAX_CONCURRENT_JOBS};
+use crate::config::MAX_CONCURRENT_JOBS;
 
 struct State {
+    max: usize,
     active: usize,
     waiters: VecDeque<oneshot::Sender<()>>,
 }
 
 struct SemaphoreInner {
-    config: Arc<Mutex<MediaProcessingModuleConfig>>,
     state: Mutex<State>,
 }
 
@@ -35,13 +35,13 @@ impl std::fmt::Debug for Semaphore {
 }
 
 impl Semaphore {
-    /// Creates a new semaphore whose permit limit tracks `max_concurrent_jobs`
-    /// in the shared module configuration.
-    pub fn with_config(config: Arc<Mutex<MediaProcessingModuleConfig>>) -> Self {
+    /// Creates a new semaphore with the given maximum number of concurrent
+    /// permits, clamped to [`MAX_CONCURRENT_JOBS`].
+    pub fn with_max(max: usize) -> Self {
         Self {
             inner: Arc::new(SemaphoreInner {
-                config,
                 state: Mutex::new(State {
+                    max: max.min(MAX_CONCURRENT_JOBS as usize),
                     active: 0,
                     waiters: VecDeque::new(),
                 }),
@@ -49,25 +49,25 @@ impl Semaphore {
         }
     }
 
+    /// Updates the limit and wakes all current waiters so they re-evaluate.
+    ///
+    /// Used when a hot configuration change alters `max_concurrent_jobs`.
+    pub fn set_max(&self, max: usize) {
+        let max = max.min(MAX_CONCURRENT_JOBS as usize);
+        let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.max = max;
+        while let Some(tx) = state.waiters.pop_front() {
+            let _ = tx.send(());
+        }
+    }
+
     /// Acquires a permit, waiting asynchronously until one is available.
     pub async fn acquire(&self) -> Permit {
         loop {
-            // Compute the current limit first. The actual check-and-park below
-            // is atomic, so a freed permit cannot be lost between observing that
-            // the semaphore is full and enqueueing the waiter.
-            let max = {
-                self.inner
-                    .config
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .max_concurrent_jobs as usize
-            }
-            .min(MAX_CONCURRENT_JOBS as usize);
-
             let (tx, rx) = oneshot::channel();
             {
                 let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
-                if state.active < max {
+                if state.active < state.max {
                     state.active += 1;
                     return Permit {
                         inner: self.inner.clone(),
@@ -76,16 +76,6 @@ impl Semaphore {
                 state.waiters.push_back(tx);
             }
             rx.await.ok();
-        }
-    }
-
-    /// Wakes all current waiters so they re-evaluate the current limit.
-    ///
-    /// Used after a hot configuration update increases `max_concurrent_jobs`.
-    pub fn notify_waiters(&self) {
-        let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
-        while let Some(tx) = state.waiters.pop_front() {
-            let _ = tx.send(());
         }
     }
 }
@@ -119,15 +109,9 @@ mod tests {
 
     use super::*;
 
-    fn cfg(max: u32) -> Arc<Mutex<MediaProcessingModuleConfig>> {
-        let mut c = MediaProcessingModuleConfig::default();
-        c.max_concurrent_jobs = max;
-        Arc::new(Mutex::new(c))
-    }
-
     #[tokio::test]
     async fn permits_limit_concurrency_until_released() {
-        let sem = Semaphore::with_config(cfg(1));
+        let sem = Semaphore::with_max(1);
         let p1 = sem.acquire().await;
 
         let sem2 = sem.clone();
@@ -144,7 +128,7 @@ mod tests {
 
     #[tokio::test]
     async fn released_permit_is_reused() {
-        let sem = Semaphore::with_config(cfg(1));
+        let sem = Semaphore::with_max(1);
         {
             let _p = sem.acquire().await;
         }
@@ -153,7 +137,7 @@ mod tests {
 
     #[tokio::test]
     async fn queued_waiter_receives_released_permit() {
-        let sem = Semaphore::with_config(cfg(1));
+        let sem = Semaphore::with_max(1);
         let p1 = sem.acquire().await;
 
         let sem2 = sem.clone();
@@ -172,7 +156,7 @@ mod tests {
 
     #[tokio::test]
     async fn canceled_waiter_at_front_does_not_block_live_waiter() {
-        let sem = Semaphore::with_config(cfg(1));
+        let sem = Semaphore::with_max(1);
         let p1 = sem.acquire().await;
 
         // W1 will time out and be canceled while in the waiter queue.
@@ -200,7 +184,7 @@ mod tests {
 
     #[tokio::test]
     async fn canceled_waiter_after_wake_does_not_lose_permit() {
-        let sem = Semaphore::with_config(cfg(1));
+        let sem = Semaphore::with_max(1);
         let _p1 = sem.acquire().await;
 
         // Start a waiter that will block until a permit is released.
@@ -226,8 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn dynamic_limit_increase_wakes_waiters() {
-        let config = cfg(1);
-        let sem = Semaphore::with_config(config.clone());
+        let sem = Semaphore::with_max(1);
 
         // Consume the only permit.
         let p1 = sem.acquire().await;
@@ -238,8 +221,7 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(20)).await;
 
         // Increase the limit and notify; the waiter should proceed.
-        config.lock().unwrap().max_concurrent_jobs = 2;
-        sem.notify_waiters();
+        sem.set_max(2);
 
         let result = tokio::time::timeout(Duration::from_millis(500), pending).await;
         assert!(
@@ -252,8 +234,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn concurrent_acquire_and_release_do_not_hang() {
-        let config = cfg(2);
-        let sem = Semaphore::with_config(config.clone());
+        let sem = Semaphore::with_max(2);
 
         let mut handles = Vec::new();
         for _ in 0..20 {

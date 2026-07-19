@@ -35,19 +35,20 @@ impl ImageProcessProvider {
         file_store: Option<Arc<dyn MediaFileStoreApi>>,
         config: MediaProcessingModuleConfig,
     ) -> Self {
-        let config = Arc::new(Mutex::new(config));
+        let semaphore = Semaphore::with_max(config.max_concurrent_jobs as usize);
         Self {
             runtime,
             file_store,
-            config: config.clone(),
-            semaphore: Semaphore::with_config(config),
+            config: Arc::new(Mutex::new(config)),
+            semaphore,
         }
     }
 
     /// Atomically replace the running configuration.
     pub fn update_config(&self, config: MediaProcessingModuleConfig) {
+        let max = config.max_concurrent_jobs as usize;
         *self.config.lock().unwrap_or_else(|e| e.into_inner()) = config;
-        self.semaphore.notify_waiters();
+        self.semaphore.set_max(max);
     }
 
     /// Read the current configuration snapshot.
