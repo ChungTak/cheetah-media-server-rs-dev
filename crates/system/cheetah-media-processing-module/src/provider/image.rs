@@ -91,9 +91,16 @@ fn process_blocking(
 
     let registry = build_registry(config)?;
 
-    // Pre-validate declared encoded dimensions so the decoder does not have to
-    // allocate a huge pixel buffer for an oversized input.
+    // Pre-validate encoded frame size and declared dimensions so the decoder does
+    // not have to allocate a huge buffer for an oversized input.
     if let ImageInput::Encoded { data, format } = &request.input {
+        if data.len() as u64 > config.max_encoded_frame_bytes {
+            return Err(MediaError::invalid_argument(format!(
+                "encoded image {} bytes exceeds configured limit {}",
+                data.len(),
+                config.max_encoded_frame_bytes
+            )));
+        }
         if let Some((w, h)) = encoded_dimensions(data, *format) {
             if w > config.max_image_width || h > config.max_image_height {
                 return Err(MediaError::invalid_argument(format!(

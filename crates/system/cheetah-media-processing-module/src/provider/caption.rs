@@ -21,9 +21,9 @@ use cheetah_codec::{
     video::{AccessUnitAssembler, AccessUnitTiming},
     AVFrame,
 };
-#[cfg(feature = "media-processing-cpu")]
 use cheetah_media_api::processing::{
-    AbrVariant, AudioMix, AudioMixInput, MosaicLayout, Overlay, TrackSelection, VideoMosaicInput,
+    AbrVariant, AudioMix, AudioMixInput, MosaicLayout, Overlay, OverlayKind, TrackSelection,
+    VideoMosaicInput,
 };
 use cheetah_media_api::{
     auth::MediaScope,
@@ -393,6 +393,138 @@ impl MediaProcessingProvider {
         for target in targets {
             self.authorize(ctx, AdmissionAction::Publish, &target)
                 .await?;
+        }
+        Ok(())
+    }
+
+    /// Validate that a processing job spec respects configured upper bounds.
+    fn validate_spec(&self, spec: &ProcessingJobSpec) -> MediaResult<()> {
+        let cfg = &self.config;
+        match spec {
+            ProcessingJobSpec::CaptionExtract { caption, .. } => {
+                if caption.source_streams.len() > cfg.max_processing_inputs as usize {
+                    return Err(MediaError::invalid_argument(
+                        "caption source_streams exceed max_processing_inputs".to_string(),
+                    ));
+                }
+                if caption.languages.len() > cfg.max_processing_inputs as usize {
+                    return Err(MediaError::invalid_argument(
+                        "caption languages exceed max_processing_inputs".to_string(),
+                    ));
+                }
+            }
+            ProcessingJobSpec::Transcode {
+                video, overlays, ..
+            } => {
+                if let Some(video) = video {
+                    self.validate_video_target(video)?;
+                }
+                self.validate_overlays(overlays)?;
+            }
+            ProcessingJobSpec::AbrLadder { variants, .. } => {
+                for variant in variants {
+                    self.validate_video_target(&variant.video)?;
+                }
+            }
+            ProcessingJobSpec::AudioMix { inputs, .. } => {
+                if inputs.len() > cfg.max_processing_inputs as usize {
+                    return Err(MediaError::invalid_argument(format!(
+                        "audio mix inputs exceed max_processing_inputs ({})",
+                        cfg.max_processing_inputs
+                    )));
+                }
+            }
+            ProcessingJobSpec::VideoMosaic {
+                inputs,
+                layout,
+                overlays,
+                ..
+            } => {
+                if inputs.len() > cfg.max_processing_inputs as usize {
+                    return Err(MediaError::invalid_argument(format!(
+                        "video mosaic inputs exceed max_processing_inputs ({})",
+                        cfg.max_processing_inputs
+                    )));
+                }
+                self.validate_mosaic_layout(layout)?;
+                self.validate_overlays(overlays)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_video_target(
+        &self,
+        video: &cheetah_media_api::processing::VideoTarget,
+    ) -> MediaResult<()> {
+        let cfg = &self.config;
+        if let (Some(width), Some(height)) = (video.width, video.height) {
+            if width > cfg.max_image_width || height > cfg.max_image_height {
+                return Err(MediaError::invalid_argument(format!(
+                    "video target {width}x{height} exceeds configured limit {}x{}",
+                    cfg.max_image_width, cfg.max_image_height
+                )));
+            }
+            let num = video.frame_rate_num.unwrap_or(1).max(1) as u128;
+            let den = video.frame_rate_den.unwrap_or(1).max(1) as u128;
+            let pixel_rate = (width as u128) * (height as u128) * num / den;
+            if pixel_rate > cfg.max_video_pixel_rate as u128 {
+                return Err(MediaError::invalid_argument(format!(
+                    "video target pixel rate {pixel_rate} exceeds configured limit {}",
+                    cfg.max_video_pixel_rate
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_mosaic_layout(
+        &self,
+        layout: &cheetah_media_api::processing::MosaicLayout,
+    ) -> MediaResult<()> {
+        let cfg = &self.config;
+        let width = (layout.columns as u128) * (layout.cell_width as u128);
+        let height = (layout.rows as u128) * (layout.cell_height as u128);
+        if width > cfg.max_image_width as u128 || height > cfg.max_image_height as u128 {
+            return Err(MediaError::invalid_argument(format!(
+                "mosaic output {width}x{height} exceeds configured limit {}x{}",
+                cfg.max_image_width, cfg.max_image_height
+            )));
+        }
+        if let (Some(num), Some(den)) = (layout.frame_rate_num, layout.frame_rate_den) {
+            if den == 0 {
+                return Err(MediaError::invalid_argument(
+                    "mosaic frame_rate_den must be non-zero".to_string(),
+                ));
+            }
+            let pixel_rate = width * height * (num as u128) / (den as u128);
+            if pixel_rate > cfg.max_video_pixel_rate as u128 {
+                return Err(MediaError::invalid_argument(format!(
+                    "mosaic pixel rate {pixel_rate} exceeds configured limit {}",
+                    cfg.max_video_pixel_rate
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_overlays(&self, overlays: &[Overlay]) -> MediaResult<()> {
+        let cfg = &self.config;
+        if overlays.len() > cfg.max_processing_overlays as usize {
+            return Err(MediaError::invalid_argument(format!(
+                "overlays exceed max_processing_overlays ({})",
+                cfg.max_processing_overlays
+            )));
+        }
+        for overlay in overlays {
+            if let OverlayKind::Text { text, .. } = &overlay.kind {
+                if text.chars().count() > cfg.max_overlay_text_length as usize {
+                    return Err(MediaError::invalid_argument(format!(
+                        "overlay text length exceeds max_overlay_text_length ({})",
+                        cfg.max_overlay_text_length
+                    )));
+                }
+            }
         }
         Ok(())
     }
@@ -1052,6 +1184,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
     ) -> MediaResult<ProcessingJob> {
         Self::validate_no_reserved_targets(&request.spec)?;
         self.authorize_create(ctx, &request.spec).await?;
+        self.validate_spec(&request.spec)?;
         let owner = Self::owner_from_ctx(ctx);
         let (job_id, job, cancel) = self.reserve_job_slot(&request, owner)?;
         let spec = request.spec.clone();
