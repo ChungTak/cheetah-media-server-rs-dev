@@ -65,10 +65,10 @@ pub use model::{AdmissionAction, AdmissionRequest, Decision};
 pub use node::{NodeIdentity, NodeRegistrationRequest, NodeRegistrationResponse};
 pub use output::{EndpointState, MediaOutputEndpoint};
 pub use port::{
-    ControlAuthApi, MediaAdmissionApi, MediaControlApi, MediaFacade, MediaMutationContext,
-    MediaOutputRegistryApi, MediaProcessingApi, MediaRequestContext, MediaUrlResolverApi,
-    PlaybackApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookAdminApi,
-    WebhookApi,
+    ControlAuthApi, CredentialExchangeApi, MediaAdmissionApi, MediaControlApi, MediaFacade,
+    MediaMutationContext, MediaOutputRegistryApi, MediaProcessingApi, MediaRequestContext,
+    MediaUrlResolverApi, PlaybackApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi,
+    SnapshotApi, WebhookAdminApi, WebhookApi,
 };
 pub use processing::{
     AbrVariant, AudioCodec, AudioMix, AudioMixInput, AudioTarget, CaptionConfig,
