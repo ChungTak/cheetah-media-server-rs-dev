@@ -359,8 +359,9 @@ Preflight and capability honesty:
 - `MediaProcessingApi::preflight` probes each compiled profile for the requested codec
   decode/encode pairs, image operators, audio resample/channel adaptation, flush/reset support,
   memory domain, and buffer path.
-- `ProcessingPreflightReport` records the avcodec revision, profile, operation, availability,
-  selection trace, and reason for any failure.
+- `ProcessingPreflightReport` records the active profile, a top-level `available` boolean,
+  the list of ready operation names, and a `diagnostics` map from unavailable operation name to
+  reason.
 - A single failed operation removes only that operation; the provider still advertises the remaining
   ones. If the core provider cannot initialize, module startup fails and health reports `Disabled`
   or `Degraded` rather than treating a missing feature as an error.
