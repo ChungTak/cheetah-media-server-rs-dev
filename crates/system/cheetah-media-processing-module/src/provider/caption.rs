@@ -1189,8 +1189,8 @@ impl MediaProcessingApi for MediaProcessingProvider {
         request: CreateProcessingJob,
     ) -> MediaResult<ProcessingJob> {
         Self::validate_no_reserved_targets(&request.spec)?;
-        self.authorize_create(ctx, &request.spec).await?;
         self.validate_spec(&request.spec)?;
+        self.authorize_create(ctx, &request.spec).await?;
         let owner = Self::owner_from_ctx(ctx);
         let (job_id, job, cancel) = self.reserve_job_slot(&request, owner)?;
         let spec = request.spec.clone();
