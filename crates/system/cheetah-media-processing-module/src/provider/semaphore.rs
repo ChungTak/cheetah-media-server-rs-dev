@@ -3,7 +3,8 @@
 //! Only compiled when `media-processing-image` is enabled. The limit is stored
 //! inside the same mutex that tracks active permits, so hot-reloaded
 //! `max_concurrent_jobs` updates and waiter wakeups are atomic and cannot miss
-//! a slot that has just become available.
+//! a slot that has just become available. Waiters that are canceled after being
+//! woken forward the wakeup to the next queued waiter.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -63,12 +64,16 @@ impl Semaphore {
 
     /// Acquires a permit, waiting asynchronously until one is available.
     pub async fn acquire(&self) -> Permit {
+        // If this future is canceled after being woken but before it claims the
+        // slot, forward the wakeup to the next waiter.
+        let mut guard = NotifyOnDrop::new(self.inner.clone());
         loop {
             let (tx, rx) = oneshot::channel();
             {
                 let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
                 if state.active < state.max {
                     state.active += 1;
+                    guard.disarm();
                     return Permit {
                         inner: self.inner.clone(),
                     };
@@ -76,6 +81,37 @@ impl Semaphore {
                 state.waiters.push_back(tx);
             }
             rx.await.ok();
+        }
+    }
+}
+
+/// Wakes the next queued waiter when the acquiring future is dropped before it
+/// manages to claim a permit.
+struct NotifyOnDrop {
+    inner: Arc<SemaphoreInner>,
+    armed: bool,
+}
+
+impl NotifyOnDrop {
+    fn new(inner: Arc<SemaphoreInner>) -> Self {
+        Self { inner, armed: true }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for NotifyOnDrop {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        while let Some(tx) = state.waiters.pop_front() {
+            if tx.send(()).is_ok() {
+                break;
+            }
         }
     }
 }
@@ -248,5 +284,33 @@ mod tests {
         for h in handles {
             h.await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn woken_waiter_forwarded_when_canceled_behind_another_waiter() {
+        let sem = Semaphore::with_max(1);
+        let p1 = sem.acquire().await;
+
+        // Two waiters queued behind the held permit.
+        let sem2 = sem.clone();
+        let w1 = tokio::spawn(async move { sem2.acquire().await });
+
+        let sem3 = sem.clone();
+        let w2 = tokio::spawn(async move { sem3.acquire().await });
+
+        tokio::time::sleep(Duration::from_millis(20)).await;
+
+        // Release the permit. w1 is woken; abort it before it claims the slot.
+        drop(p1);
+        w1.abort();
+        let _ = w1.await;
+
+        // The freed slot must be handed to w2, even though w1 was canceled
+        // after being woken.
+        let result = tokio::time::timeout(Duration::from_millis(500), w2).await;
+        assert!(
+            result.is_ok(),
+            "w2 should receive the slot when w1 is canceled after being woken"
+        );
     }
 }
