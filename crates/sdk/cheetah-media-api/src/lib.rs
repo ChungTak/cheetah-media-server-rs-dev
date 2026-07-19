@@ -16,6 +16,7 @@ pub mod capability;
 pub mod command;
 pub mod error;
 pub mod event;
+pub mod fencing;
 pub mod ids;
 pub mod image;
 pub mod media_file_store;
@@ -32,6 +33,7 @@ pub use capability::{
 };
 pub use error::{MediaError, MediaErrorCode};
 pub use event::MediaEvent;
+pub use fencing::ControlledResourceRef;
 pub use ids::{
     AppName, CredentialHandle, MediaBindingId, MediaKey, MediaNodeId, MediaNodeInstanceEpoch,
     MediaNodeInstanceId, MediaSchema, MediaSessionId, MessageId, OperationId, OperationStepId,
