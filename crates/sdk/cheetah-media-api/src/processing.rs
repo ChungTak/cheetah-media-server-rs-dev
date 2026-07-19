@@ -340,6 +340,8 @@ pub struct ProcessingJob {
     pub created_at: i64,
     pub updated_at: i64,
     pub started_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_output_at: Option<i64>,
     pub finished_at: Option<i64>,
     pub input_keys: Vec<MediaKey>,
     pub output_keys: Vec<MediaKey>,

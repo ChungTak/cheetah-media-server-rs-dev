@@ -432,6 +432,9 @@ where
     if let Some(job) = job.as_ref() {
         let mut guard = job.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut *guard);
+        if guard.frames_out > 0 && guard.first_output_at.is_none() {
+            guard.first_output_at = Some(now_ms());
+        }
     }
 }
 
@@ -498,6 +501,7 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             started_at: None,
+            first_output_at: None,
             finished_at: None,
             input_keys: vec![],
             output_keys: vec![],
