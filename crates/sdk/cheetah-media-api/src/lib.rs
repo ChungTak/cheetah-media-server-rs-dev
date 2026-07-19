@@ -33,7 +33,9 @@ pub use capability::{
 };
 pub use error::{EffectOutcome, FieldViolation, MediaError, MediaErrorCode};
 pub use event::MediaEvent;
-pub use fencing::ControlledResourceRef;
+pub use fencing::{
+    ControlledResourceRef, LeaseStatus, MediaNodeLease, NodeRuntimeState, NodeState,
+};
 pub use ids::{
     AppName, CredentialHandle, MediaBindingId, MediaKey, MediaNodeId, MediaNodeInstanceEpoch,
     MediaNodeInstanceId, MediaSchema, MediaSessionId, MessageId, OperationId, OperationStepId,
