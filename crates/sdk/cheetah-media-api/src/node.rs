@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{MediaError, MediaErrorCode};
-use crate::fencing::MediaNodeLease;
+use crate::fencing::{MediaNodeLease, NodeState};
 use crate::ids::{MediaNodeId, MediaNodeInstanceEpoch, MediaNodeInstanceId, OwnerEpoch};
 
 /// Stable, deployment-level identity of a media node.
@@ -61,6 +61,52 @@ pub struct NodeRegistrationResponse {
     pub accepted_contract_version: String,
     /// Cluster time at lease issuance, as a UTC millisecond timestamp.
     pub cluster_time_ms: i64,
+}
+
+/// Resource usage and health reported by a node.
+///
+/// 节点上报的资源使用与健康状况。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeLoad {
+    pub session_count: u64,
+    pub port_count: u64,
+    pub bandwidth_bps: u64,
+    pub worker_count: u64,
+    pub blocking_job_count: u64,
+    pub file_task_count: u64,
+    pub event_subscriber_count: u64,
+    /// Normalized CPU load as a permille value (0–1000).
+    pub cpu_permille: u64,
+    pub degraded_reasons: Vec<String>,
+    /// Current drain state reported by the node.
+    pub drain_state: NodeState,
+}
+
+/// Heartbeat sent from the media node to the signaling registry.
+///
+/// 媒体节点向信号注册中心发送的心跳。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeHeartbeat {
+    pub lease_id: String,
+    pub node_id: MediaNodeId,
+    pub instance_id: MediaNodeInstanceId,
+    pub instance_epoch: MediaNodeInstanceEpoch,
+    pub accepted_contract_version: String,
+    /// Checksum of the descriptor accepted by the registry.
+    pub descriptor_checksum: String,
+    pub capability_generation: u64,
+    pub load: NodeLoad,
+}
+
+/// Registry response to a node heartbeat.
+///
+/// 注册中心对心跳的响应。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeHeartbeatResponse {
+    /// Updated lease, if the registry chose to extend it.
+    pub lease: Option<MediaNodeLease>,
+    /// Heartbeat interval requested by the registry in milliseconds.
+    pub next_heartbeat_interval_ms: u64,
 }
 
 impl NodeIdentity {
@@ -151,6 +197,42 @@ mod tests {
     fn owner_epoch_derives_from_instance_epoch() {
         let id = identity();
         assert_eq!(id.owner_epoch(), OwnerEpoch(42));
+    }
+
+    #[test]
+    fn heartbeat_round_trips() {
+        let hb = NodeHeartbeat {
+            lease_id: "lease-1".to_string(),
+            node_id: identity().node_id,
+            instance_id: identity().instance_id,
+            instance_epoch: MediaNodeInstanceEpoch(7),
+            accepted_contract_version: "v1".to_string(),
+            descriptor_checksum: "sha256:abc".to_string(),
+            capability_generation: 1,
+            load: NodeLoad {
+                session_count: 10,
+                port_count: 4,
+                bandwidth_bps: 1_000_000,
+                worker_count: 2,
+                blocking_job_count: 0,
+                file_task_count: 1,
+                event_subscriber_count: 3,
+                cpu_permille: 123,
+                degraded_reasons: vec!["disk slow".to_string()],
+                drain_state: NodeState::Active,
+            },
+        };
+        let json = serde_json::to_string(&hb).unwrap();
+        let decoded: NodeHeartbeat = serde_json::from_str(&json).unwrap();
+        assert_eq!(hb, decoded);
+
+        let resp = NodeHeartbeatResponse {
+            lease: None,
+            next_heartbeat_interval_ms: 5_000,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let decoded: NodeHeartbeatResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(resp, decoded);
     }
 
     #[test]
