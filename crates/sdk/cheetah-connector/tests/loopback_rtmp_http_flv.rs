@@ -95,9 +95,11 @@ modules:
         .build()?;
     connector.start().await?;
 
-    let mut options = LoopbackOptions::default();
-    options.stream_name = "loopback".to_string();
-    options.tracks = vec![h264_track(), aac_track()];
+    let options = LoopbackOptions {
+        stream_name: "loopback".to_string(),
+        tracks: vec![h264_track(), aac_track()],
+        ..Default::default()
+    };
 
     let mut pair = connector.open_in_memory_loopback(options).await?;
     assert_eq!(pair.layer, LoopbackLayer::ProtocolFraming);

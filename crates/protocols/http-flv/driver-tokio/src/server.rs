@@ -671,12 +671,12 @@ mod tests {
                 .await
                 .expect("timeout")
                 .expect("event");
-            match event {
-                HttpFlvDriverEvent::Core {
-                    connection_id,
-                    event: HttpFlvEvent::PlayRequested { .. },
-                } => break connection_id,
-                _ => {}
+            if let HttpFlvDriverEvent::Core {
+                connection_id,
+                event: HttpFlvEvent::PlayRequested { .. },
+            } = event
+            {
+                break connection_id;
             }
         };
 
@@ -747,12 +747,12 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
                 .await
                 .expect("timeout")
                 .expect("event");
-            match event {
-                HttpFlvDriverEvent::Core {
-                    connection_id,
-                    event: HttpFlvEvent::PlayRequested { .. },
-                } => break connection_id,
-                _ => {}
+            if let HttpFlvDriverEvent::Core {
+                connection_id,
+                event: HttpFlvEvent::PlayRequested { .. },
+            } = event
+            {
+                break connection_id;
             }
         };
 
@@ -832,9 +832,8 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
                 .await
                 .expect("timeout")
                 .expect("event");
-            match event {
-                HttpFlvDriverEvent::ConnectionOpened { connection_id, .. } => break connection_id,
-                _ => {}
+            if let HttpFlvDriverEvent::ConnectionOpened { connection_id, .. } = event {
+                break connection_id;
             }
         };
 
@@ -875,12 +874,12 @@ Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n",
                 .await
                 .expect("timeout")
                 .expect("event");
-            match event {
-                HttpFlvDriverEvent::Core {
-                    event: HttpFlvEvent::PlayRequested { .. },
-                    ..
-                } => break,
-                _ => {}
+            if let HttpFlvDriverEvent::Core {
+                event: HttpFlvEvent::PlayRequested { .. },
+                ..
+            } = event
+            {
+                break;
             }
         }
 

@@ -47,13 +47,15 @@ async fn webrtc_same_protocol_fixture_loopback_roundtrips_h264(
         .build()?;
     connector.start().await?;
 
-    let mut options = LoopbackOptions::default();
-    options.stream_name = "webrtc_fixture".to_string();
-    options.topology = LoopbackTopology::SameProtocol {
-        protocol: Protocol::WebRtc,
+    let options = LoopbackOptions {
+        stream_name: "webrtc_fixture".to_string(),
+        topology: LoopbackTopology::SameProtocol {
+            protocol: Protocol::WebRtc,
+        },
+        preferred_layer: LoopbackLayer::WebRtcMediaFixture,
+        tracks: vec![h264_track()],
+        ..Default::default()
     };
-    options.preferred_layer = LoopbackLayer::WebRtcMediaFixture;
-    options.tracks = vec![h264_track()];
 
     let mut pair = connector.open_in_memory_loopback(options).await?;
     assert_eq!(pair.layer, LoopbackLayer::WebRtcMediaFixture);

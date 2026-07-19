@@ -133,8 +133,9 @@ proptest! {
     ) {
         let mut muxer = TsMuxer::new(CodecId::H265, CodecId::G711A, true);
         muxer.write_pat_pmt();
-        muxer.write_video(&vec![0xBB; payload_len], pts * 90, pts * 90, false);
-        muxer.write_audio(&vec![0xCC; 50], pts * 90);
+        let video_payload = vec![0xBB; payload_len];
+        muxer.write_video(&video_payload, pts * 90, pts * 90, false);
+        muxer.write_audio(&[0xCC; 50], pts * 90);
         let segment = muxer.take_segment();
         for (i, chunk) in segment.chunks(188).enumerate() {
             prop_assert_eq!(chunk[0], 0x47, "packet {} missing sync byte", i);

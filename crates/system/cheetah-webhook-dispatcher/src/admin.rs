@@ -405,10 +405,11 @@ mod tests {
     }
 
     fn test_policy() -> WebhookUrlPolicy {
-        let mut policy = WebhookUrlPolicy::default();
-        policy.block_private = false;
-        policy.allowed_cidrs = vec!["127.0.0.0/8".parse().unwrap()];
-        policy
+        WebhookUrlPolicy {
+            block_private: false,
+            allowed_cidrs: vec!["127.0.0.0/8".parse().unwrap()],
+            ..Default::default()
+        }
     }
 
     fn store(db: Arc<dyn DatabaseApi>) -> WebhookAdminStore {
@@ -430,9 +431,10 @@ mod tests {
     }
 
     fn ctx() -> MediaRequestContext {
-        let mut ctx = MediaRequestContext::default();
-        ctx.request_id = cheetah_media_api::ids::RequestId("req-1".to_string());
-        ctx
+        MediaRequestContext {
+            request_id: cheetah_media_api::ids::RequestId("req-1".to_string()),
+            ..Default::default()
+        }
     }
 
     #[tokio::test]

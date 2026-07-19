@@ -218,9 +218,11 @@ async fn open_webrtc_push_handle(
         "webrtc+whip://127.0.0.1:{}/whip/app/stream",
         server_addr.port()
     );
-    let mut options = ConnectorPushOptions::default();
-    options.tracks = tracks;
-    options.protocol = ProtocolPushExtras::WebRtc(WebRtcPushExtras::default());
+    let options = ConnectorPushOptions {
+        tracks,
+        protocol: ProtocolPushExtras::WebRtc(WebRtcPushExtras::default()),
+        ..Default::default()
+    };
     connector.open_push(Protocol::WebRtc, &url, options).await
 }
 

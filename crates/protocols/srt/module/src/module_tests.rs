@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{SrtAuthUserConfig, SrtFecModuleConfig, SrtRelayJobConfig};
+    use crate::config::{SrtAuthUserConfig, SrtFecModuleConfig, SrtPayloadModuleConfig, SrtRelayJobConfig};
     use bytes::Bytes;
     use cheetah_sdk::{HttpMethod, HttpRequest, ModuleFactory};
 
@@ -404,32 +404,44 @@ mod tests {
 
     #[test]
     fn payload_kind_rejects_non_ts() {
-        let mut config = SrtModuleConfig::default();
-        config.payload.kind = "flv".to_string();
+        let config = SrtModuleConfig {
+            payload: SrtPayloadModuleConfig {
+                kind: "flv".to_string(),
+            },
+            ..Default::default()
+        };
         let err = config.validate().expect_err("non-mpegts payload should fail");
         assert!(err.contains("mpegts"));
     }
 
     #[test]
     fn fec_required_requires_enabled() {
-        let mut fec = SrtFecModuleConfig::default();
-        fec.enabled = false;
-        fec.required = true;
+        let fec = SrtFecModuleConfig {
+            enabled: false,
+            required: true,
+            ..Default::default()
+        };
         let err = fec.validate().expect_err("required without enabled should fail");
         assert!(err.contains("enabled"));
     }
 
     #[test]
     fn fec_enabled_validates_matrix_size() {
-        let mut fec = SrtFecModuleConfig::default();
-        fec.enabled = true;
-        fec.cols = 0;
-        fec.rows = 5;
+        let fec = SrtFecModuleConfig {
+            enabled: true,
+            cols: 0,
+            rows: 5,
+            ..Default::default()
+        };
         let err = fec.validate().expect_err("zero cols should fail");
         assert!(err.contains("cols"));
 
-        fec.cols = 200;
-        fec.rows = 200;
+        let fec = SrtFecModuleConfig {
+            enabled: true,
+            cols: 200,
+            rows: 200,
+            ..Default::default()
+        };
         let err = fec.validate().expect_err("oversized matrix should fail");
         assert!(err.contains("matrix"));
     }

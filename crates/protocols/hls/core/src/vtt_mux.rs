@@ -246,7 +246,7 @@ mod tests {
         mux.close_segment(8_000).unwrap();
 
         let first = mux.segments().iter().next().unwrap();
-        let second = mux.segments().iter().nth(1).unwrap();
+        let second = mux.segments().get(1).unwrap();
 
         assert!(first.payload.contains("00:00:02.000 --> 00:00:04.000"));
         assert!(first.payload.contains("Cross"));
