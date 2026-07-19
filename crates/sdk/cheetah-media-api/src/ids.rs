@@ -491,7 +491,7 @@ macro_rules! uuid_string_id {
                         " must be a canonical UUID"
                     )));
                 }
-                Ok(Self(value))
+                Ok(Self(value.to_lowercase()))
             }
 
             /// Return the inner UUID string.
@@ -606,6 +606,17 @@ mod cluster_id_tests {
         for invalid in ["", "not-a-uuid", "550e8400-e29b-41d4-a716"].iter() {
             assert!(MediaNodeId::new(*invalid).is_err());
         }
+    }
+
+    #[test]
+    fn uuid_ids_are_case_normalized() {
+        let lower = "550e8400-e29b-41d4-a716-446655440000";
+        let upper = "550E8400-E29B-41D4-A716-446655440000";
+        let a = MediaNodeId::new(lower).unwrap();
+        let b = MediaNodeId::new(upper).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a.as_str(), lower);
+        assert_eq!(b.as_str(), lower);
     }
 
     #[test]
