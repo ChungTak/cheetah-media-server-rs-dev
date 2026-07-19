@@ -20,10 +20,8 @@ GET /api/v1/media-processing/preflight
 响应 `ProcessingPreflightReport` 包含：
 
 - `profile`：当前 profile（`native-free` / `software`）
-- `avcodec_revision`：avcodec-rs 的 git revision
-- `features`：编译进的 Cargo feature 列表
+- `available`：预检是否整体可用
 - `operations`：可用的操作（`transcode`、`abr_ladder`、`audio_mix`、`video_mosaic`、`image_process`、`audio_resample`、`caption_extract`）
-- `selection`：每个 operation 选中的 backend、memory domain、staging 摘要
 - `diagnostics`：不可用的 operation 及原因
 
 若某 operation 显示 `media-processing-cpu feature not compiled`，说明该能力未编译进当前二进制；若显示 `no H.264/H.265 encoder available` 等，说明 avcodec 注册表未选中对应 backend。
@@ -66,8 +64,8 @@ DELETE /api/v1/media-processing/jobs/{job_id}
 1. 先查 `/preflight`，确认 `operations` 包含目标 operation。
 2. 查看 `diagnostics` 中对应条目的 `reason`。
 3. 检查 `profile` 是否为 `software`（需要 `--features avcodec-profile-software`）。
-4. 检查 `features` 是否包含 `media-processing-cpu`（混音/宫格/ABR/转码需要）。
-5. 确认输入 codec 在 `audio_decode` / `video_decode` selection 中列出。
+4. 确认目标 operation 在 `operations` 列表中；若缺失，检查是否已编译对应的 `media-processing-{audio,video,image,caption}` feature。
+5. 根据 `diagnostics` 中的具体原因，确认输入/输出 codec 或 image operator 是否在当前 profile 中可用。
 
 ## 4. 观察队列与丢帧
 
@@ -88,7 +86,7 @@ DELETE /api/v1/media-processing/jobs/{job_id}
 
 ## 5. 动态库 / SBOM
 
-`preflight` 报告的 `avcodec_revision` 字段来自 `Cargo.toml` 中 avcodec 依赖的 `rev`，可作为 SBOM 的一部分。若怀疑动态库链接异常：
+avcodec-rs 的 git revision 来自 `Cargo.toml` 中 avcodec 依赖的 `rev`，可作为 SBOM 的一部分。若怀疑动态库链接异常：
 
 ```bash
 # 检查编译进的 avcodec revision
