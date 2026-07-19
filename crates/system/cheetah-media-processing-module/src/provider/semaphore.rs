@@ -1,9 +1,9 @@
 //! Runtime-neutral async semaphore used to cap image-processing concurrency.
 //!
-//! Only compiled when `media-processing-image` is enabled. Supports a fixed
-//! permit count for tests and a dynamic count backed by the shared module
-//! configuration, so hot-reloaded `max_concurrent_jobs` takes effect without a
-//! module restart.
+//! Only compiled when `media-processing-image` is enabled. The limit tracks
+//! `max_concurrent_jobs` from the shared module configuration and wakes waiters
+//! when the limit increases, so hot-reloaded concurrency bounds take effect
+//! without a module restart.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -12,14 +12,14 @@ use futures::channel::oneshot;
 
 use crate::config::{MediaProcessingModuleConfig, MAX_CONCURRENT_JOBS};
 
-enum Max {
-    Config(Arc<Mutex<MediaProcessingModuleConfig>>),
+struct State {
+    active: usize,
+    waiters: VecDeque<oneshot::Sender<()>>,
 }
 
 struct SemaphoreInner {
-    max: Max,
-    active: Mutex<usize>,
-    waiters: Mutex<VecDeque<oneshot::Sender<()>>>,
+    config: Arc<Mutex<MediaProcessingModuleConfig>>,
+    state: Mutex<State>,
 }
 
 /// Async permit-backed concurrency limiter.
@@ -40,9 +40,11 @@ impl Semaphore {
     pub fn with_config(config: Arc<Mutex<MediaProcessingModuleConfig>>) -> Self {
         Self {
             inner: Arc::new(SemaphoreInner {
-                max: Max::Config(config),
-                active: Mutex::new(0),
-                waiters: Mutex::new(VecDeque::new()),
+                config,
+                state: Mutex::new(State {
+                    active: 0,
+                    waiters: VecDeque::new(),
+                }),
             }),
         }
     }
@@ -50,41 +52,30 @@ impl Semaphore {
     /// Acquires a permit, waiting asynchronously until one is available.
     pub async fn acquire(&self) -> Permit {
         loop {
-            let max = self.permit_limit();
-            if let Some(permit) = self.try_acquire(max) {
-                return permit;
-            }
-
-            let (tx, rx) = oneshot::channel();
-            self.inner
-                .waiters
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .push_back(tx);
-            rx.await.ok();
-        }
-    }
-
-    fn permit_limit(&self) -> usize {
-        match &self.inner.max {
-            Max::Config(cfg) => {
-                cfg.lock()
+            // Compute the current limit first. The actual check-and-park below
+            // is atomic, so a freed permit cannot be lost between observing that
+            // the semaphore is full and enqueueing the waiter.
+            let max = {
+                self.inner
+                    .config
+                    .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .max_concurrent_jobs as usize
             }
-        }
-        .min(MAX_CONCURRENT_JOBS as usize)
-    }
+            .min(MAX_CONCURRENT_JOBS as usize);
 
-    fn try_acquire(&self, max: usize) -> Option<Permit> {
-        let mut active = self.inner.active.lock().unwrap_or_else(|e| e.into_inner());
-        if *active < max {
-            *active += 1;
-            Some(Permit {
-                inner: self.inner.clone(),
-            })
-        } else {
-            None
+            let (tx, rx) = oneshot::channel();
+            {
+                let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+                if state.active < max {
+                    state.active += 1;
+                    return Permit {
+                        inner: self.inner.clone(),
+                    };
+                }
+                state.waiters.push_back(tx);
+            }
+            rx.await.ok();
         }
     }
 
@@ -92,8 +83,8 @@ impl Semaphore {
     ///
     /// Used after a hot configuration update increases `max_concurrent_jobs`.
     pub fn notify_waiters(&self) {
-        let mut waiters = self.inner.waiters.lock().unwrap_or_else(|e| e.into_inner());
-        while let Some(tx) = waiters.pop_front() {
+        let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        while let Some(tx) = state.waiters.pop_front() {
             let _ = tx.send(());
         }
     }
@@ -112,10 +103,9 @@ impl std::fmt::Debug for Permit {
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        let mut active = self.inner.active.lock().unwrap_or_else(|e| e.into_inner());
-        *active = active.saturating_sub(1);
-        let mut waiters = self.inner.waiters.lock().unwrap_or_else(|e| e.into_inner());
-        while let Some(tx) = waiters.pop_front() {
+        let mut state = self.inner.state.lock().unwrap_or_else(|e| e.into_inner());
+        state.active = state.active.saturating_sub(1);
+        while let Some(tx) = state.waiters.pop_front() {
             if tx.send(()).is_ok() {
                 break;
             }
@@ -258,5 +248,24 @@ mod tests {
         );
 
         drop(p1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_acquire_and_release_do_not_hang() {
+        let config = cfg(2);
+        let sem = Semaphore::with_config(config.clone());
+
+        let mut handles = Vec::new();
+        for _ in 0..20 {
+            let sem2 = sem.clone();
+            handles.push(tokio::spawn(async move {
+                let _p = sem2.acquire().await;
+                tokio::time::sleep(Duration::from_micros(100)).await;
+            }));
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
     }
 }
