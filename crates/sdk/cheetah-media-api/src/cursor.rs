@@ -2,6 +2,9 @@
 //!
 //! 控制面查询的游标分页类型。
 
+use std::fmt;
+
+use serde::de::{self, Deserializer, Visitor};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{MediaError, Result};
@@ -9,7 +12,7 @@ use crate::error::{MediaError, Result};
 /// Opaque cursor token passed by clients to resume a paginated query.
 ///
 /// 客户端传回的不透明游标令牌，用于继续分页查询。
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 #[serde(transparent)]
 pub struct OpaqueCursor(String);
 
@@ -39,6 +42,32 @@ impl OpaqueCursor {
     /// Return the raw cursor string.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for OpaqueCursor {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct OpaqueCursorVisitor;
+
+        impl<'de> Visitor<'de> for OpaqueCursorVisitor {
+            type Value = OpaqueCursor;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("a non-empty opaque cursor string")
+            }
+
+            fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                OpaqueCursor::new(value).map_err(de::Error::custom)
+            }
+        }
+
+        deserializer.deserialize_str(OpaqueCursorVisitor)
     }
 }
 
@@ -114,6 +143,19 @@ mod tests {
     fn cursor_enforces_max_length() {
         let long = "a".repeat(OpaqueCursor::MAX_LEN + 1);
         assert!(OpaqueCursor::new(long).is_err());
+    }
+
+    #[test]
+    fn cursor_deserialize_validates() {
+        let valid = "\"valid-cursor\"";
+        let decoded: OpaqueCursor = serde_json::from_str(valid).unwrap();
+        assert_eq!(decoded.as_str(), "valid-cursor");
+
+        let empty = "\"\"";
+        assert!(serde_json::from_str::<OpaqueCursor>(empty).is_err());
+
+        let long = format!("\"{}\"", "a".repeat(OpaqueCursor::MAX_LEN + 1));
+        assert!(serde_json::from_str::<OpaqueCursor>(&long).is_err());
     }
 
     #[test]
