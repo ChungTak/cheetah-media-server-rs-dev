@@ -91,11 +91,14 @@ fn apply_video_target(video: &VideoTarget, usage: &mut ProcessingUsageSnapshot) 
     if let (Some(w), Some(h)) = (video.width, video.height) {
         usage.max_image_width = usage.max_image_width.max(w);
         usage.max_image_height = usage.max_image_height.max(h);
-        let fps = fps_from(&video.frame_rate_num, &video.frame_rate_den).unwrap_or(30.0);
-        let pixel_rate = (w as u64)
-            .saturating_mul(h as u64)
-            .saturating_mul(fps.max(0.0) as u64);
-        usage.max_video_pixel_rate = usage.max_video_pixel_rate.max(pixel_rate);
+        // Only contribute a pixel-rate figure when the spec explicitly sets a
+        // frame rate, matching the validation in `validate_video_target`.
+        if let Some(fps) = fps_from(&video.frame_rate_num, &video.frame_rate_den) {
+            let pixel_rate = (w as u64)
+                .saturating_mul(h as u64)
+                .saturating_mul(fps.max(0.0) as u64);
+            usage.max_video_pixel_rate = usage.max_video_pixel_rate.max(pixel_rate);
+        }
     }
 }
 
@@ -105,11 +108,14 @@ fn apply_mosaic_layout(layout: &MosaicLayout, usage: &mut ProcessingUsageSnapsho
     let h = layout.rows.saturating_mul(layout.cell_height);
     usage.max_image_width = usage.max_image_width.max(w);
     usage.max_image_height = usage.max_image_height.max(h);
-    let fps = fps_from(&layout.frame_rate_num, &layout.frame_rate_den).unwrap_or(30.0);
-    let pixel_rate = (w as u64)
-        .saturating_mul(h as u64)
-        .saturating_mul(fps.max(0.0) as u64);
-    usage.max_video_pixel_rate = usage.max_video_pixel_rate.max(pixel_rate);
+    // Only contribute a pixel-rate figure when the spec explicitly sets a
+    // frame rate, matching the validation in `validate_video_target`.
+    if let Some(fps) = fps_from(&layout.frame_rate_num, &layout.frame_rate_den) {
+        let pixel_rate = (w as u64)
+            .saturating_mul(h as u64)
+            .saturating_mul(fps.max(0.0) as u64);
+        usage.max_video_pixel_rate = usage.max_video_pixel_rate.max(pixel_rate);
+    }
 }
 
 #[cfg(any(test, feature = "media-processing-caption"))]
