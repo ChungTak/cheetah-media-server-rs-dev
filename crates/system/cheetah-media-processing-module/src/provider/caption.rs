@@ -83,7 +83,7 @@ struct JobEntry {
 /// `MediaProcessingApi` provider for caption extraction and stream transcoding jobs.
 pub struct MediaProcessingProvider {
     ctx: EngineContext,
-    config: MediaProcessingModuleConfig,
+    config: Arc<Mutex<MediaProcessingModuleConfig>>,
     jobs: Arc<Mutex<HashMap<ProcessingJobId, JobEntry>>>,
     id_counter: AtomicU64,
     gauge_keys: Arc<Mutex<HashSet<String>>>,
@@ -104,12 +104,42 @@ impl MediaProcessingProvider {
     pub fn new(ctx: EngineContext, config: MediaProcessingModuleConfig) -> Self {
         Self {
             ctx,
-            config,
+            config: Arc::new(Mutex::new(config)),
             jobs: Arc::new(Mutex::new(HashMap::new())),
             id_counter: AtomicU64::new(0),
             gauge_keys: Arc::new(Mutex::new(HashSet::new())),
             last_metric_counts: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Atomically replace the running configuration.
+    ///
+    /// `MediaProcessingModule::apply_config` calls this when a change is applied
+    /// immediately, so limit checks use the new bounds without requiring a module restart.
+    pub fn update_config(&self, config: MediaProcessingModuleConfig) {
+        *self.config.lock().unwrap_or_else(|e| e.into_inner()) = config;
+    }
+
+    /// Read the current configuration snapshot.
+    fn config(&self) -> MediaProcessingModuleConfig {
+        self.config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Current resource usage of active processing jobs.
+    ///
+    /// Used by `apply_config` to decide whether a lowered configuration bound
+    /// can be applied live or requires a module restart.
+    pub fn usage_snapshot(&self) -> crate::provider::usage::ProcessingUsageSnapshot {
+        let mut usage = crate::provider::usage::ProcessingUsageSnapshot::default();
+        let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        for entry in jobs.values() {
+            let guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
+            crate::provider::usage::usage_from_job(&guard, &mut usage);
+        }
+        usage
     }
 
     /// Publish processing gauges/counters and zero out stale gauge keys.
@@ -379,7 +409,7 @@ impl MediaProcessingProvider {
 
     /// Validate that a processing job spec respects configured upper bounds.
     fn validate_spec(&self, spec: &ProcessingJobSpec) -> MediaResult<()> {
-        let cfg = &self.config;
+        let cfg = self.config();
         match spec {
             ProcessingJobSpec::CaptionExtract { caption, .. } => {
                 if caption.source_streams.len() > cfg.max_processing_inputs as usize {
@@ -437,7 +467,7 @@ impl MediaProcessingProvider {
         &self,
         video: &cheetah_media_api::processing::VideoTarget,
     ) -> MediaResult<()> {
-        let cfg = &self.config;
+        let cfg = self.config();
         if let (Some(width), Some(height)) = (video.width, video.height) {
             if width > cfg.max_image_width || height > cfg.max_image_height {
                 return Err(MediaError::invalid_argument(format!(
@@ -467,7 +497,7 @@ impl MediaProcessingProvider {
         &self,
         layout: &cheetah_media_api::processing::MosaicLayout,
     ) -> MediaResult<()> {
-        let cfg = &self.config;
+        let cfg = self.config();
         let width = (layout.columns as u128) * (layout.cell_width as u128);
         let height = (layout.rows as u128) * (layout.cell_height as u128);
         if width > cfg.max_image_width as u128 || height > cfg.max_image_height as u128 {
@@ -494,7 +524,7 @@ impl MediaProcessingProvider {
     }
 
     fn validate_overlays(&self, overlays: &[Overlay]) -> MediaResult<()> {
-        let cfg = &self.config;
+        let cfg = self.config();
         if overlays.len() > cfg.max_processing_overlays as usize {
             return Err(MediaError::invalid_argument(format!(
                 "overlays exceed max_processing_overlays ({})",
@@ -532,6 +562,7 @@ impl MediaProcessingProvider {
         Arc<Mutex<ProcessingJob>>,
         CancellationToken,
     )> {
+        let cfg = self.config();
         let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         let running = jobs
             .values()
@@ -539,10 +570,10 @@ impl MediaProcessingProvider {
                 e.job.lock().unwrap_or_else(|e| e.into_inner()).state == ProcessingJobState::Running
             })
             .count();
-        if running >= self.config.max_concurrent_jobs as usize {
+        if running >= cfg.max_concurrent_jobs as usize {
             return Err(MediaError::unavailable(format!(
                 "max concurrent processing jobs ({}) reached",
-                self.config.max_concurrent_jobs
+                cfg.max_concurrent_jobs
             )));
         }
 
@@ -630,7 +661,7 @@ impl MediaProcessingProvider {
             spec: request.spec.clone(),
             state,
             generation: 1,
-            profile: self.config.profile.clone(),
+            profile: self.config().profile.clone(),
             created_at: now,
             updated_at: now,
             started_at: None,
@@ -810,7 +841,7 @@ impl MediaProcessingProvider {
 
         let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
-        let config = self.config.clone();
+        let config = self.config();
         let engine = self.ctx.clone();
         let spawned_job_id = job_id.clone();
         let video = video.clone();
@@ -914,7 +945,7 @@ impl MediaProcessingProvider {
 
         let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
-        let config = self.config.clone();
+        let config = self.config();
         let engine = self.ctx.clone();
         let spawned_job_id = job_id.clone();
         let variants = variants.to_vec();
@@ -985,7 +1016,7 @@ impl MediaProcessingProvider {
 
         let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
-        let config = self.config.clone();
+        let config = self.config();
         let engine = self.ctx.clone();
         let spawned_job_id = job_id.clone();
         let inputs = inputs.to_vec();
@@ -1071,7 +1102,7 @@ impl MediaProcessingProvider {
 
         let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
-        let config = self.config.clone();
+        let config = self.config();
         let engine = self.ctx.clone();
         let spawned_job_id = job_id.clone();
         let inputs = inputs.to_vec();
@@ -1268,8 +1299,8 @@ impl MediaProcessingApi for MediaProcessingProvider {
         &self,
         _ctx: &MediaRequestContext,
     ) -> MediaResult<ProcessingPreflightReport> {
-        let report =
-            crate::provider::preflight::preflight_processing(&self.ctx, &self.config).await?;
+        let report = crate::provider::preflight::preflight_processing(&self.ctx, &self.config())
+            .await?;
 
         for op in &report.operations {
             let key = format!(

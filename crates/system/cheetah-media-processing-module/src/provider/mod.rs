@@ -25,6 +25,8 @@ pub use image::ImageProcessProvider;
 #[cfg(feature = "media-processing-caption")]
 pub mod caption;
 
+pub(crate) mod usage;
+
 #[cfg(feature = "media-processing-caption")]
 pub(crate) mod preflight;
 

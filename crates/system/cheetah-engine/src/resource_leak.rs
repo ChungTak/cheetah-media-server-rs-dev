@@ -7,14 +7,17 @@
 //! 资源泄漏观测器。
 //! 汇总任务、流、模块与媒体会话的快照，用于验证取消、停止与重启后没有遗留运行时对象。
 
+use std::collections::HashSet;
+
 use cheetah_media_api::auth::{MediaScope, Principal};
 use cheetah_media_api::command::SessionQuery;
+use cheetah_media_api::ids::StreamKeyBridge;
 use cheetah_media_api::model::SessionState;
 use cheetah_media_api::port::MediaRequestContext;
 use cheetah_media_api::processing::{ProcessingJobQuery, ProcessingJobState};
 use cheetah_sdk::{
-    MediaServices, MediaSessionDirectoryApi, ModuleManagerApi, ModuleState, StreamManagerApi,
-    StreamSnapshot, TaskState, TaskSystemApi,
+    MediaServices, MediaSessionDirectoryApi, ModuleManagerApi, ModuleState, StreamKey,
+    StreamManagerApi, StreamSnapshot, TaskState, TaskSystemApi,
 };
 
 /// Summary of runtime objects that are still alive when they should have been
@@ -27,6 +30,11 @@ pub struct ResourceLeakReport {
     pub active_stream_keys: Vec<String>,
     pub running_module_ids: Vec<String>,
     pub active_processing_job_ids: Vec<String>,
+    pub live_blocking_worker_job_ids: Vec<String>,
+    pub derived_publisher_stream_keys: Vec<String>,
+    pub derived_subscriber_stream_keys: Vec<String>,
+    pub shared_task_references: Vec<(String, u64)>,
+    pub reserved_processing_resources: Vec<String>,
     pub active_session_ids: Vec<String>,
 }
 
@@ -45,6 +53,10 @@ impl ResourceLeakReport {
         self.active_task_ids.is_empty()
             && self.active_stream_keys.is_empty()
             && self.active_processing_job_ids.is_empty()
+            && self.live_blocking_worker_job_ids.is_empty()
+            && self.derived_publisher_stream_keys.is_empty()
+            && self.derived_subscriber_stream_keys.is_empty()
+            && self.shared_task_references.is_empty()
             && self.active_session_ids.is_empty()
     }
 }
@@ -73,9 +85,12 @@ impl ResourceLeakObserver {
             }
         }
 
+        let mut active_stream_set = HashSet::new();
         for stream in stream_manager.list_streams().await? {
             if is_stream_active(&stream) {
-                report.active_stream_keys.push(stream.key.to_string());
+                let key_str = stream.key.to_string();
+                active_stream_set.insert(key_str.clone());
+                report.active_stream_keys.push(key_str);
             }
         }
 
@@ -95,6 +110,9 @@ impl ResourceLeakObserver {
                 ..Default::default()
             };
             let mut collected = 0u64;
+            let mut reserved_publishers = 0u64;
+            let mut reserved_subscribers = 0u64;
+            let mut reserved_slots = 0u64;
             loop {
                 let mut page_query = query.clone();
                 page_query.page = (collected / query.page_size) + 1;
@@ -105,15 +123,39 @@ impl ResourceLeakObserver {
                         job.state,
                         ProcessingJobState::Stopped | ProcessingJobState::Failed
                     ) {
-                        report
-                            .active_processing_job_ids
-                            .push(job.job_id.to_string());
+                        let job_id = job.job_id.to_string();
+                        report.active_processing_job_ids.push(job_id.clone());
+                        report.live_blocking_worker_job_ids.push(job_id.clone());
+                        report.shared_task_references.push((job_id, job.ref_count));
+
+                        for key in &job.input_keys {
+                            let (ns, path) = StreamKeyBridge::to_namespace_path(key);
+                            let skey = StreamKey::new(ns, path);
+                            if active_stream_set.contains(&skey.to_string()) {
+                                report.derived_subscriber_stream_keys.push(skey.to_string());
+                            }
+                            reserved_subscribers += 1;
+                        }
+                        for key in &job.output_keys {
+                            let (ns, path) = StreamKeyBridge::to_namespace_path(key);
+                            let skey = StreamKey::new(ns, path);
+                            if active_stream_set.contains(&skey.to_string()) {
+                                report.derived_publisher_stream_keys.push(skey.to_string());
+                            }
+                            reserved_publishers += 1;
+                        }
+                        reserved_slots += 1;
                     }
                 }
                 collected += page_len;
                 if collected >= page.total || page_len == 0 {
                     break;
                 }
+            }
+            if reserved_slots > 0 || reserved_publishers > 0 || reserved_subscribers > 0 {
+                report.reserved_processing_resources.push(format!(
+                    "slots={reserved_slots} publishers={reserved_publishers} subscribers={reserved_subscribers}"
+                ));
             }
         }
 

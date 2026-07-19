@@ -58,6 +58,8 @@ pub struct MediaProcessingModule {
     state: ModuleState,
     ctx: Option<EngineContext>,
     config: MediaProcessingModuleConfig,
+    #[cfg(feature = "media-processing-image")]
+    image_process_provider: Option<Arc<crate::provider::ImageProcessProvider>>,
     image_process_registration: Option<ProviderRegistration>,
     processing_registration: Option<ProviderRegistration>,
     metrics_cancel: Option<CancellationToken>,
@@ -73,6 +75,8 @@ impl MediaProcessingModule {
             state: ModuleState::Created,
             ctx: None,
             config: MediaProcessingModuleConfig::default(),
+            #[cfg(feature = "media-processing-image")]
+            image_process_provider: None,
             image_process_registration: None,
             processing_registration: None,
             metrics_cancel: None,
@@ -118,6 +122,7 @@ impl Module for MediaProcessingModule {
                 Some(ctx.engine.media_file_store.clone()),
                 self.config.clone(),
             ));
+            self.image_process_provider = Some(provider.clone());
 
             let mut capabilities = cheetah_media_api::MediaCapabilitySet::empty();
             capabilities.add(cheetah_media_api::MediaCapability::ImageProcessing, 1);
@@ -223,9 +228,69 @@ impl Module for MediaProcessingModule {
         let new_cfg = MediaProcessingModuleConfig::from_value(change.next)
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
         new_cfg.validate().map_err(SdkError::InvalidArgument)?;
-        if new_cfg != self.config {
+        if new_cfg == self.config {
+            return Ok(ConfigEffect::Immediate);
+        }
+
+        // Profile/backend selection requires a restart because it changes which
+        // codec backends are compiled in and preflighted.
+        if new_cfg.profile != self.config.profile {
             self.config = new_cfg;
             return Ok(ConfigEffect::ModuleRestartRequired);
+        }
+
+        // For numeric upper bounds, require a restart only if the new bound is
+        // lower than the current usage of active jobs. Bounds that cannot be
+        // tracked from job specs (font size, encoded frame bytes) are treated
+        // conservatively: any decrease requires a restart.
+        #[cfg(feature = "media-processing-caption")]
+        let usage = self
+            .processing_provider
+            .as_ref()
+            .map(|p| p.usage_snapshot())
+            .unwrap_or_default();
+        #[cfg(not(feature = "media-processing-caption"))]
+        let usage = crate::provider::usage::ProcessingUsageSnapshot::default();
+
+        if new_cfg.max_concurrent_jobs < usage.active_jobs {
+            return Ok(ConfigEffect::ModuleRestartRequired);
+        }
+        if new_cfg.max_processing_inputs < usage.max_inputs {
+            return Ok(ConfigEffect::ModuleRestartRequired);
+        }
+        if new_cfg.max_processing_overlays < usage.max_overlays {
+            return Ok(ConfigEffect::ModuleRestartRequired);
+        }
+        if new_cfg.max_image_width < usage.max_image_width
+            || new_cfg.max_image_height < usage.max_image_height
+        {
+            return Ok(ConfigEffect::ModuleRestartRequired);
+        }
+        if new_cfg.max_video_pixel_rate < usage.max_video_pixel_rate {
+            return Ok(ConfigEffect::ModuleRestartRequired);
+        }
+        if new_cfg.max_encoded_frame_bytes < self.config.max_encoded_frame_bytes {
+            // Encoded frame size usage is not tracked; any decrease requires a restart.
+            self.config = new_cfg;
+            return Ok(ConfigEffect::ModuleRestartRequired);
+        }
+        if new_cfg.max_overlay_text_length < usage.max_overlay_text_length {
+            return Ok(ConfigEffect::ModuleRestartRequired);
+        }
+        if new_cfg.max_overlay_font_size < self.config.max_overlay_font_size {
+            // Font size usage is not tracked; any decrease requires a restart.
+            self.config = new_cfg;
+            return Ok(ConfigEffect::ModuleRestartRequired);
+        }
+
+        self.config = new_cfg.clone();
+        #[cfg(feature = "media-processing-image")]
+        if let Some(provider) = self.image_process_provider.as_ref() {
+            provider.update_config(new_cfg.clone());
+        }
+        #[cfg(feature = "media-processing-caption")]
+        if let Some(provider) = self.processing_provider.as_ref() {
+            provider.update_config(new_cfg);
         }
         Ok(ConfigEffect::Immediate)
     }
