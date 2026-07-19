@@ -1,4 +1,3 @@
-use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -32,13 +31,9 @@ fn golden_key() -> MediaKey {
     MediaKey::with_default_vhost("live", "snap-test", None).expect("valid key")
 }
 
-fn make_jpeg_payload(width: u32, height: u32) -> Bytes {
-    let img = image::RgbaImage::new(width, height);
-    let mut buf = Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(img)
-        .write_to(&mut buf, image::ImageFormat::Jpeg)
-        .expect("encode jpeg");
-    Bytes::from(buf.into_inner())
+fn make_jpeg_payload(_width: u32, _height: u32) -> Bytes {
+    // Fixed 8x6 JPEG fixture generated with PIL; sha256 = 9208189deaa2dd9c36f36506932f3512bd1c1d30df2feb0a76c574c2ed1d8614.
+    Bytes::from_static(include_bytes!("testdata/golden_8x6.jpg"))
 }
 
 struct FixtureModule {

@@ -9,7 +9,6 @@
 //! SnapshotModule 以及一个发布 MJPEG 视频流的 fixture module。
 
 use std::fs;
-use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -47,14 +46,10 @@ pub fn golden_key() -> MediaKey {
     MediaKey::with_default_vhost("live", "golden", None).expect("valid golden key")
 }
 
-/// Default golden stream key used by low-level subscriber tests.
-pub fn make_jpeg_payload(width: u32, height: u32) -> Bytes {
-    let img = image::RgbaImage::new(width, height);
-    let mut buf = Cursor::new(Vec::new());
-    image::DynamicImage::ImageRgba8(img)
-        .write_to(&mut buf, image::ImageFormat::Jpeg)
-        .expect("encode jpeg");
-    Bytes::from(buf.into_inner())
+/// Default golden JPEG payload used by low-level subscriber tests.
+pub fn make_jpeg_payload(_width: u32, _height: u32) -> Bytes {
+    // Fixed 8x6 JPEG fixture generated with PIL; sha256 = 9208189deaa2dd9c36f36506932f3512bd1c1d30df2feb0a76c574c2ed1d8614.
+    Bytes::from_static(include_bytes!("testdata/golden_8x6.jpg"))
 }
 
 pub fn golden_stream_key() -> StreamKey {
