@@ -59,7 +59,7 @@ pub struct CanonicalDigest(pub [u8; 32]);
 impl CanonicalDigest {
     /// Return the digest as a hex-encoded string.
     pub fn to_hex(&self) -> String {
-        self.0.map(|b| format!("{:02x}", b)).concat()
+        self.0.map(|b| format!("{b:02x}")).concat()
     }
 }
 
