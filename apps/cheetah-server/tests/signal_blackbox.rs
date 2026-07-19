@@ -9,11 +9,15 @@
 
 mod fixtures;
 
+#[cfg(feature = "rtp")]
 use std::net::SocketAddr;
+#[cfg(feature = "rtp")]
 use std::time::Duration;
 
 use fixtures::*;
+#[cfg(feature = "rtp")]
 use tokio::net::UdpSocket;
+#[cfg(feature = "rtp")]
 use tokio::time::sleep;
 
 #[tokio::test(flavor = "current_thread")]
