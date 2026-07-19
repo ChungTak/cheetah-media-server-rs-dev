@@ -112,6 +112,8 @@ pub enum IdempotencyError {
     InProgress,
     #[error("idempotency operation failed: {0}")]
     OperationFailed(String),
+    #[error("idempotency operation retryable: {0}")]
+    Retryable(String),
 }
 
 impl IdempotencyError {
@@ -344,6 +346,14 @@ impl InMemoryIdempotencyRepository {
 
         // Run the actual operation outside of the lock.
         let result = f().await;
+
+        // Retryable errors are not persisted; dropping the guard removes the
+        // in-progress entry so the next call can retry.
+        if let Err(e) = &result {
+            if matches!(e, IdempotencyError::Retryable(_)) {
+                return Err(e.clone());
+            }
+        }
 
         // The operation has finished (success or error). Defuse the guard: we
         // will now commit a terminal outcome ourselves.

@@ -39,9 +39,9 @@ use cheetah_media_api::{
     MediaCapability, MediaCapabilitySet, MediaRequestContext,
 };
 use cheetah_sdk::{
-    BackpressurePolicy, BootstrapPolicy, CancellationToken, DispatchResult, EngineContext,
-    MediaFilter, PublisherOptions, PublisherSink, SdkError, StreamKey, SubscriberOptions,
-    SubscriberSource,
+    canonical_hash, BackpressurePolicy, BootstrapPolicy, CancellationToken, Deadline,
+    DispatchResult, EngineContext, IdempotencyError, IdempotencyKey, MediaFilter, PublisherOptions,
+    PublisherSink, SdkError, StreamKey, SubscriberOptions, SubscriberSource,
 };
 use futures::FutureExt;
 use tracing::{info, warn};
@@ -1125,74 +1125,47 @@ impl MediaProcessingProvider {
         info!(job_id = %job_id, "video mosaic job started");
         Ok(job_snapshot)
     }
-}
 
-#[async_trait]
-impl MediaProcessingApi for MediaProcessingProvider {
-    async fn preflight(
-        &self,
-        _ctx: &MediaRequestContext,
-    ) -> MediaResult<ProcessingPreflightReport> {
-        let mut diagnostics = HashMap::new();
-        let mut operations = Vec::new();
-
-        if cfg!(feature = "media-processing-caption") {
-            operations.push("caption_extract".to_string());
-        } else {
-            diagnostics.insert(
-                "caption_extract".to_string(),
-                "media-processing-caption feature not compiled".to_string(),
-            );
-        }
-
-        #[cfg(feature = "media-processing-cpu")]
-        {
-            match crate::provider::avcodec_registry::build_registry(&self.config) {
-                Ok(_) => {
-                    operations.push("transcode".to_string());
-                    operations.push("abr_ladder".to_string());
-                    operations.push("audio_mix".to_string());
-                    operations.push("video_mosaic".to_string());
-                }
-                Err(e) => {
-                    let reason = format!("avcodec registry unavailable for profile: {e}");
-                    for op in ["transcode", "abr_ladder", "audio_mix", "video_mosaic"] {
-                        diagnostics.insert(op.to_string(), reason.clone());
-                    }
-                }
+    fn map_idempotency_error(e: IdempotencyError) -> MediaError {
+        match e {
+            IdempotencyError::Conflict { .. } => {
+                MediaError::new(MediaErrorCode::Conflict, e.to_string())
+            }
+            IdempotencyError::InProgress => MediaError::new(
+                MediaErrorCode::Busy,
+                "idempotency operation in progress".to_string(),
+            ),
+            IdempotencyError::OperationFailed(msg) | IdempotencyError::Retryable(msg) => {
+                serde_json::from_str::<MediaError>(&msg)
+                    .unwrap_or_else(|_| MediaError::new(MediaErrorCode::Internal, msg))
             }
         }
-
-        let profile = self.config.profile.clone();
-        let available = !operations.is_empty();
-
-        for op in &operations {
-            let key = format!("media_processing_preflight{{profile={profile},operation={op}}}");
-            self.ctx.metrics_api.set(&key, 1);
-        }
-        for op in diagnostics.keys() {
-            let key = format!("media_processing_preflight{{profile={profile},operation={op}}}");
-            self.ctx.metrics_api.set(&key, 0);
-        }
-
-        Ok(ProcessingPreflightReport {
-            profile,
-            available,
-            operations,
-            diagnostics,
-        })
     }
 
-    async fn create_job(
+    async fn create_job_impl(
         &self,
         ctx: &MediaRequestContext,
         request: CreateProcessingJob,
-    ) -> MediaResult<ProcessingJob> {
+    ) -> MediaResult<(ProcessingJob, Option<String>)> {
+        let deadline = Deadline::from_context(ctx);
+        if deadline.is_expired() {
+            return Err(MediaError::new(
+                MediaErrorCode::Timeout,
+                "request deadline exceeded".to_string(),
+            ));
+        }
         Self::validate_no_reserved_targets(&request.spec)?;
         self.validate_spec(&request.spec)?;
         self.authorize_create(ctx, &request.spec).await?;
+        if deadline.is_expired() {
+            return Err(MediaError::new(
+                MediaErrorCode::Timeout,
+                "request deadline exceeded".to_string(),
+            ));
+        }
         let owner = Self::owner_from_ctx(ctx);
         let (job_id, job, cancel) = self.reserve_job_slot(&request, owner)?;
+
         let spec = request.spec.clone();
         let result = match &spec {
             ProcessingJobSpec::CaptionExtract { source, target, .. } => {
@@ -1300,7 +1273,117 @@ impl MediaProcessingApi for MediaProcessingProvider {
         if let Err(ref e) = result {
             self.fail_reserved_job(&job_id, job, e);
         }
-        result
+        result.map(|job_snapshot| (job_snapshot, Some(job_id.to_string())))
+    }
+}
+
+#[async_trait]
+impl MediaProcessingApi for MediaProcessingProvider {
+    async fn preflight(
+        &self,
+        _ctx: &MediaRequestContext,
+    ) -> MediaResult<ProcessingPreflightReport> {
+        let mut diagnostics = HashMap::new();
+        let mut operations = Vec::new();
+
+        if cfg!(feature = "media-processing-caption") {
+            operations.push("caption_extract".to_string());
+        } else {
+            diagnostics.insert(
+                "caption_extract".to_string(),
+                "media-processing-caption feature not compiled".to_string(),
+            );
+        }
+
+        #[cfg(feature = "media-processing-cpu")]
+        {
+            match crate::provider::avcodec_registry::build_registry(&self.config) {
+                Ok(_) => {
+                    operations.push("transcode".to_string());
+                    operations.push("abr_ladder".to_string());
+                    operations.push("audio_mix".to_string());
+                    operations.push("video_mosaic".to_string());
+                }
+                Err(e) => {
+                    let reason = format!("avcodec registry unavailable for profile: {e}");
+                    for op in ["transcode", "abr_ladder", "audio_mix", "video_mosaic"] {
+                        diagnostics.insert(op.to_string(), reason.clone());
+                    }
+                }
+            }
+        }
+
+        let profile = self.config.profile.clone();
+        let available = !operations.is_empty();
+
+        for op in &operations {
+            let key = format!("media_processing_preflight{{profile={profile},operation={op}}}");
+            self.ctx.metrics_api.set(&key, 1);
+        }
+        for op in diagnostics.keys() {
+            let key = format!("media_processing_preflight{{profile={profile},operation={op}}}");
+            self.ctx.metrics_api.set(&key, 0);
+        }
+
+        Ok(ProcessingPreflightReport {
+            profile,
+            available,
+            operations,
+            diagnostics,
+        })
+    }
+
+    async fn create_job(
+        &self,
+        ctx: &MediaRequestContext,
+        request: CreateProcessingJob,
+    ) -> MediaResult<ProcessingJob> {
+        let idem_key = request
+            .idempotency_key
+            .as_ref()
+            .or(ctx.idempotency_key.as_ref())
+            .cloned();
+        // Idempotency keys are scoped to a principal; unauthenticated callers
+        // must not share a key namespace.
+        if let (Some(key), Some(principal)) = (idem_key, ctx.principal.as_ref()) {
+            let idem = self.ctx.media_services.idempotency();
+            let idem_key =
+                IdempotencyKey::new(principal.identity.clone(), "processing.create_job", key);
+            let fingerprint = serde_json::to_vec(&(&request.spec, &request.deadline_ms))
+                .map(canonical_hash)
+                .map_err(|e| {
+                    MediaError::internal(format!("idempotency fingerprint failed: {e}"))
+                })?;
+            // Idempotency retention is independent of the request deadline so retries
+            // after a timeout can still be deduplicated.
+            let ttl = 3_600_000;
+            idem.execute(idem_key, fingerprint, ttl, || async move {
+                self.create_job_impl(ctx, request.clone())
+                    .await
+                    .map_err(|e| {
+                        let encoded = serde_json::to_string(&e)
+                            .unwrap_or_else(|_| format!("internal: {}", e));
+                        if e.retryable
+                            || matches!(
+                                e.code,
+                                MediaErrorCode::Busy
+                                    | MediaErrorCode::Timeout
+                                    | MediaErrorCode::Unavailable
+                            )
+                        {
+                            IdempotencyError::Retryable(encoded)
+                        } else {
+                            IdempotencyError::OperationFailed(encoded)
+                        }
+                    })
+            })
+            .await
+            .map_err(Self::map_idempotency_error)
+        } else {
+            self.create_job_impl(ctx, request)
+                .await
+                .map(|(job, _resource_id)| job)
+        }
     }
 
     async fn get_job(
