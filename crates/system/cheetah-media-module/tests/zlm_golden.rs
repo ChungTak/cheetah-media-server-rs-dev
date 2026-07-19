@@ -35,7 +35,7 @@ use serde_json::json;
 
 static FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn make_jpeg_payload(_width: u32, _height: u32) -> bytes::Bytes {
+fn make_jpeg_payload() -> bytes::Bytes {
     // Fixed 8x6 JPEG fixture generated with PIL; sha256 = 9208189deaa2dd9c36f36506932f3512bd1c1d30df2feb0a76c574c2ed1d8614.
     bytes::Bytes::from_static(include_bytes!("testdata/golden_8x6.jpg"))
 }
@@ -124,7 +124,7 @@ impl Module for GoldenFixtureModule {
         let n = FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
         let mut file_path = std::env::temp_dir();
         file_path.push(format!("cheetah_zlm_golden_download_{n}.jpg"));
-        let contents = make_jpeg_payload(8, 6);
+        let contents = make_jpeg_payload();
         std::fs::write(&file_path, &contents).map_err(|e| SdkError::Internal(e.to_string()))?;
         let entry = FileStoreEntry {
             media_key: MediaKey::with_default_vhost("live", "download", None)

@@ -31,7 +31,7 @@ fn golden_key() -> MediaKey {
     MediaKey::with_default_vhost("live", "snap-test", None).expect("valid key")
 }
 
-fn make_jpeg_payload(_width: u32, _height: u32) -> Bytes {
+fn make_jpeg_payload() -> Bytes {
     // Fixed 8x6 JPEG fixture generated with PIL; sha256 = 9208189deaa2dd9c36f36506932f3512bd1c1d30df2feb0a76c574c2ed1d8614.
     Bytes::from_static(include_bytes!("testdata/golden_8x6.jpg"))
 }
@@ -110,7 +110,7 @@ impl Module for FixtureModule {
         let cancel = cancel.child_token();
         let _ = runtime.spawn(Box::pin(async move {
             let mut pts = 0i64;
-            let payload = make_jpeg_payload(8, 6);
+            let payload = make_jpeg_payload();
             let timebase = Timebase::new(1, 30);
             loop {
                 if cancel.is_cancelled() {

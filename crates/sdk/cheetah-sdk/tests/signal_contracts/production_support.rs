@@ -47,7 +47,7 @@ pub fn golden_key() -> MediaKey {
 }
 
 /// Default golden JPEG payload used by low-level subscriber tests.
-pub fn make_jpeg_payload(_width: u32, _height: u32) -> Bytes {
+pub fn make_jpeg_payload() -> Bytes {
     // Fixed 8x6 JPEG fixture generated with PIL; sha256 = 9208189deaa2dd9c36f36506932f3512bd1c1d30df2feb0a76c574c2ed1d8614.
     Bytes::from_static(include_bytes!("testdata/golden_8x6.jpg"))
 }
@@ -240,7 +240,7 @@ impl Module for ProductionFixtureModule {
         let cancel = cancel.child_token();
         let _ = runtime_api.spawn(Box::pin(async move {
             let mut pts = 0i64;
-            let payload = make_jpeg_payload(8, 6);
+            let payload = make_jpeg_payload();
             let timebase = Timebase::new(1, 30);
             loop {
                 if cancel.is_cancelled() {
