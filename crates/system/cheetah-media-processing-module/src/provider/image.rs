@@ -15,7 +15,7 @@ use cheetah_media_api::{
 use cheetah_runtime_api::RuntimeApi;
 use futures::channel::oneshot;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tracing::instrument;
+use tracing::{instrument, warn};
 
 use crate::config::MediaProcessingModuleConfig;
 use crate::provider::avcodec_registry::build_registry;
@@ -705,7 +705,7 @@ fn map_image_operation(
                     config.max_overlay_font_size
                 ));
             }
-            if font_handle.is_empty() {
+            if font_handle.0.is_empty() {
                 return Err("text overlay requires a non-empty font_handle".to_string());
             }
             let file_store = file_store.ok_or_else(|| {
@@ -906,20 +906,33 @@ fn decode_overlay_image(
 }
 
 /// Loads a font file referenced by an authorized `FileHandle`.
+///
+/// Errors are sanitized: the returned `String` never contains the server-side
+/// absolute path, font payload, or store-layer error detail. Those details are
+/// logged at warn level for operators while callers receive a generic message.
 fn resolve_font(
     ctx: &MediaRequestContext,
     file_store: &dyn MediaFileStoreApi,
-    handle: &str,
+    handle: &FileHandle,
 ) -> std::result::Result<Vec<u8>, String> {
     let now_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     let entry = file_store
-        .resolve_for_read(ctx, &FileHandle(handle.to_string()), None, now_ms)
-        .map_err(|e| format!("resolve font handle {handle}: {e}"))?;
-    std::fs::read(&entry.absolute_path)
-        .map_err(|e| format!("read font file {}: {e}", entry.absolute_path))
+        .resolve_for_read(ctx, handle, None, now_ms)
+        .map_err(|e| {
+            warn!(font_handle = %handle, "resolve font handle failed: {e}");
+            format!("font handle {handle} is not authorized or not found")
+        })?;
+    std::fs::read(&entry.absolute_path).map_err(|e| {
+        warn!(
+            font_handle = %handle,
+            path = %entry.absolute_path,
+            "failed to read font file: {e}"
+        );
+        format!("failed to read font for handle {handle}")
+    })
 }
 
 #[cfg(all(test, feature = "media-processing-image"))]
@@ -1362,7 +1375,7 @@ mod tests {
             },
             operations: vec![ImageOperation::Text {
                 text: "hello".to_string(),
-                font_handle: "test-font".to_string(),
+                font_handle: FileHandle("test-font".to_string()),
                 x: 0,
                 y: 0,
                 size: 12,
@@ -1495,7 +1508,7 @@ mod tests {
             },
             operations: vec![ImageOperation::Text {
                 text: "A".to_string(),
-                font_handle: "serif".to_string(),
+                font_handle: FileHandle("serif".to_string()),
                 x: 0,
                 y: 0,
                 size: 12,
