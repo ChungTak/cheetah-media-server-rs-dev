@@ -384,3 +384,241 @@ mod tests {
         assert_eq!(MediaSchema::Hls.to_string(), "hls");
     }
 }
+
+// --- 905 control-plane strong-typed identifiers ---
+
+/// Maximum length for a control-plane identifier string.
+const CONTROL_ID_MAX_LEN: usize = 256;
+/// Maximum length for a credential handle.
+const CREDENTIAL_HANDLE_MAX_LEN: usize = 1024;
+
+fn has_control_char(s: &str) -> bool {
+    s.chars().any(|c| c.is_control())
+}
+
+fn is_canonical_uuid(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('-').collect();
+    if parts.len() != 5 {
+        return false;
+    }
+    let expected = [8, 4, 4, 4, 12];
+    for (p, &len) in parts.iter().zip(expected.iter()) {
+        if p.len() != len || !p.chars().all(|c| c.is_ascii_hexdigit()) {
+            return false;
+        }
+    }
+    true
+}
+
+macro_rules! validated_string_id {
+    ($name:ident, $max_len:expr) => {
+        #[doc = concat!("Validated string identifier for `", stringify!($name), "`.")]
+        #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(String);
+
+        impl $name {
+            /// Create a new identifier, validating length and control characters.
+            pub fn new(value: impl Into<String>) -> Result<Self, MediaError> {
+                let value = value.into();
+                if value.is_empty() {
+                    return Err(MediaError::invalid_argument(concat!(
+                        stringify!($name),
+                        " must be non-empty"
+                    )));
+                }
+                if value.len() > $max_len {
+                    return Err(MediaError::invalid_argument(concat!(
+                        stringify!($name),
+                        " exceeds maximum length"
+                    )));
+                }
+                if has_control_char(&value) {
+                    return Err(MediaError::invalid_argument(concat!(
+                        stringify!($name),
+                        " contains control characters"
+                    )));
+                }
+                Ok(Self(value))
+            }
+
+            /// Return the inner string value.
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl fmt::Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, concat!(stringify!($name), "({})"), self.0)
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+    };
+}
+
+macro_rules! uuid_string_id {
+    ($name:ident) => {
+        #[doc = concat!("Canonical UUID identifier for `", stringify!($name), "`.")]
+        #[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(String);
+
+        impl $name {
+            /// Create a new identifier, validating that it is a canonical UUID.
+            pub fn new(value: impl Into<String>) -> Result<Self, MediaError> {
+                let value = value.into();
+                if value.is_empty() {
+                    return Err(MediaError::invalid_argument(concat!(
+                        stringify!($name),
+                        " must be non-empty"
+                    )));
+                }
+                if value.len() > CONTROL_ID_MAX_LEN {
+                    return Err(MediaError::invalid_argument(concat!(
+                        stringify!($name),
+                        " exceeds maximum length"
+                    )));
+                }
+                if !is_canonical_uuid(&value) {
+                    return Err(MediaError::invalid_argument(concat!(
+                        stringify!($name),
+                        " must be a canonical UUID"
+                    )));
+                }
+                Ok(Self(value))
+            }
+
+            /// Return the inner UUID string.
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+        }
+
+        impl fmt::Debug for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, concat!(stringify!($name), "({})"), self.0)
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+    };
+}
+
+validated_string_id!(TenantId, CONTROL_ID_MAX_LEN);
+validated_string_id!(MessageId, CONTROL_ID_MAX_LEN);
+validated_string_id!(OperationId, CONTROL_ID_MAX_LEN);
+validated_string_id!(OperationStepId, CONTROL_ID_MAX_LEN);
+
+uuid_string_id!(MediaNodeId);
+uuid_string_id!(MediaNodeInstanceId);
+uuid_string_id!(MediaSessionId);
+uuid_string_id!(MediaBindingId);
+
+/// Opaque credential handle. Debug and Display are redacted to avoid leaking secrets.
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct CredentialHandle(String);
+
+impl CredentialHandle {
+    /// Create a new credential handle.
+    pub fn new(value: impl Into<String>) -> Result<Self, MediaError> {
+        let value = value.into();
+        if value.is_empty() {
+            return Err(MediaError::invalid_argument(
+                "credential handle must be non-empty",
+            ));
+        }
+        if value.len() > CREDENTIAL_HANDLE_MAX_LEN {
+            return Err(MediaError::invalid_argument(
+                "credential handle exceeds maximum length",
+            ));
+        }
+        if has_control_char(&value) {
+            return Err(MediaError::invalid_argument(
+                "credential handle contains control characters",
+            ));
+        }
+        Ok(Self(value))
+    }
+
+    /// Return the inner value. Callers must avoid logging or displaying it.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for CredentialHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "CredentialHandle(<redacted>)")
+    }
+}
+
+impl fmt::Display for CredentialHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<redacted>")
+    }
+}
+
+/// Monotonic epoch assigned to a media node instance by the signaling registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct MediaNodeInstanceEpoch(pub u64);
+
+/// Monotonic epoch of the owner (signaling operation) for fencing checks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct OwnerEpoch(pub u64);
+
+/// Monotonic generation counter for a controlled resource.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ResourceGeneration(pub u64);
+
+#[cfg(test)]
+mod cluster_id_tests {
+    use super::*;
+
+    #[test]
+    fn tenant_id_rejects_empty_and_control_chars() {
+        assert!(TenantId::new("").is_err());
+        assert!(TenantId::new("tenant\nfoo").is_err());
+        assert!(TenantId::new("tenant-1").is_ok());
+    }
+
+    #[test]
+    fn uuid_ids_accept_canonical_uuids() {
+        let valid = "550e8400-e29b-41d4-a716-446655440000";
+        assert!(MediaNodeId::new(valid).is_ok());
+        assert!(MediaNodeInstanceId::new(valid).is_ok());
+        assert!(MediaSessionId::new(valid).is_ok());
+        assert!(MediaBindingId::new(valid).is_ok());
+    }
+
+    #[test]
+    fn uuid_ids_reject_non_canonical_values() {
+        for invalid in ["", "not-a-uuid", "550e8400-e29b-41d4-a716"].iter() {
+            assert!(MediaNodeId::new(*invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn credential_handle_is_redacted() {
+        let h = CredentialHandle::new("secret-token").unwrap();
+        assert_eq!(format!("{h}"), "<redacted>");
+        assert!(!format!("{h:?}").contains("secret-token"));
+    }
+
+    #[test]
+    fn epoch_and_generation_are_u64_newtypes() {
+        assert_eq!(MediaNodeInstanceEpoch(42).0, 42);
+        assert_eq!(OwnerEpoch(7).0, 7);
+        assert_eq!(ResourceGeneration(9).0, 9);
+    }
+}
