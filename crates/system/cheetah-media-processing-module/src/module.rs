@@ -58,6 +58,8 @@ pub struct MediaProcessingModule {
     state: ModuleState,
     ctx: Option<EngineContext>,
     config: MediaProcessingModuleConfig,
+    #[cfg(feature = "media-processing-image")]
+    image_process_provider: Option<Arc<crate::provider::ImageProcessProvider>>,
     image_process_registration: Option<ProviderRegistration>,
     processing_registration: Option<ProviderRegistration>,
     metrics_cancel: Option<CancellationToken>,
@@ -73,6 +75,8 @@ impl MediaProcessingModule {
             state: ModuleState::Created,
             ctx: None,
             config: MediaProcessingModuleConfig::default(),
+            #[cfg(feature = "media-processing-image")]
+            image_process_provider: None,
             image_process_registration: None,
             processing_registration: None,
             metrics_cancel: None,
@@ -118,6 +122,7 @@ impl Module for MediaProcessingModule {
                 Some(ctx.engine.media_file_store.clone()),
                 self.config.clone(),
             ));
+            self.image_process_provider = Some(provider.clone());
 
             let mut capabilities = cheetah_media_api::MediaCapabilitySet::empty();
             capabilities.add(cheetah_media_api::MediaCapability::ImageProcessing, 1);
@@ -278,7 +283,15 @@ impl Module for MediaProcessingModule {
             return Ok(ConfigEffect::ModuleRestartRequired);
         }
 
-        self.config = new_cfg;
+        self.config = new_cfg.clone();
+        #[cfg(feature = "media-processing-image")]
+        if let Some(provider) = self.image_process_provider.as_ref() {
+            provider.update_config(new_cfg.clone());
+        }
+        #[cfg(feature = "media-processing-caption")]
+        if let Some(provider) = self.processing_provider.as_ref() {
+            provider.update_config(new_cfg);
+        }
         Ok(ConfigEffect::Immediate)
     }
 }

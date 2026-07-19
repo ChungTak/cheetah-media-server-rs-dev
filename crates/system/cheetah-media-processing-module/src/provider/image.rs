@@ -2,7 +2,7 @@
 //!
 //! Only compiled when `media-processing-image` is enabled.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -25,7 +25,7 @@ use crate::provider::semaphore::Semaphore;
 pub struct ImageProcessProvider {
     runtime: Arc<dyn RuntimeApi>,
     file_store: Option<Arc<dyn MediaFileStoreApi>>,
-    config: MediaProcessingModuleConfig,
+    config: Arc<Mutex<MediaProcessingModuleConfig>>,
     semaphore: Semaphore,
 }
 
@@ -35,13 +35,27 @@ impl ImageProcessProvider {
         file_store: Option<Arc<dyn MediaFileStoreApi>>,
         config: MediaProcessingModuleConfig,
     ) -> Self {
-        let max_jobs = config.max_concurrent_jobs as usize;
+        let config = Arc::new(Mutex::new(config));
         Self {
             runtime,
             file_store,
-            config,
-            semaphore: Semaphore::new(max_jobs),
+            config: config.clone(),
+            semaphore: Semaphore::with_config(config),
         }
+    }
+
+    /// Atomically replace the running configuration.
+    pub fn update_config(&self, config: MediaProcessingModuleConfig) {
+        *self.config.lock().unwrap_or_else(|e| e.into_inner()) = config;
+        self.semaphore.notify_waiters();
+    }
+
+    /// Read the current configuration snapshot.
+    fn config(&self) -> MediaProcessingModuleConfig {
+        self.config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -58,7 +72,7 @@ impl ImageProcessApi for ImageProcessProvider {
 
         let runtime = Arc::clone(&self.runtime);
         let file_store = self.file_store.clone();
-        let config = self.config.clone();
+        let config = self.config();
         let ctx = ctx.clone();
 
         let (tx, rx) = oneshot::channel::<Result<ImageArtifact>>();
