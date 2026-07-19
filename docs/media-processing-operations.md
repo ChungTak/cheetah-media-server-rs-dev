@@ -9,7 +9,7 @@ features the endpoints return `Unavailable`.
 Query what the running instance can do before creating jobs:
 
 ```bash
-curl -s http://localhost:8080/api/v1/media-processing/preflight | jq .
+curl -s http://localhost:8080/api/v1/processing/preflight | jq .
 ```
 
 Response fields:
@@ -27,7 +27,7 @@ not supported by the active profile.
 Create a single-stream transcode:
 
 ```bash
-curl -s -X POST http://localhost:8080/api/v1/media-processing/jobs \
+curl -s -X POST http://localhost:8080/api/v1/processing/jobs \
   -H 'Content-Type: application/json' \
   -d '{
     "spec": {
@@ -49,13 +49,13 @@ shared.
 Stop a job (idempotent):
 
 ```bash
-curl -s -X POST "http://localhost:8080/api/v1/media-processing/jobs/${JOB_ID}/stop"
+curl -s -X POST "http://localhost:8080/api/v1/processing/jobs/${JOB_ID}/stop"
 ```
 
 Delete removes the record after the job is terminal:
 
 ```bash
-curl -s -X DELETE "http://localhost:8080/api/v1/media-processing/jobs/${JOB_ID}"
+curl -s -X DELETE "http://localhost:8080/api/v1/processing/jobs/${JOB_ID}"
 ```
 
 ## Locating `Unsupported` errors
@@ -73,7 +73,7 @@ available but `create_job` still returns `Unsupported`, inspect the job
 `last_error` for the backend selection trace:
 
 ```bash
-curl -s "http://localhost:8080/api/v1/media-processing/jobs/${JOB_ID}" | jq '.last_error'
+curl -s "http://localhost:8080/api/v1/processing/jobs/${JOB_ID}" | jq '.last_error'
 ```
 
 ## Observing queues and drops
@@ -121,17 +121,12 @@ Before shutting down the engine:
 1. Stop or delete all externally created jobs.
 2. Drain protocol-derived jobs by stopping the source publishers/subscribers
    that triggered them.
-3. Verify `ResourceLeakReport` is clean:
-
-   ```bash
-   curl -s http://localhost:8080/api/v1/system/leak-report | jq .
-   ```
-
+3. Verify `ResourceLeakReport` is clean using the engine's internal diagnostic
+   surface or by confirming the processing metrics have all returned to zero.
    A clean report has no `active_processing_job_ids`, `active_stream_keys`,
    `active_task_ids`, `running_module_ids`, or `active_session_ids` related to
    media processing.
-
-4. Call `POST /api/v1/system/shutdown` or send `SIGTERM`.
+4. Shut down the process with `SIGTERM` (or through your process manager).
 
 `ModuleManagerApi::restart_module` for `media-processing` can be used to apply a
 `ModuleRestartRequired` config change; it stops the old provider, releases
