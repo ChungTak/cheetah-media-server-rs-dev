@@ -51,6 +51,7 @@ enum MixInput {
 async fn wait_for_source_tracks(
     engine: &EngineContext,
     inputs: &[AudioMixInput],
+    cancel: &CancellationToken,
 ) -> Result<Vec<TrackInfo>, SdkError> {
     use cheetah_codec::MonoTime;
 
@@ -61,6 +62,11 @@ async fn wait_for_source_tracks(
         let deadline_us = engine.runtime_api.now().as_micros() + 5_000_000;
         let mut found = None;
         while engine.runtime_api.now().as_micros() < deadline_us {
+            if cancel.is_cancelled() {
+                return Err(SdkError::Internal(
+                    "wait for source tracks cancelled".to_string(),
+                ));
+            }
             if let Ok(Some(snapshot)) = engine.stream_manager_api.get_stream(&key).await {
                 if let Some(audio) = snapshot.tracks.into_iter().find(|t| {
                     t.media_kind == MediaKind::Audio && t.readiness == TrackReadiness::Ready
@@ -143,7 +149,7 @@ pub async fn spawn_audio_mix_worker(
             )));
         }
 
-        let source_tracks = wait_for_source_tracks(&engine, &inputs).await?;
+        let source_tracks = wait_for_source_tracks(&engine, &inputs, &cancel).await?;
 
         let (sender, receiver) = std::sync::mpsc::sync_channel::<MixInput>(MIX_QUEUE_CAPACITY);
 
@@ -181,7 +187,9 @@ pub async fn spawn_audio_mix_worker(
             Ok(s) => s,
             Err(e) => {
                 drop(sender);
-                let _ = handle.wait().await;
+                if let Err(join_err) = handle.wait().await {
+                    warn!("audio mix worker joined with error after subscribe failure: {join_err}");
+                }
                 return Err(e);
             }
         };
@@ -270,7 +278,11 @@ pub async fn spawn_audio_mix_worker(
         .await?;
 
         drop(sender);
-        let _ = handle.wait().await;
+        if let Err(join_err) = handle.wait().await {
+            return Err(SdkError::Internal(format!(
+                "audio mix worker joined with error: {join_err}"
+            )));
+        }
 
         if let Some(err) = worker_error
             .lock()
@@ -295,8 +307,10 @@ pub async fn spawn_audio_mix_worker(
                 }
             }
             Err(e) => {
-                guard.state = cheetah_media_api::processing::ProcessingJobState::Failed;
-                guard.last_error = Some(format!("{e}"));
+                if guard.state == cheetah_media_api::processing::ProcessingJobState::Running {
+                    guard.state = cheetah_media_api::processing::ProcessingJobState::Failed;
+                    guard.last_error = Some(format!("{e}"));
+                }
             }
         }
         let ts = now_ms();

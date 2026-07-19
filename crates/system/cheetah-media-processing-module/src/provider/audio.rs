@@ -180,6 +180,7 @@ pub fn transcode_audio_frame(
 /// Output specification for a streaming audio transcode session.
 ///
 /// 流式音频转码 session 的输出规格。
+#[cfg(feature = "media-processing-cpu")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AudioTranscodeSpec {
     pub codec: CodecId,
@@ -191,6 +192,7 @@ pub struct AudioTranscodeSpec {
 /// Stateful streaming audio transcode session.
 ///
 /// 有状态的流式音频转码 session。
+#[cfg(feature = "media-processing-cpu")]
 pub struct AudioTranscodeSession {
     config: MediaProcessingModuleConfig,
     source_track: TrackInfo,
@@ -199,6 +201,7 @@ pub struct AudioTranscodeSession {
     output_track: TrackInfo,
 }
 
+#[cfg(feature = "media-processing-cpu")]
 impl AudioTranscodeSession {
     /// Create a new streaming transcode session for a source audio track.
     pub fn new(
@@ -364,6 +367,7 @@ impl AudioTranscodeSession {
     }
 }
 
+#[cfg(feature = "media-processing-cpu")]
 fn build_audio_output_track(input_track: &TrackInfo, spec: &AudioTranscodeSpec) -> TrackInfo {
     let mut output_track = TrackInfo::new(
         input_track.track_id,
@@ -380,6 +384,7 @@ fn build_audio_output_track(input_track: &TrackInfo, spec: &AudioTranscodeSpec) 
     output_track
 }
 
+#[cfg(feature = "media-processing-cpu")]
 fn drain_audio_transcoder(
     transcoder: &mut avcodec::AudioTranscoder,
     track_id: TrackId,
@@ -608,6 +613,7 @@ pub(crate) fn av_frame_from_packet(
 }
 
 /// Convert an [`avcodec::core::AudioFrame`] to interleaved `f32` samples.
+#[cfg(feature = "media-processing-cpu")]
 pub(crate) fn audio_frame_to_f32_interleaved(
     frame: &avcodec::core::AudioFrame,
 ) -> Result<Vec<f32>> {
@@ -682,6 +688,7 @@ pub(crate) fn audio_frame_to_f32_interleaved(
 }
 
 /// Clamp and convert interleaved `f32` samples to host-endian `i16` bytes.
+#[cfg(feature = "media-processing-cpu")]
 pub(crate) fn f32_interleaved_to_s16_bytes(samples: &[f32]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(samples.len() * 2);
     for sample in samples {
@@ -694,6 +701,7 @@ pub(crate) fn f32_interleaved_to_s16_bytes(samples: &[f32]) -> Vec<u8> {
 
 /// Build an [`avcodec::core::AudioEncoder`] for the requested output codec and
 /// return its configuration and target [`FrameFormat`].
+#[cfg(feature = "media-processing-cpu")]
 pub(crate) fn create_audio_encoder(
     registry: &avcodec::core::Registry,
     output_codec: CodecId,
@@ -747,6 +755,7 @@ pub(crate) fn create_audio_encoder(
 
 /// Submit a single frame of interleaved `f32` PCM to an [`avcodec::core::AudioEncoder`]
 /// and drain all produced compressed packets into [`AVFrame`]s.
+#[cfg(feature = "media-processing-cpu")]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_pcm_frame(
     encoder: &mut dyn avcodec::core::AudioEncoder,
@@ -954,6 +963,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "media-processing-cpu")]
     fn streaming_session_produces_opus_output() {
         let cfg = MediaProcessingModuleConfig::default();
         let payload = (0..160).map(|v| v as u8).collect::<Vec<_>>();

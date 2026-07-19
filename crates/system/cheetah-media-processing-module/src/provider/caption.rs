@@ -78,7 +78,16 @@ pub struct MediaProcessingProvider {
     config: MediaProcessingModuleConfig,
     jobs: Arc<Mutex<HashMap<ProcessingJobId, JobEntry>>>,
     id_counter: AtomicU64,
-    metric_keys: Arc<Mutex<HashSet<String>>>,
+    gauge_keys: Arc<Mutex<HashSet<String>>>,
+    last_metric_counts: Arc<Mutex<HashMap<ProcessingJobId, MetricSnapshot>>>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct MetricSnapshot {
+    frames_in: u64,
+    frames_out: u64,
+    drops: u64,
+    restarts: u64,
 }
 
 impl MediaProcessingProvider {
@@ -88,7 +97,8 @@ impl MediaProcessingProvider {
             config,
             jobs: Arc::new(Mutex::new(HashMap::new())),
             id_counter: AtomicU64::new(0),
-            metric_keys: Arc::new(Mutex::new(HashSet::new())),
+            gauge_keys: Arc::new(Mutex::new(HashSet::new())),
+            last_metric_counts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -153,17 +163,23 @@ impl MediaProcessingProvider {
         }
     }
 
-    /// Publish processing gauges/counters and zero out stale keys.
+    /// Publish processing gauges/counters and zero out stale gauge keys.
+    ///
+    /// Counters (`*_total`) are incremented by the delta since the last publish
+    /// so they stay monotonic. Gauges are overwritten and stale keys are zeroed.
     pub fn publish_job_metrics(&self) {
-        let jobs = self.jobs.lock().unwrap();
-        let mut counts: HashMap<String, u64> = HashMap::new();
+        let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        let active_ids: HashSet<ProcessingJobId> = jobs.keys().cloned().collect();
+        let mut gauge_values: HashMap<String, u64> = HashMap::new();
+        let mut counter_deltas: HashMap<String, u64> = HashMap::new();
+        let mut current_counts: HashMap<ProcessingJobId, MetricSnapshot> = HashMap::new();
         let mut shared_refs: u64 = 0;
-        let mut restarts: u64 = 0;
         let mut reserved_publishers: u64 = 0;
         let mut reserved_subscribers: u64 = 0;
 
         for entry in jobs.values() {
-            let guard = entry.job.lock().unwrap();
+            let guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
+            let job_id = guard.job_id.clone();
             let kind = Self::job_kind_label(&guard.spec);
             let (media, codec) = Self::job_primary_media_and_codec(&guard.spec);
             let state = format!("{0:?}", guard.state).to_lowercase();
@@ -172,57 +188,96 @@ impl MediaProcessingProvider {
                 "media_processing_jobs{{kind={kind},state={state},profile={}}}",
                 guard.profile
             );
-            *counts.entry(job_key).or_insert(0) += 1;
+            *gauge_values.entry(job_key).or_insert(0) += 1;
 
-            let frames_in_key = format!(
-                "media_processing_frames_total{{direction=ingress,media={media},codec={codec}}}"
-            );
-            *counts.entry(frames_in_key).or_insert(0) += guard.frames_in;
+            let prev = self
+                .last_metric_counts
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(&job_id)
+                .copied()
+                .unwrap_or_default();
+            let frames_in_delta = guard.frames_in.saturating_sub(prev.frames_in);
+            let frames_out_delta = guard.frames_out.saturating_sub(prev.frames_out);
+            let drops_delta = guard.drops.saturating_sub(prev.drops);
+            let restarts_delta = (guard.restart_count as u64).saturating_sub(prev.restarts);
 
-            let frames_out_key = format!(
-                "media_processing_frames_total{{direction=egress,media={media},codec={codec}}}"
-            );
-            *counts.entry(frames_out_key).or_insert(0) += guard.frames_out;
+            *counter_deltas
+                .entry(format!(
+                    "media_processing_frames_total{{direction=ingress,media={media},codec={codec}}}"
+                ))
+                .or_insert(0) += frames_in_delta;
+            *counter_deltas
+                .entry(format!(
+                    "media_processing_frames_total{{direction=egress,media={media},codec={codec}}}"
+                ))
+                .or_insert(0) += frames_out_delta;
+            *counter_deltas
+                .entry(format!(
+                    "media_processing_drops_total{{reason=policy,media={media}}}"
+                ))
+                .or_insert(0) += drops_delta;
+            *counter_deltas
+                .entry("media_processing_restarts_total{reason=failure}".to_string())
+                .or_insert(0) += restarts_delta;
 
-            let drops_key = format!("media_processing_drops_total{{reason=policy,media={media}}}");
-            *counts.entry(drops_key).or_insert(0) += guard.drops;
-
-            let pending_key = "media_processing_pending_total{stage=frame}".to_string();
-            *counts.entry(pending_key).or_insert(0) += guard.pending;
-
-            let queue_key = "media_processing_queue_depth{stage=frame}".to_string();
-            *counts.entry(queue_key).or_insert(0) += guard.pending;
+            *gauge_values
+                .entry("media_processing_pending_total{stage=frame}".to_string())
+                .or_insert(0) += guard.pending;
+            *gauge_values
+                .entry("media_processing_queue_depth{stage=frame}".to_string())
+                .or_insert(0) += guard.pending;
 
             shared_refs += guard.ref_count;
-            restarts += guard.restart_count as u64;
             reserved_publishers += guard.output_keys.len() as u64;
             reserved_subscribers += guard.input_keys.len() as u64;
+
+            current_counts.insert(
+                job_id,
+                MetricSnapshot {
+                    frames_in: guard.frames_in,
+                    frames_out: guard.frames_out,
+                    drops: guard.drops,
+                    restarts: guard.restart_count as u64,
+                },
+            );
         }
 
-        counts.insert("media_processing_shared_refs".to_string(), shared_refs);
-        counts.insert(
-            "media_processing_restarts_total{reason=failure}".to_string(),
-            restarts,
-        );
-        counts.insert(
+        gauge_values.insert("media_processing_shared_refs".to_string(), shared_refs);
+        gauge_values.insert(
             "media_processing_resource_reserved{kind=publisher}".to_string(),
             reserved_publishers,
         );
-        counts.insert(
+        gauge_values.insert(
             "media_processing_resource_reserved{kind=subscriber}".to_string(),
             reserved_subscribers,
         );
 
-        let mut emitted = self.metric_keys.lock().unwrap();
-        let new_keys: HashSet<String> = counts.keys().cloned().collect();
-        for (key, count) in counts {
-            self.ctx.metrics_api.set(&key, count);
+        for (key, delta) in counter_deltas {
+            if delta > 0 {
+                self.ctx.metrics_api.inc(&key, delta);
+            }
+        }
+
+        let mut emitted = self.gauge_keys.lock().unwrap_or_else(|e| e.into_inner());
+        let new_keys: HashSet<String> = gauge_values.keys().cloned().collect();
+        for (key, value) in gauge_values {
+            self.ctx.metrics_api.set(&key, value);
             emitted.insert(key);
         }
         for stale in emitted.difference(&new_keys) {
             self.ctx.metrics_api.set(stale, 0);
         }
         *emitted = new_keys;
+
+        let mut last_counts = self
+            .last_metric_counts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        last_counts.retain(|id, _| active_ids.contains(id));
+        for (id, snap) in current_counts {
+            last_counts.insert(id, snap);
+        }
     }
 
     fn media_key_to_stream_key(key: &MediaKey) -> StreamKey {
@@ -264,6 +319,63 @@ impl MediaProcessingProvider {
             .as_millis();
         let n = self.id_counter.fetch_add(1, Ordering::Relaxed);
         ProcessingJobId(format!("job-{ts}-{n}"))
+    }
+
+    fn reserve_job_slot(
+        &self,
+        request: &CreateProcessingJob,
+    ) -> MediaResult<(
+        ProcessingJobId,
+        Arc<Mutex<ProcessingJob>>,
+        CancellationToken,
+    )> {
+        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        let running = jobs
+            .values()
+            .filter(|e| {
+                e.job.lock().unwrap_or_else(|e| e.into_inner()).state == ProcessingJobState::Running
+            })
+            .count();
+        if running >= self.config.max_concurrent_jobs as usize {
+            return Err(MediaError::unavailable(format!(
+                "max concurrent processing jobs ({}) reached",
+                self.config.max_concurrent_jobs
+            )));
+        }
+
+        let job = Arc::new(Mutex::new(
+            self.build_job(request, ProcessingJobState::Running),
+        ));
+        let cancel = CancellationToken::new();
+        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
+        jobs.insert(
+            job_id.clone(),
+            JobEntry {
+                job: job.clone(),
+                cancel: cancel.clone(),
+                handle: None,
+            },
+        );
+        Ok((job_id, job, cancel))
+    }
+
+    fn fail_reserved_job(
+        &self,
+        job_id: &ProcessingJobId,
+        job: Arc<Mutex<ProcessingJob>>,
+        error: &MediaError,
+    ) {
+        let mut guard = job.lock().unwrap_or_else(|e| e.into_inner());
+        let now = now_ms();
+        guard.state = ProcessingJobState::Failed;
+        guard.last_error = Some(error.to_string());
+        guard.finished_at = Some(now);
+        guard.updated_at = now;
+        drop(guard);
+        self.jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(job_id);
     }
 
     pub fn default_capabilities() -> MediaCapabilitySet {
@@ -349,10 +461,10 @@ impl MediaProcessingProvider {
     /// Cancel every running job and wait for the worker tasks to complete.
     pub async fn cancel_all(&self) {
         let handles = {
-            let mut jobs = self.jobs.lock().unwrap();
+            let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
             for entry in jobs.values_mut() {
                 entry.cancel.cancel();
-                let mut guard = entry.job.lock().unwrap();
+                let mut guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
                 guard.state = ProcessingJobState::Stopped;
                 guard.updated_at = now_ms();
             }
@@ -363,13 +475,18 @@ impl MediaProcessingProvider {
         let _ = futures::future::join_all(handles.into_iter().map(|h| h.wait())).await;
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn create_caption_job(
         &self,
         ctx: &MediaRequestContext,
         request: CreateProcessingJob,
         source: &MediaKey,
         target: &MediaKey,
+        job_id: &ProcessingJobId,
+        job: Arc<Mutex<ProcessingJob>>,
+        cancel: CancellationToken,
     ) -> MediaResult<ProcessingJob> {
+        let _ = request;
         let source_key = Self::media_key_to_stream_key(source);
         let target_key = Self::media_key_to_stream_key(target);
 
@@ -418,26 +535,10 @@ impl MediaProcessingProvider {
             return Err(MediaError::internal(format!("update tracks failed: {e}")));
         }
 
-        let cancel = CancellationToken::new();
         let cancel_child = cancel.child_token();
         let runtime = self.ctx.runtime_api.clone();
 
-        let job = Arc::new(Mutex::new(
-            self.build_job(&request, ProcessingJobState::Running),
-        ));
-        let job_id = job.lock().unwrap().job_id.clone();
-        let job_snapshot = job.lock().unwrap().clone();
-
-        // Insert the job record before spawning the worker so that a very fast
-        // completion (or failure) still finds the entry and transitions it.
-        self.jobs.lock().unwrap().insert(
-            job_id.clone(),
-            JobEntry {
-                job: job.clone(),
-                cancel,
-                handle: None,
-            },
-        );
+        let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
 
         let publisher_api = self.ctx.publisher_api.clone();
         let spawned_job_id = job_id.clone();
@@ -451,7 +552,13 @@ impl MediaProcessingProvider {
             let _ = publisher_api.release_publisher(&lease).await;
         }));
 
-        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+        if let Some(entry) = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(job_id)
+        {
+            entry.cancel = cancel;
             entry.handle = Some(handle);
         }
 
@@ -470,7 +577,11 @@ impl MediaProcessingProvider {
         track_selection: TrackSelection,
         video: &Option<cheetah_media_api::processing::VideoTarget>,
         audio: &Option<cheetah_media_api::processing::AudioTarget>,
+        job_id: &ProcessingJobId,
+        job: Arc<Mutex<ProcessingJob>>,
+        cancel: CancellationToken,
     ) -> MediaResult<ProcessingJob> {
+        let _ = request;
         let source_key = Self::media_key_to_stream_key(source);
         let target_key = Self::media_key_to_stream_key(target);
 
@@ -490,24 +601,10 @@ impl MediaProcessingProvider {
             .await
             .map_err(|e| MediaError::internal(format!("acquire publisher failed: {e}")))?;
 
-        let cancel = CancellationToken::new();
         let cancel_child = cancel.child_token();
         let runtime = self.ctx.runtime_api.clone();
 
-        let job = Arc::new(Mutex::new(
-            self.build_job(&request, ProcessingJobState::Running),
-        ));
-        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
         let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
-
-        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
-            job_id.clone(),
-            JobEntry {
-                job: job.clone(),
-                cancel,
-                handle: None,
-            },
-        );
 
         let config = self.config.clone();
         let engine = self.ctx.clone();
@@ -534,7 +631,13 @@ impl MediaProcessingProvider {
             }
         }));
 
-        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+        if let Some(entry) = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(job_id)
+        {
+            entry.cancel = cancel;
             entry.handle = Some(handle);
         }
 
@@ -543,13 +646,18 @@ impl MediaProcessingProvider {
     }
 
     #[cfg(feature = "media-processing-cpu")]
+    #[allow(clippy::too_many_arguments)]
     async fn create_abr_ladder_job(
         &self,
         ctx: &MediaRequestContext,
         request: CreateProcessingJob,
         source: &MediaKey,
         variants: &[AbrVariant],
+        job_id: &ProcessingJobId,
+        job: Arc<Mutex<ProcessingJob>>,
+        cancel: CancellationToken,
     ) -> MediaResult<ProcessingJob> {
+        let _ = request;
         if variants.is_empty() || variants.len() > 4 {
             return Err(MediaError::invalid_argument(
                 "ABR ladder requires 1-4 variants",
@@ -602,24 +710,10 @@ impl MediaProcessingProvider {
             }
         }
 
-        let cancel = CancellationToken::new();
         let cancel_child = cancel.child_token();
         let runtime = self.ctx.runtime_api.clone();
 
-        let job = Arc::new(Mutex::new(
-            self.build_job(&request, ProcessingJobState::Running),
-        ));
-        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
         let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
-
-        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
-            job_id.clone(),
-            JobEntry {
-                job: job.clone(),
-                cancel,
-                handle: None,
-            },
-        );
 
         let config = self.config.clone();
         let engine = self.ctx.clone();
@@ -641,7 +735,13 @@ impl MediaProcessingProvider {
             }
         }));
 
-        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+        if let Some(entry) = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(job_id)
+        {
+            entry.cancel = cancel;
             entry.handle = Some(handle);
         }
 
@@ -650,13 +750,18 @@ impl MediaProcessingProvider {
     }
 
     #[cfg(feature = "media-processing-cpu")]
+    #[allow(clippy::too_many_arguments)]
     async fn create_audio_mix_job(
         &self,
         ctx: &MediaRequestContext,
         request: CreateProcessingJob,
         inputs: &[AudioMixInput],
         mix: &AudioMix,
+        job_id: &ProcessingJobId,
+        job: Arc<Mutex<ProcessingJob>>,
+        cancel: CancellationToken,
     ) -> MediaResult<ProcessingJob> {
+        let _ = request;
         if inputs.len() < 2 || inputs.len() > 16 {
             return Err(MediaError::invalid_argument(
                 "audio mix requires 2-16 sources",
@@ -684,24 +789,10 @@ impl MediaProcessingProvider {
             .await
             .map_err(|e| MediaError::internal(format!("acquire publisher failed: {e}")))?;
 
-        let cancel = CancellationToken::new();
         let cancel_child = cancel.child_token();
         let runtime = self.ctx.runtime_api.clone();
 
-        let job = Arc::new(Mutex::new(
-            self.build_job(&request, ProcessingJobState::Running),
-        ));
-        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
         let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
-
-        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
-            job_id.clone(),
-            JobEntry {
-                job: job.clone(),
-                cancel,
-                handle: None,
-            },
-        );
 
         let config = self.config.clone();
         let engine = self.ctx.clone();
@@ -725,7 +816,13 @@ impl MediaProcessingProvider {
             }
         }));
 
-        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+        if let Some(entry) = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(job_id)
+        {
+            entry.cancel = cancel;
             entry.handle = Some(handle);
         }
 
@@ -744,7 +841,11 @@ impl MediaProcessingProvider {
         target: &MediaKey,
         audio_mix: &Option<AudioMix>,
         overlays: &[Overlay],
+        job_id: &ProcessingJobId,
+        job: Arc<Mutex<ProcessingJob>>,
+        cancel: CancellationToken,
     ) -> MediaResult<ProcessingJob> {
+        let _ = request;
         if inputs.len() < 2 || inputs.len() > 9 {
             return Err(MediaError::invalid_argument(
                 "video mosaic requires 2-9 sources",
@@ -781,24 +882,10 @@ impl MediaProcessingProvider {
             .await
             .map_err(|e| MediaError::internal(format!("acquire publisher failed: {e}")))?;
 
-        let cancel = CancellationToken::new();
         let cancel_child = cancel.child_token();
         let runtime = self.ctx.runtime_api.clone();
 
-        let job = Arc::new(Mutex::new(
-            self.build_job(&request, ProcessingJobState::Running),
-        ));
-        let job_id = job.lock().unwrap_or_else(|e| e.into_inner()).job_id.clone();
         let job_snapshot = job.lock().unwrap_or_else(|e| e.into_inner()).clone();
-
-        self.jobs.lock().unwrap_or_else(|e| e.into_inner()).insert(
-            job_id.clone(),
-            JobEntry {
-                job: job.clone(),
-                cancel,
-                handle: None,
-            },
-        );
 
         let config = self.config.clone();
         let engine = self.ctx.clone();
@@ -822,7 +909,13 @@ impl MediaProcessingProvider {
             }
         }));
 
-        if let Some(entry) = self.jobs.lock().unwrap().get_mut(&job_id) {
+        if let Some(entry) = self
+            .jobs
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(job_id)
+        {
+            entry.cancel = cancel;
             entry.handle = Some(handle);
         }
 
@@ -851,10 +944,20 @@ impl MediaProcessingApi for MediaProcessingProvider {
 
         #[cfg(feature = "media-processing-cpu")]
         {
-            operations.push("transcode".to_string());
-            operations.push("abr_ladder".to_string());
-            operations.push("audio_mix".to_string());
-            operations.push("video_mosaic".to_string());
+            match crate::provider::avcodec_registry::build_registry(&self.config) {
+                Ok(_) => {
+                    operations.push("transcode".to_string());
+                    operations.push("abr_ladder".to_string());
+                    operations.push("audio_mix".to_string());
+                    operations.push("video_mosaic".to_string());
+                }
+                Err(e) => {
+                    let reason = format!("avcodec registry unavailable for profile: {e}");
+                    for op in ["transcode", "abr_ladder", "audio_mix", "video_mosaic"] {
+                        diagnostics.insert(op.to_string(), reason.clone());
+                    }
+                }
+            }
         }
 
         let profile = self.config.profile.clone();
@@ -882,10 +985,20 @@ impl MediaProcessingApi for MediaProcessingProvider {
         ctx: &MediaRequestContext,
         request: CreateProcessingJob,
     ) -> MediaResult<ProcessingJob> {
+        let (job_id, job, cancel) = self.reserve_job_slot(&request)?;
         let spec = request.spec.clone();
-        match &spec {
+        let result = match &spec {
             ProcessingJobSpec::CaptionExtract { source, target, .. } => {
-                self.create_caption_job(ctx, request, source, target).await
+                self.create_caption_job(
+                    ctx,
+                    request,
+                    source,
+                    target,
+                    &job_id,
+                    job.clone(),
+                    cancel.clone(),
+                )
+                .await
             }
             #[cfg(feature = "media-processing-cpu")]
             ProcessingJobSpec::Transcode {
@@ -897,25 +1010,37 @@ impl MediaProcessingApi for MediaProcessingProvider {
                 overlays,
             } => {
                 if !overlays.is_empty() {
-                    return Err(MediaError::unsupported(
+                    Err(MediaError::unsupported(
                         "transcode overlays are not supported in this release",
-                    ));
+                    ))
+                } else {
+                    self.create_transcode_job(
+                        ctx,
+                        request,
+                        source,
+                        target,
+                        *track_selection,
+                        video,
+                        audio,
+                        &job_id,
+                        job.clone(),
+                        cancel.clone(),
+                    )
+                    .await
                 }
-                self.create_transcode_job(
-                    ctx,
-                    request,
-                    source,
-                    target,
-                    *track_selection,
-                    video,
-                    audio,
-                )
-                .await
             }
             #[cfg(feature = "media-processing-cpu")]
             ProcessingJobSpec::AbrLadder { source, variants } => {
-                self.create_abr_ladder_job(ctx, request, source, variants)
-                    .await
+                self.create_abr_ladder_job(
+                    ctx,
+                    request,
+                    source,
+                    variants,
+                    &job_id,
+                    job.clone(),
+                    cancel.clone(),
+                )
+                .await
             }
             #[cfg(feature = "media-processing-cpu")]
             ProcessingJobSpec::AudioMix {
@@ -927,7 +1052,16 @@ impl MediaProcessingApi for MediaProcessingProvider {
                     target: target.clone(),
                     output: output.clone(),
                 };
-                self.create_audio_mix_job(ctx, request, inputs, &mix).await
+                self.create_audio_mix_job(
+                    ctx,
+                    request,
+                    inputs,
+                    &mix,
+                    &job_id,
+                    job.clone(),
+                    cancel.clone(),
+                )
+                .await
             }
             #[cfg(feature = "media-processing-cpu")]
             ProcessingJobSpec::VideoMosaic {
@@ -938,7 +1072,16 @@ impl MediaProcessingApi for MediaProcessingProvider {
                 overlays,
             } => {
                 self.create_video_mosaic_job(
-                    ctx, request, inputs, layout, target, audio_mix, overlays,
+                    ctx,
+                    request,
+                    inputs,
+                    layout,
+                    target,
+                    audio_mix,
+                    overlays,
+                    &job_id,
+                    job.clone(),
+                    cancel.clone(),
                 )
                 .await
             }
@@ -946,7 +1089,11 @@ impl MediaProcessingApi for MediaProcessingProvider {
             _ => Err(MediaError::unsupported(
                 "processing job type is not compiled in this build",
             )),
+        };
+        if let Err(ref e) = result {
+            self.fail_reserved_job(&job_id, job, e);
         }
+        result
     }
 
     async fn get_job(
@@ -954,9 +1101,9 @@ impl MediaProcessingApi for MediaProcessingProvider {
         _ctx: &MediaRequestContext,
         id: &ProcessingJobId,
     ) -> MediaResult<ProcessingJob> {
-        let jobs = self.jobs.lock().unwrap();
+        let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         jobs.get(id)
-            .map(|e| e.job.lock().unwrap().clone())
+            .map(|e| e.job.lock().unwrap_or_else(|e| e.into_inner()).clone())
             .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))
     }
 
@@ -966,10 +1113,10 @@ impl MediaProcessingApi for MediaProcessingProvider {
         mut query: ProcessingJobQuery,
     ) -> MediaResult<Page<ProcessingJob>> {
         query.clamp_page_size();
-        let jobs = self.jobs.lock().unwrap();
+        let jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         let mut items: Vec<ProcessingJob> = jobs
             .values()
-            .map(|e| e.job.lock().unwrap().clone())
+            .map(|e| e.job.lock().unwrap_or_else(|e| e.into_inner()).clone())
             .filter(|j| {
                 query.state.is_none_or(|s| j.state == s)
                     && query.vhost.as_ref().is_none_or(|v| {
@@ -1022,12 +1169,12 @@ impl MediaProcessingApi for MediaProcessingProvider {
         _ctx: &MediaRequestContext,
         id: &ProcessingJobId,
     ) -> MediaResult<ProcessingJob> {
-        let mut jobs = self.jobs.lock().unwrap();
+        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         let entry = jobs
             .get_mut(id)
             .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))?;
         entry.cancel.cancel();
-        let mut guard = entry.job.lock().unwrap();
+        let mut guard = entry.job.lock().unwrap_or_else(|e| e.into_inner());
         guard.state = ProcessingJobState::Stopped;
         guard.updated_at = now_ms();
         Ok(guard.clone())
@@ -1038,7 +1185,7 @@ impl MediaProcessingApi for MediaProcessingProvider {
         _ctx: &MediaRequestContext,
         id: &ProcessingJobId,
     ) -> MediaResult<()> {
-        let mut jobs = self.jobs.lock().unwrap();
+        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
         let entry = jobs
             .get_mut(id)
             .ok_or_else(|| MediaError::not_found(format!("job {id} not found")))?;
@@ -1186,29 +1333,25 @@ impl CaptionExtractWorker {
         F: FnOnce(&mut ProcessingJob),
     {
         if let Some(p) = progress {
-            if let Ok(mut guard) = p.lock() {
-                f(&mut guard);
-                guard.updated_at = now_ms();
-            }
+            let mut guard = p.lock().unwrap_or_else(|e| e.into_inner());
+            f(&mut guard);
+            guard.updated_at = now_ms();
         }
     }
 
     fn finish_progress(progress: &Option<Arc<Mutex<ProcessingJob>>>, last_error: Option<&str>) {
         if let Some(p) = progress {
-            if let Ok(mut guard) = p.lock() {
-                let finished_at = now_ms();
-                guard.finished_at = Some(finished_at);
+            let mut guard = p.lock().unwrap_or_else(|e| e.into_inner());
+            let finished_at = now_ms();
+            guard.finished_at = Some(finished_at);
+            if guard.state == ProcessingJobState::Running {
                 if let Some(err) = last_error {
                     guard.last_error = Some(err.to_string());
+                    guard.state = ProcessingJobState::Failed;
+                } else {
+                    guard.state = ProcessingJobState::Stopped;
                 }
-                if guard.state == ProcessingJobState::Running {
-                    guard.state = if last_error.is_some() {
-                        ProcessingJobState::Failed
-                    } else {
-                        ProcessingJobState::Stopped
-                    };
-                    guard.updated_at = finished_at;
-                }
+                guard.updated_at = finished_at;
             }
         }
     }
@@ -1511,6 +1654,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "media-processing-cpu")]
     fn job_primary_media_and_codec_labels() {
         use cheetah_media_api::processing::{
             AudioCodec, AudioTarget, CaptionConfig, MosaicCell, MosaicLayout, VideoCodec,

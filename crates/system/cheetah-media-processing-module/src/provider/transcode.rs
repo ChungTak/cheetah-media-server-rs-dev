@@ -162,7 +162,7 @@ impl TranscodeQueueSender {
     /// is the number of previously queued droppable frames that were dropped to
     /// make room for a keyframe, and `Err(input)` if the input itself was dropped.
     pub(crate) fn try_send(&self, input: TranscodeInput) -> Result<usize, TranscodeInput> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if guard.closed {
             return Err(input);
         }
@@ -203,7 +203,7 @@ impl TranscodeQueueSender {
 
 impl Drop for TranscodeQueueSender {
     fn drop(&mut self) {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         guard.closed = true;
         self.condvar.notify_all();
     }
@@ -211,7 +211,7 @@ impl Drop for TranscodeQueueSender {
 
 impl TranscodeQueueReceiver {
     pub(crate) fn recv(&self) -> Option<TranscodeInput> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         loop {
             if let Some(item) = guard.items.pop_front() {
                 return Some(item);
@@ -219,7 +219,7 @@ impl TranscodeQueueReceiver {
             if guard.closed {
                 return None;
             }
-            guard = self.condvar.wait(guard).unwrap();
+            guard = self.condvar.wait(guard).unwrap_or_else(|e| e.into_inner());
         }
     }
 }
@@ -439,27 +439,25 @@ where
     F: FnOnce(&mut ProcessingJob),
 {
     if let Some(job) = job.as_ref() {
-        if let Ok(mut guard) = job.lock() {
-            f(&mut guard);
-            guard.updated_at = now_ms();
-        }
+        let mut guard = job.lock().unwrap_or_else(|e| e.into_inner());
+        f(&mut guard);
+        guard.updated_at = now_ms();
     }
 }
 
 pub(crate) fn finish_job(job: &Option<Arc<Mutex<ProcessingJob>>>, last_error: Option<&SdkError>) {
     if let Some(job) = job.as_ref() {
-        if let Ok(mut guard) = job.lock() {
-            let finished_at = now_ms();
-            guard.finished_at = Some(finished_at);
-            guard.last_error = last_error.map(|e| e.to_string());
-            guard.updated_at = finished_at;
-            if guard.state == ProcessingJobState::Running {
-                guard.state = if last_error.is_some() {
-                    ProcessingJobState::Failed
-                } else {
-                    ProcessingJobState::Stopped
-                };
+        let mut guard = job.lock().unwrap_or_else(|e| e.into_inner());
+        let finished_at = now_ms();
+        guard.finished_at = Some(finished_at);
+        if guard.state == ProcessingJobState::Running {
+            if let Some(err) = last_error {
+                guard.last_error = Some(err.to_string());
+                guard.state = ProcessingJobState::Failed;
+            } else {
+                guard.state = ProcessingJobState::Stopped;
             }
+            guard.updated_at = finished_at;
         }
     }
 }
@@ -495,6 +493,7 @@ pub async fn spawn_transcode_worker(
             &track_selection,
             video_target.is_some(),
             audio_target.is_some(),
+            &cancel,
         )
         .await?;
 
@@ -535,7 +534,9 @@ pub async fn spawn_transcode_worker(
                         process_error.get_or_insert_with(|| format!("{e}"));
                     }
                     if let Some(err) = process_error {
-                        *worker_error_clone.lock().unwrap() = Some(err);
+                        *worker_error_clone
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner()) = Some(err);
                     }
                 }),
             )
@@ -610,9 +611,18 @@ pub async fn spawn_transcode_worker(
         }
 
         drop(tx);
-        let _ = handle.wait().await;
-        if let Some(err) = worker_error.lock().unwrap().take() {
+        let join_result = handle.wait().await;
+        if let Some(err) = worker_error
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+        {
             return Err(SdkError::Internal(err));
+        }
+        if let Err(e) = join_result {
+            return Err(SdkError::Internal(format!(
+                "transcode worker joined with error: {e}"
+            )));
         }
         if let Some(err) = subscriber_error {
             return Err(err);
@@ -632,9 +642,15 @@ pub(crate) async fn wait_for_source_tracks(
     track_selection: &TrackSelection,
     need_video: bool,
     need_audio: bool,
+    cancel: &CancellationToken,
 ) -> Result<(Option<TrackInfo>, Option<TrackInfo>), SdkError> {
     let deadline = engine.runtime_api.now().as_micros() + 5_000_000;
     while engine.runtime_api.now().as_micros() < deadline {
+        if cancel.is_cancelled() {
+            return Err(SdkError::Internal(
+                "wait for source tracks cancelled".to_string(),
+            ));
+        }
         if let Ok(Some(snapshot)) = engine.stream_manager_api.get_stream(source).await {
             let mut video = None;
             let mut audio = None;
