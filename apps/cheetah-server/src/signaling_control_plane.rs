@@ -200,7 +200,41 @@ impl SignalingControlPlaneConfig {
             if self.tls.server_key_pem.is_empty() {
                 return Err("tls.server_key_pem is required when TLS is enabled".to_string());
             }
+            if self.tls.client_cert_required && self.tls.client_ca_pem.is_empty() {
+                return Err(
+                    "tls.client_ca_pem is required when client_cert_required is set".to_string(),
+                );
+            }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_config_validates() {
+        let cfg = SignalingControlPlaneConfig::default();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn enabled_config_requires_fields() {
+        let mut cfg = SignalingControlPlaneConfig::default();
+        cfg.enabled = true;
+        cfg.grpc.listen = "127.0.0.1:9090".to_string();
+        cfg.store.path = "/tmp/test.db".to_string();
+        cfg.registry.node_identity = "node-1".to_string();
+        assert!(cfg.validate().is_ok());
+
+        cfg.tls.client_cert_required = true;
+        assert!(cfg.validate().is_err());
+
+        cfg.tls.client_ca_pem = "-----BEGIN CERTIFICATE-----\nMIIB...".to_string();
+        cfg.tls.server_cert_pem = "-----BEGIN CERTIFICATE-----\nMIIB...".to_string();
+        cfg.tls.server_key_pem = "-----BEGIN PRIVATE KEY-----\nMIIB...".to_string();
+        assert!(cfg.validate().is_ok());
     }
 }
