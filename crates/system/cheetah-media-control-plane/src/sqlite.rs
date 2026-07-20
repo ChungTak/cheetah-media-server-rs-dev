@@ -87,7 +87,25 @@ impl SqliteStore {
 }
 
 fn open_conn(path: &str) -> Result<Connection, ControlPlaneError> {
-    Connection::open(path).map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))
+    let conn =
+        Connection::open(path).map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))?;
+    restrict_store_permissions(path)?;
+    Ok(conn)
+}
+
+fn restrict_store_permissions(path: &str) -> Result<(), ControlPlaneError> {
+    if path == ":memory:" || path.is_empty() {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|e| {
+            ControlPlaneError::StoreUnavailable(format!("cannot set store permissions: {e}"))
+        })?;
+    }
+    Ok(())
 }
 
 fn migrate(conn: &mut Connection) -> Result<(), ControlPlaneError> {
