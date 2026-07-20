@@ -48,21 +48,26 @@ pub trait EventStore: Send + Sync {
         sequence: EventSequence,
     ) -> Result<Option<EventRecord>, ControlPlaneError>;
 
-    /// List events for a tenant starting after `start_sequence` (inclusive of
-    /// later epochs, exclusive of the start boundary).
+    /// List events for a tenant starting after `(start_epoch, start_sequence)`.
+    ///
+    /// The cursor is ordered by `(instance_epoch, sequence)` so events from
+    /// different node instance lifetimes do not interleave or duplicate.
     async fn list_by_tenant(
         &self,
         tenant_id: &TenantId,
+        start_epoch: MediaNodeInstanceEpoch,
         start_sequence: EventSequence,
         limit: u32,
     ) -> Result<Vec<EventRecord>, ControlPlaneError>;
 
-    /// List events for a specific resource.
+    /// List events for a specific resource starting after
+    /// `(start_epoch, start_sequence)`.
     async fn list_by_resource(
         &self,
         tenant_id: &TenantId,
         resource_kind: &str,
         resource_handle: &str,
+        start_epoch: MediaNodeInstanceEpoch,
         start_sequence: EventSequence,
         limit: u32,
     ) -> Result<Vec<EventRecord>, ControlPlaneError>;
@@ -196,10 +201,12 @@ impl EventStore for SqliteStore {
     async fn list_by_tenant(
         &self,
         tenant_id: &TenantId,
+        start_epoch: MediaNodeInstanceEpoch,
         start_sequence: EventSequence,
         limit: u32,
     ) -> Result<Vec<EventRecord>, ControlPlaneError> {
         let tenant = tenant_id.as_str().to_string();
+        let start_epoch_i64 = start_epoch.0 as i64;
         let start = start_sequence.0 as i64;
         let limit = limit as i64;
         self.with_conn("event_list_by_tenant", move |conn| {
@@ -208,27 +215,31 @@ impl EventStore for SqliteStore {
                         resource_handle, occurred_at, event_kind, serialized_payload,
                         correlation_id, traceparent, tracestate, expires_at
                  FROM media_events
-                 WHERE tenant_id = ?1 AND sequence > ?2
-                 ORDER BY sequence ASC
-                 LIMIT ?3",
+                 WHERE tenant_id = ?1
+                   AND (instance_epoch > ?2 OR (instance_epoch = ?3 AND sequence > ?4))
+                 ORDER BY instance_epoch ASC, sequence ASC
+                 LIMIT ?5",
             )?;
-            let rows = stmt.query_map(params![tenant, start, limit], |row| {
-                Ok(RowEvent {
-                    instance_epoch: row.get(0)?,
-                    sequence: row.get(1)?,
-                    event_id: row.get(2)?,
-                    tenant_id: row.get(3)?,
-                    resource_kind: row.get(4)?,
-                    resource_handle: row.get(5)?,
-                    occurred_at: row.get(6)?,
-                    event_kind: row.get(7)?,
-                    serialized_payload: row.get(8)?,
-                    correlation_id: row.get(9)?,
-                    traceparent: row.get(10)?,
-                    tracestate: row.get(11)?,
-                    expires_at: row.get(12)?,
-                })
-            })?;
+            let rows = stmt.query_map(
+                params![tenant, start_epoch_i64, start_epoch_i64, start, limit],
+                |row| {
+                    Ok(RowEvent {
+                        instance_epoch: row.get(0)?,
+                        sequence: row.get(1)?,
+                        event_id: row.get(2)?,
+                        tenant_id: row.get(3)?,
+                        resource_kind: row.get(4)?,
+                        resource_handle: row.get(5)?,
+                        occurred_at: row.get(6)?,
+                        event_kind: row.get(7)?,
+                        serialized_payload: row.get(8)?,
+                        correlation_id: row.get(9)?,
+                        traceparent: row.get(10)?,
+                        tracestate: row.get(11)?,
+                        expires_at: row.get(12)?,
+                    })
+                },
+            )?;
             let mut records = Vec::new();
             for row in rows {
                 records.push(row?.into_record()?);
@@ -243,12 +254,14 @@ impl EventStore for SqliteStore {
         tenant_id: &TenantId,
         resource_kind: &str,
         resource_handle: &str,
+        start_epoch: MediaNodeInstanceEpoch,
         start_sequence: EventSequence,
         limit: u32,
     ) -> Result<Vec<EventRecord>, ControlPlaneError> {
         let tenant = tenant_id.as_str().to_string();
         let kind = resource_kind.to_string();
         let handle = resource_handle.to_string();
+        let start_epoch_i64 = start_epoch.0 as i64;
         let start = start_sequence.0 as i64;
         let limit = limit as i64;
         self.with_conn("event_list_by_resource", move |conn| {
@@ -258,27 +271,38 @@ impl EventStore for SqliteStore {
                         correlation_id, traceparent, tracestate, expires_at
                  FROM media_events
                  WHERE tenant_id = ?1 AND resource_kind = ?2 AND resource_handle = ?3
-                   AND sequence > ?4
-                 ORDER BY sequence ASC
-                 LIMIT ?5",
+                   AND (instance_epoch > ?4 OR (instance_epoch = ?5 AND sequence > ?6))
+                 ORDER BY instance_epoch ASC, sequence ASC
+                 LIMIT ?7",
             )?;
-            let rows = stmt.query_map(params![tenant, kind, handle, start, limit], |row| {
-                Ok(RowEvent {
-                    instance_epoch: row.get(0)?,
-                    sequence: row.get(1)?,
-                    event_id: row.get(2)?,
-                    tenant_id: row.get(3)?,
-                    resource_kind: row.get(4)?,
-                    resource_handle: row.get(5)?,
-                    occurred_at: row.get(6)?,
-                    event_kind: row.get(7)?,
-                    serialized_payload: row.get(8)?,
-                    correlation_id: row.get(9)?,
-                    traceparent: row.get(10)?,
-                    tracestate: row.get(11)?,
-                    expires_at: row.get(12)?,
-                })
-            })?;
+            let rows = stmt.query_map(
+                params![
+                    tenant,
+                    kind,
+                    handle,
+                    start_epoch_i64,
+                    start_epoch_i64,
+                    start,
+                    limit
+                ],
+                |row| {
+                    Ok(RowEvent {
+                        instance_epoch: row.get(0)?,
+                        sequence: row.get(1)?,
+                        event_id: row.get(2)?,
+                        tenant_id: row.get(3)?,
+                        resource_kind: row.get(4)?,
+                        resource_handle: row.get(5)?,
+                        occurred_at: row.get(6)?,
+                        event_kind: row.get(7)?,
+                        serialized_payload: row.get(8)?,
+                        correlation_id: row.get(9)?,
+                        traceparent: row.get(10)?,
+                        tracestate: row.get(11)?,
+                        expires_at: row.get(12)?,
+                    })
+                },
+            )?;
             let mut records = Vec::new();
             for row in rows {
                 records.push(row?.into_record()?);
@@ -408,13 +432,20 @@ mod tests {
         }
 
         let by_tenant = store
-            .list_by_tenant(&tenant, EventSequence(0), 10)
+            .list_by_tenant(&tenant, MediaNodeInstanceEpoch(0), EventSequence(0), 10)
             .await
             .unwrap();
         assert_eq!(by_tenant.len(), 3);
 
         let by_resource = store
-            .list_by_resource(&tenant, "publisher", "pub-1", EventSequence(0), 10)
+            .list_by_resource(
+                &tenant,
+                "publisher",
+                "pub-1",
+                MediaNodeInstanceEpoch(0),
+                EventSequence(0),
+                10,
+            )
             .await
             .unwrap();
         assert_eq!(by_resource.len(), 3);
