@@ -64,6 +64,7 @@ pub use media_file_store::{
 };
 pub use model::{AdmissionAction, AdmissionRequest, Decision};
 pub use node::{
+    NodeDeregisterRequest, NodeDeregisterResponse, NodeDrainRequest, NodeDrainResponse,
     NodeHeartbeat, NodeHeartbeatResponse, NodeIdentity, NodeLoad, NodeRegistrationRequest,
     NodeRegistrationResponse,
 };
