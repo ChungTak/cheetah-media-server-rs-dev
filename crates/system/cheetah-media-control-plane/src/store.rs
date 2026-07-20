@@ -35,7 +35,6 @@ pub enum IdempotencyOutcome {
 pub struct IdempotencyRecord {
     pub key: IdempotencyKey,
     pub state: IdempotencyState,
-    pub operation_kind: String,
     pub canonical_digest: CanonicalDigest,
     pub resource_ref: Option<ControlledResourceRef>,
     pub effect_outcome: EffectOutcome,

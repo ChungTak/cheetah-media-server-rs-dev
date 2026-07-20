@@ -184,6 +184,48 @@ fn migrate(conn: &mut Connection) -> Result<(), ControlPlaneError> {
     Ok(())
 }
 
+fn select_idempotency_row(
+    tx: &rusqlite::Transaction<'_>,
+    key: &IdempotencyKey,
+) -> Result<Option<RowIdempotency>, rusqlite::Error> {
+    let mut stmt = tx.prepare(
+        "SELECT canonical_digest, state, resource_ref,
+                effect_outcome, serialized_domain_result, safe_error,
+                created_at_ms, updated_at_ms, expires_at_ms, attempt_count
+         FROM idempotency_records
+         WHERE tenant_id = ?1 AND operation_kind = ?2 AND idempotency_key = ?3",
+    )?;
+    stmt.query_row(
+        params![key.tenant_id.as_str(), key.operation_kind, key.key,],
+        |row| {
+            Ok(RowIdempotency {
+                digest: row.get::<_, String>(0)?,
+                state: row.get::<_, String>(1)?,
+                resource_ref: row.get::<_, Option<String>>(2)?,
+                effect_outcome: row.get::<_, String>(3)?,
+                serialized_domain_result: row.get::<_, Option<String>>(4)?,
+                safe_error: row.get::<_, Option<String>>(5)?,
+                created_at_ms: row.get::<_, i64>(6)?,
+                updated_at_ms: row.get::<_, i64>(7)?,
+                expires_at_ms: row.get::<_, i64>(8)?,
+                attempt_count: row.get::<_, u32>(9)?,
+            })
+        },
+    )
+    .optional()
+}
+
+fn delete_idempotency_row(
+    tx: &rusqlite::Transaction<'_>,
+    key: &IdempotencyKey,
+) -> Result<usize, rusqlite::Error> {
+    tx.execute(
+        "DELETE FROM idempotency_records
+         WHERE tenant_id = ?1 AND operation_kind = ?2 AND idempotency_key = ?3",
+        params![key.tenant_id.as_str(), key.operation_kind, key.key,],
+    )
+}
+
 #[async_trait]
 impl IdempotencyStore for SqliteStore {
     async fn get(
@@ -192,33 +234,19 @@ impl IdempotencyStore for SqliteStore {
     ) -> Result<Option<IdempotencyRecord>, ControlPlaneError> {
         let key = key.clone();
         self.with_conn("idempotency_get", move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT canonical_digest, state, resource_ref,
-                        effect_outcome, serialized_domain_result, safe_error,
-                        created_at_ms, updated_at_ms, expires_at_ms, attempt_count
-                 FROM idempotency_records
-                 WHERE tenant_id = ?1 AND operation_kind = ?2 AND idempotency_key = ?3",
-            )?;
-            let row: Option<RowIdempotency> = stmt
-                .query_row(
-                    params![key.tenant_id.as_str(), key.operation_kind, key.key,],
-                    |row| {
-                        Ok(RowIdempotency {
-                            digest: row.get::<_, String>(0)?,
-                            state: row.get::<_, String>(1)?,
-                            resource_ref: row.get::<_, Option<String>>(2)?,
-                            effect_outcome: row.get::<_, String>(3)?,
-                            serialized_domain_result: row.get::<_, Option<String>>(4)?,
-                            safe_error: row.get::<_, Option<String>>(5)?,
-                            created_at_ms: row.get::<_, i64>(6)?,
-                            updated_at_ms: row.get::<_, i64>(7)?,
-                            expires_at_ms: row.get::<_, i64>(8)?,
-                            attempt_count: row.get::<_, u32>(9)?,
-                        })
-                    },
-                )
-                .optional()?;
-            Ok(row.map(|r| r.into_record(&key)))
+            let tx = conn.transaction()?;
+            let row = select_idempotency_row(&tx, &key)?;
+            if let Some(r) = row {
+                if r.expires_at_ms < now_ms() {
+                    delete_idempotency_row(&tx, &key)?;
+                    tx.commit()?;
+                    return Ok(None);
+                }
+                tx.commit()?;
+                return Ok(Some(r.into_record(&key)));
+            }
+            tx.commit()?;
+            Ok(None)
         })
         .await
     }
@@ -235,52 +263,28 @@ impl IdempotencyStore for SqliteStore {
         self.with_conn("idempotency_prepare", move |conn| {
             let tx = conn.transaction()?;
 
-            let existing: Option<RowIdempotency> = {
-                let mut stmt = tx.prepare(
-                    "SELECT canonical_digest, state, resource_ref,
-                            effect_outcome, serialized_domain_result, safe_error,
-                            created_at_ms, updated_at_ms, expires_at_ms, attempt_count
-                     FROM idempotency_records
-                     WHERE tenant_id = ?1 AND operation_kind = ?2 AND idempotency_key = ?3",
-                )?;
-                let key_clone = key.clone();
-                stmt.query_row(
-                    params![
-                        key_clone.tenant_id.as_str(),
-                        key_clone.operation_kind,
-                        key_clone.key,
-                    ],
-                    |row| {
-                        Ok(RowIdempotency {
-                            digest: row.get::<_, String>(0)?,
-                            state: row.get::<_, String>(1)?,
-                            resource_ref: row.get::<_, Option<String>>(2)?,
-                            effect_outcome: row.get::<_, String>(3)?,
-                            serialized_domain_result: row.get::<_, Option<String>>(4)?,
-                            safe_error: row.get::<_, Option<String>>(5)?,
-                            created_at_ms: row.get::<_, i64>(6)?,
-                            updated_at_ms: row.get::<_, i64>(7)?,
-                            expires_at_ms: row.get::<_, i64>(8)?,
-                            attempt_count: row.get::<_, u32>(9)?,
-                        })
-                    },
-                )
-                .optional()?
-            };
+            let existing = select_idempotency_row(&tx, &key)?;
 
             if let Some(row) = existing {
-                let record = row.into_record(&key);
-                if record.canonical_digest != digest {
-                    return Ok(IdempotencyOutcome::Conflict);
+                // Expired records are deleted so the key can be reused after its
+                // TTL. An expired record is not replayed or reconciled.
+                if row.expires_at_ms < now {
+                    delete_idempotency_row(&tx, &key)?;
+                } else {
+                    let record = row.into_record(&key);
+                    tx.commit()?;
+                    if record.canonical_digest != digest {
+                        return Ok(IdempotencyOutcome::Conflict);
+                    }
+                    return match record.state {
+                        IdempotencyState::Completed | IdempotencyState::Failed => {
+                            Ok(IdempotencyOutcome::Replay(Box::new(record)))
+                        }
+                        IdempotencyState::Prepared | IdempotencyState::Unknown => {
+                            Ok(IdempotencyOutcome::Reconcile)
+                        }
+                    };
                 }
-                return match record.state {
-                    IdempotencyState::Completed | IdempotencyState::Failed => {
-                        Ok(IdempotencyOutcome::Replay(Box::new(record)))
-                    }
-                    IdempotencyState::Prepared | IdempotencyState::Unknown => {
-                        Ok(IdempotencyOutcome::Reconcile)
-                    }
-                };
             }
 
             tx.execute(
@@ -311,24 +315,15 @@ impl IdempotencyStore for SqliteStore {
         self.with_conn("idempotency_complete", move |conn| {
             let tx = conn.transaction()?;
 
-            let existing_digest: Option<String> = {
-                let mut stmt = tx.prepare(
-                    "SELECT canonical_digest FROM idempotency_records
-                     WHERE tenant_id = ?1 AND operation_kind = ?2 AND idempotency_key = ?3",
-                )?;
-                let key = record.key.clone();
-                stmt.query_row(
-                    params![key.tenant_id.as_str(), key.operation_kind, key.key],
-                    |row| row.get::<_, String>(0),
-                )
-                .optional()?
-            };
-
-            if let Some(existing) = existing_digest {
-                if existing != record.canonical_digest.to_hex() {
+            let existing = select_idempotency_row(&tx, &record.key)?;
+            let (created_at_ms, attempt_count) = if let Some(row) = existing {
+                if parse_hex(&row.digest) != Some(record.canonical_digest) {
                     return Err(ControlPlaneError::InvalidIdempotencyState);
                 }
-            }
+                (row.created_at_ms, row.attempt_count + 1)
+            } else {
+                (record.created_at_ms, record.attempt_count)
+            };
 
             let resource_ref_json = record
                 .resource_ref
@@ -354,12 +349,7 @@ impl IdempotencyStore for SqliteStore {
                  (tenant_id, operation_kind, idempotency_key, canonical_digest, state,
                   resource_ref, effect_outcome, serialized_domain_result, safe_error,
                   created_at_ms, updated_at_ms, expires_at_ms, attempt_count)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-                         COALESCE((SELECT created_at_ms FROM idempotency_records
-                                   WHERE tenant_id = ?1 AND operation_kind = ?2 AND idempotency_key = ?3), ?10),
-                         ?10, ?11,
-                         COALESCE((SELECT attempt_count FROM idempotency_records
-                                   WHERE tenant_id = ?1 AND operation_kind = ?2 AND idempotency_key = ?3), 0) + 1)",
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     record.key.tenant_id.as_str(),
                     record.key.operation_kind,
@@ -370,8 +360,10 @@ impl IdempotencyStore for SqliteStore {
                     effect_outcome_to_str(record.effect_outcome),
                     domain_result_json,
                     safe_error_json,
+                    created_at_ms,
                     record.updated_at_ms,
                     record.expires_at_ms,
+                    attempt_count,
                 ],
             )?;
             tx.commit()?;
@@ -399,7 +391,6 @@ impl RowIdempotency {
         IdempotencyRecord {
             key: key.clone(),
             state: str_to_state(&self.state),
-            operation_kind: key.operation_kind.clone(),
             canonical_digest: parse_hex(&self.digest).unwrap_or(CanonicalDigest([0u8; 32])),
             resource_ref: self
                 .resource_ref
@@ -496,7 +487,6 @@ mod tests {
         let record = IdempotencyRecord {
             key: key.clone(),
             state: IdempotencyState::Completed,
-            operation_kind: "create_session".to_string(),
             canonical_digest: digest,
             resource_ref: None,
             effect_outcome: EffectOutcome::Applied,
@@ -518,6 +508,26 @@ mod tests {
         let loaded = store.get(&key).await.unwrap().expect("record exists");
         assert_eq!(loaded.key, key);
         assert_eq!(loaded.state, IdempotencyState::Completed);
+    }
+
+    #[tokio::test]
+    async fn idempotency_expired_record_allows_reuse() {
+        let rt = Arc::new(TokioRuntime::new());
+        let store = SqliteStore::new(rt, ":memory:").await.unwrap();
+
+        let tenant = TenantId::new("tenant-1").unwrap();
+        let key = IdempotencyKey::new(tenant, "create_session", "key-1");
+        let digest = CanonicalDigest([1u8; 32]);
+
+        let past = now_ms() - 1;
+        store.prepare(&key, digest, past).await.unwrap();
+        assert!(store.get(&key).await.unwrap().is_none());
+
+        let outcome = store
+            .prepare(&key, digest, now_ms() + 60_000)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, IdempotencyOutcome::Proceed));
     }
 
     #[tokio::test]
@@ -558,7 +568,6 @@ mod tests {
         let record = IdempotencyRecord {
             key: key.clone(),
             state: IdempotencyState::Failed,
-            operation_kind: "create_session".to_string(),
             canonical_digest: digest,
             resource_ref: None,
             effect_outcome: EffectOutcome::NotApplied,
