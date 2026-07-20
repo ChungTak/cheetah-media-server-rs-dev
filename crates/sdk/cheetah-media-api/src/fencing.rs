@@ -11,6 +11,19 @@ use crate::ids::{
     OwnerEpoch, ResourceGeneration, TenantId,
 };
 
+/// Origin of a controlled resource.
+///
+/// 受控资源的来源。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceOrigin {
+    /// Created by the cluster signaling control plane.
+    #[default]
+    Cluster,
+    /// Created by a local media adapter (Native/ZLM) for local-only lifecycle.
+    Local,
+}
+
 /// Reference to a controlled resource used in errors, audit logs, and cleanup.
 ///
 /// 错误、审计和清理中使用的受控资源引用。
@@ -24,6 +37,8 @@ pub struct ControlledResourceRef {
     pub owner_epoch: OwnerEpoch,
     pub node_instance_epoch: MediaNodeInstanceEpoch,
     pub generation: ResourceGeneration,
+    #[serde(default)]
+    pub origin: ResourceOrigin,
 }
 
 impl ControlledResourceRef {
@@ -133,6 +148,7 @@ mod tests {
             owner_epoch: OwnerEpoch(7),
             node_instance_epoch: MediaNodeInstanceEpoch(42),
             generation: ResourceGeneration(3),
+            origin: ResourceOrigin::Cluster,
         };
         let json = serde_json::to_string(&ref_).unwrap();
         let decoded: ControlledResourceRef = serde_json::from_str(&json).unwrap();

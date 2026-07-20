@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cursor::OpaqueCursor;
 use crate::error::MediaError;
-use crate::fencing::ControlledResourceRef;
+use crate::fencing::{ControlledResourceRef, ResourceOrigin};
 use crate::ids::{
     MediaBindingId, MediaKey, MediaNodeId, MediaNodeInstanceEpoch, MediaNodeInstanceId,
     MediaSessionId, MessageId, OwnerEpoch, ResourceGeneration, TenantId,
@@ -100,6 +100,7 @@ impl ControlledMediaEvent {
                 owner_epoch: p.owner_epoch,
                 node_instance_epoch: self.header.media_node_instance_epoch,
                 generation: p.generation,
+                origin: ResourceOrigin::default(),
             }),
             ControlledEventPayload::StreamOnline(_)
             | ControlledEventPayload::StreamOffline(_)

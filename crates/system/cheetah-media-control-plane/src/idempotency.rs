@@ -172,6 +172,7 @@ mod tests {
                 owner_epoch: OwnerEpoch(1),
                 node_instance_epoch: cheetah_media_api::ids::MediaNodeInstanceEpoch(42),
                 generation: ResourceGeneration(0),
+                origin: Default::default(),
             }),
             media_session_id: None,
             media_binding_id: None,

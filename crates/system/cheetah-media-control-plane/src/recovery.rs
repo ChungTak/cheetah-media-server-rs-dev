@@ -549,6 +549,7 @@ mod tests {
             owner_epoch: OwnerEpoch(1),
             node_instance_epoch: MediaNodeInstanceEpoch(10),
             generation: ResourceGeneration(0),
+            origin: Default::default(),
         }
     }
 

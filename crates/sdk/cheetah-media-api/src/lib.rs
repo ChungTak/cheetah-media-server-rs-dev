@@ -68,7 +68,7 @@ pub use event::MediaEvent;
 pub use event_cursor::{EventCursorCodec, EventCursorContents};
 pub use fencing::{
     ControlledResourceRef, LeaseLossReason, LeaseStatus, MediaNodeLease, NodeRuntimeState,
-    NodeState,
+    NodeState, ResourceOrigin,
 };
 pub use ids::{
     AppName, CredentialHandle, MediaBindingId, MediaKey, MediaNodeId, MediaNodeInstanceEpoch,
