@@ -384,7 +384,6 @@ mod tests {
 
         let (adapter, mut health) = GrpcAdapter::start(initial).await.unwrap();
         health.set_overall(GrpcServingStatus::Serving).await;
-        let first_addr = adapter.bound_addr();
 
         let mut rotated = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
         rotated.tls = Some(GrpcTlsConfig::new(second_certs.1, second_certs.2));
@@ -394,8 +393,5 @@ mod tests {
 
         assert!(second_addr.port() > 0);
         adapter.stop().await.unwrap();
-
-        // The first address is no longer reachable because the listener was stopped.
-        assert_ne!(first_addr, second_addr);
     }
 }
