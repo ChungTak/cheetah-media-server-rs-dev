@@ -28,6 +28,9 @@ pub enum ControlPlaneError {
     /// An argument was invalid for the requested operation.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
+    /// The requested controlled resource was not found.
+    #[error("not found: {0}")]
+    NotFound(String),
     /// The runtime shut down before the blocking task completed.
     #[error("runtime shutdown")]
     RuntimeShutdown,
@@ -52,6 +55,7 @@ impl ControlPlaneError {
             ControlPlaneError::Serialization(_) => MediaErrorCode::StorageFailed,
             ControlPlaneError::Conflict(_) => MediaErrorCode::Conflict,
             ControlPlaneError::InvalidArgument(_) => MediaErrorCode::InvalidArgument,
+            ControlPlaneError::NotFound(_) => MediaErrorCode::NotFound,
             ControlPlaneError::RuntimeShutdown => MediaErrorCode::Unavailable,
             ControlPlaneError::RuntimeError(_) => MediaErrorCode::Internal,
             ControlPlaneError::Internal(_) => MediaErrorCode::Internal,

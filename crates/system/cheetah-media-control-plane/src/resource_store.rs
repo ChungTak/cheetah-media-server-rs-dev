@@ -296,7 +296,7 @@ impl ResourceStore for SqliteStore {
         let handle = resource_handle.to_string();
         self.with_conn("resource_set_state", move |conn| {
             let is_terminal = if state.is_terminal() { 1i64 } else { 0i64 };
-            conn.execute(
+            let updated = conn.execute(
                 "UPDATE controlled_resources
                  SET state = ?1,
                      terminal_at_ms = CASE WHEN ?2 = 1 AND terminal_at_ms IS NULL THEN ?3 ELSE terminal_at_ms END,
@@ -312,6 +312,11 @@ impl ResourceStore for SqliteStore {
                     handle,
                 ],
             )?;
+            if updated == 0 {
+                return Err(ControlPlaneError::NotFound(
+                    "controlled resource not found".to_string(),
+                ));
+            }
             Ok(())
         })
         .await
@@ -744,6 +749,19 @@ mod tests {
             .unwrap();
         assert_eq!(third.state, ResourceState::Active);
         assert_eq!(third.terminal_at_ms, first.terminal_at_ms);
+    }
+
+    #[tokio::test]
+    async fn resource_set_state_missing_resource_returns_not_found() {
+        let rt = Arc::new(TokioRuntime::new());
+        let store = SqliteStore::new(rt, ":memory:").await.unwrap();
+
+        let tenant = TenantId::new("tenant-1").unwrap();
+        let err = store
+            .set_state(&tenant, "publisher", "missing", ResourceState::Stopped)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ControlPlaneError::NotFound(_)));
     }
 
     #[tokio::test]
