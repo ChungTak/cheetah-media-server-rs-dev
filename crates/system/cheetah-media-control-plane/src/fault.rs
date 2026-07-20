@@ -58,6 +58,13 @@ pub enum FaultAction {
     Succeed,
 }
 
+impl FaultAction {
+    /// Return true for actions that survive `FaultInjector::reset`.
+    const fn is_persistent(self) -> bool {
+        !matches!(self, FaultAction::FailUntilReset | FaultAction::Stall)
+    }
+}
+
 /// Trait for deterministic fault injection.
 ///
 /// 确定性故障注入 trait。
@@ -65,7 +72,9 @@ pub trait FaultInjector: Send + Sync {
     /// Return the action to take at `point`, if any.
     fn inject(&self, point: FaultPoint) -> Option<FaultAction>;
 
-    /// Reset all `FailUntilReset` and `Stall` faults to normal.
+    /// Reset `FailUntilReset` and `Stall` faults to normal.
+    ///
+    /// One-shot actions (`FailOnce`, `Delay`, `Panic`, `Drop`, `Skip`) persist.
     fn reset(&self);
 }
 
@@ -116,7 +125,8 @@ impl FaultInjector for DeterministicFaultInjector {
     }
 
     fn reset(&self) {
-        self.rules.lock().unwrap().clear();
+        let mut rules = self.rules.lock().unwrap();
+        rules.retain(|_, action| action.is_persistent());
     }
 }
 
@@ -142,10 +152,15 @@ mod tests {
     }
 
     #[test]
-    fn reset_clears_faults() {
+    fn reset_clears_stall_and_fail_until_reset_but_keeps_persistent() {
         let injector = DeterministicFaultInjector::default();
         injector.set(FaultPoint::SqliteBusy, FaultAction::Stall);
+        injector.set(FaultPoint::SlowRpc, FaultAction::Delay(42));
         injector.reset();
         assert!(injector.inject(FaultPoint::SqliteBusy).is_none());
+        assert_eq!(
+            injector.inject(FaultPoint::SlowRpc),
+            Some(FaultAction::Delay(42))
+        );
     }
 }
