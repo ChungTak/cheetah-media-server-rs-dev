@@ -66,6 +66,7 @@ impl MediaCapacityApi for CapacityOrchestrator {
         if !state.node_gate_open {
             return Err(
                 MediaError::new(MediaErrorCode::Busy, "node create gate is closed")
+                    .with_retryable(true)
                     .with_retry_after(100),
             );
         }
@@ -73,6 +74,7 @@ impl MediaCapacityApi for CapacityOrchestrator {
         if !fits(&state.used, &request, &state.limits) {
             return Err(
                 MediaError::new(MediaErrorCode::Busy, "capacity hard limit reached")
+                    .with_retryable(true)
                     .with_retry_after(100),
             );
         }
@@ -144,27 +146,40 @@ impl Drop for OwnedCapacityPermit {
 }
 
 fn fits(used: &CapacityVector, request: &CapacityVector, limits: &CapacityLimits) -> bool {
-    used.session_count + request.session_count <= limits.session_count
-        && used.port_count + request.port_count <= limits.port_count
-        && used.bandwidth_bps + request.bandwidth_bps <= limits.bandwidth_bps
-        && used.worker_count + request.worker_count <= limits.worker_count
-        && used.blocking_job_count + request.blocking_job_count <= limits.blocking_job_count
-        && used.file_task_count + request.file_task_count <= limits.file_task_count
-        && used.event_subscriber_count + request.event_subscriber_count
-            <= limits.event_subscriber_count
-        && used.cpu_permille + request.cpu_permille <= limits.cpu_permille
+    checked_add(used.session_count, request.session_count)
+        .is_some_and(|sum| sum <= limits.session_count)
+        && checked_add(used.port_count, request.port_count)
+            .is_some_and(|sum| sum <= limits.port_count)
+        && checked_add(used.bandwidth_bps, request.bandwidth_bps)
+            .is_some_and(|sum| sum <= limits.bandwidth_bps)
+        && checked_add(used.worker_count, request.worker_count)
+            .is_some_and(|sum| sum <= limits.worker_count)
+        && checked_add(used.blocking_job_count, request.blocking_job_count)
+            .is_some_and(|sum| sum <= limits.blocking_job_count)
+        && checked_add(used.file_task_count, request.file_task_count)
+            .is_some_and(|sum| sum <= limits.file_task_count)
+        && checked_add(used.event_subscriber_count, request.event_subscriber_count)
+            .is_some_and(|sum| sum <= limits.event_subscriber_count)
+        && checked_add(used.cpu_permille, request.cpu_permille)
+            .is_some_and(|sum| sum <= limits.cpu_permille)
+}
+
+fn checked_add(a: u64, b: u64) -> Option<u64> {
+    a.checked_add(b)
 }
 
 fn add(a: &CapacityVector, b: &CapacityVector) -> CapacityVector {
     CapacityVector {
-        session_count: a.session_count + b.session_count,
-        port_count: a.port_count + b.port_count,
-        bandwidth_bps: a.bandwidth_bps + b.bandwidth_bps,
-        worker_count: a.worker_count + b.worker_count,
-        blocking_job_count: a.blocking_job_count + b.blocking_job_count,
-        file_task_count: a.file_task_count + b.file_task_count,
-        event_subscriber_count: a.event_subscriber_count + b.event_subscriber_count,
-        cpu_permille: a.cpu_permille + b.cpu_permille,
+        session_count: a.session_count.saturating_add(b.session_count),
+        port_count: a.port_count.saturating_add(b.port_count),
+        bandwidth_bps: a.bandwidth_bps.saturating_add(b.bandwidth_bps),
+        worker_count: a.worker_count.saturating_add(b.worker_count),
+        blocking_job_count: a.blocking_job_count.saturating_add(b.blocking_job_count),
+        file_task_count: a.file_task_count.saturating_add(b.file_task_count),
+        event_subscriber_count: a
+            .event_subscriber_count
+            .saturating_add(b.event_subscriber_count),
+        cpu_permille: a.cpu_permille.saturating_add(b.cpu_permille),
     }
 }
 
@@ -252,6 +267,8 @@ mod tests {
         let _p2 = orchestrator.acquire(request_one()).await.unwrap();
         let err = orchestrator.acquire(request_one()).await.unwrap_err();
         assert_eq!(err.code, MediaErrorCode::Busy);
+        assert!(err.retryable);
+        assert!(err.retry_after_ms.is_some());
         assert_eq!(
             err.outcome,
             cheetah_media_api::error::EffectOutcome::NotApplied
@@ -264,6 +281,19 @@ mod tests {
         orchestrator.set_node_gate(false).await.unwrap();
         let err = orchestrator.acquire(request_one()).await.unwrap_err();
         assert_eq!(err.code, MediaErrorCode::Busy);
+        assert!(err.retryable);
+    }
+
+    #[tokio::test]
+    async fn extreme_request_rejected_without_overflow() {
+        let orchestrator = CapacityOrchestrator::new(limits());
+        let mut extreme = request_one();
+        extreme.session_count = u64::MAX;
+        let err = orchestrator.acquire(extreme).await.unwrap_err();
+        assert_eq!(err.code, MediaErrorCode::Busy);
+
+        // The orchestrator should still be usable for normal requests.
+        let _p = orchestrator.acquire(request_one()).await.unwrap();
     }
 
     #[tokio::test]
