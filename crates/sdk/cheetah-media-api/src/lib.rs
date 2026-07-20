@@ -20,6 +20,7 @@ pub mod credential;
 pub mod cursor;
 pub mod error;
 pub mod event;
+pub mod event_cursor;
 pub mod fencing;
 pub mod ids;
 pub mod image;
@@ -50,9 +51,13 @@ pub use controlled_event::{
     RtpSessionTimeout, SnapshotCompleted, StreamOffline, StreamOnline, SubscriberLimits,
 };
 pub use credential::{CredentialLease, CredentialMaterial, CredentialPurpose};
-pub use cursor::{CursorPage, CursorPageRequest, OpaqueCursor};
+pub use cursor::{
+    CursorBoundary, CursorCodec, CursorContents, CursorPage, CursorPageRequest, OpaqueCursor,
+    SortKey, SortTimestamp,
+};
 pub use error::{EffectOutcome, FieldViolation, MediaError, MediaErrorCode};
 pub use event::MediaEvent;
+pub use event_cursor::{EventCursorCodec, EventCursorContents};
 pub use fencing::{
     ControlledResourceRef, LeaseStatus, MediaNodeLease, NodeRuntimeState, NodeState,
 };
