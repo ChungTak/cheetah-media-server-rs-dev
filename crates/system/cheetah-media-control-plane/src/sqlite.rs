@@ -87,10 +87,34 @@ impl SqliteStore {
 }
 
 fn open_conn(path: &str) -> Result<Connection, ControlPlaneError> {
+    if path != ":memory:" && !path.is_empty() {
+        create_store_file_with_restricted_permissions(path)?;
+    }
     let conn =
         Connection::open(path).map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))?;
     restrict_store_permissions(path)?;
     Ok(conn)
+}
+
+#[cfg(unix)]
+fn create_store_file_with_restricted_permissions(path: &str) -> Result<(), ControlPlaneError> {
+    use std::fs::OpenOptions;
+    use std::os::unix::fs::OpenOptionsExt;
+    OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(|e| {
+            ControlPlaneError::StoreUnavailable(format!("cannot create store file: {e}"))
+        })?;
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_store_file_with_restricted_permissions(_path: &str) -> Result<(), ControlPlaneError> {
+    Ok(())
 }
 
 fn restrict_store_permissions(path: &str) -> Result<(), ControlPlaneError> {
