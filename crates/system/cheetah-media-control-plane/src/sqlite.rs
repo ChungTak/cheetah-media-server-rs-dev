@@ -74,9 +74,9 @@ impl SqliteStore {
             runtime.as_ref(),
             name,
             move || -> Result<R, ControlPlaneError> {
-                let mut guard = conn
-                    .lock()
-                    .map_err(|_| ControlPlaneError::RuntimeError("sqlite mutex poisoned".to_string()))?;
+                let mut guard = conn.lock().map_err(|_| {
+                    ControlPlaneError::RuntimeError("sqlite mutex poisoned".to_string())
+                })?;
                 f(&mut guard)
             },
         )
