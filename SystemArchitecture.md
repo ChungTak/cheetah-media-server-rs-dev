@@ -498,6 +498,20 @@ Release validation uses the explicit C0–C6 feature matrix instead of `--all-fe
 - C5: `cheetah-server` with `media-processing-full` plus all protocol features runs the five E2E scenarios.
 - C6: release profile builds the C5 feature set and produces artifacts, SBOM, license report, perf baseline and 24-hour soak evidence.
 
+## 3.16 Release Evidence Generator (CL904-05)
+
+The release evidence file is produced by `scripts/generate_cl904_05_evidence.sh` from the template in `dev-docs/905_signaling_control_plane_plan/16_release_evidence_template.md`. The script captures the static supply-chain facts that can be collected without the external signaling contract artifacts:
+
+- Cheetah commit SHA and short form.
+- `Cargo.lock` SHA-256 checksum.
+- Rust/Cargo versions and OS/arch.
+- avcodec-rs git revision from `Cargo.lock`.
+- C0–C6 feature commands for reproducibility.
+- `cargo tree` snapshots for `cheetah-server` with `--no-default-features` and `--features signaling-control-plane`.
+- A checklist referencing CL904-01..04 gates.
+
+Dynamic artifact fields (x86_64/aarch64 binaries, container digest, SBOM, license report, E2E logs, 24h soak report) are left as `TBD` placeholders to be filled after the corresponding CI lanes complete. The script writes to `target/release_evidence/release_evidence_<short_commit>.md` (or an override directory supplied as the first argument) so per-candidate evidence files do not pollute the source tree.
+
 ## 4. Media Model and Unification
 
 All protocol ingest into engine should converge to:
