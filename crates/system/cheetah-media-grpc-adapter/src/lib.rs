@@ -113,8 +113,8 @@ pub enum GrpcAdapterError {
 /// 运行中的 gRPC adapter。
 pub struct GrpcAdapter {
     bound_addr: SocketAddr,
-    handle: tokio::task::JoinHandle<Result<(), GrpcAdapterError>>,
-    shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    handle: Option<tokio::task::JoinHandle<Result<(), GrpcAdapterError>>>,
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl std::fmt::Debug for GrpcAdapter {
@@ -203,8 +203,8 @@ impl GrpcAdapter {
         Ok((
             Self {
                 bound_addr,
-                handle: handle_task,
-                shutdown_tx,
+                handle: Some(handle_task),
+                shutdown_tx: Some(shutdown_tx),
             },
             handle,
         ))
@@ -220,11 +220,42 @@ impl GrpcAdapter {
     /// Request a graceful shutdown and wait for the server to stop.
     ///
     /// 请求优雅关闭并等待服务器停止。
-    pub async fn stop(self) -> Result<(), GrpcAdapterError> {
-        let _ = self.shutdown_tx.send(());
-        self.handle
-            .await
-            .map_err(|e| GrpcAdapterError::Serve(e.to_string()))?
+    pub async fn stop(&mut self) -> Result<(), GrpcAdapterError> {
+        let _ = self.shutdown_tx.take();
+        if let Some(handle) = self.handle.take() {
+            handle
+                .await
+                .map_err(|e| GrpcAdapterError::Serve(e.to_string()))??;
+        }
+        Ok(())
+    }
+
+    /// Rotate the listener to a new configuration.
+    ///
+    /// This validates the new TLS material (if any), stops the current gRPC
+    /// listener, and starts a new one with `new_config`. Because the old listener
+    /// is stopped before the new one is bound, rotation on a fixed `bind_addr`
+    /// succeeds; the brief unavailability is the unavoidable cost of re-binding
+    /// the same port. Parsing/validation errors are caught before the old listener
+    /// is torn down, so a bad certificate does not cause an outage.
+    ///
+    /// 轮换监听器到新配置。先校验新 TLS 材料，再停止旧 listener 并以 `new_config`
+    /// 启动新 listener。固定 `bind_addr` 也能成功轮换；解析/校验错误会在关闭旧
+    /// listener 前返回，避免坏证书导致服务中断。
+    pub async fn rotate(
+        &mut self,
+        new_config: GrpcAdapterConfig,
+    ) -> Result<GrpcHealthHandle, GrpcAdapterError> {
+        // Validate TLS material before tearing down the existing listener.
+        Self::make_server_builder(new_config.tls.as_ref())?;
+        self.stop().await?;
+
+        let (new_adapter, new_health) = Self::start(new_config).await?;
+        self.bound_addr = new_adapter.bound_addr;
+        self.handle = new_adapter.handle;
+        self.shutdown_tx = new_adapter.shutdown_tx;
+
+        Ok(new_health)
     }
 }
 
@@ -235,7 +266,7 @@ mod tests {
     #[tokio::test]
     async fn health_server_starts_and_stops() {
         let config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
-        let (adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
+        let (mut adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
 
         assert!(adapter.bound_addr().port() > 0);
 
@@ -261,7 +292,7 @@ mod tests {
         let mut config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
         config.enable_reflection = true;
 
-        let (adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
+        let (mut adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
         health.set_overall(GrpcServingStatus::Serving).await;
         assert!(adapter.bound_addr().port() > 0);
 
@@ -271,7 +302,7 @@ mod tests {
     #[tokio::test]
     async fn health_categories_are_reported() {
         let config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
-        let (adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
+        let (mut adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
 
         health.set_overall(GrpcServingStatus::Serving).await;
         health
@@ -326,7 +357,7 @@ mod tests {
         let mut config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
         config.tls = Some(tls);
 
-        let (adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
+        let (mut adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
         assert!(adapter.bound_addr().port() > 0);
 
         health.set_overall(GrpcServingStatus::Serving).await;
@@ -356,5 +387,28 @@ mod tests {
             config.message_limits.max_encoding_message_size,
             4 * 1024 * 1024
         );
+    }
+
+    #[tokio::test]
+    async fn rotate_restarts_with_new_tls_config() {
+        let first_certs = generate_test_certs();
+        let second_certs = generate_test_certs();
+
+        let mut initial = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
+        initial.tls = Some(GrpcTlsConfig::new(first_certs.1, first_certs.2));
+
+        let (mut adapter, mut health) = GrpcAdapter::start(initial).await.unwrap();
+        health.set_overall(GrpcServingStatus::Serving).await;
+
+        // Use the same bound port for the rotated config to exercise fixed-port
+        // certificate rotation.
+        let fixed_addr = adapter.bound_addr();
+        let mut rotated = GrpcAdapterConfig::new(fixed_addr);
+        rotated.tls = Some(GrpcTlsConfig::new(second_certs.1, second_certs.2));
+
+        let _new_health = adapter.rotate(rotated).await.unwrap();
+
+        assert_eq!(adapter.bound_addr(), fixed_addr);
+        adapter.stop().await.unwrap();
     }
 }
