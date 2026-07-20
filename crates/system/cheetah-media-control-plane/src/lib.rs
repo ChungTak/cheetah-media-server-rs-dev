@@ -22,6 +22,7 @@ pub mod fault;
 pub mod idempotency;
 pub mod recovery;
 pub mod resource_store;
+pub mod rollback;
 pub mod rollout;
 pub mod side_effect;
 pub mod sqlite;
@@ -38,6 +39,10 @@ pub use fault::{
 pub use idempotency::{CanonicalDigest, CanonicalRequest, IdempotencyKey, IdempotencyState};
 pub use recovery::{
     ConvergeOutcome, ProbeResult, RecoveryEngine, RecoveryLimits, RecoveryReport, ResourceProbe,
+};
+pub use rollback::{
+    RollbackContext, RollbackOutcome, RollbackPolicy, RollbackRequest, RollbackViolation,
+    SchemaVersion,
 };
 pub use side_effect::{RecoveryAction, SideEffectWindow};
 pub use sqlite::SqliteStore;
