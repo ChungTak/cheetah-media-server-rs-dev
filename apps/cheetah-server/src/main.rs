@@ -51,7 +51,7 @@ use cheetah_rtp_module::RtpModuleFactory;
 #[cfg(feature = "rtsp")]
 use cheetah_rtsp_module::RtspModuleFactory;
 use cheetah_runtime_tokio::TokioRuntime;
-use cheetah_sdk::{ConfigProvider, ConfigSchemaRegistry, ServiceDescriptor};
+use cheetah_sdk::{ConfigProvider, ConfigSchemaRegistry, ModuleId, ServiceDescriptor};
 #[cfg(feature = "snapshot")]
 use cheetah_snapshot_module::SnapshotModuleFactory;
 #[cfg(feature = "srt")]
@@ -63,6 +63,8 @@ use cheetah_webhook_dispatcher::WebhookModuleFactory;
 use cheetah_webrtc_module::WebRtcModuleFactory;
 use serde_json::Value;
 use tracing::{error, info};
+
+mod signaling_control_plane;
 
 /// Main entrypoint of the cheetah media server.
 ///
@@ -146,6 +148,27 @@ async fn main() -> anyhow::Result<()> {
     let mut builder = EngineBuilder::new(config.clone(), config.clone(), runtime)
         .with_dispatcher_mode(DispatcherMode::PerStream)
         .with_config_schema_registry(config.clone());
+
+    // Load the signaling control-plane assembly when the feature is enabled.
+    // 启用 `signaling-control-plane` 时加载信号控制面装配骨架。
+    #[cfg(feature = "signaling-control-plane")]
+    {
+        config
+            .register_module_schema(
+                ModuleId::new("signaling_control_plane"),
+                "signaling_control_plane",
+                signaling_control_plane::SignalingControlPlaneConfig::default_json(),
+                Some(std::sync::Arc::new(|v: &serde_json::Value| {
+                    let cfg: signaling_control_plane::SignalingControlPlaneConfig =
+                        serde_json::from_value(v.clone()).map_err(|e| e.to_string())?;
+                    cfg.validate()
+                })),
+            )
+            .expect("register signaling control-plane schema");
+
+        let assembly = signaling_control_plane::Assembly::new("127.0.0.1:0".parse().unwrap());
+        let _ = assembly.grpc_config;
+    }
 
     // Register enabled protocol / feature module factories via conditional compilation.
     // 通过条件编译注册已启用的协议/特性模块工厂。
