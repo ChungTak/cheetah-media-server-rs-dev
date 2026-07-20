@@ -475,6 +475,18 @@ The `signaling-control-plane` Cargo feature gates the new gRPC-based signaling c
 - The SQLite store opens with file permissions restricted to owner read/write (`0o600`) on Unix, satisfying SEC-03 SQLite file-permission minimization.
 - The current `Assembly` is a placeholder; later MIG tasks will wire the gRPC adapter and control-plane facade.
 
+## 3.14 Build and Release Lanes (CL904-02)
+
+Release validation uses the explicit C0–C6 feature matrix instead of `--all-features`:
+
+- C0: `cheetah-server --no-default-features` must not pull in `avcodec`, `tonic`, or `rusqlite`.
+- C1: `cheetah-media-processing-module --features media-processing-audio` covers the audio codec matrix.
+- C2: `cheetah-media-processing-module --features media-processing-image` covers JPEG/PNG decode, image operators and snapshot without OpenCV/FFmpeg linkage.
+- C3: `cheetah-media-processing-module --features media-processing-video` covers H.264/H.265/MJPEG decode/encode.
+- C4: `cheetah-media-processing-module --features media-processing-full` adds software/OpenCV backends.
+- C5: `cheetah-server` with `media-processing-full` plus all protocol features runs the five E2E scenarios.
+- C6: release profile builds the C5 feature set and produces artifacts, SBOM, license report, perf baseline and 24-hour soak evidence.
+
 ## 4. Media Model and Unification
 
 All protocol ingest into engine should converge to:
