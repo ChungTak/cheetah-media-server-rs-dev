@@ -17,6 +17,7 @@ pub mod blocking;
 pub mod error;
 pub mod facade;
 pub mod idempotency;
+pub mod resource_store;
 pub mod sqlite;
 pub mod store;
 
@@ -25,4 +26,6 @@ pub use error::ControlPlaneError;
 pub use facade::ControlPlane;
 pub use idempotency::{CanonicalDigest, CanonicalRequest, IdempotencyKey, IdempotencyState};
 pub use sqlite::SqliteStore;
-pub use store::{IdempotencyOutcome, IdempotencyRecord, IdempotencyStore};
+pub use store::{
+    IdempotencyOutcome, IdempotencyRecord, IdempotencyStore, ResourceRecord, ResourceStore,
+};

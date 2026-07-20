@@ -84,6 +84,19 @@ impl CanonicalDigest {
     pub fn to_hex(&self) -> String {
         self.0.map(|b| format!("{b:02x}")).concat()
     }
+
+    /// Parse a 64-character hex string into a digest.
+    pub fn from_hex(s: &str) -> Option<Self> {
+        if s.len() != 64 {
+            return None;
+        }
+        let mut bytes = [0u8; 32];
+        for (i, chunk) in s.as_bytes().chunks(2).enumerate() {
+            let chunk_str = std::str::from_utf8(chunk).ok()?;
+            bytes[i] = u8::from_str_radix(chunk_str, 16).ok()?;
+        }
+        Some(Self(bytes))
+    }
 }
 
 /// Canonical request representation used for idempotent digest computation.
