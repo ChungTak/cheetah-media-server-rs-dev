@@ -26,9 +26,8 @@ pub struct RecoveryLimits {
     pub max_resources: u32,
     /// Maximum PREPARED/UNKNOWN idempotency records to inspect.
     pub max_idempotency: u32,
-    /// Maximum events to backfill per resource.
-    pub max_events_per_resource: u32,
-    /// Hard deadline from `now_ms()` for the entire pass.
+    /// Time budget in milliseconds for the entire recovery pass. The deadline
+    /// is computed from the start of `recover()`.
     pub deadline_ms: i64,
 }
 
@@ -37,8 +36,7 @@ impl Default for RecoveryLimits {
         Self {
             max_resources: 1000,
             max_idempotency: 1000,
-            max_events_per_resource: 1,
-            deadline_ms: now_ms() + 30_000,
+            deadline_ms: 30_000,
         }
     }
 }
@@ -134,6 +132,7 @@ where
         limits: &RecoveryLimits,
     ) -> Result<RecoveryReport, ControlPlaneError> {
         let started_at = now_ms();
+        let deadline = started_at + limits.deadline_ms;
         let mut report = RecoveryReport {
             resources_scanned: 0,
             resources_converged: 0,
@@ -149,7 +148,7 @@ where
             .list_non_terminal(limits.max_resources)
             .await?;
         for resource in resources {
-            if now_ms() > limits.deadline_ms {
+            if now_ms() > deadline {
                 break;
             }
             report.resources_scanned += 1;
@@ -177,20 +176,29 @@ where
                         ResourceState::Stopped,
                         None,
                         resource.generation,
-                        limits.max_events_per_resource,
                     )
                     .await?;
                     report.resources_failed += 1;
                 }
                 ProbeResult::Unknown => {
-                    self.resources
-                        .set_state(
-                            &resource.tenant_id,
-                            &resource.resource_kind,
-                            &resource.resource_handle,
+                    if resource.state != ResourceState::Unknown {
+                        self.resources
+                            .set_state(
+                                &resource.tenant_id,
+                                &resource.resource_kind,
+                                &resource.resource_handle,
+                                ResourceState::Unknown,
+                            )
+                            .await?;
+                        self.backfill_state_event(
+                            &resource_ref,
+                            resource.state,
                             ResourceState::Unknown,
+                            resource.safe_last_error.clone(),
+                            resource.generation,
                         )
                         .await?;
+                    }
                     report.resources_unknown += 1;
                 }
             }
@@ -201,7 +209,7 @@ where
             .list_prepared_unknown(limits.max_idempotency)
             .await?;
         for record in idem {
-            if now_ms() > limits.deadline_ms {
+            if now_ms() > deadline {
                 break;
             }
             report.idempotency_scanned += 1;
@@ -230,10 +238,11 @@ where
     ) -> Result<ConvergeOutcome, ControlPlaneError> {
         let resource_ref = resource.resource_ref();
 
-        let (new_state, new_generation, changed, ambiguous) = if generation < resource.generation {
-            if resource.state == ResourceState::Unknown {
-                (resource.state, resource.generation, false, false)
-            } else {
+        let mut new_state = resource.state;
+        let mut new_generation = resource.generation;
+        let mut changed = false;
+        let ambiguous = if generation < resource.generation {
+            if resource.state != ResourceState::Unknown {
                 self.resources
                     .set_state(
                         &resource.tenant_id,
@@ -242,35 +251,29 @@ where
                         ResourceState::Unknown,
                     )
                     .await?;
-                (ResourceState::Unknown, resource.generation, true, true)
-            }
-        } else {
-            let mut changed = false;
-            if generation > resource.generation {
-                let ok = self
-                    .resources
-                    .compare_and_set_generation(
-                        &resource.tenant_id,
-                        &resource.resource_kind,
-                        &resource.resource_handle,
-                        resource.generation,
-                        generation,
-                        state,
-                    )
-                    .await?;
-                if !ok {
-                    // Another writer changed the generation; fall back to set_state.
-                    self.resources
-                        .set_state(
-                            &resource.tenant_id,
-                            &resource.resource_kind,
-                            &resource.resource_handle,
-                            state,
-                        )
-                        .await?;
-                }
+                new_state = ResourceState::Unknown;
                 changed = true;
-            } else if state != resource.state {
+            }
+            true
+        } else if generation > resource.generation {
+            let ok = self
+                .resources
+                .compare_and_set_generation(
+                    &resource.tenant_id,
+                    &resource.resource_kind,
+                    &resource.resource_handle,
+                    resource.generation,
+                    generation,
+                    state,
+                )
+                .await?;
+            if ok {
+                new_state = state;
+                new_generation = generation;
+                changed = true;
+            } else {
+                // Another writer changed the generation; fall back to set_state
+                // and re-fetch to record the actual persisted generation.
                 self.resources
                     .set_state(
                         &resource.tenant_id,
@@ -279,15 +282,38 @@ where
                         state,
                     )
                     .await?;
-                changed = true;
+                let updated = self
+                    .resources
+                    .get(
+                        &resource.tenant_id,
+                        &resource.resource_kind,
+                        &resource.resource_handle,
+                    )
+                    .await?
+                    .ok_or_else(|| {
+                        ControlPlaneError::NotFound(
+                            "controlled resource disappeared during convergence".to_string(),
+                        )
+                    })?;
+                new_state = updated.state;
+                new_generation = updated.generation;
+                changed = new_state != resource.state || new_generation != resource.generation;
             }
-            let new_state = if changed { state } else { resource.state };
-            let new_generation = if generation > resource.generation {
-                generation
-            } else {
-                resource.generation
-            };
-            (new_state, new_generation, changed, false)
+            false
+        } else if state != resource.state {
+            self.resources
+                .set_state(
+                    &resource.tenant_id,
+                    &resource.resource_kind,
+                    &resource.resource_handle,
+                    state,
+                )
+                .await?;
+            new_state = state;
+            changed = true;
+            false
+        } else {
+            false
         };
 
         if changed {
@@ -297,7 +323,6 @@ where
                 new_state,
                 resource.safe_last_error.clone(),
                 new_generation,
-                1,
             )
             .await?;
         }
@@ -319,7 +344,7 @@ where
     ) -> Result<(), ControlPlaneError> {
         match self.probe.probe(resource_ref).await? {
             ProbeResult::Found { state, generation } => {
-                if let Some(existing) = self
+                let outcome = if let Some(existing) = self
                     .resources
                     .get(
                         &resource_ref.tenant_id,
@@ -328,7 +353,7 @@ where
                     )
                     .await?
                 {
-                    self.converge_resource(&existing, state, generation).await?;
+                    self.converge_resource(&existing, state, generation).await?
                 } else {
                     let recovered = ResourceRecord {
                         tenant_id: resource_ref.tenant_id.clone(),
@@ -362,14 +387,19 @@ where
                         state,
                         None,
                         generation,
-                        1,
                     )
                     .await?;
-                }
+                    ConvergeOutcome::Converged
+                };
 
                 let mut completed = record.clone();
-                completed.state = IdempotencyState::Completed;
-                completed.effect_outcome = EffectOutcome::Applied;
+                if outcome == ConvergeOutcome::Ambiguous {
+                    completed.state = IdempotencyState::Unknown;
+                    completed.effect_outcome = EffectOutcome::Unknown;
+                } else {
+                    completed.state = IdempotencyState::Completed;
+                    completed.effect_outcome = EffectOutcome::Applied;
+                }
                 completed.updated_at_ms = now_ms();
                 self.idempotency.complete(&completed).await?;
                 report.idempotency_converged += 1;
@@ -403,7 +433,6 @@ where
         new_state: ResourceState,
         last_error: Option<MediaError>,
         generation: ResourceGeneration,
-        _limit: u32,
     ) -> Result<(), ControlPlaneError> {
         let sequence = self
             .events
@@ -451,6 +480,7 @@ where
 mod tests {
     use std::sync::Arc;
 
+    use cheetah_media_api::controlled_event::{EventSequence, ResourceStateChanged};
     use cheetah_media_api::error::{EffectOutcome, MediaErrorCode};
     use cheetah_media_api::fencing::ControlledResourceRef;
     use cheetah_media_api::ids::{
@@ -461,6 +491,7 @@ mod tests {
     use cheetah_runtime_tokio::TokioRuntime;
 
     use super::*;
+    use crate::event_store::EventStore;
     use crate::idempotency::{CanonicalDigest, IdempotencyKey, IdempotencyState};
     use crate::recovery::{ProbeResult, RecoveryEngine, RecoveryLimits, ResourceProbe};
     use crate::sqlite::SqliteStore;
@@ -551,6 +582,64 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(loaded.generation, ResourceGeneration(1));
+
+        let events = EventStore::list_by_resource(
+            store.as_ref(),
+            &tenant,
+            "publisher",
+            "pub-1",
+            MediaNodeInstanceEpoch(0),
+            EventSequence(0),
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_id.as_str(), "evt-10-1");
+        let payload: ResourceStateChanged =
+            serde_json::from_str(&events[0].serialized_payload).unwrap();
+        assert_eq!(payload.previous_state, ResourceState::Active);
+        assert_eq!(payload.new_state, ResourceState::Active);
+        assert_eq!(payload.generation, ResourceGeneration(1));
+    }
+
+    #[tokio::test]
+    async fn recovery_does_not_backfill_unchanged_resource() {
+        let rt = Arc::new(TokioRuntime::new());
+        let store = Arc::new(SqliteStore::new(rt, ":memory:").await.unwrap());
+
+        let tenant = TenantId::new("tenant-1").unwrap();
+        let resource = sample_resource(&tenant, "pub-same");
+        store.insert(&resource).await.unwrap();
+
+        let mut results = std::collections::HashMap::new();
+        results.insert(
+            "pub-same".to_string(),
+            ProbeResult::Found {
+                state: ResourceState::Active,
+                generation: ResourceGeneration(0),
+            },
+        );
+        let probe = Arc::new(FakeProbe { results });
+
+        let engine = RecoveryEngine::new(store.clone(), store.clone(), store.clone(), probe);
+        let report = engine.recover(&RecoveryLimits::default()).await.unwrap();
+
+        assert_eq!(report.resources_scanned, 1);
+        assert_eq!(report.resources_converged, 0);
+
+        let events = EventStore::list_by_resource(
+            store.as_ref(),
+            &tenant,
+            "publisher",
+            "pub-same",
+            MediaNodeInstanceEpoch(0),
+            EventSequence(0),
+            10,
+        )
+        .await
+        .unwrap();
+        assert!(events.is_empty());
     }
 
     #[tokio::test]
@@ -676,5 +765,47 @@ mod tests {
             completed.safe_error.as_ref().map(|e| e.code),
             Some(MediaErrorCode::NotFound)
         );
+    }
+
+    #[tokio::test]
+    async fn recovery_backfills_unknown_transition() {
+        let rt = Arc::new(TokioRuntime::new());
+        let store = Arc::new(SqliteStore::new(rt, ":memory:").await.unwrap());
+
+        let tenant = TenantId::new("tenant-1").unwrap();
+        let resource = sample_resource(&tenant, "pub-unknown");
+        store.insert(&resource).await.unwrap();
+
+        let mut results = std::collections::HashMap::new();
+        results.insert("pub-unknown".to_string(), ProbeResult::Unknown);
+        let probe = Arc::new(FakeProbe { results });
+
+        let engine = RecoveryEngine::new(store.clone(), store.clone(), store.clone(), probe);
+        let report = engine.recover(&RecoveryLimits::default()).await.unwrap();
+
+        assert_eq!(report.resources_unknown, 1);
+
+        let loaded = ResourceStore::get(store.as_ref(), &tenant, "publisher", "pub-unknown")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.state, ResourceState::Unknown);
+
+        let events = EventStore::list_by_resource(
+            store.as_ref(),
+            &tenant,
+            "publisher",
+            "pub-unknown",
+            MediaNodeInstanceEpoch(0),
+            EventSequence(0),
+            10,
+        )
+        .await
+        .unwrap();
+        assert_eq!(events.len(), 1);
+        let payload: ResourceStateChanged =
+            serde_json::from_str(&events[0].serialized_payload).unwrap();
+        assert_eq!(payload.previous_state, ResourceState::Active);
+        assert_eq!(payload.new_state, ResourceState::Unknown);
     }
 }
