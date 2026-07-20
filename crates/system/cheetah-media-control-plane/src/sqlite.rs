@@ -237,9 +237,14 @@ fn migrate(conn: &mut Connection) -> Result<(), ControlPlaneError> {
     )
     .map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))?;
 
+    // Ensure exactly one control_meta row exists before bumping the schema
+    // version. The version number is the primary key, so a plain
+    // `INSERT OR IGNORE VALUES(1)` would create a duplicate when reopening
+    // a database whose version is already > 1.
     conn.execute(
-        "INSERT OR IGNORE INTO control_meta (schema_version) VALUES (?1)",
-        params![1],
+        "INSERT INTO control_meta (schema_version)
+         SELECT 1 WHERE NOT EXISTS (SELECT 1 FROM control_meta)",
+        [],
     )
     .map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))?;
 
@@ -731,5 +736,40 @@ mod tests {
 
         let loaded = store.get(&key).await.unwrap().expect("record exists");
         assert_eq!(loaded.safe_error, record.safe_error);
+    }
+
+    #[tokio::test]
+    async fn persistent_store_reopens_after_shutdown() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = format!("/tmp/cheetah_test_reopen_{}_{}.db", std::process::id(), now);
+        let _ = std::fs::remove_file(&path);
+
+        let rt = Arc::new(TokioRuntime::new());
+        let tenant = TenantId::new("tenant-1").unwrap();
+        let key = IdempotencyKey::new(tenant, "create_session", "key-1");
+        let digest = CanonicalDigest([1u8; 32]);
+
+        {
+            let store = SqliteStore::new(rt.clone(), &path).await.unwrap();
+            let outcome = store
+                .prepare(&key, digest, now_ms() + 60_000)
+                .await
+                .unwrap();
+            assert!(matches!(outcome, IdempotencyOutcome::Proceed));
+        }
+
+        let store = SqliteStore::new(rt, &path).await.unwrap();
+        let outcome = store
+            .prepare(&key, digest, now_ms() + 60_000)
+            .await
+            .unwrap();
+        assert!(matches!(outcome, IdempotencyOutcome::Reconcile));
+
+        let _ = std::fs::remove_file(&path);
     }
 }
