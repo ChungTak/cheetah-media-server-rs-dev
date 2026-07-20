@@ -2,8 +2,10 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::MediaError;
 use crate::ids::*;
 use crate::model::*;
+use crate::outbound_policy::OutboundUrlPolicy;
 
 /// Query for media list.
 ///
@@ -476,6 +478,16 @@ pub struct PullProxyRequest {
     pub record_policy: Option<StartRecordRequest>,
 }
 
+impl PullProxyRequest {
+    /// Return the sanitized source URL suitable for storage, audit and events.
+    ///
+    /// Rejects URLs that contain userinfo (`user:pass@`) and applies the
+    /// configured query-key denylist.
+    pub fn sanitized_source_url(&self, policy: &OutboundUrlPolicy) -> Result<String, MediaError> {
+        policy.sanitize_url(&self.source_url)
+    }
+}
+
 /// Push proxy request.
 ///
 /// 推流代理请求。
@@ -488,6 +500,19 @@ pub struct PushProxyRequest {
     pub retry_policy: RetryPolicy,
     #[serde(default)]
     pub protocol_options: HashMap<String, String>,
+}
+
+impl PushProxyRequest {
+    /// Return the sanitized destination URL suitable for storage, audit and events.
+    ///
+    /// Rejects URLs that contain userinfo (`user:pass@`) and applies the
+    /// configured query-key denylist.
+    pub fn sanitized_destination_url(
+        &self,
+        policy: &OutboundUrlPolicy,
+    ) -> Result<String, MediaError> {
+        policy.sanitize_url(&self.destination_url)
+    }
 }
 
 /// Retry policy.
@@ -741,5 +766,59 @@ mod tests {
         let json = serde_json::to_string(&req).unwrap();
         let decoded: FetchSnapshotRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(req, decoded);
+    }
+
+    #[test]
+    fn pull_proxy_request_sanitizes_source_url() {
+        let req = PullProxyRequest {
+            source_url: "https://Example.COM:8443/path?token=abc&keep=1#frag".to_string(),
+            destination: MediaKey::new("default", "live", "test", None).unwrap(),
+            retry_policy: RetryPolicy::default(),
+            heartbeat_ms: None,
+            timeout_ms: 10_000,
+            processing_policy: Default::default(),
+            output_policy: Default::default(),
+            record_policy: None,
+        };
+        let mut policy = OutboundUrlPolicy::default();
+        policy.deny_unknown_query_keys = vec!["token".to_string()];
+
+        let sanitized = req.sanitized_source_url(&policy).unwrap();
+        assert!(sanitized.contains("example.com:8443"), "{sanitized}");
+        assert!(sanitized.contains("/path"), "{sanitized}");
+        assert!(sanitized.contains("keep=1"), "{sanitized}");
+        assert!(!sanitized.contains("token"), "{sanitized}");
+        assert!(!sanitized.contains("#"), "{sanitized}");
+
+        let bad_req = PullProxyRequest {
+            source_url: "https://user:pass@example.com/path".to_string(),
+            destination: MediaKey::new("default", "live", "test", None).unwrap(),
+            retry_policy: RetryPolicy::default(),
+            heartbeat_ms: None,
+            timeout_ms: 10_000,
+            processing_policy: Default::default(),
+            output_policy: Default::default(),
+            record_policy: None,
+        };
+        assert!(bad_req.sanitized_source_url(&policy).is_err());
+    }
+
+    #[test]
+    fn push_proxy_request_sanitizes_destination_url() {
+        let req = PushProxyRequest {
+            source_media_key: MediaKey::new("default", "live", "test", None).unwrap(),
+            destination_url: "rtsps://host.example:1935/app/stream?key=secret".to_string(),
+            protocol: "rtsp".to_string(),
+            retry_policy: RetryPolicy::default(),
+            protocol_options: HashMap::new(),
+        };
+        let mut policy = OutboundUrlPolicy::default();
+        policy.allowed_schemes = vec!["rtsps".to_string()];
+        policy.deny_unknown_query_keys = vec!["key".to_string()];
+
+        let sanitized = req.sanitized_destination_url(&policy).unwrap();
+        assert!(sanitized.contains("host.example:1935"), "{sanitized}");
+        assert!(sanitized.contains("/app/stream"), "{sanitized}");
+        assert!(!sanitized.contains("key"), "{sanitized}");
     }
 }

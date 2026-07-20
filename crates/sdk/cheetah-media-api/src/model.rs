@@ -2,8 +2,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::MediaErrorCode;
+use crate::error::{MediaError, MediaErrorCode};
 use crate::ids::*;
+use crate::outbound_policy::OutboundUrlPolicy;
 
 /// Codec kind for a track.
 ///
@@ -300,6 +301,18 @@ pub struct ProxyInfo {
     pub output_urls: Vec<MediaUrl>,
 }
 
+impl ProxyInfo {
+    /// Sanitize the persisted `source` URL so it contains no userinfo, fragment,
+    /// or denylisted query keys.
+    ///
+    /// This should be called before persisting or returning `ProxyInfo` to audit
+    /// logs and events.
+    pub fn sanitize_source(&mut self, policy: &OutboundUrlPolicy) -> Result<(), MediaError> {
+        self.source = policy.sanitize_url(&self.source)?;
+        Ok(())
+    }
+}
+
 /// Proxy kind.
 ///
 /// 代理类型。
@@ -564,6 +577,52 @@ mod tests {
         let json = serde_json::to_string(&reason).unwrap();
         let de: CloseReason = serde_json::from_str(&json).unwrap();
         assert_eq!(de, reason);
+    }
+
+    #[test]
+    fn proxy_info_sanitizes_source_url() {
+        let mut info = ProxyInfo {
+            proxy_id: ProxyId("proxy-1".to_string()),
+            kind: ProxyKind::Pull,
+            source: "https://Source.Host:8443/path?token=abc&keep=1#frag".to_string(),
+            destination: MediaKey::new("default", "live", "test", None).unwrap(),
+            state: ProxyState::Created,
+            retry_count: 0,
+            last_error: None,
+            created_at: 0,
+            updated_at: 0,
+            output_urls: Vec::new(),
+        };
+
+        let mut policy = OutboundUrlPolicy::default();
+        policy.deny_unknown_query_keys = vec!["token".to_string()];
+
+        info.sanitize_source(&policy).unwrap();
+        let sanitized = &info.source;
+        assert!(sanitized.contains("source.host:8443"), "{sanitized}");
+        assert!(sanitized.contains("/path"), "{sanitized}");
+        assert!(sanitized.contains("keep=1"), "{sanitized}");
+        assert!(!sanitized.contains("token"), "{sanitized}");
+        assert!(!sanitized.contains("USER"), "{sanitized}");
+        assert!(!sanitized.contains("PASS"), "{sanitized}");
+        assert!(!sanitized.contains("#"), "{sanitized}");
+    }
+
+    #[test]
+    fn proxy_info_sanitize_rejects_userinfo() {
+        let mut info = ProxyInfo {
+            proxy_id: ProxyId("proxy-1".to_string()),
+            kind: ProxyKind::Pull,
+            source: "https://user:pass@example.com/path".to_string(),
+            destination: MediaKey::new("default", "live", "test", None).unwrap(),
+            state: ProxyState::Created,
+            retry_count: 0,
+            last_error: None,
+            created_at: 0,
+            updated_at: 0,
+            output_urls: Vec::new(),
+        };
+        assert!(info.sanitize_source(&OutboundUrlPolicy::default()).is_err());
     }
 
     #[test]
