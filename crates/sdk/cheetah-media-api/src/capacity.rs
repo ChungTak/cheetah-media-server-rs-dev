@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 /// limits and snapshots.
 ///
 /// 容量请求、上限与快照使用的资源维度向量。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct CapacityVector {
     pub session_count: u64,
     pub port_count: u64,
@@ -33,7 +33,7 @@ pub type CapacityLimits = CapacityVector;
 /// Snapshot of current capacity usage and availability.
 ///
 /// 当前容量使用与可用性的快照。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct CapacitySnapshot {
     pub used: CapacityVector,
     pub remaining: CapacityVector,
@@ -49,7 +49,7 @@ pub struct CapacitySnapshot {
 /// is dropped.
 ///
 /// `MediaCapacityApi::acquire` 返回的不透明许可。许可在 drop 时释放其预留。
-pub trait CapacityPermit: Send {
+pub trait CapacityPermit: Send + std::fmt::Debug {
     /// Optional resource handle this permit is associated with.
     fn resource_handle(&self) -> Option<&str>;
 }
