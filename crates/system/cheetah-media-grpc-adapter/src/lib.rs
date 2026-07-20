@@ -42,6 +42,26 @@ impl GrpcTlsConfig {
     }
 }
 
+/// gRPC per-message size limits.
+///
+/// gRPC 单条消息大小限制。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GrpcMessageLimits {
+    /// Maximum decoded (inbound) message size in bytes.
+    pub max_decoding_message_size: usize,
+    /// Maximum encoded (outbound) message size in bytes.
+    pub max_encoding_message_size: usize,
+}
+
+impl Default for GrpcMessageLimits {
+    fn default() -> Self {
+        Self {
+            max_decoding_message_size: 4 * 1024 * 1024,
+            max_encoding_message_size: 4 * 1024 * 1024,
+        }
+    }
+}
+
 /// Configuration for the gRPC adapter listener.
 ///
 /// gRPC adapter 监听器配置。
@@ -56,6 +76,8 @@ pub struct GrpcAdapterConfig {
     pub enable_reflection: bool,
     /// Optional TLS configuration.
     pub tls: Option<GrpcTlsConfig>,
+    /// gRPC per-message size limits.
+    pub message_limits: GrpcMessageLimits,
 }
 
 impl GrpcAdapterConfig {
@@ -65,6 +87,7 @@ impl GrpcAdapterConfig {
             bind_addr,
             enable_reflection: false,
             tls: None,
+            message_limits: GrpcMessageLimits::default(),
         }
     }
 }
@@ -320,5 +343,18 @@ mod tests {
 
         let result = GrpcAdapter::start(config).await;
         assert!(matches!(result, Err(GrpcAdapterError::InvalidTls(_))));
+    }
+
+    #[test]
+    fn message_limits_default_to_four_megabytes() {
+        let config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
+        assert_eq!(
+            config.message_limits.max_decoding_message_size,
+            4 * 1024 * 1024
+        );
+        assert_eq!(
+            config.message_limits.max_encoding_message_size,
+            4 * 1024 * 1024
+        );
     }
 }

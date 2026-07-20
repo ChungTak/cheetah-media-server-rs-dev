@@ -463,8 +463,8 @@ The `signaling-control-plane` Cargo feature gates the new gRPC-based signaling c
   - `capacity.max_nodes`, `capacity.max_resources`
   - `tls.server_cert_pem`, `tls.server_key_pem`, `tls.client_ca_pem`, `tls.client_cert_required`
   - `secret_exchange.enabled`, `secret_exchange.endpoint`, `secret_exchange.renewal_margin_sec`
-- `validate()` enforces required fields when enabled, socket-address parsing, contract version ordering, TLS consistency (including `client_ca_pem` when client certificates are required), and secret-exchange consistency.
-- `cheetah-media-grpc-adapter` `GrpcAdapterConfig` carries an optional `GrpcTlsConfig`; when supplied, the adapter builds a `tonic` TLS listener with server identity and optional/mandatory client certificate verification (mTLS).
+- `validate()` enforces required fields when enabled, socket-address parsing, message limits (non-zero `max_inbound_size` and `max_outbound_size`), contract version ordering, TLS consistency (including `client_ca_pem` when client certificates are required), and secret-exchange consistency.
+- `cheetah-media-grpc-adapter` `GrpcAdapterConfig` carries an optional `GrpcTlsConfig` and `GrpcMessageLimits` (default 4 MiB inbound/outbound); `GrpcMessageLimits` are validated and will be applied to typed services as they are added.
 - The current `Assembly` is a placeholder; later MIG tasks will wire the gRPC adapter and control-plane facade.
 
 ## 4. Media Model and Unification

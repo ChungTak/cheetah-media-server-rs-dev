@@ -169,6 +169,12 @@ impl SignalingControlPlaneConfig {
             .listen
             .parse::<SocketAddr>()
             .map_err(|e| format!("grpc.listen is not a valid socket address: {e}"))?;
+        if self.grpc.message_limits.max_inbound_size == 0 {
+            return Err("grpc.message_limits.max_inbound_size must be non-zero".to_string());
+        }
+        if self.grpc.message_limits.max_outbound_size == 0 {
+            return Err("grpc.message_limits.max_outbound_size must be non-zero".to_string());
+        }
         if self.store.path.is_empty() {
             return Err(
                 "store.path is required when signaling-control-plane is enabled".to_string(),
@@ -245,6 +251,18 @@ mod tests {
         cfg.tls.client_cert_required = false;
         cfg.tls.client_ca_pem.clear();
         cfg.tls.server_cert_pem.clear();
+        assert!(cfg.validate().is_err());
+
+        // Zero message limits are rejected.
+        let mut cfg = SignalingControlPlaneConfig::default();
+        cfg.enabled = true;
+        cfg.grpc.listen = "127.0.0.1:9090".to_string();
+        cfg.store.path = "/tmp/test.db".to_string();
+        cfg.registry.node_identity = "node-1".to_string();
+        cfg.grpc.message_limits.max_inbound_size = 0;
+        assert!(cfg.validate().is_err());
+        cfg.grpc.message_limits.max_inbound_size = 4 * 1024 * 1024;
+        cfg.grpc.message_limits.max_outbound_size = 0;
         assert!(cfg.validate().is_err());
     }
 }
