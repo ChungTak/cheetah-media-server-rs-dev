@@ -51,9 +51,9 @@ use cheetah_rtp_module::RtpModuleFactory;
 #[cfg(feature = "rtsp")]
 use cheetah_rtsp_module::RtspModuleFactory;
 use cheetah_runtime_tokio::TokioRuntime;
-use cheetah_sdk::{ConfigProvider, ConfigSchemaRegistry, ServiceDescriptor};
 #[cfg(feature = "signaling-control-plane")]
 use cheetah_sdk::ModuleId;
+use cheetah_sdk::{ConfigProvider, ConfigSchemaRegistry, ServiceDescriptor};
 #[cfg(feature = "snapshot")]
 use cheetah_snapshot_module::SnapshotModuleFactory;
 #[cfg(feature = "srt")]
