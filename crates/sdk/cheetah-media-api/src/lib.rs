@@ -44,9 +44,9 @@ pub use capacity::{
 };
 pub use controlled_event::{
     ControlledEventHeader, ControlledEventPayload, ControlledMediaEvent, EventGap, EventId,
-    EventSequence, NodeLifecycle, PlaybackCompleted, ProcessingCompleted, ProxyStateChanged,
-    RecordCompleted, ResourceStateChanged, RtpSessionTimeout, SnapshotCompleted, StreamOffline,
-    StreamOnline,
+    EventSequence, EventSubscribeRequest, EventSubscribeResponse, NodeLifecycle, PlaybackCompleted,
+    ProcessingCompleted, ProxyStateChanged, RecordCompleted, ResourceStateChanged,
+    RtpSessionTimeout, SnapshotCompleted, StreamOffline, StreamOnline, SubscriberLimits,
 };
 pub use credential::{CredentialLease, CredentialMaterial, CredentialPurpose};
 pub use cursor::{CursorPage, CursorPageRequest, OpaqueCursor};
