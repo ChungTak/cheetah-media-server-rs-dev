@@ -14,6 +14,34 @@ pub mod health;
 
 pub use health::{GrpcHealthHandle, GrpcServingStatus, HealthCategory};
 
+/// TLS configuration for the gRPC adapter listener.
+///
+/// gRPC adapter 监听器 TLS 配置。
+#[derive(Debug, Clone)]
+pub struct GrpcTlsConfig {
+    /// Server certificate PEM.
+    pub server_cert_pem: String,
+    /// Server private key PEM.
+    pub server_key_pem: String,
+    /// Trusted client CA certificate PEM. If empty, client certificates are
+    /// not validated.
+    pub client_ca_pem: String,
+    /// Whether a client certificate is required when `client_ca_pem` is set.
+    pub client_cert_required: bool,
+}
+
+impl GrpcTlsConfig {
+    /// Create a TLS config from server cert/key. Client CA is optional.
+    pub fn new(server_cert_pem: String, server_key_pem: String) -> Self {
+        Self {
+            server_cert_pem,
+            server_key_pem,
+            client_ca_pem: String::new(),
+            client_cert_required: false,
+        }
+    }
+}
+
 /// Configuration for the gRPC adapter listener.
 ///
 /// gRPC adapter 监听器配置。
@@ -26,6 +54,8 @@ pub struct GrpcAdapterConfig {
     ///
     /// 是否启用 gRPC reflection。默认关闭。
     pub enable_reflection: bool,
+    /// Optional TLS configuration.
+    pub tls: Option<GrpcTlsConfig>,
 }
 
 impl GrpcAdapterConfig {
@@ -34,6 +64,7 @@ impl GrpcAdapterConfig {
         Self {
             bind_addr,
             enable_reflection: false,
+            tls: None,
         }
     }
 }
@@ -49,6 +80,9 @@ pub enum GrpcAdapterError {
     /// Failed to serve gRPC requests.
     #[error("serve failed: {0}")]
     Serve(String),
+    /// Failed to configure TLS.
+    #[error("invalid TLS configuration: {0}")]
+    InvalidTls(String),
 }
 
 /// A running gRPC adapter.
@@ -69,6 +103,30 @@ impl std::fmt::Debug for GrpcAdapter {
 }
 
 impl GrpcAdapter {
+    /// Build a `tonic` server builder from the TLS config, if any.
+    fn make_server_builder(
+        tls: Option<&GrpcTlsConfig>,
+    ) -> Result<tonic::transport::server::Server, GrpcAdapterError> {
+        let Some(tls) = tls else {
+            return Ok(tonic::transport::Server::builder());
+        };
+
+        let identity =
+            tonic::transport::Identity::from_pem(&tls.server_cert_pem, &tls.server_key_pem);
+        let mut tls_config = tonic::transport::ServerTlsConfig::new().identity(identity);
+
+        if !tls.client_ca_pem.is_empty() {
+            let ca = tonic::transport::Certificate::from_pem(&tls.client_ca_pem);
+            tls_config = tls_config
+                .client_ca_root(ca)
+                .client_auth_optional(!tls.client_cert_required);
+        }
+
+        tonic::transport::Server::builder()
+            .tls_config(tls_config)
+            .map_err(|e| GrpcAdapterError::InvalidTls(e.to_string()))
+    }
+
     /// Start the gRPC listener and health service.
     ///
     /// Returns the running adapter and a handle for updating health status.
@@ -95,18 +153,20 @@ impl GrpcAdapter {
             let _ = shutdown_rx.await;
         };
 
+        let mut server_builder = Self::make_server_builder(config.tls.as_ref())?;
+
         let serve = if config.enable_reflection {
             let reflection = tonic_reflection::server::Builder::configure()
                 .register_encoded_file_descriptor_set(tonic_health::pb::FILE_DESCRIPTOR_SET)
                 .build_v1()
                 .map_err(|e| GrpcAdapterError::Serve(e.to_string()))?;
 
-            tonic::transport::Server::builder()
+            server_builder
                 .add_service(health_server)
                 .add_service(reflection)
                 .serve_with_incoming_shutdown(incoming, shutdown)
         } else {
-            tonic::transport::Server::builder()
+            server_builder
                 .add_service(health_server)
                 .serve_with_incoming_shutdown(incoming, shutdown)
         };
@@ -200,5 +260,65 @@ mod tests {
 
         assert!(adapter.bound_addr().port() > 0);
         adapter.stop().await.unwrap();
+    }
+
+    /// Generate a self-signed CA and a leaf certificate signed by that CA.
+    /// Returns `(ca_pem, cert_pem, key_pem)`.
+    fn generate_test_certs() -> (String, String, String) {
+        use rcgen::{
+            BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
+            KeyUsagePurpose, SanType,
+        };
+
+        let ca_key = KeyPair::generate().unwrap();
+        let mut ca_params = CertificateParams::new(vec!["ca.local".to_string()]).unwrap();
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        ca_params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        let ca_cert = ca_params.self_signed(&ca_key).unwrap();
+
+        let server_key = KeyPair::generate().unwrap();
+        let mut server_params = CertificateParams::new(vec!["localhost".to_string()]).unwrap();
+        server_params.is_ca = IsCa::NoCa;
+        server_params.key_usages = vec![
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::KeyEncipherment,
+        ];
+        server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        server_params.subject_alt_names = vec![SanType::IpAddress("127.0.0.1".parse().unwrap())];
+
+        let ca_issuer = Issuer::new(ca_params, ca_key);
+        let server_cert = server_params.signed_by(&server_key, &ca_issuer).unwrap();
+
+        (ca_cert.pem(), server_cert.pem(), server_key.serialize_pem())
+    }
+
+    #[tokio::test]
+    async fn mtls_server_starts_and_stops() {
+        let (ca_pem, server_cert, server_key) = generate_test_certs();
+
+        let mut tls = GrpcTlsConfig::new(server_cert, server_key);
+        tls.client_ca_pem = ca_pem;
+        tls.client_cert_required = true;
+
+        let mut config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
+        config.tls = Some(tls);
+
+        let (adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
+        assert!(adapter.bound_addr().port() > 0);
+
+        health.set_overall(GrpcServingStatus::Serving).await;
+        adapter.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn invalid_tls_pem_fails_to_start() {
+        let mut tls = GrpcTlsConfig::new("not-a-cert".to_string(), "not-a-key".to_string());
+        tls.client_ca_pem = "not-a-ca".to_string();
+
+        let mut config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
+        config.tls = Some(tls);
+
+        let result = GrpcAdapter::start(config).await;
+        assert!(matches!(result, Err(GrpcAdapterError::InvalidTls(_))));
     }
 }
