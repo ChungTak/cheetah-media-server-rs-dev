@@ -1,0 +1,15 @@
+[package]
+name = "cheetah-media-grpc-adapter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+tokio = { workspace = true }
+tonic = { workspace = true }
+tonic-health = { workspace = true }
+tonic-reflection = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
