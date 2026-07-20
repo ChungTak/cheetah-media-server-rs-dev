@@ -10,6 +10,7 @@
 //! 本 crate 刻意保持运行时无关：不依赖 Tokio、Axum、任何具体 protocol module 或 `cheetah-sdk`。
 //! 它提供稳定的类型化契约，供 adapter 和 provider 实现。
 
+pub mod admin;
 pub mod audit;
 pub mod auth;
 pub mod capability;
@@ -38,6 +39,12 @@ pub mod subtitle;
 pub mod validation;
 pub mod webhook;
 
+pub use admin::{
+    AdminApi, AdminIdentity, AdminScope, CheckpointKind, CheckpointStoreRequest,
+    CheckpointStoreResponse, CleanupOrphanRequest, CleanupOrphanResponse, DiagnosticsRequest,
+    DiagnosticsResponse, DrainNodeRequest, DrainNodeResponse, ReconcileScope, RotateTlsRequest,
+    RotateTlsResponse, TlsComponent, TriggerReconciliationRequest, TriggerReconciliationResponse,
+};
 pub use auth::{AuthCredentials, MediaScope, Principal};
 pub use capability::{
     MediaCapability, MediaCapabilityDescriptor, MediaCapabilityReport, MediaCapabilitySet,

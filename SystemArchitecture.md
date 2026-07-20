@@ -467,6 +467,7 @@ The `signaling-control-plane` Cargo feature gates the new gRPC-based signaling c
   - `secret_exchange.enabled`, `secret_exchange.endpoint`, `secret_exchange.renewal_margin_sec`
 - `validate()` enforces required fields when enabled, socket-address parsing, message limits (non-zero `max_inbound_size` and `max_outbound_size`), contract version ordering, TLS consistency (including `client_ca_pem` when client certificates are required), and secret-exchange consistency.
 - `cheetah-media-grpc-adapter` `GrpcAdapterConfig` carries an optional `GrpcTlsConfig` and `GrpcMessageLimits` (default 4 MiB inbound/outbound); `GrpcMessageLimits` are validated and will be applied to typed services as they are added.
+- `cheetah-media-api` exposes an `AdminApi` with `AdminScope` (Node, Reconcile, Tls, Store, Orphan), `AdminIdentity`, and typed requests/responses for drain, reconciliation, safe diagnostics, TLS/cursor rotation, store checkpoint, and orphan cleanup. Implementations must reject secret dump, raw SQLite queries, arbitrary file reads, and tenant/fencing bypass.
 - The current `Assembly` is a placeholder; later MIG tasks will wire the gRPC adapter and control-plane facade.
 
 ## 4. Media Model and Unification
