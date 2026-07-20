@@ -10,27 +10,50 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-/// A client-supplied idempotency key.
+/// A client-supplied idempotency key scoped to a tenant and operation kind.
 ///
-/// 客户端提供的幂等键。
+/// 客户端提供的幂等键，按租户与操作类型隔离。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct IdempotencyKey(pub String);
+pub struct IdempotencyKey {
+    pub tenant_id: TenantId,
+    pub operation_kind: String,
+    pub key: String,
+}
 
 impl IdempotencyKey {
+    /// Create a new idempotency key.
+    pub fn new(
+        tenant_id: TenantId,
+        operation_kind: impl Into<String>,
+        key: impl Into<String>,
+    ) -> Self {
+        Self {
+            tenant_id,
+            operation_kind: operation_kind.into(),
+            key: key.into(),
+        }
+    }
+
     /// Validate that the key is non-empty and free of control characters.
     pub fn validate(&self) -> Result<(), super::ControlPlaneError> {
-        if self.0.is_empty() {
+        if self.key.is_empty() {
             return Err(cheetah_media_api::error::MediaError::new(
                 cheetah_media_api::error::MediaErrorCode::InvalidArgument,
                 "idempotency key must be non-empty",
             )
             .into());
         }
-        if self.0.chars().any(|c| c.is_control()) {
+        if self.key.chars().any(|c| c.is_control()) {
             return Err(cheetah_media_api::error::MediaError::new(
                 cheetah_media_api::error::MediaErrorCode::InvalidArgument,
                 "idempotency key must not contain control characters",
+            )
+            .into());
+        }
+        if self.operation_kind.is_empty() {
+            return Err(cheetah_media_api::error::MediaError::new(
+                cheetah_media_api::error::MediaErrorCode::InvalidArgument,
+                "operation kind must be non-empty",
             )
             .into());
         }
@@ -149,13 +172,21 @@ mod tests {
 
     #[test]
     fn idempotency_key_rejects_empty_and_control_chars() {
-        let empty = IdempotencyKey("".to_string());
+        let empty = IdempotencyKey::new(TenantId::new("tenant-1").unwrap(), "create_session", "");
         assert!(empty.validate().is_err());
 
-        let ctrl = IdempotencyKey("key\x01value".to_string());
+        let ctrl = IdempotencyKey::new(
+            TenantId::new("tenant-1").unwrap(),
+            "create_session",
+            "key\x01value",
+        );
         assert!(ctrl.validate().is_err());
 
-        let ok = IdempotencyKey("valid-key".to_string());
+        let ok = IdempotencyKey::new(
+            TenantId::new("tenant-1").unwrap(),
+            "create_session",
+            "valid-key",
+        );
         assert!(ok.validate().is_ok());
     }
 

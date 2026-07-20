@@ -75,7 +75,6 @@ pub trait IdempotencyStore: Send + Sync {
     async fn prepare(
         &self,
         key: &IdempotencyKey,
-        operation_kind: &str,
         digest: CanonicalDigest,
         expires_at_ms: i64,
     ) -> Result<IdempotencyOutcome, ControlPlaneError>;
