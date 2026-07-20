@@ -4,13 +4,14 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::cursor::OpaqueCursor;
 use crate::error::MediaError;
 use crate::fencing::ControlledResourceRef;
 use crate::ids::{
     MediaBindingId, MediaKey, MediaNodeId, MediaNodeInstanceEpoch, MediaNodeInstanceId,
     MediaSessionId, MessageId, OwnerEpoch, ResourceGeneration, TenantId,
 };
-use crate::resource_filter::ResourceState;
+use crate::resource_filter::{ResourceFilter, ResourceState};
 
 /// Opaque, globally-unique identifier for an event in the durable journal.
 ///
@@ -214,6 +215,39 @@ pub struct EventGap {
     pub reconciliation_required: bool,
 }
 
+/// Request to subscribe to the durable event stream.
+///
+/// 订阅可重放事件流的请求。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventSubscribeRequest {
+    pub tenant_id: TenantId,
+    pub filter: ResourceFilter,
+    pub resume_cursor: Option<OpaqueCursor>,
+    pub max_batch: u32,
+    pub max_bytes: u64,
+}
+
+/// Response page from a durable event stream subscription.
+///
+/// 可重放事件流订阅返回的页。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventSubscribeResponse {
+    pub events: Vec<ControlledMediaEvent>,
+    pub next_cursor: Option<OpaqueCursor>,
+}
+
+/// Limits enforced per event subscriber to prevent slow consumers.
+///
+/// 防止慢消费者的每个事件订阅者限制。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubscriberLimits {
+    pub queue_capacity: u32,
+    pub max_batch: u32,
+    pub max_bytes: u64,
+    pub idle_deadline_ms: u64,
+    pub max_subscribers: u32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,6 +336,44 @@ mod tests {
             }),
         };
         assert!(event.resource_ref().is_none());
+    }
+
+    #[test]
+    fn subscribe_request_and_limits_round_trip() {
+        let req = EventSubscribeRequest {
+            tenant_id: TenantId::new("tenant-1").unwrap(),
+            filter: ResourceFilter {
+                tenant_id: TenantId::new("tenant-1").unwrap(),
+                media_session_id: None,
+                media_binding_id: None,
+                resource_handle: None,
+                media_key: None,
+                idempotency_key: None,
+                state: None,
+                non_terminal: false,
+                owner_epoch: None,
+                node_instance_epoch: None,
+                updated_before_ms: None,
+                updated_after_ms: None,
+            },
+            resume_cursor: None,
+            max_batch: 100,
+            max_bytes: 1_000_000,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: EventSubscribeRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, decoded);
+
+        let limits = SubscriberLimits {
+            queue_capacity: 1024,
+            max_batch: 100,
+            max_bytes: 1_000_000,
+            idle_deadline_ms: 30_000,
+            max_subscribers: 100,
+        };
+        let json = serde_json::to_string(&limits).unwrap();
+        let decoded: SubscriberLimits = serde_json::from_str(&json).unwrap();
+        assert_eq!(limits, decoded);
     }
 
     #[test]
