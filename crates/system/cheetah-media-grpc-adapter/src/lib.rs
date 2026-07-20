@@ -12,7 +12,7 @@ use thiserror::Error;
 
 pub mod health;
 
-pub use health::{GrpcHealthHandle, GrpcServingStatus};
+pub use health::{GrpcHealthHandle, GrpcServingStatus, HealthCategory};
 
 /// Configuration for the gRPC adapter listener.
 ///
@@ -182,6 +182,23 @@ mod tests {
         health.set_overall(GrpcServingStatus::Serving).await;
         assert!(adapter.bound_addr().port() > 0);
 
+        adapter.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn health_categories_are_reported() {
+        let config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
+        let (adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
+
+        health.set_overall(GrpcServingStatus::Serving).await;
+        health
+            .set_category(HealthCategory::Store, GrpcServingStatus::Serving)
+            .await;
+        health
+            .set_category(HealthCategory::Capacity, GrpcServingStatus::NotServing)
+            .await;
+
+        assert!(adapter.bound_addr().port() > 0);
         adapter.stop().await.unwrap();
     }
 }
