@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use cheetah_runtime_api::RuntimeApi;
 
-use crate::store::IdempotencyStore;
+use crate::event_store::EventStore;
+use crate::reconciler::{OrphanReconciler, Reconciler};
+use crate::store::{IdempotencyStore, OrphanStore, ResourceStore};
 
 /// The control-plane context shared by the gRPC adapter and internal modules.
 ///
@@ -19,14 +21,30 @@ use crate::store::IdempotencyStore;
 pub struct ControlPlane {
     pub runtime: Arc<dyn RuntimeApi>,
     pub idempotency: Arc<dyn IdempotencyStore>,
+    pub resources: Arc<dyn ResourceStore>,
+    pub events: Arc<dyn EventStore>,
+    pub orphan: Arc<dyn OrphanStore>,
+    pub reconciler: Arc<dyn Reconciler>,
 }
 
 impl ControlPlane {
-    /// Create a new control plane from a runtime and an idempotency store.
-    pub fn new(runtime: Arc<dyn RuntimeApi>, idempotency: Arc<dyn IdempotencyStore>) -> Self {
+    /// Create a new control plane from a runtime and store handles.
+    pub fn new(
+        runtime: Arc<dyn RuntimeApi>,
+        idempotency: Arc<dyn IdempotencyStore>,
+        resources: Arc<dyn ResourceStore>,
+        events: Arc<dyn EventStore>,
+        orphan: Arc<dyn OrphanStore>,
+    ) -> Self {
+        let reconciler: Arc<dyn Reconciler> =
+            Arc::new(OrphanReconciler::new(resources.clone(), orphan.clone()));
         Self {
             runtime,
             idempotency,
+            resources,
+            events,
+            orphan,
+            reconciler,
         }
     }
 }

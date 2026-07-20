@@ -63,3 +63,9 @@ impl ControlPlaneError {
         }
     }
 }
+
+impl From<ControlPlaneError> for MediaError {
+    fn from(e: ControlPlaneError) -> Self {
+        MediaError::new(e.code(), e.to_string())
+    }
+}
