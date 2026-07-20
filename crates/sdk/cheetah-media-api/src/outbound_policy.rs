@@ -7,6 +7,8 @@ use std::net::IpAddr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::MediaError;
+
 /// A resolved and policy-checked outbound endpoint.
 ///
 /// 已通过策略校验的出站端点。
@@ -75,6 +77,57 @@ impl Default for OutboundUrlPolicy {
     }
 }
 
+impl OutboundUrlPolicy {
+    /// Sanitize a URL for storage, audit and event logging.
+    ///
+    /// - Rejects URLs that contain userinfo (`user:pass@`).
+    /// - Removes query keys listed in `deny_unknown_query_keys`.
+    /// - Strips the fragment.
+    /// - Returns a canonical `scheme://host[:port]/path` form.
+    ///
+    /// 对 URL 进行脱敏，供存储、审计和事件日志使用。
+    pub fn sanitize_url(&self, url: &str) -> Result<String, MediaError> {
+        let parsed = url::Url::parse(url)
+            .map_err(|e| MediaError::invalid_argument(format!("invalid URL: {e}")))?;
+
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            return Err(MediaError::invalid_argument(
+                "URL must not contain userinfo",
+            ));
+        }
+
+        let mut cleaned = parsed.clone();
+        cleaned
+            .set_username("")
+            .map_err(|_| MediaError::invalid_argument("cannot remove URL userinfo"))?;
+        cleaned
+            .set_password(None)
+            .map_err(|_| MediaError::invalid_argument("cannot remove URL password"))?;
+        cleaned.set_fragment(None);
+
+        let deny: std::collections::HashSet<_> = self
+            .deny_unknown_query_keys
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        let pairs: Vec<_> = parsed
+            .query_pairs()
+            .filter(|(k, _)| !deny.contains(k.as_ref()))
+            .collect();
+        if pairs.is_empty() {
+            cleaned.set_query(None);
+        } else {
+            let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+            for (k, v) in pairs {
+                serializer.append_pair(k.as_ref(), v.as_ref());
+            }
+            cleaned.set_query(Some(&serializer.finish()));
+        }
+
+        Ok(cleaned.to_string())
+    }
+}
+
 /// Static check result returned by `OutboundUrlPolicyApi::check_static`.
 ///
 /// `OutboundUrlPolicyApi::check_static` 返回的静态检查结果。
@@ -112,5 +165,30 @@ mod tests {
         let json = serde_json::to_string(&policy).unwrap();
         let decoded: OutboundUrlPolicy = serde_json::from_str(&json).unwrap();
         assert_eq!(policy, decoded);
+    }
+
+    #[test]
+    fn sanitize_url_removes_fragment_and_denlisted_query_keys() {
+        let policy = OutboundUrlPolicy {
+            deny_unknown_query_keys: vec!["token".to_string(), "secret".to_string()],
+            ..Default::default()
+        };
+
+        let sanitized = policy
+            .sanitize_url("https://Example.COM:8443/path?token=abc&keep=1&secret=xyz#frag")
+            .unwrap();
+        assert!(sanitized.contains("example.com:8443"), "{sanitized}");
+        assert!(sanitized.contains("/path"), "{sanitized}");
+        assert!(sanitized.contains("keep=1"), "{sanitized}");
+        assert!(!sanitized.contains("token"), "{sanitized}");
+        assert!(!sanitized.contains("secret"), "{sanitized}");
+        assert!(!sanitized.contains("#"), "{sanitized}");
+    }
+
+    #[test]
+    fn sanitize_url_rejects_userinfo() {
+        let policy = OutboundUrlPolicy::default();
+        let result = policy.sanitize_url("https://user:pass@example.com/path");
+        assert!(result.is_err());
     }
 }
