@@ -51,7 +51,9 @@ use cheetah_rtp_module::RtpModuleFactory;
 #[cfg(feature = "rtsp")]
 use cheetah_rtsp_module::RtspModuleFactory;
 use cheetah_runtime_tokio::TokioRuntime;
-use cheetah_sdk::{ConfigProvider, ConfigSchemaRegistry, ModuleId, ServiceDescriptor};
+use cheetah_sdk::{ConfigProvider, ConfigSchemaRegistry, ServiceDescriptor};
+#[cfg(feature = "signaling-control-plane")]
+use cheetah_sdk::ModuleId;
 #[cfg(feature = "snapshot")]
 use cheetah_snapshot_module::SnapshotModuleFactory;
 #[cfg(feature = "srt")]
@@ -64,6 +66,7 @@ use cheetah_webrtc_module::WebRtcModuleFactory;
 use serde_json::Value;
 use tracing::{error, info};
 
+#[cfg(feature = "signaling-control-plane")]
 mod signaling_control_plane;
 
 /// Main entrypoint of the cheetah media server.
