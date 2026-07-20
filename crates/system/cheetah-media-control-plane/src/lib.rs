@@ -13,12 +13,16 @@
 //!
 //! 信号控制面无运行时依赖的 facade 与持久化 store trait。
 
+pub mod blocking;
 pub mod error;
 pub mod facade;
 pub mod idempotency;
+pub mod sqlite;
 pub mod store;
 
+pub use blocking::blocking_call;
 pub use error::ControlPlaneError;
 pub use facade::ControlPlane;
 pub use idempotency::{CanonicalDigest, CanonicalRequest, IdempotencyKey, IdempotencyState};
+pub use sqlite::SqliteStore;
 pub use store::{IdempotencyOutcome, IdempotencyRecord, IdempotencyStore};

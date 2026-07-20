@@ -22,6 +22,18 @@ pub enum ControlPlaneError {
     /// Serialization or deserialization of a stored value failed.
     #[error("serialization failed: {0}")]
     Serialization(String),
+    /// The runtime shut down before the blocking task completed.
+    #[error("runtime shutdown")]
+    RuntimeShutdown,
+    /// A runtime operation failed.
+    #[error("runtime error: {0}")]
+    RuntimeError(String),
+    /// An internal control-plane error.
+    #[error("internal error: {0}")]
+    Internal(String),
+    /// A database operation failed.
+    #[error("database error: {0}")]
+    Db(String),
 }
 
 impl ControlPlaneError {
@@ -32,6 +44,10 @@ impl ControlPlaneError {
             ControlPlaneError::StoreUnavailable(_) => MediaErrorCode::Unavailable,
             ControlPlaneError::InvalidIdempotencyState => MediaErrorCode::Conflict,
             ControlPlaneError::Serialization(_) => MediaErrorCode::StorageFailed,
+            ControlPlaneError::RuntimeShutdown => MediaErrorCode::Unavailable,
+            ControlPlaneError::RuntimeError(_) => MediaErrorCode::Internal,
+            ControlPlaneError::Internal(_) => MediaErrorCode::Internal,
+            ControlPlaneError::Db(_) => MediaErrorCode::StorageFailed,
         }
     }
 }
