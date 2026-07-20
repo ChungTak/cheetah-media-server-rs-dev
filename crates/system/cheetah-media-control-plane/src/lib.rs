@@ -29,7 +29,9 @@ pub use error::ControlPlaneError;
 pub use event_store::{EventRecord, EventStore};
 pub use facade::ControlPlane;
 pub use idempotency::{CanonicalDigest, CanonicalRequest, IdempotencyKey, IdempotencyState};
-pub use recovery::{ProbeResult, RecoveryEngine, RecoveryLimits, RecoveryReport, ResourceProbe};
+pub use recovery::{
+    ConvergeOutcome, ProbeResult, RecoveryEngine, RecoveryLimits, RecoveryReport, ResourceProbe,
+};
 pub use side_effect::{RecoveryAction, SideEffectWindow};
 pub use sqlite::SqliteStore;
 pub use store::{

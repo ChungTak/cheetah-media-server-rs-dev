@@ -73,6 +73,19 @@ pub enum ProbeResult {
     Unknown,
 }
 
+/// Result of converging a stored resource record with a provider view.
+///
+/// 资源对账结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConvergeOutcome {
+    /// No durable change was needed.
+    Unchanged,
+    /// The resource record was advanced to a known state.
+    Converged,
+    /// The provider view is stale or ambiguous; the record is marked Unknown.
+    Ambiguous,
+}
+
 /// Port used by the recovery engine to ask a typed provider for the actual
 /// state of a controlled resource.
 ///
@@ -143,11 +156,10 @@ where
             let resource_ref = resource.resource_ref();
             match self.probe.probe(&resource_ref).await? {
                 ProbeResult::Found { state, generation } => {
-                    let converged = self.converge_resource(&resource, state, generation).await?;
-                    if converged {
-                        report.resources_converged += 1;
-                    } else {
-                        report.resources_unknown += 1;
+                    match self.converge_resource(&resource, state, generation).await? {
+                        ConvergeOutcome::Converged => report.resources_converged += 1,
+                        ConvergeOutcome::Ambiguous => report.resources_unknown += 1,
+                        ConvergeOutcome::Unchanged => {}
                     }
                 }
                 ProbeResult::Gone => {
@@ -164,6 +176,7 @@ where
                         resource.state,
                         ResourceState::Stopped,
                         None,
+                        resource.generation,
                         limits.max_events_per_resource,
                     )
                     .await?;
@@ -214,37 +227,50 @@ where
         resource: &ResourceRecord,
         state: ResourceState,
         generation: ResourceGeneration,
-    ) -> Result<bool, ControlPlaneError> {
+    ) -> Result<ConvergeOutcome, ControlPlaneError> {
         let resource_ref = resource.resource_ref();
 
-        if generation < resource.generation {
-            // The stored record is newer than the provider view. This is
-            // ambiguous and must be reconciled manually.
-            self.resources
-                .set_state(
-                    &resource.tenant_id,
-                    &resource.resource_kind,
-                    &resource.resource_handle,
-                    ResourceState::Unknown,
-                )
-                .await?;
-            return Ok(false);
-        }
-
-        if generation > resource.generation {
-            let ok = self
-                .resources
-                .compare_and_set_generation(
-                    &resource.tenant_id,
-                    &resource.resource_kind,
-                    &resource.resource_handle,
-                    resource.generation,
-                    generation,
-                    state,
-                )
-                .await?;
-            if !ok {
-                // Another writer changed the generation; fall back to set_state.
+        let (new_state, new_generation, changed, ambiguous) = if generation < resource.generation {
+            if resource.state == ResourceState::Unknown {
+                (resource.state, resource.generation, false, false)
+            } else {
+                self.resources
+                    .set_state(
+                        &resource.tenant_id,
+                        &resource.resource_kind,
+                        &resource.resource_handle,
+                        ResourceState::Unknown,
+                    )
+                    .await?;
+                (ResourceState::Unknown, resource.generation, true, true)
+            }
+        } else {
+            let mut changed = false;
+            if generation > resource.generation {
+                let ok = self
+                    .resources
+                    .compare_and_set_generation(
+                        &resource.tenant_id,
+                        &resource.resource_kind,
+                        &resource.resource_handle,
+                        resource.generation,
+                        generation,
+                        state,
+                    )
+                    .await?;
+                if !ok {
+                    // Another writer changed the generation; fall back to set_state.
+                    self.resources
+                        .set_state(
+                            &resource.tenant_id,
+                            &resource.resource_kind,
+                            &resource.resource_handle,
+                            state,
+                        )
+                        .await?;
+                }
+                changed = true;
+            } else if state != resource.state {
                 self.resources
                     .set_state(
                         &resource.tenant_id,
@@ -253,28 +279,36 @@ where
                         state,
                     )
                     .await?;
+                changed = true;
             }
-        } else if state != resource.state {
-            self.resources
-                .set_state(
-                    &resource.tenant_id,
-                    &resource.resource_kind,
-                    &resource.resource_handle,
-                    state,
-                )
-                .await?;
+            let new_state = if changed { state } else { resource.state };
+            let new_generation = if generation > resource.generation {
+                generation
+            } else {
+                resource.generation
+            };
+            (new_state, new_generation, changed, false)
+        };
+
+        if changed {
+            self.backfill_state_event(
+                &resource_ref,
+                resource.state,
+                new_state,
+                resource.safe_last_error.clone(),
+                new_generation,
+                1,
+            )
+            .await?;
         }
 
-        self.backfill_state_event(
-            &resource_ref,
-            resource.state,
-            state,
-            resource.safe_last_error.clone(),
-            1,
-        )
-        .await?;
-
-        Ok(true)
+        Ok(if ambiguous {
+            ConvergeOutcome::Ambiguous
+        } else if changed {
+            ConvergeOutcome::Converged
+        } else {
+            ConvergeOutcome::Unchanged
+        })
     }
 
     async fn reconcile_idempotency(
@@ -322,8 +356,15 @@ where
                         terminal_at_ms: None,
                     };
                     self.resources.insert(&recovered).await?;
-                    self.backfill_state_event(resource_ref, ResourceState::Pending, state, None, 1)
-                        .await?;
+                    self.backfill_state_event(
+                        resource_ref,
+                        ResourceState::Pending,
+                        state,
+                        None,
+                        generation,
+                        1,
+                    )
+                    .await?;
                 }
 
                 let mut completed = record.clone();
@@ -361,6 +402,7 @@ where
         previous_state: ResourceState,
         new_state: ResourceState,
         last_error: Option<MediaError>,
+        generation: ResourceGeneration,
         _limit: u32,
     ) -> Result<(), ControlPlaneError> {
         let sequence = self
@@ -375,15 +417,18 @@ where
             previous_state,
             new_state,
             owner_epoch: resource_ref.owner_epoch,
-            generation: resource_ref.generation,
+            generation,
             media_key: None,
             last_error,
         };
         let serialized = serde_json::to_string(&payload)
             .map_err(|e| ControlPlaneError::Serialization(e.to_string()))?;
         let event = EventRecord {
-            event_id: EventId::new(format!("evt-{}", sequence.0))
-                .map_err(|e| ControlPlaneError::Serialization(e.to_string()))?,
+            event_id: EventId::new(format!(
+                "evt-{}-{}",
+                resource_ref.node_instance_epoch.0, sequence.0
+            ))
+            .map_err(|e| ControlPlaneError::Serialization(e.to_string()))?,
             instance_epoch: resource_ref.node_instance_epoch,
             sequence,
             tenant_id: resource_ref.tenant_id.clone(),
@@ -581,7 +626,10 @@ mod tests {
         assert_eq!(loaded.state, ResourceState::Active);
         assert_eq!(loaded.generation, ResourceGeneration(2));
 
-        let completed = IdempotencyStore::get(store.as_ref(), &key).await.unwrap().unwrap();
+        let completed = IdempotencyStore::get(store.as_ref(), &key)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(completed.state, IdempotencyState::Completed);
     }
 
@@ -619,7 +667,10 @@ mod tests {
 
         assert_eq!(report.idempotency_converged, 1);
 
-        let completed = IdempotencyStore::get(store.as_ref(), &key).await.unwrap().unwrap();
+        let completed = IdempotencyStore::get(store.as_ref(), &key)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(completed.state, IdempotencyState::Failed);
         assert_eq!(
             completed.safe_error.as_ref().map(|e| e.code),
