@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{MediaError, MediaErrorCode};
-use crate::fencing::{MediaNodeLease, NodeState};
+use crate::fencing::{LeaseLossReason, MediaNodeLease, NodeState};
 use crate::ids::{MediaNodeId, MediaNodeInstanceEpoch, MediaNodeInstanceId, OwnerEpoch};
 
 /// Stable, deployment-level identity of a media node.
@@ -148,6 +148,28 @@ pub struct NodeDeregisterRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeDeregisterResponse {
     pub acknowledged: bool,
+}
+
+/// Request to isolate a node after lease loss.
+///
+/// 租约丢失后隔离节点的请求。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeIsolateRequest {
+    pub node_id: MediaNodeId,
+    pub instance_id: MediaNodeInstanceId,
+    pub reason: LeaseLossReason,
+    /// If true, the node should isolate immediately without waiting for the
+    /// lease deadline.
+    pub force: bool,
+}
+
+/// Response to a node isolation request.
+///
+/// 节点隔离请求的响应。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeIsolateResponse {
+    pub isolated: bool,
+    pub state: NodeState,
 }
 
 impl NodeIdentity {
@@ -308,6 +330,27 @@ mod tests {
         let json = serde_json::to_string(&deregister_resp).unwrap();
         let decoded: NodeDeregisterResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(deregister_resp, decoded);
+    }
+
+    #[test]
+    fn isolate_request_and_response_round_trip() {
+        let req = NodeIsolateRequest {
+            node_id: identity().node_id,
+            instance_id: identity().instance_id,
+            reason: LeaseLossReason::RegistryUnreachable,
+            force: false,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: NodeIsolateRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, decoded);
+
+        let resp = NodeIsolateResponse {
+            isolated: true,
+            state: NodeState::Isolated,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let decoded: NodeIsolateResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(resp, decoded);
     }
 
     #[test]
