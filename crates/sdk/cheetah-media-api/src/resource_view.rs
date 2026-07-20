@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::MediaError;
-use crate::fencing::ControlledResourceRef;
+use crate::fencing::{ControlledResourceRef, ResourceOrigin};
 use crate::ids::{
     MediaBindingId, MediaKey, MediaNodeInstanceEpoch, MediaSessionId, OwnerEpoch,
     ResourceGeneration, TenantId,
@@ -28,6 +28,7 @@ pub struct ControlledResourceMeta {
     pub registered_owner_epoch: OwnerEpoch,
     pub registered_node_instance_epoch: MediaNodeInstanceEpoch,
     pub registered_generation: ResourceGeneration,
+    pub registered_origin: ResourceOrigin,
 }
 
 impl ControlledResourceMeta {
@@ -43,6 +44,7 @@ impl ControlledResourceMeta {
             registered_owner_epoch: resource.owner_epoch,
             registered_node_instance_epoch: resource.node_instance_epoch,
             registered_generation: generation,
+            registered_origin: resource.origin,
         }
     }
 }
@@ -92,6 +94,7 @@ mod tests {
             owner_epoch: OwnerEpoch(7),
             node_instance_epoch: MediaNodeInstanceEpoch(42),
             generation: ResourceGeneration(3),
+            origin: ResourceOrigin::default(),
         }
     }
 

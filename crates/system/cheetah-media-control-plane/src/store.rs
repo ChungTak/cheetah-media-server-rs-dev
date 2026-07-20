@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use cheetah_media_api::error::{EffectOutcome, MediaError};
-use cheetah_media_api::fencing::ControlledResourceRef;
+use cheetah_media_api::fencing::{ControlledResourceRef, ResourceOrigin};
 use cheetah_media_api::ids::{
     MediaBindingId, MediaKey, MediaNodeId, MediaNodeInstanceEpoch, MediaNodeInstanceId,
     MediaSessionId, OwnerEpoch, ResourceGeneration, TenantId,
@@ -136,6 +136,7 @@ impl ResourceRecord {
             owner_epoch: self.accepted_owner_epoch,
             node_instance_epoch: self.media_node_instance_epoch,
             generation: self.generation,
+            origin: ResourceOrigin::default(),
         }
     }
 }

@@ -476,6 +476,7 @@ mod tests {
             owner_epoch: OwnerEpoch(7),
             node_instance_epoch: MediaNodeInstanceEpoch(42),
             generation: ResourceGeneration(3),
+            origin: Default::default(),
         };
         let guard = MutationGuard::new(&ctx, &node);
         let next = guard.validate_against(&resource).unwrap();
@@ -495,6 +496,7 @@ mod tests {
             owner_epoch: OwnerEpoch(7),
             node_instance_epoch: MediaNodeInstanceEpoch(42),
             generation: ResourceGeneration(3),
+            origin: Default::default(),
         };
         resource.owner_epoch = OwnerEpoch(8);
         let guard = MutationGuard::new(&ctx, &node);
@@ -518,6 +520,7 @@ mod tests {
             owner_epoch: OwnerEpoch(7),
             node_instance_epoch: MediaNodeInstanceEpoch(42),
             generation: ResourceGeneration(3),
+            origin: Default::default(),
         };
         let guard = MutationGuard::new(&ctx, &node);
         let next = guard.validate_against(&resource).unwrap();
