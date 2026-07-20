@@ -12,17 +12,36 @@ use crate::ids::{
 };
 use crate::resource_filter::ResourceState;
 
+/// Opaque, globally-unique identifier for an event in the durable journal.
+///
+/// 可重放事件日志中事件的全局唯一标识。
+pub type EventId = MessageId;
+
+/// Monotonic sequence number scoped to a single media-node instance epoch.
+///
+/// 单个媒体节点实例 epoch 内的单调序列号。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct EventSequence(pub u64);
+
+impl EventSequence {
+    /// Return the raw sequence value.
+    pub fn value(&self) -> u64 {
+        self.0
+    }
+}
+
 /// Header shared by every controlled-media event.
 ///
 /// 每个受控媒体事件共享的 header。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ControlledEventHeader {
-    pub event_id: MessageId,
+    pub event_id: EventId,
     pub tenant_id: TenantId,
     pub media_node_id: MediaNodeId,
     pub media_node_instance_id: MediaNodeInstanceId,
     pub media_node_instance_epoch: MediaNodeInstanceEpoch,
-    pub sequence: u64,
+    pub sequence: EventSequence,
     pub occurred_at: i64,
     pub correlation_id: Option<String>,
     pub traceparent: Option<String>,
@@ -189,8 +208,8 @@ pub struct NodeLifecycle {
 /// 当订阅者的恢复 sequence 早于 journal 保留底限时发送的 gap 事件。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EventGap {
-    pub requested_sequence: u64,
-    pub first_available_sequence: u64,
+    pub requested_sequence: EventSequence,
+    pub first_available_sequence: EventSequence,
     pub instance_epoch: MediaNodeInstanceEpoch,
     pub reconciliation_required: bool,
 }
@@ -210,7 +229,7 @@ mod tests {
             )
             .unwrap(),
             media_node_instance_epoch: MediaNodeInstanceEpoch(42),
-            sequence: 7,
+            sequence: EventSequence(7),
             occurred_at: 1_000_000,
             correlation_id: None,
             traceparent: None,
@@ -290,8 +309,8 @@ mod tests {
         let event = ControlledMediaEvent {
             header: header(),
             payload: ControlledEventPayload::Gap(EventGap {
-                requested_sequence: 1,
-                first_available_sequence: 100,
+                requested_sequence: EventSequence(1),
+                first_available_sequence: EventSequence(100),
                 instance_epoch: MediaNodeInstanceEpoch(42),
                 reconciliation_required: true,
             }),
