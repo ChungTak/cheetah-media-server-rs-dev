@@ -113,8 +113,8 @@ pub enum GrpcAdapterError {
 /// 运行中的 gRPC adapter。
 pub struct GrpcAdapter {
     bound_addr: SocketAddr,
-    handle: tokio::task::JoinHandle<Result<(), GrpcAdapterError>>,
-    shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    handle: Option<tokio::task::JoinHandle<Result<(), GrpcAdapterError>>>,
+    shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl std::fmt::Debug for GrpcAdapter {
@@ -203,8 +203,8 @@ impl GrpcAdapter {
         Ok((
             Self {
                 bound_addr,
-                handle: handle_task,
-                shutdown_tx,
+                handle: Some(handle_task),
+                shutdown_tx: Some(shutdown_tx),
             },
             handle,
         ))
@@ -220,27 +220,37 @@ impl GrpcAdapter {
     /// Request a graceful shutdown and wait for the server to stop.
     ///
     /// 请求优雅关闭并等待服务器停止。
-    pub async fn stop(self) -> Result<(), GrpcAdapterError> {
-        let _ = self.shutdown_tx.send(());
-        self.handle
-            .await
-            .map_err(|e| GrpcAdapterError::Serve(e.to_string()))?
+    pub async fn stop(&mut self) -> Result<(), GrpcAdapterError> {
+        let _ = self.shutdown_tx.take();
+        if let Some(handle) = self.handle.take() {
+            handle
+                .await
+                .map_err(|e| GrpcAdapterError::Serve(e.to_string()))??;
+        }
+        Ok(())
     }
 
     /// Rotate the listener to a new configuration.
     ///
-    /// This performs a controlled stop of the current gRPC listener and starts a
-    /// new one with `new_config`. Existing media sessions are not affected because
-    /// they run in `cheetah-engine`, not in the gRPC listener.
+    /// This starts a new gRPC listener with `new_config`, then stops the current
+    /// one and replaces the running state with the new listener. If starting the
+    /// new listener fails (e.g. invalid TLS or the bind address is unavailable),
+    /// the current listener is left running.
     ///
-    /// 轮换监听器到新配置。当前 gRPC listener 会受控关闭并以 `new_config` 重新启动；
-    /// 已有媒体 session 不受影响。
+    /// 轮换监听器到新配置。先启动新 listener；成功后停止旧 listener 并替换运行状态。
+    /// 如果新 listener 启动失败，旧 listener 保持运行。
     pub async fn rotate(
-        self,
+        &mut self,
         new_config: GrpcAdapterConfig,
-    ) -> Result<(GrpcAdapter, GrpcHealthHandle), GrpcAdapterError> {
+    ) -> Result<GrpcHealthHandle, GrpcAdapterError> {
+        let (new_adapter, new_health) = Self::start(new_config).await?;
         self.stop().await?;
-        Self::start(new_config).await
+
+        self.bound_addr = new_adapter.bound_addr;
+        self.handle = new_adapter.handle;
+        self.shutdown_tx = new_adapter.shutdown_tx;
+
+        Ok(new_health)
     }
 }
 
@@ -251,7 +261,7 @@ mod tests {
     #[tokio::test]
     async fn health_server_starts_and_stops() {
         let config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
-        let (adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
+        let (mut adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
 
         assert!(adapter.bound_addr().port() > 0);
 
@@ -277,7 +287,7 @@ mod tests {
         let mut config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
         config.enable_reflection = true;
 
-        let (adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
+        let (mut adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
         health.set_overall(GrpcServingStatus::Serving).await;
         assert!(adapter.bound_addr().port() > 0);
 
@@ -287,7 +297,7 @@ mod tests {
     #[tokio::test]
     async fn health_categories_are_reported() {
         let config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
-        let (adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
+        let (mut adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
 
         health.set_overall(GrpcServingStatus::Serving).await;
         health
@@ -342,7 +352,7 @@ mod tests {
         let mut config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
         config.tls = Some(tls);
 
-        let (adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
+        let (mut adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
         assert!(adapter.bound_addr().port() > 0);
 
         health.set_overall(GrpcServingStatus::Serving).await;
@@ -382,13 +392,13 @@ mod tests {
         let mut initial = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
         initial.tls = Some(GrpcTlsConfig::new(first_certs.1, first_certs.2));
 
-        let (adapter, mut health) = GrpcAdapter::start(initial).await.unwrap();
+        let (mut adapter, mut health) = GrpcAdapter::start(initial).await.unwrap();
         health.set_overall(GrpcServingStatus::Serving).await;
 
         let mut rotated = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
         rotated.tls = Some(GrpcTlsConfig::new(second_certs.1, second_certs.2));
 
-        let (adapter, _health) = adapter.rotate(rotated).await.unwrap();
+        let _new_health = adapter.rotate(rotated).await.unwrap();
         let second_addr = adapter.bound_addr();
 
         assert!(second_addr.port() > 0);
