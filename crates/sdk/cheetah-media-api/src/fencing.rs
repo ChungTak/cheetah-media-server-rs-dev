@@ -64,6 +64,20 @@ pub enum LeaseStatus {
     Revoked,
 }
 
+/// Reason a node lease was lost, triggering isolation.
+///
+/// 节点租约丢失并触发隔离的原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LeaseLossReason {
+    RegistryUnreachable,
+    LeaseExpired,
+    LeaseRevoked,
+    ContractVersionRejected,
+    InstanceReplaced,
+    AdminInitiated,
+}
+
 /// A registration lease granted by the signaling registry.
 ///
 /// 由信号注册中心授予的注册租约。

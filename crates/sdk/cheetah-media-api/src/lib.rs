@@ -59,7 +59,8 @@ pub use error::{EffectOutcome, FieldViolation, MediaError, MediaErrorCode};
 pub use event::MediaEvent;
 pub use event_cursor::{EventCursorCodec, EventCursorContents};
 pub use fencing::{
-    ControlledResourceRef, LeaseStatus, MediaNodeLease, NodeRuntimeState, NodeState,
+    ControlledResourceRef, LeaseLossReason, LeaseStatus, MediaNodeLease, NodeRuntimeState,
+    NodeState,
 };
 pub use ids::{
     AppName, CredentialHandle, MediaBindingId, MediaKey, MediaNodeId, MediaNodeInstanceEpoch,
@@ -75,8 +76,8 @@ pub use media_file_store::{
 pub use model::{AdmissionAction, AdmissionRequest, Decision};
 pub use node::{
     NodeDeregisterRequest, NodeDeregisterResponse, NodeDrainRequest, NodeDrainResponse,
-    NodeHeartbeat, NodeHeartbeatResponse, NodeIdentity, NodeLoad, NodeRegistrationRequest,
-    NodeRegistrationResponse,
+    NodeHeartbeat, NodeHeartbeatResponse, NodeIdentity, NodeIsolateRequest, NodeIsolateResponse,
+    NodeLoad, NodeRegistrationRequest, NodeRegistrationResponse,
 };
 pub use outbound_policy::{
     AllowedDestination, OutboundUrlPolicy, ResolvedEndpoint, UrlPolicyVerdict,
