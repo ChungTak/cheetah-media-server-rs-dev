@@ -23,7 +23,7 @@ use cheetah_sdk::{
     ModuleSchemaRegistration, ModuleState, SdkError,
 };
 
-use crate::config::Gb28181ModuleConfig;
+use crate::config::{ControlOwner, Gb28181ModuleConfig};
 
 const MODULE_ID: &str = "gb28181";
 
@@ -115,6 +115,24 @@ impl Default for Gb28181Module {
     }
 }
 
+/// Returns true when the signaling control plane is enabled and in a rollout
+/// mode that can drive mutations for GB resources.
+///
+/// 当信号控制面已启用且处于可驱动 GB 资源变更的灰度/生产阶段时返回 true。
+fn signaling_controls_gb(signaling_cfg: &Value) -> bool {
+    let enabled = signaling_cfg
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !enabled {
+        return false;
+    }
+    matches!(
+        signaling_cfg.get("rollout").and_then(Value::as_str),
+        Some("canary") | Some("production")
+    )
+}
+
 /// `Module` lifecycle and HTTP API for GB28181.
 ///
 /// GB28181 的 `Module` 生命周期与 HTTP API。
@@ -135,13 +153,48 @@ impl Module for Gb28181Module {
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
         self.config = Gb28181ModuleConfig::from_value(ctx.initial_config.clone())
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
+
+        // A disabled module never binds the local listener, so there is no
+        // dual-owner risk. Only enforce ownership when the module is enabled.
+        if self.config.enabled {
+            let signaling_cfg = ctx
+                .engine
+                .config_provider
+                .module(&ModuleId::new("signaling_control_plane"));
+
+            match self.config.control_owner {
+                ControlOwner::Signaling => {
+                    if !signaling_cfg
+                        .get("enabled")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        return Err(SdkError::InvalidArgument(
+                            "gb28181.control_owner=signaling requires signaling_control_plane.enabled=true"
+                                .to_string(),
+                        ));
+                    }
+                }
+                ControlOwner::Local => {
+                    if signaling_controls_gb(&signaling_cfg) {
+                        return Err(SdkError::InvalidArgument(
+                            "gb28181.control_owner=local conflicts with signaling_control_plane canary/production rollout"
+                                .to_string(),
+                        ));
+                    }
+                }
+            }
+        }
+
         self.ctx = Some(ctx.engine);
         self.state = ModuleState::Initialized;
         Ok(())
     }
 
     async fn start(&mut self, cancel: CancellationToken) -> Result<(), SdkError> {
-        if !self.config.enabled {
+        if !self.config.enabled || self.config.control_owner == ControlOwner::Signaling {
+            // When the signaling control plane owns GB control, the media process must not
+            // bind the local SIP/GB listener or expose local HTTP control routes.
             self.state = ModuleState::Running;
             cancel.cancelled().await;
             return Ok(());
@@ -287,6 +340,9 @@ impl Module for Gb28181Module {
     }
 
     fn http_routes(&self) -> Vec<HttpRouteDescriptor> {
+        if self.config.control_owner == ControlOwner::Signaling {
+            return Vec::new();
+        }
         vec![
             HttpRouteDescriptor {
                 method: HttpMethod::Post,
@@ -328,6 +384,9 @@ impl Module for Gb28181Module {
     }
 
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
+        if self.config.control_owner == ControlOwner::Signaling {
+            return None;
+        }
         let engine = self.ctx.clone()?;
         let local_ip = if self.config.public_ip.is_empty() {
             self.config
@@ -881,4 +940,47 @@ fn extract_app_alias(body: &serde_json::Value) -> String {
         .or_else(|| body.get("sendApp").and_then(|v| v.as_str()))
         .unwrap_or("live")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signaling_controls_gb_only_in_active_rollout() {
+        assert!(!signaling_controls_gb(
+            &serde_json::json!({"enabled": false})
+        ));
+        assert!(!signaling_controls_gb(&serde_json::json!({
+            "enabled": true,
+            "rollout": "register_only"
+        })));
+        assert!(!signaling_controls_gb(&serde_json::json!({
+            "enabled": true,
+            "rollout": "shadow_query"
+        })));
+        assert!(signaling_controls_gb(&serde_json::json!({
+            "enabled": true,
+            "rollout": "canary"
+        })));
+        assert!(signaling_controls_gb(&serde_json::json!({
+            "enabled": true,
+            "rollout": "production"
+        })));
+    }
+
+    #[test]
+    fn signaling_owner_disables_http_routes() {
+        let mut module = Gb28181Module::new();
+        module.config.control_owner = ControlOwner::Signaling;
+        assert!(module.http_routes().is_empty());
+        assert!(module.http_service().is_none());
+    }
+
+    #[test]
+    fn local_owner_keeps_http_routes() {
+        let module = Gb28181Module::new();
+        assert_eq!(module.config.control_owner, ControlOwner::Local);
+        assert_eq!(module.http_routes().len(), 9);
+    }
 }

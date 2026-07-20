@@ -4,6 +4,19 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Who owns the GB28181 control listener.
+///
+/// 谁负责 GB28181 控制监听。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlOwner {
+    /// Media process keeps the local SIP/GB listener.
+    #[default]
+    Local,
+    /// The cluster signaling control plane owns GB control.
+    Signaling,
+}
+
 /// Configuration for the GB28181 module.
 ///
 /// GB28181 模块配置。
@@ -30,6 +43,14 @@ pub struct Gb28181ModuleConfig {
     /// 发起 INVITE/talk SDP 时宣告的默认本地 RTP 端口。REST 请求中的 `port` 字段可覆盖。
     #[serde(default = "default_media_port")]
     pub default_media_port: u16,
+    /// Who owns the GB28181 control listener.
+    /// `local` keeps the existing media SIP/GB listener.
+    /// `signaling` disables the local control listener; the signaling control plane
+    /// is expected to drive GB sessions.
+    ///
+    /// 谁拥有 GB28181 控制监听器。
+    #[serde(default)]
+    pub control_owner: ControlOwner,
 }
 
 /// Default UDP listen address.
@@ -80,6 +101,7 @@ impl Default for Gb28181ModuleConfig {
             tick_interval_ms: default_tick_interval_ms(),
             public_ip: String::new(),
             default_media_port: default_media_port(),
+            control_owner: ControlOwner::Local,
         }
     }
 }
@@ -113,5 +135,26 @@ impl Gb28181ModuleConfig {
             return Err(format!("invalid listen_tcp: {}", self.listen_tcp));
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_control_owner_is_local() {
+        let cfg = Gb28181ModuleConfig::default();
+        assert_eq!(cfg.control_owner, ControlOwner::Local);
+    }
+
+    #[test]
+    fn control_owner_deserializes_from_snake_case() {
+        let json = serde_json::json!({
+            "enabled": true,
+            "control_owner": "signaling"
+        });
+        let cfg: Gb28181ModuleConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(cfg.control_owner, ControlOwner::Signaling);
     }
 }
