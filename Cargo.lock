@@ -1110,6 +1110,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cheetah-media-grpc-adapter"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "cheetah-media-api",
+ "cheetah-media-control-plane",
+ "cheetah-runtime-api",
+ "thiserror",
+ "tokio",
+ "tonic",
+ "tonic-health",
+ "tracing",
+]
+
+[[package]]
 name = "cheetah-media-module"
 version = "0.1.0"
 dependencies = [
@@ -4761,6 +4776,19 @@ dependencies = [
  "tower-layer",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "tonic-health"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1eaf34ddb812120f5c601162d5429933c9b527d901ab0e7f930d3147e33a09b2"
+dependencies = [
+ "async-stream",
+ "prost",
+ "tokio",
+ "tokio-stream",
+ "tonic",
 ]
 
 [[package]]
