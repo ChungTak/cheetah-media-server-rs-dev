@@ -7,9 +7,10 @@ license.workspace = true
 [dependencies]
 thiserror.workspace = true
 tokio = { workspace = true }
-tonic = { workspace = true }
+tonic = { workspace = true, features = ["tls"] }
 tonic-health = { workspace = true }
 tonic-reflection = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true }
+rcgen = "0.14.8"
