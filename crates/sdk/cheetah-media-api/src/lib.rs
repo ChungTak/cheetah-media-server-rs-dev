@@ -26,6 +26,7 @@ pub mod image;
 pub mod media_file_store;
 pub mod model;
 pub mod node;
+pub mod outbound_policy;
 pub mod output;
 pub mod port;
 pub mod processing;
@@ -72,12 +73,15 @@ pub use node::{
     NodeHeartbeat, NodeHeartbeatResponse, NodeIdentity, NodeLoad, NodeRegistrationRequest,
     NodeRegistrationResponse,
 };
+pub use outbound_policy::{
+    AllowedDestination, OutboundUrlPolicy, ResolvedEndpoint, UrlPolicyVerdict,
+};
 pub use output::{EndpointState, MediaOutputEndpoint};
 pub use port::{
     ControlAuthApi, CredentialExchangeApi, MediaAdmissionApi, MediaCapacityApi, MediaControlApi,
     MediaFacade, MediaMutationContext, MediaOutputRegistryApi, MediaProcessingApi,
-    MediaRequestContext, MediaUrlResolverApi, PlaybackApi, ProxyApi, PublishSubscribeApi,
-    RecordApi, RtpApi, SnapshotApi, WebhookAdminApi, WebhookApi,
+    MediaRequestContext, MediaUrlResolverApi, OutboundUrlPolicyApi, PlaybackApi, ProxyApi,
+    PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookAdminApi, WebhookApi,
 };
 pub use processing::{
     AbrVariant, AudioCodec, AudioMix, AudioMixInput, AudioTarget, CaptionConfig,
