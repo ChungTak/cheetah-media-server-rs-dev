@@ -258,20 +258,20 @@ impl ResourceStore for SqliteStore {
         let kind = resource_kind.to_string();
         let handle = resource_handle.to_string();
         self.with_conn("resource_cas_generation", move |conn| {
-            let terminal_at = if state.is_terminal() {
-                Some(now_ms())
-            } else {
-                None
-            };
+            let is_terminal = if state.is_terminal() { 1i64 } else { 0i64 };
             let updated = conn.execute(
                 "UPDATE controlled_resources
-                 SET generation = ?1, state = ?2, terminal_at_ms = ?3, updated_at_ms = ?4
-                 WHERE tenant_id = ?5 AND resource_kind = ?6 AND resource_handle = ?7
-                   AND generation = ?8",
+                 SET generation = ?1,
+                     state = ?2,
+                     terminal_at_ms = CASE WHEN ?3 = 1 AND terminal_at_ms IS NULL THEN ?4 ELSE terminal_at_ms END,
+                     updated_at_ms = ?5
+                 WHERE tenant_id = ?6 AND resource_kind = ?7 AND resource_handle = ?8
+                   AND generation = ?9",
                 params![
                     new.0 as i64,
                     state_to_str(state),
-                    terminal_at,
+                    is_terminal,
+                    now_ms(),
                     now_ms(),
                     tenant,
                     kind,
@@ -295,18 +295,17 @@ impl ResourceStore for SqliteStore {
         let kind = resource_kind.to_string();
         let handle = resource_handle.to_string();
         self.with_conn("resource_set_state", move |conn| {
-            let terminal_at = if state.is_terminal() {
-                Some(now_ms())
-            } else {
-                None
-            };
+            let is_terminal = if state.is_terminal() { 1i64 } else { 0i64 };
             conn.execute(
                 "UPDATE controlled_resources
-                 SET state = ?1, terminal_at_ms = ?2, updated_at_ms = ?3
-                 WHERE tenant_id = ?4 AND resource_kind = ?5 AND resource_handle = ?6",
+                 SET state = ?1,
+                     terminal_at_ms = CASE WHEN ?2 = 1 AND terminal_at_ms IS NULL THEN ?3 ELSE terminal_at_ms END,
+                     updated_at_ms = ?4
+                 WHERE tenant_id = ?5 AND resource_kind = ?6 AND resource_handle = ?7",
                 params![
                     state_to_str(state),
-                    terminal_at,
+                    is_terminal,
+                    now_ms(),
                     now_ms(),
                     tenant,
                     kind,
@@ -711,13 +710,40 @@ mod tests {
             .await
             .unwrap();
 
-        let loaded = store
+        let first = store
             .get(&tenant, "publisher", "pub-1")
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(loaded.state, ResourceState::Stopped);
-        assert!(loaded.terminal_at_ms.is_some());
+        assert_eq!(first.state, ResourceState::Stopped);
+        assert!(first.terminal_at_ms.is_some());
+
+        // Terminal timestamp must be write-once: later terminal state changes
+        // should not overwrite it.
+        store
+            .set_state(&tenant, "publisher", "pub-1", ResourceState::Failed)
+            .await
+            .unwrap();
+        let second = store
+            .get(&tenant, "publisher", "pub-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(second.state, ResourceState::Failed);
+        assert_eq!(second.terminal_at_ms, first.terminal_at_ms);
+
+        // Moving back to a non-terminal state must not erase the tombstone timestamp.
+        store
+            .set_state(&tenant, "publisher", "pub-1", ResourceState::Active)
+            .await
+            .unwrap();
+        let third = store
+            .get(&tenant, "publisher", "pub-1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(third.state, ResourceState::Active);
+        assert_eq!(third.terminal_at_ms, first.terminal_at_ms);
     }
 
     #[tokio::test]
