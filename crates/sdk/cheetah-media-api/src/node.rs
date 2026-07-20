@@ -109,6 +109,47 @@ pub struct NodeHeartbeatResponse {
     pub next_heartbeat_interval_ms: u64,
 }
 
+/// Request to put a node into drain and eventually deregister it.
+///
+/// 请求节点进入 drain 并最终注销。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeDrainRequest {
+    /// Deadline by which the node should finish active work, in milliseconds.
+    pub drain_deadline_ms: i64,
+    /// Human-readable reason for the drain.
+    pub reason: String,
+    /// If true, the node should stop accepting reads as well as creates.
+    pub force: bool,
+}
+
+/// Response confirming or rejecting a drain request.
+///
+/// 确认或拒绝 drain 请求的响应。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeDrainResponse {
+    pub accepted: bool,
+    /// Effective deadline by which the node must finish draining.
+    pub drain_deadline_ms: i64,
+}
+
+/// Request to deregister a node instance.
+///
+/// 注销节点实例的请求。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeDeregisterRequest {
+    pub node_id: MediaNodeId,
+    pub instance_id: MediaNodeInstanceId,
+    pub reason: String,
+}
+
+/// Response confirming a deregister request.
+///
+/// 注销节点实例请求的响应。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodeDeregisterResponse {
+    pub acknowledged: bool,
+}
+
 impl NodeIdentity {
     /// Validate that the identity contains all required fields.
     pub fn validate(&self) -> Result<(), MediaError> {
@@ -233,6 +274,40 @@ mod tests {
         let json = serde_json::to_string(&resp).unwrap();
         let decoded: NodeHeartbeatResponse = serde_json::from_str(&json).unwrap();
         assert_eq!(resp, decoded);
+    }
+
+    #[test]
+    fn drain_and_deregister_round_trip() {
+        let drain = NodeDrainRequest {
+            drain_deadline_ms: 1_000_000,
+            reason: "rolling restart".to_string(),
+            force: false,
+        };
+        let json = serde_json::to_string(&drain).unwrap();
+        let decoded: NodeDrainRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(drain, decoded);
+
+        let resp = NodeDrainResponse {
+            accepted: true,
+            drain_deadline_ms: 1_000_000,
+        };
+        let json = serde_json::to_string(&resp).unwrap();
+        let decoded: NodeDrainResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(resp, decoded);
+
+        let deregister = NodeDeregisterRequest {
+            node_id: identity().node_id,
+            instance_id: identity().instance_id,
+            reason: "shutdown".to_string(),
+        };
+        let json = serde_json::to_string(&deregister).unwrap();
+        let decoded: NodeDeregisterRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deregister, decoded);
+
+        let deregister_resp = NodeDeregisterResponse { acknowledged: true };
+        let json = serde_json::to_string(&deregister_resp).unwrap();
+        let decoded: NodeDeregisterResponse = serde_json::from_str(&json).unwrap();
+        assert_eq!(deregister_resp, decoded);
     }
 
     #[test]
