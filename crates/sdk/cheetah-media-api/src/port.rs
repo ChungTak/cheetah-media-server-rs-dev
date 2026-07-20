@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 
 use crate::auth::{AuthCredentials, Principal};
+use crate::capacity::{CapacityLimits, CapacityPermit, CapacityRequest, CapacitySnapshot};
 use crate::command::*;
 use crate::credential::CredentialLease;
 use crate::error::{MediaError, Result};
@@ -581,4 +582,26 @@ pub trait CredentialExchangeApi: Send + Sync {
         purpose: &str,
         resource_ref: &ControlledResourceRef,
     ) -> Result<CredentialLease>;
+}
+
+/// Runtime-neutral capacity and load-gate API.
+///
+/// `acquire` returns a `Box<dyn CapacityPermit>` that releases its reservation
+/// when dropped. Implementations must not over-commit resources.
+///
+/// 运行时无关的容量与负载门控 API。
+#[async_trait]
+pub trait MediaCapacityApi: Send + Sync {
+    /// Acquire capacity for a new resource operation.
+    async fn acquire(&self, request: CapacityRequest) -> Result<Box<dyn CapacityPermit>>;
+
+    /// Return a point-in-time snapshot of usage and remaining capacity.
+    async fn snapshot(&self) -> Result<CapacitySnapshot>;
+
+    /// Update the hard limits for each resource dimension.
+    async fn update_limits(&self, limits: CapacityLimits) -> Result<()>;
+
+    /// Open or close the node gate that controls whether new resources may be
+    /// created on this node instance.
+    async fn set_node_gate(&self, open: bool) -> Result<()>;
 }

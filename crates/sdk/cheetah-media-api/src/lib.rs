@@ -13,6 +13,7 @@
 pub mod audit;
 pub mod auth;
 pub mod capability;
+pub mod capacity;
 pub mod command;
 pub mod controlled_event;
 pub mod credential;
@@ -37,6 +38,9 @@ pub mod webhook;
 pub use auth::{AuthCredentials, MediaScope, Principal};
 pub use capability::{
     MediaCapability, MediaCapabilityDescriptor, MediaCapabilityReport, MediaCapabilitySet,
+};
+pub use capacity::{
+    CapacityLimits, CapacityPermit, CapacityRequest, CapacitySnapshot, CapacityVector,
 };
 pub use controlled_event::{
     ControlledEventHeader, ControlledEventPayload, ControlledMediaEvent, EventGap, EventId,
@@ -70,10 +74,10 @@ pub use node::{
 };
 pub use output::{EndpointState, MediaOutputEndpoint};
 pub use port::{
-    ControlAuthApi, CredentialExchangeApi, MediaAdmissionApi, MediaControlApi, MediaFacade,
-    MediaMutationContext, MediaOutputRegistryApi, MediaProcessingApi, MediaRequestContext,
-    MediaUrlResolverApi, PlaybackApi, ProxyApi, PublishSubscribeApi, RecordApi, RtpApi,
-    SnapshotApi, WebhookAdminApi, WebhookApi,
+    ControlAuthApi, CredentialExchangeApi, MediaAdmissionApi, MediaCapacityApi, MediaControlApi,
+    MediaFacade, MediaMutationContext, MediaOutputRegistryApi, MediaProcessingApi,
+    MediaRequestContext, MediaUrlResolverApi, PlaybackApi, ProxyApi, PublishSubscribeApi,
+    RecordApi, RtpApi, SnapshotApi, WebhookAdminApi, WebhookApi,
 };
 pub use processing::{
     AbrVariant, AudioCodec, AudioMix, AudioMixInput, AudioTarget, CaptionConfig,
