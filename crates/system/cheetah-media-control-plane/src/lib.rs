@@ -21,6 +21,7 @@ pub mod facade;
 pub mod idempotency;
 pub mod recovery;
 pub mod resource_store;
+pub mod rollout;
 pub mod side_effect;
 pub mod sqlite;
 pub mod store;

@@ -1547,6 +1547,7 @@ dependencies = [
  "cheetah-gb28181-module",
  "cheetah-hls-module",
  "cheetah-http-flv-module",
+ "cheetah-media-api",
  "cheetah-media-control-plane",
  "cheetah-media-grpc-adapter",
  "cheetah-media-module",

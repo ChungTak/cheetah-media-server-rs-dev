@@ -35,7 +35,7 @@ media-processing-full = [
     "cheetah-media-processing-module/media-processing-full",
 ]
 media-control-full = ["rtmp", "rtsp", "http-flv", "hls", "ts", "fmp4", "mp4", "rtp", "gb28181", "record", "webrtc", "srt", "proxy", "proxy-rtsp", "proxy-rtmp", "proxy-http-flv", "snapshot", "signaling-control-plane"]
-signaling-control-plane = ["dep:cheetah-media-control-plane", "dep:cheetah-media-grpc-adapter"]
+signaling-control-plane = ["dep:cheetah-media-api", "dep:cheetah-media-control-plane", "dep:cheetah-media-grpc-adapter"]
 tokio-console = ["dep:console-subscriber", "tokio/tracing"]
 
 [dependencies]
@@ -60,6 +60,7 @@ cheetah-snapshot-module = { path = "../../crates/system/cheetah-snapshot-module"
 cheetah-record-module = { path = "../../crates/system/cheetah-record-module", optional = true }
 cheetah-webrtc-module = { path = "../../crates/protocols/webrtc/module", optional = true }
 cheetah-srt-module = { path = "../../crates/protocols/srt/module", optional = true }
+cheetah-media-api = { path = "../../crates/sdk/cheetah-media-api", optional = true }
 cheetah-media-control-plane = { path = "../../crates/system/cheetah-media-control-plane", optional = true }
 cheetah-media-grpc-adapter = { path = "../../crates/system/cheetah-media-grpc-adapter", optional = true }
 cheetah-runtime-tokio = { path = "../../crates/runtime/cheetah-runtime-tokio" }
