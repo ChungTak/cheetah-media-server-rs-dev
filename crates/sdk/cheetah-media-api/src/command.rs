@@ -366,7 +366,16 @@ pub struct FetchSnapshotRequest {
 impl FetchSnapshotRequest {
     /// Validate that the request does not contain forbidden inputs.
     pub fn validate(&self) -> Result<(), crate::error::MediaError> {
-        if self.source_url.contains('@') {
+        let parsed = url::Url::parse(&self.source_url).map_err(|e| {
+            crate::error::MediaError::invalid_argument(format!("source URL is not valid: {e}"))
+        })?;
+        let scheme = parsed.scheme();
+        if scheme != "http" && scheme != "https" {
+            return Err(crate::error::MediaError::invalid_argument(format!(
+                "unsupported URL scheme {scheme} for snapshot fetch"
+            )));
+        }
+        if !parsed.username().is_empty() || parsed.password().is_some() {
             return Err(crate::error::MediaError::invalid_argument(
                 "source URL must not contain userinfo",
             ));
@@ -687,6 +696,32 @@ mod tests {
         assert!(req.validate().is_err());
         req.timeout_ms = 10_000;
         req.max_bytes = 0;
+        assert!(req.validate().is_err());
+
+        let req = FetchSnapshotRequest {
+            source_url: "http://example.com/images/photo@2x.png".to_string(),
+            credential_handle: None,
+            destination: SnapshotDestination::Namespace("snapshots".to_string()),
+            expected_media_type: "image/png".to_string(),
+            expected_format: "png".to_string(),
+            timeout_ms: 10_000,
+            max_bytes: 1_000_000,
+            max_width: None,
+            max_height: None,
+        };
+        assert!(req.validate().is_ok());
+
+        let req = FetchSnapshotRequest {
+            source_url: "file:///etc/passwd".to_string(),
+            credential_handle: None,
+            destination: SnapshotDestination::Namespace("snapshots".to_string()),
+            expected_media_type: "image/jpeg".to_string(),
+            expected_format: "jpg".to_string(),
+            timeout_ms: 10_000,
+            max_bytes: 1_000_000,
+            max_width: None,
+            max_height: None,
+        };
         assert!(req.validate().is_err());
     }
 
