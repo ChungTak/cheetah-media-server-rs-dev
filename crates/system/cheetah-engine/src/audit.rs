@@ -36,10 +36,19 @@ impl AuditApi for TracingAuditApi {
             request_id = %event.request_id,
             correlation_id = ?event.correlation_id,
             principal = ?event.principal,
+            service = %event.service,
+            method = %event.method,
             operation = %event.operation,
+            operation_step = ?event.operation_step,
+            resource_kind = %event.resource_kind,
             resource = %event.resource,
             result = %result,
             summary = %event.summary,
+            node_state = ?event.node_state,
+            owner_epoch = ?event.owner_epoch,
+            generation = ?event.generation,
+            contract_version = ?event.contract_version,
+            latency_ms = ?event.latency_ms,
             "audit"
         );
     }
