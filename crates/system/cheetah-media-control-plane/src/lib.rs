@@ -14,6 +14,7 @@
 //! 信号控制面无运行时依赖的 facade 与持久化 store trait。
 
 pub mod blocking;
+pub mod capacity;
 pub mod error;
 pub mod event_store;
 pub mod facade;
@@ -25,6 +26,7 @@ pub mod sqlite;
 pub mod store;
 
 pub use blocking::blocking_call;
+pub use capacity::CapacityOrchestrator;
 pub use error::ControlPlaneError;
 pub use event_store::{EventRecord, EventStore};
 pub use facade::ControlPlane;
