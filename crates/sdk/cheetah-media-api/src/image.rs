@@ -35,6 +35,29 @@ impl ImageFormat {
             ImageFormat::Png => "image/png",
         }
     }
+
+    /// Check whether `data` starts with the expected magic bytes.
+    ///
+    /// 检查 `data` 是否以该格式期望的 magic 开头。
+    pub fn matches_magic(&self, data: &[u8]) -> bool {
+        match self {
+            ImageFormat::Jpeg => data.len() >= 2 && data[0] == 0xFF && data[1] == 0xD8,
+            ImageFormat::Png => data.starts_with(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]),
+        }
+    }
+
+    /// Parse width and height from the image header.
+    ///
+    /// 从图片头部解析宽高。
+    pub fn parse_dimensions(&self, data: &[u8]) -> Option<(u32, u32)> {
+        use cheetah_codec::image::ImageDimensions;
+        match self {
+            ImageFormat::Jpeg => cheetah_codec::image::jpeg::parse_dimensions(data)
+                .map(|ImageDimensions { width, height }| (width, height)),
+            ImageFormat::Png => cheetah_codec::image::png::parse_dimensions(data)
+                .map(|ImageDimensions { width, height }| (width, height)),
+        }
+    }
 }
 
 impl FromStr for ImageFormat {

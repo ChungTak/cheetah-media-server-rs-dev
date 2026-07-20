@@ -78,6 +78,7 @@ pub mod fmp4_demux;
 pub mod fmp4_mux;
 pub mod frame;
 pub mod frame_view;
+pub mod image;
 pub mod ingress;
 pub mod jtt1078;
 pub mod mp4;
@@ -152,6 +153,7 @@ pub use frame::{
 pub use frame_view::{
     annexb_from_payload, h26x_length_prefixed_from_payload, FrameViewCache, FrameViewKind,
 };
+pub use image::{jpeg, png, ImageDimensions};
 pub use ingress::{
     fallback_step_for_rtp_ingress, monotonic_dts_min_step, source_timeline_mode_for_rtp_ingress,
 };
