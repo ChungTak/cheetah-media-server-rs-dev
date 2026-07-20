@@ -193,7 +193,10 @@ impl SignalingControlPlaneConfig {
                 return Err("secret_exchange.renewal_margin_sec must be non-zero".to_string());
             }
         }
-        if self.tls.client_cert_required || !self.tls.server_cert_pem.is_empty() {
+        if self.tls.client_cert_required
+            || !self.tls.server_cert_pem.is_empty()
+            || !self.tls.server_key_pem.is_empty()
+        {
             if self.tls.server_cert_pem.is_empty() {
                 return Err("tls.server_cert_pem is required when TLS is enabled".to_string());
             }
@@ -236,5 +239,11 @@ mod tests {
         cfg.tls.server_cert_pem = "-----BEGIN CERTIFICATE-----\nMIIB...".to_string();
         cfg.tls.server_key_pem = "-----BEGIN PRIVATE KEY-----\nMIIB...".to_string();
         assert!(cfg.validate().is_ok());
+
+        // A lone private key should also trigger the TLS consistency check.
+        cfg.tls.client_cert_required = false;
+        cfg.tls.client_ca_pem.clear();
+        cfg.tls.server_cert_pem.clear();
+        assert!(cfg.validate().is_err());
     }
 }
