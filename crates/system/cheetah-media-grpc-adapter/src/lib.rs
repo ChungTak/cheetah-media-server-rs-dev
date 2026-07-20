@@ -226,6 +226,22 @@ impl GrpcAdapter {
             .await
             .map_err(|e| GrpcAdapterError::Serve(e.to_string()))?
     }
+
+    /// Rotate the listener to a new configuration.
+    ///
+    /// This performs a controlled stop of the current gRPC listener and starts a
+    /// new one with `new_config`. Existing media sessions are not affected because
+    /// they run in `cheetah-engine`, not in the gRPC listener.
+    ///
+    /// 轮换监听器到新配置。当前 gRPC listener 会受控关闭并以 `new_config` 重新启动；
+    /// 已有媒体 session 不受影响。
+    pub async fn rotate(
+        self,
+        new_config: GrpcAdapterConfig,
+    ) -> Result<(GrpcAdapter, GrpcHealthHandle), GrpcAdapterError> {
+        self.stop().await?;
+        Self::start(new_config).await
+    }
 }
 
 #[cfg(test)]
@@ -356,5 +372,30 @@ mod tests {
             config.message_limits.max_encoding_message_size,
             4 * 1024 * 1024
         );
+    }
+
+    #[tokio::test]
+    async fn rotate_restarts_with_new_tls_config() {
+        let first_certs = generate_test_certs();
+        let second_certs = generate_test_certs();
+
+        let mut initial = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
+        initial.tls = Some(GrpcTlsConfig::new(first_certs.1, first_certs.2));
+
+        let (adapter, mut health) = GrpcAdapter::start(initial).await.unwrap();
+        health.set_overall(GrpcServingStatus::Serving).await;
+        let first_addr = adapter.bound_addr();
+
+        let mut rotated = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
+        rotated.tls = Some(GrpcTlsConfig::new(second_certs.1, second_certs.2));
+
+        let (adapter, _health) = adapter.rotate(rotated).await.unwrap();
+        let second_addr = adapter.bound_addr();
+
+        assert!(second_addr.port() > 0);
+        adapter.stop().await.unwrap();
+
+        // The first address is no longer reachable because the listener was stopped.
+        assert_ne!(first_addr, second_addr);
     }
 }
