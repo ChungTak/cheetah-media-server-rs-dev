@@ -5,16 +5,11 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-async-trait.workspace = true
-cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
-cheetah-media-control-plane = { path = "../cheetah-media-control-plane" }
-cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
 thiserror.workspace = true
 tokio = { workspace = true }
 tonic = { workspace = true }
 tonic-health = { workspace = true }
 tonic-reflection = { workspace = true }
-tracing.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true }

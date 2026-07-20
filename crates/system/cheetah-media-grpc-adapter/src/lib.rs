@@ -152,7 +152,7 @@ mod tests {
     #[tokio::test]
     async fn health_server_starts_and_stops() {
         let config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
-        let (adapter, health) = GrpcAdapter::start(config).await.unwrap();
+        let (adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
 
         assert!(adapter.bound_addr().port() > 0);
 
@@ -178,7 +178,7 @@ mod tests {
         let mut config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
         config.enable_reflection = true;
 
-        let (adapter, health) = GrpcAdapter::start(config).await.unwrap();
+        let (adapter, mut health) = GrpcAdapter::start(config).await.unwrap();
         health.set_overall(GrpcServingStatus::Serving).await;
         assert!(adapter.bound_addr().port() > 0);
 

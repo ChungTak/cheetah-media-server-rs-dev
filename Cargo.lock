@@ -1113,16 +1113,11 @@ dependencies = [
 name = "cheetah-media-grpc-adapter"
 version = "0.1.0"
 dependencies = [
- "async-trait",
- "cheetah-media-api",
- "cheetah-media-control-plane",
- "cheetah-runtime-api",
  "thiserror",
  "tokio",
  "tonic",
  "tonic-health",
  "tonic-reflection",
- "tracing",
 ]
 
 [[package]]
