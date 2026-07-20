@@ -232,20 +232,25 @@ impl GrpcAdapter {
 
     /// Rotate the listener to a new configuration.
     ///
-    /// This starts a new gRPC listener with `new_config`, then stops the current
-    /// one and replaces the running state with the new listener. If starting the
-    /// new listener fails (e.g. invalid TLS or the bind address is unavailable),
-    /// the current listener is left running.
+    /// This validates the new TLS material (if any), stops the current gRPC
+    /// listener, and starts a new one with `new_config`. Because the old listener
+    /// is stopped before the new one is bound, rotation on a fixed `bind_addr`
+    /// succeeds; the brief unavailability is the unavoidable cost of re-binding
+    /// the same port. Parsing/validation errors are caught before the old listener
+    /// is torn down, so a bad certificate does not cause an outage.
     ///
-    /// 轮换监听器到新配置。先启动新 listener；成功后停止旧 listener 并替换运行状态。
-    /// 如果新 listener 启动失败，旧 listener 保持运行。
+    /// 轮换监听器到新配置。先校验新 TLS 材料，再停止旧 listener 并以 `new_config`
+    /// 启动新 listener。固定 `bind_addr` 也能成功轮换；解析/校验错误会在关闭旧
+    /// listener 前返回，避免坏证书导致服务中断。
     pub async fn rotate(
         &mut self,
         new_config: GrpcAdapterConfig,
     ) -> Result<GrpcHealthHandle, GrpcAdapterError> {
-        let (new_adapter, new_health) = Self::start(new_config).await?;
+        // Validate TLS material before tearing down the existing listener.
+        Self::make_server_builder(new_config.tls.as_ref())?;
         self.stop().await?;
 
+        let (new_adapter, new_health) = Self::start(new_config).await?;
         self.bound_addr = new_adapter.bound_addr;
         self.handle = new_adapter.handle;
         self.shutdown_tx = new_adapter.shutdown_tx;
@@ -395,13 +400,15 @@ mod tests {
         let (mut adapter, mut health) = GrpcAdapter::start(initial).await.unwrap();
         health.set_overall(GrpcServingStatus::Serving).await;
 
-        let mut rotated = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
+        // Use the same bound port for the rotated config to exercise fixed-port
+        // certificate rotation.
+        let fixed_addr = adapter.bound_addr();
+        let mut rotated = GrpcAdapterConfig::new(fixed_addr);
         rotated.tls = Some(GrpcTlsConfig::new(second_certs.1, second_certs.2));
 
         let _new_health = adapter.rotate(rotated).await.unwrap();
-        let second_addr = adapter.bound_addr();
 
-        assert!(second_addr.port() > 0);
+        assert_eq!(adapter.bound_addr(), fixed_addr);
         adapter.stop().await.unwrap();
     }
 }
