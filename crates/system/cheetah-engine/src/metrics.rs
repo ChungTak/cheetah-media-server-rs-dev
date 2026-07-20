@@ -104,13 +104,20 @@ fn merge_metric_value(existing: &mut MetricValue, incoming: &MetricValue) {
     }
 }
 
+fn escape_label_value(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
 fn format_labels(labels: &[MetricLabel]) -> String {
     if labels.is_empty() {
         return String::new();
     }
     let pairs: Vec<String> = labels
         .iter()
-        .map(|l| format!("{}=\"{}\"", l.name, l.value))
+        .map(|l| format!("{}=\"{}\"", l.name, escape_label_value(&l.value)))
         .collect();
     format!("{{{}}}", pairs.join(","))
 }
@@ -238,5 +245,24 @@ mod tests {
 
         let rendered = reg.render();
         assert!(rendered.contains("grpc_requests_total{service=\"control_plane\"} 8"));
+    }
+
+    #[test]
+    fn label_values_are_escaped_for_prometheus_exposition() {
+        use cheetah_sdk::{MetricLabel, MetricRecord, MetricValue};
+
+        let reg = MetricsRegistry::default();
+        reg.record(MetricRecord {
+            name: "rpc_latency_ms".to_string(),
+            labels: vec![MetricLabel {
+                name: "path".to_string(),
+                value: "a\"b\nc\\d".to_string(),
+            }],
+            value: MetricValue::Counter(1),
+            timestamp_ms: 0,
+        });
+
+        let rendered = reg.render();
+        assert!(rendered.contains("path=\"a\\\"b\\nc\\\\d\""));
     }
 }
