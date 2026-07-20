@@ -88,6 +88,15 @@ pub trait IdempotencyStore: Send + Sync {
     /// The store may overwrite a `Prepared` record but must not silently
     /// overwrite a completed record with a different digest.
     async fn complete(&self, record: &IdempotencyRecord) -> Result<(), ControlPlaneError>;
+
+    /// List idempotency records in `Prepared` or `Unknown` state, limited to
+    /// `max_records`.
+    ///
+    /// Used by startup recovery to find in-flight or ambiguous attempts.
+    async fn list_prepared_unknown(
+        &self,
+        max_records: u32,
+    ) -> Result<Vec<IdempotencyRecord>, ControlPlaneError>;
 }
 
 /// A durable controlled-resource record.
@@ -215,6 +224,14 @@ pub trait ResourceStore: Send + Sync {
         &self,
         tenant_id: &TenantId,
         node_id: &MediaNodeId,
+    ) -> Result<Vec<ResourceRecord>, ControlPlaneError>;
+
+    /// List all resources in a non-terminal state, limited to `max_records`.
+    ///
+    /// Used by startup recovery to find resources that may need reconciliation.
+    async fn list_non_terminal(
+        &self,
+        max_records: u32,
     ) -> Result<Vec<ResourceRecord>, ControlPlaneError>;
 }
 
