@@ -37,13 +37,14 @@ pub struct AuditEvent {
     pub principal: Option<String>,
     /// Service or module emitting the record, e.g. `cheetah.media`.
     pub service: String,
-    /// Method or route being invoked, e.g. `POST /media/close` or gRPC method name.
+    /// HTTP method verb or gRPC method name, e.g. `POST` or `cheetah.media.v1.Media.Close`.
     pub method: String,
     /// Operation name, e.g. `media.close` or `record.start`.
     pub operation: String,
     /// Operation step for multi-stage mutations, e.g. `validate`, `admission`, `side-effect`.
     pub operation_step: Option<String>,
     /// Resource kind being operated on, e.g. `room`, `stream`, `session`.
+    /// May be empty until callers populate it.
     pub resource_kind: String,
     /// Resource identifier affected by the operation.
     pub resource: String,
