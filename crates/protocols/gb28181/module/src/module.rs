@@ -188,7 +188,9 @@ impl Module for Gb28181Module {
     }
 
     async fn start(&mut self, cancel: CancellationToken) -> Result<(), SdkError> {
-        if !self.config.enabled {
+        if !self.config.enabled || self.config.control_owner == ControlOwner::Signaling {
+            // When the signaling control plane owns GB control, the media process must not
+            // bind the local SIP/GB listener or expose local HTTP control routes.
             self.state = ModuleState::Running;
             cancel.cancelled().await;
             return Ok(());
@@ -334,6 +336,9 @@ impl Module for Gb28181Module {
     }
 
     fn http_routes(&self) -> Vec<HttpRouteDescriptor> {
+        if self.config.control_owner == ControlOwner::Signaling {
+            return Vec::new();
+        }
         vec![
             HttpRouteDescriptor {
                 method: HttpMethod::Post,
@@ -375,6 +380,9 @@ impl Module for Gb28181Module {
     }
 
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
+        if self.config.control_owner == ControlOwner::Signaling {
+            return None;
+        }
         let engine = self.ctx.clone()?;
         let local_ip = if self.config.public_ip.is_empty() {
             self.config
@@ -955,5 +963,20 @@ mod tests {
             "enabled": true,
             "rollout": "production"
         })));
+    }
+
+    #[test]
+    fn signaling_owner_disables_http_routes() {
+        let mut module = Gb28181Module::new();
+        module.config.control_owner = ControlOwner::Signaling;
+        assert!(module.http_routes().is_empty());
+        assert!(module.http_service().is_none());
+    }
+
+    #[test]
+    fn local_owner_keeps_http_routes() {
+        let module = Gb28181Module::new();
+        assert_eq!(module.config.control_owner, ControlOwner::Local);
+        assert_eq!(module.http_routes().len(), 9);
     }
 }
