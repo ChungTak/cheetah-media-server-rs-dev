@@ -469,6 +469,7 @@ The `signaling-control-plane` Cargo feature gates the new gRPC-based signaling c
 - `cheetah-media-grpc-adapter` `GrpcAdapterConfig` carries an optional `GrpcTlsConfig` and `GrpcMessageLimits` (default 4 MiB inbound/outbound); `GrpcMessageLimits` are validated and will be applied to typed services as they are added.
 - `cheetah-media-api` exposes an `AdminApi` with `AdminScope` (Node, Reconcile, Tls, Store, Orphan), `AdminIdentity`, and typed requests/responses for drain, reconciliation, safe diagnostics, TLS/cursor rotation, store checkpoint, and orphan cleanup. Implementations must reject secret dump, raw SQLite queries, arbitrary file reads, and tenant/fencing bypass.
 - `cheetah-media-api` `ControlledResourceRef` and `ControlledResourceMeta` carry a `ResourceOrigin` (`Cluster` | `Local`) to support MIG-02 local/cluster isolation; local adapters use the reserved system tenant namespace and `Local` origin, while cluster gRPC enumerates only `Cluster` resources. Shared provider still executes admission/capacity/fencing guards.
+- `cheetah-media-control-plane` provides deterministic `FaultInjector` (`FaultPoint` / `FaultAction`) so OPS-01 can simulate crashes, stalls, drops, SQLite failures, registry timeouts, worker panics and TLS rotation at each mutation window.
 - The current `Assembly` is a placeholder; later MIG tasks will wire the gRPC adapter and control-plane facade.
 
 ## 4. Media Model and Unification

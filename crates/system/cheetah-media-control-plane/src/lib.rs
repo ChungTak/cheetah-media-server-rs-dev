@@ -18,6 +18,7 @@ pub mod capacity;
 pub mod error;
 pub mod event_store;
 pub mod facade;
+pub mod fault;
 pub mod idempotency;
 pub mod recovery;
 pub mod resource_store;
@@ -31,6 +32,9 @@ pub use capacity::CapacityOrchestrator;
 pub use error::ControlPlaneError;
 pub use event_store::{EventRecord, EventStore};
 pub use facade::ControlPlane;
+pub use fault::{
+    DeterministicFaultInjector, FaultAction, FaultInjector, FaultPoint, NullFaultInjector,
+};
 pub use idempotency::{CanonicalDigest, CanonicalRequest, IdempotencyKey, IdempotencyState};
 pub use recovery::{
     ConvergeOutcome, ProbeResult, RecoveryEngine, RecoveryLimits, RecoveryReport, ResourceProbe,
