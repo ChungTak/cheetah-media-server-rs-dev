@@ -91,12 +91,25 @@ impl GrpcAdapter {
         let handle = GrpcHealthHandle::new(reporter);
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+        let shutdown = async {
+            let _ = shutdown_rx.await;
+        };
 
-        let serve = tonic::transport::Server::builder()
-            .add_service(health_server)
-            .serve_with_incoming_shutdown(incoming, async {
-                let _ = shutdown_rx.await;
-            });
+        let serve = if config.enable_reflection {
+            let reflection = tonic_reflection::server::Builder::configure()
+                .register_encoded_file_descriptor_set(tonic_health::pb::FILE_DESCRIPTOR_SET)
+                .build_v1()
+                .map_err(|e| GrpcAdapterError::Serve(e.to_string()))?;
+
+            tonic::transport::Server::builder()
+                .add_service(health_server)
+                .add_service(reflection)
+                .serve_with_incoming_shutdown(incoming, shutdown)
+        } else {
+            tonic::transport::Server::builder()
+                .add_service(health_server)
+                .serve_with_incoming_shutdown(incoming, shutdown)
+        };
 
         let handle_task = tokio::spawn(async move {
             serve
@@ -158,5 +171,17 @@ mod tests {
         let cloned = config.clone();
         assert_eq!(config.bind_addr, cloned.bind_addr);
         assert!(!config.enable_reflection);
+    }
+
+    #[tokio::test]
+    async fn reflection_can_be_enabled() {
+        let mut config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
+        config.enable_reflection = true;
+
+        let (adapter, health) = GrpcAdapter::start(config).await.unwrap();
+        health.set_overall(GrpcServingStatus::Serving).await;
+        assert!(adapter.bound_addr().port() > 0);
+
+        adapter.stop().await.unwrap();
     }
 }
