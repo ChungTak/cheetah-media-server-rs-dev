@@ -491,7 +491,7 @@ impl ZlmMediaHttpService {
             correlation_id: ctx.correlation_id.clone(),
             principal: ctx.principal.as_ref().map(|p| p.identity.clone()),
             service: "cheetah.media.zlm".to_string(),
-            method: format!("{:?}", req.method),
+            method: req.method.as_str().to_string(),
             operation: operation.to_string(),
             resource: req.path.clone(),
             result: audit_result,

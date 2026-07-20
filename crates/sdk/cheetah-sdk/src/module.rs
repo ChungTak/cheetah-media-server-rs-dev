@@ -50,6 +50,20 @@ pub enum HttpMethod {
     Options,
 }
 
+impl HttpMethod {
+    /// Returns the canonical uppercase HTTP method name.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            HttpMethod::Get => "GET",
+            HttpMethod::Post => "POST",
+            HttpMethod::Put => "PUT",
+            HttpMethod::Patch => "PATCH",
+            HttpMethod::Delete => "DELETE",
+            HttpMethod::Options => "OPTIONS",
+        }
+    }
+}
+
 /// Name/value pair for an HTTP header.
 ///
 /// HTTP 头的名称/值对。
