@@ -217,13 +217,35 @@ fn migrate(conn: &mut Connection) -> Result<(), ControlPlaneError> {
          CREATE INDEX IF NOT EXISTS idx_media_events_tenant
              ON media_events(tenant_id, instance_epoch, sequence);
          CREATE INDEX IF NOT EXISTS idx_media_events_id
-             ON media_events(event_id);",
+             ON media_events(event_id);
+
+         CREATE TABLE IF NOT EXISTS orphan_records (
+             tenant_id TEXT NOT NULL,
+             resource_kind TEXT NOT NULL,
+             resource_handle TEXT NOT NULL,
+             resource_ref_json TEXT NOT NULL,
+             marked_at_ms INTEGER NOT NULL,
+             confirmed INTEGER NOT NULL DEFAULT 0,
+             confirmed_at_ms INTEGER,
+             PRIMARY KEY (tenant_id, resource_kind, resource_handle)
+         ) WITHOUT ROWID;
+
+         CREATE INDEX IF NOT EXISTS idx_orphan_marked
+             ON orphan_records(marked_at_ms);
+         CREATE INDEX IF NOT EXISTS idx_orphan_confirmed
+             ON orphan_records(confirmed, marked_at_ms);",
     )
     .map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))?;
 
     conn.execute(
         "INSERT OR IGNORE INTO control_meta (schema_version) VALUES (?1)",
         params![1],
+    )
+    .map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))?;
+
+    conn.execute(
+        "UPDATE control_meta SET schema_version = MAX(schema_version, ?1)",
+        params![2],
     )
     .map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))?;
     Ok(())

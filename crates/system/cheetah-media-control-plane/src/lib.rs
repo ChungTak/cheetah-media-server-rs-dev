@@ -13,6 +13,7 @@
 //!
 //! 信号控制面无运行时依赖的 facade 与持久化 store trait。
 
+pub mod admin;
 pub mod blocking;
 pub mod capacity;
 pub mod error;
@@ -20,6 +21,8 @@ pub mod event_store;
 pub mod facade;
 pub mod fault;
 pub mod idempotency;
+pub mod orphan_store;
+pub mod reconciler;
 pub mod recovery;
 pub mod resource_store;
 pub mod rollback;
@@ -37,6 +40,7 @@ pub use fault::{
     DeterministicFaultInjector, FaultAction, FaultInjector, FaultPoint, NullFaultInjector,
 };
 pub use idempotency::{CanonicalDigest, CanonicalRequest, IdempotencyKey, IdempotencyState};
+pub use reconciler::{OrphanReconciler, ReconcileLimits, ReconcileReport, Reconciler};
 pub use recovery::{
     ConvergeOutcome, ProbeResult, RecoveryEngine, RecoveryLimits, RecoveryReport, ResourceProbe,
 };
@@ -47,5 +51,6 @@ pub use rollback::{
 pub use side_effect::{RecoveryAction, SideEffectWindow};
 pub use sqlite::SqliteStore;
 pub use store::{
-    IdempotencyOutcome, IdempotencyRecord, IdempotencyStore, ResourceRecord, ResourceStore,
+    IdempotencyOutcome, IdempotencyRecord, IdempotencyStore, OrphanRecord, OrphanStore,
+    ResourceRecord, ResourceStore,
 };

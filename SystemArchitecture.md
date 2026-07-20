@@ -512,6 +512,17 @@ The release evidence file is produced by `scripts/generate_cl904_05_evidence.sh`
 
 Dynamic artifact fields (x86_64/aarch64 binaries, container digest, SBOM, license report, E2E logs, 24h soak report) are left as `TBD` placeholders to be filled after the corresponding CI lanes complete. The script writes to `target/release_evidence/release_evidence_<short_commit>.md` (or an override directory supplied as the first argument) so per-candidate evidence files do not pollute the source tree.
 
+## 3.17 Reconciliation and Orphan Protection (REC-01/02)
+
+The control plane reconciles its durable resource index with external signaling state. `OrphanStore` persists orphan marks keyed by `(tenant, resource_kind, resource_handle)` with `marked_at_ms`, `confirmed` and `confirmed_at_ms` fields. `OrphanReconciler` implements the `Reconciler` trait:
+
+- **Mark**: non-terminal `ResourceStore` records with no `media_binding_id` are marked as orphan candidates.
+- **Grace period**: `ReconcileLimits.grace_period_ms` controls how long an orphan mark remains unconfirmed before cleanup is allowed.
+- **Confirm**: after the grace period, `OrphanReconciler` re-reads the resource; if it is still non-terminal and unbound, the mark is confirmed.
+- **Cleanup**: an `AdminIdentity` carrying `AdminScope::Orphan` may call `Reconciler::cleanup_orphan`, which tombstones the resource as `Failed` and removes the orphan mark.
+
+`ControlPlane` now holds `resources`, `events`, `idempotency`, `orphan` and `reconciler` handles, and implements `AdminApi` from `cheetah-media-api` for `trigger_reconciliation` and `cleanup_orphan`. Other admin methods return `Unsupported` until the corresponding subsystems land. The reconciler does not emit media events yet; that will be wired once the event-driven cleanup contract is finalized.
+
 ## 4. Media Model and Unification
 
 All protocol ingest into engine should converge to:

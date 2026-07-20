@@ -236,6 +236,76 @@ pub trait ResourceStore: Send + Sync {
     ) -> Result<Vec<ResourceRecord>, ControlPlaneError>;
 }
 
+/// A durable orphan mark for a controlled resource that has lost its signaling
+/// binding and is waiting through a grace period before it may be cleaned up.
+///
+/// 持久化 orphan 标记，用于丢失 signaling binding 的受控资源。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrphanRecord {
+    pub tenant_id: TenantId,
+    pub resource_kind: String,
+    pub resource_handle: String,
+    pub resource_ref_json: String,
+    pub marked_at_ms: i64,
+    pub confirmed: bool,
+    pub confirmed_at_ms: Option<i64>,
+}
+
+/// Durable orphan tracking.
+///
+/// Implementations must not expose `rusqlite` or other database connection types
+/// through the trait.
+#[async_trait]
+pub trait OrphanStore: Send + Sync {
+    /// Mark a resource as an orphan candidate. Fails with `Conflict` if the
+    /// resource is already marked and confirmed.
+    async fn mark_orphan(
+        &self,
+        resource_ref: &ControlledResourceRef,
+        now_ms: i64,
+    ) -> Result<(), ControlPlaneError>;
+
+    /// Fetch the orphan mark for a resource, if any.
+    async fn get_orphan(
+        &self,
+        tenant_id: &TenantId,
+        resource_kind: &str,
+        resource_handle: &str,
+    ) -> Result<Option<OrphanRecord>, ControlPlaneError>;
+
+    /// Confirm an orphan mark. Confirmed orphans are eligible for cleanup after
+    /// admin authorization.
+    async fn confirm_orphan(
+        &self,
+        tenant_id: &TenantId,
+        resource_kind: &str,
+        resource_handle: &str,
+        now_ms: i64,
+    ) -> Result<(), ControlPlaneError>;
+
+    /// List unconfirmed orphan marks up to `max_records`.
+    async fn list_unconfirmed(
+        &self,
+        max_records: u32,
+    ) -> Result<Vec<OrphanRecord>, ControlPlaneError>;
+
+    /// List unconfirmed orphan marks whose `marked_at_ms` is at or before
+    /// `before_ms`, limited to `max_records`.
+    async fn list_unconfirmed_older_than(
+        &self,
+        before_ms: i64,
+        max_records: u32,
+    ) -> Result<Vec<OrphanRecord>, ControlPlaneError>;
+
+    /// Remove the orphan mark for a resource.
+    async fn remove_orphan(
+        &self,
+        tenant_id: &TenantId,
+        resource_kind: &str,
+        resource_handle: &str,
+    ) -> Result<(), ControlPlaneError>;
+}
+
 /// Return the current time in milliseconds since the Unix epoch.
 #[allow(dead_code)]
 pub(crate) fn now_ms() -> i64 {
