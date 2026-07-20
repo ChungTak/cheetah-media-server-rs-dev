@@ -208,6 +208,14 @@ pub trait SnapshotApi: Send + Sync {
         request: SnapshotRequest,
     ) -> Result<SnapshotHandle>;
 
+    /// Fetch a snapshot from an external URL, applying URL policy and content
+    /// validation before committing it to the configured FileStore namespace.
+    async fn fetch_snapshot(
+        &self,
+        ctx: &MediaRequestContext,
+        request: FetchSnapshotRequest,
+    ) -> Result<SnapshotHandle>;
+
     async fn query_snapshots(
         &self,
         ctx: &MediaRequestContext,
