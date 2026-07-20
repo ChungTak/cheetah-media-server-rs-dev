@@ -208,6 +208,18 @@ pub trait SnapshotApi: Send + Sync {
         request: SnapshotRequest,
     ) -> Result<SnapshotHandle>;
 
+    /// Fetch a snapshot from an external URL, applying URL policy and content
+    /// validation before committing it to the configured FileStore namespace.
+    async fn fetch_snapshot(
+        &self,
+        _ctx: &MediaRequestContext,
+        _request: FetchSnapshotRequest,
+    ) -> Result<SnapshotHandle> {
+        Err(MediaError::unsupported(
+            "snapshot fetch is not supported by this provider",
+        ))
+    }
+
     async fn query_snapshots(
         &self,
         ctx: &MediaRequestContext,

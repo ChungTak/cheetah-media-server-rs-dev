@@ -330,6 +330,70 @@ pub struct DeleteSnapshotRequest {
     pub retain_count: Option<u32>,
 }
 
+/// Destination for a fetched snapshot.
+///
+/// 抓取快照的目的地。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum SnapshotDestination {
+    /// FileStore namespace configured by the deployment.
+    Namespace(String),
+    /// Named storage policy from the deployment configuration.
+    Policy(String),
+}
+
+/// Request to fetch a snapshot from an external URL.
+///
+/// 从外部 URL 抓取快照的请求。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FetchSnapshotRequest {
+    /// Sanitized source URL. Must not contain userinfo.
+    pub source_url: String,
+    /// Optional credential handle for authenticated URLs.
+    pub credential_handle: Option<CredentialHandle>,
+    /// Destination policy/namespace for the fetched image.
+    pub destination: SnapshotDestination,
+    /// Expected media type (e.g. `image/jpeg`).
+    pub expected_media_type: String,
+    /// Expected format (e.g. `jpg`, `png`).
+    pub expected_format: String,
+    pub timeout_ms: u64,
+    pub max_bytes: u64,
+    pub max_width: Option<u32>,
+    pub max_height: Option<u32>,
+}
+
+impl FetchSnapshotRequest {
+    /// Validate that the request does not contain forbidden inputs.
+    pub fn validate(&self) -> Result<(), crate::error::MediaError> {
+        let parsed = url::Url::parse(&self.source_url).map_err(|e| {
+            crate::error::MediaError::invalid_argument(format!("source URL is not valid: {e}"))
+        })?;
+        let scheme = parsed.scheme();
+        if scheme != "http" && scheme != "https" {
+            return Err(crate::error::MediaError::invalid_argument(format!(
+                "unsupported URL scheme {scheme} for snapshot fetch"
+            )));
+        }
+        if !parsed.username().is_empty() || parsed.password().is_some() {
+            return Err(crate::error::MediaError::invalid_argument(
+                "source URL must not contain userinfo",
+            ));
+        }
+        if self.timeout_ms == 0 {
+            return Err(crate::error::MediaError::invalid_argument(
+                "timeout must be non-zero",
+            ));
+        }
+        if self.max_bytes == 0 {
+            return Err(crate::error::MediaError::invalid_argument(
+                "max_bytes must be non-zero",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Open playback request.
 ///
 /// 打开回放请求。
@@ -601,5 +665,81 @@ mod tests {
         };
         q.clamp_page_size();
         assert_eq!(q.page_size, MediaQuery::MAX_PAGE_SIZE);
+    }
+
+    #[test]
+    fn fetch_snapshot_request_rejects_userinfo_and_zero_limits() {
+        let req = FetchSnapshotRequest {
+            source_url: "http://user:pass@example.com/s.jpg".to_string(),
+            credential_handle: None,
+            destination: SnapshotDestination::Namespace("snapshots".to_string()),
+            expected_media_type: "image/jpeg".to_string(),
+            expected_format: "jpg".to_string(),
+            timeout_ms: 10_000,
+            max_bytes: 1_000_000,
+            max_width: None,
+            max_height: None,
+        };
+        assert!(req.validate().is_err());
+
+        let mut req = FetchSnapshotRequest {
+            source_url: "http://example.com/s.jpg".to_string(),
+            credential_handle: None,
+            destination: SnapshotDestination::Namespace("snapshots".to_string()),
+            expected_media_type: "image/jpeg".to_string(),
+            expected_format: "jpg".to_string(),
+            timeout_ms: 0,
+            max_bytes: 1_000_000,
+            max_width: None,
+            max_height: None,
+        };
+        assert!(req.validate().is_err());
+        req.timeout_ms = 10_000;
+        req.max_bytes = 0;
+        assert!(req.validate().is_err());
+
+        let req = FetchSnapshotRequest {
+            source_url: "http://example.com/images/photo@2x.png".to_string(),
+            credential_handle: None,
+            destination: SnapshotDestination::Namespace("snapshots".to_string()),
+            expected_media_type: "image/png".to_string(),
+            expected_format: "png".to_string(),
+            timeout_ms: 10_000,
+            max_bytes: 1_000_000,
+            max_width: None,
+            max_height: None,
+        };
+        assert!(req.validate().is_ok());
+
+        let req = FetchSnapshotRequest {
+            source_url: "file:///etc/passwd".to_string(),
+            credential_handle: None,
+            destination: SnapshotDestination::Namespace("snapshots".to_string()),
+            expected_media_type: "image/jpeg".to_string(),
+            expected_format: "jpg".to_string(),
+            timeout_ms: 10_000,
+            max_bytes: 1_000_000,
+            max_width: None,
+            max_height: None,
+        };
+        assert!(req.validate().is_err());
+    }
+
+    #[test]
+    fn fetch_snapshot_request_round_trips() {
+        let req = FetchSnapshotRequest {
+            source_url: "http://example.com/s.jpg".to_string(),
+            credential_handle: None,
+            destination: SnapshotDestination::Namespace("snapshots".to_string()),
+            expected_media_type: "image/jpeg".to_string(),
+            expected_format: "jpg".to_string(),
+            timeout_ms: 10_000,
+            max_bytes: 1_000_000,
+            max_width: Some(1920),
+            max_height: Some(1080),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let decoded: FetchSnapshotRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(req, decoded);
     }
 }
