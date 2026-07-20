@@ -195,6 +195,7 @@ GB28181 boundary clarification:
 - `cheetah-gb28181-core` is purely Sans-I/O. It models SIP requests/responses, device registry, keepalive timeouts, invite/bye dialogs, and SDP parsing (`GbSdp`). Interaction is driven via `Gb28181CoreInput` and yields `Gb28181CoreOutput` (like `SendSip`, `Gb28181Event`).
 - `cheetah-gb28181-driver-tokio` executes the UDP/TCP SIP message loop, handles TCP connection states, manages timer-based ticks for offline checks, and routes outgoing SIP buffers.
 - `cheetah-gb28181-module` manages GB28181 business logic, registering HTTP REST APIs (for triggering manual INVITE, BYE, and talkback), keeping track of active device maps, checking publish leases, and bridging incoming streams to the core media engine.
+- `Gb28181ModuleConfig` has `control_owner = local | signaling` (default `local`). `local` keeps the existing media SIP/GB listener; `signaling` disables it and expects the cluster signaling control plane to drive GB sessions. Module `init` fails on dual-owner configurations: `signaling` requires `signaling_control_plane.enabled=true`, and `local` conflicts with an active `canary`/`production` rollout of the signaling control plane.
 
 ## 3.5 HLS Reference Mapping
 

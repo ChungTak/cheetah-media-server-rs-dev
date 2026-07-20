@@ -507,11 +507,14 @@ modules:
 modules:
   gb28181:
     enabled: true
+    control_owner: local
     listen_udp: 0.0.0.0:5060
     listen_tcp: 0.0.0.0:5060
     read_buffer_size: 65536
     tick_interval_ms: 1000
 ```
+
+`control_owner` 默认 `local`，表示由媒体进程内的 GB SIP 监听器处理信令；设为 `signaling` 时，由集群信号控制面接管（需要 `signaling_control_plane.enabled=true`）。`canary`/`production` 灰度阶段不允许 `local` 与信号控制面同时作为 GB 控制入口。
 
 ## 4. 测试
 
