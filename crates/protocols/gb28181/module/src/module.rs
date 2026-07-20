@@ -154,30 +154,34 @@ impl Module for Gb28181Module {
         self.config = Gb28181ModuleConfig::from_value(ctx.initial_config.clone())
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
 
-        let signaling_cfg = ctx
-            .engine
-            .config_provider
-            .module(&ModuleId::new("signaling_control_plane"));
+        // A disabled module never binds the local listener, so there is no
+        // dual-owner risk. Only enforce ownership when the module is enabled.
+        if self.config.enabled {
+            let signaling_cfg = ctx
+                .engine
+                .config_provider
+                .module(&ModuleId::new("signaling_control_plane"));
 
-        match self.config.control_owner {
-            ControlOwner::Signaling => {
-                if !signaling_cfg
-                    .get("enabled")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-                {
-                    return Err(SdkError::InvalidArgument(
-                        "gb28181.control_owner=signaling requires signaling_control_plane.enabled=true"
-                            .to_string(),
-                    ));
+            match self.config.control_owner {
+                ControlOwner::Signaling => {
+                    if !signaling_cfg
+                        .get("enabled")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false)
+                    {
+                        return Err(SdkError::InvalidArgument(
+                            "gb28181.control_owner=signaling requires signaling_control_plane.enabled=true"
+                                .to_string(),
+                        ));
+                    }
                 }
-            }
-            ControlOwner::Local => {
-                if signaling_controls_gb(&signaling_cfg) {
-                    return Err(SdkError::InvalidArgument(
-                        "gb28181.control_owner=local conflicts with signaling_control_plane canary/production rollout"
-                            .to_string(),
-                    ));
+                ControlOwner::Local => {
+                    if signaling_controls_gb(&signaling_cfg) {
+                        return Err(SdkError::InvalidArgument(
+                            "gb28181.control_owner=local conflicts with signaling_control_plane canary/production rollout"
+                                .to_string(),
+                        ));
+                    }
                 }
             }
         }
