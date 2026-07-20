@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::MediaError;
 use crate::ids::*;
+use crate::image::ImageFormat;
 use crate::model::*;
 use crate::outbound_policy::OutboundUrlPolicy;
 
@@ -394,6 +396,77 @@ impl FetchSnapshotRequest {
         }
         Ok(())
     }
+
+    /// Validate fetched image content against the declared format and size limits.
+    ///
+    /// Returns `SnapshotContentInfo` on success, or `MediaError` if the magic,
+    /// dimensions, byte count, or pixel count is out of bounds.
+    pub fn validate_content(&self, data: &[u8]) -> Result<SnapshotContentInfo, MediaError> {
+        let format = ImageFormat::from_str(&self.expected_format)
+            .map_err(|e| MediaError::invalid_argument(format!("invalid expected_format: {e}")))?;
+        if data.len() as u64 > self.max_bytes {
+            return Err(MediaError::invalid_argument(format!(
+                "snapshot content exceeds max_bytes: {} > {}",
+                data.len(),
+                self.max_bytes
+            )));
+        }
+        if !format.matches_magic(data) {
+            return Err(MediaError::invalid_argument(format!(
+                "snapshot content does not match expected magic for {format:?}"
+            )));
+        }
+        let (width, height) = format.parse_dimensions(data).ok_or_else(|| {
+            MediaError::invalid_argument(format!("cannot parse dimensions for {format:?}"))
+        })?;
+
+        if let Some(max_width) = self.max_width {
+            if width > max_width {
+                return Err(MediaError::invalid_argument(format!(
+                    "snapshot width {width} exceeds max_width {max_width}"
+                )));
+            }
+        }
+        if let Some(max_height) = self.max_height {
+            if height > max_height {
+                return Err(MediaError::invalid_argument(format!(
+                    "snapshot height {height} exceeds max_height {max_height}"
+                )));
+            }
+        }
+
+        let pixels = (width as u64) * (height as u64);
+        let max_pixels = self
+            .max_width
+            .zip(self.max_height)
+            .map(|(w, h)| (w as u64) * (h as u64))
+            .unwrap_or(u64::MAX);
+        if pixels > max_pixels {
+            return Err(MediaError::invalid_argument(format!(
+                "snapshot pixel count {pixels} exceeds allowed {max_pixels}"
+            )));
+        }
+
+        Ok(SnapshotContentInfo {
+            content_type: format.content_type().to_string(),
+            format,
+            width,
+            height,
+            bytes: data.len() as u64,
+        })
+    }
+}
+
+/// Validated metadata for fetched snapshot content.
+///
+/// 抓取到的快照内容经过校验后的元数据。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotContentInfo {
+    pub content_type: String,
+    pub format: ImageFormat,
+    pub width: u32,
+    pub height: u32,
+    pub bytes: u64,
 }
 
 /// Open playback request.
@@ -766,6 +839,122 @@ mod tests {
         let json = serde_json::to_string(&req).unwrap();
         let decoded: FetchSnapshotRequest = serde_json::from_str(&json).unwrap();
         assert_eq!(req, decoded);
+    }
+
+    fn minimal_jpeg(width: u16, height: u16) -> Vec<u8> {
+        let mut data = vec![0xFF, 0xD8]; // SOI
+        let mut seg = vec![0xFF, 0xC0, 0x00, 0x0B, 0x08];
+        seg.extend_from_slice(&height.to_be_bytes());
+        seg.extend_from_slice(&width.to_be_bytes());
+        seg.extend_from_slice(&[0x01, 0x01, 0x11, 0x00]); // one component
+        data.extend_from_slice(&seg);
+        data.extend_from_slice(&[0xFF, 0xD9]); // EOI
+        data
+    }
+
+    fn minimal_png(width: u32, height: u32) -> Vec<u8> {
+        let signature: [u8; 8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        let mut data = signature.to_vec();
+        data.extend_from_slice(&13u32.to_be_bytes()); // IHDR length
+        data.extend_from_slice(b"IHDR");
+        data.extend_from_slice(&width.to_be_bytes());
+        data.extend_from_slice(&height.to_be_bytes());
+        data.extend_from_slice(&[0x08, 0x02, 0x00, 0x00, 0x00]); // bit depth etc.
+        data.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // CRC placeholder
+        data
+    }
+
+    #[test]
+    fn validate_content_accepts_valid_jpeg() {
+        let data = minimal_jpeg(640, 480);
+        let req = FetchSnapshotRequest {
+            source_url: "http://example.com/s.jpg".to_string(),
+            credential_handle: None,
+            destination: SnapshotDestination::Namespace("snapshots".to_string()),
+            expected_media_type: "image/jpeg".to_string(),
+            expected_format: "jpg".to_string(),
+            timeout_ms: 10_000,
+            max_bytes: 1_000_000,
+            max_width: Some(800),
+            max_height: Some(600),
+        };
+        let info = req.validate_content(&data).unwrap();
+        assert_eq!(info.format, ImageFormat::Jpeg);
+        assert_eq!(info.width, 640);
+        assert_eq!(info.height, 480);
+        assert_eq!(info.content_type, "image/jpeg");
+    }
+
+    #[test]
+    fn validate_content_accepts_valid_png() {
+        let data = minimal_png(256, 256);
+        let req = FetchSnapshotRequest {
+            source_url: "http://example.com/s.png".to_string(),
+            credential_handle: None,
+            destination: SnapshotDestination::Namespace("snapshots".to_string()),
+            expected_media_type: "image/png".to_string(),
+            expected_format: "png".to_string(),
+            timeout_ms: 10_000,
+            max_bytes: 1_000_000,
+            max_width: Some(512),
+            max_height: Some(512),
+        };
+        let info = req.validate_content(&data).unwrap();
+        assert_eq!(info.format, ImageFormat::Png);
+        assert_eq!(info.width, 256);
+        assert_eq!(info.height, 256);
+    }
+
+    #[test]
+    fn validate_content_rejects_oversize_and_dimension_limits() {
+        let data = minimal_jpeg(640, 480);
+        let req = FetchSnapshotRequest {
+            source_url: "http://example.com/s.jpg".to_string(),
+            credential_handle: None,
+            destination: SnapshotDestination::Namespace("snapshots".to_string()),
+            expected_media_type: "image/jpeg".to_string(),
+            expected_format: "jpg".to_string(),
+            timeout_ms: 10_000,
+            max_bytes: 10, // too small
+            max_width: Some(800),
+            max_height: Some(600),
+        };
+        assert!(req.validate_content(&data).is_err());
+
+        let data = minimal_jpeg(1024, 768);
+        let mut req = FetchSnapshotRequest {
+            source_url: "http://example.com/s.jpg".to_string(),
+            credential_handle: None,
+            destination: SnapshotDestination::Namespace("snapshots".to_string()),
+            expected_media_type: "image/jpeg".to_string(),
+            expected_format: "jpg".to_string(),
+            timeout_ms: 10_000,
+            max_bytes: 1_000_000,
+            max_width: Some(800),
+            max_height: Some(600),
+        };
+        // width exceeds
+        assert!(req.validate_content(&data).is_err());
+
+        req.max_width = Some(2048);
+        req.max_height = Some(700); // height exceeds
+        assert!(req.validate_content(&data).is_err());
+    }
+
+    #[test]
+    fn validate_content_rejects_wrong_magic() {
+        let req = FetchSnapshotRequest {
+            source_url: "http://example.com/s.jpg".to_string(),
+            credential_handle: None,
+            destination: SnapshotDestination::Namespace("snapshots".to_string()),
+            expected_media_type: "image/jpeg".to_string(),
+            expected_format: "jpg".to_string(),
+            timeout_ms: 10_000,
+            max_bytes: 1_000_000,
+            max_width: None,
+            max_height: None,
+        };
+        assert!(req.validate_content(b"not a jpeg").is_err());
     }
 
     #[test]
