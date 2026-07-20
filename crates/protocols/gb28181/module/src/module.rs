@@ -23,7 +23,7 @@ use cheetah_sdk::{
     ModuleSchemaRegistration, ModuleState, SdkError,
 };
 
-use crate::config::Gb28181ModuleConfig;
+use crate::config::{ControlOwner, Gb28181ModuleConfig};
 
 const MODULE_ID: &str = "gb28181";
 
@@ -115,6 +115,24 @@ impl Default for Gb28181Module {
     }
 }
 
+/// Returns true when the signaling control plane is enabled and in a rollout
+/// mode that can drive mutations for GB resources.
+///
+/// 当信号控制面已启用且处于可驱动 GB 资源变更的灰度/生产阶段时返回 true。
+fn signaling_controls_gb(signaling_cfg: &Value) -> bool {
+    let enabled = signaling_cfg
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if !enabled {
+        return false;
+    }
+    matches!(
+        signaling_cfg.get("rollout").and_then(Value::as_str),
+        Some("canary") | Some("production")
+    )
+}
+
 /// `Module` lifecycle and HTTP API for GB28181.
 ///
 /// GB28181 的 `Module` 生命周期与 HTTP API。
@@ -135,6 +153,35 @@ impl Module for Gb28181Module {
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
         self.config = Gb28181ModuleConfig::from_value(ctx.initial_config.clone())
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
+
+        let signaling_cfg = ctx
+            .engine
+            .config_provider
+            .module(&ModuleId::new("signaling_control_plane"));
+
+        match self.config.control_owner {
+            ControlOwner::Signaling => {
+                if !signaling_cfg
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                {
+                    return Err(SdkError::InvalidArgument(
+                        "gb28181.control_owner=signaling requires signaling_control_plane.enabled=true"
+                            .to_string(),
+                    ));
+                }
+            }
+            ControlOwner::Local => {
+                if signaling_controls_gb(&signaling_cfg) {
+                    return Err(SdkError::InvalidArgument(
+                        "gb28181.control_owner=local conflicts with signaling_control_plane canary/production rollout"
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+
         self.ctx = Some(ctx.engine);
         self.state = ModuleState::Initialized;
         Ok(())
@@ -881,4 +928,32 @@ fn extract_app_alias(body: &serde_json::Value) -> String {
         .or_else(|| body.get("sendApp").and_then(|v| v.as_str()))
         .unwrap_or("live")
         .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signaling_controls_gb_only_in_active_rollout() {
+        assert!(!signaling_controls_gb(
+            &serde_json::json!({"enabled": false})
+        ));
+        assert!(!signaling_controls_gb(&serde_json::json!({
+            "enabled": true,
+            "rollout": "register_only"
+        })));
+        assert!(!signaling_controls_gb(&serde_json::json!({
+            "enabled": true,
+            "rollout": "shadow_query"
+        })));
+        assert!(signaling_controls_gb(&serde_json::json!({
+            "enabled": true,
+            "rollout": "canary"
+        })));
+        assert!(signaling_controls_gb(&serde_json::json!({
+            "enabled": true,
+            "rollout": "production"
+        })));
+    }
 }
