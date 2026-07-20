@@ -58,6 +58,28 @@ cargo run -p cheetah-server --features signaling-control-plane
 cargo run -p cheetah-server --no-default-features --features rtsp
 ```
 
+### 1.1 构建/测试 lane 矩阵（CL904-02）
+
+不要用 `--all-features` 替代明确矩阵。CI 与本地验证按以下 lane 执行：
+
+| Lane | 命令 | 退出条件 |
+| --- | --- | --- |
+| C0 | `cargo check -p cheetah-server --no-default-features` | 不引入 avcodec、tonic、SQLite |
+| C1 | `cargo test -p cheetah-media-processing-module --features media-processing-audio` | G711/AAC/Opus/MP3 矩阵 |
+| C2 | `cargo test -p cheetah-media-processing-module --features media-processing-image` | JPEG/PNG decode、算子、snapshot；无 OpenCV/FFmpeg linkage |
+| C3 | `cargo test -p cheetah-media-processing-module --features media-processing-video` | H.264/H.265/MJPEG decode/encode 矩阵 |
+| C4 | `cargo test -p cheetah-media-processing-module --features media-processing-full` | 软件/OpenCV backend 版本 |
+| C5 | `cargo test -p cheetah-server --features media-processing-full,rtmp,rtsp,http-flv,hls,ts,fmp4,mp4,rtp,gb28181,record,webrtc,srt,proxy,proxy-rtsp,proxy-rtmp,proxy-http-flv,snapshot` | 五条集成 E2E |
+| C6 | `cargo build -p cheetah-server --release --features media-processing-full,rtmp,rtsp,http-flv,hls,ts,fmp4,mp4,rtp,gb28181,record,webrtc,srt,proxy,proxy-rtsp,proxy-rtmp,proxy-http-flv,snapshot` | artifact、SBOM、license、perf、soak、证据 |
+
+C0 还应检查依赖树，确认不存在 `avcodec`、`tonic`、`rusqlite`：
+
+```bash
+cargo tree -p cheetah-server --no-default-features
+```
+
+C1–C5 需记录当前 avcodec revision 与 preflight 结果；C6 包含 release profile、SBOM、license 扫描、性能与 24 小时 soak 证据。
+
 程序启动后会：
 
 1. 初始化 Tokio runtime
