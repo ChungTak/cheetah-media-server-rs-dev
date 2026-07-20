@@ -73,6 +73,39 @@ pub trait RoomServiceApi: Send + Sync {
     fn snapshot(&self) -> Vec<RoomSnapshot>;
 }
 
+/// A single label attached to a metric record.
+///
+/// 附加到指标记录的一个标签。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct MetricLabel {
+    pub name: String,
+    pub value: String,
+}
+
+/// Value kind for a metric record.
+///
+/// 指标记录的值类型。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MetricValue {
+    /// Monotonic counter delta or accumulated value.
+    Counter(u64),
+    /// Signed gauge snapshot.
+    Gauge(i64),
+    /// Histogram aggregate (`sum` of observed values and `count`).
+    Histogram { sum: u64, count: u64 },
+}
+
+/// Structured metric record with labels.
+///
+/// 带标签的结构化指标记录。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetricRecord {
+    pub name: String,
+    pub labels: Vec<MetricLabel>,
+    pub value: MetricValue,
+    pub timestamp_ms: i64,
+}
+
 /// API for rendering metrics in text format and recording counters and gauges.
 ///
 /// 以文本格式渲染指标并记录计数器和仪表盘的 API。
@@ -86,6 +119,11 @@ pub trait MetricsApi: Send + Sync {
     ///
     /// 用最新快照值覆盖仪表盘。
     fn set(&self, _key: &str, _value: u64) {}
+
+    /// Record a structured metric observation with labels.
+    ///
+    /// 记录一条带标签的结构化指标观测。
+    fn record(&self, _record: MetricRecord) {}
 
     fn render(&self) -> String;
 }
