@@ -46,6 +46,12 @@ cargo run -p cheetah-server --features "rtsp,http-flv,hls,fmp4"
 cargo run -p cheetah-server --features media-processing
 ```
 
+启用 signaling control plane（当前为 MIG-01 占位骨架，包含 gRPC adapter 与 SQLite control-plane 依赖）：
+
+```bash
+cargo run -p cheetah-server --features signaling-control-plane
+```
+
 如果你想只启用 RTSP、禁用默认 RTMP：
 
 ```bash
@@ -80,6 +86,26 @@ modules:
   rtmp:
     enabled: true
     listen: 0.0.0.0:1935
+```
+
+启用 `signaling-control-plane` 时的最小配置示例：
+
+```yaml
+global:
+  control:
+    listen: 127.0.0.1:8891
+modules:
+  rtmp:
+    enabled: true
+    listen: 0.0.0.0:1935
+  signaling_control_plane:
+    enabled: true
+    grpc:
+      listen: 127.0.0.1:9090
+    store:
+      path: /var/lib/cheetah/signaling.db
+    registry:
+      node_identity: node-1
 ```
 
 同时启用 RTSP 的示例：

@@ -446,6 +446,25 @@ Webhook profiles are managed through `WebhookAdminApi` and exposed as native HTT
 - Unsupported mappings for the active mode increment `unsupported_mapping_total{event_type,profile}` through `MetricsApi`.
 - Closing the dispatcher handle or removing a profile from configuration stops further delivery attempts for that profile.
 
+## 3.13 Signaling Control Plane
+
+The `signaling-control-plane` Cargo feature gates the new gRPC-based signaling control plane.
+
+- `apps/cheetah-server` adds the optional feature `signaling-control-plane` and includes it in `media-control-full`.
+- When enabled, `main.rs` registers a `signaling_control_plane` module schema in `ConfigStore`.
+- `SignalingControlPlaneConfig` declares the full configuration surface:
+  - `enabled`, `rollout` (`register_only`/`shadow_query`/`canary`/`production`)
+  - `grpc.listen`, `grpc.advertised_endpoint`, `grpc.message_limits`
+  - `registry.endpoint`, `registry.zone`, `registry.node_identity`, `registry.addresses`
+  - `contract.min_version`, `contract.max_version`, `contract.checksum`
+  - `store.path`, `store.max_size_mb`, `store.retention_hours`
+  - `events.max_events`, `events.retention_hours`, `events.cursor_key_handle`
+  - `capacity.max_nodes`, `capacity.max_resources`
+  - `tls.server_cert_pem`, `tls.server_key_pem`, `tls.client_ca_pem`, `tls.client_cert_required`
+  - `secret_exchange.enabled`, `secret_exchange.endpoint`, `secret_exchange.renewal_margin_sec`
+- `validate()` enforces required fields when enabled, socket-address parsing, contract version ordering, TLS consistency (including `client_ca_pem` when client certificates are required), and secret-exchange consistency.
+- The current `Assembly` is a placeholder; later MIG tasks will wire the gRPC adapter and control-plane facade.
+
 ## 4. Media Model and Unification
 
 All protocol ingest into engine should converge to:
