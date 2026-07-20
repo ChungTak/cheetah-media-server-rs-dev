@@ -11,22 +11,7 @@ extern crate cheetah_media_grpc_adapter;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
-/// Deployment rollout mode for the signaling control plane.
-///
-/// 信号控制面的部署灰度阶段。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RolloutMode {
-    /// Register heartbeat only; all mutation gates are closed.
-    #[default]
-    RegisterOnly,
-    /// Consume query/event without driving business.
-    ShadowQuery,
-    /// Allow typed creates for an allowlisted subset.
-    Canary,
-    /// Full typed control plane.
-    Production,
-}
+pub use cheetah_media_api::RolloutMode;
 
 /// gRPC message size limits.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -453,6 +453,8 @@ The `signaling-control-plane` Cargo feature gates the new gRPC-based signaling c
 
 - `apps/cheetah-server` adds the optional feature `signaling-control-plane` and includes it in `media-control-full`.
 - When enabled, `main.rs` registers a `signaling_control_plane` module schema in `ConfigStore`.
+- `RolloutMode` lives in `cheetah-media-api` and is re-exported/reused by `cheetah-media-control-plane` and `cheetah-server`.
+- `RolloutGate` (in `cheetah-media-api`) exposes `query_allowed`, `event_allowed`, `mutation_allowed`, and `operation_allowed(tenant, operation)`; `Canary` mode supports tenant and operation allowlists.
 - `SignalingControlPlaneConfig` declares the full configuration surface:
   - `enabled`, `rollout` (`register_only`/`shadow_query`/`canary`/`production`)
   - `grpc.listen`, `grpc.advertised_endpoint`, `grpc.message_limits`
