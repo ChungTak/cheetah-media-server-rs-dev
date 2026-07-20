@@ -28,7 +28,7 @@ pub enum RolloutMode {
     Production,
 }
 
-/// gRPC listener configuration.
+/// gRPC message size limits.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MessageLimits {
@@ -45,6 +45,7 @@ impl Default for MessageLimits {
     }
 }
 
+/// gRPC listener configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct GrpcConfig {
