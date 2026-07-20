@@ -9,6 +9,7 @@ use crate::event::{MediaEvent, MediaEventSender, MediaEventSubscription};
 use crate::fencing::ControlledResourceRef;
 use crate::ids::*;
 use crate::model::{AdmissionRequest, Decision, *};
+use crate::outbound_policy::{ResolvedEndpoint, UrlPolicyVerdict};
 use crate::processing::{
     CreateProcessingJob, ProcessingJob, ProcessingJobQuery, ProcessingPreflightReport,
     UpdateProcessingJob,
@@ -616,4 +617,25 @@ pub trait MediaCapacityApi: Send + Sync {
     /// Open or close the node gate that controls whether new resources may be
     /// created on this node instance.
     async fn set_node_gate(&self, open: bool) -> Result<()>;
+}
+
+/// Runtime-neutral outbound URL policy used by snapshot fetch and proxy pull.
+///
+/// 运行时无关的出站 URL 策略，供快照抓取与代理拉流使用。
+#[async_trait]
+pub trait OutboundUrlPolicyApi: Send + Sync {
+    /// Validate a URL statically against configured scheme/length rules.
+    fn check_static(&self, url: &str) -> Result<UrlPolicyVerdict>;
+
+    /// Resolve, sanitize and validate an outbound URL, returning a pinned
+    /// endpoint if allowed.
+    async fn evaluate(&self, url: &str) -> Result<ResolvedEndpoint>;
+
+    /// Re-evaluate a redirect target using the same policy and remaining budget.
+    async fn validate_redirect(
+        &self,
+        previous: &ResolvedEndpoint,
+        location: &str,
+        redirects_remaining: u32,
+    ) -> Result<ResolvedEndpoint>;
 }
