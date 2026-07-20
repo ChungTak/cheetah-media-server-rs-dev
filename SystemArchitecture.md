@@ -475,7 +475,18 @@ The `signaling-control-plane` Cargo feature gates the new gRPC-based signaling c
 - The SQLite store opens with file permissions restricted to owner read/write (`0o600`) on Unix, satisfying SEC-03 SQLite file-permission minimization.
 - The current `Assembly` is a placeholder; later MIG tasks will wire the gRPC adapter and control-plane facade.
 
-## 3.14 Build and Release Lanes (CL904-02)
+## 3.14 904 Closeout: Direct `image` Dependency Removal (CL904-01)
+
+The media server no longer depends on the third-party `image` crate. Image parsing for content validation is provided by the small, self-contained `cheetah-codec::image` module (JPEG SOF and PNG IHDR header parsers). Test fixtures must be committed as binary artifacts in `tests/testdata/` with documented generation commands, not generated at test time by a third-party image library.
+
+Verification is automated by `scripts/verify_cl904_01_image_cleanup.sh`, which checks:
+
+- `Cargo.lock` does not contain a package named `image`.
+- No `Cargo.toml` declares a direct `image` dependency.
+- `cargo tree -i image -p cheetah-server` reports `did not match any packages`.
+- No source file imports a third-party `image` crate (`use image::` / `extern crate image`), while allowing the crate's own `pub mod image` / `pub use image::`.
+
+## 3.15 Build and Release Lanes (CL904-02)
 
 Release validation uses the explicit C0–C6 feature matrix instead of `--all-features`:
 
