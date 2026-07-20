@@ -63,7 +63,7 @@ impl SqliteStore {
         })
     }
 
-    async fn with_conn<R, F>(&self, name: &str, f: F) -> Result<R, ControlPlaneError>
+    pub(crate) async fn with_conn<R, F>(&self, name: &str, f: F) -> Result<R, ControlPlaneError>
     where
         R: Send + 'static,
         F: FnOnce(&mut Connection) -> Result<R, ControlPlaneError> + Send + 'static,
@@ -149,6 +149,8 @@ fn migrate(conn: &mut Connection) -> Result<(), ControlPlaneError> {
              ON controlled_resources(tenant_id, media_session_id);
          CREATE INDEX IF NOT EXISTS idx_resource_binding
              ON controlled_resources(tenant_id, media_binding_id);
+         CREATE INDEX IF NOT EXISTS idx_resource_node
+             ON controlled_resources(tenant_id, media_node_id);
          CREATE INDEX IF NOT EXISTS idx_resource_idempotency
              ON controlled_resources(tenant_id, idempotency_scope);
 
