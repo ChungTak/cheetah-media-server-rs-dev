@@ -110,6 +110,7 @@ fn state_to_str(state: ResourceState) -> &'static str {
         ResourceState::Stopping => "stopping",
         ResourceState::Stopped => "stopped",
         ResourceState::Failed => "failed",
+        ResourceState::Unknown => "unknown",
     }
 }
 
@@ -119,6 +120,7 @@ fn str_to_state(s: &str) -> ResourceState {
         "stopping" => ResourceState::Stopping,
         "stopped" => ResourceState::Stopped,
         "failed" => ResourceState::Failed,
+        "unknown" => ResourceState::Unknown,
         _ => ResourceState::Pending,
     }
 }
@@ -455,6 +457,54 @@ impl ResourceStore for SqliteStore {
                  ORDER BY updated_at_ms DESC",
             )?;
             let rows = stmt.query_map(params![tenant, node], |row| {
+                Ok(RowResource {
+                    tenant_id: row.get(0)?,
+                    resource_kind: row.get(1)?,
+                    resource_handle: row.get(2)?,
+                    media_session_id: row.get(3)?,
+                    media_binding_id: row.get(4)?,
+                    media_key: row.get(5)?,
+                    idempotency_scope: row.get(6)?,
+                    canonical_digest: row.get(7)?,
+                    accepted_owner_epoch: row.get(8)?,
+                    media_node_id: row.get(9)?,
+                    media_node_instance_id: row.get(10)?,
+                    media_node_instance_epoch: row.get(11)?,
+                    generation: row.get(12)?,
+                    state: row.get(13)?,
+                    safe_last_error: row.get(14)?,
+                    created_at_ms: row.get(15)?,
+                    updated_at_ms: row.get(16)?,
+                    terminal_at_ms: row.get(17)?,
+                })
+            })?;
+            let mut records = Vec::new();
+            for row in rows {
+                records.push(row?.into_record()?);
+            }
+            Ok(records)
+        })
+        .await
+    }
+
+    async fn list_non_terminal(
+        &self,
+        max_records: u32,
+    ) -> Result<Vec<ResourceRecord>, ControlPlaneError> {
+        let max = max_records as i64;
+        self.with_conn("resource_list_non_terminal", move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT tenant_id, resource_kind, resource_handle, media_session_id,
+                        media_binding_id, media_key, idempotency_scope, canonical_digest,
+                        accepted_owner_epoch, media_node_id, media_node_instance_id,
+                        media_node_instance_epoch, generation, state, safe_last_error,
+                        created_at_ms, updated_at_ms, terminal_at_ms
+                 FROM controlled_resources
+                 WHERE state NOT IN ('stopped', 'failed')
+                 ORDER BY updated_at_ms ASC
+                 LIMIT ?1",
+            )?;
+            let rows = stmt.query_map(params![max], |row| {
                 Ok(RowResource {
                     tenant_id: row.get(0)?,
                     resource_kind: row.get(1)?,

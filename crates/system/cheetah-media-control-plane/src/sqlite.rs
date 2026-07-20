@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use cheetah_media_api::error::EffectOutcome;
+use cheetah_media_api::ids::TenantId;
 use cheetah_runtime_api::RuntimeApi;
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -372,6 +373,88 @@ impl IdempotencyStore for SqliteStore {
             Ok(())
         })
         .await
+    }
+
+    async fn list_prepared_unknown(
+        &self,
+        max_records: u32,
+    ) -> Result<Vec<IdempotencyRecord>, ControlPlaneError> {
+        let max = max_records as i64;
+        self.with_conn("idempotency_list_prepared_unknown", move |conn| {
+            let mut stmt = conn.prepare(
+                "SELECT tenant_id, operation_kind, idempotency_key, canonical_digest, state,
+                        resource_ref, effect_outcome, serialized_domain_result, safe_error,
+                        created_at_ms, updated_at_ms, expires_at_ms, attempt_count
+                 FROM idempotency_records
+                 WHERE state IN ('prepared', 'unknown')
+                 ORDER BY updated_at_ms ASC
+                 LIMIT ?1",
+            )?;
+            let rows = stmt.query_map(params![max], |row| {
+                Ok(RowIdempotencyList {
+                    tenant_id: row.get(0)?,
+                    operation_kind: row.get(1)?,
+                    idempotency_key: row.get(2)?,
+                    digest: row.get(3)?,
+                    state: row.get(4)?,
+                    resource_ref: row.get(5)?,
+                    effect_outcome: row.get(6)?,
+                    serialized_domain_result: row.get(7)?,
+                    safe_error: row.get(8)?,
+                    created_at_ms: row.get(9)?,
+                    updated_at_ms: row.get(10)?,
+                    expires_at_ms: row.get(11)?,
+                    attempt_count: row.get(12)?,
+                })
+            })?;
+            let mut records = Vec::new();
+            for row in rows {
+                records.push(row?.into_record()?);
+            }
+            Ok(records)
+        })
+        .await
+    }
+}
+
+struct RowIdempotencyList {
+    tenant_id: String,
+    operation_kind: String,
+    idempotency_key: String,
+    digest: String,
+    state: String,
+    resource_ref: Option<String>,
+    effect_outcome: String,
+    serialized_domain_result: Option<String>,
+    safe_error: Option<String>,
+    created_at_ms: i64,
+    updated_at_ms: i64,
+    expires_at_ms: i64,
+    attempt_count: u32,
+}
+
+impl RowIdempotencyList {
+    fn into_record(self) -> Result<IdempotencyRecord, ControlPlaneError> {
+        let tenant_id = TenantId::new(self.tenant_id)
+            .map_err(|e| ControlPlaneError::Serialization(e.to_string()))?;
+        let key = IdempotencyKey::new(tenant_id, self.operation_kind, self.idempotency_key);
+        Ok(IdempotencyRecord {
+            key,
+            state: str_to_state(&self.state),
+            canonical_digest: parse_hex(&self.digest).unwrap_or(CanonicalDigest([0u8; 32])),
+            resource_ref: self
+                .resource_ref
+                .and_then(|s| serde_json::from_str(&s).ok()),
+            effect_outcome: str_to_effect_outcome(&self.effect_outcome),
+            serialized_domain_result: self
+                .serialized_domain_result
+                .and_then(|s| serde_json::from_str(&s).ok()),
+            safe_error: self.safe_error.and_then(|s| serde_json::from_str(&s).ok()),
+            created_at_ms: self.created_at_ms,
+            updated_at_ms: self.updated_at_ms,
+            expires_at_ms: self.expires_at_ms,
+            attempt_count: self.attempt_count,
+        })
     }
 }
 

@@ -29,6 +29,8 @@ pub enum ResourceState {
     Stopped,
     /// Resource failed and is terminal.
     Failed,
+    /// Resource state cannot be determined and must be reconciled.
+    Unknown,
 }
 
 impl ResourceState {

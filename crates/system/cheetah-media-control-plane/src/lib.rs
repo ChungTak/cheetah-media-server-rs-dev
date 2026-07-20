@@ -15,8 +15,10 @@
 
 pub mod blocking;
 pub mod error;
+pub mod event_store;
 pub mod facade;
 pub mod idempotency;
+pub mod recovery;
 pub mod resource_store;
 pub mod side_effect;
 pub mod sqlite;
@@ -24,8 +26,12 @@ pub mod store;
 
 pub use blocking::blocking_call;
 pub use error::ControlPlaneError;
+pub use event_store::{EventRecord, EventStore};
 pub use facade::ControlPlane;
 pub use idempotency::{CanonicalDigest, CanonicalRequest, IdempotencyKey, IdempotencyState};
+pub use recovery::{
+    ConvergeOutcome, ProbeResult, RecoveryEngine, RecoveryLimits, RecoveryReport, ResourceProbe,
+};
 pub use side_effect::{RecoveryAction, SideEffectWindow};
 pub use sqlite::SqliteStore;
 pub use store::{
