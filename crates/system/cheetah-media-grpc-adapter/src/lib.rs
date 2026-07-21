@@ -106,6 +106,9 @@ pub enum GrpcAdapterError {
     /// Failed to configure TLS.
     #[error("invalid TLS configuration: {0}")]
     InvalidTls(String),
+    /// Invalid adapter configuration.
+    #[error("invalid configuration: {0}")]
+    InvalidConfig(String),
 }
 
 /// A running gRPC adapter.
@@ -158,6 +161,17 @@ impl GrpcAdapter {
     pub async fn start(
         config: GrpcAdapterConfig,
     ) -> Result<(Self, GrpcHealthHandle), GrpcAdapterError> {
+        if config.message_limits.max_decoding_message_size == 0 {
+            return Err(GrpcAdapterError::InvalidConfig(
+                "max_decoding_message_size must be non-zero".to_string(),
+            ));
+        }
+        if config.message_limits.max_encoding_message_size == 0 {
+            return Err(GrpcAdapterError::InvalidConfig(
+                "max_encoding_message_size must be non-zero".to_string(),
+            ));
+        }
+
         let listener = tokio::net::TcpListener::bind(config.bind_addr)
             .await
             .map_err(|e| GrpcAdapterError::Bind(e.to_string()))?;
@@ -394,6 +408,23 @@ mod tests {
             config.message_limits.max_encoding_message_size,
             4 * 1024 * 1024
         );
+    }
+
+    #[tokio::test]
+    async fn message_limits_zero_rejected() {
+        let mut config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
+        config.message_limits.max_decoding_message_size = 0;
+        assert!(matches!(
+            GrpcAdapter::start(config).await,
+            Err(GrpcAdapterError::InvalidConfig(_))
+        ));
+
+        let mut config = GrpcAdapterConfig::new("127.0.0.1:0".parse().unwrap());
+        config.message_limits.max_encoding_message_size = 0;
+        assert!(matches!(
+            GrpcAdapter::start(config).await,
+            Err(GrpcAdapterError::InvalidConfig(_))
+        ));
     }
 
     #[tokio::test]
