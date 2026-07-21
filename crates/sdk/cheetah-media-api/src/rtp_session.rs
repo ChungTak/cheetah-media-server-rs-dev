@@ -31,12 +31,15 @@ impl Default for RtpSessionGeneration {
 
 /// A stable reference to a controlled RTP session resource.
 ///
+/// `resource_ref` is nested rather than flattened because both this struct and
+/// `ControlledResourceRef` carry a `generation` field; flattening would create a
+/// duplicate JSON key and break serde round-trips.
+///
 /// 受控 RTP 会话资源的稳定引用。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RtpSessionResourceRef {
     pub session_id: RtpSessionId,
     pub generation: RtpSessionGeneration,
-    #[serde(flatten)]
     pub resource_ref: ControlledResourceRef,
 }
 
@@ -622,5 +625,34 @@ mod tests {
         let json = serde_json::to_string(&stop).unwrap();
         let decoded: StopRtpSession = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded, stop);
+    }
+
+    #[test]
+    fn session_resource_ref_round_trips_without_generation_collision() {
+        let resource_ref = RtpSessionResourceRef {
+            session_id: RtpSessionId("rtp-sess-42".to_string()),
+            generation: RtpSessionGeneration(3),
+            resource_ref: crate::fencing::ControlledResourceRef {
+                tenant_id: crate::ids::TenantId::new("tenant-1").unwrap(),
+                media_session_id: Some(
+                    crate::ids::MediaSessionId::new("550e8400-e29b-41d4-a716-446655440000")
+                        .unwrap(),
+                ),
+                media_binding_id: None,
+                resource_kind: "rtp_session".to_string(),
+                resource_handle: "rtp-sess-42".to_string(),
+                owner_epoch: crate::ids::OwnerEpoch(9),
+                node_instance_epoch: crate::ids::MediaNodeInstanceEpoch(4),
+                generation: crate::ids::ResourceGeneration(3),
+                origin: crate::fencing::ResourceOrigin::Local,
+            },
+        };
+        let json = serde_json::to_string(&resource_ref).unwrap();
+        let decoded: RtpSessionResourceRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, resource_ref);
+        // Sanity check that both generation fields are present and distinct.
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["generation"], 3);
+        assert_eq!(value["resource_ref"]["generation"], 3);
     }
 }
