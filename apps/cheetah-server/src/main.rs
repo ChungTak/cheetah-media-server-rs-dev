@@ -169,10 +169,9 @@ async fn main() -> anyhow::Result<()> {
 
         if scp_cfg.enabled {
             let runtime_api: std::sync::Arc<dyn cheetah_runtime_api::RuntimeApi> = runtime.clone();
-            let mut assembly =
-                signaling_control_plane::Assembly::bootstrap(&scp_cfg, runtime_api)
-                    .await
-                    .map_err(|e| anyhow::anyhow!("signaling control-plane bootstrap: {e}"))?;
+            let mut assembly = signaling_control_plane::Assembly::bootstrap(&scp_cfg, runtime_api)
+                .await
+                .map_err(|e| anyhow::anyhow!("signaling control-plane bootstrap: {e}"))?;
             // Start gRPC NotServing; mutations stay gated until registry lease.
             let addr = assembly
                 .start_grpc()

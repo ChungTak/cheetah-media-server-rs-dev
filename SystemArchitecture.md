@@ -185,17 +185,17 @@ Current GB28181 crates:
 
 GB28181 capability snapshot:
 
-- control plane (SIP): REGISTER challenge auth (with lenient `\r\n`/`\n`/`\r` line terminators and `,`/`;` Digest parameter parsing), duplicate header tolerance, keepalive, INVITE, ACK, BYE, standard/non-standard SDP negotiation
-- media sessions: GB28181 passive media stream reception, active device stream pull (via INVITE request)
-- audio talkback: bi-directional voice talk (`sendrecv` SDP negotiation)
-- compatibility baseline: robust SIP message parsing (vendored after ABLMediaServer's lenient SIP parse + DigestAuthentication), keepalive offline timeouts, customizable auth challenge, and ZLMediaKit / SMS-compatible REST endpoints.
+- control plane: **not implemented in this project**. SIP/MANSCDP/SDP/XML parsing, device registry, keepalive, call/dialog handling, and authentication are the responsibility of a third-party signaling system.
+- media sessions: GB28181 media data plane only — RTP/RTCP over UDP or TCP (active and passive), RFC 4571 2-byte and RTSP-style 4-byte interleaved framing, PS/TS/ES/raw payload, SSRC/PT binding and bounded fallback, live passive reception, active device stream pull, playback, and download.
+- audio talkback: bi-directional voice talk media loop driven by structured media parameters from the third-party controller.
+- compatibility baseline: media-level tolerance for ABLMediaServer, ZLMediaKit, and simple-media-server wire behavior (framing, payload sniffing, timestamp/PT quirks), implemented in `cheetah-codec` and the GB media module with bounded recovery. No signaling parsing or device database is maintained.
 
 GB28181 boundary clarification:
 
-- `cheetah-gb28181-core` is purely Sans-I/O. It models SIP requests/responses, device registry, keepalive timeouts, invite/bye dialogs, and SDP parsing (`GbSdp`). Interaction is driven via `Gb28181CoreInput` and yields `Gb28181CoreOutput` (like `SendSip`, `Gb28181Event`).
-- `cheetah-gb28181-driver-tokio` executes the UDP/TCP SIP message loop, handles TCP connection states, manages timer-based ticks for offline checks, and routes outgoing SIP buffers.
-- `cheetah-gb28181-module` manages GB28181 business logic, registering HTTP REST APIs (for triggering manual INVITE, BYE, and talkback), keeping track of active device maps, checking publish leases, and bridging incoming streams to the core media engine.
-- `Gb28181ModuleConfig` has `control_owner = local | signaling` (default `local`). `local` keeps the existing media SIP/GB listener; `signaling` disables it and expects the cluster signaling control plane to drive GB sessions. Module `init` fails on dual-owner configurations: `signaling` requires `signaling_control_plane.enabled=true`, and `local` conflicts with an active `canary`/`production` rollout of the signaling control plane.
+- `cheetah-gb28181-core` is purely Sans-I/O. It models GB media session state (transport, framing, SSRC/PT/container validation, request/result effects, and events). It does not model SIP requests/responses, device registry, keepalive dialogs, or SDP. Interaction is driven via explicit `Gb28181CoreInput` actions and yields `Gb28181CoreOutput` such as `SendRtp`, `SendRtcp`, and `Gb28181Event`.
+- `cheetah-gb28181-driver-tokio` executes the RTP/RTCP media I/O loop over UDP/TCP, handles TCP framing, manages timer-based ticks, and routes outgoing RTP/RTCP buffers. It does not listen for or parse SIP traffic.
+- `cheetah-gb28181-module` manages GB media business logic: media admission, resource allocation, `StreamKey` binding, publish-lease checks, and bridging incoming/outgoing media streams to the core media engine. It exposes runtime-neutral typed media APIs and optional REST aliases that only normalize media fields; it does not accept raw SIP/SDP/XML or device directory DTOs.
+- The legacy SIP/SDP/auth/listener code in `crates/protocols/gb28181/core` is historical and is scheduled for removal under plan task RMV-04; it is not part of the supported media data plane.
 
 ## 3.5 HLS Reference Mapping
 

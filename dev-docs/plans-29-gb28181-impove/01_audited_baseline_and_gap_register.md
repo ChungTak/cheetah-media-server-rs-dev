@@ -72,3 +72,47 @@ cargo clippy -p cheetah-rtp-core -p cheetah-rtp-driver-tokio \
 
 初次并行执行多个 Cargo 测试发生过共享 target artifact 竞争；串行复跑全部通过。CI 应按独立
 target dir 并行，或对共享 target 的 build/test 进行调度，避免把基础设施竞争误判为产品失败。
+
+## 6. 当前审计固定点
+
+| 项目 | 当前值 | 说明 |
+| --- | --- | --- |
+| 审计基线提交 | `d6f3534979c8a7099949115f62c5f9234f57afdc` | 本计划开始执行时的 `main` HEAD |
+| GB28181 core | `crates/protocols/gb28181/core` | 仍含历史 SIP/SDP/digest/message 代码，已标记为待移除 |
+| GB28181 driver | `crates/protocols/gb28181/driver-tokio` | 当前以 RTP/RTCP 媒体 I/O 为主 |
+| GB28181 module | `crates/protocols/gb28181/module` | 仍保留旧 REST 入口，需迁移到 typed media API |
+| 参考实现路径 | `vendor-ref/ZLMediaKit`（缺失） | 工作区未挂载 |
+| 参考实现路径 | `vendor-ref/simple-media-server`（缺失） | 工作区未挂载 |
+| 参考实现路径 | `ABLMediaServer-src-2026-07-02/ABLMediaServer`（缺失） | 工作区未挂载 |
+
+### 6.1 媒体能力现状清单
+
+| 能力 | 状态 | 证据/位置 |
+| --- | --- | --- |
+| RTP/RTCP Sans-I/O core | CODE PASS | `crates/protocols/rtp/core` |
+| RTP/RTCP tokio driver | CODE PASS | `crates/protocols/rtp/driver-tokio` |
+| RTP module engine 接入 | CODE PASS | `crates/protocols/rtp/module` |
+| GB28181 core Sans-I/O 媒体状态机 | PARTIAL | 旧 SIP/SDP 代码仍占位，需按 RMV-04 清理 |
+| GB28181 driver-tokio | PARTIAL | 媒体 I/O 存在，SIP 遗留待清理 |
+| GB28181 module | PARTIAL | 仍通过内部 HTTP/JSON 编排，API-01/02/03 后迁移 |
+| PS/TS/ES 共享编解码 | CODE PASS | `cheetah-codec` 提供基础视图 |
+| admission/fence/capacity | CODE PASS | 算法存在，待按 ADM-01/02 接入 GB 模块 |
+| typed media API/RtpSessionApi | NOT_STARTED | P1 API-01 交付 |
+| 第三方控制接口 | NOT_STARTED | P4 EXT-01..07 交付 |
+| GB28181 信令解析/监听 | REMOVED_BY_DESIGN | 本项目不实现，由第三方信令系统负责 |
+
+### 6.2 905 依赖门禁当前结论
+
+依据 `02_905_closeout_and_dependency_gates.md` 逐项复核，当前状态如下：
+
+| Gate | 当前状态 | 解除条件 |
+| --- | --- | --- |
+| CL904-02..05 | BLOCKED | 904 同候选证据签署 |
+| media API revision | BLOCKED | 固定 RtpSessionApi/schema 并迁移调用方 |
+| adapter compatibility | BLOCKED | 完成 compatibility suite |
+| GRPC-01..10 | BLOCKED | 全 typed service + mapper |
+| NODE/EVT/REC | BLOCKED | 生产 registry/event/recovery 装配 |
+| CRED/FETCH/SEC | BLOCKED | mTLS、scope、rotation 与 leak test |
+| REL-GB | BLOCKED | CI、双架构、SBOM、24h、签名证据齐全 |
+
+> 注：以上 BLOCKED 状态不影响 P0/P1/P2 GB 媒体数据面子任务的独立开发；各 gate 解除条件在后续任务中逐步满足。
