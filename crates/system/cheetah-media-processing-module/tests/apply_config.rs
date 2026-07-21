@@ -26,8 +26,10 @@ async fn identical_config_is_immediate() {
 #[tokio::test(flavor = "current_thread")]
 async fn profile_change_requires_restart() {
     let mut module = MediaProcessingModule::new();
-    let mut cfg = MediaProcessingModuleConfig::default();
-    cfg.profile = "software".to_string();
+    let cfg = MediaProcessingModuleConfig {
+        profile: "software".to_string(),
+        ..Default::default()
+    };
     assert_eq!(
         module.apply_config(change(cfg)).await.unwrap(),
         ConfigEffect::ModuleRestartRequired
@@ -37,8 +39,10 @@ async fn profile_change_requires_restart() {
 #[tokio::test(flavor = "current_thread")]
 async fn max_concurrent_jobs_increase_is_immediate_when_no_usage() {
     let mut module = MediaProcessingModule::new();
-    let mut cfg = MediaProcessingModuleConfig::default();
-    cfg.max_concurrent_jobs = 128;
+    let cfg = MediaProcessingModuleConfig {
+        max_concurrent_jobs: 128,
+        ..Default::default()
+    };
     assert_eq!(
         module.apply_config(change(cfg)).await.unwrap(),
         ConfigEffect::Immediate
@@ -48,8 +52,10 @@ async fn max_concurrent_jobs_increase_is_immediate_when_no_usage() {
 #[tokio::test(flavor = "current_thread")]
 async fn max_image_width_decrease_is_immediate_when_no_usage() {
     let mut module = MediaProcessingModule::new();
-    let mut cfg = MediaProcessingModuleConfig::default();
-    cfg.max_image_width = 100;
+    let cfg = MediaProcessingModuleConfig {
+        max_image_width: 100,
+        ..Default::default()
+    };
     assert_eq!(
         module.apply_config(change(cfg)).await.unwrap(),
         ConfigEffect::Immediate
@@ -59,8 +65,10 @@ async fn max_image_width_decrease_is_immediate_when_no_usage() {
 #[tokio::test(flavor = "current_thread")]
 async fn max_encoded_frame_bytes_decrease_requires_restart() {
     let mut module = MediaProcessingModule::new();
-    let mut cfg = MediaProcessingModuleConfig::default();
-    cfg.max_encoded_frame_bytes = 1024;
+    let cfg = MediaProcessingModuleConfig {
+        max_encoded_frame_bytes: 1024,
+        ..Default::default()
+    };
     assert_eq!(
         module.apply_config(change(cfg)).await.unwrap(),
         ConfigEffect::ModuleRestartRequired
@@ -70,8 +78,10 @@ async fn max_encoded_frame_bytes_decrease_requires_restart() {
 #[tokio::test(flavor = "current_thread")]
 async fn max_overlay_font_size_decrease_requires_restart() {
     let mut module = MediaProcessingModule::new();
-    let mut cfg = MediaProcessingModuleConfig::default();
-    cfg.max_overlay_font_size = 64;
+    let cfg = MediaProcessingModuleConfig {
+        max_overlay_font_size: 64,
+        ..Default::default()
+    };
     assert_eq!(
         module.apply_config(change(cfg)).await.unwrap(),
         ConfigEffect::ModuleRestartRequired
