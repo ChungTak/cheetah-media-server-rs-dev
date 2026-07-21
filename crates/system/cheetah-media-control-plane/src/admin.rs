@@ -5,10 +5,10 @@
 
 use async_trait::async_trait;
 use cheetah_media_api::admin::{
-    AdminApi, AdminIdentity, CheckpointStoreRequest, CheckpointStoreResponse, CleanupOrphanRequest,
-    CleanupOrphanResponse, DiagnosticsRequest, DiagnosticsResponse, DrainNodeRequest,
-    DrainNodeResponse, RotateTlsRequest, RotateTlsResponse, TriggerReconciliationRequest,
-    TriggerReconciliationResponse,
+    AdminApi, AdminIdentity, AdminScope, CheckpointStoreRequest, CheckpointStoreResponse,
+    CleanupOrphanRequest, CleanupOrphanResponse, DiagnosticsRequest, DiagnosticsResponse,
+    DrainNodeRequest, DrainNodeResponse, RotateTlsRequest, RotateTlsResponse,
+    TriggerReconciliationRequest, TriggerReconciliationResponse,
 };
 use cheetah_media_api::error::MediaError;
 
@@ -28,9 +28,15 @@ impl AdminApi for ControlPlane {
 
     async fn trigger_reconciliation(
         &self,
-        _identity: &AdminIdentity,
+        identity: &AdminIdentity,
         _request: TriggerReconciliationRequest,
     ) -> Result<TriggerReconciliationResponse, MediaError> {
+        if !identity.has_scope(AdminScope::Reconcile) {
+            return Err(MediaError::new(
+                cheetah_media_api::error::MediaErrorCode::PermissionDenied,
+                "admin identity lacks Reconcile scope",
+            ));
+        }
         let _report = self
             .reconciler
             .reconcile(now_ms(), &ReconcileLimits::default())
@@ -71,5 +77,62 @@ impl AdminApi for ControlPlane {
     ) -> Result<CleanupOrphanResponse, MediaError> {
         self.reconciler.cleanup_orphan(identity, &request).await?;
         Ok(CleanupOrphanResponse { cleaned: true })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use cheetah_media_api::admin::{
+        AdminApi, AdminIdentity, AdminScope, ReconcileScope, TriggerReconciliationRequest,
+    };
+    use cheetah_media_api::error::MediaErrorCode;
+    use cheetah_runtime_tokio::TokioRuntime;
+
+    use crate::facade::ControlPlane;
+    use crate::sqlite::SqliteStore;
+
+    fn runtime() -> Arc<TokioRuntime> {
+        Arc::new(TokioRuntime::new())
+    }
+
+    async fn control_plane() -> ControlPlane {
+        let runtime = runtime();
+        let store = SqliteStore::new(runtime.clone(), ":memory:").await.unwrap();
+        ControlPlane::new(
+            runtime,
+            Arc::new(store.clone()),
+            Arc::new(store.clone()),
+            Arc::new(store.clone()),
+            Arc::new(store.clone()),
+        )
+    }
+
+    #[tokio::test]
+    async fn trigger_reconciliation_requires_reconcile_scope() {
+        let cp = control_plane().await;
+        let req = TriggerReconciliationRequest {
+            scope: ReconcileScope::All,
+            node_id: None,
+            tenant_id: None,
+        };
+
+        let no_scope = AdminIdentity {
+            common_name: "ops".to_string(),
+            scopes: vec![AdminScope::Orphan],
+        };
+        let err = cp
+            .trigger_reconciliation(&no_scope, req.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, MediaErrorCode::PermissionDenied);
+
+        let with_scope = AdminIdentity {
+            common_name: "ops".to_string(),
+            scopes: vec![AdminScope::Reconcile],
+        };
+        let resp = cp.trigger_reconciliation(&with_scope, req).await.unwrap();
+        assert!(resp.triggered);
     }
 }
