@@ -969,8 +969,10 @@ mod tests {
             output_policy: Default::default(),
             record_policy: None,
         };
-        let mut policy = OutboundUrlPolicy::default();
-        policy.deny_unknown_query_keys = vec!["token".to_string()];
+        let policy = OutboundUrlPolicy {
+            deny_unknown_query_keys: vec!["token".to_string()],
+            ..Default::default()
+        };
 
         let sanitized = req.sanitized_source_url(&policy).unwrap();
         assert!(sanitized.contains("example.com:8443"), "{sanitized}");
@@ -1001,9 +1003,11 @@ mod tests {
             retry_policy: RetryPolicy::default(),
             protocol_options: HashMap::new(),
         };
-        let mut policy = OutboundUrlPolicy::default();
-        policy.allowed_schemes = vec!["rtsps".to_string()];
-        policy.deny_unknown_query_keys = vec!["key".to_string()];
+        let policy = OutboundUrlPolicy {
+            allowed_schemes: vec!["rtsps".to_string()],
+            deny_unknown_query_keys: vec!["key".to_string()],
+            ..Default::default()
+        };
 
         let sanitized = req.sanitized_destination_url(&policy).unwrap();
         assert!(sanitized.contains("host.example:1935"), "{sanitized}");
