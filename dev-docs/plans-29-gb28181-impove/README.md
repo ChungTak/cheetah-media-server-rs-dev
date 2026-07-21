@@ -14,7 +14,7 @@
   - `vendor-ref/simple-media-server`
 - 905 当前结论：**BLOCKED**。领域类型、SQLite store、幂等/事件/恢复/容量算法与 mTLS health
   骨架已存在；typed media RPC、生产 Registry/SecretExchange/Snapshot client、engine facade
-  装配、信令接管、CI 发布矩阵和签名 evidence 尚未闭环。
+  装配、第三方控制接入、CI 发布矩阵和签名 evidence 尚未闭环。
 - 当前 GB28181/RTP crate 的 unit、integration、property tests、runtime boundary check 和
   `clippy --tests -- -D warnings` 通过；这只证明当前代码基线可继续开发，不代表功能完成。
 
@@ -22,10 +22,12 @@
 
 - 协议保持 `core + driver-tokio + module`；core 必须是显式 Input/Output/Event/Timer 的
   Sans-I/O 状态机。
-- SIP、MANSCDP、设备目录和信令数据库归外部 `cheetah-signaling` 所有；媒体进程不得建设
-  第二套生产信令平台。
-- `control_owner=local` 仅用于 legacy 迁移；`control_owner=signaling` 时本地生产 SIP listener
-  必须关闭，双 owner 必须启动失败。
+- 本项目只实现流媒体能力，不监听、解析或处理 SIP/MANSCDP/SDP/XML，不维护设备目录、注册、
+  心跳、告警、信令事务或信令数据库。
+- 第三方信令系统负责完整 GB28181 信令，并将协商后的结构化媒体参数传给本项目；本项目不接受
+  原始 SIP/SDP/XML 作为媒体 API 输入。
+- 现有 GB SIP listener/parser/session/auth 代码退出生产路径并按迁移任务删除，不保留 local
+  signaling owner 或双实现模式。
 - GB module 通过 runtime-neutral typed port 调用 RTP 能力，不通过 module-to-module HTTP/JSON。
 - 所有资源创建先执行 deadline、fencing、drain、capacity 与 `MediaAdmissionApi::authorize`；
   Deny 或任一步失败不得遗留端口、socket、worker、task、publisher lease 或成功幂等记录。
@@ -41,12 +43,12 @@
 | P0 | 固定真实基线与 905 依赖 | 当前 main 可构建 | AUD/905/DOC 全部完成 |
 | P1 | typed API 与原子资源生命周期 | P0 PASS | API/ADM/LIFE 全部通过 |
 | P2 | PS/RTP/RTCP/JTT/Ehome 数据面 | P1 公共接口稳定 | CODEC/RTP/DRV 全部通过 |
-| P3 | GB module、对讲、回放和下载 | P2 数据面稳定 | MOD/TALK/PLAY 全部通过 |
-| P4 | 外部信令接管与 legacy 收敛 | CT-01..03 固定 | SIG/MIG/REC 全部通过 |
+| P3 | GB 媒体 module、对讲、回放和下载 | P2 数据面稳定 | MOD/TALK/PLAY 全部通过 |
+| P4 | 第三方控制接口与旧信令代码退出 | P1 API 稳定 | EXT/RMV 全部通过 |
 | P5 | 互操作、安全、长稳和发布 | P1..P4 完成 | TEST/SEC/OBS/REL 全部 PASS |
 
-P1～P3 不依赖最终 Proto，可在 CT-01 外部 blocker 存在时推进。P4 的 cluster/signaling 路径
-不得使用临时 Proto 或 generic command 代替固定合同。
+媒体 Domain API 不依赖第三方信令 Proto。HTTP/gRPC 等 adapter 只能把外部 DTO 映射为本项目的
+typed media request；不得把信令解析或厂商信令 DTO 下沉到 core/module。
 
 ## 4. 文档索引
 
@@ -57,7 +59,7 @@ P1～P3 不依赖最终 Proto，可在 CT-01 外部 blocker 存在时推进。P4
 5. [PS、RTP、RTCP 与时间线](05_codec_ps_rtp_rtcp_timeline.md)
 6. [RTP core、driver 与传输鲁棒性](06_rtp_core_driver_transport_robustness.md)
 7. [GB module 准入与生命周期](07_gb_media_module_admission_lifecycle.md)
-8. [信令所有权与 legacy SIP](08_signaling_ownership_and_legacy_sip.md)
+8. [第三方控制接口与信令边界](08_external_control_api_and_signaling_boundary.md)
 9. [对讲、回放与下载](09_voice_talk_playback_download.md)
 10. [安全、观测与运维](10_security_observability_operations.md)
 11. [测试、互操作、Fuzz 与 CI](11_test_interop_fuzz_ci.md)
@@ -68,9 +70,10 @@ P1～P3 不依赖最终 Proto，可在 CT-01 外部 blocker 存在时推进。P4
 
 - [ ] 905 的状态与代码、应用装配、CI/evidence 一致，不再以算法单测代替生产闭环。
 - [ ] GB module 不再通过 HTTP/JSON 调用 RTP module，公共 API 无 Tokio/tonic 类型泄漏。
-- [ ] admission 拒绝、超时、取消、SIP 失败和 socket 失败均实现零资源残留。
+- [ ] admission 拒绝、超时、取消、外部请求中断和 socket 失败均实现零资源残留。
 - [ ] UDP/TCP active/passive、2/4-byte framing、PS/ES/TS、RTP/RTCP 与非标准 PT 有真实样例。
 - [ ] PS/JTT/Ehome 的已支持能力均通过 wire fixture；未验证能力明确返回 Unsupported。
-- [ ] `local`/`signaling` 唯一 owner、drain、重启、reconciliation 与 generation fencing 通过。
+- [ ] 项目制品不启动或链接 GB SIP listener/parser/transaction；第三方控制接口、drain、重启、
+  reconciliation 与 generation fencing 通过。
 - [ ] ABL/ZLM/SMS 兼容矩阵、恶意输入、故障注入、性能和 24 小时长稳 evidence 齐全。
 - [ ] `SystemArchitecture.md`、相关 README、配置与功能矩阵同步更新。

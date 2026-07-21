@@ -28,6 +28,18 @@
 - 协议测试工具放在 `crates/protocols/<proto>/testing/<kind>/`，如 `testing/property-tests`。
 - fuzz harness 放在 `crates/protocols/<proto>/fuzz/`，作为独立 cargo-fuzz workspace 管理，默认不加入根 workspace members。
 
+## 1.3 流媒体职责与 GB28181 边界
+
+- 本项目是流媒体服务器，只负责媒体资源、媒体传输、封装/解封装、时间线、发布/订阅、录制、回放、对讲和可选媒体处理能力。
+- 本项目**不负责 GB28181 信令**：不得监听信令端口，不得实现或处理 SIP transport、SIP 报文解析/序列化、REGISTER、Digest、事务、dialog、路由、重传、ACK/CANCEL/BYE、SDP offer/answer 或 MANSCDP/XML。
+- 本项目不维护 GB28181 设备、通道、注册、心跳、目录、录像检索、告警、位置、广播或信令状态数据库；这些能力全部由第三方信令系统负责。
+- 第三方信令系统完成信令和 SDP 协商后，只能通过本项目公开的媒体 API 传入已解析、已协商的结构化媒体参数，例如 session/stream 标识、媒体方向、UDP/TCP、active/passive、本地/远端 endpoint、RTP/RTCP mux、framing、SSRC、payload type、codec、clock rate、channels、PS/TS/ES 和回放时间范围。
+- SDK、Domain、protocol core 和 module 公共接口不得接受 raw SIP、raw SDP、MANSCDP/XML、Digest、Call-ID/CSeq/Via/Contact/Route 或第三方设备目录 DTO。第三方相关 DTO 只能存在于边界 adapter，并必须立即映射为 runtime-neutral、framework-neutral 的媒体请求。
+- 对外 HTTP、gRPC、C API 或应用内 trait 只封装媒体 open/connect/update/stop/get/list、媒体事件和统计；adapter 不得隐式发起、代理或处理信令操作。
+- `cheetah-gb28181-core` 只保留 GB 媒体会话状态、SSRC/PT/container/framing 校验和显式媒体 action；`cheetah-gb28181-driver-<runtime>` 只驱动 RTP/RTCP 媒体 I/O；`cheetah-gb28181-module` 只负责媒体准入、资源分配、StreamKey 绑定和引擎接入。
+- 仓库中既有 SIP/SDP/XML/listener/transaction/auth 代码属于待迁移删除的历史实现，不得继续补功能、加兼容分支或接入生产路径。过渡适配必须放在仓库外或独立第三方进程，通过公开媒体 API 调用本项目。
+- 参考 ABLMediaServer、ZLMediaKit、simple-media-server 等项目时，只吸收其 RTP/RTCP、PS/TS/ES、JTT1078、Ehome、对讲、回放、传输兼容、鲁棒性和性能经验；不得移植其 SIP、SDP、XML、设备管理或其他信令业务实现。
+
 ## 2. 分层与依赖方向
 
 - 严格遵守六层架构，依赖方向只能单向向下。
@@ -86,6 +98,7 @@
 - module 不得直接依赖 `tokio::net`、`tokio::time`、`tokio::sync`、`tokio_util::sync`；需要的取消、任务句柄、完成通知统一走 `RuntimeApi` / SDK 抽象。
 - module 不得使用 `tokio::select!`；多路等待统一使用 runtime-neutral 原语（如 `CancellationToken` + futures 组合子）。
 - 资源分配、会话绑定、鉴权、API 路由、业务映射写在 module。
+- GB28181 module 中的“业务映射”只指外部结构化媒体请求到媒体资源/StreamKey 的映射，不包括 SIP、SDP、MANSCDP/XML、设备目录或信令事务处理。
 - publish、play、proxy 创建（pull / push）、processing job 创建、RTP open 等会分配租约/端口/worker/会话的资源操作，必须在分配前调用 `MediaAdmissionApi::authorize`；`Deny` 时不得留下任何租约、端口、worker、任务或幂等成功记录。
 - 当配置应用结果为 `ModuleRestartRequired` 时，由基础层执行模块重建重启（`create -> init -> start`）；module 不应自行绕过该语义维护私有重启流程。
 - `ModuleManagerApi::restart_module / restart_modules` 只接受 `Running` 模块；非 `Running` 状态必须返回 `Conflict`，避免绕过生命周期约束。
@@ -154,6 +167,8 @@
 - 涉及时间戳、重排、参数集补发、协议兼容修复时，必须补测试。
 - 涉及编解码、图片处理、混音、ABR 或字幕时，必须覆盖 feature-off、preflight、真实输出解码、backpressure、取消和资源泄漏。
 - 修复真实设备或真实客户端兼容问题时，优先补可复现样例或回归测试。
+- GB28181 互操作测试只验证公开媒体 API 和 RTP/RTCP、PS/TS/ES、JTT1078、Ehome、对讲、回放/下载等媒体数据面；不得把 SIP/SDP/XML 信令测试作为本项目功能或完成条件。
+- GB28181 发布检查必须确认生产制品不监听信令端口、不创建 SIP transaction/dialog 任务，并且公共媒体 API 不接受 raw signaling payload。
 
 ## 12. 提交前最低检查
 
@@ -190,3 +205,4 @@
 - 媒体统一：`AVFrame + TrackInfo`
 - 时间统一：显式注入、统一归一化
 - 实现统一：兼容优先、性能优先、边界清晰
+- GB28181 边界：第三方负责全部信令，Cheetah 只提供结构化媒体 API 和媒体数据面

@@ -25,7 +25,7 @@ codec/timebase/track identity。兼容分支放 `compat` 子模块并记录 rule
 | --- | --- | --- |
 | CODEC-RTP-01 | seq 扩展、重复检测、乱序窗口和 wrap 统一实现 | loss/reorder/wrap property tests |
 | CODEC-RTP-02 | timestamp unwrap、timebase 转换、DTS/PTS/discontinuity 进入共享 timeline | long-run/wrap fixtures |
-| CODEC-RTP-03 | PT resolver 按 SDP binding → profile mapping → bounded sniff 排序 | ambiguous/unknown PT tests |
+| CODEC-RTP-03 | PT resolver 按外部 payload binding → profile mapping → bounded sniff 排序 | ambiguous/unknown PT tests |
 | CODEC-RTP-04 | payload 类型达到置信阈值后锁定；中途变化生成 format-change 或终止 | spoof/PT flip tests |
 | CODEC-RTP-05 | PS/TS/ES depacketizer 输出 `AVFrame + TrackInfo` | real decoder/player artifact |
 

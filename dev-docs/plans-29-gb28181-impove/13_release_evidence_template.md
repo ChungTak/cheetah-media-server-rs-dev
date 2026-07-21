@@ -8,10 +8,10 @@
 | 字段 | 值 |
 | --- | --- |
 | Cheetah commit | |
-| signaling contract tag/full revision | |
-| descriptor SHA-256 | |
-| 904 evidence | |
-| 905 evidence | |
+| external media API revision | |
+| adapter schema/descriptor SHA-256 | |
+| 904 evidence/profile applicability | |
+| 905 evidence/profile applicability | |
 | Rust/Cargo/OS/arch | |
 | Cargo.lock checksum | |
 | configuration/profile checksum | |
@@ -20,12 +20,14 @@
 | SBOM/license report | |
 | 测试时间/执行人 | |
 
-## 2. 905 依赖
+## 2. 可选控制面 Profile
+
+未启用相关 feature 时填写 `N/A` 并附 cargo tree；纯 GB 媒体发布不要求可选 904/905 profile PASS。
 
 | Gate | Evidence | 结果 |
 | --- | --- | --- |
 | CL904-01..05 | | |
-| CT-01..03 | | |
+| external media API revision/schema | | |
 | typed GRPC-01..10 | | |
 | Registry/lease/drain/capacity | | |
 | Event/query/reconciliation | | |
@@ -85,19 +87,19 @@
 | queue backpressure/slow peer | | |
 | JTT2013/2019/Ehome2 | | |
 
-## 6. Signaling 与迁移
+## 6. 外部媒体接口与信令代码退出
 
 | 场景 | Evidence | 结果 |
 | --- | --- | --- |
-| local REGISTER Digest/replay | | |
-| INVITE/1xx/2xx/ACK/CANCEL/BYE | | |
-| SDP Subject/y/time/TCP negotiation | | |
-| SIP parser limits/fuzz | | |
-| signaling typed contract mapper | | |
-| register/heartbeat/lease/drain | | |
-| local/signaling double-owner rejection | | |
-| shadow/canary/full rollout | | |
-| rollback/drain/reconciliation | | |
+| open receiver/sender/talk | | |
+| two-stage open/connect timeout | | |
+| update generation/fencing | | |
+| stop/get/list/event | | |
+| HTTP/gRPC adapter typed mapper | | |
+| raw SIP/SDP/XML input rejection | | |
+| no SIP listener/parser/runtime task | | |
+| old API caller migration | | |
+| controller outage/drain/reconciliation | | |
 
 ## 7. 互操作与真实输出
 
@@ -117,9 +119,9 @@
 
 | 场景 | Evidence | 结果 |
 | --- | --- | --- |
-| Digest nonce/qop/nc/expiry/replay | | |
+| API identity/tenant/deadline/rate limit | | |
 | cross-tenant/resource scope | | |
-| oversized SIP/RTP/PS/JTT/Ehome | | |
+| oversized API/RTP/PS/JTT/Ehome | | |
 | RTP source injection/rebind rate | | |
 | mTLS identity/rotation | | |
 | log/event/store/error secret scan | | |
@@ -134,7 +136,7 @@
 | fmt/clippy/unit/property | | | |
 | fuzz/sanitizer | | | |
 | driver/module E2E | | | |
-| signaling contract | | | |
+| external media contract | | | |
 | interop/security | | | |
 | receive/send/talk throughput | | | |
 | packet latency/loss/reorder | | | |
@@ -162,7 +164,7 @@ outage、cert rotation 和最终 leak report：
 | --- | --- | --- | --- |
 | architecture/API | | | |
 | codec/RTP | | | |
-| GB/signaling | | | |
+| GB/media API | | | |
 | security | | | |
 | performance/stability | | | |
 | release | | | |

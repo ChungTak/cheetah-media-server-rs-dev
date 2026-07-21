@@ -9,14 +9,14 @@ Requested
  -> CapacityReserved
  -> PortOrPublisherReserved
  -> TransportReady
- -> SignalingBound
+ -> MediaBound
  -> Active
  -> Draining
  -> Stopped | Failed
 ```
 
-状态只允许单向推进；每个 state transition 携带 generation 和 effect outcome。外部 signaling
-模式下 `SignalingBound` 表示固定合同中的 binding 已确认；local 模式表示 SIP transaction 已完成。
+状态只允许单向推进；每个 state transition 携带 generation 和 effect outcome。`MediaBound` 表示
+外部请求提供的 stream/session 与已创建 RTP transport 已完成结构化绑定，不涉及任何信令事务。
 
 ## 2. Admission 与资源顺序
 
@@ -30,8 +30,8 @@ Requested
 | LIFE-04 | stop 统一清理 transport、timer、task、lease、resource/event | leak counter tests |
 | LIFE-05 | module restart 由基础层 create→init→start，恢复后 reconcile | restart E2E |
 
-不得保留“先 bind RTP、后调用鉴权”的 legacy 顺序。需要监听端口用于 SDP 时，也必须在 authorize
-后租用；SIP/contract 失败由 guard 归还。
+不得保留“先 bind RTP、后调用鉴权”的 legacy 顺序。需要返回监听端口供第三方继续协商时，也必须
+在 authorize 后租用；外部请求取消、超时或后续 connect 失败由 guard/显式 stop 归还。
 
 ## 3. GB 与 RTP module 解耦
 
@@ -55,11 +55,11 @@ Requested
 
 - 同 idempotency key + 同 canonical digest 返回首次结果；不同 digest 返回 Conflict。
 - create 与 stop 并发由 generation CAS 决定，stop 已胜出后迟到的 bind/task 不得提交。
-- 多个重复 SIP/contract callback 只能推进同一 session，不得再租端口或再 spawn worker。
+- 多个重复 open/connect/update 请求只能推进同一 session，不得再租端口或再 spawn worker。
 - shutdown/drain 拒绝新 create，允许 get/list/stop；达到 deadline 后报告未清理资源，不静默退出。
 
 ## 6. 配置
 
-配置使用具名结构，至少包含 port pool、session limits、buffer limits、idle/handshake timeout、source
-binding、compat profile 和 control owner。固定端口只允许显式 single-session/test 配置，生产默认
+配置使用具名结构，至少包含 port pool、session limits、buffer limits、idle/connect timeout、source
+binding 和 media compat profile。固定端口只允许显式 single-session/test 配置，生产默认
 使用有界 port range。配置应用返回 `Applied` 或 `ModuleRestartRequired`，module 不私建重启流程。

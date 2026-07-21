@@ -10,7 +10,6 @@
 
 | 能力 | ABLMediaServer | ZLMediaKit | simple-media-server | Cheetah 决策 |
 | --- | --- | --- | --- | --- |
-| SIP 行结束符/重复头 | 宽容 CRLF/LF/CR 和重复参数 | 设备实战兼容 | 完整 GB SIP/XML 业务 | legacy parser 有界兼容；生产业务归 signaling |
 | TCP RTP framing | 2-byte/`$` 4-byte 自动识别 | 2/4-byte + Ehome2 | active/passive 收发 | per-connection sticky detect + bounded resync |
 | TCP 错帧恢复 | SSRC/PS 特征恢复 | 两处匹配 SSRC + PS system header | 多种数据源兼容 | 采用有界双证据恢复，禁止无限扫描 |
 | PS/ES/PT | PS、AAC、H264/H265、G711 | configurable PT + PS/TS sniff | PS/RTP/JTT/Ehome | 有界 sniff，置信后锁定并上报 provenance |
@@ -19,7 +18,7 @@
 | publish auth cache | 无统一控制面语义 | 鉴权前短暂缓存 | hook/API 编排 | 只在 admission 后有界缓存，不复制先分配行为 |
 | JT/T 1078 | 2013/2019 ingress/egress | 非主能力 | 2013/2019 媒体路径 | 完成版本自动识别和双向 fixture |
 | Ehome | Ehome2 兼容 | Ehome2 256-byte prefix | Ehome2/Ehome5 目录 | Ehome2 验证；Ehome5 未有 fixture 则 Unsupported |
-| 对讲 | raw/PS、常用音频 PT | RtpSender/voice talk | SIP Broadcast + media | signaling 发起，media 执行 typed talk session |
+| 对讲 | raw/PS、常用音频 PT | RtpSender/voice talk | Broadcast + media | 第三方控制系统发起，media 执行 typed talk session |
 
 ## 3. 兼容 Profile
 
@@ -28,7 +27,7 @@
 | `strict` | 否 | 严格长度、明确 PT/容器、禁止 SSRC 推导和自动 rebind |
 | `gb28181_common` | 是 | 标准 GB28181 + 已验证的常见设备宽容项 |
 | `zlm` | 否 | 2/4-byte、SSRC fallback、PT/PS/TS 探测、有限 resync |
-| `sms` | 否 | SMS 风格 REST aliases、Subject/y/设备媒体参数规范化 |
+| `sms` | 否 | SMS 风格 RTP/PS/PT/SSRC 媒体参数规范化，不包含其 SIP/XML 行为 |
 | `abl` | 否 | ABL framing/PT/JTT 行为，但使用 Cheetah 有界安全实现 |
 | `hikvision_ehome` | 否 | 仅启用已验证 Ehome2 framing；Ehome5 单独 capability gate |
 | `jtt1078` | 否 | SIM/channel、2013/2019 header、fragment/timestamp 规则 |

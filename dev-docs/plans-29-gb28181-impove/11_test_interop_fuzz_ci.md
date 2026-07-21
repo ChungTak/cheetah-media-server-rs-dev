@@ -14,10 +14,10 @@
 | --- | --- | --- |
 | codec/core unit | split every byte、PSM late/change、PES zero、H264/H265/AAC/G711、seq/ts wrap | TST-CORE |
 | property | parser roundtrip、任意 fragmentation、reorder/duplicate、bounded state invariant | TST-PROP |
-| fuzz | SIP/SDP/PS/PES/RTP/RTCP/framing/JTT/Ehome；no panic/OOM/unbounded loop | TST-FUZZ |
+| fuzz | media API/PS/PES/RTP/RTCP/framing/JTT/Ehome；no panic/OOM/unbounded loop | TST-FUZZ |
 | driver | UDP/TCP active/passive、2/4-byte、mux/separate RTCP、half-close、slow peer | TST-DRV |
 | module | admission、capacity、port/publisher、idempotency、cancel、restart、rollback | TST-MOD |
-| signaling | local transaction；fixed contract mapper/fencing/event/query | TST-SIG |
+| external API | typed mapper、two-stage open/connect、fencing/event/query | TST-EXT |
 | interop | ABL/ZLM/SMS style + 已授权真实设备 | TST-IOP |
 | operational | loss/reorder/NAT/port exhaustion/registry outage/cert rotation/drain | TST-OPS |
 
@@ -31,7 +31,7 @@
 6. 乱序、重复、序列/时间戳回绕输出单调媒体时间线，慢 session 不影响其他 session。
 7. 无 PSM 与动态 PT 的 H264/H265/AAC/G711 fixture 被正确规范化，歧义输入明确拒绝。
 8. JT1078 2013/2019 双向组包/拆包；Ehome2 实包；Ehome5 未 gate 时 Unsupported。
-9. local/signaling 切换无双 listener/双 mutation，drain/reconcile 后资源收敛。
+9. 生产制品无 GB SIP listener/parser/task；第三方 two-stage open/connect 超时后资源自动收敛。
 10. talk/playback/download 取消或远端失败无端口、reader、blocking worker 和 publisher 泄漏。
 
 ## 4. 互操作套件
@@ -40,10 +40,10 @@
 | --- | --- | --- |
 | IOP-ABL | 2/4-byte、PS/raw、PT96/97/98/99、G711、JTT2013/2019 | packet transcript + decoded sample |
 | IOP-ZLM | SSRC fallback、PS/TS sniff、TCP resync、RTCP、active/passive | session/event/stats report |
-| IOP-SMS | REST aliases、Subject/y、live/playback/download/talk media binding | black-box report |
+| IOP-SMS | REST media aliases、SSRC、live/playback/download/talk media binding | black-box report |
 | IOP-DEVICE | 至少覆盖 UDP、TCP active、TCP passive、H264、H265、PCMA talk | sanitized pcap + player evidence |
 
-互操作只验证本仓媒体责任；Catalog/RecordInfo/Alarm 等由 signaling contract suite 验证。
+互操作只验证本仓媒体责任；REGISTER/Catalog/RecordInfo/Alarm/SDP 等不属于本项目测试范围。
 
 ## 5. CI lanes
 
@@ -52,7 +52,7 @@
 - `gb-module`: feature-off/on、fake admission、lifecycle E2E、REST compatibility adapter。
 - `gb-fuzz-smoke`: 固定 corpus 与短时 sanitizer；nightly 执行长 fuzz。
 - `gb-interop`: reference fixtures；需要设备的 lane 显式 gated，不以跳过标 PASS。
-- `signaling-contract`: CT-01 固定后运行 simulator 与真实 adapter 同一套测试。
+- `external-media-contract`: 第三方 simulator 与真实 HTTP/gRPC adapter 运行同一套媒体 API 测试。
 - `gb-security`: malformed/limits/secret scan/mTLS/source spoof。
 - `gb-soak`: nightly/候选版本执行故障注入与 24 小时长稳。
 
@@ -80,7 +80,7 @@ cargo test -p cheetah-rtp-property-tests
 
 ## 7. 长稳退出条件
 
-候选制品执行 24 小时混合收发、create/stop、loss/reorder、peer reconnect、module restart、registry
+候选制品执行 24 小时混合收发、create/stop、loss/reorder、peer reconnect、module restart、controller
 短时中断与证书轮换。退出时没有存活的已停止 session、未归还端口/permit/lease、孤立 task/worker；
 RSS/queue/resource 曲线无持续无界增长。性能回归与允许阈值由同硬件基线报告逐项签署，不用跨机器
 绝对数替代回归判断。
