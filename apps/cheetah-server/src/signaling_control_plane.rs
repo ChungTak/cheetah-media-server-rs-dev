@@ -166,8 +166,10 @@ impl Assembly {
             max_encoding_message_size: cfg.grpc.message_limits.max_outbound_size as usize,
         };
         if !cfg.tls.server_cert_pem.is_empty() {
-            let mut tls =
-                GrpcTlsConfig::new(cfg.tls.server_cert_pem.clone(), cfg.tls.server_key_pem.clone());
+            let mut tls = GrpcTlsConfig::new(
+                cfg.tls.server_cert_pem.clone(),
+                cfg.tls.server_key_pem.clone(),
+            );
             tls.client_ca_pem = cfg.tls.client_ca_pem.clone();
             tls.client_cert_required = cfg.tls.client_cert_required;
             grpc_config.tls = Some(tls);
@@ -230,9 +232,7 @@ impl Assembly {
         let (adapter, mut health) = GrpcAdapter::start(self.grpc_config.clone())
             .await
             .map_err(|e| e.to_string())?;
-        health
-            .set_overall(GrpcServingStatus::NotServing)
-            .await;
+        health.set_overall(GrpcServingStatus::NotServing).await;
         let addr = adapter.bound_addr();
         self.adapter = Some(adapter);
         self.health = Some(health);
@@ -340,7 +340,10 @@ fn build_node_identity(cfg: &SignalingControlPlaneConfig) -> Result<NodeIdentity
         labels: Default::default(),
         advertised_media_addresses: cfg.registry.addresses.clone(),
         build_version: env!("CARGO_PKG_VERSION").to_string(),
-        contract_range: format!(">={}, <={}", cfg.contract.min_version, cfg.contract.max_version),
+        contract_range: format!(
+            ">={}, <={}",
+            cfg.contract.min_version, cfg.contract.max_version
+        ),
         contract_checksum: checksum,
         capability_generation: 1,
     })
