@@ -3,11 +3,11 @@
 //! 节目流（PS）复用器。
 
 use crate::frame::AVFrame;
+use crate::prelude::*;
 use crate::ps::encode_pts_dts;
 use crate::track::{CodecId, MediaKind, TrackInfo};
 use crate::ts_common::crc32_mpeg2;
 use bytes::Bytes;
-use std::collections::HashMap;
 
 /// Program Stream (PS) muxer.
 ///
