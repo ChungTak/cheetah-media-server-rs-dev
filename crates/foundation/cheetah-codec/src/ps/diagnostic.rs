@@ -2,8 +2,8 @@
 //!
 //! PS 解复用器诊断与事件。
 
-use crate::prelude::*;
 use crate::frame::AVFrame;
+use crate::prelude::*;
 use crate::track::TrackInfo;
 
 /// Configuration for the PS demuxer.
