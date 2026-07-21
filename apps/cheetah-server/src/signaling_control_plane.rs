@@ -217,11 +217,22 @@ mod tests {
 
     #[test]
     fn enabled_config_requires_fields() {
-        let mut cfg = SignalingControlPlaneConfig::default();
-        cfg.enabled = true;
-        cfg.grpc.listen = "127.0.0.1:9090".to_string();
-        cfg.store.path = "/tmp/test.db".to_string();
-        cfg.registry.node_identity = "node-1".to_string();
+        let mut cfg = SignalingControlPlaneConfig {
+            enabled: true,
+            grpc: GrpcConfig {
+                listen: "127.0.0.1:9090".to_string(),
+                ..Default::default()
+            },
+            store: StoreConfig {
+                path: "/tmp/test.db".to_string(),
+                ..Default::default()
+            },
+            registry: RegistryConfig {
+                node_identity: "node-1".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         assert!(cfg.validate().is_ok());
 
         cfg.tls.client_cert_required = true;
@@ -239,11 +250,22 @@ mod tests {
         assert!(cfg.validate().is_err());
 
         // Zero message limits are rejected.
-        let mut cfg = SignalingControlPlaneConfig::default();
-        cfg.enabled = true;
-        cfg.grpc.listen = "127.0.0.1:9090".to_string();
-        cfg.store.path = "/tmp/test.db".to_string();
-        cfg.registry.node_identity = "node-1".to_string();
+        let mut cfg = SignalingControlPlaneConfig {
+            enabled: true,
+            grpc: GrpcConfig {
+                listen: "127.0.0.1:9090".to_string(),
+                ..Default::default()
+            },
+            store: StoreConfig {
+                path: "/tmp/test.db".to_string(),
+                ..Default::default()
+            },
+            registry: RegistryConfig {
+                node_identity: "node-1".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         cfg.grpc.message_limits.max_inbound_size = 0;
         assert!(cfg.validate().is_err());
         cfg.grpc.message_limits.max_inbound_size = 4 * 1024 * 1024;
