@@ -594,8 +594,10 @@ mod tests {
             output_urls: Vec::new(),
         };
 
-        let mut policy = OutboundUrlPolicy::default();
-        policy.deny_unknown_query_keys = vec!["token".to_string()];
+        let policy = OutboundUrlPolicy {
+            deny_unknown_query_keys: vec!["token".to_string()],
+            ..Default::default()
+        };
 
         info.sanitize_source(&policy).unwrap();
         let sanitized = &info.source;
