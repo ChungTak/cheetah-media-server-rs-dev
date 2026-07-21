@@ -337,8 +337,18 @@ impl CursorCodec {
             MediaError::cursor_expired("failed to re-serialize cursor contents for verification")
         })?;
         let expected = Self::sign(&payload_bytes, key)?;
-        let expected_b64 = base64::engine::general_purpose::STANDARD.encode(&expected);
-        if expected_b64 != signed.hmac {
+        let actual = base64::engine::general_purpose::STANDARD
+            .decode(&signed.hmac)
+            .map_err(|_| MediaError::cursor_expired("cursor HMAC is not valid base64"))?;
+        if expected.len() != actual.len() {
+            return Err(MediaError::cursor_expired(
+                "cursor HMAC verification failed",
+            ));
+        }
+        if !bool::from(subtle::ConstantTimeEq::ct_eq(
+            expected.as_slice(),
+            actual.as_slice(),
+        )) {
             return Err(MediaError::cursor_expired(
                 "cursor HMAC verification failed",
             ));
