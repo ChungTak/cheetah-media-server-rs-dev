@@ -171,6 +171,10 @@ impl GrpcAdapter {
         let (reporter, health_server) = tonic_health::server::health_reporter();
         let handle = GrpcHealthHandle::new(reporter);
 
+        let health_server = health_server
+            .max_decoding_message_size(config.message_limits.max_decoding_message_size)
+            .max_encoding_message_size(config.message_limits.max_encoding_message_size);
+
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
         let shutdown = async {
             let _ = shutdown_rx.await;
@@ -183,6 +187,9 @@ impl GrpcAdapter {
                 .register_encoded_file_descriptor_set(tonic_health::pb::FILE_DESCRIPTOR_SET)
                 .build_v1()
                 .map_err(|e| GrpcAdapterError::Serve(e.to_string()))?;
+            let reflection = reflection
+                .max_decoding_message_size(config.message_limits.max_decoding_message_size)
+                .max_encoding_message_size(config.message_limits.max_encoding_message_size);
 
             server_builder
                 .add_service(health_server)
