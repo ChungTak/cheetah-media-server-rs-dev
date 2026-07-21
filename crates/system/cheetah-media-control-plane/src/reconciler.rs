@@ -322,7 +322,6 @@ mod tests {
     use std::sync::Arc;
 
     use cheetah_media_api::admin::{AdminIdentity, AdminScope, CleanupOrphanRequest};
-    use cheetah_media_api::fencing::{ControlledResourceRef, ResourceOrigin};
     use cheetah_media_api::ids::{
         MediaBindingId, MediaNodeId, MediaNodeInstanceEpoch, MediaNodeInstanceId, MediaSessionId,
         OwnerEpoch, ResourceGeneration, TenantId,
@@ -366,20 +365,6 @@ mod tests {
             created_at_ms: now_ms(),
             updated_at_ms: now_ms(),
             terminal_at_ms: None,
-        }
-    }
-
-    fn resource_ref(record: &ResourceRecord) -> ControlledResourceRef {
-        ControlledResourceRef {
-            tenant_id: record.tenant_id.clone(),
-            media_session_id: record.media_session_id.clone(),
-            media_binding_id: record.media_binding_id.clone(),
-            resource_kind: record.resource_kind.clone(),
-            resource_handle: record.resource_handle.clone(),
-            owner_epoch: record.accepted_owner_epoch,
-            node_instance_epoch: record.media_node_instance_epoch,
-            generation: record.generation,
-            origin: ResourceOrigin::default(),
         }
     }
 
