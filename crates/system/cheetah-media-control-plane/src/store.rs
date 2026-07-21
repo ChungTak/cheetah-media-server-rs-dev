@@ -119,6 +119,8 @@ pub struct ResourceRecord {
     pub generation: ResourceGeneration,
     pub state: ResourceState,
     pub safe_last_error: Option<MediaError>,
+    /// Whether the resource was created by cluster signaling or a local adapter.
+    pub origin: ResourceOrigin,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub terminal_at_ms: Option<i64>,
@@ -136,9 +138,38 @@ impl ResourceRecord {
             owner_epoch: self.accepted_owner_epoch,
             node_instance_epoch: self.media_node_instance_epoch,
             generation: self.generation,
-            origin: ResourceOrigin::default(),
+            origin: self.origin,
         }
     }
+}
+
+/// Aggregate counts returned by store diagnostics.
+///
+/// store 诊断聚合计数。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct StoreStats {
+    pub resource_count: u64,
+    pub non_terminal_resource_count: u64,
+    pub event_count: u64,
+}
+
+/// Cold-path store maintenance operations (checkpoint/compact/stats).
+///
+/// 冷路径 store 维护操作。
+#[async_trait]
+pub trait StoreMaintenance: Send + Sync {
+    /// Checkpoint or compact the durable store.
+    async fn checkpoint(
+        &self,
+        kind: cheetah_media_api::admin::CheckpointKind,
+    ) -> Result<(), ControlPlaneError>;
+
+    /// Return safe aggregate counts, optionally filtered by tenant/kind.
+    async fn stats(
+        &self,
+        tenant_id: Option<&TenantId>,
+        resource_kind: Option<&str>,
+    ) -> Result<StoreStats, ControlPlaneError>;
 }
 
 /// Durable controlled-resource storage.

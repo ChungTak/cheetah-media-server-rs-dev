@@ -253,6 +253,7 @@ mod tests {
             generation: ResourceGeneration(0),
             state: ResourceState::Active,
             safe_last_error: None,
+            origin: ResourceOrigin::Cluster,
             created_at_ms: now_ms(),
             updated_at_ms: now_ms(),
             terminal_at_ms: None,

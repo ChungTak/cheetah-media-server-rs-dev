@@ -146,16 +146,10 @@ async fn main() -> anyhow::Result<()> {
     // 加载以 `M7S_` 为前缀的环境变量，以保持向后兼容。
     config.load_env("M7S_");
 
-    // Build the engine with the runtime, config, and per-stream dispatcher.
-    // 使用运行时、配置与按流分发器构建引擎。
-    let mut builder = EngineBuilder::new(config.clone(), config.clone(), runtime)
-        .with_dispatcher_mode(DispatcherMode::PerStream)
-        .with_config_schema_registry(config.clone());
-
     // Load the signaling control-plane assembly when the feature is enabled.
-    // 启用 `signaling-control-plane` 时加载信号控制面装配骨架。
+    // 启用 `signaling-control-plane` 时装配 store + facade；配置 enabled 时再 bind gRPC。
     #[cfg(feature = "signaling-control-plane")]
-    {
+    let mut signaling_assembly = {
         config
             .register_module_schema(
                 ModuleId::new("signaling_control_plane"),
@@ -169,9 +163,33 @@ async fn main() -> anyhow::Result<()> {
             )
             .expect("register signaling control-plane schema");
 
-        let assembly = signaling_control_plane::Assembly::new("127.0.0.1:0".parse().unwrap());
-        let _ = assembly.grpc_config;
-    }
+        let scp_value = config.module(&ModuleId::new("signaling_control_plane"));
+        let scp_cfg: signaling_control_plane::SignalingControlPlaneConfig =
+            serde_json::from_value(scp_value).unwrap_or_default();
+
+        if scp_cfg.enabled {
+            let runtime_api: std::sync::Arc<dyn cheetah_runtime_api::RuntimeApi> = runtime.clone();
+            let mut assembly =
+                signaling_control_plane::Assembly::bootstrap(&scp_cfg, runtime_api)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("signaling control-plane bootstrap: {e}"))?;
+            // Start gRPC NotServing; mutations stay gated until registry lease.
+            let addr = assembly
+                .start_grpc()
+                .await
+                .map_err(|e| anyhow::anyhow!("signaling gRPC start: {e}"))?;
+            info!(%addr, "signaling control-plane gRPC listening (NotServing until register)");
+            Some(assembly)
+        } else {
+            None
+        }
+    };
+
+    // Build the engine with the runtime, config, and per-stream dispatcher.
+    // 使用运行时、配置与按流分发器构建引擎。
+    let mut builder = EngineBuilder::new(config.clone(), config.clone(), runtime)
+        .with_dispatcher_mode(DispatcherMode::PerStream)
+        .with_config_schema_registry(config.clone());
 
     // Register enabled protocol / feature module factories via conditional compilation.
     // 通过条件编译注册已启用的协议/特性模块工厂。
@@ -308,6 +326,14 @@ async fn main() -> anyhow::Result<()> {
     {
         info!("graceful shutdown timed out, forcing exit");
     }
+
+    #[cfg(feature = "signaling-control-plane")]
+    if let Some(mut assembly) = signaling_assembly.take() {
+        if let Err(err) = assembly.stop().await {
+            error!(%err, "signaling control-plane stop failed");
+        }
+    }
+
     control_task.abort();
     info!("shutdown complete");
 

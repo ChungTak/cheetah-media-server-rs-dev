@@ -15,10 +15,14 @@ use cheetah_media_api::ids::TenantId;
 use cheetah_runtime_api::RuntimeApi;
 use rusqlite::{params, Connection, OptionalExtension};
 
+use cheetah_media_api::admin::CheckpointKind;
+
 use crate::blocking::blocking_call;
 use crate::error::ControlPlaneError;
 use crate::idempotency::{CanonicalDigest, IdempotencyKey, IdempotencyState};
-use crate::store::{now_ms, IdempotencyOutcome, IdempotencyRecord, IdempotencyStore};
+use crate::store::{
+    now_ms, IdempotencyOutcome, IdempotencyRecord, IdempotencyStore, StoreMaintenance, StoreStats,
+};
 
 impl From<rusqlite::Error> for ControlPlaneError {
     fn from(e: rusqlite::Error) -> Self {
@@ -92,6 +96,14 @@ fn open_conn(path: &str) -> Result<Connection, ControlPlaneError> {
     }
     let conn =
         Connection::open(path).map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))?;
+    // STORE-01: WAL, foreign keys, and a bounded busy timeout for cold-path I/O.
+    // :memory: databases ignore WAL but still honor foreign_keys/busy_timeout.
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA foreign_keys = ON;
+         PRAGMA busy_timeout = 5000;",
+    )
+    .map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))?;
     restrict_store_permissions(path)?;
     Ok(conn)
 }
@@ -134,9 +146,7 @@ fn restrict_store_permissions(path: &str) -> Result<(), ControlPlaneError> {
 
 fn migrate(conn: &mut Connection) -> Result<(), ControlPlaneError> {
     conn.execute_batch(
-        "PRAGMA foreign_keys = ON;
-
-         CREATE TABLE IF NOT EXISTS control_meta (
+        "CREATE TABLE IF NOT EXISTS control_meta (
              schema_version INTEGER PRIMARY KEY,
              stable_node_id TEXT,
              process_instance_id TEXT,
@@ -182,6 +192,7 @@ fn migrate(conn: &mut Connection) -> Result<(), ControlPlaneError> {
              generation INTEGER NOT NULL,
              state TEXT NOT NULL,
              safe_last_error TEXT,
+             origin TEXT NOT NULL DEFAULT 'cluster',
              created_at_ms INTEGER NOT NULL,
              updated_at_ms INTEGER NOT NULL,
              terminal_at_ms INTEGER,
@@ -248,9 +259,31 @@ fn migrate(conn: &mut Connection) -> Result<(), ControlPlaneError> {
     )
     .map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))?;
 
+    // Schema v3: persist ResourceOrigin for local/cluster isolation (MIG-02).
+    // Safe on fresh DBs that already have the column via CREATE TABLE.
+    let has_origin: bool = conn
+        .prepare("PRAGMA table_info(controlled_resources)")
+        .and_then(|mut stmt| {
+            let cols = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            for col in cols {
+                if col? == "origin" {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })
+        .map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))?;
+    if !has_origin {
+        conn.execute(
+            "ALTER TABLE controlled_resources ADD COLUMN origin TEXT NOT NULL DEFAULT 'cluster'",
+            [],
+        )
+        .map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))?;
+    }
+
     conn.execute(
         "UPDATE control_meta SET schema_version = MAX(schema_version, ?1)",
-        params![2],
+        params![3],
     )
     .map_err(|e| ControlPlaneError::StoreUnavailable(e.to_string()))?;
     Ok(())
@@ -606,6 +639,79 @@ fn parse_hex(s: &str) -> Option<CanonicalDigest> {
         bytes[i] = u8::from_str_radix(chunk_str, 16).ok()?;
     }
     Some(CanonicalDigest(bytes))
+}
+
+#[async_trait]
+impl StoreMaintenance for SqliteStore {
+    async fn checkpoint(&self, kind: CheckpointKind) -> Result<(), ControlPlaneError> {
+        self.with_conn("store_checkpoint", move |conn| match kind {
+            CheckpointKind::Checkpoint => {
+                // Truncate the WAL into the main DB file so a crash after
+                // checkpoint has a consistent on-disk state.
+                conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+                    .map_err(|e| ControlPlaneError::Db(e.to_string()))?;
+                Ok(())
+            }
+            CheckpointKind::Compact => {
+                conn.execute_batch("VACUUM;")
+                    .map_err(|e| ControlPlaneError::Db(e.to_string()))?;
+                Ok(())
+            }
+        })
+        .await
+    }
+
+    async fn stats(
+        &self,
+        tenant_id: Option<&TenantId>,
+        resource_kind: Option<&str>,
+    ) -> Result<StoreStats, ControlPlaneError> {
+        let tenant = tenant_id.map(|t| t.as_str().to_string());
+        let kind = resource_kind.map(|s| s.to_string());
+        self.with_conn("store_stats", move |conn| {
+            let mut resource_sql =
+                String::from("SELECT COUNT(*), SUM(CASE WHEN state NOT IN ('stopped','failed') THEN 1 ELSE 0 END) FROM controlled_resources WHERE 1=1");
+            let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            if let Some(ref t) = tenant {
+                resource_sql.push_str(" AND tenant_id = ?");
+                params_vec.push(Box::new(t.clone()));
+            }
+            if let Some(ref k) = kind {
+                resource_sql.push_str(" AND resource_kind = ?");
+                params_vec.push(Box::new(k.clone()));
+            }
+            let param_refs: Vec<&dyn rusqlite::ToSql> =
+                params_vec.iter().map(|p| p.as_ref()).collect();
+            let (resource_count, non_terminal): (i64, Option<i64>) = conn
+                .query_row(&resource_sql, param_refs.as_slice(), |row| {
+                    Ok((row.get(0)?, row.get(1)?))
+                })
+                .map_err(|e| ControlPlaneError::Db(e.to_string()))?;
+
+            let mut event_sql = String::from("SELECT COUNT(*) FROM media_events WHERE 1=1");
+            let mut event_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            if let Some(ref t) = tenant {
+                event_sql.push_str(" AND tenant_id = ?");
+                event_params.push(Box::new(t.clone()));
+            }
+            if let Some(ref k) = kind {
+                event_sql.push_str(" AND resource_kind = ?");
+                event_params.push(Box::new(k.clone()));
+            }
+            let event_param_refs: Vec<&dyn rusqlite::ToSql> =
+                event_params.iter().map(|p| p.as_ref()).collect();
+            let event_count: i64 = conn
+                .query_row(&event_sql, event_param_refs.as_slice(), |row| row.get(0))
+                .map_err(|e| ControlPlaneError::Db(e.to_string()))?;
+
+            Ok(StoreStats {
+                resource_count: resource_count as u64,
+                non_terminal_resource_count: non_terminal.unwrap_or(0) as u64,
+                event_count: event_count as u64,
+            })
+        })
+        .await
+    }
 }
 
 #[cfg(test)]

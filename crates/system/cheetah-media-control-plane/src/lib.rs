@@ -18,9 +18,12 @@ pub mod blocking;
 pub mod capacity;
 pub mod error;
 pub mod event_store;
+pub mod event_stream;
 pub mod facade;
 pub mod fault;
 pub mod idempotency;
+pub mod mutation;
+pub mod node_supervisor;
 pub mod orphan_store;
 pub mod reconciler;
 pub mod recovery;
@@ -35,11 +38,17 @@ pub use blocking::blocking_call;
 pub use capacity::CapacityOrchestrator;
 pub use error::ControlPlaneError;
 pub use event_store::{EventRecord, EventStore};
-pub use facade::ControlPlane;
+pub use event_stream::{default_subscriber_limits, EventPollPage, EventStreamService};
+pub use facade::{ControlPlane, TlsRotator};
 pub use fault::{
     DeterministicFaultInjector, FaultAction, FaultInjector, FaultPoint, NullFaultInjector,
 };
 pub use idempotency::{CanonicalDigest, CanonicalRequest, IdempotencyKey, IdempotencyState};
+pub use mutation::{MutationOrchestrator, MutationPrepareResult};
+pub use node_supervisor::{
+    CapacityLoadProvider, Clock, FakeClock, LoadProvider, NodeSupervisor, RegistryClient,
+    SystemClock,
+};
 pub use reconciler::{OrphanReconciler, ReconcileLimits, ReconcileReport, Reconciler};
 pub use recovery::{
     ConvergeOutcome, ProbeResult, RecoveryEngine, RecoveryLimits, RecoveryReport, ResourceProbe,
@@ -52,5 +61,5 @@ pub use side_effect::{RecoveryAction, SideEffectWindow};
 pub use sqlite::SqliteStore;
 pub use store::{
     IdempotencyOutcome, IdempotencyRecord, IdempotencyStore, OrphanRecord, OrphanStore,
-    ResourceRecord, ResourceStore,
+    ResourceRecord, ResourceStore, StoreMaintenance, StoreStats,
 };

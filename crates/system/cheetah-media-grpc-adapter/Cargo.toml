@@ -7,6 +7,8 @@ license.workspace = true
 [dependencies]
 thiserror.workspace = true
 tokio = { workspace = true }
+# Explicit ring provider so tonic TLS can install a process-level CryptoProvider.
+rustls = { workspace = true }
 tonic = { workspace = true, features = ["tls"] }
 tonic-health = { workspace = true }
 tonic-reflection = { workspace = true }

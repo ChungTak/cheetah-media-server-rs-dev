@@ -128,6 +128,14 @@ impl std::fmt::Debug for GrpcAdapter {
     }
 }
 
+/// Ensure a process-level rustls `CryptoProvider` is installed.
+///
+/// tonic/rustls 0.23 requires exactly one default crypto provider. The workspace
+/// selects `ring`; install it once before any TLS configuration is built.
+fn ensure_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 impl GrpcAdapter {
     /// Build a `tonic` server builder from the TLS config, if any.
     fn make_server_builder(
@@ -136,6 +144,8 @@ impl GrpcAdapter {
         let Some(tls) = tls else {
             return Ok(tonic::transport::Server::builder());
         };
+
+        ensure_crypto_provider();
 
         let identity =
             tonic::transport::Identity::from_pem(&tls.server_cert_pem, &tls.server_key_pem);

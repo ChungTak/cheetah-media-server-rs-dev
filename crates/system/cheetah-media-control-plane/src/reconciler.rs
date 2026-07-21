@@ -9,14 +9,15 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cheetah_media_api::admin::{
-    AdminIdentity, AdminScope, CleanupOrphanRequest, CleanupOrphanResponse,
+    AdminIdentity, AdminScope, CleanupOrphanRequest, CleanupOrphanResponse, ReconcileScope,
 };
 use cheetah_media_api::error::{MediaError, MediaErrorCode};
 use cheetah_media_api::fencing::ControlledResourceRef;
+use cheetah_media_api::ids::{MediaNodeId, TenantId};
 use cheetah_media_api::resource_filter::ResourceState;
 
 use crate::error::ControlPlaneError;
-use crate::store::{OrphanStore, ResourceStore};
+use crate::store::{OrphanStore, ResourceRecord, ResourceStore};
 
 /// Limits for a single reconciliation pass.
 ///
@@ -59,11 +60,24 @@ pub struct ReconcileReport {
 /// 驱动持久资源索引与外部 signaling 状态对账。
 #[async_trait]
 pub trait Reconciler: Send + Sync {
-    /// Run a bounded reconciliation pass.
+    /// Run a bounded reconciliation pass over all non-terminal resources.
     async fn reconcile(
         &self,
         now_ms: i64,
         limits: &ReconcileLimits,
+    ) -> Result<ReconcileReport, ControlPlaneError> {
+        self.reconcile_scoped(now_ms, limits, ReconcileScope::All, None, None)
+            .await
+    }
+
+    /// Run a bounded reconciliation pass with an optional tenant/node scope.
+    async fn reconcile_scoped(
+        &self,
+        now_ms: i64,
+        limits: &ReconcileLimits,
+        scope: ReconcileScope,
+        node_id: Option<&MediaNodeId>,
+        tenant_id: Option<&TenantId>,
     ) -> Result<ReconcileReport, ControlPlaneError>;
 
     /// Clean up a typed orphan resource after an admin identity with the
@@ -189,16 +203,50 @@ impl OrphanReconciler {
         Ok(confirmed)
     }
 
+    fn matches_scope(
+        record: &ResourceRecord,
+        scope: ReconcileScope,
+        node_id: Option<&MediaNodeId>,
+        tenant_id: Option<&TenantId>,
+    ) -> bool {
+        match scope {
+            ReconcileScope::All => true,
+            ReconcileScope::Tenant => tenant_id.map(|t| record.tenant_id == *t).unwrap_or(false),
+            ReconcileScope::Node => {
+                let tenant_ok = tenant_id.map(|t| record.tenant_id == *t).unwrap_or(true);
+                let node_ok = node_id
+                    .map(|n| record.media_node_id.as_ref() == Some(n))
+                    .unwrap_or(false);
+                tenant_ok && node_ok
+            }
+        }
+    }
+
     /// Mark all non-terminal resources without a binding as orphan candidates,
     /// up to `max_mark`.
     async fn mark_candidates(
         &self,
         now_ms: i64,
         limits: &ReconcileLimits,
+        scope: ReconcileScope,
+        node_id: Option<&MediaNodeId>,
+        tenant_id: Option<&TenantId>,
     ) -> Result<u64, ControlPlaneError> {
-        let resources = self.resources.list_non_terminal(limits.max_mark).await?;
+        // Over-fetch when scoped so filtering still yields up to max_mark hits.
+        let fetch = if matches!(scope, ReconcileScope::All) {
+            limits.max_mark
+        } else {
+            limits.max_mark.saturating_mul(4).max(limits.max_mark)
+        };
+        let resources = self.resources.list_non_terminal(fetch).await?;
         let mut marked = 0u64;
         for record in resources {
+            if marked >= u64::from(limits.max_mark) {
+                break;
+            }
+            if !Self::matches_scope(&record, scope, node_id, tenant_id) {
+                continue;
+            }
             if record.media_binding_id.is_some() || record.state.is_terminal() {
                 continue;
             }
@@ -223,17 +271,97 @@ impl OrphanReconciler {
         }
         Ok(marked)
     }
+
+    /// Confirm orphan marks, optionally restricted by scope filters.
+    async fn confirm_orphans_scoped(
+        &self,
+        now_ms: i64,
+        limits: &ReconcileLimits,
+        scope: ReconcileScope,
+        node_id: Option<&MediaNodeId>,
+        tenant_id: Option<&TenantId>,
+    ) -> Result<u64, ControlPlaneError> {
+        if matches!(scope, ReconcileScope::All) && node_id.is_none() && tenant_id.is_none() {
+            return self.confirm_orphans(now_ms, limits).await;
+        }
+
+        let before_ms = now_ms.saturating_sub(limits.grace_period_ms);
+        let fetch = limits.max_confirm.saturating_mul(4).max(limits.max_confirm);
+        let candidates = self
+            .orphan_store
+            .list_unconfirmed_older_than(before_ms, fetch)
+            .await?;
+
+        let mut confirmed = 0u64;
+        for orphan in candidates {
+            if confirmed >= u64::from(limits.max_confirm) {
+                break;
+            }
+            if let Some(t) = tenant_id {
+                if orphan.tenant_id != *t {
+                    continue;
+                }
+            }
+            let resource = self
+                .resources
+                .get(
+                    &orphan.tenant_id,
+                    &orphan.resource_kind,
+                    &orphan.resource_handle,
+                )
+                .await?;
+            if let Some(ref r) = resource {
+                if !Self::matches_scope(r, scope, node_id, tenant_id) {
+                    continue;
+                }
+            } else if matches!(scope, ReconcileScope::Node) {
+                // Without the resource we cannot verify node scope; skip.
+                continue;
+            }
+
+            match resource {
+                Some(r) if r.media_binding_id.is_none() && !r.state.is_terminal() => {
+                    self.orphan_store
+                        .confirm_orphan(
+                            &orphan.tenant_id,
+                            &orphan.resource_kind,
+                            &orphan.resource_handle,
+                            now_ms,
+                        )
+                        .await?;
+                    confirmed += 1;
+                }
+                _ => {
+                    self.orphan_store
+                        .remove_orphan(
+                            &orphan.tenant_id,
+                            &orphan.resource_kind,
+                            &orphan.resource_handle,
+                        )
+                        .await?;
+                }
+            }
+        }
+        Ok(confirmed)
+    }
 }
 
 #[async_trait]
 impl Reconciler for OrphanReconciler {
-    async fn reconcile(
+    async fn reconcile_scoped(
         &self,
         now_ms: i64,
         limits: &ReconcileLimits,
+        scope: ReconcileScope,
+        node_id: Option<&MediaNodeId>,
+        tenant_id: Option<&TenantId>,
     ) -> Result<ReconcileReport, ControlPlaneError> {
-        let orphans_marked = self.mark_candidates(now_ms, limits).await?;
-        let orphans_confirmed = self.confirm_orphans(now_ms, limits).await?;
+        let orphans_marked = self
+            .mark_candidates(now_ms, limits, scope, node_id, tenant_id)
+            .await?;
+        let orphans_confirmed = self
+            .confirm_orphans_scoped(now_ms, limits, scope, node_id, tenant_id)
+            .await?;
         Ok(ReconcileReport {
             orphans_marked,
             orphans_confirmed,
@@ -362,6 +490,7 @@ mod tests {
             generation: ResourceGeneration(0),
             state: ResourceState::Active,
             safe_last_error: None,
+            origin: cheetah_media_api::fencing::ResourceOrigin::Cluster,
             created_at_ms: now_ms(),
             updated_at_ms: now_ms(),
             terminal_at_ms: None,

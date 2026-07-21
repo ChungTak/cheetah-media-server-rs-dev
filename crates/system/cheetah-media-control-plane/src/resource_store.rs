@@ -4,6 +4,7 @@
 
 use async_trait::async_trait;
 use cheetah_media_api::error::MediaError;
+use cheetah_media_api::fencing::ResourceOrigin;
 use cheetah_media_api::ids::{
     MediaBindingId, MediaKey, MediaNodeId, MediaNodeInstanceEpoch, MediaNodeInstanceId,
     MediaSessionId, OwnerEpoch, ResourceGeneration, TenantId,
@@ -32,9 +33,24 @@ struct RowResource {
     generation: i64,
     state: String,
     safe_last_error: Option<String>,
+    origin: String,
     created_at_ms: i64,
     updated_at_ms: i64,
     terminal_at_ms: Option<i64>,
+}
+
+fn origin_to_str(origin: ResourceOrigin) -> &'static str {
+    match origin {
+        ResourceOrigin::Cluster => "cluster",
+        ResourceOrigin::Local => "local",
+    }
+}
+
+fn str_to_origin(s: &str) -> ResourceOrigin {
+    match s {
+        "local" => ResourceOrigin::Local,
+        _ => ResourceOrigin::Cluster,
+    }
 }
 
 impl RowResource {
@@ -96,6 +112,7 @@ impl RowResource {
             generation: ResourceGeneration(self.generation as u64),
             state: str_to_state(&self.state),
             safe_last_error,
+            origin: str_to_origin(&self.origin),
             created_at_ms: self.created_at_ms,
             updated_at_ms: self.updated_at_ms,
             terminal_at_ms: self.terminal_at_ms,
@@ -133,6 +150,36 @@ fn encode_media_error(error: &MediaError) -> Result<String, ControlPlaneError> {
     serde_json::to_string(error).map_err(|e| ControlPlaneError::Serialization(e.to_string()))
 }
 
+fn map_row_resource(row: &rusqlite::Row<'_>) -> rusqlite::Result<RowResource> {
+    Ok(RowResource {
+        tenant_id: row.get(0)?,
+        resource_kind: row.get(1)?,
+        resource_handle: row.get(2)?,
+        media_session_id: row.get(3)?,
+        media_binding_id: row.get(4)?,
+        media_key: row.get(5)?,
+        idempotency_scope: row.get(6)?,
+        canonical_digest: row.get(7)?,
+        accepted_owner_epoch: row.get(8)?,
+        media_node_id: row.get(9)?,
+        media_node_instance_id: row.get(10)?,
+        media_node_instance_epoch: row.get(11)?,
+        generation: row.get(12)?,
+        state: row.get(13)?,
+        safe_last_error: row.get(14)?,
+        origin: row.get(15)?,
+        created_at_ms: row.get(16)?,
+        updated_at_ms: row.get(17)?,
+        terminal_at_ms: row.get(18)?,
+    })
+}
+
+const RESOURCE_SELECT_COLUMNS: &str = "tenant_id, resource_kind, resource_handle, media_session_id,
+                        media_binding_id, media_key, idempotency_scope, canonical_digest,
+                        accepted_owner_epoch, media_node_id, media_node_instance_id,
+                        media_node_instance_epoch, generation, state, safe_last_error,
+                        origin, created_at_ms, updated_at_ms, terminal_at_ms";
+
 #[async_trait]
 impl ResourceStore for SqliteStore {
     async fn get(
@@ -150,33 +197,12 @@ impl ResourceStore for SqliteStore {
                         media_binding_id, media_key, idempotency_scope, canonical_digest,
                         accepted_owner_epoch, media_node_id, media_node_instance_id,
                         media_node_instance_epoch, generation, state, safe_last_error,
-                        created_at_ms, updated_at_ms, terminal_at_ms
+                        origin, created_at_ms, updated_at_ms, terminal_at_ms
                  FROM controlled_resources
                  WHERE tenant_id = ?1 AND resource_kind = ?2 AND resource_handle = ?3",
             )?;
             let row: Option<RowResource> = stmt
-                .query_row(params![tenant, kind, handle], |row| {
-                    Ok(RowResource {
-                        tenant_id: row.get(0)?,
-                        resource_kind: row.get(1)?,
-                        resource_handle: row.get(2)?,
-                        media_session_id: row.get(3)?,
-                        media_binding_id: row.get(4)?,
-                        media_key: row.get(5)?,
-                        idempotency_scope: row.get(6)?,
-                        canonical_digest: row.get(7)?,
-                        accepted_owner_epoch: row.get(8)?,
-                        media_node_id: row.get(9)?,
-                        media_node_instance_id: row.get(10)?,
-                        media_node_instance_epoch: row.get(11)?,
-                        generation: row.get(12)?,
-                        state: row.get(13)?,
-                        safe_last_error: row.get(14)?,
-                        created_at_ms: row.get(15)?,
-                        updated_at_ms: row.get(16)?,
-                        terminal_at_ms: row.get(17)?,
-                    })
-                })
+                .query_row(params![tenant, kind, handle], map_row_resource)
                 .optional()?;
             row.map(|r| r.into_record()).transpose()
         })
@@ -348,38 +374,14 @@ impl ResourceStore for SqliteStore {
         let tenant = tenant_id.as_str().to_string();
         let session = session_id.as_str().to_string();
         self.with_conn("resource_list_by_session", move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT tenant_id, resource_kind, resource_handle, media_session_id,
-                        media_binding_id, media_key, idempotency_scope, canonical_digest,
-                        accepted_owner_epoch, media_node_id, media_node_instance_id,
-                        media_node_instance_epoch, generation, state, safe_last_error,
-                        created_at_ms, updated_at_ms, terminal_at_ms
+            let sql = format!(
+                "SELECT {RESOURCE_SELECT_COLUMNS}
                  FROM controlled_resources
                  WHERE tenant_id = ?1 AND media_session_id = ?2
-                 ORDER BY updated_at_ms DESC",
-            )?;
-            let rows = stmt.query_map(params![tenant, session], |row| {
-                Ok(RowResource {
-                    tenant_id: row.get(0)?,
-                    resource_kind: row.get(1)?,
-                    resource_handle: row.get(2)?,
-                    media_session_id: row.get(3)?,
-                    media_binding_id: row.get(4)?,
-                    media_key: row.get(5)?,
-                    idempotency_scope: row.get(6)?,
-                    canonical_digest: row.get(7)?,
-                    accepted_owner_epoch: row.get(8)?,
-                    media_node_id: row.get(9)?,
-                    media_node_instance_id: row.get(10)?,
-                    media_node_instance_epoch: row.get(11)?,
-                    generation: row.get(12)?,
-                    state: row.get(13)?,
-                    safe_last_error: row.get(14)?,
-                    created_at_ms: row.get(15)?,
-                    updated_at_ms: row.get(16)?,
-                    terminal_at_ms: row.get(17)?,
-                })
-            })?;
+                 ORDER BY updated_at_ms DESC"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![tenant, session], map_row_resource)?;
             let mut records = Vec::new();
             for row in rows {
                 records.push(row?.into_record()?);
@@ -397,38 +399,14 @@ impl ResourceStore for SqliteStore {
         let tenant = tenant_id.as_str().to_string();
         let binding = binding_id.as_str().to_string();
         self.with_conn("resource_list_by_binding", move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT tenant_id, resource_kind, resource_handle, media_session_id,
-                        media_binding_id, media_key, idempotency_scope, canonical_digest,
-                        accepted_owner_epoch, media_node_id, media_node_instance_id,
-                        media_node_instance_epoch, generation, state, safe_last_error,
-                        created_at_ms, updated_at_ms, terminal_at_ms
+            let sql = format!(
+                "SELECT {RESOURCE_SELECT_COLUMNS}
                  FROM controlled_resources
                  WHERE tenant_id = ?1 AND media_binding_id = ?2
-                 ORDER BY updated_at_ms DESC",
-            )?;
-            let rows = stmt.query_map(params![tenant, binding], |row| {
-                Ok(RowResource {
-                    tenant_id: row.get(0)?,
-                    resource_kind: row.get(1)?,
-                    resource_handle: row.get(2)?,
-                    media_session_id: row.get(3)?,
-                    media_binding_id: row.get(4)?,
-                    media_key: row.get(5)?,
-                    idempotency_scope: row.get(6)?,
-                    canonical_digest: row.get(7)?,
-                    accepted_owner_epoch: row.get(8)?,
-                    media_node_id: row.get(9)?,
-                    media_node_instance_id: row.get(10)?,
-                    media_node_instance_epoch: row.get(11)?,
-                    generation: row.get(12)?,
-                    state: row.get(13)?,
-                    safe_last_error: row.get(14)?,
-                    created_at_ms: row.get(15)?,
-                    updated_at_ms: row.get(16)?,
-                    terminal_at_ms: row.get(17)?,
-                })
-            })?;
+                 ORDER BY updated_at_ms DESC"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![tenant, binding], map_row_resource)?;
             let mut records = Vec::new();
             for row in rows {
                 records.push(row?.into_record()?);
@@ -446,38 +424,14 @@ impl ResourceStore for SqliteStore {
         let tenant = tenant_id.as_str().to_string();
         let node = node_id.as_str().to_string();
         self.with_conn("resource_list_by_node", move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT tenant_id, resource_kind, resource_handle, media_session_id,
-                        media_binding_id, media_key, idempotency_scope, canonical_digest,
-                        accepted_owner_epoch, media_node_id, media_node_instance_id,
-                        media_node_instance_epoch, generation, state, safe_last_error,
-                        created_at_ms, updated_at_ms, terminal_at_ms
+            let sql = format!(
+                "SELECT {RESOURCE_SELECT_COLUMNS}
                  FROM controlled_resources
                  WHERE tenant_id = ?1 AND media_node_id = ?2
-                 ORDER BY updated_at_ms DESC",
-            )?;
-            let rows = stmt.query_map(params![tenant, node], |row| {
-                Ok(RowResource {
-                    tenant_id: row.get(0)?,
-                    resource_kind: row.get(1)?,
-                    resource_handle: row.get(2)?,
-                    media_session_id: row.get(3)?,
-                    media_binding_id: row.get(4)?,
-                    media_key: row.get(5)?,
-                    idempotency_scope: row.get(6)?,
-                    canonical_digest: row.get(7)?,
-                    accepted_owner_epoch: row.get(8)?,
-                    media_node_id: row.get(9)?,
-                    media_node_instance_id: row.get(10)?,
-                    media_node_instance_epoch: row.get(11)?,
-                    generation: row.get(12)?,
-                    state: row.get(13)?,
-                    safe_last_error: row.get(14)?,
-                    created_at_ms: row.get(15)?,
-                    updated_at_ms: row.get(16)?,
-                    terminal_at_ms: row.get(17)?,
-                })
-            })?;
+                 ORDER BY updated_at_ms DESC"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![tenant, node], map_row_resource)?;
             let mut records = Vec::new();
             for row in rows {
                 records.push(row?.into_record()?);
@@ -493,39 +447,15 @@ impl ResourceStore for SqliteStore {
     ) -> Result<Vec<ResourceRecord>, ControlPlaneError> {
         let max = max_records as i64;
         self.with_conn("resource_list_non_terminal", move |conn| {
-            let mut stmt = conn.prepare(
-                "SELECT tenant_id, resource_kind, resource_handle, media_session_id,
-                        media_binding_id, media_key, idempotency_scope, canonical_digest,
-                        accepted_owner_epoch, media_node_id, media_node_instance_id,
-                        media_node_instance_epoch, generation, state, safe_last_error,
-                        created_at_ms, updated_at_ms, terminal_at_ms
+            let sql = format!(
+                "SELECT {RESOURCE_SELECT_COLUMNS}
                  FROM controlled_resources
                  WHERE state NOT IN ('stopped', 'failed')
                  ORDER BY updated_at_ms ASC
-                 LIMIT ?1",
-            )?;
-            let rows = stmt.query_map(params![max], |row| {
-                Ok(RowResource {
-                    tenant_id: row.get(0)?,
-                    resource_kind: row.get(1)?,
-                    resource_handle: row.get(2)?,
-                    media_session_id: row.get(3)?,
-                    media_binding_id: row.get(4)?,
-                    media_key: row.get(5)?,
-                    idempotency_scope: row.get(6)?,
-                    canonical_digest: row.get(7)?,
-                    accepted_owner_epoch: row.get(8)?,
-                    media_node_id: row.get(9)?,
-                    media_node_instance_id: row.get(10)?,
-                    media_node_instance_epoch: row.get(11)?,
-                    generation: row.get(12)?,
-                    state: row.get(13)?,
-                    safe_last_error: row.get(14)?,
-                    created_at_ms: row.get(15)?,
-                    updated_at_ms: row.get(16)?,
-                    terminal_at_ms: row.get(17)?,
-                })
-            })?;
+                 LIMIT ?1"
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(params![max], map_row_resource)?;
             let mut records = Vec::new();
             for row in rows {
                 records.push(row?.into_record()?);
@@ -565,8 +495,8 @@ fn do_insert(
          (tenant_id, resource_kind, resource_handle, media_session_id, media_binding_id,
           media_key, idempotency_scope, canonical_digest, accepted_owner_epoch,
           media_node_id, media_node_instance_id, media_node_instance_epoch, generation,
-          state, safe_last_error, created_at_ms, updated_at_ms, terminal_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+          state, safe_last_error, origin, created_at_ms, updated_at_ms, terminal_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
         params![
             record.tenant_id.as_str(),
             record.resource_kind,
@@ -586,6 +516,7 @@ fn do_insert(
             record.generation.0 as i64,
             state_to_str(record.state),
             safe_last_error_json,
+            origin_to_str(record.origin),
             record.created_at_ms,
             record.updated_at_ms,
             terminal_at_ms,
@@ -598,7 +529,7 @@ fn do_insert(
 mod tests {
     use std::sync::Arc;
 
-    use cheetah_media_api::fencing::ControlledResourceRef;
+    use cheetah_media_api::fencing::{ControlledResourceRef, ResourceOrigin};
     use cheetah_media_api::ids::{
         MediaBindingId, MediaKey, MediaNodeId, MediaNodeInstanceEpoch, MediaNodeInstanceId,
         MediaSessionId, OwnerEpoch, ResourceGeneration, TenantId,
@@ -632,6 +563,7 @@ mod tests {
             generation: ResourceGeneration(0),
             state: ResourceState::Pending,
             safe_last_error: None,
+            origin: ResourceOrigin::Cluster,
             created_at_ms: now_ms(),
             updated_at_ms: now_ms(),
             terminal_at_ms: None,

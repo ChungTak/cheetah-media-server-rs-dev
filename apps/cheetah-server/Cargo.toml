@@ -63,9 +63,11 @@ cheetah-srt-module = { path = "../../crates/protocols/srt/module", optional = tr
 cheetah-media-api = { path = "../../crates/sdk/cheetah-media-api", optional = true }
 cheetah-media-control-plane = { path = "../../crates/system/cheetah-media-control-plane", optional = true }
 cheetah-media-grpc-adapter = { path = "../../crates/system/cheetah-media-grpc-adapter", optional = true }
+cheetah-runtime-api = { path = "../../crates/runtime/cheetah-runtime-api" }
 cheetah-runtime-tokio = { path = "../../crates/runtime/cheetah-runtime-tokio" }
 cheetah-sdk = { path = "../../crates/sdk/cheetah-sdk" }
 console-subscriber = { workspace = true, optional = true }
+getrandom.workspace = true
 rustls.workspace = true
 serde = { workspace = true }
 serde_json.workspace = true

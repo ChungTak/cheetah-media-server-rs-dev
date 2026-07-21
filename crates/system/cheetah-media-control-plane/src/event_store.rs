@@ -73,6 +73,8 @@ pub trait EventStore: Send + Sync {
     ) -> Result<Vec<EventRecord>, ControlPlaneError>;
 
     /// List events after a sequence within a single node instance epoch.
+    ///
+    /// Only returns non-expired rows (`expires_at == 0` or `expires_at > now_ms`).
     async fn list_after_sequence(
         &self,
         instance_epoch: MediaNodeInstanceEpoch,
@@ -85,6 +87,18 @@ pub trait EventStore: Send + Sync {
         &self,
         instance_epoch: MediaNodeInstanceEpoch,
     ) -> Result<EventSequence, ControlPlaneError>;
+
+    /// Return the lowest non-expired sequence for `instance_epoch`, if any.
+    ///
+    /// Used by EVT-05 gap detection when a resume cursor is older than retention.
+    async fn first_available_sequence(
+        &self,
+        instance_epoch: MediaNodeInstanceEpoch,
+        now_ms: i64,
+    ) -> Result<Option<EventSequence>, ControlPlaneError>;
+
+    /// Delete expired event rows up to `max_rows`. Returns the number deleted.
+    async fn purge_expired(&self, now_ms: i64, max_rows: u32) -> Result<u64, ControlPlaneError>;
 }
 
 struct RowEvent {
@@ -321,6 +335,7 @@ impl EventStore for SqliteStore {
         let epoch = instance_epoch.0 as i64;
         let start = start_sequence.0 as i64;
         let limit = limit as i64;
+        let now = crate::store::now_ms();
         self.with_conn("event_list_after_sequence", move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT instance_epoch, sequence, event_id, tenant_id, resource_kind,
@@ -328,10 +343,11 @@ impl EventStore for SqliteStore {
                         correlation_id, traceparent, tracestate, expires_at
                  FROM media_events
                  WHERE instance_epoch = ?1 AND sequence > ?2
+                   AND (expires_at = 0 OR expires_at > ?3)
                  ORDER BY sequence ASC
-                 LIMIT ?3",
+                 LIMIT ?4",
             )?;
-            let rows = stmt.query_map(params![epoch, start, limit], |row| {
+            let rows = stmt.query_map(params![epoch, start, now, limit], |row| {
                 Ok(RowEvent {
                     instance_epoch: row.get(0)?,
                     sequence: row.get(1)?,
@@ -373,6 +389,45 @@ impl EventStore for SqliteStore {
         })
         .await
     }
+
+    async fn first_available_sequence(
+        &self,
+        instance_epoch: MediaNodeInstanceEpoch,
+        now_ms: i64,
+    ) -> Result<Option<EventSequence>, ControlPlaneError> {
+        let epoch = instance_epoch.0 as i64;
+        self.with_conn("event_first_available", move |conn| {
+            // MIN always returns a row; NULL means no non-expired events.
+            let seq: Option<i64> = conn.query_row(
+                "SELECT MIN(sequence) FROM media_events
+                 WHERE instance_epoch = ?1
+                   AND (expires_at = 0 OR expires_at > ?2)",
+                params![epoch, now_ms],
+                |row| row.get(0),
+            )?;
+            Ok(seq.map(|s| EventSequence(s as u64)))
+        })
+        .await
+    }
+
+    async fn purge_expired(&self, now_ms: i64, max_rows: u32) -> Result<u64, ControlPlaneError> {
+        let max = max_rows as i64;
+        self.with_conn("event_purge_expired", move |conn| {
+            // media_events is WITHOUT ROWID; delete via composite primary key.
+            let deleted = conn.execute(
+                "DELETE FROM media_events
+                 WHERE (instance_epoch, sequence) IN (
+                     SELECT instance_epoch, sequence FROM media_events
+                     WHERE expires_at > 0 AND expires_at <= ?1
+                     ORDER BY expires_at ASC, instance_epoch ASC, sequence ASC
+                     LIMIT ?2
+                 )",
+                params![now_ms, max],
+            )?;
+            Ok(deleted as u64)
+        })
+        .await
+    }
 }
 
 #[cfg(test)]
@@ -398,7 +453,8 @@ mod tests {
             correlation_id: None,
             traceparent: None,
             tracestate: None,
-            expires_at: 9999999,
+            // 0 = never expires (absolute UTC ms otherwise).
+            expires_at: 0,
         }
     }
 
