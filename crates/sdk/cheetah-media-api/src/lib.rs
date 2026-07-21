@@ -35,6 +35,7 @@ pub mod processing;
 pub mod resource_filter;
 pub mod resource_view;
 pub mod rollout;
+pub mod rtp_session;
 pub mod subtitle;
 pub mod validation;
 pub mod webhook;
@@ -108,6 +109,13 @@ pub use processing::{
 pub use resource_filter::{ResourceFilter, ResourceState};
 pub use resource_view::{ControlledResourceMeta, ControlledResourceView};
 pub use rollout::{RolloutGate, RolloutMode};
+pub use rtp_session::{
+    GbMediaCompatibilityProfile, MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk,
+    PlaybackRange, RtpDirection, RtpEndpoints, RtpFraming, RtpPayloadBinding, RtpSessionApi,
+    RtpSessionDescriptor, RtpSessionGeneration, RtpSessionParams, RtpSessionParamsBuilder,
+    RtpSessionQuery, RtpSessionRef, RtpSessionResourceRef, RtpSessionState, RtpTransport,
+    SourceBindingPolicy, StopRtpSession, TcpRole, UpdateRtpSession,
+};
 pub use subtitle::{WebVttCue, WebVttFrame};
 pub use validation::{GuardOutcome, MutationGuard, OperationIntent, ValidationStep};
 pub use webhook::{
