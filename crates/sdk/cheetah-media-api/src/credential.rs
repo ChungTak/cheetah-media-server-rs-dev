@@ -87,7 +87,7 @@ impl fmt::Display for CredentialLease {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "CredentialLease({}, purpose={}, ttl={}ms)",
+            "CredentialLease({}, purpose={}, ttl={}ms, material=<redacted>)",
             self.handle, self.purpose, self.ttl_ms
         )
     }
