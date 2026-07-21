@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use cheetah_media_api::admin::{
     AdminApi, AdminIdentity, AdminScope, CheckpointStoreRequest, CheckpointStoreResponse,
     CleanupOrphanRequest, CleanupOrphanResponse, DiagnosticsRequest, DiagnosticsResponse,
-    DrainNodeRequest, DrainNodeResponse, RotateTlsRequest, RotateTlsResponse,
+    DrainNodeRequest, DrainNodeResponse, ReconcileScope, RotateTlsRequest, RotateTlsResponse,
     TriggerReconciliationRequest, TriggerReconciliationResponse,
 };
 use cheetah_media_api::error::MediaError;
@@ -29,12 +29,22 @@ impl AdminApi for ControlPlane {
     async fn trigger_reconciliation(
         &self,
         identity: &AdminIdentity,
-        _request: TriggerReconciliationRequest,
+        request: TriggerReconciliationRequest,
     ) -> Result<TriggerReconciliationResponse, MediaError> {
         if !identity.has_scope(AdminScope::Reconcile) {
             return Err(MediaError::new(
                 cheetah_media_api::error::MediaErrorCode::PermissionDenied,
                 "admin identity lacks Reconcile scope",
+            ));
+        }
+        if request.scope != ReconcileScope::All {
+            return Err(MediaError::unsupported(
+                "scoped reconciliation is not yet implemented",
+            ));
+        }
+        if request.node_id.is_some() || request.tenant_id.is_some() {
+            return Err(MediaError::unsupported(
+                "node/tenant-scoped reconciliation is not yet implemented",
             ));
         }
         let _report = self
@@ -134,5 +144,39 @@ mod tests {
         };
         let resp = cp.trigger_reconciliation(&with_scope, req).await.unwrap();
         assert!(resp.triggered);
+    }
+
+    #[tokio::test]
+    async fn trigger_reconciliation_rejects_scoped_requests() {
+        let cp = control_plane().await;
+        let identity = AdminIdentity {
+            common_name: "ops".to_string(),
+            scopes: vec![AdminScope::Reconcile],
+        };
+
+        let scoped = TriggerReconciliationRequest {
+            scope: ReconcileScope::Tenant,
+            node_id: None,
+            tenant_id: None,
+        };
+        let err = cp
+            .trigger_reconciliation(&identity, scoped)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, MediaErrorCode::Unsupported);
+
+        let scoped = TriggerReconciliationRequest {
+            scope: ReconcileScope::All,
+            node_id: Some(
+                cheetah_media_api::ids::MediaNodeId::new("550e8400-e29b-41d4-a716-446655440003")
+                    .unwrap(),
+            ),
+            tenant_id: None,
+        };
+        let err = cp
+            .trigger_reconciliation(&identity, scoped)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, MediaErrorCode::Unsupported);
     }
 }
