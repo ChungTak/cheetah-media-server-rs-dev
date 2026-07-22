@@ -32,6 +32,8 @@ pub enum RtcpEncodeError {
     TooManySdesChunks { count: usize },
     #[error("too many bye ssrcs: {count}")]
     TooManyByeSsrcs { count: usize },
+    #[error("payload length must be a multiple of 4: {length}")]
+    UnalignedPayload { length: usize },
 }
 
 /// RTCP packet type identifiers.

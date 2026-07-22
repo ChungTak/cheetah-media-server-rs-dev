@@ -270,3 +270,30 @@ fn compound_with_unknown_packet_roundtrips() {
         RtcpPacket::Unknown { pt: 205, .. }
     ));
 }
+
+#[test]
+fn rejects_unaligned_app_payload() {
+    let app = RtcpAppPacket {
+        subtype: 0,
+        ssrc: 0x11111111,
+        name: [b't', b'e', b's', b't'],
+        payload: Bytes::from_static(&[0x01, 0x02, 0x03]),
+    };
+    assert!(matches!(
+        app.encode(),
+        Err(RtcpEncodeError::UnalignedPayload { .. })
+    ));
+}
+
+#[test]
+fn rejects_unaligned_unknown_payload() {
+    let unknown = RtcpPacket::Unknown {
+        pt: 205,
+        count: 0,
+        payload: Bytes::from_static(&[0xde, 0xad, 0xbe]),
+    };
+    assert!(matches!(
+        unknown.encode(),
+        Err(RtcpEncodeError::UnalignedPayload { .. })
+    ));
+}

@@ -86,7 +86,12 @@ pub struct RtcpAppPacket {
 impl RtcpAppPacket {
     pub fn encode(&self) -> Result<Bytes, RtcpEncodeError> {
         let payload_len = self.payload.len();
-        let total_len = 4 + 4 + 4 + payload_len + padding_to_4(payload_len);
+        if !payload_len.is_multiple_of(4) {
+            return Err(RtcpEncodeError::UnalignedPayload {
+                length: payload_len,
+            });
+        }
+        let total_len = 4 + 4 + 4 + payload_len;
         let length = ((total_len / 4) - 1) as u16;
         let mut out = BytesMut::with_capacity(total_len);
         out.put_u8(0x80 | (self.subtype & 0x1f));
@@ -95,10 +100,6 @@ impl RtcpAppPacket {
         out.put_u32(self.ssrc);
         out.extend_from_slice(&self.name);
         out.extend_from_slice(&self.payload);
-        let pad = padding_to_4(payload_len);
-        for _ in 0..pad {
-            out.put_u8(0);
-        }
         Ok(out.freeze())
     }
 

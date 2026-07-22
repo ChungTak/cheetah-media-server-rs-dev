@@ -1,6 +1,6 @@
 use super::{
-    padding_to_4, RtcpAppPacket, RtcpBye, RtcpEncodeError, RtcpPacketType, RtcpParseError,
-    RtcpReceiverReport, RtcpSenderReport, RtcpSourceDescription,
+    RtcpAppPacket, RtcpBye, RtcpEncodeError, RtcpPacketType, RtcpParseError, RtcpReceiverReport,
+    RtcpSenderReport, RtcpSourceDescription,
 };
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 
@@ -28,17 +28,18 @@ impl RtcpPacket {
             Self::App(p) => p.encode(),
             Self::Unknown { pt, count, payload } => {
                 let payload_len = payload.len();
-                let total_len = 4 + payload_len + padding_to_4(payload_len);
+                if !payload_len.is_multiple_of(4) {
+                    return Err(RtcpEncodeError::UnalignedPayload {
+                        length: payload_len,
+                    });
+                }
+                let total_len = 4 + payload_len;
                 let length = ((total_len / 4) - 1) as u16;
                 let mut out = BytesMut::with_capacity(total_len);
                 out.put_u8(0x80 | (*count & 0x1f));
                 out.put_u8(*pt);
                 out.put_u16(length);
                 out.extend_from_slice(payload);
-                let pad = padding_to_4(payload_len);
-                for _ in 0..pad {
-                    out.put_u8(0);
-                }
                 Ok(out.freeze())
             }
         }
