@@ -941,6 +941,12 @@ impl RtpCore {
             if now_ms.saturating_sub(session.last_rtcp_report_ms) >= 5000 {
                 session.last_rtcp_report_ms = now_ms;
 
+                let session_key = session._session_key.clone();
+                let conn_id = session.tcp_conn_id;
+                let Some(dest) = session.destination.or(session.source_addr) else {
+                    continue;
+                };
+
                 let peer_ssrc = session.peer_ssrc;
                 let ssrc = session.ssrc;
                 let packets_sent = session.packets_sent;
@@ -973,14 +979,12 @@ impl RtpCore {
                         packets: vec![packet],
                     };
                     if let Ok(data) = compound.encode() {
-                        if let Some(dest) = session.destination.or(session.source_addr) {
-                            outputs.push(RtpCoreOutput::SendRtcp(RtcpSend {
-                                session_key: session._session_key.clone(),
-                                destination: dest,
-                                conn_id: session.tcp_conn_id,
-                                data,
-                            }));
-                        }
+                        outputs.push(RtpCoreOutput::SendRtcp(RtcpSend {
+                            session_key,
+                            destination: dest,
+                            conn_id,
+                            data,
+                        }));
                     }
                 }
             }
@@ -1288,7 +1292,6 @@ impl RtpCore {
                     };
                     let rtp_clock = cheetah_codec::RtpClock { rate: clock_rate };
                     let timestamp = rtp_clock.micros_to_ticks(send_frame.frame.pts_us);
-                    session.rtcp.set_clock_rate(u64::from(clock_rate));
                     session.rtcp.on_sent(timestamp);
 
                     let payload_type =

@@ -46,7 +46,7 @@ pub struct RtcpReportState {
     last_sr_received_ms: u64,
     /// Interarrival jitter in RTP timestamp units.
     jitter: u64,
-    last_transit: Option<i64>,
+    last_transit: Option<u64>,
     /// RTP clock rate used to convert arrival time to RTP timestamp units.
     clock_rate_hz: u64,
     /// Last RTP timestamp that the local sender placed on an outbound packet.
@@ -77,11 +77,6 @@ impl RtcpReportState {
         }
     }
 
-    /// Set the clock rate. Usually updated when the codec or payload type is known.
-    pub fn set_clock_rate(&mut self, hz: u64) {
-        self.clock_rate_hz = hz;
-    }
-
     /// Register an outbound RTP packet timestamp for the sender report.
     pub fn on_sent(&mut self, rtp_timestamp: u32) {
         self.last_sent_rtp_timestamp = rtp_timestamp;
@@ -100,15 +95,17 @@ impl RtcpReportState {
         }
 
         let arrival_rtp_ts = (now_ms * self.clock_rate_hz) / MS_PER_SEC;
-        let transit = i64::try_from(arrival_rtp_ts)
-            .unwrap_or(i64::MAX)
-            .wrapping_sub(i64::from(rtp_timestamp as i32));
+        let transit = arrival_rtp_ts.wrapping_sub(u64::from(rtp_timestamp));
 
         if let Some(prev) = self.last_transit {
-            let d = transit.wrapping_sub(prev);
-            let abs_d = d.unsigned_abs();
-            // RFC 3550 A.8: J = J + (|D| - J) / 16
-            self.jitter = self.jitter + (abs_d.saturating_sub(self.jitter)) / 16;
+            // RFC 3550 A.8: J = J + (|D| - J) / 16.  Compute the difference
+            // in the low 32 bits so that timestamp wraparound is handled
+            // correctly, then take the signed absolute value.
+            let d_u32 = (transit as u32).wrapping_sub(prev as u32);
+            let abs_d = (d_u32 as i32).unsigned_abs() as u64;
+
+            let jitter = self.jitter as i64;
+            self.jitter = (jitter + (abs_d as i64 - jitter) / 16).max(0) as u64;
         }
         self.last_transit = Some(transit);
     }
@@ -227,9 +224,17 @@ mod tests {
 
         let mut state = RtcpReportState::new(90_000);
         state.on_packet(0, 0, 0);
-        state.on_packet(1, 900, 40);
-        let block = state.report_block(0, 40).unwrap();
-        assert!(block.jitter > 0);
+        state.on_packet(1, 900, 40); // 30 ms late relative to 10 ms spacing
+        let spike_jitter = state.report_block(0, 40).unwrap().jitter;
+        assert!(spike_jitter > 0);
+
+        // Smooth stream afterward should bring the jitter estimate back down.
+        for i in 2u32..12 {
+            let ts = i * 900;
+            state.on_packet(i as u16, ts, 10 + u64::from(i) * 10);
+        }
+        let recovered_jitter = state.report_block(0, 130).unwrap().jitter;
+        assert!(recovered_jitter < spike_jitter);
     }
 
     #[test]
@@ -253,5 +258,16 @@ mod tests {
         let block = state.report_block(0, 10).unwrap();
         // cycle 1, seq 1 => 0x00010001
         assert_eq!(block.highest_seq, 0x0001_0001);
+    }
+
+    #[test]
+    fn jitter_handles_32bit_timestamp_wraparound() {
+        let mut state = RtcpReportState::new(90_000);
+        // 10 ms spacing right before the 32-bit wrap boundary.
+        state.on_packet(0, u32::MAX - 900, 0);
+        state.on_packet(1, u32::MAX, 10);
+        state.on_packet(2, 900, 20); // wrapped
+        let block = state.report_block(0, 30).unwrap();
+        assert_eq!(block.jitter, 0);
     }
 }
