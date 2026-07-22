@@ -48,6 +48,10 @@ pub enum MpegTsDemuxEvent {
     ///
     /// 从 PMT 中发现一条轨道。
     TrackFound(TrackInfo),
+    /// One or more tracks were removed by a new PMT/PSM.
+    ///
+    /// 一条或多条轨道被新的 PMT/PSM 移除。
+    TrackRemoved(Vec<TrackId>),
     /// A complete frame was reassembled from PES.
     ///
     /// 从 PES 重组得到完整帧。

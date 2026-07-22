@@ -37,6 +37,11 @@ pub struct PsDemuxer {
     tracks_ever_found: bool,
     codec_probe_pes: HashMap<u8, u32>,
     unsupported_payload_reported: HashSet<u8>,
+    psm_version: Option<u8>,
+    /// (media_kind, codec) per stream_id as last declared by a processed PSM.
+    psm_signature: HashMap<u8, (MediaKind, CodecId)>,
+    /// stream_ids that were introduced by a PSM (as opposed to PES-probed).
+    psm_declared: HashSet<u8>,
 }
 
 impl PsDemuxer {
@@ -59,6 +64,9 @@ impl PsDemuxer {
             tracks_ever_found: false,
             codec_probe_pes: HashMap::new(),
             unsupported_payload_reported: HashSet::new(),
+            psm_version: None,
+            psm_signature: HashMap::new(),
+            psm_declared: HashSet::new(),
         }
     }
 
@@ -266,6 +274,14 @@ impl PsDemuxer {
             events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::PsmParseError));
             return;
         }
+
+        let current_next = payload[0] >> 7;
+        let version = payload[0] & 0x1F;
+        if current_next == 0 {
+            // Not yet applicable; wait for the next PSM.
+            return;
+        }
+
         let psm_length = payload.len();
         let mut buf = &payload[2..];
         if buf.len() < 2 {
@@ -279,7 +295,7 @@ impl PsDemuxer {
         buf = &buf[ps_info_length + 2..];
 
         let mut es_map_length = psm_length.saturating_sub(ps_info_length + 10);
-        let mut new_tracks = Vec::new();
+        let mut new_tracks = HashMap::<u8, TrackInfo>::new();
 
         while es_map_length >= 4 && buf.len() >= 4 {
             let es_type = buf[0];
@@ -323,39 +339,74 @@ impl PsDemuxer {
             };
 
             let track_info = TrackInfo::new(track_id, media_kind, codec, timescale);
-            new_tracks.push(track_info);
+            new_tracks.insert(es_id, track_info);
         }
 
-        if !new_tracks.is_empty() {
-            let new_keys = new_tracks
-                .iter()
-                .filter(|t| !self.tracks.contains_key(&(t.track_id.0 as u8)))
-                .count();
-            if self.tracks.len() + new_keys > self.config.max_tracks {
-                events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
-                    resource: "tracks".to_string(),
-                }));
-                return;
-            }
-            let mut changed = Vec::with_capacity(new_tracks.len());
-            for track in &new_tracks {
-                let track_key = track.track_id.0 as u8;
-                if let Some(existing) = self.tracks.get(&track_key) {
-                    // Preserve runtime-refined fields (clock_rate, sample_rate, channels, ...)
-                    // if the PSM still describes the same elementary stream type.
-                    if existing.media_kind == track.media_kind && existing.codec == track.codec {
-                        continue;
-                    }
+        // A PSM that yields no supported tracks carries no actionable track list; treat it
+        // as a no-op rather than removing all existing tracks.
+        if new_tracks.is_empty() {
+            return;
+        }
+
+        let new_signature: HashMap<u8, (MediaKind, CodecId)> = new_tracks
+            .iter()
+            .map(|(es_id, t)| (*es_id, (t.media_kind, t.codec)))
+            .collect();
+        if self.psm_version == Some(version) && self.psm_signature == new_signature {
+            // Duplicate PSM with identical stream descriptions; ignore.
+            return;
+        }
+
+        // Compute removed and changed/added tracks before mutating the table.
+        // Only tracks that were originally declared by a previous PSM may be removed
+        // by a new PSM; PES-probed tracks are left alone.
+        let new_keys: HashSet<u8> = new_tracks.keys().copied().collect();
+        let removed_keys: Vec<u8> = self.psm_declared.difference(&new_keys).copied().collect();
+        let removed: Vec<TrackId> = removed_keys
+            .iter()
+            .map(|k| TrackId(u32::from(*k)))
+            .collect();
+
+        let added_count = new_tracks
+            .values()
+            .filter(|t| !self.tracks.contains_key(&(t.track_id.0 as u8)))
+            .count();
+        let remaining_after_remove = self.tracks.len().saturating_sub(removed.len());
+        if remaining_after_remove + added_count > self.config.max_tracks {
+            events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                resource: "tracks".to_string(),
+            }));
+            return;
+        }
+
+        // Only commit the version/signature once the PSM is actually applied.
+        self.psm_version = Some(version);
+        self.psm_signature = new_signature;
+        self.psm_declared = new_keys;
+
+        let mut changed = Vec::with_capacity(new_tracks.len());
+        for (es_id, track) in &new_tracks {
+            if let Some(existing) = self.tracks.get(es_id) {
+                if existing.media_kind == track.media_kind && existing.codec == track.codec {
+                    // Preserve runtime-refined fields; the PSM still describes the same stream.
+                    continue;
                 }
-                if self.tracks.get(&track_key) != Some(track) {
-                    changed.push(track.clone());
-                    self.tracks.insert(track_key, track.clone());
-                }
             }
-            if !changed.is_empty() {
-                self.tracks_ever_found = true;
-                events.push(PsDemuxEvent::TrackInfo(changed));
+            changed.push(track.clone());
+            self.tracks.insert(*es_id, track.clone());
+        }
+
+        if !removed.is_empty() {
+            for es_id in &removed_keys {
+                self.tracks.remove(es_id);
+                self.codec_probe_pes.remove(es_id);
             }
+            events.push(PsDemuxEvent::TrackRemoved(removed));
+        }
+
+        if !changed.is_empty() {
+            self.tracks_ever_found = true;
+            events.push(PsDemuxEvent::TrackInfo(changed));
         }
     }
 

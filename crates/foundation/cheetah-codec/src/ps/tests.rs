@@ -10,6 +10,7 @@ use crate::frame::{AVFrame, FrameFlags, FrameFormat};
 use crate::prelude::*;
 use crate::time::Timebase;
 use crate::track::{CodecId, MediaKind, TrackId, TrackInfo};
+use crate::ts_common::crc32_mpeg2;
 use bytes::Bytes;
 
 #[test]
@@ -799,4 +800,251 @@ fn ps_demuxer_emits_unsupported_payload_after_codec_probe_budget() {
         })
         .count();
     assert_eq!(unsupported_count, 1);
+}
+
+/// Build a minimal Program Stream Map payload for testing PSM version/duplicate logic.
+fn encode_psm_payload(version: u8, entries: &[(u8, u8)]) -> Vec<u8> {
+    let current_next = 1u8; // always applicable in tests
+    let version_byte = (current_next << 7) | (0b11 << 5) | (version & 0x1F);
+
+    let mut es_map = Vec::new();
+    for (es_type, es_id) in entries {
+        es_map.extend_from_slice(&[*es_type, *es_id, 0x00, 0x00]);
+    }
+
+    let es_map_length = es_map.len();
+    let data_len = 10 + es_map_length + 4; // header + es_map + crc
+    let mut out = Vec::with_capacity(data_len);
+    out.push(version_byte);
+    out.push(0xFF); // reserved/marker
+    out.extend_from_slice(&0u16.to_be_bytes()); // program_stream_info_length
+    out.extend_from_slice(&(es_map_length as u16).to_be_bytes());
+    out.extend_from_slice(&es_map);
+
+    let crc = crc32_mpeg2(&out);
+    out.extend_from_slice(&crc.to_be_bytes());
+    out
+}
+
+#[test]
+fn ps_demuxer_duplicate_psm_is_ignored() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+    let psm = encode_psm_payload(0, &[(0x1B, 0xE0)]);
+    let mut first = vec![0x00, 0x00, 0x01, 0xBC];
+    first.extend_from_slice(&(psm.len() as u16).to_be_bytes());
+    first.extend_from_slice(&psm);
+
+    let events1 = demuxer.push(&first);
+    assert!(events1
+        .iter()
+        .any(|e| matches!(e, PsDemuxEvent::TrackInfo(..))));
+
+    let events2 = demuxer.push(&first);
+    assert!(
+        !events2
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackInfo(..))),
+        "duplicate PSM must not re-announce tracks"
+    );
+    assert!(
+        !events2
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackRemoved(..))),
+        "duplicate PSM must not remove tracks"
+    );
+}
+
+#[test]
+fn ps_demuxer_psm_version_change_adds_and_removes_tracks() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    let psm0 = encode_psm_payload(0, &[(0x1B, 0xE0), (0x0F, 0xC0)]);
+    let mut packet0 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet0.extend_from_slice(&(psm0.len() as u16).to_be_bytes());
+    packet0.extend_from_slice(&psm0);
+
+    let events0 = demuxer.push(&packet0);
+    assert_eq!(
+        events0
+            .iter()
+            .filter(|e| matches!(e, PsDemuxEvent::TrackInfo(..)))
+            .count(),
+        1,
+        "initial PSM announces two tracks once"
+    );
+    let announced0 = events0.iter().find_map(|e| match e {
+        PsDemuxEvent::TrackInfo(t) => Some(t.len()),
+        _ => None,
+    });
+    assert_eq!(announced0, Some(2));
+
+    // New PSM version removes the audio track.
+    let psm1 = encode_psm_payload(1, &[(0x1B, 0xE0)]);
+    let mut packet1 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet1.extend_from_slice(&(psm1.len() as u16).to_be_bytes());
+    packet1.extend_from_slice(&psm1);
+
+    let events1 = demuxer.push(&packet1);
+    assert!(
+        events1.iter().any(|e| matches!(
+            e,
+            PsDemuxEvent::TrackRemoved(ids) if ids.contains(&TrackId(0xC0))
+        )),
+        "audio track must be removed when PSM no longer lists it"
+    );
+    assert!(
+        !events1
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackInfo(..))),
+        "removing a track should not re-announce unchanged video track"
+    );
+}
+
+#[test]
+fn ps_demuxer_pes_probed_audio_not_removed_on_psm_version_bump() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    // PSM declares only video; audio will be discovered from PES.
+    let psm0 = encode_psm_payload(0, &[(0x1B, 0xE0)]);
+    let mut packet0 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet0.extend_from_slice(&(psm0.len() as u16).to_be_bytes());
+    packet0.extend_from_slice(&psm0);
+    let _ = demuxer.push(&packet0);
+
+    let audio_pes = PesPacket {
+        stream_id: 0xC0,
+        kind: PsStreamKind::Audio,
+        pts: Some(90_000),
+        dts: None,
+        payload: Bytes::from_static(b"g711 audio samples"),
+    };
+    let events_audio = demuxer.push(&audio_pes.encode());
+    assert!(
+        events_audio
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackInfo(..))),
+        "audio track should be discovered from PES"
+    );
+
+    // PSM re-issued with a new version but still declares only video.
+    let psm1 = encode_psm_payload(1, &[(0x1B, 0xE0)]);
+    let mut packet1 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet1.extend_from_slice(&(psm1.len() as u16).to_be_bytes());
+    packet1.extend_from_slice(&psm1);
+    let events = demuxer.push(&packet1);
+
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackRemoved(..))),
+        "PES-probed audio must not be removed by a PSM that never declared it"
+    );
+}
+
+#[test]
+fn ps_demuxer_psm_not_current_next_is_ignored() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    // current_next_indicator = 0 means the PSM is not yet applicable.
+    let version_byte = 0u8; // current_next=0, version=0
+    let es_map = [(0x1B, 0xE0)];
+    let mut es_map_bytes = Vec::new();
+    for (es_type, es_id) in &es_map {
+        es_map_bytes.extend_from_slice(&[*es_type, *es_id, 0x00, 0x00]);
+    }
+    let es_map_length = es_map_bytes.len();
+    let data_len = 10 + es_map_length + 4;
+    let mut payload = Vec::with_capacity(data_len);
+    payload.push(version_byte);
+    payload.push(0xFF);
+    payload.extend_from_slice(&0u16.to_be_bytes());
+    payload.extend_from_slice(&(es_map_length as u16).to_be_bytes());
+    payload.extend_from_slice(&es_map_bytes);
+    let crc = crc32_mpeg2(&payload);
+    payload.extend_from_slice(&crc.to_be_bytes());
+
+    let mut packet = vec![0x00, 0x00, 0x01, 0xBC];
+    packet.extend_from_slice(&(payload.len() as u16).to_be_bytes());
+    packet.extend_from_slice(&payload);
+
+    let events = demuxer.push(&packet);
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackInfo(..))),
+        "PSM with current_next=0 must not announce tracks"
+    );
+}
+
+#[test]
+fn ps_demuxer_empty_supported_psm_does_not_wipe_tracks() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    let psm0 = encode_psm_payload(0, &[(0x1B, 0xE0)]);
+    let mut packet0 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet0.extend_from_slice(&(psm0.len() as u16).to_be_bytes());
+    packet0.extend_from_slice(&psm0);
+    let _ = demuxer.push(&packet0);
+
+    // A PSM that lists only an unsupported stream type yields no supported tracks;
+    // it must not remove the existing video track.
+    let psm1 = encode_psm_payload(1, &[(0xFF, 0xC0)]);
+    let mut packet1 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet1.extend_from_slice(&(psm1.len() as u16).to_be_bytes());
+    packet1.extend_from_slice(&psm1);
+    let events = demuxer.push(&packet1);
+
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackRemoved(..))),
+        "unsupported-only PSM must not wipe existing tracks"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackInfo(..))),
+        "unsupported-only PSM must not re-announce tracks"
+    );
+}
+
+#[test]
+fn ps_demuxer_over_limit_psm_retransmission_still_emits_limit() {
+    let mut config = limit_config();
+    config.max_tracks = 1;
+    let mut demuxer = PsDemuxer::new(config);
+
+    // First PSM with one track fits.
+    let psm0 = encode_psm_payload(0, &[(0x1B, 0xE0)]);
+    let mut packet0 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet0.extend_from_slice(&(psm0.len() as u16).to_be_bytes());
+    packet0.extend_from_slice(&psm0);
+    let _ = demuxer.push(&packet0);
+
+    // Second PSM with two tracks exceeds the limit; each retransmission must still
+    // report the limit so the cache does not swallow the diagnostic.
+    let psm1 = encode_psm_payload(1, &[(0x1B, 0xE0), (0x0F, 0xC0)]);
+    let mut packet1 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet1.extend_from_slice(&(psm1.len() as u16).to_be_bytes());
+    packet1.extend_from_slice(&psm1);
+
+    let events1 = demuxer.push(&packet1);
+    let events2 = demuxer.push(&packet1);
+
+    for events in [events1, events2] {
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+                if resource == "tracks"
+            )),
+            "over-limit PSM retransmission must still emit LimitExceeded"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, PsDemuxEvent::TrackRemoved(..))),
+            "over-limit PSM must not remove existing tracks"
+        );
+    }
 }

@@ -478,6 +478,13 @@ async fn run_pull_inner(
                             debug!(name = %job.name, codec = ?track_info.codec, "track found");
                             accumulated_tracks.push(track_info);
                         }
+                        MpegTsDemuxEvent::TrackRemoved(ids) => {
+                            let before = accumulated_tracks.len();
+                            accumulated_tracks.retain(|t| !ids.contains(&t.track_id));
+                            if accumulated_tracks.len() != before {
+                                tracks_published = false;
+                            }
+                        }
                         MpegTsDemuxEvent::Frame(frame) => {
                             // Publish accumulated tracks on first frame
                             if !tracks_published && !accumulated_tracks.is_empty() {
