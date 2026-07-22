@@ -144,9 +144,10 @@ impl<T> RtpReorderBuffer<T> {
     /// Extend a raw 16-bit sequence number to a monotonic 64-bit value relative
     /// to the current expected sequence number.
     ///
-    /// Returns `None` when the closest cycle is more than half a period away,
-    /// which means the packet is either a late duplicate or too far ahead to be
-    /// reordered reliably.
+    /// For late or previous-cycle packets (whose closest cycle lands before the
+    /// expected sequence number) it returns a value strictly below `expected`
+    /// so that `push` drops them, instead of casting a negative extended value
+    /// to `u64`. Large future packets are returned as-is for buffering.
     fn extend_sequence(&self, raw: u16) -> u64 {
         let raw64 = u64::from(raw);
         let Some(expected) = self.expected_seq else {
