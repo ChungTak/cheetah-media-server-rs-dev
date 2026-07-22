@@ -234,23 +234,23 @@ impl RtpCore {
         outputs
     }
 
-    /// Parse an incoming RTCP packet and refresh peer-feedback timers.
+    /// Parse an incoming RTCP packet and refresh peer-feedback timers or close sessions.
     ///
-    /// Only RTCP sender reports (PT=200) and receiver reports (PT=201) are consumed. For RR
-    /// the report block at offset 8 contains the SSRC of the source being reported on; this
-    /// described SSRC is used to locate the local sender session and reset its
-    /// `last_rr_received_ms`. RTCP feedback packets such as NACK or PLI are not parsed in
-    /// this phase and are ignored.
+    /// SR (PT=200) and RR (PT=201) refresh `last_rr_received_ms` for sender/sender-described
+    /// sessions. BYE (PT=203) closes any session whose `ssrc` or `peer_ssrc` matches a listed
+    /// source. NACK/PLI and other feedback are not parsed in this phase.
     ///
-    /// 解析入站 RTCP 包并刷新对端反馈计时器。
+    /// 解析入站 RTCP 包并刷新对端反馈计时器或关闭会话。
     ///
-    /// 仅消费 RTCP 发送者报告（PT=200）和接收者报告（PT=201）。对于 RR，偏移 8 处的报告块
-    /// 包含被报告的源 SSRC；该被描述 SSRC 用于定位本地发送会话并重置其
-    /// `last_rr_received_ms`。NACK 或 PLI 等 RTCP 反馈包在此阶段不解析并被忽略。
-    fn process_rtcp_packet(&mut self, datagram: RtpDatagram, _outputs: &mut Vec<RtpCoreOutput>) {
+    /// 消费 SR（PT=200）、RR（PT=201）与 BYE（PT=203）。BYE 会关闭其中列出的源 SSRC
+    /// 与会话 `ssrc` 或 `peer_ssrc` 匹配的会话。NACK 或 PLI 等 RTCP 反馈包在此阶段
+    /// 不解析并被忽略。
+    fn process_rtcp_packet(&mut self, datagram: RtpDatagram, outputs: &mut Vec<RtpCoreOutput>) {
         let Ok(compound) = RtcpCompoundPacket::parse(datagram.data) else {
             return;
         };
+
+        let mut bye_keys: Vec<RtpSessionKey> = Vec::new();
 
         for packet in compound.packets {
             match packet {
@@ -275,11 +275,23 @@ impl RtpCore {
                         }
                     }
                 }
+                RtcpPacket::Bye(bye) => {
+                    for bye_ssrc in bye.ssrcs {
+                        for (key, session) in &self.sessions {
+                            if session.peer_ssrc == bye_ssrc || session.ssrc == bye_ssrc {
+                                bye_keys.push(key.clone());
+                            }
+                        }
+                    }
+                }
                 RtcpPacket::SourceDescription(_)
-                | RtcpPacket::Bye(_)
                 | RtcpPacket::App(_)
                 | RtcpPacket::Unknown { .. } => {}
             }
+        }
+
+        for key in bye_keys {
+            self.close_session(key, "RTCP BYE".to_string(), outputs);
         }
     }
 
@@ -1648,6 +1660,7 @@ fn track_filter_allows_track(filter: RtpTrackFilter, kind: cheetah_codec::MediaK
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rtcp::RtcpBye;
     use crate::types::{
         RtpClientSpec, RtpConnectionType, RtpDatagram, RtpSendFrame, RtpServerSpec,
     };
@@ -2904,5 +2917,102 @@ mod tests {
         };
         let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
         assert!(core.sessions.contains_key("live/6001"));
+    }
+
+    #[test]
+    fn test_rtcp_bye_closes_matching_session() {
+        let mut core = RtpCore::new(10, 30_000);
+        let ssrc = 0x4444_4444u32;
+        let key = format!("live/{ssrc}");
+
+        // Auto-create a session by feeding an RTP packet.
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 1,
+                timestamp: 0,
+                ssrc,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0x00]),
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:1".parse().unwrap(),
+            data: rtp.encode(),
+            received_at_ms: 0,
+        };
+        let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        assert!(core.sessions.contains_key(&key));
+
+        // The peer sends RTCP BYE for its SSRC.
+        let bye = RtcpCompoundPacket {
+            packets: vec![RtcpPacket::Bye(RtcpBye {
+                ssrcs: vec![ssrc],
+                reason: Some("shutdown".to_string()),
+            })],
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:2".parse().unwrap(),
+            data: bye.encode().unwrap(),
+            received_at_ms: 0,
+        };
+        let outputs = core.handle_input(RtpCoreInput::RtcpPacket(dgram));
+
+        assert!(
+            outputs
+                .iter()
+                .any(|o| matches!(o, RtpCoreOutput::CloseSession(k) if k == &key)),
+            "BYE must emit explicit CloseSession action"
+        );
+        assert!(outputs.iter().any(|o| matches!(
+            o,
+            RtpCoreOutput::Event(RtpCoreEvent::SessionClosed { session_key, .. })
+            if session_key == &key
+        )));
+        assert!(!core.sessions.contains_key(&key));
+    }
+
+    #[test]
+    fn test_rtcp_bye_ignores_unknown_ssrc() {
+        let mut core = RtpCore::new(10, 30_000);
+        let ssrc = 0x1111_1111u32;
+        let key = format!("live/{ssrc}");
+
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 1,
+                timestamp: 0,
+                ssrc,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0x00]),
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:1".parse().unwrap(),
+            data: rtp.encode(),
+            received_at_ms: 0,
+        };
+        let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+
+        let bye = RtcpCompoundPacket {
+            packets: vec![RtcpPacket::Bye(RtcpBye {
+                ssrcs: vec![0x2222_2222],
+                reason: None,
+            })],
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:2".parse().unwrap(),
+            data: bye.encode().unwrap(),
+            received_at_ms: 0,
+        };
+        let outputs = core.handle_input(RtpCoreInput::RtcpPacket(dgram));
+
+        assert!(!outputs
+            .iter()
+            .any(|o| matches!(o, RtpCoreOutput::CloseSession(_))));
+        assert!(core.sessions.contains_key(&key));
     }
 }
