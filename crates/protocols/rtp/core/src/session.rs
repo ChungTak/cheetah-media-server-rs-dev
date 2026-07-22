@@ -717,17 +717,27 @@ impl RtpCore {
         // Order: external binding (set via spec/UpdateSession), static PT table,
         // then payload sniff. The sniff budget is per-session so one stream cannot
         // exhaust it for others.
-        if session.payload_mode == RtpPayloadMode::Unknown
-            && session.pt_probe_attempts < self.max_pt_probe_packets
-        {
-            session.pt_probe_attempts += 1;
-            if let Some(profile) = self
-                .pt_resolver
-                .resolve(rtp.header.payload_type, &rtp.payload)
+        if session.payload_mode == RtpPayloadMode::Unknown {
+            if session.pt_probe_attempts < self.max_pt_probe_packets {
+                session.pt_probe_attempts += 1;
+                if let Some(profile) = self
+                    .pt_resolver
+                    .resolve(rtp.header.payload_type, &rtp.payload)
+                {
+                    session.payload_type = Some(rtp.header.payload_type);
+                    session.payload_mode = profile.mode;
+                    session.egress_payload_mode = profile.mode;
+                    session.demuxer = SessionDemuxer::Pending;
+                }
+            }
+            // If the mode is still unknown after exhausting the per-session sniff budget,
+            // fall back to PS for GB28181 compatibility rather than leaving the stream on
+            // the no-op ES demuxer.
+            if session.payload_mode == RtpPayloadMode::Unknown
+                && session.pt_probe_attempts >= self.max_pt_probe_packets
             {
-                session.payload_type = Some(rtp.header.payload_type);
-                session.payload_mode = profile.mode;
-                session.egress_payload_mode = profile.mode;
+                session.payload_mode = RtpPayloadMode::Ps;
+                session.egress_payload_mode = RtpPayloadMode::Ps;
                 session.demuxer = SessionDemuxer::Pending;
             }
         }
@@ -2127,5 +2137,35 @@ mod tests {
             }
         }
         assert!(created, "expected SessionCreated with sniffed Es mode");
+    }
+
+    #[test]
+    fn test_unknown_payload_falls_back_to_ps_after_probe_budget() {
+        let mut core = RtpCore::new(10, 30_000);
+
+        for seq in 1..=8u16 {
+            let rtp = RtpPacket {
+                header: RtpHeader {
+                    version: 2,
+                    payload_type: 96,
+                    sequence_number: seq,
+                    timestamp: u32::from(seq),
+                    ssrc: 2000,
+                    marker: false,
+                },
+                payload: Bytes::from(vec![0xAB, 0xCD]),
+            };
+            let dgram = RtpDatagram {
+                source: "127.0.0.1:1".parse().unwrap(),
+                data: rtp.encode(),
+            };
+            let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        }
+
+        let session = core
+            .sessions
+            .get("live/2000")
+            .expect("auto-created session");
+        assert_eq!(session.payload_mode, RtpPayloadMode::Ps);
     }
 }
