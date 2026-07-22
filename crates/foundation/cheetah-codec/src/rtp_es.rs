@@ -169,10 +169,10 @@ impl EsDemuxer {
             }
         }
 
-        // H.264 FU-A (28), FU-B (29), STAP-A (24) and single NAL (1-5, 7, 8).
+        // H.264 FU-A (28), FU-B (29), STAP-A (24) and single NAL (1-5, 6 SEI, 7 SPS, 8 PPS, 9 AUD).
         let h264_type = payload[0] & 0x1f;
         if payload[0] & 0x80 == 0
-            && (matches!(h264_type, 1..=5 | 7 | 8) || matches!(h264_type, 24 | 28 | 29))
+            && (matches!(h264_type, 1..=9) || matches!(h264_type, 24 | 28 | 29))
         {
             return Some(CodecId::H264);
         }
@@ -201,7 +201,7 @@ impl EsDemuxer {
 
         if !unit.is_empty() {
             let h264_type = unit[0] & 0x1f;
-            if unit[0] & 0x80 == 0 && matches!(h264_type, 1..=5 | 7 | 8) {
+            if unit[0] & 0x80 == 0 && matches!(h264_type, 1..=9) {
                 return Some(CodecId::H264);
             }
         }
