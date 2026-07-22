@@ -87,6 +87,8 @@ pub struct RtpCore {
     ssrc_to_session: HashMap<u32, RtpSessionKey>,
     tcp_conn_to_session: HashMap<u64, RtpSessionKey>,
     ehome_decoders: HashMap<u64, cheetah_codec::EhomeDecoder>,
+    /// Payload-type resolver: binding -> static table -> bounded sniff.
+    pt_resolver: cheetah_codec::RtpPtResolver,
     max_sessions: usize,
     session_idle_timeout_ms: u64,
     now_ms: u64,
@@ -114,6 +116,7 @@ impl RtpCore {
             ssrc_to_session: HashMap::new(),
             tcp_conn_to_session: HashMap::new(),
             ehome_decoders: HashMap::new(),
+            pt_resolver: cheetah_codec::RtpPtResolver::new(8),
             max_sessions,
             session_idle_timeout_ms,
             now_ms: 0,
@@ -654,12 +657,9 @@ impl RtpCore {
             }
 
             let key = format!("live/{ssrc}");
-            let probed = probe_rtp_payload(&rtp.payload);
-            let mode = if probed == RtpPayloadMode::Unknown {
-                RtpPayloadMode::Ps // default standard compat
-            } else {
-                probed
-            };
+            let mode = probe_rtp_payload(&rtp.payload);
+            // If `probe_rtp_payload` cannot determine the mode, leave it `Unknown`; the
+            // `pt_resolver` will attempt a static mapping and bounded sniff on the first packet.
 
             let session = RtpSession {
                 _session_key: key.clone(),
@@ -704,6 +704,21 @@ impl RtpCore {
         let Some(session) = self.sessions.get_mut(&session_key) else {
             return;
         };
+
+        // Resolve the payload mode for sessions created without an explicit mode.
+        // Order: external binding (set via spec/UpdateSession), static PT table,
+        // then bounded payload sniff.
+        if session.payload_mode == RtpPayloadMode::Unknown {
+            if let Some(profile) = self
+                .pt_resolver
+                .resolve(rtp.header.payload_type, &rtp.payload)
+            {
+                session.payload_type = Some(rtp.header.payload_type);
+                session.payload_mode = profile.mode;
+                session.egress_payload_mode = profile.mode;
+                session.demuxer = SessionDemuxer::Pending;
+            }
+        }
 
         // Update stats and activity
         session.packets_received += 1;
@@ -2060,5 +2075,43 @@ mod tests {
             _ => None,
         });
         assert_eq!(updated, Some(1));
+    }
+
+    #[test]
+    fn test_pt_resolver_sniffs_h26x_on_auto_create() {
+        let mut core = RtpCore::new(10, 30_000);
+
+        // Feed an unmapped SSRC with an H.264 Annex-B payload on a dynamic PT.
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 1,
+                timestamp: 0,
+                ssrc: 1000,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x09]),
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:1".parse().unwrap(),
+            data: rtp.encode(),
+        };
+        let outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+
+        let mut created = false;
+        for output in outputs {
+            if let RtpCoreOutput::Event(RtpCoreEvent::SessionCreated {
+                session_key,
+                payload_mode,
+                ..
+            }) = output
+            {
+                assert_eq!(session_key, "live/1000");
+                assert_eq!(payload_mode, RtpPayloadMode::Es);
+                created = true;
+            }
+        }
+        assert!(created, "expected SessionCreated with sniffed Es mode");
     }
 }
