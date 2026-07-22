@@ -12,8 +12,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use cheetah_codec::TrackInfo;
 use cheetah_rtp_core::{
-    RtpClientSpec, RtpConnectionType, RtpCoreEvent, RtpPayloadMode, RtpTrackFilter,
-    RtpTransportMode,
+    RtpClientSpec, RtpConnectionType, RtpCoreEvent, RtpPayloadMode, RtpSessionCloseReason,
+    RtpTrackFilter, RtpTransportMode,
 };
 use cheetah_rtp_driver_tokio::{start_driver, RtpDriverCommand, RtpDriverConfig, RtpDriverHandle};
 use cheetah_sdk::media_api::error::MediaError;
@@ -655,11 +655,15 @@ async fn run_ingress_worker(
                 session_key,
                 reason,
             } => {
+                let is_timeout = matches!(
+                    reason,
+                    RtpSessionCloseReason::IdleTimeout | RtpSessionCloseReason::RrTimeout
+                );
                 info!("RTP ingress session closed: key={session_key}, reason={reason}");
                 let id = RtpSessionId(session_key.clone());
                 let timeout_session = {
                     let mut guard = orchestrator.sessions.lock();
-                    let session = if reason.contains("timeout") {
+                    let session = if is_timeout {
                         guard.get(&id).cloned()
                     } else {
                         None
@@ -671,7 +675,7 @@ async fn run_ingress_worker(
                     let _ = session.sink.close();
                 }
 
-                let event_type = if reason.contains("timeout") {
+                let event_type = if is_timeout {
                     "rtp_session_timeout"
                 } else {
                     "rtp_session_closed"
@@ -681,7 +685,7 @@ async fn run_ingress_worker(
                     event_type: event_type.to_string(),
                     payload: serde_json::json!({
                         "session_key": session_key,
-                        "reason": reason,
+                        "reason": reason.to_string(),
                     }),
                 }));
 

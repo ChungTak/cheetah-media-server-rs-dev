@@ -55,6 +55,7 @@ pub use session::RtpCore;
 /// 重导出的公共输入/输出/事件/命令类型。
 pub use types::{
     RtcpSend, RtpClientSpec, RtpConnectionType, RtpCoreCommand, RtpCoreEvent, RtpCoreInput,
-    RtpCoreOutput, RtpDatagram, RtpSendFrame, RtpServerSpec, RtpSessionKey, RtpSessionState,
-    RtpSourcePolicy, RtpTcpChunk, RtpTcpSend, RtpTrackFilter, RtpTransportMode, RtpUdpSend,
+    RtpCoreOutput, RtpDatagram, RtpSendFrame, RtpServerSpec, RtpSessionCloseReason, RtpSessionKey,
+    RtpSessionState, RtpSourcePolicy, RtpTcpChunk, RtpTcpSend, RtpTrackFilter, RtpTransportMode,
+    RtpUdpSend,
 };

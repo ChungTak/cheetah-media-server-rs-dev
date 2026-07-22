@@ -221,7 +221,7 @@ impl RtpCore {
         received_at_ms: u64,
         created: bool,
         outputs: &mut Vec<RtpCoreOutput>,
-    ) -> Result<(), String> {
+    ) -> Result<(), RtpSessionCloseReason> {
         let ssrc = rtp.header.ssrc;
 
         let Some(session) = self.sessions.get_mut(session_key) else {
@@ -237,7 +237,7 @@ impl RtpCore {
         // then payload sniff. The sniff budget is per-session so one stream cannot
         // exhaust it for others.
         let mut format_change = None;
-        let mut close_reason: Option<String> = None;
+        let mut close_reason: Option<RtpSessionCloseReason> = None;
         let mut skip_demuxer = false;
 
         if session.payload_mode == RtpPayloadMode::Unknown {
@@ -313,12 +313,11 @@ impl RtpCore {
                         if profile.mode != session.payload_mode {
                             session.pt_format_change_count += 1;
                             if session.pt_format_change_count > self.max_pt_format_changes {
-                                close_reason = Some(format!(
-                                    "payload mode oscillated from {payload_mode:?} to {new_mode:?} more than {max} times",
-                                    payload_mode = session.payload_mode,
-                                    new_mode = profile.mode,
-                                    max = self.max_pt_format_changes,
-                                ));
+                                close_reason =
+                                    Some(RtpSessionCloseReason::PayloadModeOscillation {
+                                        from: session.payload_mode,
+                                        to: profile.mode,
+                                    });
                             } else {
                                 let old_mode = session.payload_mode;
                                 commit_payload_profile(session, new_pt, profile);
@@ -342,10 +341,11 @@ impl RtpCore {
                         session.pt_change_unknown_count += 1;
                         if session.pt_change_unknown_count >= self.max_tolerated_unknown_pt_packets
                         {
-                            close_reason = Some(format!(
-                                "payload type changed from {current_pt} to {new_pt} and could not be resolved for {} packets",
-                                session.pt_change_unknown_count
-                            ));
+                            close_reason = Some(RtpSessionCloseReason::UnresolvablePayloadType {
+                                current: current_pt,
+                                new: new_pt,
+                                count: session.pt_change_unknown_count,
+                            });
                         } else {
                             skip_demuxer = true;
                         }

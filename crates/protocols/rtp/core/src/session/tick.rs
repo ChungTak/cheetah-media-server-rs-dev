@@ -23,7 +23,7 @@ impl RtpCore {
                     && now_ms.saturating_sub(session.last_activity_ms)
                         > self.session_idle_timeout_ms
                 {
-                    to_remove.push((key.clone(), "Idle timeout".to_string()));
+                    to_remove.push((key.clone(), RtpSessionCloseReason::IdleTimeout));
                     continue;
                 }
 
@@ -49,7 +49,7 @@ impl RtpCore {
                     } else if now_ms.saturating_sub(session.last_rr_received_ms)
                         > self.session_idle_timeout_ms
                     {
-                        to_remove.push((key.clone(), "RR timeout".to_string()));
+                        to_remove.push((key.clone(), RtpSessionCloseReason::RrTimeout));
                         continue;
                     }
                 }

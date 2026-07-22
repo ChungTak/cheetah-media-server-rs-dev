@@ -127,7 +127,7 @@ impl RtpCore {
     pub(super) fn close_session(
         &mut self,
         key: RtpSessionKey,
-        reason: String,
+        reason: RtpSessionCloseReason,
         outputs: &mut Vec<RtpCoreOutput>,
     ) {
         if let Some(mut session) = self.sessions.remove(&key) {
@@ -422,7 +422,7 @@ impl RtpCore {
                 );
             }
             RtpCoreCommand::StopSession(key) => {
-                self.close_session(key, "Stopped by command".to_string(), outputs);
+                self.close_session(key, RtpSessionCloseReason::Stopped, outputs);
             }
             RtpCoreCommand::PauseCheck {
                 session_key,
