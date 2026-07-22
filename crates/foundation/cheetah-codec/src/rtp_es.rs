@@ -10,7 +10,7 @@ use crate::frame::{AVFrame, FrameFlags, FrameFormat};
 use crate::prelude::*;
 use crate::time::Timebase;
 use crate::track::{CodecExtradata, CodecId, MediaKind, TrackId, TrackInfo, TrackReadiness};
-use crate::video::{h26x_nalu_is_random_access, ParameterSetCache};
+use crate::video::{h26x_nalu_is_random_access, AccessUnitAssembler, ParameterSetCache};
 
 /// Events produced by the elementary-stream depacketizer.
 #[derive(Debug, Clone)]
@@ -50,6 +50,11 @@ pub struct EsDemuxer {
     parameter_sets: ParameterSetCache,
     track_emitted: bool,
     fu: Option<FuState>,
+    au_assembler: AccessUnitAssembler,
+    au_timestamp: Option<u32>,
+    au_codec: Option<CodecId>,
+    au_random_access: bool,
+    au_has_vcl: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -66,10 +71,17 @@ impl EsDemuxer {
         }
     }
 
-    /// Push a single RTP payload with its RTP timestamp.
+    /// Push a single RTP payload with its RTP timestamp and marker bit.
     ///
-    /// Returns a sequence of `TrackFound` and/or `Frame` events.
-    pub fn push_packet(&mut self, payload: &[u8], timestamp: u32) -> Vec<EsDemuxEvent> {
+    /// Returns a sequence of `TrackFound` and/or `Frame` events. VCL NAL units that
+    /// share the same RTP timestamp are accumulated into one access unit and emitted
+    /// as a single `Frame` when the timestamp changes or the RTP marker bit is set.
+    pub fn push_packet(
+        &mut self,
+        payload: &[u8],
+        timestamp: u32,
+        marker: bool,
+    ) -> Vec<EsDemuxEvent> {
         let mut events = Vec::new();
         if payload.is_empty() {
             return events;
@@ -80,17 +92,20 @@ impl EsDemuxer {
             || payload.starts_with(&[0x00, 0x00, 0x00, 0x01])
         {
             self.process_annexb(payload, timestamp, &mut events);
-            return events;
+        } else {
+            let Some(codec) = self.detect_rtp_packet_codec(payload) else {
+                return events;
+            };
+
+            match codec {
+                CodecId::H264 => self.process_h264_rtp(payload, timestamp, &mut events),
+                CodecId::H265 => self.process_h265_rtp(payload, timestamp, &mut events),
+                _ => {}
+            }
         }
 
-        let Some(codec) = self.detect_rtp_packet_codec(payload) else {
-            return events;
-        };
-
-        match codec {
-            CodecId::H264 => self.process_h264_rtp(payload, timestamp, &mut events),
-            CodecId::H265 => self.process_h265_rtp(payload, timestamp, &mut events),
-            _ => {}
+        if marker {
+            self.flush_access_unit(&mut events);
         }
 
         events
@@ -98,13 +113,13 @@ impl EsDemuxer {
 
     /// Determine the H.26x codec from the RTP packet header.
     ///
-    /// H.264 packetization (single NAL, STAP-A, FU-A) is detected first by the 1-byte NAL
+    /// H.264 packetization (single NAL, STAP-A, FU-A/FU-B) is detected by the 1-byte NAL
     /// header; H.265 packetization is detected by its 2-byte NAL header and a `layer_id`
     /// of 0 with a valid temporal id. The more constrained H.265 test runs first so that
     /// H.265 SPS (`0x42 0x01...`) is not misread as H.264 NAL type 2.
     fn detect_rtp_packet_codec(&self, payload: &[u8]) -> Option<CodecId> {
-        if self.config.codec.is_some() {
-            return self.config.codec;
+        if let Some(codec) = self.config.codec {
+            return Some(codec);
         }
 
         if payload.len() >= 2 {
@@ -133,8 +148,8 @@ impl EsDemuxer {
 
     /// Determine the H.26x codec from a single Annex-B NAL unit (no start code).
     fn detect_unit_codec(&self, unit: &[u8]) -> Option<CodecId> {
-        if self.config.codec.is_some() {
-            return self.config.codec;
+        if let Some(codec) = self.config.codec {
+            return Some(codec);
         }
 
         if unit.len() >= 2 {
@@ -174,7 +189,8 @@ impl EsDemuxer {
         match nal_type {
             1..=23 => self.process_nal(CodecId::H264, payload, timestamp, events),
             24 => self.process_h264_stap_a(payload, timestamp, events),
-            28 | 29 => self.process_h264_fu_a(payload, timestamp, events),
+            28 => self.process_h264_fu_a(payload, timestamp, events),
+            29 => self.process_h264_fu_b(payload, timestamp, events),
             _ => {}
         }
     }
@@ -222,21 +238,35 @@ impl EsDemuxer {
             });
         }
 
-        if let Some(ref mut fu) = self.fu {
-            if fu.codec == CodecId::H264 {
-                if fu.buffer.len().saturating_add(data.len()) > self.config.max_fu_reassembly_bytes
-                {
-                    self.fu = None;
-                    return;
-                }
-                fu.buffer.extend_from_slice(data);
-                if end {
-                    let unit = core::mem::take(&mut fu.buffer);
-                    self.fu = None;
-                    self.process_nal(CodecId::H264, &unit, timestamp, events);
-                }
-            }
+        self.extend_fu_buffer(CodecId::H264, data, timestamp, events, end);
+    }
+
+    fn process_h264_fu_b(
+        &mut self,
+        payload: &[u8],
+        timestamp: u32,
+        events: &mut Vec<EsDemuxEvent>,
+    ) {
+        if payload.len() < 4 {
+            return;
         }
+        let indicator = payload[0];
+        let fu_header = payload[1];
+        // Skip the 2-byte DON carried by FU-B (RFC 6184).
+        let start = (fu_header & 0x80) != 0;
+        let end = (fu_header & 0x40) != 0;
+        let nal_type = fu_header & 0x1f;
+        let data = &payload[4..];
+
+        if start {
+            let reconstructed = (indicator & 0xe0) | nal_type;
+            self.fu = Some(FuState {
+                codec: CodecId::H264,
+                buffer: vec![reconstructed],
+            });
+        }
+
+        self.extend_fu_buffer(CodecId::H264, data, timestamp, events, end);
     }
 
     fn process_h265_rtp(&mut self, payload: &[u8], timestamp: u32, events: &mut Vec<EsDemuxEvent>) {
@@ -286,8 +316,19 @@ impl EsDemuxer {
             });
         }
 
+        self.extend_fu_buffer(CodecId::H265, data, timestamp, events, end);
+    }
+
+    fn extend_fu_buffer(
+        &mut self,
+        codec: CodecId,
+        data: &[u8],
+        timestamp: u32,
+        events: &mut Vec<EsDemuxEvent>,
+        end: bool,
+    ) {
         if let Some(ref mut fu) = self.fu {
-            if fu.codec == CodecId::H265 {
+            if fu.codec == codec {
                 if fu.buffer.len().saturating_add(data.len()) > self.config.max_fu_reassembly_bytes
                 {
                     self.fu = None;
@@ -297,7 +338,7 @@ impl EsDemuxer {
                 if end {
                     let unit = core::mem::take(&mut fu.buffer);
                     self.fu = None;
-                    self.process_nal(CodecId::H265, &unit, timestamp, events);
+                    self.process_nal(codec, &unit, timestamp, events);
                 }
             }
         }
@@ -314,7 +355,17 @@ impl EsDemuxer {
             return;
         }
 
-        // Feed the cache in canonical Annex-B form.
+        // An RTP timestamp change means the previous access unit is complete.
+        if self.au_timestamp.is_some() && self.au_timestamp != Some(timestamp) {
+            self.flush_access_unit(events);
+        }
+
+        if self.au_codec.is_none() {
+            self.au_codec = Some(codec);
+        }
+        self.au_timestamp = Some(timestamp);
+
+        // Update the parameter-set cache in canonical Annex-B form.
         let mut annexb = Vec::with_capacity(4 + nal_unit.len());
         annexb.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
         annexb.extend_from_slice(nal_unit);
@@ -325,6 +376,10 @@ impl EsDemuxer {
                 self.emit_track(codec, extradata, events);
             }
         }
+
+        // Accumulate this NAL unit into the current access unit.
+        self.au_assembler
+            .push_unit(Bytes::copy_from_slice(nal_unit));
 
         let is_vcl = match codec {
             CodecId::H264 => {
@@ -338,10 +393,32 @@ impl EsDemuxer {
             _ => false,
         };
 
-        if !is_vcl {
+        if is_vcl {
+            self.au_has_vcl = true;
+            if h26x_nalu_is_random_access(codec, nal_unit) {
+                self.au_random_access = true;
+            }
+        }
+    }
+
+    fn flush_access_unit(&mut self, events: &mut Vec<EsDemuxEvent>) {
+        let codec = match self.au_codec {
+            Some(c) => c,
+            None => return,
+        };
+        if !self.au_has_vcl {
+            self.reset_access_unit();
             return;
         }
 
+        let timestamp = self.au_timestamp.unwrap_or(0);
+        let mut access_unit = self.au_assembler.take_access_unit();
+        if self.au_random_access && self.parameter_sets.has_required_sets(codec) {
+            self.parameter_sets
+                .prepend_to_access_unit(codec, &mut access_unit);
+        }
+
+        let payload = annexb_from_units(&access_unit.units);
         let mut frame = AVFrame::new(
             TrackId(1),
             MediaKind::Video,
@@ -350,20 +427,23 @@ impl EsDemuxer {
             i64::from(timestamp),
             i64::from(timestamp),
             Timebase::new(1, self.config.clock_rate_hz.max(1)),
-            Bytes::from(annexb),
+            payload,
         );
 
-        if h26x_nalu_is_random_access(codec, nal_unit) {
+        if self.au_random_access {
             frame.flags.insert(FrameFlags::KEY);
-            if self.parameter_sets.has_required_sets(codec) {
-                let prepended = self
-                    .parameter_sets
-                    .prepend_to_annexb_access_unit(codec, frame.payload.as_ref());
-                frame.payload = prepended;
-            }
         }
 
         events.push(EsDemuxEvent::Frame(frame));
+        self.reset_access_unit();
+    }
+
+    fn reset_access_unit(&mut self) {
+        self.au_assembler = AccessUnitAssembler::default();
+        self.au_timestamp = None;
+        self.au_codec = None;
+        self.au_random_access = false;
+        self.au_has_vcl = false;
     }
 
     fn emit_track(
@@ -457,6 +537,17 @@ fn split_annexb(payload: &[u8]) -> Vec<&[u8]> {
     units
 }
 
+/// Re-serialize a list of NAL units as an Annex-B payload with 4-byte start codes.
+fn annexb_from_units(units: &[Bytes]) -> Bytes {
+    let total_len = units.iter().map(|u| u.len().saturating_add(4)).sum();
+    let mut out = Vec::with_capacity(total_len);
+    for unit in units {
+        out.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        out.extend_from_slice(unit);
+    }
+    Bytes::from(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -478,7 +569,7 @@ mod tests {
         payload.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
         payload.extend_from_slice(idr);
 
-        let events = demuxer.push_packet(&payload, 90_000);
+        let events = demuxer.push_packet(&payload, 90_000, true);
 
         let found_track = events
             .iter()
@@ -513,10 +604,10 @@ mod tests {
             p
         };
 
-        let events1 = demuxer.push_packet(&first, 90_000);
+        let events1 = demuxer.push_packet(&first, 90_000, false);
         assert!(events1.is_empty(), "FU-A start should not emit until end");
 
-        let events2 = demuxer.push_packet(&second, 90_000);
+        let events2 = demuxer.push_packet(&second, 90_000, true);
         assert_eq!(events2.len(), 1, "FU-A end should emit one frame");
     }
 
@@ -591,9 +682,57 @@ mod tests {
             p
         };
 
-        assert!(demuxer.push_packet(&start, 1000).is_empty());
-        assert!(demuxer.push_packet(&cont1, 1000).is_empty());
-        assert!(demuxer.push_packet(&cont_overflow, 1000).is_empty());
-        assert!(demuxer.push_packet(&end, 1000).is_empty());
+        assert!(demuxer.push_packet(&start, 1000, false).is_empty());
+        assert!(demuxer.push_packet(&cont1, 1000, false).is_empty());
+        assert!(demuxer.push_packet(&cont_overflow, 1000, false).is_empty());
+        assert!(demuxer.push_packet(&end, 1000, true).is_empty());
+    }
+
+    #[test]
+    fn es_h264_multiple_slices_produce_one_frame() {
+        let mut demuxer = EsDemuxer::default();
+
+        // Two H.264 P-slices (type 1) in separate RTP packets sharing a timestamp.
+        let slice1: &[u8] = &[0x21, 0xaa, 0xbb];
+        let slice2: &[u8] = &[0x21, 0xcc, 0xdd];
+
+        let events1 = demuxer.push_packet(slice1, 1000, false);
+        assert!(events1.is_empty(), "first slice should accumulate");
+
+        let events2 = demuxer.push_packet(slice2, 1000, true);
+        let frames: Vec<_> = events2
+            .iter()
+            .filter_map(|e| match e {
+                EsDemuxEvent::Frame(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            frames.len(),
+            1,
+            "two slices with same timestamp should emit one frame"
+        );
+        assert_eq!(frames[0].codec, CodecId::H264);
+    }
+
+    #[test]
+    fn es_h264_timestamp_change_flushes_pending_access_unit() {
+        let mut demuxer = EsDemuxer::default();
+
+        let slice1: &[u8] = &[0x21, 0xaa];
+        let slice2: &[u8] = &[0x21, 0xbb];
+
+        assert!(demuxer.push_packet(slice1, 1000, false).is_empty());
+        // Timestamp change flushes the previous slice even without a marker bit.
+        let events = demuxer.push_packet(slice2, 2000, false);
+        let frames: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                EsDemuxEvent::Frame(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].pts, 1000);
     }
 }
