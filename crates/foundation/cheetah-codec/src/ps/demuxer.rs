@@ -2,10 +2,12 @@
 //!
 //! 节目流（PS）解复用器。
 
-use crate::frame::{AVFrame, FrameFormat};
+use crate::frame::AVFrame;
 use crate::prelude::*;
 use crate::ps::diagnostic::{PsDemuxDiagnostic, PsDemuxEvent, PsDemuxerConfig};
-use crate::ps::{default_frame_format, is_ps_stream_id, parse_pts_dts};
+use crate::ps::{
+    default_frame_format, is_ps_stream_id, parse_pts_dts, probe_audio_codec, probe_video_codec,
+};
 use crate::time::Timebase;
 use crate::track::{CodecId, MediaKind, TrackId, TrackInfo};
 use crate::video_payload_is_random_access;
@@ -32,6 +34,7 @@ pub struct PsDemuxer {
     probe_pack_count: u32,
     probe_exceeded: bool,
     tracks_ever_found: bool,
+    codec_probe_pes: HashMap<u8, u32>,
 }
 
 impl PsDemuxer {
@@ -52,6 +55,7 @@ impl PsDemuxer {
             probe_pack_count: 0,
             probe_exceeded: false,
             tracks_ever_found: false,
+            codec_probe_pes: HashMap::new(),
         }
     }
 
@@ -276,10 +280,14 @@ impl PsDemuxer {
                 0x0F | 0x11 => CodecId::AAC,
                 0x90 | 0x07 => CodecId::G711A,
                 0x91 | 0x08 => CodecId::G711U,
-                0x03 => CodecId::MP3,
-                0x04 => CodecId::MP3,
+                0x03 | 0x04 => CodecId::MP3,
                 0x80 => CodecId::Opus,
-                _ => continue,
+                _ => {
+                    events.push(PsDemuxEvent::Diagnostic(
+                        PsDemuxDiagnostic::UnsupportedPayload { stream_id: es_id },
+                    ));
+                    continue;
+                }
             };
 
             let media_kind = if (0xE0..=0xEF).contains(&es_id) {
@@ -310,12 +318,18 @@ impl PsDemuxer {
                 }));
                 return;
             }
+            let mut changed = Vec::with_capacity(new_tracks.len());
             for track in &new_tracks {
                 let track_key = track.track_id.0 as u8;
-                self.tracks.insert(track_key, track.clone());
+                if self.tracks.get(&track_key) != Some(track) {
+                    changed.push(track.clone());
+                    self.tracks.insert(track_key, track.clone());
+                }
             }
-            self.tracks_ever_found = true;
-            events.push(PsDemuxEvent::TrackInfo(new_tracks));
+            if !changed.is_empty() {
+                self.tracks_ever_found = true;
+                events.push(PsDemuxEvent::TrackInfo(changed));
+            }
         }
     }
 
@@ -409,8 +423,23 @@ impl PsDemuxer {
                     }));
                     return;
                 }
+
+                let probe_count = self.codec_probe_pes.entry(stream_id).or_insert(0);
+                if *probe_count >= self.config.max_codec_probe_packets {
+                    events.push(PsDemuxEvent::Diagnostic(
+                        PsDemuxDiagnostic::UnsupportedPayload { stream_id },
+                    ));
+                    return;
+                }
+                *probe_count += 1;
+
+                let Some(codec) = probe_video_codec(payload) else {
+                    return;
+                };
+                self.codec_probe_pes.insert(stream_id, 0);
+
                 let track_id = TrackId(stream_id as u32);
-                let track_info = TrackInfo::new(track_id, MediaKind::Video, CodecId::H264, 90_000);
+                let track_info = TrackInfo::new(track_id, MediaKind::Video, codec, 90_000);
                 self.tracks.insert(stream_id, track_info.clone());
                 self.tracks_ever_found = true;
                 events.push(PsDemuxEvent::TrackInfo(vec![track_info]));
@@ -453,8 +482,12 @@ impl PsDemuxer {
                     }));
                     return;
                 }
+
+                let codec = probe_audio_codec(payload, stream_id);
+                self.codec_probe_pes.insert(stream_id, 0);
+
                 let track_id = TrackId(stream_id as u32);
-                let track_info = TrackInfo::new(track_id, MediaKind::Audio, CodecId::G711A, 8_000);
+                let track_info = TrackInfo::new(track_id, MediaKind::Audio, codec, 8_000);
                 self.tracks.insert(stream_id, track_info.clone());
                 self.audio_es_id = stream_id;
                 self.tracks_ever_found = true;
@@ -468,8 +501,8 @@ impl PsDemuxer {
                 let frame = AVFrame::new(
                     track_id,
                     MediaKind::Audio,
-                    CodecId::G711A,
-                    FrameFormat::G711Packet,
+                    codec,
+                    default_frame_format(codec),
                     pts_converted,
                     dts_converted,
                     Timebase::new(1, 8_000),

@@ -19,6 +19,65 @@ pub use pes::{PesPacket, PsPacket, PsStreamKind};
 use crate::frame::FrameFormat;
 use crate::track::CodecId;
 
+pub(crate) fn probe_video_codec(payload: &[u8]) -> Option<CodecId> {
+    let mut offset = 0;
+    while offset + 6 <= payload.len() {
+        let Some(start) = payload[offset..]
+            .windows(3)
+            .position(|w| w == [0x00, 0x00, 0x01])
+        else {
+            break;
+        };
+        let start = offset + start;
+        let header_offset = if payload.get(start + 3).copied() == Some(0x00) {
+            start + 4
+        } else {
+            start + 3
+        };
+        if header_offset >= payload.len() {
+            break;
+        }
+
+        let b0 = payload[header_offset];
+        let b1 = payload.get(header_offset + 1).copied().unwrap_or(0);
+
+        // H.265 NAL header: first byte contains forbidden zero bit, nal_unit_type (6 bits),
+        // second byte contains nuh_temporal_id_plus1 (3 bits).
+        let h265_nal_type = (b0 >> 1) & 0x3F;
+        let h265_temporal_id = b1 & 0x07;
+        if (b0 & 0x80) == 0
+            && h265_temporal_id > 0
+            && matches!(h265_nal_type, 1 | 2 | 19 | 20 | 32 | 33 | 34 | 35 | 36)
+        {
+            return Some(CodecId::H265);
+        }
+
+        // H.264 NAL header: 1 forbidden bit, 2 ref idc, 5 nal_unit_type.
+        let h264_nal_type = b0 & 0x1F;
+        if (b0 & 0x80) == 0 && matches!(h264_nal_type, 1 | 5 | 7 | 8 | 9) {
+            return Some(CodecId::H264);
+        }
+
+        offset = header_offset;
+    }
+    None
+}
+
+pub(crate) fn probe_audio_codec(payload: &[u8], stream_id: u8) -> CodecId {
+    // ADTS syncword is 0xFFF (12 bits).
+    if payload.len() >= 2 && payload[0] == 0xFF && (payload[1] & 0xF0) == 0xF0 {
+        return CodecId::AAC;
+    }
+    // Without a PSM, G.711 A-law and mu-law are indistinguishable from payload alone.
+    // Use the stream id range as a best-effort hint: the lower half of audio stream ids
+    // maps to A-law, the upper half to mu-law.
+    if (0xD0..=0xDF).contains(&stream_id) {
+        CodecId::G711U
+    } else {
+        CodecId::G711A
+    }
+}
+
 pub(crate) fn default_frame_format(codec: CodecId) -> FrameFormat {
     match codec {
         CodecId::H264 | CodecId::H265 | CodecId::H266 => FrameFormat::CanonicalH26x,
