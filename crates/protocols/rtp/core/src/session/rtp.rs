@@ -67,6 +67,7 @@ impl RtpCore {
                 check_paused: false,
                 demuxer: SessionDemuxer::Pending,
                 last_seq: None,
+                last_received_seq: None,
                 reorder: RtpReorderBuffer::new(RtpReorderSettings::default()),
                 source_addr,
                 source_policy: RtpSourcePolicy::AllowValidatedRebind,
@@ -134,8 +135,10 @@ impl RtpCore {
                         RtpSourcePolicy::AllowValidatedRebind => {
                             let idle = received_at_ms.saturating_sub(session.last_activity_ms)
                                 >= source_rebind_idle_window_ms;
+                            let seq_plausible =
+                                plausible_seq_continuation(session.last_received_seq, seq);
                             let rate_ok = session.source_rebind_count < max_source_rebinds;
-                            if idle && rate_ok {
+                            if idle && seq_plausible && rate_ok {
                                 session.source_rebind_count += 1;
                                 outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SourceChanged {
                                     session_key: session_key.clone(),
@@ -143,6 +146,11 @@ impl RtpCore {
                                     new: src,
                                 }));
                                 session.source_addr = Some(src);
+                                // A source rebind often means a camera restart/NAT rebinding
+                                // with a new 16-bit sequence base. Reset the reorder context so
+                                // the new source is not treated as late/duplicate.
+                                session.reorder.reset();
+                                session.last_seq = None;
                             } else {
                                 session.source_spoof_count += 1;
                                 outputs.push(RtpCoreOutput::Diagnostic(
@@ -160,9 +168,10 @@ impl RtpCore {
             } else {
                 session.source_addr = Some(src);
             }
-            // Accepted packet counts as activity; update on arrival so the idle window
-            // used by AllowValidatedRebind is based on receipt time, not release order.
+            // Accepted packet counts as activity and updates the sequence context;
+            // the rebind idle/continuity checks operate on arrival order, not release order.
             session.last_activity_ms = received_at_ms;
+            session.last_received_seq = Some(seq);
         }
 
         // Push the packet into the per-session reorder buffer. The buffer releases one
@@ -509,5 +518,24 @@ impl RtpCore {
         }
 
         Ok(())
+    }
+}
+
+/// Check whether `seq` is a plausible continuation of `last_seq` for a source rebind.
+///
+/// Accepts the next expected sequence number, a small forward jump (allowing for a
+/// few dropped packets or reorder), or a large backward jump/wrap that is consistent
+/// with a camera restart. Rejects exact duplicates and packets that land just behind
+/// the last observed sequence, which are more likely to be late/duplicate traffic.
+fn plausible_seq_continuation(last_seq: Option<u16>, seq: u16) -> bool {
+    const WINDOW: u16 = 64;
+    match last_seq {
+        None => true,
+        Some(last) if seq == last => false,
+        Some(last) => {
+            let forward = seq.wrapping_sub(last);
+            let backward = last.wrapping_sub(seq);
+            forward <= WINDOW || backward > WINDOW
+        }
     }
 }

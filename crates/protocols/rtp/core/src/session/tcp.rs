@@ -56,6 +56,7 @@ impl RtpCore {
                                 check_paused: false,
                                 demuxer: SessionDemuxer::Pending,
                                 last_seq: None,
+                                last_received_seq: None,
                                 reorder: RtpReorderBuffer::new(RtpReorderSettings::default()),
                                 source_addr: None,
                                 source_policy: RtpSourcePolicy::AllowValidatedRebind,

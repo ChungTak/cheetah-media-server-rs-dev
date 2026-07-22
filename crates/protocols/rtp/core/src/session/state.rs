@@ -35,6 +35,10 @@ pub(crate) struct RtpSession {
     // Ingress state
     pub(super) demuxer: SessionDemuxer,
     pub(super) last_seq: Option<u16>,
+    /// Last sequence number observed on arrival, used by the rebind gate. This is
+    /// updated on packet acceptance (before reorder buffering) so the continuity
+    /// check operates on arrival order, not release order.
+    pub(super) last_received_seq: Option<u16>,
     /// Bounded RTP reorder buffer for this session. Packets that arrive out of order
     /// are held until their predecessors arrive or a latency/packet budget is exceeded.
     /// The buffer stores `(packet, arrival_ms, source_addr)` tuples so per-packet

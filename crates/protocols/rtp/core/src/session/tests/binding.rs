@@ -247,3 +247,87 @@ fn test_strict_reject_spoof_before_reorder() {
     assert_eq!(session.packets_received, 2);
     assert_eq!(session.source_spoof_count, 1);
 }
+
+#[test]
+fn test_allow_validated_rebind_accepts_sequence_restart() {
+    let mut core = RtpCore::new(10, 30_000);
+    core.set_source_rebind_idle_window_ms(100);
+
+    let key = "recv/rebind-restart".to_string();
+    let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(
+        RtpServerSpec {
+            session_key: key.clone(),
+            ssrc: Some(1000),
+            payload_mode: RtpPayloadMode::Es,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            source_policy: None,
+            track_filter: RtpTrackFilter::All,
+        },
+    )));
+
+    let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::UpdateSession {
+        session_key: key.clone(),
+        expected_generation: 1,
+        ssrc: None,
+        payload_type: None,
+        pause_check: None,
+        source_policy: Some(RtpSourcePolicy::AllowValidatedRebind),
+    }));
+
+    let _ = core.handle_input(udp_dgram("127.0.0.1:5000", es_packet(1000, 1000), 0));
+    let outputs = core.handle_input(udp_dgram("127.0.0.1:6000", es_packet(1000, 10), 150));
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        RtpCoreOutput::Event(RtpCoreEvent::SourceChanged {
+            session_key,
+            old,
+            new,
+        }) if session_key == &key && *old == "127.0.0.1:5000".parse().unwrap() && *new == "127.0.0.1:6000".parse().unwrap()
+    )));
+
+    let session = core.sessions.get(&key).expect("session alive");
+    assert_eq!(session.source_addr, Some("127.0.0.1:6000".parse().unwrap()));
+    assert_eq!(session.source_rebind_count, 1);
+    assert_eq!(session.packets_received, 2);
+}
+
+#[test]
+fn test_allow_validated_rebind_rejects_small_backward_duplicate() {
+    let mut core = RtpCore::new(10, 30_000);
+    core.set_source_rebind_idle_window_ms(100);
+
+    let key = "recv/rebind-dup".to_string();
+    let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(
+        RtpServerSpec {
+            session_key: key.clone(),
+            ssrc: Some(1000),
+            payload_mode: RtpPayloadMode::Es,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            source_policy: None,
+            track_filter: RtpTrackFilter::All,
+        },
+    )));
+
+    let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::UpdateSession {
+        session_key: key.clone(),
+        expected_generation: 1,
+        ssrc: None,
+        payload_type: None,
+        pause_check: None,
+        source_policy: Some(RtpSourcePolicy::AllowValidatedRebind),
+    }));
+
+    let _ = core.handle_input(udp_dgram("127.0.0.1:5000", es_packet(1000, 1000), 0));
+    let outputs = core.handle_input(udp_dgram("127.0.0.1:6000", es_packet(1000, 995), 150));
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        RtpCoreOutput::Diagnostic(RtpCoreDiagnostic::SourceSpoofed { ssrc: 1000, .. })
+    )));
+
+    let session = core.sessions.get(&key).expect("session alive");
+    assert_eq!(session.source_addr, Some("127.0.0.1:5000".parse().unwrap()));
+    assert_eq!(session.source_rebind_count, 0);
+    assert_eq!(session.source_spoof_count, 1);
+}
