@@ -9,7 +9,7 @@ use super::{
 use crate::frame::{AVFrame, FrameFlags, FrameFormat};
 use crate::prelude::*;
 use crate::time::Timebase;
-use crate::track::{CodecId, MediaKind, TrackId, TrackInfo};
+use crate::track::{CodecExtradata, CodecId, MediaKind, TrackId, TrackInfo, TrackReadiness};
 use crate::ts_common::crc32_mpeg2;
 use bytes::Bytes;
 
@@ -1315,4 +1315,227 @@ fn ps_demuxer_private_stream_is_ignored() {
             _ => {}
         }
     }
+}
+
+#[test]
+fn ps_demuxer_caches_h264_parameter_sets_and_prepends_to_keyframe() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    let sps: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xC0, 0x1E];
+    let pps: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x3C, 0x80];
+    let idr: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84];
+
+    let config_payload = [sps, pps].concat();
+
+    // Pack 1: SPS/PPS buffered (no data_alignment, no keyframe).
+    let mut pack1 = Vec::new();
+    pack1.extend_from_slice(&[0x00, 0x00, 0x01, 0xBA]);
+    pack1.extend_from_slice(&[0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8]);
+    pack1.extend_from_slice(&encode_pes_raw(
+        0xE0,
+        Some(90_000),
+        None,
+        false,
+        0,
+        Some(8 + config_payload.len()),
+        &config_payload,
+    ));
+
+    // Pack 2: IDR PES with data_alignment; the SPS/PPS AU is flushed before it,
+    // and the keyframe AU is emitted on flush with cached SPS/PPS prepended.
+    let mut pack2 = Vec::new();
+    pack2.extend_from_slice(&[0x00, 0x00, 0x01, 0xBA]);
+    pack2.extend_from_slice(&[0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8]);
+    pack2.extend_from_slice(&encode_pes_raw(
+        0xE0,
+        Some(180_000),
+        None,
+        true,
+        0,
+        Some(8 + idr.len()),
+        idr,
+    ));
+
+    let mut all_events = demuxer.push(&pack1);
+    all_events.extend(demuxer.push(&pack2));
+    all_events.extend(demuxer.flush());
+
+    let mut keyframe: Option<AVFrame> = None;
+    let mut track_ready = false;
+
+    for ev in all_events {
+        match ev {
+            PsDemuxEvent::TrackInfo(tracks) => {
+                if let Some(t) = tracks.iter().find(|t| t.track_id == TrackId(0xE0)) {
+                    if t.readiness == TrackReadiness::Ready {
+                        track_ready = true;
+                        assert!(
+                            matches!(
+                                &t.extradata,
+                                CodecExtradata::H264 { sps, pps, .. }
+                                    if sps.len() == 1 && pps.len() == 1
+                            ),
+                            "track should carry cached H.264 parameter sets"
+                        );
+                    }
+                }
+            }
+            PsDemuxEvent::Frame(frame) => {
+                if frame.track_id == TrackId(0xE0) && frame.flags.contains(FrameFlags::KEY) {
+                    keyframe = Some(*frame);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        track_ready,
+        "track should be reported Ready once parameter sets are cached"
+    );
+
+    let keyframe = keyframe.expect("keyframe should be emitted on flush");
+    let payload = keyframe.payload.as_ref();
+
+    // Expected prefix: start-code + SPS (without start code) + start-code + PPS + start-code + IDR.
+    let mut expected_prefix = Vec::new();
+    expected_prefix.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+    expected_prefix.extend_from_slice(&[0x67, 0x42, 0xC0, 0x1E]);
+    expected_prefix.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+    expected_prefix.extend_from_slice(&[0x68, 0xCE, 0x3C, 0x80]);
+    expected_prefix.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+    expected_prefix.extend_from_slice(&[0x65, 0x88, 0x84]);
+
+    assert_eq!(
+        payload,
+        expected_prefix.as_slice(),
+        "keyframe should be prefixed with cached SPS/PPS"
+    );
+}
+
+#[test]
+fn ps_demuxer_reports_missing_parameter_sets_for_keyframe() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    // A single PES containing only an IDR, with no preceding SPS/PPS.
+    let idr: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84];
+
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&[0x00, 0x00, 0x01, 0xBA]);
+    buf.extend_from_slice(&[0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8]);
+    buf.extend_from_slice(&encode_pes_raw(
+        0xE0,
+        Some(90_000),
+        None,
+        false,
+        0,
+        Some(8 + idr.len()),
+        idr,
+    ));
+
+    let events = demuxer.push(&buf);
+    let mut flush = demuxer.flush();
+
+    let mut keyframe: Option<AVFrame> = None;
+    let mut missing_reported = false;
+
+    for ev in events.into_iter().chain(flush.drain(..)) {
+        match ev {
+            PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::MissingParameterSets {
+                stream_id: 0xE0,
+                codec: CodecId::H264,
+            }) => missing_reported = true,
+            PsDemuxEvent::Frame(frame) => {
+                if frame.track_id == TrackId(0xE0) && frame.flags.contains(FrameFlags::KEY) {
+                    keyframe = Some(*frame);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    assert!(keyframe.is_some(), "IDR frame should still be emitted");
+    assert!(
+        missing_reported,
+        "keyframe without cached SPS/PPS should report MissingParameterSets"
+    );
+}
+
+#[test]
+fn ps_demuxer_clears_parameter_set_cache_on_psm_stream_removal() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    let sps: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xC0, 0x1E];
+    let pps: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x3C, 0x80];
+    let idr: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84];
+
+    let pack_header = [
+        0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8,
+    ];
+
+    // PSM 0: declare H.264 video at 0xE0.
+    let psm0 = encode_psm_payload(0, &[(0x1B, 0xE0)]);
+    let mut pack0 = Vec::new();
+    pack0.extend_from_slice(&pack_header);
+    pack0.extend_from_slice(&[0x00, 0x00, 0x01, 0xBC]);
+    pack0.extend_from_slice(&(psm0.len() as u16).to_be_bytes());
+    pack0.extend_from_slice(&psm0);
+
+    // PES 0: SPS/PPS, no keyframe.
+    let config_payload = [sps, pps].concat();
+    let mut pack1 = Vec::new();
+    pack1.extend_from_slice(&pack_header);
+    pack1.extend_from_slice(&encode_pes_raw(
+        0xE0,
+        Some(90_000),
+        None,
+        false,
+        0,
+        Some(8 + config_payload.len()),
+        &config_payload,
+    ));
+
+    // PSM 1: replace 0xE0 with an unrelated audio stream so the video track is removed.
+    let psm1 = encode_psm_payload(1, &[(0x0F, 0xC0)]);
+    let mut pack2 = Vec::new();
+    pack2.extend_from_slice(&pack_header);
+    pack2.extend_from_slice(&[0x00, 0x00, 0x01, 0xBC]);
+    pack2.extend_from_slice(&(psm1.len() as u16).to_be_bytes());
+    pack2.extend_from_slice(&psm1);
+
+    // PES 1: pure IDR after the video track was removed. The previous SPS/PPS cache
+    // must have been cleared, so the keyframe cannot be prefixed and must report MissingParameterSets.
+    let mut pack3 = Vec::new();
+    pack3.extend_from_slice(&pack_header);
+    pack3.extend_from_slice(&encode_pes_raw(
+        0xE0,
+        Some(180_000),
+        None,
+        false,
+        0,
+        Some(8 + idr.len()),
+        idr,
+    ));
+
+    let mut all_events = demuxer.push(&pack0);
+    all_events.extend(demuxer.push(&pack1));
+    all_events.extend(demuxer.push(&pack2));
+    all_events.extend(demuxer.push(&pack3));
+    all_events.extend(demuxer.flush());
+
+    let mut missing_reported = false;
+    for ev in all_events {
+        if let PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::MissingParameterSets {
+            stream_id: 0xE0,
+            codec: CodecId::H264,
+        }) = ev
+        {
+            missing_reported = true;
+        }
+    }
+
+    assert!(
+        missing_reported,
+        "keyframe after PSM removal must not reuse stale parameter set cache"
+    );
 }
