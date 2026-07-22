@@ -261,7 +261,11 @@ impl RtpCore {
                 RtcpPacket::SenderReport(sr) => {
                     for session in self.sessions.values_mut() {
                         if session.peer_ssrc == sr.ssrc {
-                            session.rtcp.on_sender_report(sr.ntp_timestamp, self.now_ms);
+                            session.rtcp.on_sender_report(
+                                sr.ntp_timestamp,
+                                sr.rtp_timestamp,
+                                self.now_ms,
+                            );
                             session.last_rr_received_ms = self.now_ms.max(1);
                         }
                     }
