@@ -29,6 +29,7 @@ fn server(key: &str, ssrc: u32, mode: RtpPayloadMode, transport: RtpTransportMod
         payload_mode: mode,
         transport_mode: transport,
         connection_type: None,
+        source_policy: None,
         track_filter: RtpTrackFilter::All,
     }))
 }
