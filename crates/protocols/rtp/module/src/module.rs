@@ -20,6 +20,7 @@ use cheetah_sdk::media_api::error::MediaError;
 use cheetah_sdk::media_api::event::{EventHeader, MediaEvent, RtpSessionTimeout};
 use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId};
 use cheetah_sdk::media_api::model::{RtpSessionState, RtpTcpMode};
+use cheetah_sdk::media_api::rtp_session::SourceBindingPolicy;
 use cheetah_sdk::{
     CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -921,6 +922,7 @@ impl ModuleHttpService for RtpHttpService {
                         bind_addr,
                         false,
                         RtpSessionState::Listening,
+                        SourceBindingPolicy::default(),
                     )
                     .await
                     .map_err(media_error_to_sdk_error)?;
@@ -1118,6 +1120,7 @@ impl ModuleHttpService for RtpHttpService {
                             *transport_mode,
                             connection_type,
                             track_filter,
+                            SourceBindingPolicy::default(),
                         )
                         .await
                         .map_err(media_error_to_sdk_error)?;

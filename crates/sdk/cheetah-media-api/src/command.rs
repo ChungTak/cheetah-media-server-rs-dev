@@ -659,6 +659,8 @@ pub struct RtpReceiverRequest {
     pub reuse_port: bool,
     #[serde(default)]
     pub timeout_ms: u64,
+    #[serde(default)]
+    pub source_binding_policy: SourceBindingPolicy,
 }
 
 /// RTP connect request.
@@ -690,6 +692,8 @@ pub struct RtpSenderRequest {
     pub mode: RtpSenderMode,
     #[serde(default)]
     pub transport_options: HashMap<String, String>,
+    #[serde(default)]
+    pub source_binding_policy: SourceBindingPolicy,
 }
 
 /// RTP sender mode.

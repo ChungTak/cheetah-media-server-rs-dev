@@ -192,6 +192,7 @@ impl RtpMediaProvider {
             codec_hint,
             reuse_port: false,
             timeout_ms: 0,
+            source_binding_policy: params.source_binding_policy,
         })
     }
 
@@ -219,6 +220,7 @@ impl RtpMediaProvider {
             codec_hint,
             mode,
             transport_options,
+            source_binding_policy: params.source_binding_policy,
         })
     }
 

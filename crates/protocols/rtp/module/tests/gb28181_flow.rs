@@ -13,7 +13,7 @@ use cheetah_sdk::media_api::model::{OnlineState, RecordTaskState};
 use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
     MediaContainer, OpenRtpReceiver, RtpDirection, RtpPayloadBinding, RtpSessionParamsBuilder,
-    RtpSessionRef, RtpTransport, StopRtpSession,
+    RtpSessionRef, RtpTransport, SourceBindingPolicy, StopRtpSession,
 };
 use cheetah_sdk::media_api::{MediaKey, MediaRequestContext};
 use cheetah_sdk::StreamKey;
@@ -46,6 +46,7 @@ async fn gb28181_udp_receiver_ingest_stream_online_and_keyframe_request() {
         codec_hint: Some("ps".to_string()),
         reuse_port: false,
         timeout_ms: 0,
+        source_binding_policy: SourceBindingPolicy::default(),
     };
 
     let session = media.open_rtp_receiver(&ctx, request).await.unwrap();
@@ -209,6 +210,7 @@ async fn gb28181_udp_sender_egress_emits_real_rtp_packets() {
         codec_hint: Some("ps".to_string()),
         mode: RtpSenderMode::Active,
         transport_options: HashMap::new(),
+        source_binding_policy: SourceBindingPolicy::default(),
     };
 
     let _sender_session = media.open_rtp_sender(&ctx, request).await.unwrap();
@@ -259,6 +261,7 @@ async fn gb28181_talkback_audio_round_trip() {
         codec_hint: Some("ps".to_string()),
         reuse_port: false,
         timeout_ms: 0,
+        source_binding_policy: SourceBindingPolicy::default(),
     };
 
     let session = media.open_rtp_receiver(&ctx, request).await.unwrap();
@@ -292,6 +295,7 @@ async fn gb28181_talkback_audio_round_trip() {
         codec_hint: Some("raw_audio".to_string()),
         mode: RtpSenderMode::Talk,
         transport_options: HashMap::new(),
+        source_binding_policy: SourceBindingPolicy::default(),
     };
     media.open_rtp_sender(&ctx, talk_request).await.unwrap();
 
@@ -348,6 +352,7 @@ async fn gb28181_session_stop_releases_port() {
         codec_hint: Some("ps".to_string()),
         reuse_port: false,
         timeout_ms: 0,
+        source_binding_policy: SourceBindingPolicy::default(),
     };
 
     let session = media.open_rtp_receiver(&ctx, request).await.unwrap();
