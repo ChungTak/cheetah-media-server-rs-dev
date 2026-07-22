@@ -578,8 +578,38 @@ async fn run_ingress_worker(
                 new_payload_mode,
             } => {
                 warn!("RTP payload format changed: key={session_key}, pt={payload_type}, {old_payload_mode:?} -> {new_payload_mode:?}");
-                if let Some(session) = sessions.remove(&session_key) {
-                    let _ = session.sink.close();
+                // The core keeps the session alive and re-initializes the demuxer for the new
+                // format. Re-acquire a publisher for the same stream key so subsequent
+                // TrackFound / Frame events under the new format are published.
+                if let Some(old) = sessions.remove(&session_key) {
+                    let _ = old.sink.close();
+                    let sk = parse_session_key(&session_key);
+                    match ctx
+                        .publisher_api
+                        .acquire_publisher(sk.clone(), PublisherOptions::default())
+                        .await
+                    {
+                        Ok((lease, sink)) => {
+                            sessions.insert(
+                                session_key,
+                                ActiveIngressSession {
+                                    _lease: lease,
+                                    sink,
+                                    _tracks: Vec::new(),
+                                    stream_key: sk,
+                                    online_reported: false,
+                                    pending_frames: std::collections::VecDeque::new(),
+                                    pending_frames_capacity: publish_frame_cache_capacity,
+                                    publisher_ready: true,
+                                },
+                            );
+                        }
+                        Err(e) => {
+                            error!("RTP re-acquire_publisher failed for {sk}: {e}");
+                        }
+                    }
+                } else {
+                    warn!("RTP FormatChanged for unknown session: {session_key}");
                 }
             }
             RtpCoreEvent::SessionClosed {
