@@ -1,14 +1,8 @@
-#[cfg(test)]
-use bytes::Bytes;
 use std::collections::HashMap;
 
 #[cfg(not(test))]
 use crate::types::{RtpCoreInput, RtpCoreOutput, RtpSessionKey};
 
-#[cfg(test)]
-pub(crate) use crate::error::RtpCoreDiagnostic;
-#[cfg(test)]
-pub(crate) use crate::rtcp::{RtcpCompoundPacket, RtcpPacket};
 #[cfg(test)]
 pub(crate) use crate::types::*;
 #[cfg(test)]
