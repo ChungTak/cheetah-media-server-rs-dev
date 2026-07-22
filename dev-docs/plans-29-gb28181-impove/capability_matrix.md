@@ -10,10 +10,10 @@
 | UDP receive/send | Supported | Supported | Supported | Supported | Supported | N/A | Supported | `crates/protocols/gb28181/driver-tokio` |
 | TCP active/passive | Supported | Supported | Supported | Supported | Supported | N/A | Supported | RFC 4571 2-byte / RTSP-style 4-byte auto-detect |
 | 2-byte/4-byte framing | Supported | Supported | Supported | Supported | Supported | N/A | N/A | `cheetah-rtp-driver-tokio` framing |
-| PS/TS/ES | Unsupported | Experimental | Experimental | Experimental | Experimental | N/A | N/A | PS 基础路径已存在，PSM 缺失/异常 fallback 仍需 fixture 验证 (GAP-PS-01) |
+| PS/TS/ES | Unsupported | Experimental | Experimental | Experimental | Experimental | N/A | N/A | PS demuxer 已支持 PSM 版本/重复检测、track 增删、PES length=0/cross-PES AU、stuffing、private stream、参数集缓存与关键帧前置 (CODEC-PS)；仍待真实 fixture 转 Supported |
 | H264/H265/AAC/G711 | Unsupported | Supported | Supported | Supported | Supported | N/A | Supported | `cheetah-codec` 基础解复用 |
-| RTP/RTCP | Unsupported | Experimental | Experimental | Experimental | Experimental | N/A | Experimental | RTP 收发 Supported；RTCP SR/RR/SDES/BYE/timeout 待补齐 (GAP-RTP-01) |
-| source binding/NAT rebind | Unsupported | Experimental | Experimental | Experimental | Experimental | N/A | Unsupported | SSRC fallback 仅作为 profile-specific compat，默认严格模式禁用 |
+| RTP/RTCP | Unsupported | Experimental | Experimental | Experimental | Experimental | N/A | Experimental | RTP 收发、reorder、source binding、PT lock/format change、RTCP SR/RR/SDES/BYE 与 timeout 生命周期已实现 (RTP-CORE/RTCP/CODEC-RTP)；仍待真实 fixture 转 Supported |
+| source binding/NAT rebind | Supported | Experimental | Experimental | Experimental | Experimental | N/A | Unsupported | Strict 模式已强制 SSRC/source-IP 锁定；AllowValidatedRebind 在 profile 允许、idle 窗口、连续性与速率检查通过时切换；日志使用哈希 endpoint (RTP-CORE-03) |
 | live/playback/download | Unsupported | Supported (live) | Supported (live) | Supported (live) | Supported (live) | N/A | Unsupported | 回放/下载为 P3 PLAY 任务 |
 | voice talk | Unsupported | Unsupported | Unsupported | Unsupported | Unsupported | N/A | Unsupported | P3 TALK 任务 |
 | JTT 2013/2019 | N/A | N/A | N/A | N/A | N/A | N/A | Experimental (2013) | v2019 parser 存在，主 assembler/packetizer 路径仍偏 v2013 (GAP-JTT-01) |
