@@ -31,6 +31,9 @@ pub struct EsDemuxerConfig {
     /// Maximum size of an FU-A/FU reassembly buffer; prevents unbounded growth from
     /// endless continuation fragments or a lost end marker.
     pub max_fu_reassembly_bytes: usize,
+    /// Maximum size of an access-unit accumulator; prevents unbounded growth when a
+    /// stream reuses the same RTP timestamp without ever setting the marker bit.
+    pub max_access_unit_bytes: usize,
 }
 
 impl Default for EsDemuxerConfig {
@@ -39,6 +42,7 @@ impl Default for EsDemuxerConfig {
             clock_rate_hz: 90_000,
             codec: None,
             max_fu_reassembly_bytes: 8 * 1024 * 1024,
+            max_access_unit_bytes: 8 * 1024 * 1024,
         }
     }
 }
@@ -55,6 +59,7 @@ pub struct EsDemuxer {
     au_codec: Option<CodecId>,
     au_random_access: bool,
     au_has_vcl: bool,
+    au_size: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -377,7 +382,15 @@ impl EsDemuxer {
             }
         }
 
-        // Accumulate this NAL unit into the current access unit.
+        // Accumulate this NAL unit into the current access unit, but drop the pending
+        // units (not the current timestamp/codec) if the cap would be exceeded.
+        let new_au_size = self.au_size.saturating_add(nal_unit.len());
+        if new_au_size > self.config.max_access_unit_bytes {
+            self.drop_pending_access_unit();
+            self.au_size = nal_unit.len();
+        } else {
+            self.au_size = new_au_size;
+        }
         self.au_assembler
             .push_unit(Bytes::copy_from_slice(nal_unit));
 
@@ -439,11 +452,16 @@ impl EsDemuxer {
     }
 
     fn reset_access_unit(&mut self) {
-        self.au_assembler = AccessUnitAssembler::default();
+        self.drop_pending_access_unit();
         self.au_timestamp = None;
         self.au_codec = None;
+    }
+
+    fn drop_pending_access_unit(&mut self) {
+        self.au_assembler = AccessUnitAssembler::default();
         self.au_random_access = false;
         self.au_has_vcl = false;
+        self.au_size = 0;
     }
 
     fn emit_track(
@@ -655,6 +673,7 @@ mod tests {
             clock_rate_hz: 90_000,
             codec: Some(CodecId::H264),
             max_fu_reassembly_bytes: 4,
+            ..Default::default()
         };
         let mut demuxer = EsDemuxer::new(config);
 
@@ -734,5 +753,33 @@ mod tests {
             .collect();
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].pts, 1000);
+    }
+
+    #[test]
+    fn es_access_unit_drops_when_size_cap_exceeded() {
+        let config = EsDemuxerConfig {
+            clock_rate_hz: 90_000,
+            codec: Some(CodecId::H264),
+            max_access_unit_bytes: 4,
+            ..Default::default()
+        };
+        let mut demuxer = EsDemuxer::new(config);
+
+        // First slice fits (3 bytes).
+        assert!(demuxer
+            .push_packet(&[0x21, 0xaa, 0xbb], 1000, false)
+            .is_empty());
+        // Second slice would push the pending AU past the 4-byte cap; drop pending and start fresh.
+        let events = demuxer.push_packet(&[0x21, 0xcc, 0xdd], 1000, true);
+        let frames: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                EsDemuxEvent::Frame(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(frames.len(), 1);
+        // The flushed frame contains only the last NAL unit (3 bytes).
+        assert_eq!(frames[0].payload.len(), 3 + 4);
     }
 }
