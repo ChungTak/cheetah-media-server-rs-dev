@@ -169,17 +169,18 @@ impl<T> RtpReorderBuffer<T> {
             }
         }
 
-        // Packets more than half a period ahead are treated as too far; still
-        // return the closest extended value and let the caller decide. The push
-        // method then compares against `expected` and drops anything behind it.
-        if best_diff >= HALF_SEQUENCE_PERIOD {
-            // Prefer the cycle that is closest to expected; if that is in the past,
-            // push will drop it. If it is in the future by more than half a period,
-            // we still deliver it as a (large) future packet and let the gap policy
-            // flush pending.
-            if best_candidate < exp {
-                return expected.saturating_sub(1);
-            }
+        // A candidate more than half a period ahead is a genuine large future
+        // packet: deliver it and let the gap policy flush pending.
+        if best_diff >= HALF_SEQUENCE_PERIOD && best_candidate >= exp {
+            return best_candidate as u64;
+        }
+
+        // Any candidate before the expected sequence number is a late /
+        // previous-cycle packet (its extended value may even be negative).
+        // Return a value the push method will drop instead of casting a
+        // negative i128 to u64, which would wrap into a huge future number.
+        if best_candidate < exp {
+            return expected.saturating_sub(1);
         }
 
         best_candidate as u64
@@ -285,6 +286,22 @@ mod tests {
 
         assert_eq!(reorder.push(100, 1, 100), vec![100]);
         assert!(reorder.push(100, 2, 100).is_empty());
+        assert_eq!(reorder.push(101, 3, 101), vec![101]);
+    }
+
+    #[test]
+    fn drops_late_packet_that_appears_to_be_in_next_cycle_before_wraparound() {
+        // expected is in cycle 0. A raw number far ahead in the u16 space is
+        // closer as a previous-cycle packet, so it should be dropped rather than
+        // buffered as a huge future sequence number.
+        let mut reorder = RtpReorderBuffer::new(RtpReorderSettings {
+            max_packets: 2,
+            max_delay_ms: 100,
+        });
+
+        assert_eq!(reorder.push(100, 1, 100), vec![100]);
+        assert!(reorder.push(40000, 2, 40000).is_empty());
+        assert_eq!(reorder.pending_len(), 0);
         assert_eq!(reorder.push(101, 3, 101), vec![101]);
     }
 
