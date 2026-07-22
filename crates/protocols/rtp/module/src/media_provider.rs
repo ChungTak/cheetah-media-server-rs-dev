@@ -84,9 +84,7 @@ impl RtpMediaProvider {
 
     /// Enforce per-module capability/profile and session limits before allocating a session.
     fn check_profile_and_limits(&self, params: &RtpSessionParams) -> Result<()> {
-        if !self.config.enabled_profiles.is_empty()
-            && !self.config.enabled_profiles.contains(&params.profile)
-        {
+        if !self.config.enabled_profiles.contains(&params.profile) {
             return Err(MediaError::unsupported(format!(
                 "profile {:?} is not enabled",
                 params.profile
