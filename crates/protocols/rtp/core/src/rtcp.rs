@@ -27,6 +27,17 @@ pub enum RtcpParseError {
     InvalidSdes,
 }
 
+/// Errors encountered while encoding RTCP packets.
+///
+/// 编码 RTCP 包时遇到的错误。
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum RtcpEncodeError {
+    #[error("sdes item text too long: {length}")]
+    SdesItemTooLong { length: usize },
+    #[error("bye reason too long: {length}")]
+    ByeReasonTooLong { length: usize },
+}
+
 /// RTCP packet type identifiers.
 ///
 /// RTCP 包类型标识。
@@ -284,7 +295,7 @@ pub struct RtcpSourceDescription {
 }
 
 impl RtcpSourceDescription {
-    pub fn encode(&self) -> Bytes {
+    pub fn encode(&self) -> Result<Bytes, RtcpEncodeError> {
         let sc = self.chunks.len().min(31) as u8;
         let total_len = 4 + self.encoded_chunks_len();
         let length = ((total_len / 4) - 1) as u16;
@@ -295,8 +306,12 @@ impl RtcpSourceDescription {
         for chunk in &self.chunks {
             out.put_u32(chunk.ssrc);
             for item in &chunk.items {
+                let text_len = item.text.len();
+                if text_len > u8::MAX as usize {
+                    return Err(RtcpEncodeError::SdesItemTooLong { length: text_len });
+                }
                 out.put_u8(item.item_type.as_u8());
-                out.put_u8(item.text.len() as u8);
+                out.put_u8(text_len as u8);
                 out.extend_from_slice(item.text.as_bytes());
             }
             // End-of-list marker and pad to 4-byte boundary within the chunk.
@@ -307,7 +322,7 @@ impl RtcpSourceDescription {
                 out.put_u8(0);
             }
         }
-        out.freeze()
+        Ok(out.freeze())
     }
 
     pub fn parse(buf: &mut Bytes, count: u8) -> Result<Self, RtcpParseError> {
@@ -380,8 +395,11 @@ pub struct RtcpBye {
 }
 
 impl RtcpBye {
-    pub fn encode(&self) -> Bytes {
+    pub fn encode(&self) -> Result<Bytes, RtcpEncodeError> {
         let reason_len = self.reason.as_ref().map(|r| r.len()).unwrap_or(0);
+        if reason_len > u8::MAX as usize {
+            return Err(RtcpEncodeError::ByeReasonTooLong { length: reason_len });
+        }
         let rc = self.ssrcs.len().min(31) as u8;
         let reason_subfield = if reason_len > 0 {
             1 + reason_len + padding_to_4(1 + reason_len)
@@ -405,7 +423,7 @@ impl RtcpBye {
                 out.put_u8(0);
             }
         }
-        out.freeze()
+        Ok(out.freeze())
     }
 
     pub fn parse(buf: &mut Bytes, count: u8) -> Result<Self, RtcpParseError> {
@@ -441,6 +459,55 @@ impl RtcpBye {
     }
 }
 
+/// RTCP Application-Defined packet (PT=204).
+///
+/// RTCP 应用自定义包。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RtcpAppPacket {
+    pub subtype: u8,
+    pub ssrc: u32,
+    pub name: [u8; 4],
+    pub payload: Bytes,
+}
+
+impl RtcpAppPacket {
+    pub fn encode(&self) -> Result<Bytes, RtcpEncodeError> {
+        let payload_len = self.payload.len();
+        let total_len = 4 + 4 + 4 + payload_len + padding_to_4(payload_len);
+        let length = ((total_len / 4) - 1) as u16;
+        let mut out = BytesMut::with_capacity(total_len);
+        out.put_u8(0x80 | (self.subtype & 0x1f));
+        out.put_u8(RtcpPacketType::App as u8);
+        out.put_u16(length);
+        out.put_u32(self.ssrc);
+        out.extend_from_slice(&self.name);
+        out.extend_from_slice(&self.payload);
+        let pad = padding_to_4(payload_len);
+        for _ in 0..pad {
+            out.put_u8(0);
+        }
+        Ok(out.freeze())
+    }
+
+    pub fn parse(buf: &mut Bytes, subtype: u8) -> Result<Self, RtcpParseError> {
+        if buf.len() < 8 {
+            return Err(RtcpParseError::Truncated {
+                pt: RtcpPacketType::App as u8,
+            });
+        }
+        let ssrc = buf.get_u32();
+        let mut name = [0u8; 4];
+        name.copy_from_slice(&buf.split_to(4));
+        let payload = buf.clone();
+        Ok(Self {
+            subtype,
+            ssrc,
+            name,
+            payload,
+        })
+    }
+}
+
 /// A single parsed RTCP packet.
 ///
 /// 单个解析后的 RTCP 包。
@@ -450,16 +517,34 @@ pub enum RtcpPacket {
     ReceiverReport(RtcpReceiverReport),
     SourceDescription(RtcpSourceDescription),
     Bye(RtcpBye),
+    App(RtcpAppPacket),
+    Unknown { pt: u8, count: u8, payload: Bytes },
 }
 
 impl RtcpPacket {
     /// Encode this packet into its wire representation.
-    pub fn encode(&self) -> Bytes {
+    pub fn encode(&self) -> Result<Bytes, RtcpEncodeError> {
         match self {
-            Self::SenderReport(p) => p.encode(),
-            Self::ReceiverReport(p) => p.encode(),
+            Self::SenderReport(p) => Ok(p.encode()),
+            Self::ReceiverReport(p) => Ok(p.encode()),
             Self::SourceDescription(p) => p.encode(),
             Self::Bye(p) => p.encode(),
+            Self::App(p) => p.encode(),
+            Self::Unknown { pt, count, payload } => {
+                let payload_len = payload.len();
+                let total_len = 4 + payload_len + padding_to_4(payload_len);
+                let length = ((total_len / 4) - 1) as u16;
+                let mut out = BytesMut::with_capacity(total_len);
+                out.put_u8(0x80 | (*count & 0x1f));
+                out.put_u8(*pt);
+                out.put_u16(length);
+                out.extend_from_slice(payload);
+                let pad = padding_to_4(payload_len);
+                for _ in 0..pad {
+                    out.put_u8(0);
+                }
+                Ok(out.freeze())
+            }
         }
     }
 
@@ -476,7 +561,12 @@ impl RtcpPacket {
                 RtcpSourceDescription::parse(buf, count)?,
             )),
             Some(RtcpPacketType::Bye) => Ok(Self::Bye(RtcpBye::parse(buf, count)?)),
-            _ => Err(RtcpParseError::Truncated { pt }),
+            Some(RtcpPacketType::App) => Ok(Self::App(RtcpAppPacket::parse(buf, count)?)),
+            None => Ok(Self::Unknown {
+                pt,
+                count,
+                payload: buf.clone(),
+            }),
         }
     }
 }
@@ -517,12 +607,12 @@ impl RtcpCompoundPacket {
     }
 
     /// Encode the compound packet as bytes.
-    pub fn encode(&self) -> Bytes {
+    pub fn encode(&self) -> Result<Bytes, RtcpEncodeError> {
         let mut out = BytesMut::new();
         for packet in &self.packets {
-            out.extend_from_slice(&packet.encode());
+            out.extend_from_slice(&packet.encode()?);
         }
-        out.freeze()
+        Ok(out.freeze())
     }
 }
 
@@ -615,7 +705,7 @@ mod tests {
                 }],
             }],
         };
-        let encoded = sdes.encode();
+        let encoded = sdes.encode().unwrap();
         let decoded = RtcpCompoundPacket::parse(encoded).unwrap();
         assert_eq!(decoded.packets.len(), 1);
         let RtcpPacket::SourceDescription(parsed) = &decoded.packets[0] else {
@@ -640,7 +730,7 @@ mod tests {
                 }],
             }],
         };
-        let encoded = sdes.encode();
+        let encoded = sdes.encode().unwrap();
         assert_eq!(encoded.len() % 4, 0);
         let decoded = RtcpCompoundPacket::parse(encoded).unwrap();
         let RtcpPacket::SourceDescription(parsed) = &decoded.packets[0] else {
@@ -655,7 +745,7 @@ mod tests {
             ssrcs: vec![0x44444444],
             reason: Some("gone".to_string()),
         };
-        let encoded = bye.encode();
+        let encoded = bye.encode().unwrap();
         let decoded = RtcpCompoundPacket::parse(encoded).unwrap();
         assert_eq!(decoded.packets.len(), 1);
         let RtcpPacket::Bye(parsed) = &decoded.packets[0] else {
@@ -688,7 +778,7 @@ mod tests {
                 }),
             ],
         };
-        let encoded = compound.encode();
+        let encoded = compound.encode().unwrap();
         let parsed = RtcpCompoundPacket::parse(encoded).unwrap();
         assert_eq!(parsed, compound);
     }
@@ -702,5 +792,93 @@ mod tests {
         .is_ok());
         // A 2-byte packet cannot contain the common header.
         assert!(RtcpCompoundPacket::parse(Bytes::from_static(&[0x80, 201])).is_err());
+    }
+
+    #[test]
+    fn rejects_overlong_sdes_text() {
+        let text = "x".repeat(300);
+        let sdes = RtcpSourceDescription {
+            chunks: vec![RtcpSdesChunk {
+                ssrc: 0x33333333,
+                items: vec![RtcpSdesItem {
+                    item_type: RtcpSdesItemType::CName,
+                    text,
+                }],
+            }],
+        };
+        assert!(matches!(
+            sdes.encode(),
+            Err(RtcpEncodeError::SdesItemTooLong { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_overlong_bye_reason() {
+        let reason = "x".repeat(300);
+        let bye = RtcpBye {
+            ssrcs: vec![0x44444444],
+            reason: Some(reason),
+        };
+        assert!(matches!(
+            bye.encode(),
+            Err(RtcpEncodeError::ByeReasonTooLong { .. })
+        ));
+    }
+
+    #[test]
+    fn parses_unknown_rtcp_packet_without_aborting() {
+        // Construct a minimal unknown PT=205 (RTPFB) packet with 4 bytes payload.
+        // Header: V=2, count=0, PT=205, length=1 (8 bytes total).
+        let raw = Bytes::from_static(&[0x80, 205, 0, 1, 0xde, 0xad, 0xbe, 0xef]);
+        let parsed = RtcpCompoundPacket::parse(raw).unwrap();
+        assert_eq!(parsed.packets.len(), 1);
+        let RtcpPacket::Unknown { pt, payload, .. } = &parsed.packets[0] else {
+            panic!("expected unknown");
+        };
+        assert_eq!(*pt, 205);
+        assert_eq!(payload.as_ref(), &[0xde, 0xad, 0xbe, 0xef]);
+    }
+
+    #[test]
+    fn parses_unknown_rtcp_app_packet() {
+        // App packet: header, ssrc=0x11111111, name="test", no payload (12 bytes total).
+        let raw = Bytes::from_static(&[
+            0x80, 204, 0, 2, 0x11, 0x11, 0x11, 0x11, b't', b'e', b's', b't',
+        ]);
+        let parsed = RtcpCompoundPacket::parse(raw).unwrap();
+        let RtcpPacket::App(app) = &parsed.packets[0] else {
+            panic!("expected app");
+        };
+        assert_eq!(app.ssrc, 0x11111111);
+        assert_eq!(app.name, [b't', b'e', b's', b't']);
+        assert!(app.payload.is_empty());
+    }
+
+    #[test]
+    fn compound_with_unknown_packet_roundtrips() {
+        let compound = RtcpCompoundPacket {
+            packets: vec![
+                RtcpPacket::ReceiverReport(RtcpReceiverReport {
+                    ssrc: 0x11111111,
+                    report_blocks: Vec::new(),
+                }),
+                RtcpPacket::Unknown {
+                    pt: 205,
+                    count: 0,
+                    payload: Bytes::from_static(&[0xde, 0xad, 0xbe, 0xef]),
+                },
+                RtcpPacket::Bye(RtcpBye {
+                    ssrcs: vec![0x11111111],
+                    reason: None,
+                }),
+            ],
+        };
+        let encoded = compound.encode().unwrap();
+        let parsed = RtcpCompoundPacket::parse(encoded).unwrap();
+        assert_eq!(parsed.packets.len(), 3);
+        assert!(matches!(
+            parsed.packets[1],
+            RtcpPacket::Unknown { pt: 205, .. }
+        ));
     }
 }
