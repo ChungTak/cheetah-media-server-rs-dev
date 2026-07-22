@@ -642,6 +642,13 @@ async fn run_ingress_worker(
                     hash_endpoint(&old),
                     hash_endpoint(&new),
                 );
+                // Keep the orchestrator's remote_endpoint in sync so talkback/feedback
+                // is sent to the new source address after a validated rebind.
+                if let Err(e) = orchestrator
+                    .set_session_remote_endpoint(&RtpSessionId(session_key.clone()), new)
+                {
+                    warn!("Failed to update remote endpoint after source rebind: {e}");
+                }
             }
             RtpCoreEvent::SessionClosed {
                 session_key,

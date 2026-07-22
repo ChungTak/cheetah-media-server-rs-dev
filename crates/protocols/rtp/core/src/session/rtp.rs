@@ -146,6 +146,14 @@ impl RtpCore {
                                     new: src,
                                 }));
                                 session.source_addr = Some(src);
+                                // For SendRecv/SendOnly sessions the inbound source address is
+                                // also the outbound destination (symmetric UDP). Keep it current.
+                                if matches!(
+                                    session.transport_mode,
+                                    RtpTransportMode::SendOnly | RtpTransportMode::SendRecv
+                                ) {
+                                    session.destination = Some(src);
+                                }
                                 // A source rebind often means a camera restart/NAT rebinding
                                 // with a new 16-bit sequence base. Reset the reorder context so
                                 // the new source is not treated as late/duplicate.
