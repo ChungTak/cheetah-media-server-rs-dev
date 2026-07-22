@@ -145,3 +145,37 @@ fn test_rtp_core_tcp_connection_closed_terminates_bound_sessions() {
         .iter()
         .any(|o| matches!(o, RtpCoreOutput::CloseSession(_))));
 }
+
+#[test]
+fn test_tcp_connection_closed_keeps_send_capable_session_alive() {
+    // A peer half-close must not terminate a send-only (or sendrecv) session because the
+    // outbound write path may still be draining frames/RTCP.
+    let mut core = RtpCore::new(10, 30_000);
+    let dest = "127.0.0.1:1234".parse().unwrap();
+    let spec = RtpClientSpec {
+        session_key: "live/tcp-push".to_string(),
+        destination: dest,
+        ssrc: 0xC0FFEE,
+        payload_mode: RtpPayloadMode::Es,
+        transport_mode: RtpTransportMode::SendOnly,
+        tcp_conn_id: Some(42),
+        connection_type: None,
+        source_policy: None,
+        track_filter: RtpTrackFilter::All,
+    };
+    let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateClient(spec)));
+
+    let outputs = core.handle_input(RtpCoreInput::TcpConnectionClosed {
+        conn_id: 42,
+        received_at_ms: 0,
+    });
+
+    assert!(!outputs
+        .iter()
+        .any(|o| matches!(o, RtpCoreOutput::CloseSession(_))));
+    assert!(!outputs
+        .iter()
+        .any(|o| matches!(o, RtpCoreOutput::CloseTcpConnection { conn_id: 42 })));
+    // The session should still be present and send-capable.
+    assert!(core.sessions.contains_key("live/tcp-push"));
+}
