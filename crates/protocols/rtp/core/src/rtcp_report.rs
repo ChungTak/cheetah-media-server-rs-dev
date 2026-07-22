@@ -94,6 +94,17 @@ impl RtcpReportState {
         self.last_sent_rtp_timestamp = rtp_timestamp;
     }
 
+    /// Update the RTP clock rate used for jitter/time conversions.
+    pub fn set_clock_rate_hz(&mut self, clock_rate_hz: u64) {
+        if clock_rate_hz != self.clock_rate_hz {
+            // Transit times are in RTP-timestamp units at the old rate; drop the
+            // baseline so the next packet re-seeds it and no false jitter spike is
+            // reported after a mid-stream format switch.
+            self.last_transit = None;
+        }
+        self.clock_rate_hz = clock_rate_hz;
+    }
+
     /// Register an incoming RTP packet for statistics.
     pub fn on_packet(&mut self, seq: u16, rtp_timestamp: u32, now_ms: u64) {
         let extended = self.seq.extend(seq);
