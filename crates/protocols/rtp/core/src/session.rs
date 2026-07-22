@@ -49,6 +49,8 @@ struct RtpSession {
     pt_pending_profile: Option<RtpPayloadProfile>,
     /// Consecutive sniff matches for the same candidate profile.
     pt_pending_confirm_count: u8,
+    /// Consecutive packets with an unresolved but different PT after the mode is locked.
+    pt_change_unknown_count: u8,
     source_addr: Option<SocketAddr>,
     last_activity_ms: u64,
 
@@ -366,6 +368,7 @@ impl RtpCore {
                                 pt_probe_attempts: 0,
                                 pt_pending_profile: None,
                                 pt_pending_confirm_count: 0,
+                                pt_change_unknown_count: 0,
                                 last_error: None,
                                 rtcp: RtcpReportState::new(default_clock_rate_hz(
                                     RtpPayloadMode::Ehome,
@@ -744,6 +747,7 @@ impl RtpCore {
                 pt_probe_attempts: 0,
                 pt_pending_profile: None,
                 pt_pending_confirm_count: 0,
+                pt_change_unknown_count: 0,
                 last_error: None,
                 rtcp: RtcpReportState::new(default_clock_rate_hz(mode)),
             };
@@ -773,6 +777,7 @@ impl RtpCore {
             session.payload_mode = profile.mode;
             session.egress_payload_mode = profile.mode;
             session.demuxer = SessionDemuxer::Pending;
+            session.pt_change_unknown_count = 0;
             session
                 .rtcp
                 .set_clock_rate_hz(default_clock_rate_hz(profile.mode));
@@ -832,16 +837,21 @@ impl RtpCore {
             }
         } else {
             // The payload mode is already locked. Accept the first observed PT if none was
-            // recorded, and react to mid-stream PT changes.
+            // recorded, and react to mid-stream PT changes. Unresolved transient PTs (e.g.
+            // RFC 4733 telephone-event or FEC/RED sharing the same SSRC) are tolerated up to
+            // pt_lock_confidence consecutive packets before the session is closed.
             let current_pt = session.payload_type.unwrap_or(rtp.header.payload_type);
             if session.payload_type.is_none() {
                 session.payload_type = Some(rtp.header.payload_type);
-            } else if rtp.header.payload_type != current_pt {
+            } else if rtp.header.payload_type == current_pt {
+                session.pt_change_unknown_count = 0;
+            } else {
                 let new_pt = rtp.header.payload_type;
                 match self.pt_resolver.resolve_with_source(new_pt, &rtp.payload) {
                     cheetah_codec::RtpPtResolveSource::Binding(profile)
                     | cheetah_codec::RtpPtResolveSource::Static(profile)
                     | cheetah_codec::RtpPtResolveSource::Encapsulation(profile) => {
+                        session.pt_change_unknown_count = 0;
                         if profile.mode != session.payload_mode {
                             let old_mode = session.payload_mode;
                             commit_profile(session, new_pt, profile);
@@ -857,11 +867,20 @@ impl RtpCore {
                     }
                     cheetah_codec::RtpPtResolveSource::Weak(_)
                     | cheetah_codec::RtpPtResolveSource::Unknown => {
-                        // Mid-stream PT change that cannot be authoritatively resolved is
-                        // treated as a spoof/error and terminates the session.
-                        close_reason = Some(format!(
-                            "payload type changed from {current_pt} to {new_pt} and could not be resolved"
-                        ));
+                        session.pt_change_unknown_count += 1;
+                        // Tolerate a short run of unresolved PT packets (e.g. RFC 4733
+                        // telephone-event or FEC/RED interleaved on the same SSRC) up to the
+                        // probe budget before treating the change as a persistent spoof.
+                        if session.pt_change_unknown_count >= self.max_pt_probe_packets {
+                            close_reason = Some(format!(
+                                "payload type changed from {current_pt} to {new_pt} and could not be resolved for {} packets",
+                                session.pt_change_unknown_count
+                            ));
+                        } else {
+                            // Treat as a transient interleaved auxiliary payload; do not feed
+                            // the unresolved bytes into the demuxer.
+                            return;
+                        }
                     }
                 }
             }
@@ -1338,6 +1357,7 @@ impl RtpCore {
                     pt_probe_attempts: 0,
                     pt_pending_profile: None,
                     pt_pending_confirm_count: 0,
+                    pt_change_unknown_count: 0,
                     last_error: None,
                     rtcp: RtcpReportState::new(default_clock_rate_hz(spec.payload_mode)),
                 };
@@ -1406,6 +1426,7 @@ impl RtpCore {
                     pt_probe_attempts: 0,
                     pt_pending_profile: None,
                     pt_pending_confirm_count: 0,
+                    pt_change_unknown_count: 0,
                     last_error: None,
                     rtcp: RtcpReportState::new(default_clock_rate_hz(spec.payload_mode)),
                 };
@@ -2566,14 +2587,86 @@ mod tests {
             .expect("auto-created session");
         assert_eq!(session.payload_mode, RtpPayloadMode::Es);
 
-        // PT switch to 97 with an unrecognizable payload cannot be resolved.
+        // A persistent run of unresolvable PT packets (matching the probe budget) closes
+        // the session; short DTMF/FEC bursts are tolerated.
+        for seq in 3..=10u16 {
+            let rtp = RtpPacket {
+                header: RtpHeader {
+                    version: 2,
+                    payload_type: 97,
+                    sequence_number: seq,
+                    timestamp: u32::from(seq),
+                    ssrc: 5000,
+                    marker: false,
+                },
+                payload: Bytes::from(vec![0xAB, 0xCD]),
+            };
+            let dgram = RtpDatagram {
+                source: "127.0.0.1:1".parse().unwrap(),
+                data: rtp.encode(),
+                received_at_ms: 0,
+            };
+            let outputs = if seq == 10 {
+                core.handle_input(RtpCoreInput::UdpPacket(dgram))
+            } else {
+                let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+                Vec::new()
+            };
+
+            if seq == 10 {
+                let closed = outputs.iter().any(|o| {
+                    matches!(
+                        o,
+                        RtpCoreOutput::CloseSession(key) if key == "live/5000"
+                    )
+                });
+                assert!(
+                    closed,
+                    "expected CloseSession after repeated unresolvable PTs"
+                );
+                assert!(!core.sessions.contains_key("live/5000"));
+            } else {
+                assert!(
+                    core.sessions.contains_key("live/5000"),
+                    "single unknown PT should be tolerated"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_interleaved_unknown_pt_is_tolerated() {
+        let mut core = RtpCore::new(10, 30_000);
+
+        // Lock the session to Es on PT 96.
+        for seq in 1..=2u16 {
+            let rtp = RtpPacket {
+                header: RtpHeader {
+                    version: 2,
+                    payload_type: 96,
+                    sequence_number: seq,
+                    timestamp: u32::from(seq),
+                    ssrc: 6000,
+                    marker: false,
+                },
+                payload: Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x09]),
+            };
+            let dgram = RtpDatagram {
+                source: "127.0.0.1:1".parse().unwrap(),
+                data: rtp.encode(),
+                received_at_ms: 0,
+            };
+            let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        }
+
+        // One interleaved unknown PT (RFC 4733 DTMF/FEC) does not close the session.
         let rtp = RtpPacket {
             header: RtpHeader {
                 version: 2,
                 payload_type: 97,
                 sequence_number: 3,
                 timestamp: 3,
-                ssrc: 5000,
+                ssrc: 6000,
                 marker: false,
             },
             payload: Bytes::from(vec![0xAB, 0xCD]),
@@ -2583,15 +2676,27 @@ mod tests {
             data: rtp.encode(),
             received_at_ms: 0,
         };
-        let outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        assert!(core.sessions.contains_key("live/6000"));
 
-        let closed = outputs.iter().any(|o| {
-            matches!(
-                o,
-                RtpCoreOutput::CloseSession(key) if key == "live/5000"
-            )
-        });
-        assert!(closed, "expected CloseSession on unresolvable PT switch");
-        assert!(!core.sessions.contains_key("live/5000"));
+        // Returning to the original PT resumes normal processing.
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 4,
+                timestamp: 4,
+                ssrc: 6000,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x09]),
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:1".parse().unwrap(),
+            data: rtp.encode(),
+            received_at_ms: 0,
+        };
+        let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        assert!(core.sessions.contains_key("live/6000"));
     }
 }
