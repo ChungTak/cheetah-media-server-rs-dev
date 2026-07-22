@@ -474,7 +474,10 @@ impl EsDemuxer {
     fn flush_access_unit(&mut self, events: &mut Vec<EsDemuxEvent>) {
         let codec = match self.au_codec {
             Some(c) => c,
-            None => return,
+            None => {
+                self.reset_access_unit();
+                return;
+            }
         };
         if !self.au_has_vcl {
             self.reset_access_unit();
@@ -484,7 +487,10 @@ impl EsDemuxer {
         let timestamp = self.au_timestamp.unwrap_or(0);
         let timing = match self.timestamp_normalizer.normalize(timestamp, true) {
             Ok(t) => t,
-            Err(_) => return,
+            Err(_) => {
+                self.reset_access_unit();
+                return;
+            }
         };
         let unwrapped = self.timestamp_unwrapper.unwrap(u64::from(timestamp));
 
@@ -895,5 +901,29 @@ mod tests {
             .collect();
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].codec, CodecId::H265);
+    }
+
+    #[test]
+    fn es_sei_without_codec_does_not_leak_into_later_access_unit() {
+        let mut demuxer = EsDemuxer::default();
+
+        // An H.264 SEI in its own RTP packet is not a strong signal; the codec is still unknown.
+        // When the timestamp changes before a VCL NAL arrives, the SEI must be dropped.
+        let sei: &[u8] = &[0x06, 0x01, 0x01, 0x00];
+        assert!(demuxer.push_packet(sei, 1000, false).is_empty());
+
+        // A later H.264 IDR with a different timestamp should not contain the stale SEI.
+        let idr: &[u8] = &[0x65, 0x88, 0x84, 0x00];
+        let events = demuxer.push_packet(idr, 2000, true);
+        let frames: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                EsDemuxEvent::Frame(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].codec, CodecId::H264);
+        assert_eq!(frames[0].payload.len(), 4 + 4); // start code + 4-byte IDR
     }
 }
