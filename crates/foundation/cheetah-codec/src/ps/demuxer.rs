@@ -681,8 +681,11 @@ impl PsDemuxer {
             return None;
         }
         let cache = self.parameter_set_caches.entry(stream_id).or_default();
-        cache.update_from_annexb(codec, payload);
-        cache.extradata_for_codec(codec)
+        if cache.update_from_annexb(codec, payload) {
+            cache.extradata_for_codec(codec)
+        } else {
+            None
+        }
     }
 
     fn emit_video_frame(&mut self, events: &mut Vec<PsDemuxEvent>) {
