@@ -375,4 +375,43 @@ impl RtpCore {
             }
         }
     }
+
+    pub(super) fn process_tcp_connection_closed(
+        &mut self,
+        conn_id: u64,
+        outputs: &mut Vec<RtpCoreOutput>,
+    ) {
+        // A TCP half-close only terminates the peer's write direction. Receive-only sessions
+        // have no outbound data to drain, so they can be closed immediately. Send-capable
+        // sessions (SendOnly/SendRecv) keep their write path alive so outbound media/RTCP
+        // can continue until the session is explicitly stopped or idle/RR timeout fires.
+        let keys: Vec<_> = self
+            .sessions
+            .iter()
+            .filter_map(|(k, s)| {
+                if s.tcp_conn_id == Some(conn_id) && s.transport_mode == RtpTransportMode::RecvOnly
+                {
+                    Some(k.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let any_send_capable_remaining = self.sessions.iter().any(|(_, s)| {
+            s.tcp_conn_id == Some(conn_id)
+                && (s.transport_mode == RtpTransportMode::SendOnly
+                    || s.transport_mode == RtpTransportMode::SendRecv)
+        });
+        for key in keys {
+            self.close_session(key, RtpSessionCloseReason::ConnectionClosed, outputs);
+        }
+        // Only drop the ehome decoder and connection mapping when no send-capable session is
+        // still using the connection. If any send-only or sendrecv session remains, the
+        // outbound writer must stay alive to honor TCP half-close semantics.
+        if !any_send_capable_remaining {
+            self.ehome_decoders.remove(&conn_id);
+            self.tcp_conn_to_session.remove(&conn_id);
+            outputs.push(RtpCoreOutput::CloseTcpConnection { conn_id });
+        }
+    }
 }

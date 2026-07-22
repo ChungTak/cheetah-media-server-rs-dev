@@ -550,7 +550,7 @@ async fn run_driver_loop(
 
     // Channels for async socket read streams to multiplex into the main thread
     let (udp_rx_tx, mut udp_rx_rx) = mpsc::channel::<RtpDatagram>(256);
-    let (tcp_rx_tx, mut tcp_rx_rx) = mpsc::channel::<RtpTcpChunk>(256);
+    let (tcp_rx_tx, mut tcp_rx_rx) = mpsc::channel::<RtpCoreInput>(256);
     let (rtcp_rx_tx, mut rtcp_rx_rx) = mpsc::channel::<RtpDatagram>(64);
 
     // Active TCP connection writers: conn_id -> Writer Channel
@@ -648,7 +648,14 @@ async fn run_driver_loop(
                                                 _ = cancel.cancelled() => break,
                                                 res = reader.read(&mut buf) => {
                                                     match res {
-                                                        Ok(0) => break, // EOF
+                                                        Ok(0) => {
+                                                            // Peer half-closed the write side; notify the core so it can close
+                                                            // any sessions bound to this connection while the write side may still
+                                                            // be draining outbound frames.
+                                                            let now_ms = base_ms + start.elapsed().as_millis() as u64;
+                                                            let _ = tcp_rx_tx.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
+                                                            break;
+                                                        }
                                                         Ok(n) => {
                                                             let received_at_ms = base_ms + start.elapsed().as_millis() as u64;
                                                             remaining.extend_from_slice(&buf[..n]);
@@ -677,7 +684,7 @@ async fn run_driver_loop(
                                                                     // Check for Ehome2 256-byte header
                                                                     if remaining.len() >= 256 && remaining[0] == 0x01 && remaining[1] == 0x00 && (remaining[2] == 0x01 || remaining[2] == 0x02) {
                                                                         let data = remaining.split_to(256).freeze();
-                                                                        if tcp_rx_tx.send(RtpTcpChunk { conn_id, data, received_at_ms }).await.is_err() {
+                                                                        if tcp_rx_tx.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await.is_err() {
                                                                             break;
                                                                         }
                                                                         continue;
@@ -687,7 +694,7 @@ async fn run_driver_loop(
                                                                         let len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
                                                                         if remaining.len() >= 4 + len {
                                                                             let data = remaining.split_to(4 + len).freeze();
-                                                                            if tcp_rx_tx.send(RtpTcpChunk { conn_id, data, received_at_ms }).await.is_err() {
+                                                                            if tcp_rx_tx.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await.is_err() {
                                                                                 break;
                                                                             }
                                                                         } else {
@@ -712,7 +719,7 @@ async fn run_driver_loop(
                                                                             break;
                                                                         }
                                                                         let data = remaining.split_to(4 + len).freeze();
-                                                                        if tcp_rx_tx.send(RtpTcpChunk { conn_id, data, received_at_ms }).await.is_err() {
+                                                                        if tcp_rx_tx.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await.is_err() {
                                                                             break;
                                                                         }
                                                                     } else if remaining.len() >= 2 {
@@ -721,7 +728,7 @@ async fn run_driver_loop(
                                                                             break;
                                                                         }
                                                                         let data = remaining.split_to(2 + len).freeze();
-                                                                        if tcp_rx_tx.send(RtpTcpChunk { conn_id, data, received_at_ms }).await.is_err() {
+                                                                        if tcp_rx_tx.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await.is_err() {
                                                                             break;
                                                                         }
                                                                     } else {
@@ -730,7 +737,11 @@ async fn run_driver_loop(
                                                                 }
                                                             }
                                                         }
-                                                        Err(_) => break,
+                                                        Err(_) => {
+                                                            let now_ms = base_ms + start.elapsed().as_millis() as u64;
+                                                            let _ = tcp_rx_tx.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
+                                                            break;
+                                                        }
                                                     }
                                                 }
                                             }
@@ -946,7 +957,11 @@ async fn run_driver_loop(
                                                     _ = cancel_reader.cancelled() => break,
                                                     res = reader.read(&mut buf) => {
                                                         match res {
-                                                            Ok(0) => break,
+                                                            Ok(0) => {
+                                                                let now_ms = base_ms + start.elapsed().as_millis() as u64;
+                                                                let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
+                                                                break;
+                                                            }
                                                             Ok(n) => {
                                                                 let received_at_ms = base_ms + start.elapsed().as_millis() as u64;
                                                                 remaining.extend_from_slice(&buf[..n]);
@@ -970,14 +985,14 @@ async fn run_driver_loop(
                                                                     loop {
                                                                         if remaining.len() >= 256 && remaining[0] == 0x01 && remaining[1] == 0x00 && (remaining[2] == 0x01 || remaining[2] == 0x02) {
                                                                             let data = remaining.split_to(256).freeze();
-                                                                            let _ = tcp_rx_tx_clone.send(RtpTcpChunk { conn_id, data, received_at_ms }).await;
+                                                                            let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await;
                                                                             continue;
                                                                         }
                                                                         if remaining.len() >= 4 {
                                                                             let len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
                                                                             if remaining.len() >= 4 + len {
                                                                                 let data = remaining.split_to(4 + len).freeze();
-                                                                                let _ = tcp_rx_tx_clone.send(RtpTcpChunk { conn_id, data, received_at_ms }).await;
+                                                                                let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await;
                                                                             } else {
                                                                                 break;
                                                                             }
@@ -998,21 +1013,25 @@ async fn run_driver_loop(
                                                                                 break;
                                                                             }
                                                                             let data = remaining.split_to(4 + len).freeze();
-                                                                            let _ = tcp_rx_tx_clone.send(RtpTcpChunk { conn_id, data, received_at_ms }).await;
+                                                                            let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await;
                                                                         } else if remaining.len() >= 2 {
                                                                             let len = u16::from_be_bytes([remaining[0], remaining[1]]) as usize;
                                                                             if remaining.len() < 2 + len {
                                                                                 break;
                                                                             }
                                                                             let data = remaining.split_to(2 + len).freeze();
-                                                                            let _ = tcp_rx_tx_clone.send(RtpTcpChunk { conn_id, data, received_at_ms }).await;
+                                                                            let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await;
                                                                         } else {
                                                                             break;
                                                                         }
                                                                     }
                                                                 }
                                                             }
-                                                            Err(_) => break,
+                                                            Err(_) => {
+                                                                let now_ms = base_ms + start.elapsed().as_millis() as u64;
+                                                                let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
+                                                                break;
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -1098,8 +1117,8 @@ async fn run_driver_loop(
             Some(datagram) = udp_rx_rx.recv() => {
                 inputs.push(RtpCoreInput::UdpPacket(datagram));
             }
-            Some(chunk) = tcp_rx_rx.recv() => {
-                inputs.push(RtpCoreInput::TcpBytes(chunk));
+            Some(input) = tcp_rx_rx.recv() => {
+                inputs.push(input);
             }
             Some(rtcp) = rtcp_rx_rx.recv() => {
                 inputs.push(RtpCoreInput::RtcpPacket(rtcp));
@@ -1214,6 +1233,14 @@ async fn run_driver_loop(
                         )
                         .await;
                     }
+                    RtpCoreOutput::CloseTcpConnection { conn_id } => {
+                        debug!("Closing TCP connection: {conn_id}");
+                        // Dropping the writer sender causes the per-connection writer task to
+                        // exit, which closes the write half of the socket and frees the entry.
+                        if let Some(writer_tx) = tcp_writers.lock().await.remove(&conn_id) {
+                            drop(writer_tx);
+                        }
+                    }
                 }
             }
         }
@@ -1229,7 +1256,7 @@ mod tests {
     };
     use cheetah_rtp_core::{
         RtpClientSpec, RtpConnectionType, RtpPayloadMode, RtpSendFrame, RtpServerSpec,
-        RtpTrackFilter, RtpTransportMode,
+        RtpSessionCloseReason, RtpTrackFilter, RtpTransportMode,
     };
     use std::time::Duration;
 
@@ -1334,6 +1361,77 @@ mod tests {
                 assert_eq!(payload_mode, RtpPayloadMode::Ps);
             }
             _ => panic!("Expected SessionCreated event for TCP session"),
+        }
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn test_rtp_driver_tcp_passive_half_close_closes_session() {
+        let cancel = CancellationToken::new();
+
+        let temp_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let tcp_addr = temp_tcp.local_addr().unwrap();
+        drop(temp_tcp);
+
+        // We still need a UDP address for the driver, but it won't be used in this test.
+        let temp_udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let udp_addr = temp_udp.local_addr().unwrap();
+        drop(temp_udp);
+
+        let config = RtpDriverConfig {
+            listen_udp: udp_addr,
+            listen_tcp: tcp_addr,
+            listen_rtcp_udp: None,
+            write_queue_capacity: 10,
+            read_buffer_size: 4096,
+            session_idle_timeout_ms: 5000,
+            max_sessions: 5,
+            tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
+            max_rtp_len_cap: 65536,
+        };
+
+        let handle = start_driver(config, cancel.clone());
+
+        // Give the driver a moment to bind its TCP listener.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let mut tcp_stream = tokio::net::TcpStream::connect(tcp_addr).await.unwrap();
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 1,
+                timestamp: 100,
+                ssrc: 4444,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0x05, 0x06, 0x07]),
+        };
+        let framed = cheetah_codec::encode_tcp_rtp_frame(&rtp);
+        tcp_stream.write_all(&framed).await.unwrap();
+
+        let event = tokio::time::timeout(Duration::from_secs(5), handle.recv_event())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            event,
+            RtpCoreEvent::SessionCreated { ssrc: 4444, .. }
+        ));
+
+        // Half-close the TCP connection from the client side.
+        tcp_stream.shutdown().await.unwrap();
+
+        let event = tokio::time::timeout(Duration::from_secs(5), handle.recv_event())
+            .await
+            .unwrap()
+            .unwrap();
+        match event {
+            RtpCoreEvent::SessionClosed { reason, .. } => {
+                assert_eq!(reason, RtpSessionCloseReason::ConnectionClosed);
+            }
+            _ => panic!("Expected SessionClosed after TCP half-close, got {event:?}"),
         }
 
         cancel.cancel();

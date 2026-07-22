@@ -146,6 +146,8 @@ pub enum RtpSessionCloseReason {
         from: RtpPayloadMode,
         to: RtpPayloadMode,
     },
+    /// The underlying TCP connection was closed by the peer (half-close or error).
+    ConnectionClosed,
 }
 
 impl std::fmt::Display for RtpSessionCloseReason {
@@ -163,6 +165,7 @@ impl std::fmt::Display for RtpSessionCloseReason {
                 f,
                 "payload mode oscillated from {from:?} to {to:?}"
             ),
+            Self::ConnectionClosed => write!(f, "TCP connection closed by peer"),
         }
     }
 }
@@ -413,6 +416,10 @@ pub enum RtpCoreInput {
     ///
     /// TCP 分帧 RTP 字节。
     TcpBytes(RtpTcpChunk),
+    /// The peer closed the underlying TCP connection (half-close or read error).
+    ///
+    /// 对端关闭底层 TCP 连接（半关闭或读错误）。
+    TcpConnectionClosed { conn_id: u64, received_at_ms: u64 },
     /// Incoming RTCP datagram (non-RTP UDP arriving on the RTCP port). Used to update
     /// peer-feedback statistics and reset the RR-timeout sender shutdown.
     ///
@@ -501,4 +508,8 @@ pub enum RtpCoreOutput {
     ///
     /// 关闭会话并清理资源。
     CloseSession(RtpSessionKey),
+    /// Close the underlying TCP connection and release its writer task.
+    ///
+    /// 关闭底层 TCP 连接并释放其写任务。
+    CloseTcpConnection { conn_id: u64 },
 }

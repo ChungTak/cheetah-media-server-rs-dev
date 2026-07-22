@@ -167,6 +167,9 @@ impl RtpCore {
             RtpCoreInput::TcpBytes(chunk) => {
                 self.process_tcp_bytes(chunk, &mut outputs);
             }
+            RtpCoreInput::TcpConnectionClosed { conn_id, .. } => {
+                self.process_tcp_connection_closed(conn_id, &mut outputs);
+            }
             RtpCoreInput::RtcpPacket(datagram) => {
                 self.process_rtcp_packet(datagram, &mut outputs);
             }
