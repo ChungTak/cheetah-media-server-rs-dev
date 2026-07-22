@@ -406,6 +406,17 @@ pub fn encode_tcp_rtp_frame(packet: &RtpPacket) -> Bytes {
     Bytes::from(out)
 }
 
+/// Encodes an RTCP compound packet as an RFC 4571 TCP RTCP frame (2-byte big-endian length prefix + RTCP data).
+///
+/// 将 RTCP 复合包编码为 RFC 4571 TCP RTCP 帧（2 字节大端长度前缀 + RTCP 数据）。
+pub fn encode_tcp_rtcp_frame(data: &[u8]) -> Bytes {
+    let len = data.len();
+    let mut out = Vec::with_capacity(2 + len);
+    out.extend_from_slice(&(len as u16).to_be_bytes());
+    out.extend_from_slice(data);
+    Bytes::from(out)
+}
+
 /// TCP RTP framing variants observed across vendor stacks.
 ///
 /// 在厂商栈中观察到的 TCP RTP 分帧变体。
