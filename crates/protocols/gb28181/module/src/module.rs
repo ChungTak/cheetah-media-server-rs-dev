@@ -7,7 +7,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use parking_lot::Mutex;
 use serde_json::Value;
 use tracing::{debug, info, warn};
@@ -15,6 +14,12 @@ use tracing::{debug, info, warn};
 use cheetah_gb28181_core::{GbDevice, GbInviteSpec, GbTalkSpec};
 use cheetah_gb28181_driver_tokio::{
     start_driver, Gb28181DriverConfig, Gb28181DriverHandle, GbDriverCommand,
+};
+use cheetah_sdk::media_api::ids::MediaKey;
+use cheetah_sdk::media_api::port::MediaRequestContext;
+use cheetah_sdk::media_api::rtp_session::{
+    MediaContainer, OpenRtpReceiver, OpenRtpSender, RtpDirection, RtpPayloadBinding, RtpSessionApi,
+    RtpSessionParamsBuilder, RtpSessionRef, RtpTransport, StopRtpSession,
 };
 use cheetah_sdk::{
     CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest, HttpResponse,
@@ -83,7 +88,8 @@ pub struct Gb28181Module {
     driver_handle: Arc<Mutex<Option<Arc<Gb28181DriverHandle>>>>,
     cancel_token: Option<CancellationToken>,
     devices: Arc<Mutex<HashMap<String, GbDevice>>>,
-    active_sessions: Arc<Mutex<HashMap<String, String>>>, // session_key -> device_id
+    /// session_key -> (device_id, rtp_session_ref)
+    active_sessions: Arc<Mutex<HashMap<String, (String, RtpSessionRef)>>>,
 }
 
 /// `Gb28181Module` constructor.
@@ -419,7 +425,8 @@ struct GbHttpService {
     /// when the driver isn't yet started, returns `Unavailable`.
     driver_handle: Arc<Mutex<Option<Arc<Gb28181DriverHandle>>>>,
     devices: Arc<Mutex<HashMap<String, GbDevice>>>,
-    active_sessions: Arc<Mutex<HashMap<String, String>>>,
+    /// session_key -> (device_id, rtp_session_ref)
+    active_sessions: Arc<Mutex<HashMap<String, (String, RtpSessionRef)>>>,
     /// Local IP advertised in SIP INVITE/SDP for media reception.
     local_ip: String,
     /// Default local RTP port for media reception when REST request omits `port`.
@@ -439,51 +446,108 @@ impl GbHttpService {
             .clone()
             .ok_or_else(|| SdkError::Unavailable("GB28181 driver not yet started".to_string()))
     }
-}
 
-/// Proxy a JSON request to the mounted RTP module HTTP service.
-///
-/// 将 JSON 请求代理到已挂载的 RTP 模块 HTTP 服务。
-async fn call_rtp_service(
-    engine: &EngineContext,
-    method: HttpMethod,
-    path: &str,
-    body: serde_json::Value,
-) -> Result<serde_json::Value, String> {
-    let rtp_service = engine
-        .module_manager_api
-        .upgrade()
-        .ok_or_else(|| "module manager is unavailable".to_string())?
-        .http_mounts()
-        .into_iter()
-        .find(|m| m.module_id.to_string() == "rtp")
-        .map(|m| m.service)
-        .ok_or_else(|| "RTP module is not mounted or registered".to_string())?;
-
-    let rtp_req = HttpRequest {
-        method,
-        path: path.to_string(),
-        query: None,
-        headers: vec![cheetah_sdk::HttpHeader {
-            name: "content-type".to_string(),
-            value: "application/json".to_string(),
-        }],
-        body: Bytes::from(serde_json::to_vec(&body).unwrap()),
-    };
-
-    let resp = rtp_service
-        .handle(rtp_req)
-        .await
-        .map_err(|e| format!("RTP service invocation failed: {e:?}"))?;
-
-    if resp.status != 200 {
-        return Err(format!("RTP service returned HTTP status {}", resp.status));
+    /// Return the typed RTP session provider.
+    fn rtp_session_api(&self) -> Result<Arc<dyn RtpSessionApi>, SdkError> {
+        self.engine.media_services.rtp_session().ok_or_else(|| {
+            SdkError::Unavailable("RTP session provider is not available".to_string())
+        })
     }
 
-    let resp_val: serde_json::Value = serde_json::from_slice(&resp.body)
-        .map_err(|e| format!("failed to parse RTP response JSON: {e}"))?;
+    /// Build the default PS payload binding used by GB28181 streams.
+    fn ps_payload_binding(&self) -> RtpPayloadBinding {
+        RtpPayloadBinding {
+            payload_type: 96,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        }
+    }
 
-    Ok(resp_val)
+    /// Construct a `MediaKey` from the GB app/stream aliases.
+    fn media_key(&self, app: &str, stream: &str) -> Result<MediaKey, SdkError> {
+        MediaKey::with_default_vhost(app, stream, None)
+            .map_err(|e| SdkError::InvalidArgument(format!("invalid media key: {e}")))
+    }
+
+    /// Open an RTP receiver for the given GB session and return the descriptor.
+    async fn open_gb_receiver(
+        &self,
+        app: &str,
+        stream: &str,
+        ssrc: u32,
+        local_port: u16,
+    ) -> Result<cheetah_sdk::media_api::rtp_session::RtpSessionDescriptor, SdkError> {
+        let media_key = self.media_key(app, stream)?;
+        let local_endpoint_hint = SocketAddr::new(
+            "0.0.0.0"
+                .parse::<std::net::IpAddr>()
+                .map_err(|e| SdkError::Internal(e.to_string()))?,
+            local_port,
+        );
+        let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+            .transport(RtpTransport::Udp)
+            .container(MediaContainer::Ps)
+            .ssrc(ssrc)
+            .payload_binding(self.ps_payload_binding())
+            .local_endpoint_hint(local_endpoint_hint)
+            .build();
+        let request = OpenRtpReceiver {
+            params,
+            playback_range: None,
+        };
+        let ctx = MediaRequestContext::default();
+        let api = self.rtp_session_api()?;
+        api.open_receiver(&ctx, request)
+            .await
+            .map_err(|e| SdkError::Internal(e.to_string()))
+    }
+
+    /// Open an RTP sender for the given GB session and return the descriptor.
+    async fn open_gb_sender(
+        &self,
+        app: &str,
+        stream: &str,
+        ssrc: u32,
+        remote: SocketAddr,
+    ) -> Result<cheetah_sdk::media_api::rtp_session::RtpSessionDescriptor, SdkError> {
+        let media_key = self.media_key(app, stream)?;
+        let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Send)
+            .transport(RtpTransport::Udp)
+            .container(MediaContainer::Ps)
+            .ssrc(ssrc)
+            .payload_binding(self.ps_payload_binding())
+            .remote_endpoint(remote)
+            .build();
+        let request = OpenRtpSender { params };
+        let ctx = MediaRequestContext::default();
+        let api = self.rtp_session_api()?;
+        api.open_sender(&ctx, request)
+            .await
+            .map_err(|e| SdkError::Internal(e.to_string()))
+    }
+
+    /// Stop a previously tracked RTP session and return whether it was found.
+    async fn stop_gb_session(&self, session_ref: RtpSessionRef) -> Result<bool, SdkError> {
+        let ctx = MediaRequestContext::default();
+        let api = self.rtp_session_api()?;
+        match api
+            .stop_session(
+                &ctx,
+                StopRtpSession {
+                    session_ref,
+                    release_lease: true,
+                },
+            )
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(e) if e.code == cheetah_sdk::media_api::error::MediaErrorCode::NotFound => {
+                Ok(false)
+            }
+            Err(e) => Err(SdkError::Internal(e.to_string())),
+        }
+    }
 }
 
 /// `ModuleHttpService` implementation for GB28181 REST endpoints.
@@ -574,34 +638,19 @@ impl ModuleHttpService for GbHttpService {
                     };
 
                     // Allocate RTP server port and session in-process
-                    let rtp_resp = call_rtp_service(
-                        &self.engine,
-                        HttpMethod::Post,
-                        "/server/create",
-                        serde_json::json!({
-                            "port": port,
-                            "appName": app,
-                            "streamName": stream,
-                            "ssrc": ssrc,
-                            "payloadType": "PS",
-                            "transportMode": "RecvOnly"
-                        }),
-                    )
-                    .await
-                    .map_err(SdkError::Internal)?;
+                    let descriptor = self.open_gb_receiver(&app, &stream, ssrc, port).await?;
 
                     let session_key = format!("{app}/{stream}");
+                    let rtp_session_ref = RtpSessionRef {
+                        session_id: descriptor.session_id.clone(),
+                        expected_generation: descriptor.generation,
+                    };
                     self.active_sessions
                         .lock()
-                        .insert(session_key.clone(), device_id.clone());
+                        .insert(session_key.clone(), (device_id.clone(), rtp_session_ref));
 
                     // Start SIP INVITE
-                    let local_port = rtp_resp
-                        .get("data")
-                        .and_then(|d| d.get("port"))
-                        .and_then(|p| p.as_u64())
-                        .map(|p| p as u16)
-                        .unwrap_or(port);
+                    let local_port = descriptor.endpoints.local.port();
                     let spec = GbInviteSpec {
                         session_key: session_key.clone(),
                         ssrc,
@@ -621,7 +670,7 @@ impl ModuleHttpService for GbHttpService {
                         "code": 200,
                         "msg": "success",
                         "data": {
-                            "port": rtp_resp.get("data").and_then(|d| d.get("port")).and_then(|p| p.as_u64()).unwrap_or(port as u64),
+                            "port": local_port,
                             "ssrc": ssrc,
                             "sessionKey": session_key,
                             "deviceId": device_id,
@@ -632,29 +681,24 @@ impl ModuleHttpService for GbHttpService {
                     ))
                 } else {
                     // Passive receive mode: Allocate RTP server and return
-                    let rtp_resp = call_rtp_service(
-                        &self.engine,
-                        HttpMethod::Post,
-                        "/server/create",
-                        serde_json::json!({
-                            "port": port,
-                            "appName": app,
-                            "streamName": stream,
-                            "ssrc": ssrc,
-                            "payloadType": "PS",
-                            "transportMode": "RecvOnly"
-                        }),
-                    )
-                    .await
-                    .map_err(SdkError::Internal)?;
+                    let descriptor = self.open_gb_receiver(&app, &stream, ssrc, port).await?;
 
                     let session_key = format!("{app}/{stream}");
+                    let rtp_session_ref = RtpSessionRef {
+                        session_id: descriptor.session_id.clone(),
+                        expected_generation: descriptor.generation,
+                    };
+                    self.active_sessions
+                        .lock()
+                        .insert(session_key.clone(), (String::new(), rtp_session_ref));
+
+                    let local_port = descriptor.endpoints.local.port();
 
                     let response = serde_json::json!({
                         "code": 200,
                         "msg": "success",
                         "data": {
-                            "port": rtp_resp.get("data").and_then(|d| d.get("port")).and_then(|p| p.as_u64()).unwrap_or(port as u64),
+                            "port": local_port,
                             "ssrc": ssrc,
                             "sessionKey": session_key,
                         }
@@ -675,30 +719,23 @@ impl ModuleHttpService for GbHttpService {
 
                 let session_key = format!("{app}/{stream}");
 
-                let had_active = self.active_sessions.lock().remove(&session_key).is_some();
-                if had_active {
-                    if let Ok(driver) = self.driver() {
-                        driver
-                            .send_command(GbDriverCommand::StopInvite {
-                                session_key: session_key.clone(),
-                            })
-                            .await
-                            .ok();
+                let maybe_session = {
+                    let mut sessions = self.active_sessions.lock();
+                    sessions.remove(&session_key)
+                };
+                if let Some((device_id, session_ref)) = maybe_session {
+                    if !device_id.is_empty() {
+                        if let Ok(driver) = self.driver() {
+                            driver
+                                .send_command(GbDriverCommand::StopInvite {
+                                    session_key: session_key.clone(),
+                                })
+                                .await
+                                .ok();
+                        }
                     }
+                    self.stop_gb_session(session_ref).await.ok();
                 }
-
-                // Stop RTP server receiver via RTP module
-                call_rtp_service(
-                    &self.engine,
-                    HttpMethod::Post,
-                    "/server/stop",
-                    serde_json::json!({
-                        "appName": app,
-                        "streamName": stream
-                    }),
-                )
-                .await
-                .ok();
 
                 let response = serde_json::json!({
                     "code": 200,
@@ -733,36 +770,21 @@ impl ModuleHttpService for GbHttpService {
                         SdkError::InvalidArgument("missing field: ssrc".to_string())
                     })? as u32;
 
-                // Create RTP client egress via RTP service
-                call_rtp_service(
-                    &self.engine,
-                    HttpMethod::Post,
-                    "/client/create",
-                    serde_json::json!({
-                        "appName": app,
-                        "streamName": stream,
-                        "peerIp": ip,
-                        "peerPort": port,
-                        "ssrc": ssrc,
-                        "payloadType": "PS",
-                        "transportMode": "SendOnly"
-                    }),
-                )
-                .await
-                .map_err(SdkError::Internal)?;
+                let remote = format!("{ip}:{port}")
+                    .parse::<SocketAddr>()
+                    .map_err(|e| SdkError::InvalidArgument(format!("invalid destination: {e}")))?;
 
-                // Start client egress streaming
-                call_rtp_service(
-                    &self.engine,
-                    HttpMethod::Post,
-                    "/client/start",
-                    serde_json::json!({
-                        "appName": app,
-                        "streamName": stream
-                    }),
-                )
-                .await
-                .map_err(SdkError::Internal)?;
+                // Create RTP sender and start egress in one typed call.
+                let descriptor = self.open_gb_sender(&app, &stream, ssrc, remote).await?;
+
+                let session_key = format!("{app}/{stream}");
+                let rtp_session_ref = RtpSessionRef {
+                    session_id: descriptor.session_id.clone(),
+                    expected_generation: descriptor.generation,
+                };
+                self.active_sessions
+                    .lock()
+                    .insert(session_key, (String::new(), rtp_session_ref));
 
                 let response = serde_json::json!({
                     "code": 200,
@@ -787,17 +809,14 @@ impl ModuleHttpService for GbHttpService {
                     SdkError::InvalidArgument("missing field: stream".to_string())
                 })?;
 
-                call_rtp_service(
-                    &self.engine,
-                    HttpMethod::Post,
-                    "/client/stop",
-                    serde_json::json!({
-                        "appName": app,
-                        "streamName": stream
-                    }),
-                )
-                .await
-                .ok();
+                let session_key = format!("{app}/{stream}");
+                let session_ref = {
+                    let mut sessions = self.active_sessions.lock();
+                    sessions.remove(&session_key).map(|(_, r)| r)
+                };
+                if let Some(session_ref) = session_ref {
+                    self.stop_gb_session(session_ref).await.ok();
+                }
 
                 let response = serde_json::json!({
                     "code": 200,

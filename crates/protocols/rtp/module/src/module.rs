@@ -94,6 +94,7 @@ pub struct RtpModule {
     active_egress: Arc<Mutex<HashMap<String, CancellationToken>>>,
     client_targets: Arc<Mutex<HashMap<String, Vec<String>>>>,
     media_services_registration: Option<ProviderRegistration>,
+    rtp_session_registration: Option<ProviderRegistration>,
 }
 
 /// `RtpModule` constructor.
@@ -113,6 +114,7 @@ impl RtpModule {
             active_egress: Arc::new(Mutex::new(HashMap::new())),
             client_targets: Arc::new(Mutex::new(HashMap::new())),
             media_services_registration: None,
+            rtp_session_registration: None,
         }
     }
 }
@@ -172,20 +174,25 @@ impl Module for RtpModule {
 
         // Register the media-domain RtpApi provider so native/ZLM adapters can
         // drive RTP sessions through the same orchestrator used by the module's HTTP API.
+        let rtp_provider = Arc::new(RtpMediaProvider::new(
+            orchestrator,
+            engine.clone(),
+            module_cancel,
+        ));
+
         let rtp_capabilities = {
             let mut set = cheetah_sdk::media_api::MediaCapabilitySet::empty();
             set.add(cheetah_sdk::media_api::MediaCapability::Rtp, 1);
             set
         };
-        self.media_services_registration =
-            Some(engine.media_services.register_rtp_with_capabilities(
-                Arc::new(RtpMediaProvider::new(
-                    orchestrator,
-                    engine.clone(),
-                    module_cancel,
-                )),
-                rtp_capabilities,
-            ));
+        self.media_services_registration = Some(
+            engine
+                .media_services
+                .register_rtp_with_capabilities(rtp_provider.clone(), rtp_capabilities),
+        );
+
+        self.rtp_session_registration =
+            Some(engine.media_services.register_rtp_session(rtp_provider));
         self.state = ModuleState::Initialized;
         Ok(())
     }
@@ -345,6 +352,11 @@ impl Module for RtpModule {
         self.active_egress.lock().clear();
         self.client_targets.lock().clear();
         if let Some(reg) = self.media_services_registration.take() {
+            if let Some(ctx) = self.ctx.as_ref() {
+                ctx.media_services.unregister(&reg);
+            }
+        }
+        if let Some(reg) = self.rtp_session_registration.take() {
             if let Some(ctx) = self.ctx.as_ref() {
                 ctx.media_services.unregister(&reg);
             }
