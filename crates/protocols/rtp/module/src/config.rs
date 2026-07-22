@@ -3,6 +3,7 @@
 //! RTP 模块配置。
 
 use cheetah_rtp_core::RtpPayloadMode;
+use cheetah_sdk::media_api::rtp_session::GbMediaCompatibilityProfile;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for the RTP module.
@@ -89,6 +90,16 @@ pub struct RtpModuleConfig {
     pub max_rtp_len_cap: usize,
     #[serde(default)]
     pub pull_jobs: Vec<RtpClientJobConfig>,
+    /// Maximum number of concurrent RTP sessions.
+    ///
+    /// 最大并发 RTP 会话数。
+    #[serde(default = "default_max_sessions")]
+    pub max_sessions: usize,
+    /// Profiles enabled for new sessions. An empty list disables all profiles.
+    ///
+    /// 新会话允许的兼容 profile 列表。空列表表示禁用所有 profile。
+    #[serde(default = "default_enabled_profiles")]
+    pub enabled_profiles: Vec<GbMediaCompatibilityProfile>,
 }
 
 /// Configuration for a pull/egress RTP client job.
@@ -138,6 +149,8 @@ impl Default for RtpModuleConfig {
             max_rtp_len_initial: default_max_rtp_len_initial(),
             max_rtp_len_cap: default_max_rtp_len_cap(),
             pull_jobs: Vec::new(),
+            max_sessions: default_max_sessions(),
+            enabled_profiles: default_enabled_profiles(),
         }
     }
 }
@@ -181,6 +194,10 @@ impl RtpModuleConfig {
 
         if self.max_tracks < 1 {
             errors.push("max_tracks must be >= 1".to_string());
+        }
+
+        if self.max_sessions < 1 {
+            errors.push("max_sessions must be >= 1".to_string());
         }
 
         match self.tcp_header_type.to_lowercase().as_str() {
@@ -374,4 +391,18 @@ where
         "raw_video" | "video" => Ok(RtpPayloadMode::RawVideo),
         _ => Ok(RtpPayloadMode::Unknown),
     }
+}
+
+fn default_max_sessions() -> usize {
+    10_000
+}
+
+fn default_enabled_profiles() -> Vec<GbMediaCompatibilityProfile> {
+    vec![
+        GbMediaCompatibilityProfile::Strict,
+        GbMediaCompatibilityProfile::GbCommon,
+        GbMediaCompatibilityProfile::Zlm,
+        GbMediaCompatibilityProfile::Sms,
+        GbMediaCompatibilityProfile::Abl,
+    ]
 }
