@@ -169,21 +169,19 @@ fn weak_sniff_profile(payload: &[u8]) -> Option<RtpPayloadProfile> {
     // Disambiguate from MPEG program-stream PES/system headers, which also begin
     // with `00 00 01` but use start-code IDs >= 0xB0. Annex-B NAL headers have
     // the forbidden-zero bit clear, so the first NAL byte is always < 0x80.
-    let is_annexb_start_code = (payload.len() >= 4
+    let is_annexb_nal = (payload.len() >= 5
         && payload[0] == 0x00
         && payload[1] == 0x00
         && payload[2] == 0x00
-        && payload[3] == 0x01)
-        || (payload.len() >= 3 && payload[0] == 0x00 && payload[1] == 0x00 && payload[2] == 0x01);
-    if is_annexb_start_code {
-        let nal_or_start_code_id = if payload.len() >= 5 && payload[2] == 0x00 {
-            payload[4]
-        } else {
-            payload[3]
-        };
-        if nal_or_start_code_id < 0x80 {
-            return Some(RtpPayloadProfile::new(RtpPayloadMode::Es, 90_000));
-        }
+        && payload[3] == 0x01
+        && payload[4] < 0x80)
+        || (payload.len() >= 4
+            && payload[0] == 0x00
+            && payload[1] == 0x00
+            && payload[2] == 0x01
+            && payload[3] < 0x80);
+    if is_annexb_nal {
+        return Some(RtpPayloadProfile::new(RtpPayloadMode::Es, 90_000));
     }
 
     // AAC ADTS: sync word 0xFF with upper nibble of next byte set to 0xF.
@@ -275,5 +273,13 @@ mod tests {
         // so it must not be classified as raw H.26x elementary video.
         let resolver = RtpPtResolver::new();
         assert_eq!(resolver.resolve(96, &[0x00, 0x00, 0x01, 0xE0, 0x00]), None);
+    }
+
+    #[test]
+    fn short_three_byte_start_code_does_not_panic_or_misclassify() {
+        // Exactly `00 00 01` has no NAL header byte, so it cannot be a valid Annex-B
+        // NAL unit; the resolver must return None instead of panicking.
+        let resolver = RtpPtResolver::new();
+        assert_eq!(resolver.resolve(96, &[0x00, 0x00, 0x01]), None);
     }
 }
