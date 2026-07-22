@@ -400,5 +400,7 @@ impl RtpCore {
         // Clean up any dangling ehome decoder even if no session was ever created.
         self.ehome_decoders.remove(&conn_id);
         self.tcp_conn_to_session.remove(&conn_id);
+        // Tell the driver to release the per-connection writer task and socket.
+        outputs.push(RtpCoreOutput::CloseTcpConnection { conn_id });
     }
 }

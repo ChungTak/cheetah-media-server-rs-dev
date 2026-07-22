@@ -508,4 +508,8 @@ pub enum RtpCoreOutput {
     ///
     /// 关闭会话并清理资源。
     CloseSession(RtpSessionKey),
+    /// Close the underlying TCP connection and release its writer task.
+    ///
+    /// 关闭底层 TCP 连接并释放其写任务。
+    CloseTcpConnection { conn_id: u64 },
 }

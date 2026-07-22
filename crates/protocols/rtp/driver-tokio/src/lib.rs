@@ -1233,6 +1233,14 @@ async fn run_driver_loop(
                         )
                         .await;
                     }
+                    RtpCoreOutput::CloseTcpConnection { conn_id } => {
+                        debug!("Closing TCP connection: {conn_id}");
+                        // Dropping the writer sender causes the per-connection writer task to
+                        // exit, which closes the write half of the socket and frees the entry.
+                        if let Some(writer_tx) = tcp_writers.lock().await.remove(&conn_id) {
+                            drop(writer_tx);
+                        }
+                    }
                 }
             }
         }
