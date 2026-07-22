@@ -186,7 +186,7 @@ pub use rtp::{
     probe_rtp_payload, EhomeCodecInfo, EhomeDecoder, EhomeOutput, ParsedTcpRtpFrame, RtpClock,
     RtpHeader, RtpPacket, RtpPayloadMode, RtpTcpFraming, RtpTimestampNormalizer,
 };
-pub use rtp_pt::{RtpPayloadProfile, RtpPtResolver};
+pub use rtp_pt::{RtpPayloadProfile, RtpPtResolveSource, RtpPtResolver};
 pub use rtp_reorder::{RtpReorderBuffer, RtpReorderSettings};
 pub use sdp::{export_fmtp, export_media_description, SdpMediaDescription};
 pub use time::{

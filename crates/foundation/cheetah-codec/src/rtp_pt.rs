@@ -21,6 +21,35 @@ pub struct RtpPayloadProfile {
     pub clock_rate_hz: u32,
 }
 
+/// Source of a PT resolution.
+///
+/// `Binding` and `Static` are authoritative. `Encapsulation` (PS/TS/JTT/Ehome) is also treated as
+/// a strong signal because the container sync/pack header is unlikely to be a false positive.
+/// `Weak` covers Annex-B start codes and AAC ADTS sync words, which can appear inside container
+/// fragments and therefore require confirmation before committing.
+///
+/// PT 解析来源。`Binding`/`Static`/`Encapsulation` 可直接采用，`Weak` 需要二次确认。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RtpPtResolveSource {
+    Binding(RtpPayloadProfile),
+    Static(RtpPayloadProfile),
+    Encapsulation(RtpPayloadProfile),
+    Weak(RtpPayloadProfile),
+    Unknown,
+}
+
+impl RtpPtResolveSource {
+    pub fn profile(&self) -> Option<RtpPayloadProfile> {
+        match self {
+            RtpPtResolveSource::Binding(p)
+            | RtpPtResolveSource::Static(p)
+            | RtpPtResolveSource::Encapsulation(p)
+            | RtpPtResolveSource::Weak(p) => Some(*p),
+            RtpPtResolveSource::Unknown => None,
+        }
+    }
+}
+
 impl RtpPayloadProfile {
     pub const fn new(mode: RtpPayloadMode, clock_rate_hz: u32) -> Self {
         Self {
@@ -71,18 +100,39 @@ impl RtpPtResolver {
     ///
     /// 解析 PT。返回 `None` 表示当前 payload 不足以确定格式，调用方可继续等待更多包。
     pub fn resolve(&self, payload_type: u8, payload: &[u8]) -> Option<RtpPayloadProfile> {
+        self.resolve_with_source(payload_type, payload).profile()
+    }
+
+    /// Resolve a PT and report how the result was derived.
+    ///
+    /// 解析 PT 并返回结果来源。
+    pub fn resolve_with_source(&self, payload_type: u8, payload: &[u8]) -> RtpPtResolveSource {
         // 1. External binding.
         if let Some(profile) = self.bindings.get(&payload_type) {
-            return Some(*profile);
+            return RtpPtResolveSource::Binding(*profile);
         }
 
         // 2. Static profile mapping for well-known payload types.
         if let Some(profile) = static_profile(payload_type) {
-            return Some(profile);
+            return RtpPtResolveSource::Static(profile);
         }
 
         // 3. Payload sniff for dynamic (and other unknown) payload types.
-        sniff_profile(payload)
+        // Encapsulation probes (PS pack header, TS sync, JTT, Ehome) are strong signals.
+        let mode = probe_rtp_payload(payload);
+        if mode != RtpPayloadMode::Unknown {
+            return RtpPtResolveSource::Encapsulation(RtpPayloadProfile::new(
+                mode,
+                default_clock_rate_for_mode(mode),
+            ));
+        }
+
+        // Weak pattern-based sniff for raw Annex-B video / AAC ADTS.
+        if let Some(profile) = weak_sniff_profile(payload) {
+            return RtpPtResolveSource::Weak(profile);
+        }
+
+        RtpPtResolveSource::Unknown
     }
 }
 
@@ -110,18 +160,9 @@ fn static_profile(payload_type: u8) -> Option<RtpPayloadProfile> {
     }
 }
 
-fn sniff_profile(payload: &[u8]) -> Option<RtpPayloadProfile> {
+fn weak_sniff_profile(payload: &[u8]) -> Option<RtpPayloadProfile> {
     if payload.is_empty() {
         return None;
-    }
-
-    // Use the existing encapsulation probe (JTT/Ehome/PS/TS).
-    let mode = probe_rtp_payload(payload);
-    if mode != RtpPayloadMode::Unknown {
-        return Some(RtpPayloadProfile::new(
-            mode,
-            default_clock_rate_for_mode(mode),
-        ));
     }
 
     // Elementary video stream: H.264/H.265/H.266 Annex-B start code.
