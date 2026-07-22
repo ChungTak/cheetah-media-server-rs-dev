@@ -114,7 +114,10 @@ impl RtpCore {
         reason: String,
         outputs: &mut Vec<RtpCoreOutput>,
     ) {
-        if let Some(session) = self.sessions.remove(&key) {
+        if let Some(mut session) = self.sessions.remove(&key) {
+            // Mark terminal state before dropping; the public `SessionClosed` event is the
+            // authoritative lifecycle signal, so we do not emit a redundant state change.
+            let _ = session.transition_to(RtpSessionState::Closed);
             self.ssrc_to_session.remove(&session.ssrc);
             if let Some(conn_id) = session.tcp_conn_id {
                 self.tcp_conn_to_session.remove(&conn_id);
@@ -147,6 +150,7 @@ impl RtpCore {
                     payload_mode: spec.payload_mode,
                     egress_payload_mode: spec.payload_mode,
                     transport_mode: spec.transport_mode,
+                    state: RtpSessionState::Inactive,
                     track_filter,
                     egress_track_filter: spec.track_filter,
                     check_paused: false,
@@ -207,6 +211,13 @@ impl RtpCore {
                         session.egress_track_filter = spec.track_filter;
                         session.egress_payload_mode = spec.payload_mode;
                         session.destination = Some(spec.destination);
+                        if let Some(old) = session.transition_to(RtpSessionState::Talk) {
+                            outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SessionStateChanged {
+                                session_key: spec.session_key.clone(),
+                                old_state: old,
+                                new_state: RtpSessionState::Talk,
+                            }));
+                        }
                     }
                     return;
                 }
@@ -218,6 +229,7 @@ impl RtpCore {
                     payload_mode: spec.payload_mode,
                     egress_payload_mode: spec.payload_mode,
                     transport_mode: spec.transport_mode,
+                    state: RtpSessionState::Inactive,
                     track_filter,
                     egress_track_filter: spec.track_filter,
                     check_paused: false,
@@ -347,6 +359,22 @@ impl RtpCore {
 
                     // Advance sequence by number of packets actually emitted.
                     session.next_seq = session.next_seq.wrapping_add(packet_count.max(1));
+
+                    // Reflect the runtime state transition caused by egress.
+                    let transport_mode = session.transport_mode;
+                    let current_state = session.state;
+                    let is_talk = current_state == RtpSessionState::Talk;
+                    if let Some(new_state) =
+                        state_after_egress(transport_mode, current_state, is_talk)
+                    {
+                        if let Some(old) = session.transition_to(new_state) {
+                            outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SessionStateChanged {
+                                session_key: send_frame.session_key.clone(),
+                                old_state: old,
+                                new_state,
+                            }));
+                        }
+                    }
                 }
             }
             RtpCoreCommand::UpdateSession {
