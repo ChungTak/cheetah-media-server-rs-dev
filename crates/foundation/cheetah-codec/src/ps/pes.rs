@@ -3,7 +3,7 @@
 //! PES 包与 PS 包解析。
 
 use crate::prelude::*;
-use crate::ps::{encode_pts_dts, find_start_code, parse_pts_dts, stream_kind};
+use crate::ps::{encode_pts_dts, find_start_code, is_ps_stream_id, parse_pts_dts, stream_kind};
 use bytes::Bytes;
 
 /// Stream kind classification for PES payloads inside a PS packet.
@@ -70,14 +70,24 @@ impl PesPacket {
         let stream_id = raw[3];
         let pes_len = u16::from_be_bytes([raw[4], raw[5]]) as usize;
         let flags2 = raw[7];
-        let header_len = raw[8] as usize;
-        let data_start = 9 + header_len;
+        let header_data_len = raw[8] as usize;
+        let data_start = 9 + header_data_len;
         if raw.len() < data_start {
             return None;
         }
 
         let total_len = if pes_len == 0 {
-            raw.len()
+            // Unbounded PES: scan for the next PS-layer start code so we do not
+            // consume the rest of the stream as a single packet.
+            let scan = &raw[data_start..];
+            let next = scan
+                .windows(3)
+                .enumerate()
+                .find(|(i, w)| {
+                    *w == [0x00, 0x00, 0x01] && scan.get(i + 3).is_some_and(|b| is_ps_stream_id(*b))
+                })
+                .map(|(i, _)| data_start + i);
+            next.unwrap_or(raw.len())
         } else {
             (6 + pes_len).min(raw.len())
         };
@@ -90,11 +100,11 @@ impl PesPacket {
         let mut dts = None;
         let has_pts = (flags2 & 0x80) != 0;
         let has_dts = (flags2 & 0x40) != 0;
-        if has_pts && header_len >= 5 && raw.len() >= cursor + 5 {
+        if has_pts && header_data_len >= 5 && raw.len() >= cursor + 5 {
             pts = parse_pts_dts(&raw[cursor..cursor + 5]);
             cursor += 5;
         }
-        if has_dts && header_len >= 10 && raw.len() >= cursor + 5 {
+        if has_dts && header_data_len >= 10 && raw.len() >= cursor + 5 {
             dts = parse_pts_dts(&raw[cursor..cursor + 5]);
         }
 

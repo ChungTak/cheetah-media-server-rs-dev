@@ -1048,3 +1048,271 @@ fn ps_demuxer_over_limit_psm_retransmission_still_emits_limit() {
         );
     }
 }
+
+// Build a raw PES packet for tests. `pes_len` is the explicit PES_packet_length;
+// `None` means unbounded (0). `header_stuffing` is the number of 0xFF stuffing bytes
+// placed after the PTS/DTS fields inside the PES_header_data area.
+fn encode_pes_raw(
+    stream_id: u8,
+    pts: Option<i64>,
+    dts: Option<i64>,
+    data_alignment: bool,
+    header_stuffing: usize,
+    pes_len: Option<usize>,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut header_data = Vec::new();
+    let mut flags2 = 0u8;
+    if let Some(pts) = pts {
+        flags2 |= 0x80;
+        header_data.extend_from_slice(&encode_pts_dts(pts, 0x2));
+    }
+    if let Some(dts) = dts {
+        flags2 |= 0x40;
+        header_data.extend_from_slice(&encode_pts_dts(dts, 0x1));
+    }
+    header_data.extend((0..header_stuffing).map(|_| 0xFFu8));
+
+    let length = pes_len.unwrap_or(0);
+    let mut out = Vec::new();
+    out.extend_from_slice(&[0x00, 0x00, 0x01, stream_id]);
+    out.extend_from_slice(&(length as u16).to_be_bytes());
+    let mut flags1 = 0x80u8;
+    if data_alignment {
+        flags1 |= 0x04;
+    }
+    out.push(flags1);
+    out.push(flags2);
+    out.push(header_data.len() as u8);
+    out.extend_from_slice(&header_data);
+    out.extend_from_slice(payload);
+    out
+}
+
+#[test]
+fn pes_packet_parse_unbounded_stops_at_next_ps_start_code() {
+    let first_payload = b"first";
+    let second_payload = b"second";
+    let first = encode_pes_raw(
+        0xE0,
+        Some(90_000),
+        None,
+        false,
+        0,
+        None,
+        first_payload.as_slice(),
+    );
+    let second = encode_pes_raw(
+        0xC0,
+        Some(90_000),
+        None,
+        false,
+        0,
+        Some(3 + 5 + second_payload.len()),
+        second_payload.as_slice(),
+    );
+
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&first);
+    buf.extend_from_slice(&second);
+
+    let (decoded, consumed) = PesPacket::parse(&buf).expect("parse first PES");
+    assert_eq!(decoded.stream_id, 0xE0);
+    assert_eq!(decoded.payload.as_ref(), first_payload.as_slice());
+    assert_eq!(consumed, first.len());
+
+    let (decoded2, _) = PesPacket::parse(&buf[consumed..]).expect("parse second PES");
+    assert_eq!(decoded2.stream_id, 0xC0);
+    assert_eq!(decoded2.payload.as_ref(), second_payload.as_slice());
+}
+
+#[test]
+fn ps_demuxer_cross_pes_access_unit_reassembles_unbounded_pes() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    // First part of the frame: Annex-B start code + SPS NAL header.
+    let first_part = &[0x00, 0x00, 0x00, 0x01, 0x67, b'v'][..];
+    // Second part: arbitrary continuation bytes without any start code.
+    let second_part = b"ideo-continuation";
+
+    let mut buf = Vec::new();
+    // Pack header with zero stuffing.
+    buf.extend_from_slice(&[0x00, 0x00, 0x01, 0xBA]);
+    buf.extend_from_slice(&[0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8]);
+
+    // Two unbounded PES packets (PES_packet_length == 0) carrying one split video AU.
+    // data_alignment is false on both: the second PES is a continuation of the same AU.
+    buf.extend_from_slice(&encode_pes_raw(
+        0xE0,
+        Some(100_000),
+        None,
+        false,
+        0,
+        None,
+        first_part,
+    ));
+    buf.extend_from_slice(&encode_pes_raw(
+        0xE0,
+        None,
+        None,
+        false,
+        0,
+        None,
+        second_part,
+    ));
+
+    let _events = demuxer.push(&buf);
+    let flush_events = demuxer.flush();
+
+    let mut found_frame = None;
+    for ev in &flush_events {
+        if let PsDemuxEvent::Frame(frame) = ev {
+            if frame.track_id == TrackId(0xE0) {
+                found_frame = Some(frame.clone());
+            }
+        }
+    }
+
+    let frame = found_frame.expect("cross-PES video AU should be emitted on flush");
+    let expected: Vec<u8> = first_part.iter().chain(second_part).copied().collect();
+    assert_eq!(frame.payload.as_ref(), expected.as_slice());
+    assert_eq!(frame.pts, 100_000);
+}
+
+#[test]
+fn ps_demuxer_data_alignment_splits_access_units() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&[0x00, 0x00, 0x01, 0xBA]);
+    buf.extend_from_slice(&[0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8]);
+
+    // Two back-to-back unbounded video PES packets, each with data_alignment set,
+    // so each starts a new access unit. No pack header between them. A trailing
+    // zero-length system header delimits the second PES so it can be parsed during
+    // the same push.
+    buf.extend_from_slice(&encode_pes_raw(
+        0xE0,
+        Some(100_000),
+        None,
+        true,
+        0,
+        None,
+        &[0x00, 0x00, 0x00, 0x01, 0x67, b'1'][..],
+    ));
+    buf.extend_from_slice(&encode_pes_raw(
+        0xE0,
+        Some(200_000),
+        None,
+        true,
+        0,
+        None,
+        &[0x00, 0x00, 0x00, 0x01, 0x68, b'2'][..],
+    ));
+    // system_header_start_code with zero-length header body.
+    buf.extend_from_slice(&[0x00, 0x00, 0x01, 0xBB, 0x00, 0x00]);
+
+    let events = demuxer.push(&buf);
+    let frames: Vec<_> = events
+        .into_iter()
+        .filter_map(|e| match e {
+            PsDemuxEvent::Frame(f) if f.track_id == TrackId(0xE0) => Some(*f),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        frames.len(),
+        1,
+        "first frame is emitted at data_alignment boundary"
+    );
+    assert_eq!(frames[0].pts, 100_000);
+
+    let mut flush_events = demuxer.flush();
+    let flush_frames: Vec<_> = flush_events
+        .drain(..)
+        .filter_map(|e| match e {
+            PsDemuxEvent::Frame(f) if f.track_id == TrackId(0xE0) => Some(*f),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(
+        flush_frames.len(),
+        1,
+        "second frame is emitted on flush and not merged into first"
+    );
+    assert_eq!(flush_frames[0].pts, 200_000);
+}
+
+#[test]
+fn ps_demuxer_pes_stuffing_is_skipped() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    let payload: Vec<u8> = [0x00, 0x00, 0x00, 0x01, 0x67]
+        .into_iter()
+        .chain(b"actual-payload".iter().copied())
+        .collect();
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&[0x00, 0x00, 0x01, 0xBA]);
+    buf.extend_from_slice(&[0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8]);
+
+    // Bounded video PES with 4 stuffing bytes (0xFF) after the PTS.
+    buf.extend_from_slice(&encode_pes_raw(
+        0xE0,
+        Some(90_000),
+        None,
+        false,
+        4,
+        Some(3 + (5 + 4) + payload.len()),
+        &payload,
+    ));
+
+    let events = demuxer.push(&buf);
+    let mut flush = demuxer.flush();
+
+    let mut found = false;
+    for ev in events.into_iter().chain(flush.drain(..)) {
+        if let PsDemuxEvent::Frame(frame) = ev {
+            if frame.track_id == TrackId(0xE0) {
+                assert_eq!(frame.payload.as_ref(), payload.as_slice());
+                assert_eq!(frame.pts, 90_000);
+                found = true;
+            }
+        }
+    }
+    assert!(found, "payload should be extracted after stuffing bytes");
+}
+
+#[test]
+fn ps_demuxer_private_stream_is_ignored() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    let mut buf = Vec::new();
+    buf.extend_from_slice(&[0x00, 0x00, 0x01, 0xBA]);
+    buf.extend_from_slice(&[0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8]);
+    buf.extend_from_slice(&encode_pes_raw(
+        0xBD,
+        Some(90_000),
+        None,
+        false,
+        0,
+        Some(3 + 5 + 8),
+        b"private1",
+    ));
+
+    let events = demuxer.push(&buf);
+    let flush = demuxer.flush();
+
+    for ev in events.into_iter().chain(flush.into_iter()) {
+        match ev {
+            PsDemuxEvent::TrackInfo(_) | PsDemuxEvent::Frame(_) => {
+                panic!("private stream must not produce track or frame")
+            }
+            PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::PesParseError) => {
+                panic!("private stream must not be treated as malformed")
+            }
+            _ => {}
+        }
+    }
+}

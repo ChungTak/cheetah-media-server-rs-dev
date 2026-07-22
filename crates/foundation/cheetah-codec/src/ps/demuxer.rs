@@ -96,7 +96,21 @@ impl PsDemuxer {
         }
 
         self.remain_buffer.extend_from_slice(data);
+        self.consume_buffer(&mut events, false);
+        events
+    }
 
+    /// Flush any buffered video data and return remaining events.
+    ///
+    /// 刷新所有缓冲的视频数据并返回剩余事件。
+    pub fn flush(&mut self) -> Vec<PsDemuxEvent> {
+        let mut events = Vec::new();
+        self.consume_buffer(&mut events, true);
+        self.emit_video_frame(&mut events);
+        events
+    }
+
+    fn consume_buffer(&mut self, events: &mut Vec<PsDemuxEvent>, is_last: bool) {
         let mut cursor = 0;
         while cursor + 4 <= self.remain_buffer.len() {
             if self.remain_buffer[cursor..cursor + 3] != [0x00, 0x00, 0x01] {
@@ -173,7 +187,7 @@ impl PsDemuxer {
                         break;
                     }
                     let psm_payload = self.remain_buffer[cursor + 6..cursor + total_len].to_vec();
-                    self.parse_psm(&psm_payload, &mut events);
+                    self.parse_psm(&psm_payload, events);
                     cursor += total_len;
                     self.probe_pack_count = 0;
                     self.probe_exceeded = false;
@@ -212,6 +226,11 @@ impl PsDemuxer {
                         }
                         if let Some(pos) = found {
                             6 + pos
+                        } else if is_last
+                            && self.remain_buffer.len() - cursor <= self.config.max_pes_packet_size
+                        {
+                            // End of stream: the remaining bytes form the last PES.
+                            self.remain_buffer.len() - cursor
                         } else if self.remain_buffer.len() - (cursor + 6) > max_payload {
                             // No valid start code within the configured PES size limit.
                             self.remain_buffer.clear();
@@ -220,7 +239,7 @@ impl PsDemuxer {
                                     resource: "pes_packet_size".to_string(),
                                 },
                             ));
-                            return events;
+                            return;
                         } else {
                             // Wait for more bytes to disambiguate.
                             break;
@@ -234,7 +253,7 @@ impl PsDemuxer {
                         events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
                             resource: "pes_packet_size".to_string(),
                         }));
-                        return events;
+                        return;
                     }
 
                     if cursor + total_len > self.remain_buffer.len() {
@@ -242,7 +261,7 @@ impl PsDemuxer {
                     }
 
                     let pes_payload = self.remain_buffer[cursor..cursor + total_len].to_vec();
-                    self.parse_pes(stream_id, &pes_payload, &mut events);
+                    self.parse_pes(stream_id, &pes_payload, events);
                     cursor += total_len;
                     self.probe_pack_count = 0;
                     self.probe_exceeded = false;
@@ -256,17 +275,6 @@ impl PsDemuxer {
         if cursor > 0 {
             self.remain_buffer.drain(..cursor);
         }
-
-        events
-    }
-
-    /// Flush any buffered video data and return remaining events.
-    ///
-    /// 刷新所有缓冲的视频数据并返回剩余事件。
-    pub fn flush(&mut self) -> Vec<PsDemuxEvent> {
-        let mut events = Vec::new();
-        self.emit_video_frame(&mut events);
-        events
     }
 
     fn parse_psm(&mut self, payload: &[u8], events: &mut Vec<PsDemuxEvent>) {
@@ -417,9 +425,10 @@ impl PsDemuxer {
         }
 
         let length = u16::from_be_bytes([pes_packet[4], pes_packet[5]]) as usize;
+        let flags1 = pes_packet[6];
         let info1 = pes_packet[7];
-        let stuffing_len = pes_packet[8] as usize;
-        let data_start = 9 + stuffing_len;
+        let header_data_len = pes_packet[8] as usize;
+        let data_start = 9 + header_data_len;
         if pes_packet.len() < data_start {
             events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::PesParseError));
             return;
@@ -433,9 +442,15 @@ impl PsDemuxer {
                 .min(pes_packet.len() - data_start)
         };
 
+        // A PES with no payload data after the header is malformed; do not emit empty frames.
         if payload_len == 0 {
             return;
         }
+
+        // data_alignment_indicator (bit 2 of flags1) marks the payload start as an
+        // access-unit boundary. Use it, together with a new pack header, to decide
+        // when the previous video access unit is complete.
+        let data_alignment = (flags1 & 0x04) != 0;
 
         let pts_dts_flags = (info1 & 0xC0) >> 6;
         let mut pts = None;
@@ -454,14 +469,22 @@ impl PsDemuxer {
 
         let payload = &pes_packet[data_start..data_start + payload_len];
 
+        // A pack header signals a program pack boundary. The first PES of the new pack
+        // flushes any buffered video access unit from the previous pack. The flag is
+        // consumed here so that later PES packets in the same pack do not trigger it.
+        let new_pack = self.new_ps;
+        self.new_ps = false;
+        if new_pack && !self.video_buffer.is_empty() {
+            self.emit_video_frame(events);
+        }
+
         if is_video {
             if let Some(_track) = self
                 .tracks
                 .values()
                 .find(|t| t.media_kind == MediaKind::Video)
             {
-                if self.new_ps && !self.video_buffer.is_empty() {
-                    self.new_ps = false;
+                if data_alignment && !self.video_buffer.is_empty() {
                     self.emit_video_frame(events);
                 }
 
