@@ -491,6 +491,7 @@ impl PsDemuxer {
                         if sample_rate != track.clock_rate {
                             track.clock_rate = sample_rate;
                             track.sample_rate = Some(sample_rate);
+                            self.tracks.insert(track.track_id.0 as u8, track.clone());
                             events.push(PsDemuxEvent::TrackInfo(vec![track.clone()]));
                         }
                         (Bytes::copy_from_slice(raw), sample_rate)
@@ -507,8 +508,6 @@ impl PsDemuxer {
                 let track_clock = track_clock_rate.max(1) as i128;
                 let pts_converted = (pts_val as i128 * track_clock / 90_000) as i64;
                 let dts_converted = (dts_val as i128 * track_clock / 90_000) as i64;
-
-                self.tracks.insert(track.track_id.0 as u8, track.clone());
 
                 let frame = AVFrame::new(
                     track.track_id,
