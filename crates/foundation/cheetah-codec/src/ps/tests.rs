@@ -368,3 +368,58 @@ fn ps_demuxer_respects_max_access_unit_size() {
         if resource == "access_unit"
     )));
 }
+
+#[test]
+fn ps_demuxer_periodic_psm_at_track_limit_does_not_wipe_tracks() {
+    let mut config = limit_config();
+    config.max_tracks = 1;
+    let mut demuxer = PsDemuxer::new(config);
+
+    let mut muxer = PsMuxer::new();
+    muxer.add_track(TrackInfo::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        90_000,
+    ));
+
+    let mut video_payload = vec![0, 0, 0, 1, 0x67, 0x42, 0x00, 0x0A];
+    video_payload.extend_from_slice(b"v");
+    let mut video_frame = AVFrame::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        FrameFormat::CanonicalH26x,
+        90_000,
+        90_000,
+        Timebase::new(1, 90_000),
+        Bytes::from(video_payload),
+    );
+    video_frame.flags.insert(FrameFlags::KEY);
+
+    let muxed1 = muxer.mux(&video_frame).expect("mux");
+    let muxed2 = muxer.mux(&video_frame).expect("mux again");
+
+    let events1 = demuxer.push(&muxed1);
+    let events2 = demuxer.push(&muxed2);
+
+    let limit1 = events1.iter().any(|e| {
+        matches!(
+            e,
+            PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+            if resource == "tracks"
+        )
+    });
+    let limit2 = events2.iter().any(|e| {
+        matches!(
+            e,
+            PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+            if resource == "tracks"
+        )
+    });
+    assert!(!limit1, "first PSM should fit within max_tracks");
+    assert!(
+        !limit2,
+        "periodic retransmitted PSM must not wipe tracks at limit"
+    );
+}

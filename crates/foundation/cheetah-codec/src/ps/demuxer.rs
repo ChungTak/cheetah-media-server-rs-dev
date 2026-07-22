@@ -293,14 +293,17 @@ impl PsDemuxer {
 
         if !new_tracks.is_empty() {
             for track in &new_tracks {
-                if self.tracks.len() >= self.config.max_tracks {
+                let track_key = track.track_id.0 as u8;
+                if !self.tracks.contains_key(&track_key)
+                    && self.tracks.len() >= self.config.max_tracks
+                {
                     events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
                         resource: "tracks".to_string(),
                     }));
                     self.tracks.clear();
                     return;
                 }
-                self.tracks.insert(track.track_id.0 as u8, track.clone());
+                self.tracks.insert(track_key, track.clone());
             }
             events.push(PsDemuxEvent::TrackInfo(new_tracks));
         }
@@ -379,7 +382,9 @@ impl PsDemuxer {
                     }
                 }
             } else {
-                if self.tracks.len() >= self.config.max_tracks {
+                if !self.tracks.contains_key(&stream_id)
+                    && self.tracks.len() >= self.config.max_tracks
+                {
                     events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
                         resource: "tracks".to_string(),
                     }));
@@ -429,7 +434,9 @@ impl PsDemuxer {
                 events.push(PsDemuxEvent::Frame(Box::new(frame)));
                 self.last_audio_pts = pts;
             } else {
-                if self.tracks.len() >= self.config.max_tracks {
+                if !self.tracks.contains_key(&stream_id)
+                    && self.tracks.len() >= self.config.max_tracks
+                {
                     events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
                         resource: "tracks".to_string(),
                     }));
