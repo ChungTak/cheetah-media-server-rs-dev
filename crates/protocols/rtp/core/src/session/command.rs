@@ -372,6 +372,7 @@ impl RtpCore {
                             let frame_tcp = cheetah_codec::encode_tcp_rtp_frame(&pkt);
                             outputs.push(RtpCoreOutput::SendTcp(RtpTcpSend {
                                 conn_id,
+                                session_key: session._session_key.clone(),
                                 data: frame_tcp,
                             }));
                         } else if let Some(dest) = session.destination {
