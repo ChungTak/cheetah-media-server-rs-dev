@@ -89,6 +89,10 @@ impl EsDemuxer {
     ) -> Vec<EsDemuxEvent> {
         let mut events = Vec::new();
         if payload.is_empty() {
+            // A marker-only packet can still terminate the current access unit.
+            if marker {
+                self.flush_access_unit(&mut events);
+            }
             return events;
         }
 
@@ -99,6 +103,9 @@ impl EsDemuxer {
             self.process_annexb(payload, timestamp, &mut events);
         } else {
             let Some(codec) = self.detect_rtp_packet_codec(payload) else {
+                if marker {
+                    self.flush_access_unit(&mut events);
+                }
                 return events;
             };
 

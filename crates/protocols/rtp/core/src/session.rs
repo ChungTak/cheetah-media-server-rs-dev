@@ -417,12 +417,10 @@ impl RtpCore {
                                         cheetah_codec::PsDemuxerConfig::new(4 * 1024 * 1024, 8),
                                     )));
                                 } else {
-                                    session.demuxer =
-                                        SessionDemuxer::Es(EsDemuxer::new(EsDemuxerConfig {
-                                            clock_rate_hz: 90_000,
-                                            codec: None,
-                                            ..Default::default()
-                                        }));
+                                    // Ehome media payloads are delivered through the
+                                    // MediaPayload handler, which currently constructs frames
+                                    // per payload. ES demuxing is used for RTP payload-mode Es.
+                                    session.demuxer = SessionDemuxer::Bypass;
                                 }
 
                                 // Construct Tracks
