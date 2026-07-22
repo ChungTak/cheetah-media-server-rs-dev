@@ -832,15 +832,27 @@ impl RtpCore {
                         // Weak pattern-based sniff (Annex-B start code / AAC ADTS) requires
                         // `pt_lock_confidence` consecutive matching packets before committing,
                         // so a single false-positive inside a PS/TS fragment cannot mis-route
-                        // the stream.
-                        if session.pt_pending_profile == Some(profile) {
+                        // the stream. The codec hint inside the profile may vary per packet for
+                        // elementary streams (e.g. SPS vs slice), so confirmation compares the
+                        // payload mode and clock rate while merging any discovered codec hint.
+                        let matches_pending = session.pt_pending_profile.is_some_and(|pending| {
+                            pending.mode == profile.mode
+                                && pending.clock_rate_hz == profile.clock_rate_hz
+                        });
+                        if matches_pending {
                             session.pt_pending_confirm_count += 1;
+                            if let Some(ref mut pending) = session.pt_pending_profile {
+                                if pending.codec.is_none() && profile.codec.is_some() {
+                                    pending.codec = profile.codec;
+                                }
+                            }
                         } else {
                             session.pt_pending_profile = Some(profile);
                             session.pt_pending_confirm_count = 1;
                         }
                         if session.pt_pending_confirm_count >= self.pt_lock_confidence {
-                            commit_profile(session, rtp.header.payload_type, profile);
+                            let committed = session.pt_pending_profile.take().unwrap_or(profile);
+                            commit_profile(session, rtp.header.payload_type, committed);
                         }
                     }
                     cheetah_codec::RtpPtResolveSource::Unknown => {
@@ -3034,5 +3046,89 @@ mod tests {
             )
         });
         assert!(found_frame3, "expected key Frame on third ES packet");
+    }
+
+    #[test]
+    fn test_pt_weak_sniff_holds_codec_hint_across_mixed_es_nals() {
+        let mut core = RtpCore::new(10, 30_000);
+
+        let sps: &[u8] = &[0x67, 0x64, 0x00, 0x1f, 0xac, 0xd9, 0x40, 0x50, 0x05, 0xbb];
+        let pps: &[u8] = &[0x68, 0xeb, 0xe3, 0xcb, 0x22, 0xc0];
+        // A P-slice (type 1) is not a strong codec signal for probe_es_codec, but it
+        // is still H.264. The first packet's SPS gives a strong H.264 hint; the second
+        // packet's P-slice returns None. Confirmation must still lock to Es and keep the
+        // H.264 hint so the demuxer is created with the right codec.
+        let p_slice: &[u8] = &[0x21, 0xaa, 0xbb];
+
+        let mut pkt1 = Vec::new();
+        pkt1.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        pkt1.extend_from_slice(sps);
+
+        let mut pkt2 = Vec::new();
+        pkt2.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        pkt2.extend_from_slice(p_slice);
+
+        // Third packet supplies parameter sets and the IDR key frame.
+        let mut pkt3 = Vec::new();
+        pkt3.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        pkt3.extend_from_slice(sps);
+        pkt3.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        pkt3.extend_from_slice(pps);
+        pkt3.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        pkt3.extend_from_slice(&[0x65, 0x88, 0x84]);
+
+        let mut third_outputs = Vec::new();
+        for seq in 1..=3u16 {
+            let marker = seq == 3;
+            let payload = match seq {
+                1 => pkt1.clone(),
+                2 => pkt2.clone(),
+                _ => pkt3.clone(),
+            };
+            let rtp = RtpPacket {
+                header: RtpHeader {
+                    version: 2,
+                    payload_type: 96,
+                    sequence_number: seq,
+                    timestamp: u32::from(seq) * 90_000,
+                    ssrc: 8000,
+                    marker,
+                },
+                payload: Bytes::from(payload),
+            };
+            let dgram = RtpDatagram {
+                source: "127.0.0.1:1".parse().unwrap(),
+                data: rtp.encode(),
+                received_at_ms: 0,
+            };
+            third_outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        }
+
+        let session = core
+            .sessions
+            .get("live/8000")
+            .expect("auto-created session");
+        assert_eq!(session.payload_mode, RtpPayloadMode::Es);
+        assert_eq!(
+            session.payload_profile.and_then(|p| p.codec),
+            Some(cheetah_codec::CodecId::H264)
+        );
+
+        let found_track = third_outputs.iter().any(|o| {
+            matches!(
+                o,
+                RtpCoreOutput::Event(RtpCoreEvent::TrackFound { tracks, .. })
+                    if tracks.iter().any(|t| t.codec == cheetah_codec::CodecId::H264)
+            )
+        });
+        let found_frame = third_outputs.iter().any(|o| {
+            matches!(
+                o,
+                RtpCoreOutput::Event(RtpCoreEvent::Frame { frame, .. })
+                    if frame.codec == cheetah_codec::CodecId::H264 && frame.is_key_frame()
+            )
+        });
+        assert!(found_track, "expected H264 TrackFound for mixed ES NALs");
+        assert!(found_frame, "expected H264 key Frame for mixed ES NALs");
     }
 }
