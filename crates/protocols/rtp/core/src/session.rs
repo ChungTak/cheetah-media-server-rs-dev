@@ -39,6 +39,9 @@ struct RtpSession {
     // Ingress state
     demuxer: SessionDemuxer,
     last_seq: Option<u16>,
+    /// Count of payload-mode sniff attempts for sessions created with `Unknown` mode.
+    /// Scoped per session so unrelated streams do not share the budget.
+    pt_probe_attempts: u8,
     source_addr: Option<SocketAddr>,
     last_activity_ms: u64,
 
@@ -87,10 +90,12 @@ pub struct RtpCore {
     ssrc_to_session: HashMap<u32, RtpSessionKey>,
     tcp_conn_to_session: HashMap<u64, RtpSessionKey>,
     ehome_decoders: HashMap<u64, cheetah_codec::EhomeDecoder>,
-    /// Payload-type resolver: binding -> static table -> bounded sniff.
+    /// Payload-type resolver: binding -> static table -> payload sniff.
     pt_resolver: cheetah_codec::RtpPtResolver,
     max_sessions: usize,
     session_idle_timeout_ms: u64,
+    /// Per-session budget for payload-mode sniff when the mode is `Unknown`.
+    max_pt_probe_packets: u8,
     now_ms: u64,
     /// TCP framing mode applied when deframing inbound RTP-over-TCP traffic. Defaults to
     /// `AutoDetect`, matching ABLMediaServer's behaviour of accepting both 2-byte length-prefix
@@ -116,9 +121,10 @@ impl RtpCore {
             ssrc_to_session: HashMap::new(),
             tcp_conn_to_session: HashMap::new(),
             ehome_decoders: HashMap::new(),
-            pt_resolver: cheetah_codec::RtpPtResolver::new(8),
+            pt_resolver: cheetah_codec::RtpPtResolver::new(),
             max_sessions,
             session_idle_timeout_ms,
+            max_pt_probe_packets: 8,
             now_ms: 0,
             tcp_framing: cheetah_codec::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
@@ -324,6 +330,7 @@ impl RtpCore {
                                 max_rtp_len_observed: 0,
                                 generation: 1,
                                 updated_at_ms: 0,
+                                pt_probe_attempts: 0,
                                 last_error: None,
                             };
                             self.sessions.insert(session_key.clone(), session);
@@ -688,6 +695,7 @@ impl RtpCore {
                 max_rtp_len_observed: 0,
                 generation: 1,
                 updated_at_ms: 0,
+                pt_probe_attempts: 0,
                 last_error: None,
             };
 
@@ -707,8 +715,12 @@ impl RtpCore {
 
         // Resolve the payload mode for sessions created without an explicit mode.
         // Order: external binding (set via spec/UpdateSession), static PT table,
-        // then bounded payload sniff.
-        if session.payload_mode == RtpPayloadMode::Unknown {
+        // then payload sniff. The sniff budget is per-session so one stream cannot
+        // exhaust it for others.
+        if session.payload_mode == RtpPayloadMode::Unknown
+            && session.pt_probe_attempts < self.max_pt_probe_packets
+        {
+            session.pt_probe_attempts += 1;
             if let Some(profile) = self
                 .pt_resolver
                 .resolve(rtp.header.payload_type, &rtp.payload)
@@ -1178,6 +1190,7 @@ impl RtpCore {
                     max_rtp_len_observed: 0,
                     generation: 1,
                     updated_at_ms: 0,
+                    pt_probe_attempts: 0,
                     last_error: None,
                 };
                 self.sessions.insert(spec.session_key.clone(), session);
@@ -1242,6 +1255,7 @@ impl RtpCore {
                     max_rtp_len_observed: 0,
                     generation: 1,
                     updated_at_ms: 0,
+                    pt_probe_attempts: 0,
                     last_error: None,
                 };
                 self.sessions.insert(spec.session_key.clone(), session);

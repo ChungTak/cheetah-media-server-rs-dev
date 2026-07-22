@@ -40,32 +40,23 @@ fn default_clock_rate_for_mode(mode: RtpPayloadMode) -> u32 {
 /// Resolver that turns an RTP PT into a [`RtpPayloadProfile`].
 ///
 /// Bindings provided by the caller take precedence; otherwise a static table is used;
-/// finally a bounded number of payloads are sniffed before giving up.
+/// finally the payload is sniffed. The resolver itself is stateless; the caller decides
+/// how many times to call `resolve` for a given stream.
 ///
-/// RTP PT 解析器。调用方绑定优先，其次静态表，最后进行有界探测。
-#[derive(Debug, Clone)]
+/// RTP PT 解析器。调用方绑定优先，其次静态表，最后 payload 探测。解析器本身无状态，
+/// 由调用方决定针对单个流调用多少次 `resolve`。
+#[derive(Debug, Clone, Default)]
 pub struct RtpPtResolver {
     bindings: HashMap<u8, RtpPayloadProfile>,
-    max_probe_packets: u8,
-    probe_counts: HashMap<u8, u8>,
-}
-
-impl Default for RtpPtResolver {
-    fn default() -> Self {
-        Self::new(8)
-    }
 }
 
 impl RtpPtResolver {
-    /// Create a resolver with a per-PT payload-sniff budget.
+    /// Create a resolver with no built-in sniff budget.
     ///
-    /// `max_probe_packets` controls how many packets with the same PT are inspected
-    /// before the resolver stops trying to resolve that PT from payload bytes alone.
-    pub fn new(max_probe_packets: u8) -> Self {
+    /// 创建解析器。探测预算由调用方自行维护。
+    pub fn new() -> Self {
         Self {
             bindings: HashMap::new(),
-            max_probe_packets,
-            probe_counts: HashMap::new(),
         }
     }
 
@@ -78,8 +69,8 @@ impl RtpPtResolver {
 
     /// Resolve a PT using the configured bindings, static table and/or payload sniff.
     ///
-    /// 解析 PT。如果本次无法解析，返回 `None` 并让调用方继续等待更多包。
-    pub fn resolve(&mut self, payload_type: u8, payload: &[u8]) -> Option<RtpPayloadProfile> {
+    /// 解析 PT。返回 `None` 表示当前 payload 不足以确定格式，调用方可继续等待更多包。
+    pub fn resolve(&self, payload_type: u8, payload: &[u8]) -> Option<RtpPayloadProfile> {
         // 1. External binding.
         if let Some(profile) = self.bindings.get(&payload_type) {
             return Some(*profile);
@@ -90,21 +81,8 @@ impl RtpPtResolver {
             return Some(profile);
         }
 
-        // 3. Bounded sniff for dynamic (and other unknown) payload types.
-        let count = self.probe_counts.entry(payload_type).or_insert(0);
-        if *count >= self.max_probe_packets {
-            return None;
-        }
-        *count += 1;
-
+        // 3. Payload sniff for dynamic (and other unknown) payload types.
         sniff_profile(payload)
-    }
-
-    /// Reset any probe state for a PT, e.g. after a mid-stream format change.
-    ///
-    /// 重置某个 PT 的探测状态，例如在流中途格式变化后使用。
-    pub fn reset_probe(&mut self, payload_type: u8) {
-        self.probe_counts.remove(&payload_type);
     }
 }
 
@@ -147,14 +125,24 @@ fn sniff_profile(payload: &[u8]) -> Option<RtpPayloadProfile> {
     }
 
     // Elementary video stream: H.264/H.265/H.266 Annex-B start code.
-    if (payload.len() >= 4
+    // Disambiguate from MPEG program-stream PES/system headers, which also begin
+    // with `00 00 01` but use start-code IDs >= 0xB0. Annex-B NAL headers have
+    // the forbidden-zero bit clear, so the first NAL byte is always < 0x80.
+    let is_annexb_start_code = (payload.len() >= 4
         && payload[0] == 0x00
         && payload[1] == 0x00
         && payload[2] == 0x00
         && payload[3] == 0x01)
-        || (payload.len() >= 3 && payload[0] == 0x00 && payload[1] == 0x00 && payload[2] == 0x01)
-    {
-        return Some(RtpPayloadProfile::new(RtpPayloadMode::Es, 90_000));
+        || (payload.len() >= 3 && payload[0] == 0x00 && payload[1] == 0x00 && payload[2] == 0x01);
+    if is_annexb_start_code {
+        let nal_or_start_code_id = if payload.len() >= 5 && payload[2] == 0x00 {
+            payload[4]
+        } else {
+            payload[3]
+        };
+        if nal_or_start_code_id < 0x80 {
+            return Some(RtpPayloadProfile::new(RtpPayloadMode::Es, 90_000));
+        }
     }
 
     // AAC ADTS: sync word 0xFF with upper nibble of next byte set to 0xF.
@@ -172,7 +160,7 @@ mod tests {
 
     #[test]
     fn static_pt_pcma_is_raw_audio_8k() {
-        let mut resolver = RtpPtResolver::new(8);
+        let resolver = RtpPtResolver::new();
         assert_eq!(
             resolver.resolve(8, &[]),
             Some(RtpPayloadProfile::new(RtpPayloadMode::RawAudio, 8_000))
@@ -181,7 +169,7 @@ mod tests {
 
     #[test]
     fn static_pt_mp2t_is_ts_90k() {
-        let mut resolver = RtpPtResolver::new(8);
+        let resolver = RtpPtResolver::new();
         assert_eq!(
             resolver.resolve(33, &[]),
             Some(RtpPayloadProfile::new(RtpPayloadMode::Ts, 90_000))
@@ -190,7 +178,7 @@ mod tests {
 
     #[test]
     fn external_binding_overrides_static_table() {
-        let mut resolver = RtpPtResolver::new(8);
+        let mut resolver = RtpPtResolver::new();
         resolver.bind(96, RtpPayloadProfile::new(RtpPayloadMode::Ps, 90_000));
         assert_eq!(
             resolver.resolve(96, &[0x00, 0x00, 0x01, 0xBA]),
@@ -200,7 +188,7 @@ mod tests {
 
     #[test]
     fn sniff_detects_ps_from_pack_header() {
-        let mut resolver = RtpPtResolver::new(8);
+        let resolver = RtpPtResolver::new();
         assert_eq!(
             resolver.resolve(96, &[0x00, 0x00, 0x01, 0xBA]),
             Some(RtpPayloadProfile::new(RtpPayloadMode::Ps, 90_000))
@@ -209,7 +197,7 @@ mod tests {
 
     #[test]
     fn sniff_detects_ts_from_sync_byte() {
-        let mut resolver = RtpPtResolver::new(8);
+        let resolver = RtpPtResolver::new();
         assert_eq!(
             resolver.resolve(97, &[0x47, 0x00, 0x01]),
             Some(RtpPayloadProfile::new(RtpPayloadMode::Ts, 90_000))
@@ -218,7 +206,7 @@ mod tests {
 
     #[test]
     fn sniff_detects_h26x_annexb_start_code() {
-        let mut resolver = RtpPtResolver::new(8);
+        let resolver = RtpPtResolver::new();
         assert_eq!(
             resolver.resolve(98, &[0x00, 0x00, 0x00, 0x01, 0x09]),
             Some(RtpPayloadProfile::new(RtpPayloadMode::Es, 90_000))
@@ -227,7 +215,7 @@ mod tests {
 
     #[test]
     fn sniff_detects_aac_adts_sync_word() {
-        let mut resolver = RtpPtResolver::new(8);
+        let resolver = RtpPtResolver::new();
         assert_eq!(
             resolver.resolve(99, &[0xFF, 0xF1, 0x00, 0x00]),
             Some(RtpPayloadProfile::new(RtpPayloadMode::RawAudio, 90_000))
@@ -235,10 +223,16 @@ mod tests {
     }
 
     #[test]
-    fn unknown_dynamic_returns_none_until_budget_exhausted() {
-        let mut resolver = RtpPtResolver::new(2);
+    fn unknown_dynamic_payload_returns_none() {
+        let resolver = RtpPtResolver::new();
         assert!(resolver.resolve(100, &[0xAB, 0xCD]).is_none());
-        assert!(resolver.resolve(100, &[0xAB, 0xCD]).is_none());
-        assert!(resolver.resolve(100, &[0xAB, 0xCD]).is_none()); // budget exhausted
+    }
+
+    #[test]
+    fn ps_pes_start_code_is_not_misidentified_as_annexb() {
+        // A PS video PES starts with `00 00 01 E0`; the start-code ID is >= 0x80,
+        // so it must not be classified as raw H.26x elementary video.
+        let resolver = RtpPtResolver::new();
+        assert_eq!(resolver.resolve(96, &[0x00, 0x00, 0x01, 0xE0, 0x00]), None);
     }
 }
