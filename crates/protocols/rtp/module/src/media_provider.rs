@@ -13,7 +13,7 @@ use cheetah_sdk::media_api::command::{
     RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest,
     UpdateRtpRequest,
 };
-use cheetah_sdk::media_api::error::{EffectOutcome, MediaError, Result};
+use cheetah_sdk::media_api::error::{EffectOutcome, MediaError, MediaErrorCode, Result};
 use cheetah_sdk::media_api::fencing::{ControlledResourceRef, ResourceOrigin};
 use cheetah_sdk::media_api::ids::{
     MediaBindingId, MediaKey, MediaNodeInstanceEpoch, MediaSessionId, OwnerEpoch,
@@ -520,17 +520,23 @@ impl RtpMediaProvider {
     }
 
     fn idempotency_to_media_error(err: IdempotencyError) -> MediaError {
-        let message = err.to_string();
         match err {
-            IdempotencyError::Conflict { .. } => MediaError::conflict(message),
-            IdempotencyError::Retryable(_) => MediaError::unavailable(message),
-            _ => MediaError::invalid_argument(message),
+            IdempotencyError::Conflict { .. } => MediaError::conflict(err.to_string()),
+            IdempotencyError::InProgress => MediaError::new(
+                MediaErrorCode::Busy,
+                "idempotency operation in progress".to_string(),
+            ),
+            IdempotencyError::OperationFailed(msg) | IdempotencyError::Retryable(msg) => {
+                serde_json::from_str::<MediaError>(&msg)
+                    .unwrap_or_else(|_| MediaError::new(MediaErrorCode::Internal, msg))
+            }
         }
     }
 
     /// Run `f` through the shared idempotency repository when the caller supplied a key.
     /// No key means the operation is executed exactly once without caching.
-    /// The original `MediaError` code is preserved for both success and failure outcomes.
+    /// Deterministic errors are stored and replayed preserving their original `MediaError` code;
+    /// retryable errors (Busy, Timeout, Unavailable, or explicitly marked retryable) are not cached.
     async fn idempotent_open<F, Fut>(
         &self,
         ctx: &MediaRequestContext,
@@ -549,12 +555,30 @@ impl RtpMediaProvider {
             .media_services
             .idempotency()
             .execute(key, fingerprint, 60_000, || async {
-                let result = f().await;
-                let resource_id = result.as_ref().ok().map(|d| d.session_id.0.clone());
-                Ok((result, resource_id))
+                f().await
+                    .map_err(|e| {
+                        let encoded = serde_json::to_string(&e)
+                            .unwrap_or_else(|_| format!("internal: {}", e.message));
+                        if e.retryable
+                            || matches!(
+                                e.code,
+                                MediaErrorCode::Busy
+                                    | MediaErrorCode::Timeout
+                                    | MediaErrorCode::Unavailable
+                            )
+                        {
+                            IdempotencyError::Retryable(encoded)
+                        } else {
+                            IdempotencyError::OperationFailed(encoded)
+                        }
+                    })
+                    .map(|d| {
+                        let sid = d.session_id.0.clone();
+                        (d, Some(sid))
+                    })
             })
             .await
-            .map_err(Self::idempotency_to_media_error)?
+            .map_err(Self::idempotency_to_media_error)
     }
 }
 
