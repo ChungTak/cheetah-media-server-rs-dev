@@ -227,6 +227,20 @@ impl RtpMediaProvider {
         }
     }
 
+    /// Enrich a media error with the controlled resource reference for a session.
+    fn enrich_error(
+        &self,
+        err: MediaError,
+        ctx: &MediaRequestContext,
+        session_ref: &RtpSessionRef,
+    ) -> MediaError {
+        err.with_resource_ref(self.resource_ref_from_context(
+            ctx,
+            &session_ref.session_id,
+            session_ref.expected_generation.0,
+        ))
+    }
+
     fn build_descriptor(
         &self,
         ctx: &MediaRequestContext,
@@ -508,9 +522,18 @@ impl RtpSessionApi for RtpMediaProvider {
 
         let session = self
             .orchestrator
-            .get_rtp_session(&request.session_ref.session_id)?;
+            .get_rtp_session(&request.session_ref.session_id)
+            .map_err(|e| self.enrich_error(e, ctx, &request.session_ref))?;
         if session.generation != request.session_ref.expected_generation.0 {
-            return Err(MediaError::conflict("generation mismatch"));
+            return Err(
+                MediaError::conflict("generation mismatch").with_resource_ref(
+                    self.resource_ref_from_context(
+                        ctx,
+                        &request.session_ref.session_id,
+                        request.session_ref.expected_generation.0,
+                    ),
+                ),
+            );
         }
 
         let payload_type = request
@@ -528,7 +551,8 @@ impl RtpSessionApi for RtpMediaProvider {
         if let Some(remote) = request.remote_endpoint {
             updated = self
                 .orchestrator
-                .set_session_remote_endpoint(&request.session_ref.session_id, remote)?;
+                .set_session_remote_endpoint(&request.session_ref.session_id, remote)
+                .map_err(|e| self.enrich_error(e, ctx, &request.session_ref))?;
         }
 
         let mut descs = self.rtp_descriptors.lock();
@@ -549,9 +573,20 @@ impl RtpSessionApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         session_ref: RtpSessionRef,
     ) -> Result<RtpSessionDescriptor> {
-        let session = self.orchestrator.get_rtp_session(&session_ref.session_id)?;
+        let session = self
+            .orchestrator
+            .get_rtp_session(&session_ref.session_id)
+            .map_err(|e| self.enrich_error(e, ctx, &session_ref))?;
         if session.generation != session_ref.expected_generation.0 {
-            return Err(MediaError::conflict("generation mismatch"));
+            return Err(
+                MediaError::conflict("generation mismatch").with_resource_ref(
+                    self.resource_ref_from_context(
+                        ctx,
+                        &session_ref.session_id,
+                        session_ref.expected_generation.0,
+                    ),
+                ),
+            );
         }
         let stored = self
             .rtp_descriptors
@@ -576,7 +611,15 @@ impl RtpSessionApi for RtpMediaProvider {
         {
             Ok(session) => {
                 if session.generation != request.session_ref.expected_generation.0 {
-                    return Err(MediaError::conflict("generation mismatch"));
+                    return Err(
+                        MediaError::conflict("generation mismatch").with_resource_ref(
+                            self.resource_ref_from_context(
+                                ctx,
+                                &request.session_ref.session_id,
+                                request.session_ref.expected_generation.0,
+                            ),
+                        ),
+                    );
                 }
             }
             Err(_) => return Ok(EffectOutcome::NotApplied),
@@ -592,11 +635,7 @@ impl RtpSessionApi for RtpMediaProvider {
                     .remove(&request.session_ref.session_id);
                 Ok(EffectOutcome::Applied)
             }
-            Err(e) => {
-                let mut e = e;
-                e.outcome = e.code.into();
-                Err(e)
-            }
+            Err(e) => Err(self.enrich_error(e, ctx, &request.session_ref)),
         }
     }
 
