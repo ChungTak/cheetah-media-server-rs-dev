@@ -36,6 +36,12 @@ pub enum RtcpEncodeError {
     SdesItemTooLong { length: usize },
     #[error("bye reason too long: {length}")]
     ByeReasonTooLong { length: usize },
+    #[error("too many report blocks: {count}")]
+    TooManyReportBlocks { count: usize },
+    #[error("too many sdes chunks: {count}")]
+    TooManySdesChunks { count: usize },
+    #[error("too many bye ssrcs: {count}")]
+    TooManyByeSsrcs { count: usize },
 }
 
 /// RTCP packet type identifiers.
@@ -130,9 +136,13 @@ pub struct RtcpSenderReport {
 }
 
 impl RtcpSenderReport {
-    pub fn encode(&self) -> Bytes {
-        let rc = self.report_blocks.len().min(31) as u8;
-        let total_len = 4 + 24 + self.report_blocks.len() * 24;
+    pub fn encode(&self) -> Result<Bytes, RtcpEncodeError> {
+        let block_count = self.report_blocks.len();
+        if block_count > 31 {
+            return Err(RtcpEncodeError::TooManyReportBlocks { count: block_count });
+        }
+        let rc = block_count as u8;
+        let total_len = 4 + 24 + block_count * 24;
         let length = ((total_len / 4) - 1) as u16;
         let mut out = BytesMut::with_capacity(total_len);
         out.put_u8(0x80 | rc);
@@ -146,7 +156,7 @@ impl RtcpSenderReport {
         for block in &self.report_blocks {
             block.encode(&mut out);
         }
-        out.freeze()
+        Ok(out.freeze())
     }
 
     pub fn parse(buf: &mut Bytes, count: u8) -> Result<Self, RtcpParseError> {
@@ -186,9 +196,13 @@ pub struct RtcpReceiverReport {
 }
 
 impl RtcpReceiverReport {
-    pub fn encode(&self) -> Bytes {
-        let rc = self.report_blocks.len().min(31) as u8;
-        let total_len = 4 + 4 + self.report_blocks.len() * 24;
+    pub fn encode(&self) -> Result<Bytes, RtcpEncodeError> {
+        let block_count = self.report_blocks.len();
+        if block_count > 31 {
+            return Err(RtcpEncodeError::TooManyReportBlocks { count: block_count });
+        }
+        let rc = block_count as u8;
+        let total_len = 4 + 4 + block_count * 24;
         let length = ((total_len / 4) - 1) as u16;
         let mut out = BytesMut::with_capacity(total_len);
         out.put_u8(0x80 | rc);
@@ -198,7 +212,7 @@ impl RtcpReceiverReport {
         for block in &self.report_blocks {
             block.encode(&mut out);
         }
-        out.freeze()
+        Ok(out.freeze())
     }
 
     pub fn parse(buf: &mut Bytes, count: u8) -> Result<Self, RtcpParseError> {
@@ -296,7 +310,11 @@ pub struct RtcpSourceDescription {
 
 impl RtcpSourceDescription {
     pub fn encode(&self) -> Result<Bytes, RtcpEncodeError> {
-        let sc = self.chunks.len().min(31) as u8;
+        let chunk_count = self.chunks.len();
+        if chunk_count > 31 {
+            return Err(RtcpEncodeError::TooManySdesChunks { count: chunk_count });
+        }
+        let sc = chunk_count as u8;
         let total_len = 4 + self.encoded_chunks_len();
         let length = ((total_len / 4) - 1) as u16;
         let mut out = BytesMut::with_capacity(total_len);
@@ -400,13 +418,17 @@ impl RtcpBye {
         if reason_len > u8::MAX as usize {
             return Err(RtcpEncodeError::ByeReasonTooLong { length: reason_len });
         }
-        let rc = self.ssrcs.len().min(31) as u8;
+        let ssrc_count = self.ssrcs.len();
+        if ssrc_count > 31 {
+            return Err(RtcpEncodeError::TooManyByeSsrcs { count: ssrc_count });
+        }
+        let rc = ssrc_count as u8;
         let reason_subfield = if reason_len > 0 {
             1 + reason_len + padding_to_4(1 + reason_len)
         } else {
             0
         };
-        let total_len = 4 + self.ssrcs.len() * 4 + reason_subfield;
+        let total_len = 4 + ssrc_count * 4 + reason_subfield;
         let length = ((total_len / 4) - 1) as u16;
         let mut out = BytesMut::with_capacity(total_len);
         out.put_u8(0x80 | rc);
@@ -525,8 +547,8 @@ impl RtcpPacket {
     /// Encode this packet into its wire representation.
     pub fn encode(&self) -> Result<Bytes, RtcpEncodeError> {
         match self {
-            Self::SenderReport(p) => Ok(p.encode()),
-            Self::ReceiverReport(p) => Ok(p.encode()),
+            Self::SenderReport(p) => p.encode(),
+            Self::ReceiverReport(p) => p.encode(),
             Self::SourceDescription(p) => p.encode(),
             Self::Bye(p) => p.encode(),
             Self::App(p) => p.encode(),
@@ -656,7 +678,7 @@ mod tests {
                 delay_since_last_sr: 0,
             }],
         };
-        let encoded = sr.encode();
+        let encoded = sr.encode().unwrap();
         let decoded = RtcpCompoundPacket::parse(encoded).unwrap();
         assert_eq!(decoded.packets.len(), 1);
         let RtcpPacket::SenderReport(parsed) = &decoded.packets[0] else {
@@ -684,7 +706,7 @@ mod tests {
                 delay_since_last_sr: 0x6666_6666,
             }],
         };
-        let encoded = rr.encode();
+        let encoded = rr.encode().unwrap();
         let decoded = RtcpCompoundPacket::parse(encoded).unwrap();
         assert_eq!(decoded.packets.len(), 1);
         let RtcpPacket::ReceiverReport(parsed) = &decoded.packets[0] else {
