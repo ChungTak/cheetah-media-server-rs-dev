@@ -292,10 +292,7 @@ proptest! {
         chunks.push(&muxed_bytes[last_idx..]);
 
         // Feed each chunk into the PS demuxer.
-        let mut demuxer = PsDemuxer::new(PsDemuxerConfig {
-            max_reassembly_bytes: 10 * 1024 * 1024,
-            max_tracks: 8,
-        });
+        let mut demuxer = PsDemuxer::new(PsDemuxerConfig::new(10 * 1024 * 1024, 8));
 
         let mut decoded_frames = Vec::new();
         for chunk in chunks {

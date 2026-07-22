@@ -3,8 +3,8 @@
 //! PS 模块测试。
 
 use super::{
-    encode_pts_dts, PesPacket, PsDemuxEvent, PsDemuxer, PsDemuxerConfig, PsMuxer, PsPacket,
-    PsStreamKind,
+    encode_pts_dts, PesPacket, PsDemuxDiagnostic, PsDemuxEvent, PsDemuxer, PsDemuxerConfig,
+    PsMuxer, PsPacket, PsStreamKind,
 };
 use crate::frame::{AVFrame, FrameFlags, FrameFormat};
 use crate::prelude::*;
@@ -249,4 +249,298 @@ fn ps_demuxer_unbounded_video_pes_does_not_truncate_on_internal_nalu_start_code(
             panic!("unexpected diagnostic during unbounded video PES parse: {diag:?}");
         }
     }
+}
+
+fn limit_config() -> PsDemuxerConfig {
+    PsDemuxerConfig {
+        max_reassembly_bytes: 4 * 1024 * 1024,
+        max_tracks: 32,
+        max_pes_packet_size: 8 * 1024 * 1024,
+        max_access_unit_size: 16 * 1024 * 1024,
+        max_probe_packets: 1024,
+    }
+}
+
+#[test]
+fn ps_demuxer_respects_max_probe_packets() {
+    let mut config = limit_config();
+    config.max_probe_packets = 0;
+    let mut demuxer = PsDemuxer::new(config);
+
+    let mut buf = Vec::new();
+    // Pack header with zero stuffing.
+    buf.extend_from_slice(&[0x00, 0x00, 0x01, 0xBA]);
+    buf.extend_from_slice(&[0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8]);
+
+    let events = demuxer.push(&buf);
+    assert!(events.iter().any(|e| matches!(
+        e,
+        PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+        if resource == "probe_packets"
+    )));
+}
+
+#[test]
+fn ps_demuxer_respects_max_tracks() {
+    let mut config = limit_config();
+    config.max_tracks = 0;
+    let mut demuxer = PsDemuxer::new(config);
+
+    let mut muxer = PsMuxer::new();
+    muxer.add_track(TrackInfo::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        90_000,
+    ));
+
+    let mut video_payload = vec![0, 0, 0, 1, 0x67, 0x42, 0x00, 0x0A];
+    video_payload.extend_from_slice(b"v");
+    let mut video_frame = AVFrame::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        FrameFormat::CanonicalH26x,
+        90_000,
+        90_000,
+        Timebase::new(1, 90_000),
+        Bytes::from(video_payload),
+    );
+    video_frame.flags.insert(FrameFlags::KEY);
+
+    let muxed = muxer.mux(&video_frame).expect("mux");
+    let events = demuxer.push(&muxed);
+    assert!(events.iter().any(|e| matches!(
+        e,
+        PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+        if resource == "tracks"
+    )));
+}
+
+#[test]
+fn ps_demuxer_respects_max_pes_packet_size() {
+    let mut config = limit_config();
+    config.max_pes_packet_size = 30;
+    let mut demuxer = PsDemuxer::new(config);
+
+    let payload = Bytes::from(vec![0u8; 50]);
+    let pes = PesPacket {
+        stream_id: 0xE0,
+        kind: PsStreamKind::Video,
+        pts: Some(90_000),
+        dts: None,
+        payload,
+    };
+    let ps = PsPacket { pes: vec![pes] };
+    let events = demuxer.push(&ps.encode());
+    assert!(events.iter().any(|e| matches!(
+        e,
+        PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+        if resource == "pes_packet_size"
+    )));
+}
+
+#[test]
+fn ps_demuxer_respects_max_access_unit_size() {
+    let mut config = limit_config();
+    config.max_access_unit_size = 10;
+    let mut demuxer = PsDemuxer::new(config);
+
+    let mut buf = Vec::new();
+    // Pack header.
+    buf.extend_from_slice(&[0x00, 0x00, 0x01, 0xBA]);
+    buf.extend_from_slice(&[0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8]);
+
+    let payload = Bytes::from(vec![0u8; 20]);
+    let pes = PesPacket {
+        stream_id: 0xE0,
+        kind: PsStreamKind::Video,
+        pts: Some(90_000),
+        dts: None,
+        payload,
+    };
+    buf.extend_from_slice(&pes.encode());
+
+    let events = demuxer.push(&buf);
+    assert!(events.iter().any(|e| matches!(
+        e,
+        PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+        if resource == "access_unit"
+    )));
+}
+
+#[test]
+fn ps_demuxer_periodic_psm_at_track_limit_does_not_wipe_tracks() {
+    let mut config = limit_config();
+    config.max_tracks = 1;
+    let mut demuxer = PsDemuxer::new(config);
+
+    let mut muxer = PsMuxer::new();
+    muxer.add_track(TrackInfo::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        90_000,
+    ));
+
+    let mut video_payload = vec![0, 0, 0, 1, 0x67, 0x42, 0x00, 0x0A];
+    video_payload.extend_from_slice(b"v");
+    let mut video_frame = AVFrame::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        FrameFormat::CanonicalH26x,
+        90_000,
+        90_000,
+        Timebase::new(1, 90_000),
+        Bytes::from(video_payload),
+    );
+    video_frame.flags.insert(FrameFlags::KEY);
+
+    let muxed1 = muxer.mux(&video_frame).expect("mux");
+    let muxed2 = muxer.mux(&video_frame).expect("mux again");
+
+    let events1 = demuxer.push(&muxed1);
+    let events2 = demuxer.push(&muxed2);
+
+    let limit1 = events1.iter().any(|e| {
+        matches!(
+            e,
+            PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+            if resource == "tracks"
+        )
+    });
+    let limit2 = events2.iter().any(|e| {
+        matches!(
+            e,
+            PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+            if resource == "tracks"
+        )
+    });
+    assert!(!limit1, "first PSM should fit within max_tracks");
+    assert!(
+        !limit2,
+        "periodic retransmitted PSM must not wipe tracks at limit"
+    );
+}
+
+#[test]
+fn ps_demuxer_over_limit_psm_keeps_existing_tracks_and_continues() {
+    let mut config = limit_config();
+    config.max_tracks = 1;
+    let mut demuxer = PsDemuxer::new(config);
+
+    // First muxer with a single video track.
+    let mut muxer_one = PsMuxer::new();
+    muxer_one.add_track(TrackInfo::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        90_000,
+    ));
+
+    let mut video_payload = vec![0, 0, 0, 1, 0x67, 0x42, 0x00, 0x0A];
+    video_payload.extend_from_slice(b"v1");
+    let mut video_frame = AVFrame::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        FrameFormat::CanonicalH26x,
+        90_000,
+        90_000,
+        Timebase::new(1, 90_000),
+        Bytes::from(video_payload.clone()),
+    );
+    video_frame.flags.insert(FrameFlags::KEY);
+    let muxed_one = muxer_one.mux(&video_frame).expect("mux one");
+
+    // Second muxer with two tracks; its PSM exceeds max_tracks=1.
+    let mut muxer_two = PsMuxer::new();
+    muxer_two.add_track(TrackInfo::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        90_000,
+    ));
+    muxer_two.add_track(TrackInfo::new(
+        TrackId(0xC0),
+        MediaKind::Audio,
+        CodecId::G711A,
+        8_000,
+    ));
+    let muxed_two = muxer_two.mux(&video_frame).expect("mux two");
+
+    let _ = demuxer.push(&muxed_one);
+    let events = demuxer.push(&muxed_two);
+    let flushed = demuxer.flush();
+
+    let limit = events.iter().any(|e| {
+        matches!(
+            e,
+            PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+            if resource == "tracks"
+        )
+    });
+    assert!(
+        limit,
+        "PSM introducing more than max_tracks should emit LimitExceeded"
+    );
+
+    // The video PES that follows the over-limit PSM must still be decoded.
+    let found_frame = events
+        .iter()
+        .chain(flushed.iter())
+        .any(|e| matches!(e, PsDemuxEvent::Frame(f) if f.track_id == TrackId(0xE0)));
+    assert!(
+        found_frame,
+        "video frame after over-limit PSM must still be emitted"
+    );
+}
+
+#[test]
+fn ps_demuxer_probe_limit_recovers_when_media_arrives() {
+    let mut config = limit_config();
+    config.max_probe_packets = 0;
+    let mut demuxer = PsDemuxer::new(config);
+
+    let mut buf = Vec::new();
+    // Pack header with zero stuffing.
+    buf.extend_from_slice(&[0x00, 0x00, 0x01, 0xBA]);
+    buf.extend_from_slice(&[0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8]);
+
+    // Video PES with a payload small enough for the access-unit limit.
+    let payload = Bytes::from(vec![0u8; 8]);
+    let pes = PesPacket {
+        stream_id: 0xE0,
+        kind: PsStreamKind::Video,
+        pts: Some(90_000),
+        dts: None,
+        payload,
+    };
+    buf.extend_from_slice(&pes.encode());
+
+    let events = demuxer.push(&buf);
+    let flushed = demuxer.flush();
+
+    let probe_limit = events.iter().any(|e| {
+        matches!(
+            e,
+            PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+            if resource == "probe_packets"
+        )
+    });
+    assert!(
+        probe_limit,
+        "probe budget exceeded before media should be reported"
+    );
+
+    let found_track = events
+        .iter()
+        .any(|e| matches!(e, PsDemuxEvent::TrackInfo(..)));
+    let found_frame = flushed.iter().any(|e| matches!(e, PsDemuxEvent::Frame(..)));
+    assert!(
+        found_track,
+        "media arriving after probe limit must still be parsed"
+    );
+    assert!(found_frame, "video frame must be emitted after recovery");
 }
