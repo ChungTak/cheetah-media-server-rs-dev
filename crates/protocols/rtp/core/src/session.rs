@@ -4,8 +4,9 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 
 use cheetah_codec::{
-    probe_rtp_payload, MpegTsDemuxEvent, MpegTsDemuxer, MpegTsDemuxerConfig, PsDemuxEvent,
-    PsDemuxer, PsDemuxerConfig, RtpHeader, RtpPacket, RtpPayloadMode, RtpPayloadProfile,
+    probe_rtp_payload, EsDemuxEvent, EsDemuxer, EsDemuxerConfig, MpegTsDemuxEvent, MpegTsDemuxer,
+    MpegTsDemuxerConfig, PsDemuxEvent, PsDemuxer, PsDemuxerConfig, RtpHeader, RtpPacket,
+    RtpPayloadMode, RtpPayloadProfile,
 };
 
 use crate::error::RtpCoreDiagnostic;
@@ -21,6 +22,7 @@ enum SessionDemuxer {
     Pending,
     Ts(MpegTsDemuxer),
     Ps(Box<PsDemuxer>),
+    Es(EsDemuxer),
     Bypass,
 }
 
@@ -415,9 +417,12 @@ impl RtpCore {
                                         cheetah_codec::PsDemuxerConfig::new(4 * 1024 * 1024, 8),
                                     )));
                                 } else {
-                                    // ES depacketization is implemented in a follow-up PR;
-                                    // bridge the raw ES payload until then.
-                                    session.demuxer = SessionDemuxer::Bypass;
+                                    session.demuxer =
+                                        SessionDemuxer::Es(EsDemuxer::new(EsDemuxerConfig {
+                                            clock_rate_hz: 90_000,
+                                            codec: None,
+                                            ..Default::default()
+                                        }));
                                 }
 
                                 // Construct Tracks
@@ -1014,8 +1019,11 @@ impl RtpCore {
                     )));
                 }
                 RtpPayloadMode::Es => {
-                    // ES depacketization is implemented in a follow-up PR.
-                    session.demuxer = SessionDemuxer::Bypass;
+                    session.demuxer = SessionDemuxer::Es(EsDemuxer::new(EsDemuxerConfig {
+                        clock_rate_hz: default_clock_rate_hz(RtpPayloadMode::Es) as u32,
+                        codec: None,
+                        ..Default::default()
+                    }));
                 }
                 _ => {
                     session.demuxer = SessionDemuxer::Bypass;
@@ -1076,6 +1084,33 @@ impl RtpCore {
                             outputs.push(RtpCoreOutput::Event(RtpCoreEvent::Frame {
                                 session_key: session_key.clone(),
                                 frame: *frame,
+                                source_addr,
+                            }));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            SessionDemuxer::Es(demuxer) => {
+                let demux_events =
+                    demuxer.push_packet(&rtp.payload, rtp.header.timestamp, rtp.header.marker);
+                outputs.reserve(demux_events.len());
+                for ev in demux_events {
+                    match ev {
+                        EsDemuxEvent::TrackFound(track)
+                            if track_filter_allows_track(track_filter, track.media_kind) =>
+                        {
+                            outputs.push(RtpCoreOutput::Event(RtpCoreEvent::TrackFound {
+                                session_key: session_key.clone(),
+                                tracks: vec![track],
+                            }));
+                        }
+                        EsDemuxEvent::Frame(frame)
+                            if track_filter_allows_track(track_filter, frame.media_kind) =>
+                        {
+                            outputs.push(RtpCoreOutput::Event(RtpCoreEvent::Frame {
+                                session_key: session_key.clone(),
+                                frame,
                                 source_addr,
                             }));
                         }
@@ -2900,5 +2935,97 @@ mod tests {
         };
         let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
         assert!(core.sessions.contains_key("live/6001"));
+    }
+
+    #[test]
+    fn test_es_demuxer_emits_track_and_frame() {
+        let mut core = RtpCore::new(10, 30_000);
+
+        let sps: &[u8] = &[0x67, 0x64, 0x00, 0x1f, 0xac, 0xd9, 0x40, 0x50, 0x05, 0xbb];
+        let pps: &[u8] = &[0x68, 0xeb, 0xe3, 0xcb, 0x22, 0xc0];
+        let idr: &[u8] = &[0x65, 0x88, 0x84];
+
+        let mut annexb = Vec::new();
+        annexb.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        annexb.extend_from_slice(sps);
+        annexb.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        annexb.extend_from_slice(pps);
+        annexb.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+        annexb.extend_from_slice(idr);
+
+        // Two consecutive Annex-B packets commit the dynamic PT to Es; the second packet
+        // is fed into the newly created ES demuxer and should produce a track + frame.
+        let mut second_outputs = Vec::new();
+        for seq in 1..=2u16 {
+            let rtp = RtpPacket {
+                header: RtpHeader {
+                    version: 2,
+                    payload_type: 96,
+                    sequence_number: seq,
+                    timestamp: u32::from(seq) * 90_000,
+                    ssrc: 7000,
+                    marker: seq == 2,
+                },
+                payload: Bytes::from(annexb.clone()),
+            };
+            let dgram = RtpDatagram {
+                source: "127.0.0.1:1".parse().unwrap(),
+                data: rtp.encode(),
+                received_at_ms: 0,
+            };
+            second_outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        }
+
+        let session = core
+            .sessions
+            .get("live/7000")
+            .expect("auto-created session");
+        assert_eq!(session.payload_mode, RtpPayloadMode::Es);
+
+        // Send the IDR again to produce a frame now that the demuxer is active.
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 3,
+                timestamp: 3 * 90_000,
+                ssrc: 7000,
+                marker: true,
+            },
+            payload: Bytes::from(annexb),
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:1".parse().unwrap(),
+            data: rtp.encode(),
+            received_at_ms: 0,
+        };
+        let outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+
+        let found_track = second_outputs.iter().any(|o| {
+            matches!(
+                o,
+                RtpCoreOutput::Event(RtpCoreEvent::TrackFound { tracks, .. })
+                    if tracks.iter().any(|t| t.codec == cheetah_codec::CodecId::H264)
+            )
+        });
+        let found_frame = second_outputs.iter().any(|o| {
+            matches!(
+                o,
+                RtpCoreOutput::Event(RtpCoreEvent::Frame { frame, .. })
+                    if frame.codec == cheetah_codec::CodecId::H264 && frame.is_key_frame()
+            )
+        });
+        assert!(found_track, "expected TrackFound for H264 ES");
+        assert!(found_frame, "expected key Frame for H264 ES");
+
+        // Third packet should continue to emit frames.
+        let found_frame3 = outputs.iter().any(|o| {
+            matches!(
+                o,
+                RtpCoreOutput::Event(RtpCoreEvent::Frame { frame, .. })
+                    if frame.codec == cheetah_codec::CodecId::H264 && frame.is_key_frame()
+            )
+        });
+        assert!(found_frame3, "expected key Frame on third ES packet");
     }
 }
