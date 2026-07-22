@@ -2,13 +2,16 @@
 //!
 //! 节目流（PS）解复用器。
 
-use crate::frame::{AVFrame, FrameFormat};
+use crate::audio::{aac_sample_rate, adts_strip};
+use crate::frame::AVFrame;
 use crate::prelude::*;
 use crate::ps::diagnostic::{PsDemuxDiagnostic, PsDemuxEvent, PsDemuxerConfig};
-use crate::ps::{default_frame_format, is_ps_stream_id, parse_pts_dts};
+use crate::ps::{
+    default_frame_format, is_ps_stream_id, parse_pts_dts, probe_audio_codec, probe_video_codec,
+};
 use crate::time::Timebase;
-use crate::track::{CodecId, MediaKind, TrackId, TrackInfo};
-use crate::video_payload_is_random_access;
+use crate::track::{CodecExtradata, CodecId, MediaKind, TrackId, TrackInfo, TrackReadiness};
+use crate::video::{video_payload_is_random_access, ParameterSetCache};
 use bytes::Bytes;
 
 /// Program Stream (PS) demuxer.
@@ -29,6 +32,18 @@ pub struct PsDemuxer {
     last_audio_pts: Option<i64>,
     audio_es_id: u8,
     new_ps: bool,
+    probe_pack_count: u32,
+    probe_exceeded: bool,
+    tracks_ever_found: bool,
+    codec_probe_pes: HashMap<u8, u32>,
+    unsupported_payload_reported: HashSet<u8>,
+    psm_version: Option<u8>,
+    /// (media_kind, codec) per stream_id as last declared by a processed PSM.
+    psm_signature: HashMap<u8, (MediaKind, CodecId)>,
+    /// stream_ids that were introduced by a PSM (as opposed to PES-probed).
+    psm_declared: HashSet<u8>,
+    /// Per-stream parameter set cache for H.264/H.265/H.266.
+    parameter_set_caches: HashMap<u8, ParameterSetCache>,
 }
 
 impl PsDemuxer {
@@ -46,7 +61,30 @@ impl PsDemuxer {
             last_audio_pts: None,
             audio_es_id: 0,
             new_ps: false,
+            probe_pack_count: 0,
+            probe_exceeded: false,
+            tracks_ever_found: false,
+            codec_probe_pes: HashMap::new(),
+            unsupported_payload_reported: HashSet::new(),
+            psm_version: None,
+            psm_signature: HashMap::new(),
+            psm_declared: HashSet::new(),
+            parameter_set_caches: HashMap::new(),
         }
+    }
+
+    /// Strip an ADTS header from a PS audio payload and return the raw AAC frame plus
+    /// the sample rate derived from the ADTS header.
+    fn strip_aac_adts(payload: &[u8]) -> Option<(u32, &[u8])> {
+        let (header, raw) = adts_strip(payload)?;
+        if raw.is_empty() {
+            return None;
+        }
+        let sample_rate = aac_sample_rate(header.sampling_frequency_index);
+        if sample_rate == 0 {
+            return None;
+        }
+        Some((sample_rate, raw))
     }
 
     /// Push raw PS bytes. Returns parsed events.
@@ -61,7 +99,21 @@ impl PsDemuxer {
         }
 
         self.remain_buffer.extend_from_slice(data);
+        self.consume_buffer(&mut events, false);
+        events
+    }
 
+    /// Flush any buffered video data and return remaining events.
+    ///
+    /// 刷新所有缓冲的视频数据并返回剩余事件。
+    pub fn flush(&mut self) -> Vec<PsDemuxEvent> {
+        let mut events = Vec::new();
+        self.consume_buffer(&mut events, true);
+        self.emit_video_frame(&mut events);
+        events
+    }
+
+    fn consume_buffer(&mut self, events: &mut Vec<PsDemuxEvent>, is_last: bool) {
         let mut cursor = 0;
         while cursor + 4 <= self.remain_buffer.len() {
             if self.remain_buffer[cursor..cursor + 3] != [0x00, 0x00, 0x01] {
@@ -92,6 +144,21 @@ impl PsDemuxer {
                         break;
                     }
                     self.new_ps = true;
+                    self.probe_pack_count = self.probe_pack_count.saturating_add(1);
+                    if !self.tracks_ever_found
+                        && self.probe_pack_count > self.config.max_probe_packets
+                    {
+                        if !self.probe_exceeded {
+                            self.probe_exceeded = true;
+                            events.push(PsDemuxEvent::Diagnostic(
+                                PsDemuxDiagnostic::LimitExceeded {
+                                    resource: "probe_packets".to_string(),
+                                },
+                            ));
+                        }
+                        cursor += total_len;
+                        continue;
+                    }
                     cursor += total_len;
                 }
                 0xBB => {
@@ -107,6 +174,8 @@ impl PsDemuxer {
                         break;
                     }
                     cursor += total_len;
+                    self.probe_pack_count = 0;
+                    self.probe_exceeded = false;
                 }
                 0xBC => {
                     if cursor + 6 > self.remain_buffer.len() {
@@ -121,8 +190,10 @@ impl PsDemuxer {
                         break;
                     }
                     let psm_payload = self.remain_buffer[cursor + 6..cursor + total_len].to_vec();
-                    self.parse_psm(&psm_payload, &mut events);
+                    self.parse_psm(&psm_payload, events);
                     cursor += total_len;
+                    self.probe_pack_count = 0;
+                    self.probe_exceeded = false;
                 }
                 0xBD | 0xC0..=0xDF | 0xE0..=0xEF => {
                     if cursor + 6 > self.remain_buffer.len() {
@@ -140,7 +211,9 @@ impl PsDemuxer {
                         // also match the 3-byte triplet, so we additionally require that the
                         // byte after the prefix is a valid PS-layer stream id; otherwise we
                         // would truncate a video frame mid-NALU.
-                        let scan = &self.remain_buffer[cursor + 6..];
+                        let max_payload = self.config.max_pes_packet_size.saturating_sub(6);
+                        let search_end = (cursor + 6 + max_payload).min(self.remain_buffer.len());
+                        let scan = &self.remain_buffer[cursor + 6..search_end];
                         let mut found: Option<usize> = None;
                         let mut probe = 0usize;
                         while probe + 4 <= scan.len() {
@@ -156,6 +229,20 @@ impl PsDemuxer {
                         }
                         if let Some(pos) = found {
                             6 + pos
+                        } else if is_last
+                            && self.remain_buffer.len() - cursor <= self.config.max_pes_packet_size
+                        {
+                            // End of stream: the remaining bytes form the last PES.
+                            self.remain_buffer.len() - cursor
+                        } else if self.remain_buffer.len() - (cursor + 6) > max_payload {
+                            // No valid start code within the configured PES size limit.
+                            self.remain_buffer.clear();
+                            events.push(PsDemuxEvent::Diagnostic(
+                                PsDemuxDiagnostic::LimitExceeded {
+                                    resource: "pes_packet_size".to_string(),
+                                },
+                            ));
+                            return;
                         } else {
                             // Wait for more bytes to disambiguate.
                             break;
@@ -164,13 +251,23 @@ impl PsDemuxer {
                         6 + pes_len
                     };
 
+                    if total_len > self.config.max_pes_packet_size {
+                        self.remain_buffer.clear();
+                        events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                            resource: "pes_packet_size".to_string(),
+                        }));
+                        return;
+                    }
+
                     if cursor + total_len > self.remain_buffer.len() {
                         break;
                     }
 
                     let pes_payload = self.remain_buffer[cursor..cursor + total_len].to_vec();
-                    self.parse_pes(stream_id, &pes_payload, &mut events);
+                    self.parse_pes(stream_id, &pes_payload, events);
                     cursor += total_len;
+                    self.probe_pack_count = 0;
+                    self.probe_exceeded = false;
                 }
                 _ => {
                     cursor += 4;
@@ -181,17 +278,6 @@ impl PsDemuxer {
         if cursor > 0 {
             self.remain_buffer.drain(..cursor);
         }
-
-        events
-    }
-
-    /// Flush any buffered video data and return remaining events.
-    ///
-    /// 刷新所有缓冲的视频数据并返回剩余事件。
-    pub fn flush(&mut self) -> Vec<PsDemuxEvent> {
-        let mut events = Vec::new();
-        self.emit_video_frame(&mut events);
-        events
     }
 
     fn parse_psm(&mut self, payload: &[u8], events: &mut Vec<PsDemuxEvent>) {
@@ -199,6 +285,14 @@ impl PsDemuxer {
             events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::PsmParseError));
             return;
         }
+
+        let current_next = payload[0] >> 7;
+        let version = payload[0] & 0x1F;
+        if current_next == 0 {
+            // Not yet applicable; wait for the next PSM.
+            return;
+        }
+
         let psm_length = payload.len();
         let mut buf = &payload[2..];
         if buf.len() < 2 {
@@ -212,7 +306,7 @@ impl PsDemuxer {
         buf = &buf[ps_info_length + 2..];
 
         let mut es_map_length = psm_length.saturating_sub(ps_info_length + 10);
-        let mut new_tracks = Vec::new();
+        let mut new_tracks = HashMap::<u8, TrackInfo>::new();
 
         while es_map_length >= 4 && buf.len() >= 4 {
             let es_type = buf[0];
@@ -230,10 +324,16 @@ impl PsDemuxer {
                 0x0F | 0x11 => CodecId::AAC,
                 0x90 | 0x07 => CodecId::G711A,
                 0x91 | 0x08 => CodecId::G711U,
-                0x03 => CodecId::MP3,
-                0x04 => CodecId::MP3,
+                0x03 | 0x04 => CodecId::MP3,
                 0x80 => CodecId::Opus,
-                _ => continue,
+                _ => {
+                    if self.unsupported_payload_reported.insert(es_id) {
+                        events.push(PsDemuxEvent::Diagnostic(
+                            PsDemuxDiagnostic::UnsupportedPayload { stream_id: es_id },
+                        ));
+                    }
+                    continue;
+                }
             };
 
             let media_kind = if (0xE0..=0xEF).contains(&es_id) {
@@ -250,16 +350,76 @@ impl PsDemuxer {
             };
 
             let track_info = TrackInfo::new(track_id, media_kind, codec, timescale);
-            new_tracks.push(track_info);
+            new_tracks.insert(es_id, track_info);
         }
 
-        if !new_tracks.is_empty() {
-            for track in &new_tracks {
-                if self.tracks.len() < self.config.max_tracks {
-                    self.tracks.insert(track.track_id.0 as u8, track.clone());
+        // A PSM that yields no supported tracks carries no actionable track list; treat it
+        // as a no-op rather than removing all existing tracks.
+        if new_tracks.is_empty() {
+            return;
+        }
+
+        let new_signature: HashMap<u8, (MediaKind, CodecId)> = new_tracks
+            .iter()
+            .map(|(es_id, t)| (*es_id, (t.media_kind, t.codec)))
+            .collect();
+        if self.psm_version == Some(version) && self.psm_signature == new_signature {
+            // Duplicate PSM with identical stream descriptions; ignore.
+            return;
+        }
+
+        // Compute removed and changed/added tracks before mutating the table.
+        // Only tracks that were originally declared by a previous PSM may be removed
+        // by a new PSM; PES-probed tracks are left alone.
+        let new_keys: HashSet<u8> = new_tracks.keys().copied().collect();
+        let removed_keys: Vec<u8> = self.psm_declared.difference(&new_keys).copied().collect();
+        let removed: Vec<TrackId> = removed_keys
+            .iter()
+            .map(|k| TrackId(u32::from(*k)))
+            .collect();
+
+        let added_count = new_tracks
+            .values()
+            .filter(|t| !self.tracks.contains_key(&(t.track_id.0 as u8)))
+            .count();
+        let remaining_after_remove = self.tracks.len().saturating_sub(removed.len());
+        if remaining_after_remove + added_count > self.config.max_tracks {
+            events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                resource: "tracks".to_string(),
+            }));
+            return;
+        }
+
+        // Only commit the version/signature once the PSM is actually applied.
+        self.psm_version = Some(version);
+        self.psm_signature = new_signature;
+        self.psm_declared = new_keys;
+
+        let mut changed = Vec::with_capacity(new_tracks.len());
+        for (es_id, track) in &new_tracks {
+            if let Some(existing) = self.tracks.get(es_id) {
+                if existing.media_kind == track.media_kind && existing.codec == track.codec {
+                    // Preserve runtime-refined fields; the PSM still describes the same stream.
+                    continue;
                 }
             }
-            events.push(PsDemuxEvent::TrackInfo(new_tracks));
+            changed.push(track.clone());
+            self.parameter_set_caches.remove(es_id);
+            self.tracks.insert(*es_id, track.clone());
+        }
+
+        if !removed.is_empty() {
+            for es_id in &removed_keys {
+                self.tracks.remove(es_id);
+                self.codec_probe_pes.remove(es_id);
+                self.parameter_set_caches.remove(es_id);
+            }
+            events.push(PsDemuxEvent::TrackRemoved(removed));
+        }
+
+        if !changed.is_empty() {
+            self.tracks_ever_found = true;
+            events.push(PsDemuxEvent::TrackInfo(changed));
         }
     }
 
@@ -270,9 +430,10 @@ impl PsDemuxer {
         }
 
         let length = u16::from_be_bytes([pes_packet[4], pes_packet[5]]) as usize;
+        let flags1 = pes_packet[6];
         let info1 = pes_packet[7];
-        let stuffing_len = pes_packet[8] as usize;
-        let data_start = 9 + stuffing_len;
+        let header_data_len = pes_packet[8] as usize;
+        let data_start = 9 + header_data_len;
         if pes_packet.len() < data_start {
             events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::PesParseError));
             return;
@@ -286,9 +447,15 @@ impl PsDemuxer {
                 .min(pes_packet.len() - data_start)
         };
 
+        // A PES with no payload data after the header is malformed; do not emit empty frames.
         if payload_len == 0 {
             return;
         }
+
+        // data_alignment_indicator (bit 2 of flags1) marks the payload start as an
+        // access-unit boundary. Use it, together with a new pack header, to decide
+        // when the previous video access unit is complete.
+        let data_alignment = (flags1 & 0x04) != 0;
 
         let pts_dts_flags = (info1 & 0xC0) >> 6;
         let mut pts = None;
@@ -307,15 +474,35 @@ impl PsDemuxer {
 
         let payload = &pes_packet[data_start..data_start + payload_len];
 
+        // A pack header signals a program pack boundary. The first PES of the new pack
+        // flushes any buffered video access unit from the previous pack. The flag is
+        // consumed here so that later PES packets in the same pack do not trigger it.
+        let new_pack = self.new_ps;
+        self.new_ps = false;
+        if new_pack && !self.video_buffer.is_empty() {
+            self.emit_video_frame(events);
+        }
+
         if is_video {
-            if let Some(_track) = self
+            let video_track = self
                 .tracks
-                .values()
-                .find(|t| t.media_kind == MediaKind::Video)
-            {
-                if self.new_ps && !self.video_buffer.is_empty() {
-                    self.new_ps = false;
+                .iter()
+                .find(|(_, t)| t.media_kind == MediaKind::Video)
+                .map(|(k, v)| (*k, v.clone()));
+
+            if let Some((track_stream_id, track)) = video_track {
+                if data_alignment && !self.video_buffer.is_empty() {
                     self.emit_video_frame(events);
+                }
+
+                if self.video_buffer.len() + payload.len() > self.config.max_access_unit_size {
+                    self.video_buffer.clear();
+                    self.last_video_pts = None;
+                    self.video_dts = None;
+                    events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                        resource: "access_unit".to_string(),
+                    }));
+                    return;
                 }
 
                 self.video_buffer.extend_from_slice(payload);
@@ -325,10 +512,61 @@ impl PsDemuxer {
                         self.video_dts = dts.or(pts);
                     }
                 }
+
+                if let Some(extradata) =
+                    self.discover_parameter_sets(track_stream_id, track.codec, payload)
+                {
+                    if let Some(track) = self.tracks.get_mut(&track_stream_id) {
+                        if track.extradata != extradata {
+                            track.extradata = extradata;
+                            track.readiness = TrackReadiness::Ready;
+                            events.push(PsDemuxEvent::TrackInfo(vec![track.clone()]));
+                        }
+                    }
+                }
             } else {
+                if !self.tracks.contains_key(&stream_id)
+                    && self.tracks.len() >= self.config.max_tracks
+                {
+                    events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                        resource: "tracks".to_string(),
+                    }));
+                    return;
+                }
+                if self.video_buffer.len() + payload.len() > self.config.max_access_unit_size {
+                    self.video_buffer.clear();
+                    self.last_video_pts = None;
+                    self.video_dts = None;
+                    events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                        resource: "access_unit".to_string(),
+                    }));
+                    return;
+                }
+
+                let probe_count = self.codec_probe_pes.entry(stream_id).or_insert(0);
+                if *probe_count >= self.config.max_codec_probe_packets {
+                    if self.unsupported_payload_reported.insert(stream_id) {
+                        events.push(PsDemuxEvent::Diagnostic(
+                            PsDemuxDiagnostic::UnsupportedPayload { stream_id },
+                        ));
+                    }
+                    return;
+                }
+                *probe_count += 1;
+
+                let Some(codec) = probe_video_codec(payload) else {
+                    return;
+                };
+                self.codec_probe_pes.insert(stream_id, 0);
+
                 let track_id = TrackId(stream_id as u32);
-                let track_info = TrackInfo::new(track_id, MediaKind::Video, CodecId::H264, 90_000);
+                let mut track_info = TrackInfo::new(track_id, MediaKind::Video, codec, 90_000);
+                if let Some(extradata) = self.discover_parameter_sets(stream_id, codec, payload) {
+                    track_info.extradata = extradata;
+                    track_info.readiness = TrackReadiness::Ready;
+                }
                 self.tracks.insert(stream_id, track_info.clone());
+                self.tracks_ever_found = true;
                 events.push(PsDemuxEvent::TrackInfo(vec![track_info]));
 
                 self.video_buffer.extend_from_slice(payload);
@@ -336,15 +574,35 @@ impl PsDemuxer {
                 self.video_dts = dts.or(pts);
             }
         } else if is_audio {
-            if let Some(track) = self
+            let mut track = self
                 .tracks
                 .values()
                 .find(|t| t.media_kind == MediaKind::Audio)
-            {
+                .cloned();
+
+            if let Some(ref mut track) = track {
+                // For AAC, the payload is ADTS-wrapped in PS; strip the header before
+                // emitting raw AAC and use the ADTS sample-rate as the track clock rate.
+                let (audio_payload, track_clock_rate) = if track.codec == CodecId::AAC {
+                    if let Some((sample_rate, raw)) = Self::strip_aac_adts(payload) {
+                        if sample_rate != track.clock_rate {
+                            track.clock_rate = sample_rate;
+                            track.sample_rate = Some(sample_rate);
+                            self.tracks.insert(track.track_id.0 as u8, track.clone());
+                            events.push(PsDemuxEvent::TrackInfo(vec![track.clone()]));
+                        }
+                        (Bytes::copy_from_slice(raw), sample_rate)
+                    } else {
+                        (Bytes::copy_from_slice(payload), track.clock_rate)
+                    }
+                } else {
+                    (Bytes::copy_from_slice(payload), track.clock_rate)
+                };
+
                 let pts_val = pts.unwrap_or(self.last_audio_pts.unwrap_or(0));
                 let dts_val = dts.or(pts).unwrap_or(pts_val);
 
-                let track_clock = track.clock_rate.max(1) as i128;
+                let track_clock = track_clock_rate.max(1) as i128;
                 let pts_converted = (pts_val as i128 * track_clock / 90_000) as i64;
                 let dts_converted = (dts_val as i128 * track_clock / 90_000) as i64;
 
@@ -356,35 +614,79 @@ impl PsDemuxer {
                     pts_converted,
                     dts_converted,
                     Timebase::new(1, track.clock_rate.max(1)),
-                    Bytes::copy_from_slice(payload),
+                    audio_payload,
                 );
                 events.push(PsDemuxEvent::Frame(Box::new(frame)));
                 self.last_audio_pts = pts;
             } else {
+                if !self.tracks.contains_key(&stream_id)
+                    && self.tracks.len() >= self.config.max_tracks
+                {
+                    events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                        resource: "tracks".to_string(),
+                    }));
+                    return;
+                }
+
+                let codec = probe_audio_codec(payload, stream_id);
+                self.codec_probe_pes.insert(stream_id, 0);
+
+                let (audio_payload, clock_rate) = if codec == CodecId::AAC {
+                    if let Some((sample_rate, raw)) = Self::strip_aac_adts(payload) {
+                        (Bytes::copy_from_slice(raw), sample_rate)
+                    } else {
+                        (Bytes::copy_from_slice(payload), 8_000)
+                    }
+                } else {
+                    (Bytes::copy_from_slice(payload), 8_000)
+                };
+
                 let track_id = TrackId(stream_id as u32);
-                let track_info = TrackInfo::new(track_id, MediaKind::Audio, CodecId::G711A, 8_000);
+                let track_info = TrackInfo::new(track_id, MediaKind::Audio, codec, clock_rate);
                 self.tracks.insert(stream_id, track_info.clone());
                 self.audio_es_id = stream_id;
+                self.tracks_ever_found = true;
                 events.push(PsDemuxEvent::TrackInfo(vec![track_info]));
 
                 let pts_val = pts.unwrap_or(0);
                 let dts_val = dts.or(pts).unwrap_or(pts_val);
-                let pts_converted = (pts_val as i128 * 8_000 / 90_000) as i64;
-                let dts_converted = (dts_val as i128 * 8_000 / 90_000) as i64;
+                let pts_converted = (pts_val as i128 * clock_rate as i128 / 90_000) as i64;
+                let dts_converted = (dts_val as i128 * clock_rate as i128 / 90_000) as i64;
 
                 let frame = AVFrame::new(
                     track_id,
                     MediaKind::Audio,
-                    CodecId::G711A,
-                    FrameFormat::G711Packet,
+                    codec,
+                    default_frame_format(codec),
                     pts_converted,
                     dts_converted,
-                    Timebase::new(1, 8_000),
-                    Bytes::copy_from_slice(payload),
+                    Timebase::new(1, clock_rate.max(1)),
+                    audio_payload,
                 );
                 events.push(PsDemuxEvent::Frame(Box::new(frame)));
                 self.last_audio_pts = pts;
             }
+        }
+    }
+
+    /// Scans a video PES payload for parameter sets and updates the per-stream cache.
+    ///
+    /// Returns complete `CodecExtradata` if the cache now holds the required SPS/PPS/VPS
+    /// for the codec.
+    fn discover_parameter_sets(
+        &mut self,
+        stream_id: u8,
+        codec: CodecId,
+        payload: &[u8],
+    ) -> Option<CodecExtradata> {
+        if !matches!(codec, CodecId::H264 | CodecId::H265 | CodecId::H266) {
+            return None;
+        }
+        let cache = self.parameter_set_caches.entry(stream_id).or_default();
+        if cache.update_from_annexb(codec, payload) {
+            cache.extradata_for_codec(codec)
+        } else {
+            None
         }
     }
 
@@ -393,11 +695,13 @@ impl PsDemuxer {
             return;
         }
 
-        if let Some(track) = self
+        let video_track = self
             .tracks
-            .values()
-            .find(|t| t.media_kind == MediaKind::Video)
-        {
+            .iter()
+            .find(|(_, t)| t.media_kind == MediaKind::Video)
+            .map(|(k, v)| (*k, v.clone()));
+
+        if let Some((stream_id, track)) = video_track {
             let pts = self.last_video_pts.unwrap_or(0);
             let dts = self.video_dts.unwrap_or(pts);
 
@@ -424,6 +728,30 @@ impl PsDemuxer {
             if is_keyframe {
                 frame.flags.insert(crate::frame::FrameFlags::KEY);
             }
+
+            if is_keyframe && matches!(track.codec, CodecId::H264 | CodecId::H265 | CodecId::H266) {
+                if let Some(cache) = self.parameter_set_caches.get(&stream_id) {
+                    if cache.has_required_sets(track.codec) {
+                        frame.payload = cache
+                            .prepend_to_annexb_access_unit(track.codec, frame.payload.as_ref());
+                    } else {
+                        events.push(PsDemuxEvent::Diagnostic(
+                            PsDemuxDiagnostic::MissingParameterSets {
+                                codec: track.codec,
+                                stream_id,
+                            },
+                        ));
+                    }
+                } else {
+                    events.push(PsDemuxEvent::Diagnostic(
+                        PsDemuxDiagnostic::MissingParameterSets {
+                            codec: track.codec,
+                            stream_id,
+                        },
+                    ));
+                }
+            }
+
             events.push(PsDemuxEvent::Frame(Box::new(frame)));
         } else {
             self.video_buffer.clear();

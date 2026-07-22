@@ -20,6 +20,13 @@ fn handle_ingress_payload(session: &mut SrtIngressSession, payload: &[u8]) {
                     session.tracks_published = false;
                 }
             }
+            MpegTsDemuxEvent::TrackRemoved(ids) => {
+                let before = session.tracks.len();
+                session.tracks.retain(|t| !ids.contains(&t.track_id));
+                if session.tracks.len() != before {
+                    session.tracks_published = false;
+                }
+            }
             MpegTsDemuxEvent::Frame(frame) => {
                 if !session.tracks_published
                     && !session.tracks.is_empty()

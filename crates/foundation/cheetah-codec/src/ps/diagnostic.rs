@@ -4,7 +4,7 @@
 
 use crate::frame::AVFrame;
 use crate::prelude::*;
-use crate::track::TrackInfo;
+use crate::track::{CodecId, TrackId, TrackInfo};
 
 /// Configuration for the PS demuxer.
 ///
@@ -19,6 +19,44 @@ pub struct PsDemuxerConfig {
     ///
     /// 允许保留的最大轨道数。
     pub max_tracks: usize,
+    /// Maximum size of a single PES packet, including the 6-byte PES header.
+    ///
+    /// 单个 PES 包的最大大小，包含 6 字节 PES 头。
+    pub max_pes_packet_size: usize,
+    /// Maximum size of an assembled video access unit.
+    ///
+    /// 组装后的视频访问单元最大大小。
+    pub max_access_unit_size: usize,
+    /// Maximum number of PS pack headers to inspect before a track is found.
+    ///
+    /// 在发现轨道前允许检查的最大 PS pack header 数量。
+    pub max_probe_packets: u32,
+    /// Maximum PES packets to inspect for codec probing before giving up on a stream.
+    ///
+    /// 对一条流进行编解码器探测时最多检查的 PES 包数。
+    pub max_codec_probe_packets: u32,
+}
+
+impl PsDemuxerConfig {
+    /// Create a new configuration with the specified reassembly and track limits,
+    /// using the defaults for all other limits.
+    ///
+    /// 使用指定的重组和轨道限制创建新配置，其他限制使用默认值。
+    pub fn new(max_reassembly_bytes: usize, max_tracks: usize) -> Self {
+        Self {
+            max_reassembly_bytes,
+            max_tracks,
+            ..Default::default()
+        }
+    }
+
+    /// Builder-style setter for the codec-probe packet budget.
+    ///
+    /// 以 builder 风格设置编解码器探测预算。
+    pub fn with_codec_probe_packets(mut self, max_codec_probe_packets: u32) -> Self {
+        self.max_codec_probe_packets = max_codec_probe_packets;
+        self
+    }
 }
 
 impl Default for PsDemuxerConfig {
@@ -26,6 +64,10 @@ impl Default for PsDemuxerConfig {
         Self {
             max_reassembly_bytes: 4 * 1024 * 1024,
             max_tracks: 32,
+            max_pes_packet_size: 8 * 1024 * 1024,
+            max_access_unit_size: 16 * 1024 * 1024,
+            max_probe_packets: 1024,
+            max_codec_probe_packets: 8,
         }
     }
 }
@@ -51,6 +93,18 @@ pub enum PsDemuxDiagnostic {
     ///
     /// PES 包解析失败。
     PesParseError,
+    /// A configured per-session limit was exceeded and state was cleared.
+    ///
+    /// 配置的每 session 限制被超过并已清理状态。
+    LimitExceeded { resource: String },
+    /// The elementary stream payload could not be identified as a supported codec.
+    ///
+    /// 基本流负载无法识别为支持的编解码器。
+    UnsupportedPayload { stream_id: u8 },
+    /// A video keyframe was emitted before its required parameter sets were available.
+    ///
+    /// 在关键帧所需的参数集可用之前遇到了关键帧。
+    MissingParameterSets { codec: CodecId, stream_id: u8 },
 }
 
 /// Events produced by the PS demuxer.
@@ -58,10 +112,14 @@ pub enum PsDemuxDiagnostic {
 /// PS 解复用器产生的事件。
 #[derive(Debug, Clone)]
 pub enum PsDemuxEvent {
-    /// One or more discovered tracks.
+    /// One or more discovered or updated tracks.
     ///
-    /// 发现的一个或多个轨道。
+    /// 发现或更新的一个或多个轨道。
     TrackInfo(Vec<TrackInfo>),
+    /// One or more tracks that were removed by a new Program Stream Map.
+    ///
+    /// 被新节目流映射移除的一个或多个轨道。
+    TrackRemoved(Vec<TrackId>),
     /// A completed media frame.
     ///
     /// 一个完整的媒体帧。

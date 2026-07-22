@@ -595,6 +595,12 @@ impl RtpSessionOrchestrator {
         if let Some(state) = query.state {
             items.retain(|s| s.state == state);
         }
+        if let Some(ref id) = query.session_id {
+            items.retain(|s| &s.session_id == id);
+        }
+        if let Some(ref key) = query.media_key {
+            items.retain(|s| &s.media_key == key);
+        }
 
         let total = items.len() as u64;
         let start = (query.page - 1).saturating_mul(query.page_size) as usize;
@@ -989,6 +995,8 @@ mod tests {
             .list_rtp_sessions(cheetah_sdk::media_api::command::RtpQuery {
                 kind: None,
                 state: None,
+                session_id: None,
+                media_key: None,
                 page: 1,
                 page_size: 10,
             })
@@ -999,12 +1007,67 @@ mod tests {
             .list_rtp_sessions(cheetah_sdk::media_api::command::RtpQuery {
                 kind: Some(RtpSessionKind::Receiver),
                 state: None,
+                session_id: None,
+                media_key: None,
                 page: 1,
                 page_size: 10,
             })
             .expect("list receivers");
         assert_eq!(receivers.total, 1);
         assert_eq!(receivers.items[0].session_id, recv.session_id);
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
+    async fn list_rtp_sessions_filters_by_session_id_and_media_key() {
+        let (orchestrator, cancel) = make_orchestrator();
+
+        let recv_key = MediaKey::with_default_vhost("list", "recv", None).unwrap();
+        let send_key = MediaKey::with_default_vhost("list", "send", None).unwrap();
+
+        let recv = orchestrator
+            .open_rtp_receiver(receiver_request(recv_key.clone()))
+            .await
+            .expect("open receiver");
+        let sender = orchestrator
+            .open_rtp_sender(RtpSenderRequest {
+                media_key: send_key.clone(),
+                destination_endpoint: "127.0.0.1:16666".to_string(),
+                ssrc: Some(5000),
+                payload_type: Some(96),
+                codec_hint: Some("ps".to_string()),
+                mode: RtpSenderMode::Active,
+                transport_options: HashMap::new(),
+            })
+            .await
+            .expect("open sender");
+
+        let by_session_id = orchestrator
+            .list_rtp_sessions(cheetah_sdk::media_api::command::RtpQuery {
+                kind: None,
+                state: None,
+                session_id: Some(recv.session_id.clone()),
+                media_key: None,
+                page: 1,
+                page_size: 10,
+            })
+            .expect("list by session id");
+        assert_eq!(by_session_id.total, 1);
+        assert_eq!(by_session_id.items[0].session_id, recv.session_id);
+
+        let by_media_key = orchestrator
+            .list_rtp_sessions(cheetah_sdk::media_api::command::RtpQuery {
+                kind: None,
+                state: None,
+                session_id: None,
+                media_key: Some(send_key.clone()),
+                page: 1,
+                page_size: 10,
+            })
+            .expect("list by media key");
+        assert_eq!(by_media_key.total, 1);
+        assert_eq!(by_media_key.items[0].session_id, sender.session_id);
 
         cancel.cancel();
     }

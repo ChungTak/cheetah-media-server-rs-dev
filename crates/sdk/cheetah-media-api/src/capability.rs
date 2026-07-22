@@ -17,6 +17,7 @@ pub enum MediaCapability {
     ImageEncode,
     Proxy,
     Rtp,
+    RtpSession,
     Webhook,
     WebhookAdmin,
     Playback,
@@ -196,6 +197,15 @@ pub fn default_operations(capability: MediaCapability) -> Vec<String> {
             "list_sessions".to_string(),
             "update_session".to_string(),
             "get_session".to_string(),
+        ],
+        MediaCapability::RtpSession => vec![
+            "open_receiver".to_string(),
+            "open_sender".to_string(),
+            "open_talk".to_string(),
+            "update_session".to_string(),
+            "get_session".to_string(),
+            "stop_session".to_string(),
+            "list_sessions".to_string(),
         ],
         MediaCapability::Webhook => vec!["request_decision".to_string()],
         MediaCapability::WebhookAdmin => vec![

@@ -1,34 +1,51 @@
-//! Bridge `cheetah_media_api::port::RtpApi` to the module's shared
-//! `RtpSessionOrchestrator`.
+//! Bridge `cheetah_media_api::port::RtpApi` and the typed `RtpSessionApi` to the
+//! module's shared `RtpSessionOrchestrator`.
 //!
-//! 由模块共享的 `RtpSessionOrchestrator` 支撑的 `RtpApi` provider。
+//! 由模块共享的 `RtpSessionOrchestrator` 支撑的 `RtpApi` / `RtpSessionApi` provider。
 
+use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use cheetah_rtp_driver_tokio::RtpDriverHandle;
 use cheetah_sdk::media_api::command::{
-    RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderRequest, UpdateRtpRequest,
+    RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest,
+    UpdateRtpRequest,
 };
-use cheetah_sdk::media_api::error::{MediaError, Result};
-use cheetah_sdk::media_api::ids::StreamKeyBridge;
-use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId};
-use cheetah_sdk::media_api::model::{Page, RtpSession};
+use cheetah_sdk::media_api::error::{EffectOutcome, MediaError, Result};
+use cheetah_sdk::media_api::fencing::{ControlledResourceRef, ResourceOrigin};
+use cheetah_sdk::media_api::ids::{
+    MediaBindingId, MediaKey, MediaNodeInstanceEpoch, MediaSessionId, OwnerEpoch,
+    ResourceGeneration, RtpSessionId, StreamKeyBridge, TenantId,
+};
+use cheetah_sdk::media_api::model::{
+    Page, RtpSession, RtpSessionKind, RtpSessionState as OldRtpSessionState, RtpTcpMode,
+};
 use cheetah_sdk::media_api::port::{MediaRequestContext, RtpApi};
+use cheetah_sdk::media_api::rtp_session::{
+    GbMediaCompatibilityProfile, MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk,
+    RtpDirection, RtpEndpoints, RtpFraming, RtpPayloadBinding, RtpSessionApi, RtpSessionDescriptor,
+    RtpSessionGeneration, RtpSessionParams, RtpSessionQuery, RtpSessionRef, RtpSessionState,
+    RtpTransport, StopRtpSession, TcpRole, UpdateRtpSession,
+};
 use cheetah_sdk::{CancellationToken, Deadline, EngineContext, StreamKey};
+use parking_lot::Mutex;
 
 use crate::egress::{run_egress_session, ActiveEgressMap, EgressCleanup};
 use crate::orchestrator::RtpSessionOrchestrator;
 
-/// Media-domain `RtpApi` provider.
+/// Media-domain `RtpApi` and `RtpSessionApi` provider.
 ///
-/// `RtpApi` provider。
+/// `RtpApi` / `RtpSessionApi` provider。
 pub struct RtpMediaProvider {
     orchestrator: Arc<RtpSessionOrchestrator>,
     engine: EngineContext,
     module_cancel: CancellationToken,
     /// Active sender egress tasks keyed by session key so `stop_rtp_session` can cancel them.
     active_senders: ActiveEgressMap,
+    /// Per-session typed descriptors carrying parameters not present in the legacy `RtpSession`.
+    rtp_descriptors: Arc<Mutex<HashMap<RtpSessionId, RtpSessionDescriptor>>>,
 }
 
 impl RtpMediaProvider {
@@ -45,6 +62,7 @@ impl RtpMediaProvider {
             engine,
             module_cancel,
             active_senders: ActiveEgressMap::default(),
+            rtp_descriptors: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -64,6 +82,247 @@ impl RtpMediaProvider {
     fn stream_key_for_media_key(media_key: &MediaKey) -> StreamKey {
         let (namespace, path) = StreamKeyBridge::to_namespace_path(media_key);
         StreamKey::new(namespace, path)
+    }
+
+    fn container_to_codec_hint(container: MediaContainer) -> Option<String> {
+        match container {
+            MediaContainer::Ps => Some("ps".to_string()),
+            MediaContainer::Ts => Some("ts".to_string()),
+            MediaContainer::ElementaryStream => Some("es".to_string()),
+            MediaContainer::AutoDetect | _ => None,
+        }
+    }
+
+    fn payload_type_from_bindings(bindings: &[RtpPayloadBinding]) -> Option<u8> {
+        bindings.first().map(|b| b.payload_type)
+    }
+
+    fn codec_hint_from_params(params: &RtpSessionParams) -> Option<String> {
+        if params.container != MediaContainer::AutoDetect {
+            return Self::container_to_codec_hint(params.container);
+        }
+        params
+            .payload_bindings
+            .first()
+            .and_then(|b| match b.codec.to_lowercase().as_str() {
+                "ps" => Some("ps".to_string()),
+                "ts" => Some("ts".to_string()),
+                "es" => Some("es".to_string()),
+                _ => None,
+            })
+    }
+
+    fn build_old_receiver_request(&self, req: OpenRtpReceiver) -> Result<RtpReceiverRequest> {
+        let params = req.params;
+        let (ip, port) = params
+            .local_endpoint_hint
+            .map(|a| (Some(a.ip().to_string()), Some(a.port())))
+            .unwrap_or((None, None));
+        let tcp_mode = match params.transport {
+            RtpTransport::Udp => None,
+            RtpTransport::Tcp => Some(match params.tcp_role.unwrap_or(TcpRole::Passive) {
+                TcpRole::Active => RtpTcpMode::Active,
+                TcpRole::Passive => RtpTcpMode::Passive,
+                _ => RtpTcpMode::Passive,
+            }),
+            _ => None,
+        };
+        let payload_type = Self::payload_type_from_bindings(&params.payload_bindings);
+        let codec_hint = Self::codec_hint_from_params(&params);
+        Ok(RtpReceiverRequest {
+            media_key: params.media_key,
+            port,
+            ip,
+            ssrc: params.ssrc,
+            enable_rtcp: true,
+            tcp_mode,
+            payload_type,
+            codec_hint,
+            reuse_port: false,
+            timeout_ms: 0,
+        })
+    }
+
+    fn build_old_sender_request(
+        &self,
+        req: OpenRtpSender,
+        mode: RtpSenderMode,
+    ) -> Result<RtpSenderRequest> {
+        let params = req.params;
+        let destination_endpoint = params
+            .remote_endpoint
+            .map(|a| a.to_string())
+            .unwrap_or_else(|| "0.0.0.0:0".to_string());
+        let mut transport_options = HashMap::new();
+        if params.transport == RtpTransport::Tcp {
+            transport_options.insert("tcp".to_string(), "true".to_string());
+        }
+        let payload_type = Self::payload_type_from_bindings(&params.payload_bindings);
+        let codec_hint = Self::codec_hint_from_params(&params);
+        Ok(RtpSenderRequest {
+            media_key: params.media_key,
+            destination_endpoint,
+            ssrc: params.ssrc,
+            payload_type,
+            codec_hint,
+            mode,
+            transport_options,
+        })
+    }
+
+    fn map_old_session_state(state: OldRtpSessionState) -> RtpSessionState {
+        match state {
+            OldRtpSessionState::Created | OldRtpSessionState::Listening => RtpSessionState::Ready,
+            OldRtpSessionState::Connected
+            | OldRtpSessionState::Bound
+            | OldRtpSessionState::Paused => RtpSessionState::Active,
+            OldRtpSessionState::Stopping => RtpSessionState::Draining,
+            OldRtpSessionState::Stopped => RtpSessionState::Stopped,
+            OldRtpSessionState::TimedOut | OldRtpSessionState::Failed => RtpSessionState::Failed,
+        }
+    }
+
+    fn resource_ref_from_context(
+        &self,
+        ctx: &MediaRequestContext,
+        session_id: &RtpSessionId,
+        generation: u64,
+    ) -> ControlledResourceRef {
+        let (
+            tenant_id,
+            owner_epoch,
+            node_instance_epoch,
+            media_session_id,
+            media_binding_id,
+            origin,
+        ) = if let Some(mutation) = &ctx.mutation {
+            (
+                mutation.tenant_id.clone(),
+                mutation.owner_epoch,
+                mutation.target_media_node_instance_epoch,
+                mutation.media_session_id.clone(),
+                mutation.media_binding_id.clone(),
+                ResourceOrigin::Cluster,
+            )
+        } else {
+            (
+                TenantId::new("default").unwrap_or_else(|_| TenantId::new("cheetah").unwrap()),
+                OwnerEpoch(0),
+                MediaNodeInstanceEpoch(0),
+                None::<MediaSessionId>,
+                None::<MediaBindingId>,
+                ResourceOrigin::Local,
+            )
+        };
+        ControlledResourceRef {
+            tenant_id,
+            media_session_id,
+            media_binding_id,
+            resource_kind: "rtp_session".to_string(),
+            resource_handle: session_id.0.clone(),
+            owner_epoch,
+            node_instance_epoch,
+            generation: ResourceGeneration(generation),
+            origin,
+        }
+    }
+
+    fn build_descriptor(
+        &self,
+        ctx: &MediaRequestContext,
+        session: &RtpSession,
+        stored: Option<RtpSessionDescriptor>,
+    ) -> Result<RtpSessionDescriptor> {
+        let direction = match session.kind {
+            RtpSessionKind::Receiver => RtpDirection::Receive,
+            RtpSessionKind::Sender => RtpDirection::Send,
+            RtpSessionKind::Talk => RtpDirection::DuplexTalk,
+        };
+        let (transport, tcp_role) = match session.tcp_mode {
+            Some(RtpTcpMode::Active) => (RtpTransport::Tcp, Some(TcpRole::Active)),
+            Some(RtpTcpMode::Passive) => (RtpTransport::Tcp, Some(TcpRole::Passive)),
+            None => (RtpTransport::Udp, None),
+        };
+        let framing = if transport == RtpTransport::Udp {
+            RtpFraming::Datagram
+        } else {
+            stored
+                .as_ref()
+                .map(|s| s.framing)
+                .unwrap_or(RtpFraming::Rfc4571)
+        };
+        let container = stored
+            .as_ref()
+            .map(|s| s.container)
+            .unwrap_or(MediaContainer::Ps);
+        let profile = stored
+            .as_ref()
+            .map(|s| s.profile)
+            .unwrap_or(GbMediaCompatibilityProfile::GbCommon);
+        let payload_bindings = stored
+            .as_ref()
+            .map(|s| s.payload_bindings.clone())
+            .unwrap_or_default();
+        let source_binding_policy = stored
+            .as_ref()
+            .map(|s| s.source_binding_policy)
+            .unwrap_or_default();
+        let resource_ref = stored
+            .as_ref()
+            .map(|s| s.resource_ref.clone())
+            .unwrap_or_else(|| {
+                self.resource_ref_from_context(ctx, &session.session_id, session.generation)
+            });
+
+        let default_ip = self.orchestrator.default_bind_addr().ip();
+        let local_port = session.local_port.unwrap_or(0);
+        let local = SocketAddr::new(default_ip, local_port);
+        let remote = session
+            .remote_endpoint
+            .as_ref()
+            .and_then(|s| s.parse::<SocketAddr>().ok());
+        let endpoints = RtpEndpoints {
+            local,
+            remote,
+            rtcp_local: None,
+            rtcp_remote: None,
+        };
+
+        Ok(RtpSessionDescriptor {
+            session_id: session.session_id.clone(),
+            generation: RtpSessionGeneration(session.generation),
+            state: Self::map_old_session_state(session.state),
+            direction,
+            transport,
+            tcp_role,
+            framing,
+            container,
+            profile,
+            endpoints,
+            ssrc: session.ssrc,
+            payload_bindings,
+            source_binding_policy,
+            resource_ref,
+        })
+    }
+
+    fn apply_request_overrides(
+        &self,
+        descriptor: &mut RtpSessionDescriptor,
+        params: &RtpSessionParams,
+    ) {
+        descriptor.container = params.container;
+        descriptor.profile = params.profile;
+        descriptor.source_binding_policy = params.source_binding_policy;
+        descriptor.payload_bindings = params.payload_bindings.clone();
+        if let Some(local) = params.local_endpoint_hint {
+            // Keep the actually-bound port and apply only the requested local IP.
+            descriptor.endpoints.local =
+                SocketAddr::new(local.ip(), descriptor.endpoints.local.port());
+        }
+        if let Some(remote) = params.remote_endpoint {
+            descriptor.endpoints.remote = Some(remote);
+        }
     }
 }
 
@@ -167,5 +426,226 @@ impl RtpApi for RtpMediaProvider {
         id: &RtpSessionId,
     ) -> Result<RtpSession> {
         self.orchestrator.get_rtp_session(id)
+    }
+}
+
+#[async_trait]
+impl RtpSessionApi for RtpMediaProvider {
+    async fn open_receiver(
+        &self,
+        ctx: &MediaRequestContext,
+        request: OpenRtpReceiver,
+    ) -> Result<RtpSessionDescriptor> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        let old_req = self.build_old_receiver_request(request.clone())?;
+        let session = self.open_rtp_receiver(ctx, old_req).await?;
+        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
+        self.apply_request_overrides(&mut descriptor, &request.params);
+        self.rtp_descriptors
+            .lock()
+            .insert(descriptor.session_id.clone(), descriptor.clone());
+        Ok(descriptor)
+    }
+
+    async fn open_sender(
+        &self,
+        ctx: &MediaRequestContext,
+        request: OpenRtpSender,
+    ) -> Result<RtpSessionDescriptor> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        let mode = match request.params.tcp_role {
+            Some(TcpRole::Passive) => RtpSenderMode::Passive,
+            _ => RtpSenderMode::Active,
+        };
+        let old_req = self.build_old_sender_request(request.clone(), mode)?;
+        let session = self.open_rtp_sender(ctx, old_req).await?;
+        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
+        self.apply_request_overrides(&mut descriptor, &request.params);
+        self.rtp_descriptors
+            .lock()
+            .insert(descriptor.session_id.clone(), descriptor.clone());
+        Ok(descriptor)
+    }
+
+    async fn open_talk(
+        &self,
+        ctx: &MediaRequestContext,
+        request: OpenRtpTalk,
+    ) -> Result<RtpSessionDescriptor> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        let sender_req = self.build_old_sender_request(
+            OpenRtpSender {
+                params: request.params.clone(),
+            },
+            RtpSenderMode::Talk,
+        )?;
+        let session = self.open_rtp_sender(ctx, sender_req).await?;
+        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
+        self.apply_request_overrides(&mut descriptor, &request.params);
+        if let Some(binding) = request.talkback_binding {
+            descriptor.payload_bindings.push(binding);
+        }
+        self.rtp_descriptors
+            .lock()
+            .insert(descriptor.session_id.clone(), descriptor.clone());
+        Ok(descriptor)
+    }
+
+    async fn update_session(
+        &self,
+        ctx: &MediaRequestContext,
+        request: UpdateRtpSession,
+    ) -> Result<RtpSessionDescriptor> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
+
+        let session = self
+            .orchestrator
+            .get_rtp_session(&request.session_ref.session_id)?;
+        if session.generation != request.session_ref.expected_generation.0 {
+            return Err(MediaError::conflict("generation mismatch"));
+        }
+
+        let payload_type = request
+            .payload_bindings
+            .as_ref()
+            .and_then(|b| b.first().map(|b| b.payload_type));
+        let old_req = UpdateRtpRequest {
+            session_id: request.session_ref.session_id.clone(),
+            expected_generation: request.session_ref.expected_generation.0,
+            ssrc: None,
+            payload_type,
+            pause_check: request.pause_check,
+        };
+        let mut updated = self.update_rtp_session(ctx, old_req).await?;
+        if let Some(remote) = request.remote_endpoint {
+            updated = self
+                .orchestrator
+                .set_session_remote_endpoint(&request.session_ref.session_id, remote)?;
+        }
+
+        let mut descs = self.rtp_descriptors.lock();
+        let stored = descs.get(&request.session_ref.session_id).cloned();
+        let mut descriptor = self.build_descriptor(ctx, &updated, stored)?;
+        if let Some(bindings) = request.payload_bindings {
+            descriptor.payload_bindings = bindings;
+        }
+        if let Some(policy) = request.source_binding_policy {
+            descriptor.source_binding_policy = policy;
+        }
+        descs.insert(descriptor.session_id.clone(), descriptor.clone());
+        Ok(descriptor)
+    }
+
+    async fn get_session(
+        &self,
+        ctx: &MediaRequestContext,
+        session_ref: RtpSessionRef,
+    ) -> Result<RtpSessionDescriptor> {
+        let session = self.orchestrator.get_rtp_session(&session_ref.session_id)?;
+        if session.generation != session_ref.expected_generation.0 {
+            return Err(MediaError::conflict("generation mismatch"));
+        }
+        let stored = self
+            .rtp_descriptors
+            .lock()
+            .get(&session_ref.session_id)
+            .cloned();
+        self.build_descriptor(ctx, &session, stored)
+    }
+
+    async fn stop_session(
+        &self,
+        ctx: &MediaRequestContext,
+        request: StopRtpSession,
+    ) -> Result<EffectOutcome> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
+
+        match self
+            .orchestrator
+            .get_rtp_session(&request.session_ref.session_id)
+        {
+            Ok(session) => {
+                if session.generation != request.session_ref.expected_generation.0 {
+                    return Err(MediaError::conflict("generation mismatch"));
+                }
+            }
+            Err(_) => return Ok(EffectOutcome::NotApplied),
+        }
+
+        match self
+            .stop_rtp_session(ctx, &request.session_ref.session_id)
+            .await
+        {
+            Ok(()) => {
+                self.rtp_descriptors
+                    .lock()
+                    .remove(&request.session_ref.session_id);
+                Ok(EffectOutcome::Applied)
+            }
+            Err(e) => {
+                let mut e = e;
+                e.outcome = e.code.into();
+                Err(e)
+            }
+        }
+    }
+
+    async fn list_sessions(
+        &self,
+        ctx: &MediaRequestContext,
+        mut query: RtpSessionQuery,
+    ) -> Result<Page<RtpSessionDescriptor>> {
+        query.clamp_page_size();
+
+        let old_kind = query.direction.map(|d| match d {
+            RtpDirection::Receive => RtpSessionKind::Receiver,
+            RtpDirection::Send => RtpSessionKind::Sender,
+            RtpDirection::DuplexTalk | _ => RtpSessionKind::Talk,
+        });
+        let old_state = query.state.map(|s| match s {
+            RtpSessionState::Allocating => OldRtpSessionState::Created,
+            RtpSessionState::Ready => OldRtpSessionState::Listening,
+            RtpSessionState::Active => OldRtpSessionState::Connected,
+            RtpSessionState::Draining => OldRtpSessionState::Stopping,
+            RtpSessionState::Stopped => OldRtpSessionState::Stopped,
+            RtpSessionState::Failed | _ => OldRtpSessionState::Failed,
+        });
+        let old_query = RtpQuery {
+            kind: old_kind,
+            state: old_state,
+            session_id: query.session_id.clone(),
+            media_key: query.media_key.clone(),
+            page: query.page,
+            page_size: query.page_size,
+        };
+
+        let page = self.orchestrator.list_rtp_sessions(old_query)?;
+        let descs = self.rtp_descriptors.lock();
+        let items: Vec<RtpSessionDescriptor> = page
+            .items
+            .into_iter()
+            .map(|session| {
+                let stored = descs.get(&session.session_id).cloned();
+                self.build_descriptor(ctx, &session, stored)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(Page {
+            items,
+            page: page.page,
+            page_size: page.page_size,
+            total: page.total,
+            next_cursor: page.next_cursor,
+        })
     }
 }

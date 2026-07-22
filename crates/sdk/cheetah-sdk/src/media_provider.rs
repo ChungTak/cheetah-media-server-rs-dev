@@ -8,6 +8,7 @@ use cheetah_media_api::port::{
     MediaAdmissionApi, MediaControlApi, MediaOutputRegistryApi, MediaProcessingApi, PlaybackApi,
     ProxyApi, PublishSubscribeApi, RecordApi, RtpApi, SnapshotApi, WebhookAdminApi, WebhookApi,
 };
+use cheetah_media_api::rtp_session::RtpSessionApi;
 use cheetah_media_api::{MediaCapability, MediaCapabilitySet};
 
 /// A registration handle returned when a provider is registered with
@@ -573,6 +574,44 @@ impl MediaServices {
             .map(|e| e.provider.clone())
     }
 
+    /// Register the typed RTP session provider.
+    ///
+    /// 注册类型化的 RTP session provider。
+    pub fn register_rtp_session(
+        &self,
+        rtp_session: Arc<dyn RtpSessionApi>,
+    ) -> ProviderRegistration {
+        let mut registry = self.inner.write().expect("media services lock");
+        registry.generation += 1;
+        let generation = registry.generation;
+        let capabilities = rtp_session_default_capabilities();
+        let provider_id = format!("rtp_session:{generation}");
+        let descriptors = descriptors_from_set(&capabilities, &provider_id);
+        registry.rtp_session = Some(ProviderEntry {
+            provider: rtp_session,
+            generation,
+            capabilities,
+            descriptors,
+        });
+        ProviderRegistration {
+            capability: MediaCapability::RtpSession,
+            provider_id: format!("rtp_session:{generation}"),
+            generation,
+        }
+    }
+
+    /// Return the current typed RTP session provider, if any.
+    ///
+    /// 返回当前类型化的 RTP session provider（如有）。
+    pub fn rtp_session(&self) -> Option<Arc<dyn RtpSessionApi>> {
+        self.inner
+            .read()
+            .expect("media services lock")
+            .rtp_session
+            .as_ref()
+            .map(|e| e.provider.clone())
+    }
+
     /// Register the webhook provider.
     ///
     /// 注册 webhook provider。
@@ -794,6 +833,9 @@ impl MediaServices {
         if let Some(entry) = &registry.rtp {
             descriptors.extend(entry.descriptors.clone());
         }
+        if let Some(entry) = &registry.rtp_session {
+            descriptors.extend(entry.descriptors.clone());
+        }
         if let Some(entry) = &registry.webhook {
             descriptors.extend(entry.descriptors.clone());
         }
@@ -828,6 +870,7 @@ struct MediaProviderRegistry {
     processing: Option<ProviderEntry<Arc<dyn MediaProcessingApi>>>,
     proxy: Option<ProviderEntry<Arc<dyn ProxyApi>>>,
     rtp: Option<ProviderEntry<Arc<dyn RtpApi>>>,
+    rtp_session: Option<ProviderEntry<Arc<dyn RtpSessionApi>>>,
     webhook: Option<ProviderEntry<Arc<dyn WebhookApi>>>,
     webhook_admin: Option<ProviderEntry<Arc<dyn WebhookAdminApi>>>,
     admission: Option<ProviderEntry<Arc<dyn MediaAdmissionApi>>>,
@@ -857,6 +900,7 @@ enum ProviderSlot<'a> {
     Processing(&'a mut Option<ProviderEntry<Arc<dyn MediaProcessingApi>>>),
     Proxy(&'a mut Option<ProviderEntry<Arc<dyn ProxyApi>>>),
     Rtp(&'a mut Option<ProviderEntry<Arc<dyn RtpApi>>>),
+    RtpSession(&'a mut Option<ProviderEntry<Arc<dyn RtpSessionApi>>>),
     Webhook(&'a mut Option<ProviderEntry<Arc<dyn WebhookApi>>>),
     WebhookAdmin(&'a mut Option<ProviderEntry<Arc<dyn WebhookAdminApi>>>),
     Admission(&'a mut Option<ProviderEntry<Arc<dyn MediaAdmissionApi>>>),
@@ -875,6 +919,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::Processing(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Proxy(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Rtp(opt) => opt.as_ref().map(|e| e.generation),
+            ProviderSlot::RtpSession(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Webhook(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::WebhookAdmin(opt) => opt.as_ref().map(|e| e.generation),
             ProviderSlot::Admission(opt) => opt.as_ref().map(|e| e.generation),
@@ -893,6 +938,7 @@ impl<'a> ProviderSlot<'a> {
             ProviderSlot::Processing(opt) => **opt = None,
             ProviderSlot::Proxy(opt) => **opt = None,
             ProviderSlot::Rtp(opt) => **opt = None,
+            ProviderSlot::RtpSession(opt) => **opt = None,
             ProviderSlot::Webhook(opt) => **opt = None,
             ProviderSlot::WebhookAdmin(opt) => **opt = None,
             ProviderSlot::Admission(opt) => **opt = None,
@@ -925,6 +971,7 @@ impl MediaProviderRegistry {
             }
             MediaCapability::Proxy => Some(ProviderSlot::Proxy(&mut self.proxy)),
             MediaCapability::Rtp => Some(ProviderSlot::Rtp(&mut self.rtp)),
+            MediaCapability::RtpSession => Some(ProviderSlot::RtpSession(&mut self.rtp_session)),
             MediaCapability::Webhook => Some(ProviderSlot::Webhook(&mut self.webhook)),
             MediaCapability::WebhookAdmin => {
                 Some(ProviderSlot::WebhookAdmin(&mut self.webhook_admin))
@@ -1001,6 +1048,12 @@ fn proxy_default_capabilities() -> MediaCapabilitySet {
 fn rtp_default_capabilities() -> MediaCapabilitySet {
     let mut set = MediaCapabilitySet::empty();
     set.add(MediaCapability::Rtp, 1);
+    set
+}
+
+fn rtp_session_default_capabilities() -> MediaCapabilitySet {
+    let mut set = MediaCapabilitySet::empty();
+    set.add(MediaCapability::RtpSession, 1);
     set
 }
 

@@ -48,6 +48,10 @@ pub enum MpegTsDemuxEvent {
     ///
     /// 从 PMT 中发现一条轨道。
     TrackFound(TrackInfo),
+    /// One or more tracks were removed by a new PMT/PSM.
+    ///
+    /// 一条或多条轨道被新的 PMT/PSM 移除。
+    TrackRemoved(Vec<TrackId>),
     /// A complete frame was reassembled from PES.
     ///
     /// 从 PES 重组得到完整帧。
@@ -695,7 +699,8 @@ fn track_info_from_state(track: &DemuxTrackState) -> TrackInfo {
                     asc: Bytes::copy_from_slice(&asc),
                 };
                 if let Some(config) = crate::audio::AacAudioSpecificConfig::from_bytes(&asc) {
-                    let sample_rate = aac_sample_rate(config.sampling_frequency_index);
+                    let sample_rate =
+                        crate::audio::aac_sample_rate(config.sampling_frequency_index);
                     if sample_rate > 0 {
                         info.clock_rate = sample_rate;
                         info.sample_rate = Some(sample_rate);
@@ -927,7 +932,7 @@ fn split_aac_adts_frames(
 
         // Compute per-frame PTS offset: 1024 samples per AAC frame at 90kHz
         // Duration in 90kHz ticks = 1024 * 90000 / sample_rate
-        let sample_rate = aac_sample_rate(header.sampling_frequency_index);
+        let sample_rate = crate::audio::aac_sample_rate(header.sampling_frequency_index);
         let duration_90k = if sample_rate > 0 {
             (1024u64 * 90_000) / sample_rate as u64
         } else {
@@ -957,14 +962,6 @@ fn split_aac_adts_frames(
     }
 
     events
-}
-
-/// AAC sampling frequency table (index -> Hz).
-fn aac_sample_rate(index: u8) -> u32 {
-    const RATES: [u32; 13] = [
-        96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
-    ];
-    RATES.get(index as usize).copied().unwrap_or(0)
 }
 
 fn is_keyframe_payload(data: &[u8], codec: CodecId) -> bool {
