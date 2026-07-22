@@ -227,6 +227,93 @@ impl<T> RtpReorderBuffer<T> {
     }
 }
 
+/// Unwraps 16-bit RTP sequence numbers into a monotonic 64-bit space for
+/// statistics and RTCP report generation. Unlike `RtpReorderBuffer`, this type
+/// does not buffer packets; it only tracks the expected next sequence number
+/// and the highest sequence number seen so far.
+///
+/// 将 16 位 RTP 序列号展开为单调 64 位空间，用于统计与 RTCP 报告生成。
+/// 与 `RtpReorderBuffer` 不同，本类型不缓存包，仅跟踪期望下一个序列号
+/// 与截至目前看到的最大序列号。
+#[derive(Debug, Clone)]
+pub struct RtpSequenceUnwrapper {
+    expected: Option<u64>,
+    max: Option<u64>,
+}
+
+impl Default for RtpSequenceUnwrapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RtpSequenceUnwrapper {
+    /// Create a new, empty unwrapper.
+    pub fn new() -> Self {
+        Self {
+            expected: None,
+            max: None,
+        }
+    }
+
+    /// Extend a raw 16-bit sequence number and update the expected/max state.
+    ///
+    /// Returns the extended 64-bit sequence number. Late or duplicate packets
+    /// (before the current expected value) are returned as `expected - 1` and
+    /// do not advance the expected pointer.
+    pub fn extend(&mut self, raw: u16) -> u64 {
+        let raw64 = u64::from(raw);
+        let Some(expected) = self.expected else {
+            self.expected = Some(raw64 + 1);
+            self.max = Some(raw64);
+            return raw64;
+        };
+
+        let period = i128::from(SEQUENCE_PERIOD);
+        let exp = i128::from(expected);
+        let cycle = i128::from(expected / SEQUENCE_PERIOD);
+        let base = cycle * period + i128::from(raw64);
+
+        let mut best = base;
+        let mut best_diff = (base - exp).abs();
+        for k in [-1_i128, 1_i128] {
+            let candidate = base + k * period;
+            let diff = (candidate - exp).abs();
+            if diff < best_diff {
+                best = candidate;
+                best_diff = diff;
+            }
+        }
+
+        // Packets more than half a period away are treated as ambiguous/dropped.
+        if best_diff >= HALF_SEQUENCE_PERIOD {
+            return expected.saturating_sub(1);
+        }
+
+        // Packets before the expected value are late/duplicate and ignored.
+        if best < exp {
+            return expected.saturating_sub(1);
+        }
+
+        let extended = best as u64;
+        if self.max.is_none_or(|m| extended > m) {
+            self.max = Some(extended);
+        }
+        self.expected = Some(extended + 1);
+        extended
+    }
+
+    /// Highest extended sequence number seen so far.
+    pub fn max_seq(&self) -> Option<u64> {
+        self.max
+    }
+
+    /// Next expected extended sequence number.
+    pub fn expected_seq(&self) -> Option<u64> {
+        self.expected
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,5 +463,19 @@ mod tests {
         assert!(reorder.push(102, 2, 102).is_empty());
         reorder.reset();
         assert_eq!(reorder.push(101, 3, 101), vec![101]);
+    }
+
+    #[test]
+    fn sequence_unwrapper_tracks_max_and_wraps() {
+        let mut u = RtpSequenceUnwrapper::new();
+        assert_eq!(u.extend(100), 100);
+        assert_eq!(u.extend(101), 101);
+        assert_eq!(u.extend(100), 101); // duplicate/late returns expected - 1
+        assert_eq!(u.max_seq(), Some(101));
+
+        let mut u = RtpSequenceUnwrapper::new();
+        assert_eq!(u.extend(u16::MAX), u64::from(u16::MAX));
+        assert_eq!(u.extend(1), u64::from(u16::MAX) + 2);
+        assert_eq!(u.max_seq(), Some(u64::from(u16::MAX) + 2));
     }
 }

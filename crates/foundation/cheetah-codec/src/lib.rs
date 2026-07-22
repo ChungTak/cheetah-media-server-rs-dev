@@ -187,7 +187,7 @@ pub use rtp::{
     RtpHeader, RtpPacket, RtpPayloadMode, RtpTcpFraming, RtpTimestampNormalizer,
 };
 pub use rtp_pt::{RtpPayloadProfile, RtpPtResolveSource, RtpPtResolver};
-pub use rtp_reorder::{RtpReorderBuffer, RtpReorderSettings};
+pub use rtp_reorder::{RtpReorderBuffer, RtpReorderSettings, RtpSequenceUnwrapper};
 pub use sdp::{export_fmtp, export_media_description, SdpMediaDescription};
 pub use time::{
     DiscontinuityJudge, DtsGenerator, MonoTime, StampAdjust, StampAdjustMode, Timebase,
