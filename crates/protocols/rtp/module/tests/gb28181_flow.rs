@@ -7,8 +7,14 @@ use cheetah_codec::AVFrame;
 use cheetah_sdk::media_api::command::{
     RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, StartRecordRequest, StopRecordRequest,
 };
+use cheetah_sdk::media_api::error::{EffectOutcome, MediaErrorCode};
+use cheetah_sdk::media_api::ids::RtpSessionId;
 use cheetah_sdk::media_api::model::{OnlineState, RecordTaskState};
 use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
+use cheetah_sdk::media_api::rtp_session::{
+    MediaContainer, OpenRtpReceiver, RtpDirection, RtpPayloadBinding, RtpSessionParamsBuilder,
+    RtpSessionRef, RtpTransport, StopRtpSession,
+};
 use cheetah_sdk::media_api::{MediaKey, MediaRequestContext};
 use cheetah_sdk::StreamKey;
 use tokio::time::{sleep, timeout};
@@ -375,6 +381,92 @@ async fn gb28181_session_stop_releases_port() {
         .get_rtp_session(&ctx, &session.session_id)
         .await
         .is_err());
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn typed_rtp_session_errors_carry_resource_ref_and_generation() {
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_error", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        })
+        .build();
+    let descriptor = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("open receiver");
+
+    // get_session with a stale generation returns Conflict and carries the resource ref.
+    let stale_ref = RtpSessionRef {
+        session_id: descriptor.session_id.clone(),
+        expected_generation: cheetah_sdk::media_api::rtp_session::RtpSessionGeneration(
+            descriptor.generation.0 + 1,
+        ),
+    };
+    let err = rtp_api
+        .get_session(&ctx, stale_ref.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::Conflict);
+    assert_eq!(err.outcome, EffectOutcome::NotApplied);
+    let resource_ref = err.resource_ref.as_ref().expect("resource ref");
+    assert_eq!(resource_ref.resource_handle, descriptor.session_id.0);
+    assert_eq!(resource_ref.generation.0, stale_ref.expected_generation.0);
+
+    // stop_session with a stale generation returns Conflict and carries the resource ref.
+    let err = rtp_api
+        .stop_session(
+            &ctx,
+            StopRtpSession {
+                session_ref: stale_ref.clone(),
+                release_lease: true,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::Conflict);
+    assert_eq!(err.outcome, EffectOutcome::NotApplied);
+    let resource_ref = err.resource_ref.as_ref().expect("resource ref");
+    assert_eq!(resource_ref.resource_handle, descriptor.session_id.0);
+    assert_eq!(resource_ref.generation.0, stale_ref.expected_generation.0);
+
+    // stop_session on a missing session returns NotApplied (idempotent success).
+    let missing_ref = RtpSessionRef {
+        session_id: RtpSessionId("no-such-session".to_string()),
+        expected_generation: cheetah_sdk::media_api::rtp_session::RtpSessionGeneration(0),
+    };
+    let outcome = rtp_api
+        .stop_session(
+            &ctx,
+            StopRtpSession {
+                session_ref: missing_ref,
+                release_lease: true,
+            },
+        )
+        .await
+        .expect("idempotent stop");
+    assert_eq!(outcome, EffectOutcome::NotApplied);
 
     harness.stop().await;
 }
