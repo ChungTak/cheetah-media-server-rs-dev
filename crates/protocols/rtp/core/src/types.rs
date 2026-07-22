@@ -228,6 +228,15 @@ pub enum RtpCoreEvent {
         payload_type: Option<u8>,
         pause_check: Option<bool>,
     },
+    /// The payload format changed mid-stream after it had been locked.
+    ///
+    /// 已锁定的 payload 格式在中途发生变化。
+    FormatChanged {
+        session_key: RtpSessionKey,
+        payload_type: u8,
+        old_payload_mode: RtpPayloadMode,
+        new_payload_mode: RtpPayloadMode,
+    },
     /// A session update was rejected; the session retains its previous values.
     ///
     /// 会话更新被拒绝；会话保留旧值。

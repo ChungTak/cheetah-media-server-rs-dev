@@ -571,6 +571,17 @@ async fn run_ingress_worker(
             } => {
                 warn!("RTP session update failed: key={session_key}, reason={reason}");
             }
+            RtpCoreEvent::FormatChanged {
+                session_key,
+                payload_type,
+                old_payload_mode,
+                new_payload_mode,
+            } => {
+                warn!("RTP payload format changed: key={session_key}, pt={payload_type}, {old_payload_mode:?} -> {new_payload_mode:?}");
+                if let Some(session) = sessions.remove(&session_key) {
+                    let _ = session.sink.close();
+                }
+            }
             RtpCoreEvent::SessionClosed {
                 session_key,
                 reason,
