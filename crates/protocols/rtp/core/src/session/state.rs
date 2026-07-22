@@ -1,8 +1,10 @@
 use std::net::SocketAddr;
 
-use cheetah_codec::{MpegTsDemuxer, PsDemuxer, RtpPayloadMode, RtpPayloadProfile};
+use cheetah_codec::{
+    MpegTsDemuxer, PsDemuxer, RtpPacket, RtpPayloadMode, RtpPayloadProfile, RtpReorderBuffer,
+};
 
-use crate::rtcp_report::RtcpReportState;
+use crate::rtcp_report::{default_clock_rate_hz, RtcpReportState};
 use crate::types::{RtpSessionKey, RtpSessionState, RtpTrackFilter, RtpTransportMode};
 
 pub(super) enum SessionDemuxer {
@@ -31,6 +33,11 @@ pub(crate) struct RtpSession {
     // Ingress state
     pub(super) demuxer: SessionDemuxer,
     pub(super) last_seq: Option<u16>,
+    /// Bounded RTP reorder buffer for this session. Packets that arrive out of order
+    /// are held until their predecessors arrive or a latency/packet budget is exceeded.
+    /// The buffer stores `(packet, arrival_ms)` tuples so per-packet timestamps are
+    /// preserved when buffered packets are released.
+    pub(super) reorder: RtpReorderBuffer<(RtpPacket, u64)>,
     /// Count of payload-mode sniff attempts for sessions created with `Unknown` mode.
     /// Scoped per session so unrelated streams do not share the budget.
     pub(super) pt_probe_attempts: u8,
@@ -157,6 +164,19 @@ pub(super) fn state_after_egress(
         | (RtpTransportMode::SendRecv, RtpSessionState::Sending) => Some(RtpSessionState::SendRecv),
         _ => None,
     }
+}
+
+/// Commit a resolved payload profile to a session, resetting the demuxer and PT state
+/// so the next packet is parsed under the new mode.
+pub(super) fn commit_payload_profile(session: &mut RtpSession, pt: u8, profile: RtpPayloadProfile) {
+    session.payload_type = Some(pt);
+    session.payload_mode = profile.mode;
+    session.egress_payload_mode = profile.mode;
+    session.demuxer = SessionDemuxer::Pending;
+    session.pt_change_unknown_count = 0;
+    session
+        .rtcp
+        .set_clock_rate_hz(default_clock_rate_hz(profile.mode));
 }
 
 impl RtpSession {
