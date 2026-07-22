@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 
 use cheetah_codec::{
     probe_rtp_payload, MpegTsDemuxEvent, MpegTsDemuxer, MpegTsDemuxerConfig, PsDemuxEvent,
-    PsDemuxer, PsDemuxerConfig, RtpHeader, RtpPacket, RtpPayloadMode,
+    PsDemuxer, PsDemuxerConfig, RtpHeader, RtpPacket, RtpPayloadMode, RtpPayloadProfile,
 };
 
 use crate::error::RtpCoreDiagnostic;
@@ -42,6 +42,13 @@ struct RtpSession {
     // Ingress state
     demuxer: SessionDemuxer,
     last_seq: Option<u16>,
+    /// Count of payload-mode sniff attempts for sessions created with `Unknown` mode.
+    /// Scoped per session so unrelated streams do not share the budget.
+    pt_probe_attempts: u8,
+    /// Candidate profile from the last sniff; committed only after repeated matches.
+    pt_pending_profile: Option<RtpPayloadProfile>,
+    /// Consecutive sniff matches for the same candidate profile.
+    pt_pending_confirm_count: u8,
     source_addr: Option<SocketAddr>,
     last_activity_ms: u64,
 
@@ -93,8 +100,12 @@ pub struct RtpCore {
     ssrc_to_session: HashMap<u32, RtpSessionKey>,
     tcp_conn_to_session: HashMap<u64, RtpSessionKey>,
     ehome_decoders: HashMap<u64, cheetah_codec::EhomeDecoder>,
+    /// Payload-type resolver: binding -> static table -> payload sniff.
+    pt_resolver: cheetah_codec::RtpPtResolver,
     max_sessions: usize,
     session_idle_timeout_ms: u64,
+    /// Per-session budget for payload-mode sniff when the mode is `Unknown`.
+    max_pt_probe_packets: u8,
     now_ms: u64,
     /// TCP framing mode applied when deframing inbound RTP-over-TCP traffic. Defaults to
     /// `AutoDetect`, matching ABLMediaServer's behaviour of accepting both 2-byte length-prefix
@@ -120,8 +131,10 @@ impl RtpCore {
             ssrc_to_session: HashMap::new(),
             tcp_conn_to_session: HashMap::new(),
             ehome_decoders: HashMap::new(),
+            pt_resolver: cheetah_codec::RtpPtResolver::new(),
             max_sessions,
             session_idle_timeout_ms,
+            max_pt_probe_packets: 8,
             now_ms: 0,
             tcp_framing: cheetah_codec::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
@@ -339,6 +352,9 @@ impl RtpCore {
                                 max_rtp_len_observed: 0,
                                 generation: 1,
                                 updated_at_ms: 0,
+                                pt_probe_attempts: 0,
+                                pt_pending_profile: None,
+                                pt_pending_confirm_count: 0,
                                 last_error: None,
                                 rtcp: RtcpReportState::new(default_clock_rate_hz(
                                     RtpPayloadMode::Ehome,
@@ -683,12 +699,9 @@ impl RtpCore {
             }
 
             let key = format!("live/{ssrc}");
-            let probed = probe_rtp_payload(&rtp.payload);
-            let mode = if probed == RtpPayloadMode::Unknown {
-                RtpPayloadMode::Ps // default standard compat
-            } else {
-                probed
-            };
+            let mode = probe_rtp_payload(&rtp.payload);
+            // If `probe_rtp_payload` cannot determine the mode, leave it `Unknown`; the
+            // `pt_resolver` will attempt a static mapping and bounded sniff on the first packet.
 
             let session = RtpSession {
                 _session_key: key.clone(),
@@ -717,6 +730,9 @@ impl RtpCore {
                 max_rtp_len_observed: 0,
                 generation: 1,
                 updated_at_ms: 0,
+                pt_probe_attempts: 0,
+                pt_pending_profile: None,
+                pt_pending_confirm_count: 0,
                 last_error: None,
                 rtcp: RtcpReportState::new(default_clock_rate_hz(mode)),
             };
@@ -734,6 +750,64 @@ impl RtpCore {
         let Some(session) = self.sessions.get_mut(&session_key) else {
             return;
         };
+
+        // Resolve the payload mode for sessions created without an explicit mode.
+        // Order: external binding (set via spec/UpdateSession), static PT table,
+        // then payload sniff. The sniff budget is per-session so one stream cannot
+        // exhaust it for others.
+        if session.payload_mode == RtpPayloadMode::Unknown {
+            if session.pt_probe_attempts < self.max_pt_probe_packets {
+                session.pt_probe_attempts += 1;
+                match self
+                    .pt_resolver
+                    .resolve_with_source(rtp.header.payload_type, &rtp.payload)
+                {
+                    cheetah_codec::RtpPtResolveSource::Binding(profile)
+                    | cheetah_codec::RtpPtResolveSource::Static(profile)
+                    | cheetah_codec::RtpPtResolveSource::Encapsulation(profile) => {
+                        // Authoritative: external binding, static table, or container
+                        // sync/pack header (PS/TS/JTT/Ehome).
+                        session.payload_type = Some(rtp.header.payload_type);
+                        session.payload_mode = profile.mode;
+                        session.egress_payload_mode = profile.mode;
+                        session.demuxer = SessionDemuxer::Pending;
+                    }
+                    cheetah_codec::RtpPtResolveSource::Weak(profile) => {
+                        // Weak pattern-based sniff (Annex-B start code / AAC ADTS) requires
+                        // two consecutive matching packets before committing, so a single
+                        // false-positive inside a PS/TS fragment cannot mis-route the stream.
+                        if session.pt_pending_profile == Some(profile) {
+                            session.pt_pending_confirm_count += 1;
+                        } else {
+                            session.pt_pending_profile = Some(profile);
+                            session.pt_pending_confirm_count = 1;
+                        }
+                        if session.pt_pending_confirm_count >= 2 {
+                            session.payload_type = Some(rtp.header.payload_type);
+                            session.payload_mode = profile.mode;
+                            session.egress_payload_mode = profile.mode;
+                            session.demuxer = SessionDemuxer::Pending;
+                        }
+                    }
+                    cheetah_codec::RtpPtResolveSource::Unknown => {
+                        // No recognizable signal this packet; drop any pending weak candidate
+                        // so confirmation only counts consecutive matches.
+                        session.pt_pending_profile = None;
+                        session.pt_pending_confirm_count = 0;
+                    }
+                }
+            }
+            // If the mode is still unknown after exhausting the per-session sniff budget,
+            // fall back to PS for GB28181 compatibility rather than leaving the stream on
+            // the no-op ES demuxer.
+            if session.payload_mode == RtpPayloadMode::Unknown
+                && session.pt_probe_attempts >= self.max_pt_probe_packets
+            {
+                session.payload_mode = RtpPayloadMode::Ps;
+                session.egress_payload_mode = RtpPayloadMode::Ps;
+                session.demuxer = SessionDemuxer::Pending;
+            }
+        }
 
         // Update stats and activity
         session.packets_received += 1;
@@ -1195,6 +1269,9 @@ impl RtpCore {
                     max_rtp_len_observed: 0,
                     generation: 1,
                     updated_at_ms: 0,
+                    pt_probe_attempts: 0,
+                    pt_pending_profile: None,
+                    pt_pending_confirm_count: 0,
                     last_error: None,
                     rtcp: RtcpReportState::new(default_clock_rate_hz(spec.payload_mode)),
                 };
@@ -1260,6 +1337,9 @@ impl RtpCore {
                     max_rtp_len_observed: 0,
                     generation: 1,
                     updated_at_ms: 0,
+                    pt_probe_attempts: 0,
+                    pt_pending_profile: None,
+                    pt_pending_confirm_count: 0,
                     last_error: None,
                     rtcp: RtcpReportState::new(default_clock_rate_hz(spec.payload_mode)),
                 };
@@ -2103,5 +2183,117 @@ mod tests {
             _ => None,
         });
         assert_eq!(updated, Some(1));
+    }
+
+    #[test]
+    fn test_pt_resolver_sniffs_h26x_on_auto_create_after_confirmation() {
+        let mut core = RtpCore::new(10, 30_000);
+
+        // Two consecutive Annex-B packets are required before committing to Es.
+        for seq in 1..=2u16 {
+            let rtp = RtpPacket {
+                header: RtpHeader {
+                    version: 2,
+                    payload_type: 96,
+                    sequence_number: seq,
+                    timestamp: u32::from(seq),
+                    ssrc: 1000,
+                    marker: false,
+                },
+                payload: Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x09]),
+            };
+            let dgram = RtpDatagram {
+                source: "127.0.0.1:1".parse().unwrap(),
+                data: rtp.encode(),
+                received_at_ms: 0,
+            };
+            let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        }
+
+        let session = core
+            .sessions
+            .get("live/1000")
+            .expect("auto-created session");
+        assert_eq!(session.payload_mode, RtpPayloadMode::Es);
+    }
+
+    #[test]
+    fn test_single_annexb_hit_does_not_commit_to_es() {
+        let mut core = RtpCore::new(10, 30_000);
+
+        // First packet looks like Annex-B but the second packet is a PS pack header,
+        // so the stream should resolve to Ps, not Es.
+        let first = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 1,
+                timestamp: 0,
+                ssrc: 1000,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x09]),
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:1".parse().unwrap(),
+            data: first.encode(),
+            received_at_ms: 0,
+        };
+        let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+
+        let second = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 2,
+                timestamp: 1,
+                ssrc: 1000,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0x00]),
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:1".parse().unwrap(),
+            data: second.encode(),
+            received_at_ms: 0,
+        };
+        let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+
+        let session = core
+            .sessions
+            .get("live/1000")
+            .expect("auto-created session");
+        assert_eq!(session.payload_mode, RtpPayloadMode::Ps);
+    }
+
+    #[test]
+    fn test_unknown_payload_falls_back_to_ps_after_probe_budget() {
+        let mut core = RtpCore::new(10, 30_000);
+
+        for seq in 1..=8u16 {
+            let rtp = RtpPacket {
+                header: RtpHeader {
+                    version: 2,
+                    payload_type: 96,
+                    sequence_number: seq,
+                    timestamp: u32::from(seq),
+                    ssrc: 2000,
+                    marker: false,
+                },
+                payload: Bytes::from(vec![0xAB, 0xCD]),
+            };
+            let dgram = RtpDatagram {
+                source: "127.0.0.1:1".parse().unwrap(),
+                data: rtp.encode(),
+                received_at_ms: 0,
+            };
+            let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        }
+
+        let session = core
+            .sessions
+            .get("live/2000")
+            .expect("auto-created session");
+        assert_eq!(session.payload_mode, RtpPayloadMode::Ps);
     }
 }
