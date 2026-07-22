@@ -54,6 +54,9 @@ struct RtpSession {
     /// Number of mid-stream payload-mode switches already performed on this session.
     pt_format_change_count: u8,
     source_addr: Option<SocketAddr>,
+    /// Last observed RTCP source address for this peer. Separate from `source_addr` because
+    /// RTCP may travel on its own UDP port or even a different address.
+    rtcp_source_addr: Option<SocketAddr>,
     last_activity_ms: u64,
 
     // Egress state
@@ -246,6 +249,7 @@ impl RtpCore {
     /// 与会话 `ssrc` 或 `peer_ssrc` 匹配的会话。NACK 或 PLI 等 RTCP 反馈包在此阶段
     /// 不解析并被忽略。
     fn process_rtcp_packet(&mut self, datagram: RtpDatagram, outputs: &mut Vec<RtpCoreOutput>) {
+        let rtcp_source = datagram.source;
         let Ok(compound) = RtcpCompoundPacket::parse(datagram.data) else {
             return;
         };
@@ -257,6 +261,7 @@ impl RtpCore {
                 RtcpPacket::SenderReport(sr) => {
                     for session in self.sessions.values_mut() {
                         if session.peer_ssrc == sr.ssrc {
+                            session.rtcp_source_addr = Some(rtcp_source);
                             session.rtcp.on_sender_report(
                                 sr.ntp_timestamp,
                                 sr.rtp_timestamp,
@@ -270,6 +275,7 @@ impl RtpCore {
                     for block in rr.report_blocks {
                         if let Some(session_key) = self.ssrc_to_session.get(&block.ssrc) {
                             if let Some(session) = self.sessions.get_mut(session_key) {
+                                session.rtcp_source_addr = Some(rtcp_source);
                                 session.last_rr_received_ms = self.now_ms.max(1);
                             }
                         }
@@ -291,6 +297,9 @@ impl RtpCore {
         }
 
         for key in bye_keys {
+            if let Some(session) = self.sessions.get_mut(&key) {
+                session.rtcp_source_addr = Some(rtcp_source);
+            }
             self.close_session(key, "RTCP BYE".to_string(), outputs);
         }
     }
@@ -383,6 +392,7 @@ impl RtpCore {
                                 demuxer: SessionDemuxer::Pending,
                                 last_seq: None,
                                 source_addr: None,
+                                rtcp_source_addr: None,
                                 last_activity_ms: 0,
                                 destination: None,
                                 tcp_conn_id: Some(chunk.conn_id),
@@ -766,6 +776,7 @@ impl RtpCore {
                 demuxer: SessionDemuxer::Pending,
                 last_seq: None,
                 source_addr,
+                rtcp_source_addr: None,
                 last_activity_ms: 0, // Will be updated
                 destination: None,
                 tcp_conn_id,
@@ -1178,7 +1189,11 @@ impl RtpCore {
 
                 let session_key = session._session_key.clone();
                 let conn_id = session.tcp_conn_id;
-                let Some(dest) = session.destination.or(session.source_addr) else {
+                let Some(dest) = session
+                    .rtcp_source_addr
+                    .or(session.destination)
+                    .or(session.source_addr)
+                else {
                     continue;
                 };
 
@@ -1398,6 +1413,7 @@ impl RtpCore {
                     demuxer: SessionDemuxer::Pending,
                     last_seq: None,
                     source_addr: None,
+                    rtcp_source_addr: None,
                     last_activity_ms: 0,
                     destination: None,
                     tcp_conn_id: None,
@@ -1468,6 +1484,7 @@ impl RtpCore {
                     demuxer: SessionDemuxer::Pending,
                     last_seq: None,
                     source_addr: None,
+                    rtcp_source_addr: None,
                     last_activity_ms: 0,
                     destination: Some(spec.destination),
                     tcp_conn_id: spec.tcp_conn_id,

@@ -14,8 +14,9 @@ use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
 use cheetah_rtp_core::{
-    RtpClientSpec, RtpConnectionType, RtpCore, RtpCoreCommand, RtpCoreEvent, RtpCoreInput,
-    RtpCoreOutput, RtpDatagram, RtpSendFrame, RtpServerSpec, RtpTcpChunk,
+    rtcp::RtcpCompoundPacket, RtpClientSpec, RtpConnectionType, RtpCore, RtpCoreCommand,
+    RtpCoreEvent, RtpCoreInput, RtpCoreOutput, RtpDatagram, RtpSendFrame, RtpServerSpec,
+    RtpTcpChunk,
 };
 use cheetah_runtime_api::CancellationToken;
 
@@ -294,13 +295,21 @@ pub fn start_driver(config: RtpDriverConfig, cancel: CancellationToken) -> RtpDr
     }
 }
 
-/// Spawn a UDP recv task that forwards datagrams into the core input channel.
+/// Spawn a UDP recv task that forwards datagrams into the core input channels.
+///
+/// When `rtcp_rx_tx` is `Some`, datagrams that look like RTCP are routed to the RTCP
+/// channel; otherwise they are sent as RTP. `mux` enables RTCP/RTP mux detection on this
+/// socket; when false the socket is assumed to be a dedicated RTCP socket and all
+/// datagrams are forwarded as RTCP.
 ///
 /// 生成 UDP 接收任务，将数据报转发到 core 输入通道。
+#[allow(clippy::too_many_arguments)]
 fn spawn_udp_reader(
     socket: Arc<UdpSocket>,
     cancel: CancellationToken,
     udp_rx_tx: mpsc::Sender<RtpDatagram>,
+    rtcp_rx_tx: Option<mpsc::Sender<RtpDatagram>>,
+    mux: bool,
     buf_size: usize,
     start: time::Instant,
     base_ms: u64,
@@ -315,7 +324,30 @@ fn spawn_udp_reader(
                         Ok((len, src)) => {
                             let received_at_ms = base_ms + start.elapsed().as_millis() as u64;
                             let data = Bytes::copy_from_slice(&buf[..len]);
-                            if udp_rx_tx.send(RtpDatagram { source: src, data, received_at_ms }).await.is_err() {
+
+                            let datagram = RtpDatagram { source: src, data, received_at_ms };
+
+                            if let Some(rtcp_tx) = rtcp_rx_tx.as_ref() {
+                                if mux {
+                                    // RTP/RTCP mux: parse the datagram to decide which core
+                                    // input it should feed. A successful RTCP parse and a
+                                    // non-RTP-looking payload type routes it to the RTCP path.
+                                    if RtcpCompoundPacket::parse(datagram.data.clone()).is_ok() {
+                                        if rtcp_tx.send(datagram).await.is_err() {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                } else {
+                                    // Dedicated RTCP socket.
+                                    if rtcp_tx.send(datagram).await.is_err() {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            }
+
+                            if udp_rx_tx.send(datagram).await.is_err() {
                                 break;
                             }
                         }
@@ -377,6 +409,21 @@ async fn resolve_udp_socket(
         }
     }
     default_socket.clone()
+}
+
+/// Derive the RTCP destination from an RTP peer address.
+///
+/// RTP conventionally uses an even port and RTCP the next odd port. When the supplied
+/// address already looks like an RTCP port (odd) we leave it unchanged; otherwise we
+/// map the even RTP port to `port + 1`.
+///
+/// 由 RTP 对端地址推导 RTCP 目的地址。
+fn resolve_rtcp_destination(rtp_dest: SocketAddr) -> SocketAddr {
+    let mut dest = rtp_dest;
+    if dest.port().is_multiple_of(2) {
+        dest.set_port(dest.port().saturating_add(1));
+    }
+    dest
 }
 
 /// Main Tokio driver loop: bind sockets, spawn I/O tasks, and dispatch core I/O.
@@ -481,10 +528,18 @@ async fn run_driver_loop(
 
     // Spawn default UDP recv task.
     let default_udp_addr = udp_socket.local_addr().unwrap_or(config.listen_udp);
+    let rtcp_mux = config.listen_rtcp_udp.is_none();
+    let rtcp_rx_tx_for_sockets = rtcp_rx_tx.clone();
     spawn_udp_reader(
         udp_socket.clone(),
         cancel.clone(),
         udp_rx_tx.clone(),
+        if rtcp_mux {
+            Some(rtcp_rx_tx.clone())
+        } else {
+            None
+        },
+        rtcp_mux,
         config.read_buffer_size,
         start_instant,
         base_ms,
@@ -492,32 +547,16 @@ async fn run_driver_loop(
 
     // Spawn dedicated RTCP UDP reader if configured.
     if let Some(rtcp_socket) = rtcp_socket.clone() {
-        let cancel = cancel.clone();
-        let buf_size = config.read_buffer_size;
-        let rtcp_rx_tx = rtcp_rx_tx.clone();
-        let start = start_instant;
-        tokio::spawn(async move {
-            let mut buf = vec![0u8; buf_size];
-            loop {
-                tokio::select! {
-                    _ = cancel.cancelled() => break,
-                    res = rtcp_socket.recv_from(&mut buf) => {
-                        match res {
-                            Ok((len, src)) => {
-                                let received_at_ms = base_ms + start.elapsed().as_millis() as u64;
-                                let data = Bytes::copy_from_slice(&buf[..len]);
-                                if rtcp_rx_tx.send(RtpDatagram { source: src, data, received_at_ms }).await.is_err() {
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                warn!("RTCP receive error: {e}");
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        spawn_udp_reader(
+            rtcp_socket,
+            cancel.clone(),
+            udp_rx_tx.clone(),
+            Some(rtcp_rx_tx.clone()),
+            false,
+            config.read_buffer_size,
+            start_instant,
+            base_ms,
+        );
     }
     drop(rtcp_rx_tx);
 
@@ -735,6 +774,8 @@ async fn run_driver_loop(
                                                     socket.clone(),
                                                     socket_cancel.clone(),
                                                     udp_rx_tx.clone(),
+                                                    if rtcp_mux { Some(rtcp_rx_tx_for_sockets.clone()) } else { None },
+                                                    rtcp_mux,
                                                     config.read_buffer_size,
                                                     start_instant,
                                                     base_ms,
@@ -774,6 +815,8 @@ async fn run_driver_loop(
                                                 socket.clone(),
                                                 socket_cancel.clone(),
                                                 udp_rx_tx.clone(),
+                                                if rtcp_mux { Some(rtcp_rx_tx_for_sockets.clone()) } else { None },
+                                                rtcp_mux,
                                                 config.read_buffer_size,
                                                 start_instant,
                                                 base_ms,
@@ -1044,23 +1087,25 @@ async fn run_driver_loop(
                     }
                     RtpCoreOutput::SendRtcp(rtcp_send) => {
                         if let Some(conn_id) = rtcp_send.conn_id {
+                            // TCP RTCP frames are RFC 4571 length-prefixed like RTP so the
+                            // peer can delimit the compound packet on the byte stream.
                             let writers = tcp_writers.clone();
+                            let data = cheetah_codec::encode_tcp_rtcp_frame(&rtcp_send.data);
                             tokio::spawn(async move {
                                 let map = writers.lock().await;
                                 if let Some(tx) = map.get(&conn_id) {
-                                    let _ = tx.send(rtcp_send.data).await;
+                                    let _ = tx.send(data).await;
                                 }
                             });
                         } else if let Some(rtcp_socket) = rtcp_socket.clone() {
-                            // Use the dedicated RTCP UDP socket when configured.
+                            // Dedicated RTCP socket: map even RTP ports to the conventional
+                            // odd RTCP port unless the destination already looks like one.
+                            let dest = resolve_rtcp_destination(rtcp_send.destination);
                             tokio::spawn(async move {
-                                let _ = rtcp_socket
-                                    .send_to(&rtcp_send.data, rtcp_send.destination)
-                                    .await;
+                                let _ = rtcp_socket.send_to(&rtcp_send.data, dest).await;
                             });
                         } else {
-                            // Fallback: tunnel RTCP over the same UDP socket as RTP,
-                            // using the session's dedicated socket if it exists.
+                            // RTP/RTCP mux: reuse the same UDP socket (or per-session socket).
                             let socket = resolve_udp_socket(
                                 &rtcp_send.session_key,
                                 &session_bind_addrs,
