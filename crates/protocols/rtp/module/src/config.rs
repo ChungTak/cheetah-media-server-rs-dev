@@ -404,5 +404,7 @@ fn default_enabled_profiles() -> Vec<GbMediaCompatibilityProfile> {
         GbMediaCompatibilityProfile::Zlm,
         GbMediaCompatibilityProfile::Sms,
         GbMediaCompatibilityProfile::Abl,
+        GbMediaCompatibilityProfile::HikvisionEhome,
+        GbMediaCompatibilityProfile::Jtt1078,
     ]
 }

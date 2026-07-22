@@ -571,7 +571,9 @@ async fn rtp_module_disabled_profile_is_rejected() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rtp_module_admission_deny_leaves_no_session() {
-    let harness = Gb28181TestHarness::start().await;
+    // Cap sessions at 1 so a leaked session from the denied open would block
+    // the follow-up allowed open, making the "no leak" assertion strict.
+    let harness = Gb28181TestHarness::start_with_rtp_config("    max_sessions: 1\n").await;
     harness.set_admission_deny(true);
 
     let rtp_api = harness

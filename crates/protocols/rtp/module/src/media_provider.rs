@@ -95,6 +95,7 @@ impl RtpMediaProvider {
         action: AdmissionAction,
         resource: &MediaKey,
         protocol: &str,
+        source_address: Option<String>,
     ) -> Result<()> {
         let Some(provider) = self.engine.media_services.admission() else {
             return Ok(());
@@ -104,7 +105,7 @@ impl RtpMediaProvider {
             principal: ctx.principal.clone(),
             resource: resource.clone(),
             protocol: protocol.to_string(),
-            source_address: None,
+            source_address,
             params: HashMap::new(),
         };
         match provider.authorize(ctx, request).await {
@@ -123,7 +124,8 @@ impl RtpMediaProvider {
             )));
         }
         if self.orchestrator.session_count() >= self.config.max_sessions {
-            return Err(MediaError::unavailable("rtp session limit reached"));
+            return Err(MediaError::unavailable("rtp session limit reached")
+                .with_outcome(EffectOutcome::NotApplied));
         }
         Ok(())
     }
@@ -565,6 +567,9 @@ impl RtpMediaProvider {
                                 MediaErrorCode::Busy
                                     | MediaErrorCode::Timeout
                                     | MediaErrorCode::Unavailable
+                                    | MediaErrorCode::PermissionDenied
+                                    | MediaErrorCode::Unauthenticated
+                                    | MediaErrorCode::RateLimited
                             )
                         {
                             IdempotencyError::Retryable(encoded)
@@ -821,6 +826,7 @@ impl RtpMediaProvider {
             AdmissionAction::OpenRtpReceiver,
             &request.params.media_key,
             "rtp",
+            request.params.remote_endpoint.map(|a| a.to_string()),
         )
         .await?;
         self.check_profile_and_limits(&request.params)?;
@@ -846,6 +852,7 @@ impl RtpMediaProvider {
             AdmissionAction::OpenRtpSender,
             &request.params.media_key,
             "rtp",
+            request.params.remote_endpoint.map(|a| a.to_string()),
         )
         .await?;
         self.check_profile_and_limits(&request.params)?;
@@ -875,6 +882,7 @@ impl RtpMediaProvider {
             AdmissionAction::OpenRtpSender,
             &request.params.media_key,
             "rtp",
+            request.params.remote_endpoint.map(|a| a.to_string()),
         )
         .await?;
         self.check_profile_and_limits(&request.params)?;
