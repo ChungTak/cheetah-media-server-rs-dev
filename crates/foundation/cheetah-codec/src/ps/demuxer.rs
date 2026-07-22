@@ -285,9 +285,11 @@ impl PsDemuxer {
                 0x03 | 0x04 => CodecId::MP3,
                 0x80 => CodecId::Opus,
                 _ => {
-                    events.push(PsDemuxEvent::Diagnostic(
-                        PsDemuxDiagnostic::UnsupportedPayload { stream_id: es_id },
-                    ));
+                    if self.unsupported_payload_reported.insert(es_id) {
+                        events.push(PsDemuxEvent::Diagnostic(
+                            PsDemuxDiagnostic::UnsupportedPayload { stream_id: es_id },
+                        ));
+                    }
                     continue;
                 }
             };
