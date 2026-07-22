@@ -303,7 +303,7 @@ impl RtcpSourceDescription {
             let used = 1 + chunk.items.iter().map(|i| 2 + i.text.len()).sum::<usize>();
             let pad = padding_to_4(used);
             out.put_u8(0);
-            for _ in 0..pad.saturating_sub(1) {
+            for _ in 0..pad {
                 out.put_u8(0);
             }
         }
@@ -626,6 +626,27 @@ mod tests {
         assert_eq!(parsed.chunks[0].items.len(), 1);
         assert_eq!(parsed.chunks[0].items[0].item_type, RtcpSdesItemType::CName);
         assert_eq!(parsed.chunks[0].items[0].text, "user@host");
+    }
+
+    #[test]
+    fn roundtrip_source_description_with_padding() {
+        // 10-byte text gives item length 12 and requires 3 trailing pad bytes.
+        let sdes = RtcpSourceDescription {
+            chunks: vec![RtcpSdesChunk {
+                ssrc: 0x55555555,
+                items: vec![RtcpSdesItem {
+                    item_type: RtcpSdesItemType::CName,
+                    text: "0123456789".to_string(),
+                }],
+            }],
+        };
+        let encoded = sdes.encode();
+        assert_eq!(encoded.len() % 4, 0);
+        let decoded = RtcpCompoundPacket::parse(encoded).unwrap();
+        let RtcpPacket::SourceDescription(parsed) = &decoded.packets[0] else {
+            panic!("expected sdes");
+        };
+        assert_eq!(parsed.chunks[0].items[0].text, "0123456789");
     }
 
     #[test]
