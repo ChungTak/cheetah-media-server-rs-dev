@@ -258,7 +258,13 @@ impl RtpCore {
             return;
         };
 
-        self.feed_rtp_packet(rtp, Some(datagram.source), None, outputs);
+        self.feed_rtp_packet(
+            rtp,
+            Some(datagram.source),
+            None,
+            datagram.received_at_ms,
+            outputs,
+        );
     }
 
     /// Process TCP bytes for a single connection, handling Ehome2 and RTP-over-TCP framing.
@@ -550,7 +556,13 @@ impl RtpCore {
             let mut remaining = &chunk.data[..];
             while !remaining.is_empty() {
                 if let Some(parsed) = cheetah_codec::parse_tcp_rtp_frame_with(remaining, framing) {
-                    self.feed_rtp_packet(parsed.packet, None, Some(chunk.conn_id), outputs);
+                    self.feed_rtp_packet(
+                        parsed.packet,
+                        None,
+                        Some(chunk.conn_id),
+                        chunk.received_at_ms,
+                        outputs,
+                    );
                     remaining = &remaining[parsed.consumed..];
                 } else {
                     if remaining.len() < 2 {
@@ -585,6 +597,7 @@ impl RtpCore {
                                     parsed.packet,
                                     None,
                                     Some(chunk.conn_id),
+                                    chunk.received_at_ms,
                                     outputs,
                                 );
                                 remaining = &remaining[offset + parsed.consumed..];
@@ -632,6 +645,7 @@ impl RtpCore {
         rtp: RtpPacket,
         source_addr: Option<SocketAddr>,
         tcp_conn_id: Option<u64>,
+        received_at_ms: u64,
         outputs: &mut Vec<RtpCoreOutput>,
     ) {
         if rtp.header.version != 2 {
@@ -721,11 +735,11 @@ impl RtpCore {
         // Update stats and activity
         session.packets_received += 1;
         session.bytes_received += rtp.payload.len() as u32;
-        session.last_activity_ms = self.now_ms;
+        session.last_activity_ms = received_at_ms;
         session.rtcp.on_packet(
             rtp.header.sequence_number,
             rtp.header.timestamp,
-            self.now_ms,
+            received_at_ms,
         );
 
         // Dynamic max-RTP-length learner (ABL `nMaxRtpLength`). Track the largest payload
@@ -1447,6 +1461,7 @@ mod tests {
         let datagram = RtpDatagram {
             source: addr,
             data: packet.encode(),
+            received_at_ms: 0,
         };
 
         let outputs = core.handle_input(RtpCoreInput::UdpPacket(datagram));
@@ -1585,6 +1600,7 @@ mod tests {
         let outputs = core.handle_input(RtpCoreInput::TcpBytes(crate::types::RtpTcpChunk {
             conn_id: 1,
             data: Bytes::from(chunk),
+            received_at_ms: 0,
         }));
 
         // We should observe a Diagnostic for sequence-gap and at least one further event
@@ -1663,6 +1679,7 @@ mod tests {
         let dgram = crate::types::RtpDatagram {
             source: "127.0.0.1:1".parse().unwrap(),
             data: Bytes::from(rr),
+            received_at_ms: 0,
         };
         let _ = core.handle_input(RtpCoreInput::RtcpPacket(dgram));
 
@@ -1709,6 +1726,7 @@ mod tests {
         let outputs = core.handle_input(RtpCoreInput::TcpBytes(crate::types::RtpTcpChunk {
             conn_id: 1,
             data: frame,
+            received_at_ms: 0,
         }));
         assert!(!outputs.iter().any(|o| matches!(
             o,
@@ -1740,6 +1758,7 @@ mod tests {
         let dgram = crate::types::RtpDatagram {
             source: "127.0.0.1:1".parse().unwrap(),
             data: rtp.encode(),
+            received_at_ms: 0,
         };
 
         let outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
@@ -1902,6 +1921,7 @@ mod tests {
         let dgram = RtpDatagram {
             source: "127.0.0.1:1".parse().unwrap(),
             data: rtp.encode(),
+            received_at_ms: 0,
         };
         let outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
         assert!(!outputs
@@ -1978,6 +1998,7 @@ mod tests {
         let dgram = RtpDatagram {
             source: "127.0.0.1:1".parse().unwrap(),
             data: rtp.encode(),
+            received_at_ms: 0,
         };
         let outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
         assert!(!outputs
@@ -2042,6 +2063,7 @@ mod tests {
         let dgram = RtpDatagram {
             source: "127.0.0.1:1".parse().unwrap(),
             data: rtp.encode(),
+            received_at_ms: 0,
         };
         let outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
         assert!(!outputs

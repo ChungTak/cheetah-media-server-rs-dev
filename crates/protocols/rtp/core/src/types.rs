@@ -144,20 +144,30 @@ pub struct RtpSendFrame {
 
 /// A single UDP datagram received from the network.
 ///
+/// `received_at_ms` is the driver-side receive timestamp in Unix-epoch wall-clock
+/// milliseconds, in the same domain as `RtpCoreInput::Tick`. `core` uses it for
+/// per-packet jitter statistics and activity tracking.
+///
 /// 从网络收到的单个 UDP 数据报。
 #[derive(Debug, Clone)]
 pub struct RtpDatagram {
     pub source: SocketAddr,
     pub data: Bytes,
+    pub received_at_ms: u64,
 }
 
 /// A chunk of TCP bytes received on a single connection.
+///
+/// `received_at_ms` is the driver-side receive timestamp in Unix-epoch wall-clock
+/// milliseconds, in the same domain as `RtpCoreInput::Tick`. `core` uses it for
+/// per-packet jitter statistics and activity tracking.
 ///
 /// 在单个连接上收到的一小段 TCP 字节。
 #[derive(Debug, Clone)]
 pub struct RtpTcpChunk {
     pub conn_id: u64,
     pub data: Bytes,
+    pub received_at_ms: u64,
 }
 
 /// Outbound UDP datagram.

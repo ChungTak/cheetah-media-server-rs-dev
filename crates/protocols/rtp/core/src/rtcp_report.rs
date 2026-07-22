@@ -21,7 +21,10 @@ pub fn default_clock_rate_hz(payload_mode: RtpPayloadMode) -> u64 {
     }
 }
 
-/// Convert wall-clock milliseconds to a 64-bit NTP timestamp.
+/// Convert wall-clock milliseconds since the Unix epoch to a 64-bit NTP timestamp.
+///
+/// `now_ms` must be Unix-epoch milliseconds; callers (drivers) are responsible for
+/// providing a wall-clock value, because core is Sans-I/O and cannot read the clock.
 pub fn ms_to_ntp_timestamp(now_ms: u64) -> u64 {
     let seconds = now_ms / MS_PER_SEC + NTP_UNIX_EPOCH_DIFF;
     let fraction = (now_ms % MS_PER_SEC) * FRACTION_PER_MS;
