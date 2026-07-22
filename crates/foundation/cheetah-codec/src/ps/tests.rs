@@ -423,3 +423,76 @@ fn ps_demuxer_periodic_psm_at_track_limit_does_not_wipe_tracks() {
         "periodic retransmitted PSM must not wipe tracks at limit"
     );
 }
+
+#[test]
+fn ps_demuxer_over_limit_psm_keeps_existing_tracks_and_continues() {
+    let mut config = limit_config();
+    config.max_tracks = 1;
+    let mut demuxer = PsDemuxer::new(config);
+
+    // First muxer with a single video track.
+    let mut muxer_one = PsMuxer::new();
+    muxer_one.add_track(TrackInfo::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        90_000,
+    ));
+
+    let mut video_payload = vec![0, 0, 0, 1, 0x67, 0x42, 0x00, 0x0A];
+    video_payload.extend_from_slice(b"v1");
+    let mut video_frame = AVFrame::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        FrameFormat::CanonicalH26x,
+        90_000,
+        90_000,
+        Timebase::new(1, 90_000),
+        Bytes::from(video_payload.clone()),
+    );
+    video_frame.flags.insert(FrameFlags::KEY);
+    let muxed_one = muxer_one.mux(&video_frame).expect("mux one");
+
+    // Second muxer with two tracks; its PSM exceeds max_tracks=1.
+    let mut muxer_two = PsMuxer::new();
+    muxer_two.add_track(TrackInfo::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        90_000,
+    ));
+    muxer_two.add_track(TrackInfo::new(
+        TrackId(0xC0),
+        MediaKind::Audio,
+        CodecId::G711A,
+        8_000,
+    ));
+    let muxed_two = muxer_two.mux(&video_frame).expect("mux two");
+
+    let _ = demuxer.push(&muxed_one);
+    let events = demuxer.push(&muxed_two);
+    let flushed = demuxer.flush();
+
+    let limit = events.iter().any(|e| {
+        matches!(
+            e,
+            PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+            if resource == "tracks"
+        )
+    });
+    assert!(
+        limit,
+        "PSM introducing more than max_tracks should emit LimitExceeded"
+    );
+
+    // The video PES that follows the over-limit PSM must still be decoded.
+    let found_frame = events
+        .iter()
+        .chain(flushed.iter())
+        .any(|e| matches!(e, PsDemuxEvent::Frame(f) if f.track_id == TrackId(0xE0)));
+    assert!(
+        found_frame,
+        "video frame after over-limit PSM must still be emitted"
+    );
+}

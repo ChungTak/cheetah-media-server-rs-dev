@@ -31,6 +31,7 @@ pub struct PsDemuxer {
     new_ps: bool,
     probe_pack_count: u32,
     probe_exceeded: bool,
+    tracks_ever_found: bool,
 }
 
 impl PsDemuxer {
@@ -50,6 +51,7 @@ impl PsDemuxer {
             new_ps: false,
             probe_pack_count: 0,
             probe_exceeded: false,
+            tracks_ever_found: false,
         }
     }
 
@@ -58,7 +60,7 @@ impl PsDemuxer {
     /// 压入原始 PS 字节，返回解析出的事件。
     pub fn push(&mut self, data: &[u8]) -> Vec<PsDemuxEvent> {
         let mut events = Vec::new();
-        if self.probe_exceeded && self.tracks.is_empty() {
+        if self.probe_exceeded {
             return events;
         }
         if self.remain_buffer.len() + data.len() > self.config.max_reassembly_bytes {
@@ -100,7 +102,7 @@ impl PsDemuxer {
                     }
                     self.new_ps = true;
                     self.probe_pack_count = self.probe_pack_count.saturating_add(1);
-                    if self.tracks.is_empty()
+                    if !self.tracks_ever_found
                         && self.probe_pack_count > self.config.max_probe_packets
                     {
                         self.probe_exceeded = true;
@@ -292,19 +294,21 @@ impl PsDemuxer {
         }
 
         if !new_tracks.is_empty() {
+            let new_keys = new_tracks
+                .iter()
+                .filter(|t| !self.tracks.contains_key(&(t.track_id.0 as u8)))
+                .count();
+            if self.tracks.len() + new_keys > self.config.max_tracks {
+                events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                    resource: "tracks".to_string(),
+                }));
+                return;
+            }
             for track in &new_tracks {
                 let track_key = track.track_id.0 as u8;
-                if !self.tracks.contains_key(&track_key)
-                    && self.tracks.len() >= self.config.max_tracks
-                {
-                    events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
-                        resource: "tracks".to_string(),
-                    }));
-                    self.tracks.clear();
-                    return;
-                }
                 self.tracks.insert(track_key, track.clone());
             }
+            self.tracks_ever_found = true;
             events.push(PsDemuxEvent::TrackInfo(new_tracks));
         }
     }
@@ -402,6 +406,7 @@ impl PsDemuxer {
                 let track_id = TrackId(stream_id as u32);
                 let track_info = TrackInfo::new(track_id, MediaKind::Video, CodecId::H264, 90_000);
                 self.tracks.insert(stream_id, track_info.clone());
+                self.tracks_ever_found = true;
                 events.push(PsDemuxEvent::TrackInfo(vec![track_info]));
 
                 self.video_buffer.extend_from_slice(payload);
@@ -446,6 +451,7 @@ impl PsDemuxer {
                 let track_info = TrackInfo::new(track_id, MediaKind::Audio, CodecId::G711A, 8_000);
                 self.tracks.insert(stream_id, track_info.clone());
                 self.audio_es_id = stream_id;
+                self.tracks_ever_found = true;
                 events.push(PsDemuxEvent::TrackInfo(vec![track_info]));
 
                 let pts_val = pts.unwrap_or(0);
