@@ -1460,3 +1460,82 @@ fn ps_demuxer_reports_missing_parameter_sets_for_keyframe() {
         "keyframe without cached SPS/PPS should report MissingParameterSets"
     );
 }
+
+#[test]
+fn ps_demuxer_clears_parameter_set_cache_on_psm_stream_removal() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    let sps: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xC0, 0x1E];
+    let pps: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x68, 0xCE, 0x3C, 0x80];
+    let idr: &[u8] = &[0x00, 0x00, 0x00, 0x01, 0x65, 0x88, 0x84];
+
+    let pack_header = [
+        0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8,
+    ];
+
+    // PSM 0: declare H.264 video at 0xE0.
+    let psm0 = encode_psm_payload(0, &[(0x1B, 0xE0)]);
+    let mut pack0 = Vec::new();
+    pack0.extend_from_slice(&pack_header);
+    pack0.extend_from_slice(&[0x00, 0x00, 0x01, 0xBC]);
+    pack0.extend_from_slice(&(psm0.len() as u16).to_be_bytes());
+    pack0.extend_from_slice(&psm0);
+
+    // PES 0: SPS/PPS, no keyframe.
+    let config_payload = [sps, pps].concat();
+    let mut pack1 = Vec::new();
+    pack1.extend_from_slice(&pack_header);
+    pack1.extend_from_slice(&encode_pes_raw(
+        0xE0,
+        Some(90_000),
+        None,
+        false,
+        0,
+        Some(8 + config_payload.len()),
+        &config_payload,
+    ));
+
+    // PSM 1: replace 0xE0 with an unrelated audio stream so the video track is removed.
+    let psm1 = encode_psm_payload(1, &[(0x0F, 0xC0)]);
+    let mut pack2 = Vec::new();
+    pack2.extend_from_slice(&pack_header);
+    pack2.extend_from_slice(&[0x00, 0x00, 0x01, 0xBC]);
+    pack2.extend_from_slice(&(psm1.len() as u16).to_be_bytes());
+    pack2.extend_from_slice(&psm1);
+
+    // PES 1: pure IDR after the video track was removed. The previous SPS/PPS cache
+    // must have been cleared, so the keyframe cannot be prefixed and must report MissingParameterSets.
+    let mut pack3 = Vec::new();
+    pack3.extend_from_slice(&pack_header);
+    pack3.extend_from_slice(&encode_pes_raw(
+        0xE0,
+        Some(180_000),
+        None,
+        false,
+        0,
+        Some(8 + idr.len()),
+        idr,
+    ));
+
+    let mut all_events = demuxer.push(&pack0);
+    all_events.extend(demuxer.push(&pack1));
+    all_events.extend(demuxer.push(&pack2));
+    all_events.extend(demuxer.push(&pack3));
+    all_events.extend(demuxer.flush());
+
+    let mut missing_reported = false;
+    for ev in all_events {
+        if let PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::MissingParameterSets {
+            stream_id: 0xE0,
+            codec: CodecId::H264,
+        }) = ev
+        {
+            missing_reported = true;
+        }
+    }
+
+    assert!(
+        missing_reported,
+        "keyframe after PSM removal must not reuse stale parameter set cache"
+    );
+}

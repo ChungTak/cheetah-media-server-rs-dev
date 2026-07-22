@@ -404,6 +404,7 @@ impl PsDemuxer {
                 }
             }
             changed.push(track.clone());
+            self.parameter_set_caches.remove(es_id);
             self.tracks.insert(*es_id, track.clone());
         }
 
@@ -411,6 +412,7 @@ impl PsDemuxer {
             for es_id in &removed_keys {
                 self.tracks.remove(es_id);
                 self.codec_probe_pes.remove(es_id);
+                self.parameter_set_caches.remove(es_id);
             }
             events.push(PsDemuxEvent::TrackRemoved(removed));
         }
