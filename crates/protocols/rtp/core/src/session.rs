@@ -51,6 +51,8 @@ struct RtpSession {
     pt_pending_confirm_count: u8,
     /// Consecutive packets with an unresolved but different PT after the mode is locked.
     pt_change_unknown_count: u8,
+    /// Number of mid-stream payload-mode switches already performed on this session.
+    pt_format_change_count: u8,
     source_addr: Option<SocketAddr>,
     last_activity_ms: u64,
 
@@ -110,6 +112,9 @@ pub struct RtpCore {
     max_pt_probe_packets: u8,
     /// Number of consecutive matching sniff results required before locking a dynamic PT.
     pt_lock_confidence: u8,
+    /// Maximum number of tolerated mid-stream payload-mode switches before treating the
+    /// stream as oscillating/spoofed and closing it.
+    max_pt_format_changes: u8,
     now_ms: u64,
     /// TCP framing mode applied when deframing inbound RTP-over-TCP traffic. Defaults to
     /// `AutoDetect`, matching ABLMediaServer's behaviour of accepting both 2-byte length-prefix
@@ -140,6 +145,7 @@ impl RtpCore {
             session_idle_timeout_ms,
             max_pt_probe_packets: 8,
             pt_lock_confidence: 2,
+            max_pt_format_changes: 3,
             now_ms: 0,
             tcp_framing: cheetah_codec::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
@@ -369,6 +375,7 @@ impl RtpCore {
                                 pt_pending_profile: None,
                                 pt_pending_confirm_count: 0,
                                 pt_change_unknown_count: 0,
+                                pt_format_change_count: 0,
                                 last_error: None,
                                 rtcp: RtcpReportState::new(default_clock_rate_hz(
                                     RtpPayloadMode::Ehome,
@@ -749,6 +756,7 @@ impl RtpCore {
                 pt_pending_profile: None,
                 pt_pending_confirm_count: 0,
                 pt_change_unknown_count: 0,
+                pt_format_change_count: 0,
                 last_error: None,
                 rtcp: RtcpReportState::new(default_clock_rate_hz(mode)),
             };
@@ -855,14 +863,24 @@ impl RtpCore {
                     | cheetah_codec::RtpPtResolveSource::Encapsulation(profile) => {
                         session.pt_change_unknown_count = 0;
                         if profile.mode != session.payload_mode {
-                            let old_mode = session.payload_mode;
-                            commit_profile(session, new_pt, profile);
-                            format_change = Some(RtpCoreEvent::FormatChanged {
-                                session_key: session_key.clone(),
-                                payload_type: new_pt,
-                                old_payload_mode: old_mode,
-                                new_payload_mode: profile.mode,
-                            });
+                            session.pt_format_change_count += 1;
+                            if session.pt_format_change_count > self.max_pt_format_changes {
+                                close_reason = Some(format!(
+                                    "payload mode oscillated from {payload_mode:?} to {new_mode:?} more than {max} times",
+                                    payload_mode = session.payload_mode,
+                                    new_mode = profile.mode,
+                                    max = self.max_pt_format_changes,
+                                ));
+                            } else {
+                                let old_mode = session.payload_mode;
+                                commit_profile(session, new_pt, profile);
+                                format_change = Some(RtpCoreEvent::FormatChanged {
+                                    session_key: session_key.clone(),
+                                    payload_type: new_pt,
+                                    old_payload_mode: old_mode,
+                                    new_payload_mode: profile.mode,
+                                });
+                            }
                         } else {
                             session.payload_type = Some(new_pt);
                         }
@@ -1365,6 +1383,7 @@ impl RtpCore {
                     pt_pending_profile: None,
                     pt_pending_confirm_count: 0,
                     pt_change_unknown_count: 0,
+                    pt_format_change_count: 0,
                     last_error: None,
                     rtcp: RtcpReportState::new(default_clock_rate_hz(spec.payload_mode)),
                 };
@@ -1434,6 +1453,7 @@ impl RtpCore {
                     pt_pending_profile: None,
                     pt_pending_confirm_count: 0,
                     pt_change_unknown_count: 0,
+                    pt_format_change_count: 0,
                     last_error: None,
                     rtcp: RtcpReportState::new(default_clock_rate_hz(spec.payload_mode)),
                 };
@@ -2561,6 +2581,86 @@ mod tests {
 
         let session = core.sessions.get("live/4000").expect("session still alive");
         assert_eq!(session.payload_mode, RtpPayloadMode::Ts);
+    }
+
+    #[test]
+    fn test_session_closed_on_oscillating_pt_modes() {
+        let mut core = RtpCore::new(10, 30_000);
+
+        // Lock the session to RawAudio on static PT 0.
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 0,
+                sequence_number: 1,
+                timestamp: 1,
+                ssrc: 4100,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00]),
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:1".parse().unwrap(),
+            data: rtp.encode(),
+            received_at_ms: 0,
+        };
+        let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+
+        let session = core
+            .sessions
+            .get("live/4100")
+            .expect("auto-created session");
+        assert_eq!(session.payload_mode, RtpPayloadMode::RawAudio);
+
+        // Oscillate between PT 33 (Ts) and PT 0 (RawAudio). Each switch increments the
+        // format-change budget. The fourth mode switch exceeds the default budget and closes
+        // the session instead of emitting another FormatChanged.
+        let mut seq = 2u16;
+        let pts = [33u8, 0, 33, 0];
+        let mut final_outputs = Vec::new();
+        for (i, pt) in pts.iter().enumerate() {
+            let payload = if *pt == 33 {
+                vec![0x47, 0x00, 0x01, 0x10]
+            } else {
+                vec![0x00]
+            };
+            let rtp = RtpPacket {
+                header: RtpHeader {
+                    version: 2,
+                    payload_type: *pt,
+                    sequence_number: seq,
+                    timestamp: u32::from(seq),
+                    ssrc: 4100,
+                    marker: false,
+                },
+                payload: Bytes::from(payload),
+            };
+            let dgram = RtpDatagram {
+                source: "127.0.0.1:1".parse().unwrap(),
+                data: rtp.encode(),
+                received_at_ms: 0,
+            };
+            final_outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+            seq += 1;
+
+            // First three switches should keep the session alive.
+            if i < 3 {
+                assert!(
+                    core.sessions.contains_key("live/4100"),
+                    "session should survive {} format switches",
+                    i + 1
+                );
+            }
+        }
+
+        assert!(
+            !core.sessions.contains_key("live/4100"),
+            "session should be closed after repeated mode oscillation"
+        );
+        assert!(final_outputs.iter().any(|o| matches!(
+            o,
+            RtpCoreOutput::CloseSession(key) if key == "live/4100"
+        )));
     }
 
     #[test]
