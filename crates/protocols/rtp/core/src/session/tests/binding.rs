@@ -53,7 +53,7 @@ fn test_strict_source_binding_drops_spoofed_packets() {
 
     let legit = udp_dgram("127.0.0.1:5000", es_packet(1000, 1), 0);
     let spoof = udp_dgram("127.0.0.1:6000", es_packet(1000, 2), 0);
-    let legit2 = udp_dgram("127.0.0.1:5000", es_packet(1000, 3), 0);
+    let legit2 = udp_dgram("127.0.0.1:5000", es_packet(1000, 2), 0);
 
     let _ = core.handle_input(legit);
     let spoof_outputs = core.handle_input(spoof);
@@ -204,4 +204,41 @@ fn test_strict_reject_spoof_before_pt_resolution() {
         o,
         RtpCoreOutput::Diagnostic(RtpCoreDiagnostic::SourceSpoofed { ssrc: 1000, .. })
     )));
+}
+
+#[test]
+fn test_strict_reject_spoof_before_reorder() {
+    // A spoofed packet carrying the next expected sequence number must not be pushed into
+    // the reorder buffer, otherwise it advances `expected_seq` and the legitimate packet
+    // with the same sequence number is treated as late/duplicate.
+    let mut core = RtpCore::new(10, 30_000);
+    let key = "recv/spoof-reorder".to_string();
+    let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(
+        RtpServerSpec {
+            session_key: key.clone(),
+            ssrc: Some(1000),
+            payload_mode: RtpPayloadMode::Es,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        },
+    )));
+
+    // First legitimate packet from source A.
+    let _ = core.handle_input(udp_dgram("127.0.0.1:5000", es_packet(1000, 1), 0));
+
+    // Spoofed next-sequence packet from source B: must be rejected before the reorder buffer.
+    let spoof_outputs = core.handle_input(udp_dgram("127.0.0.1:6000", es_packet(1000, 2), 0));
+    assert!(spoof_outputs.iter().any(|o| matches!(
+        o,
+        RtpCoreOutput::Diagnostic(RtpCoreDiagnostic::SourceSpoofed { ssrc: 1000, .. })
+    )));
+
+    // The same sequence number from the legitimate source A must still be accepted.
+    let _ = core.handle_input(udp_dgram("127.0.0.1:5000", es_packet(1000, 2), 0));
+
+    let session = core.sessions.get(&key).expect("session alive");
+    assert_eq!(session.source_addr, Some("127.0.0.1:5000".parse().unwrap()));
+    assert_eq!(session.packets_received, 2);
+    assert_eq!(session.source_spoof_count, 1);
 }

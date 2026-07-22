@@ -106,24 +106,75 @@ impl RtpCore {
             key
         };
 
+        // Source-address binding / rebind policy must run before the packet reaches the
+        // reorder buffer. A spoofed next-sequence packet that is pushed and then discarded
+        // would otherwise advance `expected_seq` and cause a later legitimate packet with
+        // the same sequence number to be treated as late/duplicate.
+        let seq = rtp.header.sequence_number;
+        let source_rebind_idle_window_ms = self.source_rebind_idle_window_ms;
+        let max_source_rebinds = self.max_source_rebinds;
+        let Some(session) = self.sessions.get_mut(&session_key) else {
+            return;
+        };
+        if let Some(src) = source_addr {
+            if let Some(bound) = session.source_addr {
+                if bound != src {
+                    match session.source_policy {
+                        RtpSourcePolicy::Strict => {
+                            session.source_spoof_count += 1;
+                            outputs.push(RtpCoreOutput::Diagnostic(
+                                RtpCoreDiagnostic::SourceSpoofed {
+                                    ssrc,
+                                    expected: bound,
+                                    got: src,
+                                },
+                            ));
+                            return;
+                        }
+                        RtpSourcePolicy::AllowValidatedRebind => {
+                            let idle = received_at_ms.saturating_sub(session.last_activity_ms)
+                                >= source_rebind_idle_window_ms;
+                            let expected_seq = bound_seq(session.last_seq, seq);
+                            let rate_ok = session.source_rebind_count < max_source_rebinds;
+                            if idle && expected_seq && rate_ok {
+                                session.source_rebind_count += 1;
+                                outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SourceChanged {
+                                    session_key: session_key.clone(),
+                                    old: bound,
+                                    new: src,
+                                }));
+                                session.source_addr = Some(src);
+                            } else {
+                                session.source_spoof_count += 1;
+                                outputs.push(RtpCoreOutput::Diagnostic(
+                                    RtpCoreDiagnostic::SourceSpoofed {
+                                        ssrc,
+                                        expected: bound,
+                                        got: src,
+                                    },
+                                ));
+                                return;
+                            }
+                        }
+                    }
+                }
+            } else {
+                session.source_addr = Some(src);
+            }
+        }
+
         // Push the packet into the per-session reorder buffer. The buffer releases one
         // or more contiguous packets once their predecessors have arrived, or when a
         // bounded latency/packet budget forces release.
-        let seq = rtp.header.sequence_number;
-        let released = {
-            let Some(session) = self.sessions.get_mut(&session_key) else {
-                return;
-            };
+        let released =
             session
                 .reorder
-                .push(seq, received_at_ms, (rtp, received_at_ms, source_addr))
-        };
+                .push(seq, received_at_ms, (rtp, received_at_ms, source_addr));
 
-        for (i, (rtp, pkt_received_at_ms, source_addr)) in released.into_iter().enumerate() {
+        for (i, (rtp, pkt_received_at_ms, _source_addr)) in released.into_iter().enumerate() {
             if let Err(reason) = self.process_single_rtp_packet(
                 &session_key,
                 rtp,
-                source_addr,
                 tcp_conn_id,
                 pkt_received_at_ms,
                 created && i == 0,
@@ -140,12 +191,10 @@ impl RtpCore {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn process_single_rtp_packet(
         &mut self,
         session_key: &str,
         rtp: RtpPacket,
-        source_addr: Option<SocketAddr>,
         tcp_conn_id: Option<u64>,
         received_at_ms: u64,
         created: bool,
@@ -157,56 +206,9 @@ impl RtpCore {
             return Ok(());
         };
 
-        // Source-address binding / rebind policy.
-        // This runs before any payload format/state changes so that rejected packets do not
-        // advance the session state or reach the media unpackers.
-        if let Some(src) = source_addr {
-            if let Some(bound) = session.source_addr {
-                if bound != src {
-                    match session.source_policy {
-                        RtpSourcePolicy::Strict => {
-                            session.source_spoof_count += 1;
-                            outputs.push(RtpCoreOutput::Diagnostic(
-                                RtpCoreDiagnostic::SourceSpoofed {
-                                    ssrc,
-                                    expected: bound,
-                                    got: src,
-                                },
-                            ));
-                            return Ok(());
-                        }
-                        RtpSourcePolicy::AllowValidatedRebind => {
-                            let idle = received_at_ms.saturating_sub(session.last_activity_ms)
-                                >= self.source_rebind_idle_window_ms;
-                            let expected_seq =
-                                bound_seq(session.last_seq, rtp.header.sequence_number);
-                            let rate_ok = session.source_rebind_count < self.max_source_rebinds;
-                            if idle && expected_seq && rate_ok {
-                                session.source_rebind_count += 1;
-                                outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SourceChanged {
-                                    session_key: session_key.to_string(),
-                                    old: bound,
-                                    new: src,
-                                }));
-                                session.source_addr = Some(src);
-                            } else {
-                                session.source_spoof_count += 1;
-                                outputs.push(RtpCoreOutput::Diagnostic(
-                                    RtpCoreDiagnostic::SourceSpoofed {
-                                        ssrc,
-                                        expected: bound,
-                                        got: src,
-                                    },
-                                ));
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            } else {
-                session.source_addr = Some(src);
-            }
-        }
+        // Source-address binding / rebind policy has already been applied in
+        // `feed_rtp_packet` before the packet entered the reorder buffer. Rejected
+        // packets therefore cannot advance `expected_seq` or reach the demuxers.
 
         // Resolve the payload mode for sessions created without an explicit mode.
         // Order: external binding (set via spec/UpdateSession), static PT table,
