@@ -839,7 +839,8 @@ impl RtpCore {
             // The payload mode is already locked. Accept the first observed PT if none was
             // recorded, and react to mid-stream PT changes. Unresolved transient PTs (e.g.
             // RFC 4733 telephone-event or FEC/RED sharing the same SSRC) are tolerated up to
-            // pt_lock_confidence consecutive packets before the session is closed.
+            // the per-session probe budget (max_pt_probe_packets) consecutive packets before
+            // the session is closed.
             let current_pt = session.payload_type.unwrap_or(rtp.header.payload_type);
             if session.payload_type.is_none() {
                 session.payload_type = Some(rtp.header.payload_type);
