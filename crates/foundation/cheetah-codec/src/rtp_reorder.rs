@@ -170,10 +170,12 @@ impl<T> RtpReorderBuffer<T> {
             }
         }
 
-        // A candidate more than half a period ahead is a genuine large future
-        // packet: deliver it and let the gap policy flush pending.
-        if best_diff >= HALF_SEQUENCE_PERIOD && best_candidate >= exp {
-            return best_candidate as u64;
+        // A candidate that is half a period or more away is ambiguous: it could
+        // be a stale/late packet or a genuine far-future packet. To avoid a
+        // single stray packet jumping the expected position and stalling the
+        // stream, drop it by returning a value below `expected`.
+        if best_diff >= HALF_SEQUENCE_PERIOD {
+            return expected.saturating_sub(1);
         }
 
         // Any candidate before the expected sequence number is a late /
