@@ -606,6 +606,9 @@ async fn run_ingress_worker(
                         }
                         Err(e) => {
                             error!("RTP re-acquire_publisher failed for {sk}: {e}");
+                            // Without a publisher the stream would stay alive in the core but
+                            // discard every incoming frame. Tear it down cleanly.
+                            let _ = orchestrator.stop_session_by_key(&session_key).await;
                         }
                     }
                 } else {
