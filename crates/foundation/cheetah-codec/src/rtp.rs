@@ -1,4 +1,8 @@
 use crate::prelude::*;
+use crate::time::{
+    Timebase, TimestampNormalizeInput, TimestampNormalizeMode, TimestampNormalizeOutput,
+    TimestampNormalizer, TimestampNormalizerConfig, TimestampNormalizerConfigError, TimestampValue,
+};
 use bytes::{Buf, Bytes, BytesMut};
 
 /// RTP fixed header fields (RFC 3550).
@@ -1071,5 +1075,142 @@ impl EhomeDecoder {
         }
 
         outputs
+    }
+}
+
+/// Stateful RTP timestamp-to-timeline normalizer for one clock rate.
+///
+/// Wraps the shared `TimestampNormalizer` with RTP-specific configuration:
+/// input timebase is `1/clock_rate`, output timebase is `1/1_000_000` microseconds,
+/// and 32-bit RTP timestamp wrap-around is handled transparently. DTS is generated
+/// from PTS for PTS-only RTP streams, with discontinuity detection and monotonicity
+/// repair.
+///
+/// 单一 clock rate 的有状态 RTP 时间戳到时间线归一化器。
+///
+/// 使用共享的 `TimestampNormalizer` 并配置 RTP 专用参数：输入 timebase 为
+/// `1/clock_rate`，输出 timebase 为 `1/1_000_000` 微秒，透明处理 32 位 RTP
+/// 时间戳回绕。对仅有 PTS 的 RTP 流生成 DTS，并检测不连续与修复单调性。
+#[derive(Debug, Clone)]
+pub struct RtpTimestampNormalizer {
+    clock_rate: u32,
+    normalizer: TimestampNormalizer,
+}
+
+impl RtpTimestampNormalizer {
+    /// Create a normalizer for the given RTP clock rate (e.g. 90000 for video).
+    ///
+    /// 使用给定 RTP clock rate（如视频 90000）创建归一化器。
+    pub fn new(clock_rate: u32) -> Result<Self, TimestampNormalizerConfigError> {
+        let config = TimestampNormalizerConfig::new(
+            Timebase::new(1, clock_rate),
+            Timebase::new(1, 1_000_000),
+            Some(32),
+        )?;
+        Ok(Self {
+            clock_rate,
+            normalizer: TimestampNormalizer::new(config),
+        })
+    }
+
+    /// Normalize a 32-bit RTP timestamp to microseconds and generate a monotonic DTS.
+    ///
+    /// `is_video` controls composition-time clamping. `frame_duration_ticks` is optional
+    /// and, when provided, is expressed in RTP clock ticks.
+    ///
+    /// 将 32 位 RTP 时间戳归一化为微秒并生成单调 DTS。
+    ///
+    /// `is_video` 控制合成时间裁剪。`frame_duration_ticks` 可选，以 RTP clock tick 为单位。
+    pub fn normalize(
+        &mut self,
+        rtp_timestamp: u32,
+        is_video: bool,
+    ) -> Result<TimestampNormalizeOutput, crate::time::TimestampNormalizeError> {
+        self.normalize_with_duration(rtp_timestamp, is_video, None)
+    }
+
+    /// Normalize with an explicit frame duration hint (in RTP clock ticks).
+    ///
+    /// 带显式帧时长提示（RTP clock tick）进行归一化。
+    pub fn normalize_with_duration(
+        &mut self,
+        rtp_timestamp: u32,
+        is_video: bool,
+        frame_duration_ticks: Option<i64>,
+    ) -> Result<TimestampNormalizeOutput, crate::time::TimestampNormalizeError> {
+        let input = TimestampNormalizeInput {
+            mode: TimestampNormalizeMode::PtsOnly {
+                pts: TimestampValue::Wrapped(u64::from(rtp_timestamp)),
+            },
+            frame_duration: frame_duration_ticks,
+            fallback_step: Some(1),
+            is_video,
+            force_discontinuity: false,
+        };
+        self.normalizer.normalize(input)
+    }
+
+    /// Reset the internal timeline state.
+    ///
+    /// 重置内部时间线状态。
+    pub fn reset(&mut self) {
+        self.normalizer.reset();
+    }
+
+    /// RTP clock rate configured for this normalizer.
+    ///
+    /// 本归一化器配置的 RTP clock rate。
+    pub fn clock_rate(&self) -> u32 {
+        self.clock_rate
+    }
+}
+
+#[cfg(test)]
+mod rtp_timestamp_tests {
+    use super::RtpTimestampNormalizer;
+
+    #[test]
+    fn converts_90khz_timestamp_to_microseconds() {
+        let mut n = RtpTimestampNormalizer::new(90_000).unwrap();
+        // Establish a baseline so the normalizer returns a timeline starting near zero.
+        let _ = n.normalize(0, true).unwrap();
+        // 90kHz tick == 11.111... us; 90000 ticks == 1_000_000 us.
+        let out = n.normalize(90_000, true).unwrap();
+        assert_eq!(out.pts_us, 1_000_000);
+        assert_eq!(out.dts_us, 1_000_000);
+    }
+
+    #[test]
+    fn handles_32bit_wraparound() {
+        let mut n = RtpTimestampNormalizer::new(90_000).unwrap();
+        // Just before wrap.
+        let before = u32::MAX - 90_000;
+        let _ = n.normalize(before, true).unwrap();
+        // One tick after wrap: the elapsed interval is 90_001 ticks.
+        let out = n.normalize(0, true).unwrap();
+        // 90001 ticks / 90kHz ~= 1_000_011 us.
+        assert!((out.pts_us - 1_000_011).abs() <= 1);
+    }
+
+    #[test]
+    fn detects_discontinuity_on_large_forward_gap() {
+        let mut n = RtpTimestampNormalizer::new(90_000).unwrap();
+        let _ = n.normalize(0, true).unwrap();
+        // 3 seconds later at 90kHz.
+        let out = n.normalize(270_000, true).unwrap();
+        assert!(out.discontinuity);
+    }
+
+    #[test]
+    fn monotonic_dts_for_reordered_timestamps() {
+        let mut n = RtpTimestampNormalizer::new(90_000).unwrap();
+        let first = n.normalize(180_000, true).unwrap();
+        let second = n.normalize(90_000, true).unwrap();
+        assert!(second.dts_us >= first.dts_us);
+    }
+
+    #[test]
+    fn rejects_zero_clock_rate() {
+        assert!(RtpTimestampNormalizer::new(0).is_err());
     }
 }
