@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use cheetah_codec::{MpegTsDemuxer, PsDemuxer, RtpPayloadMode, RtpPayloadProfile};
 
 use crate::rtcp_report::RtcpReportState;
-use crate::types::{RtpSessionKey, RtpTrackFilter, RtpTransportMode};
+use crate::types::{RtpSessionKey, RtpSessionState, RtpTrackFilter, RtpTransportMode};
 
 pub(super) enum SessionDemuxer {
     Pending,
@@ -21,6 +21,8 @@ pub(crate) struct RtpSession {
     /// Payload mode used when packetizing outbound `SendFrame` frames.
     pub(super) egress_payload_mode: RtpPayloadMode,
     pub(super) transport_mode: RtpTransportMode,
+    /// Explicit runtime state for receiver/sender/talk transitions.
+    pub(super) state: RtpSessionState,
     /// Filter applied to demuxed frames before they leave the core.
     pub(super) track_filter: RtpTrackFilter,
     /// Filter applied to frames fed to `SendFrame`.
@@ -108,5 +110,65 @@ pub(super) fn track_filter_allows_track(
         RtpTrackFilter::All => true,
         RtpTrackFilter::OnlyAudio => matches!(kind, cheetah_codec::MediaKind::Audio),
         RtpTrackFilter::OnlyVideo => matches!(kind, cheetah_codec::MediaKind::Video),
+    }
+}
+
+/// Compute the runtime state a session should move to after receiving an RTP packet,
+/// based on its negotiated transport mode and current state.
+pub(super) fn state_after_ingress(
+    transport_mode: RtpTransportMode,
+    current: RtpSessionState,
+) -> Option<RtpSessionState> {
+    match (transport_mode, current) {
+        // Once voice talk has started, receiving more audio keeps it in Talk.
+        (RtpTransportMode::SendRecv, RtpSessionState::Talk) => None,
+        // A RecvOnly session that starts seeing packets becomes a receiver.
+        (RtpTransportMode::RecvOnly, RtpSessionState::Inactive)
+        | (RtpTransportMode::RecvOnly, RtpSessionState::Receiving) => {
+            Some(RtpSessionState::Receiving)
+        }
+        // A SendRecv session moves to bidirectional state on first ingress.
+        (RtpTransportMode::SendRecv, RtpSessionState::Inactive)
+        | (RtpTransportMode::SendRecv, RtpSessionState::Receiving)
+        | (RtpTransportMode::SendRecv, RtpSessionState::Sending) => Some(RtpSessionState::SendRecv),
+        _ => None,
+    }
+}
+
+/// Compute the runtime state a session should move to after a SendFrame, based on
+/// its negotiated transport mode and current state.
+pub(super) fn state_after_egress(
+    transport_mode: RtpTransportMode,
+    current: RtpSessionState,
+    is_talk: bool,
+) -> Option<RtpSessionState> {
+    if is_talk {
+        return if current == RtpSessionState::Talk {
+            None
+        } else {
+            Some(RtpSessionState::Talk)
+        };
+    }
+    match (transport_mode, current) {
+        (RtpTransportMode::SendOnly, RtpSessionState::Inactive)
+        | (RtpTransportMode::SendOnly, RtpSessionState::Sending) => Some(RtpSessionState::Sending),
+        (RtpTransportMode::SendRecv, RtpSessionState::Inactive)
+        | (RtpTransportMode::SendRecv, RtpSessionState::Receiving)
+        | (RtpTransportMode::SendRecv, RtpSessionState::Sending) => Some(RtpSessionState::SendRecv),
+        _ => None,
+    }
+}
+
+impl RtpSession {
+    /// Attempt to move to `new_state`. Returns the previous state when a real transition
+    /// happened; returns `None` if the session is already in the target state or has
+    /// already reached a terminal state.
+    pub(super) fn transition_to(&mut self, new_state: RtpSessionState) -> Option<RtpSessionState> {
+        if self.state == new_state || self.state == RtpSessionState::Closed {
+            return None;
+        }
+        let old = self.state;
+        self.state = new_state;
+        Some(old)
     }
 }

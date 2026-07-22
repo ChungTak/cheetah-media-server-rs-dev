@@ -32,6 +32,32 @@ pub enum RtpTransportMode {
     SendRecv,
 }
 
+/// Runtime state of an RTP session.
+///
+/// The state machine makes receiver / sender / talkback transitions explicit and is
+/// independent of the negotiated `RtpTransportMode`. A `SendRecv` session, for example,
+/// starts in `Inactive` and moves to `SendRecv` once media flows in either direction.
+/// `Talk` is a distinct state because voice talkback reuses an inbound socket for
+/// outbound audio and has its own timeout / codec assumptions.
+///
+/// RTP 会话的运行时状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RtpSessionState {
+    /// Session exists but no media has flowed yet.
+    #[default]
+    Inactive,
+    /// Receiving RTP from the peer.
+    Receiving,
+    /// Sending RTP to the peer.
+    Sending,
+    /// Bidirectional media is active.
+    SendRecv,
+    /// Voice talkback is active (ingress + egress audio on the same socket).
+    Talk,
+    /// Terminal state: the session has been closed.
+    Closed,
+}
+
 /// ZLMediaKit-style connection types. Mirrors `kTcpActive`/`kTcpPassive`/`kUdpActive`/
 /// `kUdpPassive`/`kVoiceTalk` from `vendor-ref/ZLMediaKit/src/Rtp/RtpSender.cpp`.
 ///
@@ -253,6 +279,14 @@ pub enum RtpCoreEvent {
     SessionUpdateFailed {
         session_key: RtpSessionKey,
         reason: String,
+    },
+    /// The runtime session state changed.
+    ///
+    /// 运行时会话状态已改变。
+    SessionStateChanged {
+        session_key: RtpSessionKey,
+        old_state: RtpSessionState,
+        new_state: RtpSessionState,
     },
     /// A session was closed (idle timeout, RR timeout, or explicit stop).
     ///

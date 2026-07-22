@@ -48,6 +48,7 @@ impl RtpCore {
                                 payload_mode: RtpPayloadMode::Ehome,
                                 egress_payload_mode: RtpPayloadMode::Ehome,
                                 transport_mode: RtpTransportMode::RecvOnly,
+                                state: RtpSessionState::Inactive,
                                 track_filter: RtpTrackFilter::All,
                                 egress_track_filter: RtpTrackFilter::All,
                                 check_paused: false,

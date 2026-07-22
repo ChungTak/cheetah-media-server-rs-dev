@@ -565,6 +565,15 @@ async fn run_ingress_worker(
                 // Update acknowledgements are consumed by the driver loop; the module
                 // learns about successful updates through the orchestrator snapshot.
             }
+            RtpCoreEvent::SessionStateChanged {
+                session_key,
+                old_state,
+                new_state,
+            } => {
+                debug!(
+                    "RTP session state changed: key={session_key}, {old_state:?} -> {new_state:?}"
+                );
+            }
             RtpCoreEvent::SessionUpdateFailed {
                 session_key,
                 reason,

@@ -64,6 +64,7 @@ impl RtpCore {
                 payload_mode: mode,
                 egress_payload_mode: mode,
                 transport_mode: RtpTransportMode::RecvOnly,
+                state: RtpSessionState::Inactive,
                 track_filter: RtpTrackFilter::All,
                 egress_track_filter: RtpTrackFilter::All,
                 check_paused: false,
@@ -300,6 +301,21 @@ impl RtpCore {
                 }
             } else {
                 session.source_addr = Some(src);
+            }
+        }
+
+        // Reflect the runtime state transition caused by ingress. For a session just
+        // auto-created by this packet, `SessionCreated` already announces the session, so
+        // suppress the redundant `SessionStateChanged` event but still record the state.
+        if let Some(new_state) = state_after_ingress(session.transport_mode, session.state) {
+            if created {
+                session.state = new_state;
+            } else if let Some(old) = session.transition_to(new_state) {
+                outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SessionStateChanged {
+                    session_key: session_key.clone(),
+                    old_state: old,
+                    new_state,
+                }));
             }
         }
 
