@@ -110,15 +110,16 @@ pub enum RtpTrackFilter {
 /// 控制入站 RTP 会话是否允许重新绑定到新源地址的策略。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RtpSourcePolicy {
+    /// Allow a rebind if the change passes the configured idle/continuity/rate checks.
+    ///
+    /// This is the default so that NAT/port migrations and camera restarts do not
+    /// silently stall the stream.
+    #[default]
+    AllowValidatedRebind,
     /// Lock the source on the first packet and reject every other source.
     ///
     /// 首个包锁定源，之后所有其他源都被拒绝。
-    #[default]
     Strict,
-    /// Allow a rebind if the change passes the configured idle/continuity/rate checks.
-    ///
-    /// 仅在通过配置的空闲/连续/速率检查时才允许重新绑定。
-    AllowValidatedRebind,
 }
 
 /// Specification for an inbound (server) RTP session.
