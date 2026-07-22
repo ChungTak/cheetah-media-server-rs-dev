@@ -15,6 +15,11 @@
 /// RTP core 产生的错误和诊断类型。
 pub mod error;
 
+/// RTCP compound packet parser/encoder.
+///
+/// RTCP 复合包解析/编码。
+pub mod rtcp;
+
 /// RTP/RTCP session state machine and packet processing.
 ///
 /// RTP/RTCP 会话状态机与包处理。
