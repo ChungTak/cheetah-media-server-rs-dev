@@ -10,8 +10,8 @@ use crate::ps::{
     default_frame_format, is_ps_stream_id, parse_pts_dts, probe_audio_codec, probe_video_codec,
 };
 use crate::time::Timebase;
-use crate::track::{CodecId, MediaKind, TrackId, TrackInfo};
-use crate::video_payload_is_random_access;
+use crate::track::{CodecExtradata, CodecId, MediaKind, TrackId, TrackInfo, TrackReadiness};
+use crate::video::{video_payload_is_random_access, ParameterSetCache};
 use bytes::Bytes;
 
 /// Program Stream (PS) demuxer.
@@ -42,6 +42,8 @@ pub struct PsDemuxer {
     psm_signature: HashMap<u8, (MediaKind, CodecId)>,
     /// stream_ids that were introduced by a PSM (as opposed to PES-probed).
     psm_declared: HashSet<u8>,
+    /// Per-stream parameter set cache for H.264/H.265/H.266.
+    parameter_set_caches: HashMap<u8, ParameterSetCache>,
 }
 
 impl PsDemuxer {
@@ -67,6 +69,7 @@ impl PsDemuxer {
             psm_version: None,
             psm_signature: HashMap::new(),
             psm_declared: HashSet::new(),
+            parameter_set_caches: HashMap::new(),
         }
     }
 
@@ -479,11 +482,13 @@ impl PsDemuxer {
         }
 
         if is_video {
-            if let Some(_track) = self
+            let video_track = self
                 .tracks
-                .values()
-                .find(|t| t.media_kind == MediaKind::Video)
-            {
+                .iter()
+                .find(|(_, t)| t.media_kind == MediaKind::Video)
+                .map(|(k, v)| (*k, v.clone()));
+
+            if let Some((track_stream_id, track)) = video_track {
                 if data_alignment && !self.video_buffer.is_empty() {
                     self.emit_video_frame(events);
                 }
@@ -503,6 +508,18 @@ impl PsDemuxer {
                     self.last_video_pts = pts;
                     if self.video_dts.is_none() {
                         self.video_dts = dts.or(pts);
+                    }
+                }
+
+                if let Some(extradata) =
+                    self.discover_parameter_sets(track_stream_id, track.codec, payload)
+                {
+                    if let Some(track) = self.tracks.get_mut(&track_stream_id) {
+                        if track.extradata != extradata {
+                            track.extradata = extradata;
+                            track.readiness = TrackReadiness::Ready;
+                            events.push(PsDemuxEvent::TrackInfo(vec![track.clone()]));
+                        }
                     }
                 }
             } else {
@@ -541,7 +558,11 @@ impl PsDemuxer {
                 self.codec_probe_pes.insert(stream_id, 0);
 
                 let track_id = TrackId(stream_id as u32);
-                let track_info = TrackInfo::new(track_id, MediaKind::Video, codec, 90_000);
+                let mut track_info = TrackInfo::new(track_id, MediaKind::Video, codec, 90_000);
+                if let Some(extradata) = self.discover_parameter_sets(stream_id, codec, payload) {
+                    track_info.extradata = extradata;
+                    track_info.readiness = TrackReadiness::Ready;
+                }
                 self.tracks.insert(stream_id, track_info.clone());
                 self.tracks_ever_found = true;
                 events.push(PsDemuxEvent::TrackInfo(vec![track_info]));
@@ -646,16 +667,36 @@ impl PsDemuxer {
         }
     }
 
+    /// Scans a video PES payload for parameter sets and updates the per-stream cache.
+    ///
+    /// Returns complete `CodecExtradata` if the cache now holds the required SPS/PPS/VPS
+    /// for the codec.
+    fn discover_parameter_sets(
+        &mut self,
+        stream_id: u8,
+        codec: CodecId,
+        payload: &[u8],
+    ) -> Option<CodecExtradata> {
+        if !matches!(codec, CodecId::H264 | CodecId::H265 | CodecId::H266) {
+            return None;
+        }
+        let cache = self.parameter_set_caches.entry(stream_id).or_default();
+        cache.update_from_annexb(codec, payload);
+        cache.extradata_for_codec(codec)
+    }
+
     fn emit_video_frame(&mut self, events: &mut Vec<PsDemuxEvent>) {
         if self.video_buffer.is_empty() {
             return;
         }
 
-        if let Some(track) = self
+        let video_track = self
             .tracks
-            .values()
-            .find(|t| t.media_kind == MediaKind::Video)
-        {
+            .iter()
+            .find(|(_, t)| t.media_kind == MediaKind::Video)
+            .map(|(k, v)| (*k, v.clone()));
+
+        if let Some((stream_id, track)) = video_track {
             let pts = self.last_video_pts.unwrap_or(0);
             let dts = self.video_dts.unwrap_or(pts);
 
@@ -682,6 +723,30 @@ impl PsDemuxer {
             if is_keyframe {
                 frame.flags.insert(crate::frame::FrameFlags::KEY);
             }
+
+            if is_keyframe && matches!(track.codec, CodecId::H264 | CodecId::H265 | CodecId::H266) {
+                if let Some(cache) = self.parameter_set_caches.get(&stream_id) {
+                    if cache.has_required_sets(track.codec) {
+                        frame.payload = cache
+                            .prepend_to_annexb_access_unit(track.codec, frame.payload.as_ref());
+                    } else {
+                        events.push(PsDemuxEvent::Diagnostic(
+                            PsDemuxDiagnostic::MissingParameterSets {
+                                codec: track.codec,
+                                stream_id,
+                            },
+                        ));
+                    }
+                } else {
+                    events.push(PsDemuxEvent::Diagnostic(
+                        PsDemuxDiagnostic::MissingParameterSets {
+                            codec: track.codec,
+                            stream_id,
+                        },
+                    ));
+                }
+            }
+
             events.push(PsDemuxEvent::Frame(Box::new(frame)));
         } else {
             self.video_buffer.clear();

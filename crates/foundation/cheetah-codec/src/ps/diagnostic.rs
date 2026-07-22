@@ -4,7 +4,7 @@
 
 use crate::frame::AVFrame;
 use crate::prelude::*;
-use crate::track::{TrackId, TrackInfo};
+use crate::track::{CodecId, TrackId, TrackInfo};
 
 /// Configuration for the PS demuxer.
 ///
@@ -101,6 +101,10 @@ pub enum PsDemuxDiagnostic {
     ///
     /// 基本流负载无法识别为支持的编解码器。
     UnsupportedPayload { stream_id: u8 },
+    /// A video keyframe was emitted before its required parameter sets were available.
+    ///
+    /// 在关键帧所需的参数集可用之前遇到了关键帧。
+    MissingParameterSets { codec: CodecId, stream_id: u8 },
 }
 
 /// Events produced by the PS demuxer.
