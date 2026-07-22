@@ -20,7 +20,8 @@ use cheetah_sdk::media_api::ids::{
     ResourceGeneration, RtpSessionId, StreamKeyBridge, TenantId,
 };
 use cheetah_sdk::media_api::model::{
-    Page, RtpSession, RtpSessionKind, RtpSessionState as OldRtpSessionState, RtpTcpMode,
+    AdmissionAction, AdmissionRequest, Decision, Page, RtpSession, RtpSessionKind,
+    RtpSessionState as OldRtpSessionState, RtpTcpMode,
 };
 use cheetah_sdk::media_api::port::{MediaRequestContext, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
@@ -80,6 +81,33 @@ impl RtpMediaProvider {
 
     fn driver(&self) -> Result<Arc<RtpDriverHandle>> {
         self.orchestrator.driver()
+    }
+
+    /// Ask the configured admission provider whether the operation is allowed.
+    /// A missing provider is treated as allow-all so optional admission remains optional.
+    async fn admit(
+        &self,
+        ctx: &MediaRequestContext,
+        action: AdmissionAction,
+        resource: &MediaKey,
+        protocol: &str,
+    ) -> Result<()> {
+        let Some(provider) = self.engine.media_services.admission() else {
+            return Ok(());
+        };
+        let request = AdmissionRequest {
+            action,
+            principal: ctx.principal.clone(),
+            resource: resource.clone(),
+            protocol: protocol.to_string(),
+            source_address: None,
+            params: HashMap::new(),
+        };
+        match provider.authorize(ctx, request).await {
+            Ok(Decision::Allow) => Ok(()),
+            Ok(Decision::Deny { code, reason }) => Err(MediaError::new(code, reason)),
+            Err(e) => Err(e),
+        }
     }
 
     /// Enforce per-module capability/profile and session limits before allocating a session.
@@ -471,6 +499,13 @@ impl RtpSessionApi for RtpMediaProvider {
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.admit(
+            ctx,
+            AdmissionAction::OpenRtpReceiver,
+            &request.params.media_key,
+            "rtp",
+        )
+        .await?;
         self.check_profile_and_limits(&request.params)?;
         let old_req = self.build_old_receiver_request(request.clone())?;
         let session = self.open_rtp_receiver(ctx, old_req).await?;
@@ -490,6 +525,13 @@ impl RtpSessionApi for RtpMediaProvider {
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.admit(
+            ctx,
+            AdmissionAction::OpenRtpSender,
+            &request.params.media_key,
+            "rtp",
+        )
+        .await?;
         self.check_profile_and_limits(&request.params)?;
         let mode = match request.params.tcp_role {
             Some(TcpRole::Passive) => RtpSenderMode::Passive,
@@ -513,6 +555,13 @@ impl RtpSessionApi for RtpMediaProvider {
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.admit(
+            ctx,
+            AdmissionAction::OpenRtpSender,
+            &request.params.media_key,
+            "rtp",
+        )
+        .await?;
         self.check_profile_and_limits(&request.params)?;
         let sender_req = self.build_old_sender_request(
             OpenRtpSender {

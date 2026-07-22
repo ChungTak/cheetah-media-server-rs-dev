@@ -568,3 +568,66 @@ async fn rtp_module_disabled_profile_is_rejected() {
 
     harness.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_module_admission_deny_leaves_no_session() {
+    let harness = Gb28181TestHarness::start().await;
+    harness.set_admission_deny(true);
+
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_admission", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        })
+        .build();
+    let err = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params,
+                playback_range: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::PermissionDenied);
+
+    // After admission flips to allow, a new open on a different stream succeeds and
+    // proves the denied request left no session behind.
+    harness.set_admission_deny(false);
+    let media_key2 = MediaKey::with_default_vhost("gb28181_admission", "cam_002", None).unwrap();
+    let params2 = RtpSessionParamsBuilder::new(media_key2, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        })
+        .build();
+    let _desc = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params: params2,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("open after allow");
+
+    harness.stop().await;
+}
