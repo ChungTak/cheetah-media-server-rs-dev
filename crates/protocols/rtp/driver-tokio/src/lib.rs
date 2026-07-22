@@ -1369,6 +1369,7 @@ mod tests {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 
@@ -1454,6 +1455,7 @@ mod tests {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 
@@ -1536,6 +1538,7 @@ mod tests {
             transport_mode: RtpTransportMode::RecvOnly,
             tcp_conn_id: None,
             connection_type: Some(RtpConnectionType::TcpActive),
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 
@@ -1618,6 +1621,7 @@ mod tests {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 
@@ -1689,6 +1693,7 @@ mod tests {
             transport_mode: RtpTransportMode::SendOnly,
             tcp_conn_id: None,
             connection_type: Some(RtpConnectionType::TcpActive),
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 
@@ -1736,6 +1741,7 @@ mod tests {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 

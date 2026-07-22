@@ -762,6 +762,7 @@ async fn run_pull_job_supervisor(
             transport_mode: RtpTransportMode::RecvOnly,
             tcp_conn_id: None,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 

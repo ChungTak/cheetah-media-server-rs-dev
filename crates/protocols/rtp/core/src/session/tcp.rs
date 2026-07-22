@@ -58,7 +58,7 @@ impl RtpCore {
                                 last_seq: None,
                                 reorder: RtpReorderBuffer::new(RtpReorderSettings::default()),
                                 source_addr: None,
-                                source_policy: RtpSourcePolicy::AllowValidatedRebind,
+                                source_policy: RtpSourcePolicy::Strict,
                                 source_spoof_count: 0,
                                 source_rebind_count: 0,
                                 rtcp_source_addr: None,

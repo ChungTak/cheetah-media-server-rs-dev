@@ -47,6 +47,7 @@ fn test_strict_source_binding_drops_spoofed_packets() {
             payload_mode: RtpPayloadMode::Es,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -83,6 +84,7 @@ fn test_allow_validated_rebind_after_idle_window() {
             payload_mode: RtpPayloadMode::Es,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -143,6 +145,7 @@ fn test_rebind_rate_limit_blocks_excess_rebinds() {
             payload_mode: RtpPayloadMode::Es,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -182,6 +185,7 @@ fn test_strict_reject_spoof_before_pt_resolution() {
             payload_mode: RtpPayloadMode::Es,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -220,6 +224,7 @@ fn test_strict_reject_spoof_before_reorder() {
             payload_mode: RtpPayloadMode::Es,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));

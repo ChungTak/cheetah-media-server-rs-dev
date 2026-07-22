@@ -226,6 +226,7 @@ impl RtpSessionOrchestrator {
             payload_mode,
             transport_mode,
             connection_type,
+            source_policy: None,
             track_filter,
         };
         let actual_addr = driver
@@ -291,6 +292,7 @@ impl RtpSessionOrchestrator {
             transport_mode,
             tcp_conn_id: None,
             connection_type,
+            source_policy: None,
             track_filter,
         };
         driver
@@ -409,6 +411,7 @@ impl RtpSessionOrchestrator {
             transport_mode: RtpTransportMode::RecvOnly,
             tcp_conn_id: None,
             connection_type,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 
@@ -572,6 +575,7 @@ impl RtpSessionOrchestrator {
             transport_mode: RtpTransportMode::SendRecv,
             tcp_conn_id: None,
             connection_type: Some(RtpConnectionType::VoiceTalk),
+            source_policy: None,
             track_filter: RtpTrackFilter::OnlyAudio,
         };
 

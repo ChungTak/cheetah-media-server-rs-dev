@@ -145,6 +145,10 @@ pub struct RtpServerSpec {
     /// 可选的连接类型提示。未设置时默认为 `UdpPassive`。
     #[allow(dead_code)]
     pub connection_type: Option<RtpConnectionType>,
+    /// Source-address binding policy. `None` uses the core default (`Strict`).
+    ///
+    /// 源地址绑定策略。`None` 使用 core 默认值（`Strict`）。
+    pub source_policy: Option<RtpSourcePolicy>,
     /// Track filter to apply on ingress.
     ///
     /// 入站时应用的轨道过滤器。
@@ -175,6 +179,10 @@ pub struct RtpClientSpec {
     /// 可选的连接类型提示。未设置时默认为 `UdpActive`。
     #[allow(dead_code)]
     pub connection_type: Option<RtpConnectionType>,
+    /// Source-address binding policy. `None` uses the core default (`Strict`).
+    ///
+    /// 源地址绑定策略。`None` 使用 core 默认值（`Strict`）。
+    pub source_policy: Option<RtpSourcePolicy>,
     /// Track filter to apply on egress.
     ///
     /// 出站时应用的轨道过滤器。

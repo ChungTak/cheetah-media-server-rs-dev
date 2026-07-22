@@ -10,6 +10,7 @@ fn test_update_session_advances_generation_and_ssrc_index() {
         payload_mode: RtpPayloadMode::Ps,
         transport_mode: RtpTransportMode::RecvOnly,
         connection_type: None,
+        source_policy: None,
         track_filter: RtpTrackFilter::All,
     };
     let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
@@ -77,6 +78,7 @@ fn test_update_session_rejects_wrong_generation_and_conflict() {
         payload_mode: RtpPayloadMode::Ps,
         transport_mode: RtpTransportMode::RecvOnly,
         connection_type: None,
+        source_policy: None,
         track_filter: RtpTrackFilter::All,
     };
     let spec_b = RtpServerSpec {
@@ -85,6 +87,7 @@ fn test_update_session_rejects_wrong_generation_and_conflict() {
         payload_mode: RtpPayloadMode::Ps,
         transport_mode: RtpTransportMode::RecvOnly,
         connection_type: None,
+        source_policy: None,
         track_filter: RtpTrackFilter::All,
     };
     let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec_a)));
@@ -157,6 +160,7 @@ fn test_update_session_payload_type_changes_mode_and_generation() {
         payload_mode: RtpPayloadMode::Ps,
         transport_mode: RtpTransportMode::RecvOnly,
         connection_type: None,
+        source_policy: None,
         track_filter: RtpTrackFilter::All,
     };
     let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
@@ -224,6 +228,7 @@ fn test_update_session_no_change_keeps_generation() {
         payload_mode: RtpPayloadMode::Ps,
         transport_mode: RtpTransportMode::RecvOnly,
         connection_type: None,
+        source_policy: None,
         track_filter: RtpTrackFilter::All,
     };
     let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));

@@ -57,6 +57,7 @@ fn test_rtp_core_reorders_out_of_order_ps_packets() {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -107,6 +108,7 @@ fn test_rtp_core_duplicate_packet_is_suppressed() {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
