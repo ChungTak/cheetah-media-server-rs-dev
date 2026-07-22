@@ -4,7 +4,7 @@
 
 use crate::frame::AVFrame;
 use crate::prelude::*;
-use crate::track::TrackInfo;
+use crate::track::{TrackId, TrackInfo};
 
 /// Configuration for the PS demuxer.
 ///
@@ -108,10 +108,14 @@ pub enum PsDemuxDiagnostic {
 /// PS 解复用器产生的事件。
 #[derive(Debug, Clone)]
 pub enum PsDemuxEvent {
-    /// One or more discovered tracks.
+    /// One or more discovered or updated tracks.
     ///
-    /// 发现的一个或多个轨道。
+    /// 发现或更新的一个或多个轨道。
     TrackInfo(Vec<TrackInfo>),
+    /// One or more tracks that were removed by a new Program Stream Map.
+    ///
+    /// 被新节目流映射移除的一个或多个轨道。
+    TrackRemoved(Vec<TrackId>),
     /// A completed media frame.
     ///
     /// 一个完整的媒体帧。
