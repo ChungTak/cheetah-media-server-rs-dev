@@ -34,20 +34,22 @@ pub(crate) fn probe_video_codec(payload: &[u8]) -> Option<CodecId> {
         } else {
             start + 3
         };
-        if header_offset >= payload.len() {
+        if header_offset + 1 >= payload.len() {
             break;
         }
 
         let b0 = payload[header_offset];
-        let b1 = payload.get(header_offset + 1).copied().unwrap_or(0);
+        let b1 = payload[header_offset + 1];
 
-        // H.265 NAL header: first byte contains forbidden zero bit, nal_unit_type (6 bits),
-        // second byte contains nuh_temporal_id_plus1 (3 bits).
+        // H.265 NAL header: first byte is f(1) + nal_unit_type(6) + nuh_layer_id msb(1);
+        // second byte is nuh_layer_id lsb(5) + nuh_temporal_id_plus1(3).
         let h265_nal_type = (b0 >> 1) & 0x3F;
+        let h265_layer_id = ((b0 & 0x01) as u16) << 5 | ((b1 >> 3) as u16);
         let h265_temporal_id = b1 & 0x07;
         if (b0 & 0x80) == 0
+            && h265_layer_id == 0
             && h265_temporal_id > 0
-            && matches!(h265_nal_type, 1 | 2 | 19 | 20 | 32 | 33 | 34 | 35 | 36)
+            && matches!(h265_nal_type, 1 | 2 | 19 | 20 | 21 | 32 | 33 | 34 | 35)
         {
             return Some(CodecId::H265);
         }
@@ -58,7 +60,7 @@ pub(crate) fn probe_video_codec(payload: &[u8]) -> Option<CodecId> {
             return Some(CodecId::H264);
         }
 
-        offset = header_offset;
+        offset = header_offset + 1;
     }
     None
 }

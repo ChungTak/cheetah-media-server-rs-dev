@@ -35,6 +35,7 @@ pub struct PsDemuxer {
     probe_exceeded: bool,
     tracks_ever_found: bool,
     codec_probe_pes: HashMap<u8, u32>,
+    unsupported_payload_reported: HashSet<u8>,
 }
 
 impl PsDemuxer {
@@ -56,6 +57,7 @@ impl PsDemuxer {
             probe_exceeded: false,
             tracks_ever_found: false,
             codec_probe_pes: HashMap::new(),
+            unsupported_payload_reported: HashSet::new(),
         }
     }
 
@@ -426,9 +428,11 @@ impl PsDemuxer {
 
                 let probe_count = self.codec_probe_pes.entry(stream_id).or_insert(0);
                 if *probe_count >= self.config.max_codec_probe_packets {
-                    events.push(PsDemuxEvent::Diagnostic(
-                        PsDemuxDiagnostic::UnsupportedPayload { stream_id },
-                    ));
+                    if self.unsupported_payload_reported.insert(stream_id) {
+                        events.push(PsDemuxEvent::Diagnostic(
+                            PsDemuxDiagnostic::UnsupportedPayload { stream_id },
+                        ));
+                    }
                     return;
                 }
                 *probe_count += 1;

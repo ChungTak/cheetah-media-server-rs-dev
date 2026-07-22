@@ -43,7 +43,7 @@ pub(crate) mod prelude {
 
     // Container types that are available in both `std` and `no_std+alloc` builds.
     pub use alloc::boxed::Box;
-    pub use hashbrown::HashMap;
+    pub use hashbrown::{HashMap, HashSet};
 
     /// Round an `f64` to the nearest integer. Half-way cases are rounded away from zero.
     #[inline]

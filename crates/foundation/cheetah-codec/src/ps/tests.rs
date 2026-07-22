@@ -654,6 +654,30 @@ fn ps_demuxer_falls_back_to_g711_for_audio_without_psm() {
 }
 
 #[test]
+fn ps_demuxer_probe_h264_p_slice_not_h265() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    // A common H.264 reference P-slice NAL header (0x41) collides with the H.265
+    // VPS type 32 when only the first byte is inspected. The layer-id / temporal-id
+    // consistency check should keep it as H.264.
+    let payload = Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x41, 0xE0, 0x00, 0x00]);
+    let pes = PesPacket {
+        stream_id: 0xE0,
+        kind: PsStreamKind::Video,
+        pts: Some(90_000),
+        dts: None,
+        payload,
+    };
+
+    let events = demuxer.push(&pes.encode());
+    let track = events.iter().find_map(|e| match e {
+        PsDemuxEvent::TrackInfo(t) => t.first(),
+        _ => None,
+    });
+    assert_eq!(track.map(|t| t.codec), Some(CodecId::H264));
+}
+
+#[test]
 fn ps_demuxer_emits_unsupported_payload_after_codec_probe_budget() {
     let config = PsDemuxerConfig {
         max_codec_probe_packets: 1,
@@ -674,8 +698,19 @@ fn ps_demuxer_emits_unsupported_payload_after_codec_probe_budget() {
     let _ = demuxer.push(&pes.encode());
     // Second unknown PES exceeds the budget and emits UnsupportedPayload.
     let events = demuxer.push(&pes.encode());
-    assert!(events.iter().any(|e| matches!(
-        e,
-        PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::UnsupportedPayload { stream_id: 0xE0 })
-    )));
+    // Third and later unknown PESes must stay silent; the diagnostic is emitted once.
+    let mut all_events = events;
+    all_events.extend(demuxer.push(&pes.encode()));
+    all_events.extend(demuxer.push(&pes.encode()));
+
+    let unsupported_count = all_events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::UnsupportedPayload { stream_id: 0xE0 })
+            )
+        })
+        .count();
+    assert_eq!(unsupported_count, 1);
 }
