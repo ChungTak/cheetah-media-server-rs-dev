@@ -258,6 +258,7 @@ fn limit_config() -> PsDemuxerConfig {
         max_pes_packet_size: 8 * 1024 * 1024,
         max_access_unit_size: 16 * 1024 * 1024,
         max_probe_packets: 1024,
+        max_codec_probe_packets: 8,
     }
 }
 
@@ -425,6 +426,77 @@ fn ps_demuxer_periodic_psm_at_track_limit_does_not_wipe_tracks() {
 }
 
 #[test]
+fn ps_demuxer_periodic_psm_preserves_audio_sample_rate() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+    let mut muxer = PsMuxer::new();
+
+    muxer.add_track(TrackInfo::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        90_000,
+    ));
+    muxer.add_track(TrackInfo::new(
+        TrackId(0xC0),
+        MediaKind::Audio,
+        CodecId::AAC,
+        8_000,
+    ));
+
+    let mut video_payload = vec![0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x0A];
+    video_payload.extend_from_slice(b"v");
+    let mut video_frame = AVFrame::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        FrameFormat::CanonicalH26x,
+        90_000,
+        90_000,
+        Timebase::new(1, 90_000),
+        Bytes::from(video_payload),
+    );
+    video_frame.flags.insert(FrameFlags::KEY);
+
+    // Valid ADTS frame: 44100 Hz, 2 channels, frame length 16.
+    let mut audio_payload = vec![0xFF, 0xF1, 0x50, 0x80, 0x02, 0x00, 0x00];
+    audio_payload.extend_from_slice(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x00]);
+    let audio_frame = AVFrame::new(
+        TrackId(0xC0),
+        MediaKind::Audio,
+        CodecId::AAC,
+        FrameFormat::AacRaw,
+        90_000,
+        90_000,
+        Timebase::new(1, 44_100),
+        Bytes::from(audio_payload),
+    );
+
+    let muxed_key1 = muxer.mux(&video_frame).expect("mux key1");
+    let _ = demuxer.push(&muxed_key1);
+    let _ = demuxer.push(&muxer.mux(&audio_frame).expect("mux audio"));
+
+    let muxed_key2 = muxer.mux(&video_frame).expect("mux key2");
+    let events2 = demuxer.push(&muxed_key2);
+    assert!(
+        !events2
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackInfo(..))),
+        "periodic PSM must not re-announce a runtime-refined audio track"
+    );
+
+    let events3 = demuxer.push(&muxer.mux(&audio_frame).expect("mux audio again"));
+    let audio_frame_after_psm = events3.iter().find_map(|e| match e {
+        PsDemuxEvent::Frame(f) if f.media_kind == MediaKind::Audio => Some(f),
+        _ => None,
+    });
+    assert_eq!(
+        audio_frame_after_psm.map(|f| f.timebase.den),
+        Some(44_100),
+        "audio clock rate must stay at the ADTS-derived sample rate after periodic PSM"
+    );
+}
+
+#[test]
 fn ps_demuxer_over_limit_psm_keeps_existing_tracks_and_continues() {
     let mut config = limit_config();
     config.max_tracks = 1;
@@ -508,8 +580,9 @@ fn ps_demuxer_probe_limit_recovers_when_media_arrives() {
     buf.extend_from_slice(&[0x00, 0x00, 0x01, 0xBA]);
     buf.extend_from_slice(&[0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8]);
 
-    // Video PES with a payload small enough for the access-unit limit.
-    let payload = Bytes::from(vec![0u8; 8]);
+    // Video PES with an Annex-B start code and H.264 SPS NAL header so the
+    // codec probe can identify the stream once the pack-header budget is reset.
+    let payload = Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x0A]);
     let pes = PesPacket {
         stream_id: 0xE0,
         kind: PsStreamKind::Video,
@@ -543,4 +616,187 @@ fn ps_demuxer_probe_limit_recovers_when_media_arrives() {
         "media arriving after probe limit must still be parsed"
     );
     assert!(found_frame, "video frame must be emitted after recovery");
+}
+
+#[test]
+fn ps_demuxer_probes_h264_without_psm() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    let payload = Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x0A]);
+    let pes = PesPacket {
+        stream_id: 0xE0,
+        kind: PsStreamKind::Video,
+        pts: Some(90_000),
+        dts: None,
+        payload,
+    };
+
+    let events = demuxer.push(&pes.encode());
+    let flushed = demuxer.flush();
+
+    let track = events.iter().find_map(|e| match e {
+        PsDemuxEvent::TrackInfo(t) => t.first(),
+        _ => None,
+    });
+    assert!(track.is_some(), "track must be discovered by probe");
+    assert_eq!(track.unwrap().codec, CodecId::H264);
+
+    assert!(flushed.iter().any(|e| matches!(e, PsDemuxEvent::Frame(..))));
+}
+
+#[test]
+fn ps_demuxer_probes_h265_without_psm() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    // H.265 VPS NAL unit: 4-byte start code, nal_unit_type 32, temporal id 1.
+    let payload = Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x40, 0x01, 0x00, 0x00]);
+    let pes = PesPacket {
+        stream_id: 0xE0,
+        kind: PsStreamKind::Video,
+        pts: Some(90_000),
+        dts: None,
+        payload,
+    };
+
+    let events = demuxer.push(&pes.encode());
+    let track = events.iter().find_map(|e| match e {
+        PsDemuxEvent::TrackInfo(t) => t.first(),
+        _ => None,
+    });
+    assert_eq!(track.map(|t| t.codec), Some(CodecId::H265));
+}
+
+#[test]
+fn ps_demuxer_probes_aac_without_psm() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    // Valid ADTS header for a 16-byte AAC frame: profile 1 (LC),
+    // sampling_frequency_index 4 (44100 Hz), 2 channels, frame length 16.
+    let mut payload = vec![0xFF, 0xF1, 0x50, 0x80, 0x02, 0x00, 0x00];
+    payload.extend_from_slice(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x00]);
+    let payload = Bytes::from(payload);
+
+    let pes = PesPacket {
+        stream_id: 0xC0,
+        kind: PsStreamKind::Audio,
+        pts: Some(90_000),
+        dts: None,
+        payload,
+    };
+
+    let events = demuxer.push(&pes.encode());
+    let track = events.iter().find_map(|e| match e {
+        PsDemuxEvent::TrackInfo(t) => t.first(),
+        _ => None,
+    });
+    assert_eq!(track.map(|t| t.codec), Some(CodecId::AAC));
+    assert_eq!(track.map(|t| t.clock_rate), Some(44_100));
+
+    let frame = events.iter().find_map(|e| match e {
+        PsDemuxEvent::Frame(f) => Some(f),
+        _ => None,
+    });
+    assert!(frame.is_some());
+    assert_eq!(
+        frame.unwrap().payload.as_ref(),
+        &[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x00]
+    );
+}
+
+#[test]
+fn ps_demuxer_falls_back_to_g711_for_audio_without_psm() {
+    let payload = Bytes::from_static(b"g711 audio samples");
+
+    let pes_a = PesPacket {
+        stream_id: 0xC0,
+        kind: PsStreamKind::Audio,
+        pts: Some(90_000),
+        dts: None,
+        payload,
+    };
+    let pes_u = PesPacket {
+        stream_id: 0xD0,
+        kind: PsStreamKind::Audio,
+        pts: Some(90_000),
+        dts: None,
+        payload: Bytes::from_static(b"g711 audio samples"),
+    };
+
+    let mut demuxer_a = PsDemuxer::new(PsDemuxerConfig::default());
+    let events_a = demuxer_a.push(&pes_a.encode());
+    let track_a = events_a.iter().find_map(|e| match e {
+        PsDemuxEvent::TrackInfo(t) => t.iter().find(|x| x.track_id == TrackId(0xC0)),
+        _ => None,
+    });
+    assert_eq!(track_a.map(|t| t.codec), Some(CodecId::G711A));
+
+    let mut demuxer_u = PsDemuxer::new(PsDemuxerConfig::default());
+    let events_u = demuxer_u.push(&pes_u.encode());
+    let track_u = events_u.iter().find_map(|e| match e {
+        PsDemuxEvent::TrackInfo(t) => t.iter().find(|x| x.track_id == TrackId(0xD0)),
+        _ => None,
+    });
+    assert_eq!(track_u.map(|t| t.codec), Some(CodecId::G711U));
+}
+
+#[test]
+fn ps_demuxer_probe_h264_p_slice_not_h265() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    // A common H.264 reference P-slice NAL header (0x41) collides with the H.265
+    // VPS type 32 when only the first byte is inspected. The layer-id / temporal-id
+    // consistency check should keep it as H.264.
+    let payload = Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x41, 0xE0, 0x00, 0x00]);
+    let pes = PesPacket {
+        stream_id: 0xE0,
+        kind: PsStreamKind::Video,
+        pts: Some(90_000),
+        dts: None,
+        payload,
+    };
+
+    let events = demuxer.push(&pes.encode());
+    let track = events.iter().find_map(|e| match e {
+        PsDemuxEvent::TrackInfo(t) => t.first(),
+        _ => None,
+    });
+    assert_eq!(track.map(|t| t.codec), Some(CodecId::H264));
+}
+
+#[test]
+fn ps_demuxer_emits_unsupported_payload_after_codec_probe_budget() {
+    let config = PsDemuxerConfig {
+        max_codec_probe_packets: 1,
+        ..Default::default()
+    };
+    let mut demuxer = PsDemuxer::new(config);
+
+    let payload = Bytes::from(vec![0u8; 8]);
+    let pes = PesPacket {
+        stream_id: 0xE0,
+        kind: PsStreamKind::Video,
+        pts: Some(90_000),
+        dts: None,
+        payload,
+    };
+
+    // First unknown PES consumes the single probe packet budget.
+    let _ = demuxer.push(&pes.encode());
+    // Second unknown PES exceeds the budget and emits UnsupportedPayload.
+    let events = demuxer.push(&pes.encode());
+    // Third and later unknown PESes must stay silent; the diagnostic is emitted once.
+    let mut all_events = events;
+    all_events.extend(demuxer.push(&pes.encode()));
+    all_events.extend(demuxer.push(&pes.encode()));
+
+    let unsupported_count = all_events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e,
+                PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::UnsupportedPayload { stream_id: 0xE0 })
+            )
+        })
+        .count();
+    assert_eq!(unsupported_count, 1);
 }

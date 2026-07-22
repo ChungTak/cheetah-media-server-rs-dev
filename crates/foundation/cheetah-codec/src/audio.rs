@@ -238,6 +238,14 @@ impl AdtsHeader {
     }
 }
 
+/// Map an AAC `sampling_frequency_index` to a sample rate in Hz.
+pub(crate) fn aac_sample_rate(index: u8) -> u32 {
+    const RATES: [u32; 13] = [
+        96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
+    ];
+    RATES.get(index as usize).copied().unwrap_or(0)
+}
+
 /// Wrap a raw AAC frame with an ADTS header derived from an ASC.
 ///
 /// Computes the ADTS profile from the ASC audio object type (`profile = AOT - 1`)

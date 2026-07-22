@@ -31,6 +31,10 @@ pub struct PsDemuxerConfig {
     ///
     /// 在发现轨道前允许检查的最大 PS pack header 数量。
     pub max_probe_packets: u32,
+    /// Maximum PES packets to inspect for codec probing before giving up on a stream.
+    ///
+    /// 对一条流进行编解码器探测时最多检查的 PES 包数。
+    pub max_codec_probe_packets: u32,
 }
 
 impl PsDemuxerConfig {
@@ -45,6 +49,14 @@ impl PsDemuxerConfig {
             ..Default::default()
         }
     }
+
+    /// Builder-style setter for the codec-probe packet budget.
+    ///
+    /// 以 builder 风格设置编解码器探测预算。
+    pub fn with_codec_probe_packets(mut self, max_codec_probe_packets: u32) -> Self {
+        self.max_codec_probe_packets = max_codec_probe_packets;
+        self
+    }
 }
 
 impl Default for PsDemuxerConfig {
@@ -55,6 +67,7 @@ impl Default for PsDemuxerConfig {
             max_pes_packet_size: 8 * 1024 * 1024,
             max_access_unit_size: 16 * 1024 * 1024,
             max_probe_packets: 1024,
+            max_codec_probe_packets: 8,
         }
     }
 }
@@ -84,6 +97,10 @@ pub enum PsDemuxDiagnostic {
     ///
     /// 配置的每 session 限制被超过并已清理状态。
     LimitExceeded { resource: String },
+    /// The elementary stream payload could not be identified as a supported codec.
+    ///
+    /// 基本流负载无法识别为支持的编解码器。
+    UnsupportedPayload { stream_id: u8 },
 }
 
 /// Events produced by the PS demuxer.
