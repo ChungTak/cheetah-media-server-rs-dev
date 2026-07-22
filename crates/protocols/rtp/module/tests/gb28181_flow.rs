@@ -631,3 +631,88 @@ async fn rtp_module_admission_deny_leaves_no_session() {
 
     harness.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_open_is_idempotent_for_same_request_and_key() {
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext {
+        idempotency_key: Some("idempotent-open-1".to_string()),
+        ..Default::default()
+    };
+
+    let media_key = MediaKey::with_default_vhost("gb28181_idem", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        })
+        .build();
+    let request = OpenRtpReceiver {
+        params,
+        playback_range: None,
+    };
+
+    let desc1 = rtp_api
+        .open_receiver(&ctx, request.clone())
+        .await
+        .expect("first open");
+    let desc2 = rtp_api
+        .open_receiver(&ctx, request)
+        .await
+        .expect("idempotent second open");
+    assert_eq!(desc1.session_id, desc2.session_id);
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_idempotent_failure_is_replayed_with_same_key() {
+    // Only strict profile is enabled so the default gb_common request fails.
+    let harness =
+        Gb28181TestHarness::start_with_rtp_config("    enabled_profiles:\n      - strict\n").await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext {
+        idempotency_key: Some("idempotent-fail-1".to_string()),
+        ..Default::default()
+    };
+
+    let media_key = MediaKey::with_default_vhost("gb28181_idem_fail", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        })
+        .build();
+    let request = OpenRtpReceiver {
+        params,
+        playback_range: None,
+    };
+
+    let err1 = rtp_api
+        .open_receiver(&ctx, request.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(err1.code, MediaErrorCode::Unsupported);
+    let err2 = rtp_api.open_receiver(&ctx, request).await.unwrap_err();
+    assert_eq!(err2.code, MediaErrorCode::Unsupported);
+    assert_eq!(err1.message, err2.message);
+
+    harness.stop().await;
+}

@@ -30,8 +30,11 @@ use cheetah_sdk::media_api::rtp_session::{
     RtpSessionGeneration, RtpSessionParams, RtpSessionQuery, RtpSessionRef, RtpSessionState,
     RtpTransport, StopRtpSession, TcpRole, UpdateRtpSession,
 };
-use cheetah_sdk::{CancellationToken, Deadline, EngineContext, StreamKey};
+use cheetah_sdk::{
+    CancellationToken, Deadline, EngineContext, IdempotencyError, IdempotencyKey, StreamKey,
+};
 use parking_lot::Mutex;
+use serde::Serialize;
 
 use crate::config::RtpModuleConfig;
 use crate::egress::{run_egress_session, ActiveEgressMap, EgressCleanup};
@@ -40,6 +43,7 @@ use crate::orchestrator::RtpSessionOrchestrator;
 /// Media-domain `RtpApi` and `RtpSessionApi` provider.
 ///
 /// `RtpApi` / `RtpSessionApi` provider。
+#[derive(Clone)]
 pub struct RtpMediaProvider {
     orchestrator: Arc<RtpSessionOrchestrator>,
     engine: EngineContext,
@@ -489,6 +493,71 @@ impl RtpApi for RtpMediaProvider {
     }
 }
 
+impl RtpMediaProvider {
+    fn idempotency_key(
+        &self,
+        ctx: &MediaRequestContext,
+        operation: &str,
+    ) -> Option<IdempotencyKey> {
+        let key = ctx.idempotency_key.as_ref()?;
+        let principal = ctx
+            .principal
+            .as_ref()
+            .map(|p| p.identity.clone())
+            .unwrap_or_default();
+        Some(IdempotencyKey::new(principal, operation, key.clone()))
+    }
+
+    fn request_fingerprint<T: Serialize>(
+        request: &T,
+    ) -> Result<cheetah_sdk::IdempotencyFingerprint> {
+        let bytes = serde_json::to_vec(request).map_err(|e| {
+            MediaError::invalid_argument(format!(
+                "failed to serialize idempotency fingerprint: {e}"
+            ))
+        })?;
+        Ok(cheetah_sdk::canonical_hash(&bytes))
+    }
+
+    fn idempotency_to_media_error(err: IdempotencyError) -> MediaError {
+        let message = err.to_string();
+        match err {
+            IdempotencyError::Conflict { .. } => MediaError::conflict(message),
+            IdempotencyError::Retryable(_) => MediaError::unavailable(message),
+            _ => MediaError::invalid_argument(message),
+        }
+    }
+
+    /// Run `f` through the shared idempotency repository when the caller supplied a key.
+    /// No key means the operation is executed exactly once without caching.
+    /// The original `MediaError` code is preserved for both success and failure outcomes.
+    async fn idempotent_open<F, Fut>(
+        &self,
+        ctx: &MediaRequestContext,
+        operation: &str,
+        fingerprint: cheetah_sdk::IdempotencyFingerprint,
+        f: F,
+    ) -> Result<RtpSessionDescriptor>
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: std::future::Future<Output = Result<RtpSessionDescriptor>> + Send,
+    {
+        let Some(key) = self.idempotency_key(ctx, operation) else {
+            return f().await;
+        };
+        self.engine
+            .media_services
+            .idempotency()
+            .execute(key, fingerprint, 60_000, || async {
+                let result = f().await;
+                let resource_id = result.as_ref().ok().map(|d| d.session_id.0.clone());
+                Ok((result, resource_id))
+            })
+            .await
+            .map_err(Self::idempotency_to_media_error)?
+    }
+}
+
 #[async_trait]
 impl RtpSessionApi for RtpMediaProvider {
     async fn open_receiver(
@@ -496,25 +565,14 @@ impl RtpSessionApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: OpenRtpReceiver,
     ) -> Result<RtpSessionDescriptor> {
-        Deadline::from_context(ctx)
-            .check()
-            .map_err(|e| MediaError::unavailable(e.to_string()))?;
-        self.admit(
-            ctx,
-            AdmissionAction::OpenRtpReceiver,
-            &request.params.media_key,
-            "rtp",
-        )
-        .await?;
-        self.check_profile_and_limits(&request.params)?;
-        let old_req = self.build_old_receiver_request(request.clone())?;
-        let session = self.open_rtp_receiver(ctx, old_req).await?;
-        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
-        self.apply_request_overrides(&mut descriptor, &request.params);
-        self.rtp_descriptors
-            .lock()
-            .insert(descriptor.session_id.clone(), descriptor.clone());
-        Ok(descriptor)
+        let fingerprint = Self::request_fingerprint(&request)?;
+        self.idempotent_open(ctx, "open_rtp_receiver", fingerprint, || {
+            let provider = self.clone();
+            let ctx = ctx.clone();
+            let request = request.clone();
+            async move { provider.open_receiver_impl(&ctx, request).await }
+        })
+        .await
     }
 
     async fn open_sender(
@@ -522,29 +580,14 @@ impl RtpSessionApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: OpenRtpSender,
     ) -> Result<RtpSessionDescriptor> {
-        Deadline::from_context(ctx)
-            .check()
-            .map_err(|e| MediaError::unavailable(e.to_string()))?;
-        self.admit(
-            ctx,
-            AdmissionAction::OpenRtpSender,
-            &request.params.media_key,
-            "rtp",
-        )
-        .await?;
-        self.check_profile_and_limits(&request.params)?;
-        let mode = match request.params.tcp_role {
-            Some(TcpRole::Passive) => RtpSenderMode::Passive,
-            _ => RtpSenderMode::Active,
-        };
-        let old_req = self.build_old_sender_request(request.clone(), mode)?;
-        let session = self.open_rtp_sender(ctx, old_req).await?;
-        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
-        self.apply_request_overrides(&mut descriptor, &request.params);
-        self.rtp_descriptors
-            .lock()
-            .insert(descriptor.session_id.clone(), descriptor.clone());
-        Ok(descriptor)
+        let fingerprint = Self::request_fingerprint(&request)?;
+        self.idempotent_open(ctx, "open_rtp_sender", fingerprint, || {
+            let provider = self.clone();
+            let ctx = ctx.clone();
+            let request = request.clone();
+            async move { provider.open_sender_impl(&ctx, request).await }
+        })
+        .await
     }
 
     async fn open_talk(
@@ -552,33 +595,14 @@ impl RtpSessionApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: OpenRtpTalk,
     ) -> Result<RtpSessionDescriptor> {
-        Deadline::from_context(ctx)
-            .check()
-            .map_err(|e| MediaError::unavailable(e.to_string()))?;
-        self.admit(
-            ctx,
-            AdmissionAction::OpenRtpSender,
-            &request.params.media_key,
-            "rtp",
-        )
-        .await?;
-        self.check_profile_and_limits(&request.params)?;
-        let sender_req = self.build_old_sender_request(
-            OpenRtpSender {
-                params: request.params.clone(),
-            },
-            RtpSenderMode::Talk,
-        )?;
-        let session = self.open_rtp_sender(ctx, sender_req).await?;
-        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
-        self.apply_request_overrides(&mut descriptor, &request.params);
-        if let Some(binding) = request.talkback_binding {
-            descriptor.payload_bindings.push(binding);
-        }
-        self.rtp_descriptors
-            .lock()
-            .insert(descriptor.session_id.clone(), descriptor.clone());
-        Ok(descriptor)
+        let fingerprint = Self::request_fingerprint(&request)?;
+        self.idempotent_open(ctx, "open_rtp_talk", fingerprint, || {
+            let provider = self.clone();
+            let ctx = ctx.clone();
+            let request = request.clone();
+            async move { provider.open_talk_impl(&ctx, request).await }
+        })
+        .await
     }
 
     async fn update_session(
@@ -756,5 +780,95 @@ impl RtpSessionApi for RtpMediaProvider {
             total: page.total,
             next_cursor: page.next_cursor,
         })
+    }
+}
+
+impl RtpMediaProvider {
+    async fn open_receiver_impl(
+        &self,
+        ctx: &MediaRequestContext,
+        request: OpenRtpReceiver,
+    ) -> Result<RtpSessionDescriptor> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.admit(
+            ctx,
+            AdmissionAction::OpenRtpReceiver,
+            &request.params.media_key,
+            "rtp",
+        )
+        .await?;
+        self.check_profile_and_limits(&request.params)?;
+        let old_req = self.build_old_receiver_request(request.clone())?;
+        let session = self.open_rtp_receiver(ctx, old_req).await?;
+        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
+        self.apply_request_overrides(&mut descriptor, &request.params);
+        self.rtp_descriptors
+            .lock()
+            .insert(descriptor.session_id.clone(), descriptor.clone());
+        Ok(descriptor)
+    }
+    async fn open_sender_impl(
+        &self,
+        ctx: &MediaRequestContext,
+        request: OpenRtpSender,
+    ) -> Result<RtpSessionDescriptor> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.admit(
+            ctx,
+            AdmissionAction::OpenRtpSender,
+            &request.params.media_key,
+            "rtp",
+        )
+        .await?;
+        self.check_profile_and_limits(&request.params)?;
+        let mode = match request.params.tcp_role {
+            Some(TcpRole::Passive) => RtpSenderMode::Passive,
+            _ => RtpSenderMode::Active,
+        };
+        let old_req = self.build_old_sender_request(request.clone(), mode)?;
+        let session = self.open_rtp_sender(ctx, old_req).await?;
+        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
+        self.apply_request_overrides(&mut descriptor, &request.params);
+        self.rtp_descriptors
+            .lock()
+            .insert(descriptor.session_id.clone(), descriptor.clone());
+        Ok(descriptor)
+    }
+    async fn open_talk_impl(
+        &self,
+        ctx: &MediaRequestContext,
+        request: OpenRtpTalk,
+    ) -> Result<RtpSessionDescriptor> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.admit(
+            ctx,
+            AdmissionAction::OpenRtpSender,
+            &request.params.media_key,
+            "rtp",
+        )
+        .await?;
+        self.check_profile_and_limits(&request.params)?;
+        let sender_req = self.build_old_sender_request(
+            OpenRtpSender {
+                params: request.params.clone(),
+            },
+            RtpSenderMode::Talk,
+        )?;
+        let session = self.open_rtp_sender(ctx, sender_req).await?;
+        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
+        self.apply_request_overrides(&mut descriptor, &request.params);
+        if let Some(binding) = request.talkback_binding {
+            descriptor.payload_bindings.push(binding);
+        }
+        self.rtp_descriptors
+            .lock()
+            .insert(descriptor.session_id.clone(), descriptor.clone());
+        Ok(descriptor)
     }
 }
