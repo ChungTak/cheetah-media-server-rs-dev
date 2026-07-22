@@ -22,7 +22,7 @@ enum SessionDemuxer {
     Pending,
     Ts(MpegTsDemuxer),
     Ps(Box<PsDemuxer>),
-    Es(EsDemuxer),
+    Es(Box<EsDemuxer>),
     Bypass,
 }
 
@@ -1017,11 +1017,12 @@ impl RtpCore {
                     )));
                 }
                 RtpPayloadMode::Es => {
-                    session.demuxer = SessionDemuxer::Es(EsDemuxer::new(EsDemuxerConfig {
-                        clock_rate_hz: default_clock_rate_hz(RtpPayloadMode::Es) as u32,
-                        codec: None,
-                        ..Default::default()
-                    }));
+                    session.demuxer =
+                        SessionDemuxer::Es(Box::new(EsDemuxer::new(EsDemuxerConfig {
+                            clock_rate_hz: default_clock_rate_hz(RtpPayloadMode::Es) as u32,
+                            codec: None,
+                            ..Default::default()
+                        })));
                 }
                 _ => {
                     session.demuxer = SessionDemuxer::Bypass;

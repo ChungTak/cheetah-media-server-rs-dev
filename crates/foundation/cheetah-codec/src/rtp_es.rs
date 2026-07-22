@@ -6,11 +6,12 @@
 
 use bytes::Bytes;
 
-use crate::frame::{AVFrame, FrameFlags, FrameFormat};
+use crate::frame::{AVFrame, FrameFlags, FrameFormat, FrameOrigin, RtpTimestamp, SourceTimestamp};
 use crate::prelude::*;
-use crate::time::Timebase;
+use crate::time::{Timebase, WrapUnwrapper};
 use crate::track::{CodecExtradata, CodecId, MediaKind, TrackId, TrackInfo, TrackReadiness};
 use crate::video::{h26x_nalu_is_random_access, AccessUnitAssembler, ParameterSetCache};
+use crate::RtpTimestampNormalizer;
 
 /// Events produced by the elementary-stream depacketizer.
 #[derive(Debug, Clone)]
@@ -48,7 +49,7 @@ impl Default for EsDemuxerConfig {
 }
 
 /// Reassembles H.264/H.265 RTP payloads into `AVFrame` + `TrackInfo`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct EsDemuxer {
     config: EsDemuxerConfig,
     parameter_sets: ParameterSetCache,
@@ -60,6 +61,14 @@ pub struct EsDemuxer {
     au_random_access: bool,
     au_has_vcl: bool,
     au_size: usize,
+    timestamp_normalizer: RtpTimestampNormalizer,
+    timestamp_unwrapper: WrapUnwrapper,
+}
+
+impl Default for EsDemuxer {
+    fn default() -> Self {
+        Self::new(EsDemuxerConfig::default())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -70,9 +79,22 @@ struct FuState {
 
 impl EsDemuxer {
     pub fn new(config: EsDemuxerConfig) -> Self {
+        let clock_rate = config.clock_rate_hz.max(1);
+        let timestamp_normalizer = RtpTimestampNormalizer::new(clock_rate)
+            .unwrap_or_else(|_| RtpTimestampNormalizer::new(90_000).expect("90kHz is valid"));
         Self {
             config,
-            ..Default::default()
+            parameter_sets: ParameterSetCache::default(),
+            track_emitted: false,
+            fu: None,
+            au_assembler: AccessUnitAssembler::default(),
+            au_timestamp: None,
+            au_codec: None,
+            au_random_access: false,
+            au_has_vcl: false,
+            au_size: 0,
+            timestamp_normalizer,
+            timestamp_unwrapper: WrapUnwrapper::new(32).expect("32-bit wrap is valid"),
         }
     }
 
@@ -432,6 +454,12 @@ impl EsDemuxer {
         }
 
         let timestamp = self.au_timestamp.unwrap_or(0);
+        let timing = match self.timestamp_normalizer.normalize(timestamp, true) {
+            Ok(t) => t,
+            Err(_) => return,
+        };
+        let unwrapped = self.timestamp_unwrapper.unwrap(u64::from(timestamp));
+
         let mut access_unit = self.au_assembler.take_access_unit();
         if self.au_random_access && self.parameter_sets.has_required_sets(codec) {
             self.parameter_sets
@@ -444,11 +472,17 @@ impl EsDemuxer {
             MediaKind::Video,
             codec,
             FrameFormat::CanonicalH26x,
-            i64::from(timestamp),
-            i64::from(timestamp),
-            Timebase::new(1, self.config.clock_rate_hz.max(1)),
+            timing.pts,
+            timing.dts,
+            Timebase::new(1, 1_000_000),
             payload,
         );
+        frame.pts_us = timing.pts;
+        frame.dts_us = timing.dts;
+        frame.origin = FrameOrigin::Ingest;
+        frame.set_source_timestamp(SourceTimestamp::Rtp(RtpTimestamp::new(
+            timestamp, unwrapped,
+        )));
 
         if self.au_random_access {
             frame.flags.insert(FrameFlags::KEY);
@@ -759,7 +793,8 @@ mod tests {
             })
             .collect();
         assert_eq!(frames.len(), 1);
-        assert_eq!(frames[0].pts, 1000);
+        // The first normalized timeline starts near zero, not with the raw RTP tick count.
+        assert_eq!(frames[0].pts, 0);
     }
 
     #[test]
