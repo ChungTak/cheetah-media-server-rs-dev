@@ -35,6 +35,8 @@ struct RtpSession {
     payload_mode: RtpPayloadMode,
     /// Payload mode used when packetizing outbound `SendFrame` frames.
     egress_payload_mode: RtpPayloadMode,
+    /// Last resolved payload profile, including optional codec hint for ES demuxers.
+    payload_profile: Option<RtpPayloadProfile>,
     transport_mode: RtpTransportMode,
     /// Filter applied to demuxed frames before they leave the core.
     track_filter: RtpTrackFilter,
@@ -362,6 +364,7 @@ impl RtpCore {
                                 payload_type: None,
                                 payload_mode: RtpPayloadMode::Ehome,
                                 egress_payload_mode: RtpPayloadMode::Ehome,
+                                payload_profile: None,
                                 transport_mode: RtpTransportMode::RecvOnly,
                                 track_filter: RtpTrackFilter::All,
                                 egress_track_filter: RtpTrackFilter::All,
@@ -746,6 +749,7 @@ impl RtpCore {
                 payload_type: None,
                 payload_mode: mode,
                 egress_payload_mode: mode,
+                payload_profile: None,
                 transport_mode: RtpTransportMode::RecvOnly,
                 track_filter: RtpTrackFilter::All,
                 egress_track_filter: RtpTrackFilter::All,
@@ -800,6 +804,7 @@ impl RtpCore {
             session.payload_type = Some(pt);
             session.payload_mode = profile.mode;
             session.egress_payload_mode = profile.mode;
+            session.payload_profile = Some(profile);
             session.demuxer = SessionDemuxer::Pending;
             session.pt_change_unknown_count = 0;
             session
@@ -1017,10 +1022,11 @@ impl RtpCore {
                     )));
                 }
                 RtpPayloadMode::Es => {
+                    let codec = session.payload_profile.and_then(|p| p.codec);
                     session.demuxer =
                         SessionDemuxer::Es(Box::new(EsDemuxer::new(EsDemuxerConfig {
                             clock_rate_hz: default_clock_rate_hz(RtpPayloadMode::Es) as u32,
-                            codec: None,
+                            codec,
                             ..Default::default()
                         })));
                 }
@@ -1409,6 +1415,7 @@ impl RtpCore {
                     payload_type: None,
                     payload_mode: spec.payload_mode,
                     egress_payload_mode: spec.payload_mode,
+                    payload_profile: None,
                     transport_mode: spec.transport_mode,
                     track_filter,
                     egress_track_filter: spec.track_filter,
@@ -1479,6 +1486,7 @@ impl RtpCore {
                     payload_type: None,
                     payload_mode: spec.payload_mode,
                     egress_payload_mode: spec.payload_mode,
+                    payload_profile: None,
                     transport_mode: spec.transport_mode,
                     track_filter,
                     egress_track_filter: spec.track_filter,

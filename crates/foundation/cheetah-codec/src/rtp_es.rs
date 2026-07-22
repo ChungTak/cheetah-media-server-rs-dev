@@ -61,6 +61,9 @@ pub struct EsDemuxer {
     au_random_access: bool,
     au_has_vcl: bool,
     au_size: usize,
+    /// Codec locked from a strong signal (SPS/PPS/VPS or VCL). Once set, all NAL units
+    /// are interpreted with this codec and content sniffing is skipped.
+    locked_codec: Option<CodecId>,
     timestamp_normalizer: RtpTimestampNormalizer,
     timestamp_unwrapper: WrapUnwrapper,
 }
@@ -93,6 +96,7 @@ impl EsDemuxer {
             au_random_access: false,
             au_has_vcl: false,
             au_size: 0,
+            locked_codec: config.codec,
             timestamp_normalizer,
             timestamp_unwrapper: WrapUnwrapper::new(32).expect("32-bit wrap is valid"),
         }
@@ -155,6 +159,9 @@ impl EsDemuxer {
         if let Some(codec) = self.config.codec {
             return Some(codec);
         }
+        if let Some(codec) = self.locked_codec {
+            return Some(codec);
+        }
 
         if payload.len() >= 2 {
             let nal_type = (payload[0] >> 1) & 0x3f;
@@ -165,7 +172,15 @@ impl EsDemuxer {
                 && (1..=8).contains(&tid)
                 && is_h265_packet_type(nal_type)
             {
-                return Some(CodecId::H265);
+                // An H.264 SEI NAL (type 6) has the same first two bytes as a H.265
+                // base-layer VCL or IRAP NAL whose `payload[0]` is also `0x06` or
+                // `0x26`. Disambiguate with the third byte: a H.265 first slice has
+                // `first_slice_segment_in_pic` set, so its RBSP starts with a `1` bit;
+                // H.264 SEI payload data commonly starts with a `0` bit.
+                let h264_type = payload[0] & 0x1f;
+                if h264_type != 6 || payload.len() < 3 || (payload[2] & 0x80) != 0 {
+                    return Some(CodecId::H265);
+                }
             }
         }
 
@@ -185,6 +200,9 @@ impl EsDemuxer {
         if let Some(codec) = self.config.codec {
             return Some(codec);
         }
+        if let Some(codec) = self.locked_codec {
+            return Some(codec);
+        }
 
         if unit.len() >= 2 {
             let nal_type = (unit[0] >> 1) & 0x3f;
@@ -195,7 +213,10 @@ impl EsDemuxer {
                 && (1..=8).contains(&tid)
                 && is_h265_nal_type(nal_type)
             {
-                return Some(CodecId::H265);
+                let h264_type = unit[0] & 0x1f;
+                if h264_type != 6 || unit.len() < 3 || (unit[2] & 0x80) != 0 {
+                    return Some(CodecId::H265);
+                }
             }
         }
 
@@ -394,8 +415,27 @@ impl EsDemuxer {
             self.flush_access_unit(events);
         }
 
-        if self.au_codec.is_none() {
-            self.au_codec = Some(codec);
+        let (is_vcl, is_parameter_set) = match codec {
+            CodecId::H264 => {
+                let t = nal_unit[0] & 0x1f;
+                (matches!(t, 1..=5), matches!(t, 7 | 8))
+            }
+            CodecId::H265 => {
+                let t = (nal_unit[0] >> 1) & 0x3f;
+                (
+                    (0..=9).contains(&t) || (16..=21).contains(&t),
+                    matches!(t, 32..=34),
+                )
+            }
+            _ => (false, false),
+        };
+        let is_strong = is_vcl || is_parameter_set;
+
+        if is_strong && self.locked_codec.is_none() {
+            self.locked_codec = Some(codec);
+        }
+        if self.au_codec.is_none() && (is_strong || self.locked_codec.is_some()) {
+            self.au_codec = self.locked_codec;
         }
         self.au_timestamp = Some(timestamp);
 
@@ -422,18 +462,6 @@ impl EsDemuxer {
         }
         self.au_assembler
             .push_unit(Bytes::copy_from_slice(nal_unit));
-
-        let is_vcl = match codec {
-            CodecId::H264 => {
-                let t = nal_unit[0] & 0x1f;
-                matches!(t, 1..=5)
-            }
-            CodecId::H265 => {
-                let t = (nal_unit[0] >> 1) & 0x3f;
-                (0..=9).contains(&t) || (16..=21).contains(&t)
-            }
-            _ => false,
-        };
 
         if is_vcl {
             self.au_has_vcl = true;
@@ -823,5 +851,49 @@ mod tests {
         assert_eq!(frames.len(), 1);
         // The flushed frame contains only the last NAL unit (3 bytes).
         assert_eq!(frames[0].payload.len(), 3 + 4);
+    }
+
+    #[test]
+    fn es_h264_sei_is_not_misclassified_as_h265() {
+        let mut demuxer = EsDemuxer::default();
+
+        // H.264 SEI (type 6) with a small payload-type byte. The first two bytes also form
+        // a valid H.265 base-layer NAL header, so the demuxer must use the third byte to
+        // prefer H.264 when the RBSP does not look like a H.265 first slice.
+        let sei: &[u8] = &[0x06, 0x01, 0x01, 0x00];
+        assert!(demuxer.push_packet(sei, 1000, false).is_empty());
+
+        // A following H.264 IDR locks the codec to H.264 and emits the SEI with it.
+        let idr: &[u8] = &[0x65, 0x88, 0x84, 0x00];
+        let events = demuxer.push_packet(idr, 1000, true);
+        let frames: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                EsDemuxEvent::Frame(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].codec, CodecId::H264);
+        assert!(frames[0].payload.len() > 4 + 4);
+    }
+
+    #[test]
+    fn es_h265_first_slice_is_not_misclassified_as_h264_sei() {
+        let mut demuxer = EsDemuxer::default();
+
+        // H.265 TSA_R (NAL type 3) base-layer NAL header: payload[0]=0x06, payload[1]=0x01.
+        // The third byte has the first-slice flag set (high bit 1), so it must stay H.265.
+        let h265_nal: &[u8] = &[0x06, 0x01, 0x80, 0x00, 0x00, 0x00];
+        let events = demuxer.push_packet(h265_nal, 1000, true);
+        let frames: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                EsDemuxEvent::Frame(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].codec, CodecId::H265);
     }
 }
