@@ -157,6 +157,57 @@ impl RtpCore {
             return Ok(());
         };
 
+        // Source-address binding / rebind policy.
+        // This runs before any payload format/state changes so that rejected packets do not
+        // advance the session state or reach the media unpackers.
+        if let Some(src) = source_addr {
+            if let Some(bound) = session.source_addr {
+                if bound != src {
+                    match session.source_policy {
+                        RtpSourcePolicy::Strict => {
+                            session.source_spoof_count += 1;
+                            outputs.push(RtpCoreOutput::Diagnostic(
+                                RtpCoreDiagnostic::SourceSpoofed {
+                                    ssrc,
+                                    expected: bound,
+                                    got: src,
+                                },
+                            ));
+                            return Ok(());
+                        }
+                        RtpSourcePolicy::AllowValidatedRebind => {
+                            let idle = received_at_ms.saturating_sub(session.last_activity_ms)
+                                >= self.source_rebind_idle_window_ms;
+                            let expected_seq =
+                                bound_seq(session.last_seq, rtp.header.sequence_number);
+                            let rate_ok = session.source_rebind_count < self.max_source_rebinds;
+                            if idle && expected_seq && rate_ok {
+                                session.source_rebind_count += 1;
+                                outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SourceChanged {
+                                    session_key: session_key.to_string(),
+                                    old: bound,
+                                    new: src,
+                                }));
+                                session.source_addr = Some(src);
+                            } else {
+                                session.source_spoof_count += 1;
+                                outputs.push(RtpCoreOutput::Diagnostic(
+                                    RtpCoreDiagnostic::SourceSpoofed {
+                                        ssrc,
+                                        expected: bound,
+                                        got: src,
+                                    },
+                                ));
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            } else {
+                session.source_addr = Some(src);
+            }
+        }
+
         // Resolve the payload mode for sessions created without an explicit mode.
         // Order: external binding (set via spec/UpdateSession), static PT table,
         // then payload sniff. The sniff budget is per-session so one stream cannot
@@ -284,57 +335,6 @@ impl RtpCore {
         }
         if let Some(reason) = close_reason {
             return Err(reason);
-        }
-
-        // Source-address binding / rebind policy.
-        // This runs before stats, events and the demuxer so that rejected packets do not
-        // advance the session state or reach the media unpackers.
-        if let Some(src) = source_addr {
-            if let Some(bound) = session.source_addr {
-                if bound != src {
-                    match session.source_policy {
-                        RtpSourcePolicy::Strict => {
-                            session.source_spoof_count += 1;
-                            outputs.push(RtpCoreOutput::Diagnostic(
-                                RtpCoreDiagnostic::SourceSpoofed {
-                                    ssrc,
-                                    expected: bound,
-                                    got: src,
-                                },
-                            ));
-                            return Ok(());
-                        }
-                        RtpSourcePolicy::AllowValidatedRebind => {
-                            let idle = received_at_ms.saturating_sub(session.last_activity_ms)
-                                >= self.source_rebind_idle_window_ms;
-                            let expected_seq =
-                                bound_seq(session.last_seq, rtp.header.sequence_number);
-                            let rate_ok = session.source_rebind_count < self.max_source_rebinds;
-                            if idle && expected_seq && rate_ok {
-                                session.source_rebind_count += 1;
-                                outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SourceChanged {
-                                    session_key: session_key.to_string(),
-                                    old: bound,
-                                    new: src,
-                                }));
-                                session.source_addr = Some(src);
-                            } else {
-                                session.source_spoof_count += 1;
-                                outputs.push(RtpCoreOutput::Diagnostic(
-                                    RtpCoreDiagnostic::SourceSpoofed {
-                                        ssrc,
-                                        expected: bound,
-                                        got: src,
-                                    },
-                                ));
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            } else {
-                session.source_addr = Some(src);
-            }
         }
 
         // Update stats and activity

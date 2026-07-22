@@ -14,6 +14,20 @@ fn es_packet(ssrc: u32, seq: u16) -> RtpPacket {
     }
 }
 
+fn ps_packet(ssrc: u32, seq: u16) -> RtpPacket {
+    RtpPacket {
+        header: RtpHeader {
+            version: 2,
+            payload_type: 97,
+            sequence_number: seq,
+            timestamp: u32::from(seq),
+            ssrc,
+            marker: false,
+        },
+        payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA]),
+    }
+}
+
 fn udp_dgram(source: &str, rtp: RtpPacket, received_at_ms: u64) -> RtpCoreInput {
     RtpCoreInput::UdpPacket(RtpDatagram {
         source: source.parse().unwrap(),
@@ -152,6 +166,41 @@ fn test_rebind_rate_limit_blocks_excess_rebinds() {
     assert_eq!(session.source_spoof_count, 1);
 
     assert!(outputs.iter().any(|o| matches!(
+        o,
+        RtpCoreOutput::Diagnostic(RtpCoreDiagnostic::SourceSpoofed { ssrc: 1000, .. })
+    )));
+}
+
+#[test]
+fn test_strict_reject_spoof_before_pt_resolution() {
+    let mut core = RtpCore::new(10, 30_000);
+    let key = "recv/spoof-pt".to_string();
+    let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(
+        RtpServerSpec {
+            session_key: key.clone(),
+            ssrc: Some(1000),
+            payload_mode: RtpPayloadMode::Es,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            track_filter: RtpTrackFilter::All,
+        },
+    )));
+
+    let _ = core.handle_input(udp_dgram("127.0.0.1:5000", es_packet(1000, 1), 0));
+    let spoof_outputs = core.handle_input(udp_dgram("127.0.0.1:6000", ps_packet(1000, 2), 0));
+
+    let session = core.sessions.get(&key).expect("session alive");
+    assert_eq!(session.source_addr, Some("127.0.0.1:5000".parse().unwrap()));
+    assert_eq!(session.payload_type, Some(96));
+    assert_eq!(session.payload_mode, RtpPayloadMode::Es);
+    assert_eq!(session.pt_format_change_count, 0);
+    assert_eq!(session.packets_received, 1);
+    assert_eq!(session.source_spoof_count, 1);
+
+    assert!(!spoof_outputs
+        .iter()
+        .any(|o| matches!(o, RtpCoreOutput::Event(RtpCoreEvent::FormatChanged { .. }))));
+    assert!(spoof_outputs.iter().any(|o| matches!(
         o,
         RtpCoreOutput::Diagnostic(RtpCoreDiagnostic::SourceSpoofed { ssrc: 1000, .. })
     )));

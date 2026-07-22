@@ -1201,7 +1201,7 @@ async fn run_driver_loop(
                         }
                     }
                     RtpCoreOutput::Diagnostic(diag) => {
-                        debug!("RTP Diagnostic: {:?}", diag);
+                        debug!("RTP Diagnostic: {}", diag);
                     }
                     RtpCoreOutput::CloseSession(key) => {
                         debug!("Closing RTP session key: {key}");

@@ -2,7 +2,9 @@
 //!
 //! RTP 模块工厂与实现。
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,6 +36,12 @@ use crate::config::{RtpClientJobConfig, RtpModuleConfig};
 use crate::egress::{run_egress_session, sleep_or_cancel, EgressCleanup};
 use crate::media_provider::RtpMediaProvider;
 use crate::orchestrator::RtpSessionOrchestrator;
+
+fn hash_endpoint(addr: &SocketAddr) -> String {
+    let mut h = DefaultHasher::new();
+    addr.to_string().hash(&mut h);
+    format!("{:x}", h.finish())
+}
 
 const MODULE_ID: &str = "rtp";
 
@@ -629,7 +637,11 @@ async fn run_ingress_worker(
                 old,
                 new,
             } => {
-                info!("RTP source address rebind: key={session_key}, old={old}, new={new}");
+                info!(
+                    "RTP source address rebind: key={session_key}, old={}, new={}",
+                    hash_endpoint(&old),
+                    hash_endpoint(&new),
+                );
             }
             RtpCoreEvent::SessionClosed {
                 session_key,

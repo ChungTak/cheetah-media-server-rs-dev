@@ -1,5 +1,14 @@
+use std::collections::hash_map::DefaultHasher;
+use std::fmt;
+use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use thiserror::Error;
+
+fn hash_endpoint(addr: &SocketAddr) -> String {
+    let mut h = DefaultHasher::new();
+    addr.to_string().hash(&mut h);
+    format!("{:x}", h.finish())
+}
 
 /// Errors returned by the `RtpCore` state machine when a command cannot be honored.
 ///
@@ -93,4 +102,53 @@ pub enum RtpCoreDiagnostic {
     /// 入站 RTP 负载超过配置的 `max_rtp_len_cap`。该包仍被路由，但会通过此诊断通知运维。
     /// 对应 ABL 动态 `nMaxRtpLength` 学习器，用于在出现巨大关键帧时自适应最大帧大小。
     OversizedPayload { ssrc: u32, len: usize, cap: usize },
+}
+
+impl fmt::Display for RtpCoreDiagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidRtpVersion { version } => write!(f, "invalid RTP version: {version}"),
+            Self::RtpHeaderError => write!(f, "RTP header parse error"),
+            Self::EmptyPayload { ssrc } => write!(f, "empty RTP payload from SSRC {ssrc}"),
+            Self::UnknownPayload { ssrc } => {
+                write!(
+                    f,
+                    "unknown RTP payload from SSRC {ssrc} (session table full)"
+                )
+            }
+            Self::SequenceGap {
+                ssrc,
+                expected,
+                got,
+            } => {
+                write!(
+                    f,
+                    "RTP sequence gap for SSRC {ssrc}: expected {expected}, got {got}"
+                )
+            }
+            Self::SourceAddressChanged { ssrc, old, new } => {
+                write!(
+                    f,
+                    "RTP source address changed for SSRC {ssrc}: old={}, new={}",
+                    hash_endpoint(old),
+                    hash_endpoint(new),
+                )
+            }
+            Self::SourceSpoofed {
+                ssrc,
+                expected,
+                got,
+            } => {
+                write!(
+                    f,
+                    "RTP source spoofed for SSRC {ssrc}: expected={}, got={}",
+                    hash_endpoint(expected),
+                    hash_endpoint(got),
+                )
+            }
+            Self::OversizedPayload { ssrc, len, cap } => {
+                write!(f, "oversized RTP payload from SSRC {ssrc}: {len} > {cap}")
+            }
+        }
+    }
 }
