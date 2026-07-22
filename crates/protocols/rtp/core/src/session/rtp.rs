@@ -160,6 +160,7 @@ impl RtpCore {
         // exhaust it for others.
         let mut format_change = None;
         let mut close_reason: Option<String> = None;
+        let mut skip_demuxer = false;
 
         if session.payload_mode == RtpPayloadMode::Unknown {
             if session.pt_probe_attempts < self.max_pt_probe_packets {
@@ -267,6 +268,8 @@ impl RtpCore {
                                 "payload type changed from {current_pt} to {new_pt} and could not be resolved for {} packets",
                                 session.pt_change_unknown_count
                             ));
+                        } else {
+                            skip_demuxer = true;
                         }
                     }
                 }
@@ -361,6 +364,10 @@ impl RtpCore {
             }
         }
         session.last_seq = Some(rtp.header.sequence_number);
+
+        if skip_demuxer {
+            return Ok(());
+        }
 
         // Lazily build demuxer
         if let SessionDemuxer::Pending = session.demuxer {
