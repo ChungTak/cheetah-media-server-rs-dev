@@ -759,7 +759,12 @@ impl RtpCore {
                             session.demuxer = SessionDemuxer::Pending;
                         }
                     }
-                    cheetah_codec::RtpPtResolveSource::Unknown => {}
+                    cheetah_codec::RtpPtResolveSource::Unknown => {
+                        // No recognizable signal this packet; drop any pending weak candidate
+                        // so confirmation only counts consecutive matches.
+                        session.pt_pending_profile = None;
+                        session.pt_pending_confirm_count = 0;
+                    }
                 }
             }
             // If the mode is still unknown after exhausting the per-session sniff budget,
