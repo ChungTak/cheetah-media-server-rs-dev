@@ -1,12 +1,13 @@
 //! Elementary stream (ES) RTP depacketizer.
 //!
-//! Converts H.264/H.265 RTP payloads (single NAL, FU-A, STAP-A/AP) into
+//! Converts H.264/H.265 RTP payloads (single NAL, FU-A/STAP-A, AP/FU) into
 //! `AVFrame` and `TrackInfo` events. The engine uses Annex-B start-code form,
 //! so emitted payloads include `0x00 0x00 0x00 0x01` prefixes.
 
 use bytes::Bytes;
 
 use crate::frame::{AVFrame, FrameFlags, FrameFormat};
+use crate::prelude::*;
 use crate::time::Timebase;
 use crate::track::{CodecExtradata, CodecId, MediaKind, TrackId, TrackInfo, TrackReadiness};
 use crate::video::{h26x_nalu_is_random_access, ParameterSetCache};
@@ -25,12 +26,15 @@ pub enum EsDemuxEvent {
 pub struct EsDemuxerConfig {
     /// RTP clock rate in Hz used for frame timing.
     pub clock_rate_hz: u32,
+    /// Optional codec hint, usually derived from the negotiated payload type.
+    pub codec: Option<CodecId>,
 }
 
 impl Default for EsDemuxerConfig {
     fn default() -> Self {
         Self {
             clock_rate_hz: 90_000,
+            codec: None,
         }
     }
 }
@@ -39,7 +43,6 @@ impl Default for EsDemuxerConfig {
 #[derive(Debug, Clone, Default)]
 pub struct EsDemuxer {
     config: EsDemuxerConfig,
-    codec: Option<CodecId>,
     parameter_sets: ParameterSetCache,
     track_emitted: bool,
     fu: Option<FuState>,
@@ -47,6 +50,7 @@ pub struct EsDemuxer {
 
 #[derive(Debug, Clone)]
 struct FuState {
+    codec: CodecId,
     buffer: Vec<u8>,
 }
 
@@ -75,7 +79,7 @@ impl EsDemuxer {
             return events;
         }
 
-        let Some(codec) = self.infer_or_get_codec(payload) else {
+        let Some(codec) = self.detect_rtp_packet_codec(payload) else {
             return events;
         };
 
@@ -88,29 +92,64 @@ impl EsDemuxer {
         events
     }
 
-    fn infer_or_get_codec(&mut self, payload: &[u8]) -> Option<CodecId> {
-        if let Some(codec) = self.codec {
-            return Some(codec);
+    /// Determine the H.26x codec from the RTP packet header.
+    ///
+    /// H.264 packetization (single NAL, STAP-A, FU-A) is detected first by the 1-byte NAL
+    /// header; H.265 packetization is detected by its 2-byte NAL header and a `layer_id`
+    /// of 0 with a valid temporal id. The more constrained H.265 test runs first so that
+    /// H.265 SPS (`0x42 0x01...`) is not misread as H.264 NAL type 2.
+    fn detect_rtp_packet_codec(&self, payload: &[u8]) -> Option<CodecId> {
+        if self.config.codec.is_some() {
+            return self.config.codec;
         }
 
-        // H.264 heuristic: 1-byte NAL header, forbidden-zero bit clear, type in VCL/PS range.
-        let h264_type = payload[0] & 0x1f;
-        let h264_forbidden = payload[0] & 0x80;
-        if h264_forbidden == 0
-            && (matches!(h264_type, 1..=5 | 7 | 8) || matches!(h264_type, 24 | 28))
-        {
-            self.codec = Some(CodecId::H264);
-            return self.codec;
-        }
-
-        // H.265 heuristic: 2-byte NAL header, forbidden-zero bit clear, temporal_id >= 1.
         if payload.len() >= 2 {
-            let h265_forbidden = payload[0] & 0x80;
             let nal_type = (payload[0] >> 1) & 0x3f;
             let tid = payload[1] & 0x07;
-            if h265_forbidden == 0 && (1..=21).contains(&nal_type) && (1..=8).contains(&tid) {
-                self.codec = Some(CodecId::H265);
-                return self.codec;
+            let layer_id = ((payload[0] & 0x01) << 5) | (payload[1] >> 3);
+            if payload[0] & 0x80 == 0
+                && layer_id == 0
+                && (1..=8).contains(&tid)
+                && is_h265_packet_type(nal_type)
+            {
+                return Some(CodecId::H265);
+            }
+        }
+
+        // H.264 FU-A (28), FU-B (29), STAP-A (24) and single NAL (1-5, 7, 8).
+        let h264_type = payload[0] & 0x1f;
+        if payload[0] & 0x80 == 0
+            && (matches!(h264_type, 1..=5 | 7 | 8) || matches!(h264_type, 24 | 28 | 29))
+        {
+            return Some(CodecId::H264);
+        }
+
+        None
+    }
+
+    /// Determine the H.26x codec from a single Annex-B NAL unit (no start code).
+    fn detect_unit_codec(&self, unit: &[u8]) -> Option<CodecId> {
+        if self.config.codec.is_some() {
+            return self.config.codec;
+        }
+
+        if unit.len() >= 2 {
+            let nal_type = (unit[0] >> 1) & 0x3f;
+            let tid = unit[1] & 0x07;
+            let layer_id = ((unit[0] & 0x01) << 5) | (unit[1] >> 3);
+            if unit[0] & 0x80 == 0
+                && layer_id == 0
+                && (1..=8).contains(&tid)
+                && is_h265_nal_type(nal_type)
+            {
+                return Some(CodecId::H265);
+            }
+        }
+
+        if !unit.is_empty() {
+            let h264_type = unit[0] & 0x1f;
+            if unit[0] & 0x80 == 0 && matches!(h264_type, 1..=5 | 7 | 8) {
+                return Some(CodecId::H264);
             }
         }
 
@@ -120,48 +159,23 @@ impl EsDemuxer {
     fn process_annexb(&mut self, payload: &[u8], timestamp: u32, events: &mut Vec<EsDemuxEvent>) {
         let units: Vec<&[u8]> = split_annexb(payload);
         for unit in units {
-            let Some(codec) = self.infer_or_get_codec_for_unit(unit) else {
-                continue;
-            };
-            self.process_nal(codec, unit, timestamp, events);
-        }
-    }
-
-    fn infer_or_get_codec_for_unit(&mut self, unit: &[u8]) -> Option<CodecId> {
-        if let Some(codec) = self.codec {
-            return Some(codec);
-        }
-        if unit.is_empty() {
-            return None;
-        }
-
-        // H.264 single-byte NAL header.
-        let h264_type = unit[0] & 0x1f;
-        if unit[0] & 0x80 == 0 && matches!(h264_type, 1..=5 | 7 | 8) {
-            self.codec = Some(CodecId::H264);
-            return self.codec;
-        }
-
-        // H.265 two-byte NAL header.
-        if unit.len() >= 2 {
-            let nal_type = (unit[0] >> 1) & 0x3f;
-            let tid = unit[1] & 0x07;
-            if unit[0] & 0x80 == 0 && (1..=21).contains(&nal_type) && (1..=8).contains(&tid) {
-                self.codec = Some(CodecId::H265);
-                return self.codec;
+            if let Some(codec) = self.detect_unit_codec(unit) {
+                self.process_nal(codec, unit, timestamp, events);
             }
         }
-
-        None
     }
 
-    fn process_h264_rtp(&mut self, payload: &[u8], timestamp: u32, events: &mut Vec<EsDemuxEvent>) {
+    fn process_h264_rtp(
+        &mut self,
+        payload: &[u8],
+        timestamp: u32,
+        events: &mut Vec<EsDemuxEvent>,
+    ) {
         let nal_type = payload[0] & 0x1f;
-
         match nal_type {
             1..=23 => self.process_nal(CodecId::H264, payload, timestamp, events),
             24 => self.process_h264_stap_a(payload, timestamp, events),
-            28 => self.process_h264_fu_a(payload, timestamp, events),
+            28 | 29 => self.process_h264_fu_a(payload, timestamp, events),
             _ => {}
         }
     }
@@ -204,26 +218,33 @@ impl EsDemuxer {
         if start {
             let reconstructed = (indicator & 0xe0) | nal_type;
             self.fu = Some(FuState {
+                codec: CodecId::H264,
                 buffer: vec![reconstructed],
             });
         }
 
         if let Some(ref mut fu) = self.fu {
-            fu.buffer.extend_from_slice(data);
-            if end {
-                let unit = std::mem::take(&mut fu.buffer);
-                self.fu = None;
-                self.process_nal(CodecId::H264, &unit, timestamp, events);
+            if fu.codec == CodecId::H264 {
+                fu.buffer.extend_from_slice(data);
+                if end {
+                    let unit = core::mem::take(&mut fu.buffer);
+                    self.fu = None;
+                    self.process_nal(CodecId::H264, &unit, timestamp, events);
+                }
             }
         }
     }
 
-    fn process_h265_rtp(&mut self, payload: &[u8], timestamp: u32, events: &mut Vec<EsDemuxEvent>) {
+    fn process_h265_rtp(
+        &mut self,
+        payload: &[u8],
+        timestamp: u32,
+        events: &mut Vec<EsDemuxEvent>,
+    ) {
         if payload.len() < 2 {
             return;
         }
         let nal_type = (payload[0] >> 1) & 0x3f;
-
         match nal_type {
             0..=40 => self.process_nal(CodecId::H265, payload, timestamp, events),
             48 => self.process_h265_ap(payload, timestamp, events),
@@ -232,7 +253,12 @@ impl EsDemuxer {
         }
     }
 
-    fn process_h265_ap(&mut self, payload: &[u8], timestamp: u32, events: &mut Vec<EsDemuxEvent>) {
+    fn process_h265_ap(
+        &mut self,
+        payload: &[u8],
+        timestamp: u32,
+        events: &mut Vec<EsDemuxEvent>,
+    ) {
         let mut offset = 2;
         while offset + 2 <= payload.len() {
             let size = u16::from_be_bytes([payload[offset], payload[offset + 1]]) as usize;
@@ -246,7 +272,12 @@ impl EsDemuxer {
         }
     }
 
-    fn process_h265_fu(&mut self, payload: &[u8], timestamp: u32, events: &mut Vec<EsDemuxEvent>) {
+    fn process_h265_fu(
+        &mut self,
+        payload: &[u8],
+        timestamp: u32,
+        events: &mut Vec<EsDemuxEvent>,
+    ) {
         if payload.len() < 3 {
             return;
         }
@@ -261,16 +292,19 @@ impl EsDemuxer {
         if start {
             let reconstructed0 = (payload_header0 & 0x81) | ((nal_type & 0x3f) << 1);
             self.fu = Some(FuState {
+                codec: CodecId::H265,
                 buffer: vec![reconstructed0, payload_header1],
             });
         }
 
         if let Some(ref mut fu) = self.fu {
-            fu.buffer.extend_from_slice(data);
-            if end {
-                let unit = std::mem::take(&mut fu.buffer);
-                self.fu = None;
-                self.process_nal(CodecId::H265, &unit, timestamp, events);
+            if fu.codec == CodecId::H265 {
+                fu.buffer.extend_from_slice(data);
+                if end {
+                    let unit = core::mem::take(&mut fu.buffer);
+                    self.fu = None;
+                    self.process_nal(CodecId::H265, &unit, timestamp, events);
+                }
             }
         }
     }
@@ -301,7 +335,7 @@ impl EsDemuxer {
         let is_vcl = match codec {
             CodecId::H264 => {
                 let t = nal_unit[0] & 0x1f;
-                matches!(t, 1 | 5)
+                matches!(t, 1..=5)
             }
             CodecId::H265 => {
                 let t = (nal_unit[0] >> 1) & 0x3f;
@@ -331,7 +365,6 @@ impl EsDemuxer {
                 let prepended = self
                     .parameter_sets
                     .prepend_to_annexb_access_unit(codec, frame.payload.as_ref());
-                // prepend_to_annexb_access_unit returns a Bytes-like? It returns Bytes.
                 frame.payload = prepended;
             }
         }
@@ -356,6 +389,22 @@ impl EsDemuxer {
         self.track_emitted = true;
         events.push(EsDemuxEvent::TrackFound(track));
     }
+}
+
+/// H.265 RTP packet types (NAL unit types) we recognize: VCL, parameter sets and
+/// aggregation/fragment headers.
+fn is_h265_packet_type(nal_type: u8) -> bool {
+    (0..=9).contains(&nal_type)
+        || (16..=21).contains(&nal_type)
+        || (32..=40).contains(&nal_type)
+        || (48..=50).contains(&nal_type)
+}
+
+/// H.265 NAL unit types encountered inside an Annex-B stream or aggregated packet.
+fn is_h265_nal_type(nal_type: u8) -> bool {
+    (0..=9).contains(&nal_type)
+        || (16..=21).contains(&nal_type)
+        || (32..=40).contains(&nal_type)
 }
 
 /// Split an Annex-B payload into NAL units without the start code.
@@ -442,9 +491,12 @@ mod tests {
         let found_track = events
             .iter()
             .any(|e| matches!(e, EsDemuxEvent::TrackFound(_)));
-        let found_frame = events
-            .iter()
-            .any(|e| matches!(e, EsDemuxEvent::Frame(f) if f.is_key_frame()));
+        let found_frame = events.iter().any(|e| {
+            matches!(
+                e,
+                EsDemuxEvent::Frame(f) if f.codec == CodecId::H264 && f.is_key_frame()
+            )
+        });
         assert!(found_track);
         assert!(found_frame);
     }
@@ -474,5 +526,42 @@ mod tests {
 
         let events2 = demuxer.push_packet(&second, 90_000);
         assert_eq!(events2.len(), 1, "FU-A end should emit one frame");
+    }
+
+    #[test]
+    fn es_h265_sps_is_not_misclassified_as_h264() {
+        // H.265 SPS: F=0, nal_type=33, layer_id=0, tid=1.
+        let h265_sps: &[u8] = &[
+            0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x80, 0x00, 0x00, 0x03, 0x00,
+            0x00, 0x03, 0x00, 0x78, 0xac, 0x09,
+        ];
+
+        let demuxer = EsDemuxer::default();
+        let codec = demuxer.detect_rtp_packet_codec(h265_sps);
+        assert_eq!(codec, Some(CodecId::H265));
+    }
+
+    #[test]
+    fn es_h265_fu_is_detected_correctly() {
+        // H.265 FU: payload header type=49, layer_id=0, tid=1; FU header S=1, type=19 (IDR).
+        let h265_fu_start: &[u8] = &[0x62, 0x01, 0x93, 0x00, 0x11, 0x22];
+
+        let demuxer = EsDemuxer::default();
+        let codec = demuxer.detect_rtp_packet_codec(h265_fu_start);
+        assert_eq!(codec, Some(CodecId::H265));
+    }
+
+    #[test]
+    fn es_codec_hint_overrides_detection() {
+        let config = EsDemuxerConfig {
+            clock_rate_hz: 90_000,
+            codec: Some(CodecId::H264),
+        };
+        let demuxer = EsDemuxer::new(config);
+
+        // Even though 0x42 0x01 looks like H.265 SPS, the hint forces H.264.
+        let payload: &[u8] = &[0x42, 0x01, 0x65, 0x88];
+        let codec = demuxer.detect_rtp_packet_codec(payload);
+        assert_eq!(codec, Some(CodecId::H264));
     }
 }
