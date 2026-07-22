@@ -162,6 +162,15 @@ pub fn aac_channel_count_from_asc(bytes: &[u8]) -> Option<u8> {
 ///
 /// ADTS 用 7 字节头封装原始 AAC 帧，包含解复用所需的 profile、采样率索引、
 /// 声道配置和帧长度。
+///
+/// Map an AAC `sampling_frequency_index` to a sample rate in Hz.
+pub(crate) fn aac_sample_rate(index: u8) -> u32 {
+    const RATES: [u32; 13] = [
+        96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350,
+    ];
+    RATES.get(index as usize).copied().unwrap_or(0)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AdtsHeader {
     pub profile: u8,

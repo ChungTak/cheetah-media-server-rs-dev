@@ -599,7 +599,12 @@ fn ps_demuxer_probes_h265_without_psm() {
 fn ps_demuxer_probes_aac_without_psm() {
     let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
 
-    let payload = Bytes::from(vec![0xFF, 0xF0, 0x00, 0x50]);
+    // Valid ADTS header for a 16-byte AAC frame: profile 1 (LC),
+    // sampling_frequency_index 4 (44100 Hz), 2 channels, frame length 16.
+    let mut payload = vec![0xFF, 0xF1, 0x50, 0x80, 0x02, 0x00, 0x00];
+    payload.extend_from_slice(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x00]);
+    let payload = Bytes::from(payload);
+
     let pes = PesPacket {
         stream_id: 0xC0,
         kind: PsStreamKind::Audio,
@@ -614,7 +619,14 @@ fn ps_demuxer_probes_aac_without_psm() {
         _ => None,
     });
     assert_eq!(track.map(|t| t.codec), Some(CodecId::AAC));
-    assert!(events.iter().any(|e| matches!(e, PsDemuxEvent::Frame(..))));
+    assert_eq!(track.map(|t| t.clock_rate), Some(44_100));
+
+    let frame = events.iter().find_map(|e| match e {
+        PsDemuxEvent::Frame(f) => Some(f),
+        _ => None,
+    });
+    assert!(frame.is_some());
+    assert_eq!(frame.unwrap().payload.as_ref(), &[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x00]);
 }
 
 #[test]
