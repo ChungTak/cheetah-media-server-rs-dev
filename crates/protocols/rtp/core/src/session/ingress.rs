@@ -63,7 +63,7 @@ impl RtpCore {
             if let Some(session) = self.sessions.get_mut(&key) {
                 session.rtcp_source_addr = Some(rtcp_source);
             }
-            self.close_session(key, "RTCP BYE".to_string(), outputs);
+            self.close_session(key, RtpSessionCloseReason::Bye, outputs);
         }
     }
 

@@ -123,6 +123,50 @@ pub enum RtpSourcePolicy {
     AllowValidatedRebind,
 }
 
+/// Reasons why an RTP session reached a terminal state.
+///
+/// This replaces free-form `String` reasons so drivers and modules can match on a
+/// small, versioned set of lifecycle outcomes.
+///
+/// RTP 会话进入终态的原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RtpSessionCloseReason {
+    /// Explicit stop command from the control plane.
+    Stopped,
+    /// No ingress activity within the configured idle window.
+    IdleTimeout,
+    /// Sender received no RTCP receiver reports within the configured window.
+    RrTimeout,
+    /// The peer sent an RTCP BYE packet.
+    Bye,
+    /// The payload type changed and could not be resolved for the tolerated budget.
+    UnresolvablePayloadType { current: u8, new: u8, count: u8 },
+    /// The payload mode oscillated more than the allowed number of times.
+    PayloadModeOscillation {
+        from: RtpPayloadMode,
+        to: RtpPayloadMode,
+    },
+}
+
+impl std::fmt::Display for RtpSessionCloseReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stopped => write!(f, "stopped by command"),
+            Self::IdleTimeout => write!(f, "idle timeout"),
+            Self::RrTimeout => write!(f, "RR timeout"),
+            Self::Bye => write!(f, "RTCP BYE"),
+            Self::UnresolvablePayloadType { current, new, count } => write!(
+                f,
+                "payload type changed from {current} to {new} and could not be resolved for {count} packets"
+            ),
+            Self::PayloadModeOscillation { from, to } => write!(
+                f,
+                "payload mode oscillated from {from:?} to {to:?}"
+            ),
+        }
+    }
+}
+
 /// Specification for an inbound (server) RTP session.
 ///
 /// The session listens for packets on the local socket and auto-creates internal tracks
@@ -327,12 +371,12 @@ pub enum RtpCoreEvent {
         old_state: RtpSessionState,
         new_state: RtpSessionState,
     },
-    /// A session was closed (idle timeout, RR timeout, or explicit stop).
+    /// A session was closed (idle timeout, RR timeout, explicit stop, BYE, or format change).
     ///
-    /// 会话被关闭（空闲超时、RR 超时或显式停止）。
+    /// 会话被关闭（空闲超时、RR 超时、显式停止、BYE 或格式变更）。
     SessionClosed {
         session_key: RtpSessionKey,
-        reason: String,
+        reason: RtpSessionCloseReason,
     },
     /// One or more tracks were discovered by the demuxer.
     ///
