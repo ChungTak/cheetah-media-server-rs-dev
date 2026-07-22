@@ -533,7 +533,7 @@ fn annexb_from_access_unit(access_unit: &AccessUnit) -> Bytes {
 ///
 /// 支持 Annex-B 和长度前缀两种输入。一旦收集到足够数据，`take_access_unit` 会消费
 /// 缓冲的单元并返回 `AccessUnit`。
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct AccessUnitAssembler {
     pending: Vec<Bytes>,
 }

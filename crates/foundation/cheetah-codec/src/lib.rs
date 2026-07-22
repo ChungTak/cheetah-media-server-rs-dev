@@ -87,6 +87,7 @@ pub mod observability;
 pub mod ps;
 pub mod record;
 pub mod rtp;
+pub mod rtp_es;
 pub mod rtp_pt;
 pub mod rtp_reorder;
 pub mod sdp;
@@ -186,6 +187,7 @@ pub use rtp::{
     probe_rtp_payload, EhomeCodecInfo, EhomeDecoder, EhomeOutput, ParsedTcpRtpFrame, RtpClock,
     RtpHeader, RtpPacket, RtpPayloadMode, RtpTcpFraming, RtpTimestampNormalizer,
 };
+pub use rtp_es::{EsDemuxEvent, EsDemuxer, EsDemuxerConfig};
 pub use rtp_pt::{RtpPayloadProfile, RtpPtResolveSource, RtpPtResolver};
 pub use rtp_reorder::{RtpReorderBuffer, RtpReorderSettings, RtpSequenceUnwrapper};
 pub use sdp::{export_fmtp, export_media_description, SdpMediaDescription};
