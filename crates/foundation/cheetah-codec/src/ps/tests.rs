@@ -426,6 +426,77 @@ fn ps_demuxer_periodic_psm_at_track_limit_does_not_wipe_tracks() {
 }
 
 #[test]
+fn ps_demuxer_periodic_psm_preserves_audio_sample_rate() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+    let mut muxer = PsMuxer::new();
+
+    muxer.add_track(TrackInfo::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        90_000,
+    ));
+    muxer.add_track(TrackInfo::new(
+        TrackId(0xC0),
+        MediaKind::Audio,
+        CodecId::AAC,
+        8_000,
+    ));
+
+    let mut video_payload = vec![0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0x00, 0x0A];
+    video_payload.extend_from_slice(b"v");
+    let mut video_frame = AVFrame::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        FrameFormat::CanonicalH26x,
+        90_000,
+        90_000,
+        Timebase::new(1, 90_000),
+        Bytes::from(video_payload),
+    );
+    video_frame.flags.insert(FrameFlags::KEY);
+
+    // Valid ADTS frame: 44100 Hz, 2 channels, frame length 16.
+    let mut audio_payload = vec![0xFF, 0xF1, 0x50, 0x80, 0x02, 0x00, 0x00];
+    audio_payload.extend_from_slice(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x00]);
+    let audio_frame = AVFrame::new(
+        TrackId(0xC0),
+        MediaKind::Audio,
+        CodecId::AAC,
+        FrameFormat::AacRaw,
+        90_000,
+        90_000,
+        Timebase::new(1, 44_100),
+        Bytes::from(audio_payload),
+    );
+
+    let muxed_key1 = muxer.mux(&video_frame).expect("mux key1");
+    let _ = demuxer.push(&muxed_key1);
+    let _ = demuxer.push(&muxer.mux(&audio_frame).expect("mux audio"));
+
+    let muxed_key2 = muxer.mux(&video_frame).expect("mux key2");
+    let events2 = demuxer.push(&muxed_key2);
+    assert!(
+        !events2
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackInfo(..))),
+        "periodic PSM must not re-announce a runtime-refined audio track"
+    );
+
+    let events3 = demuxer.push(&muxer.mux(&audio_frame).expect("mux audio again"));
+    let audio_frame_after_psm = events3.iter().find_map(|e| match e {
+        PsDemuxEvent::Frame(f) if f.media_kind == MediaKind::Audio => Some(f),
+        _ => None,
+    });
+    assert_eq!(
+        audio_frame_after_psm.map(|f| f.timebase.den),
+        Some(44_100),
+        "audio clock rate must stay at the ADTS-derived sample rate after periodic PSM"
+    );
+}
+
+#[test]
 fn ps_demuxer_over_limit_psm_keeps_existing_tracks_and_continues() {
     let mut config = limit_config();
     config.max_tracks = 1;

@@ -340,6 +340,13 @@ impl PsDemuxer {
             let mut changed = Vec::with_capacity(new_tracks.len());
             for track in &new_tracks {
                 let track_key = track.track_id.0 as u8;
+                if let Some(existing) = self.tracks.get(&track_key) {
+                    // Preserve runtime-refined fields (clock_rate, sample_rate, channels, ...)
+                    // if the PSM still describes the same elementary stream type.
+                    if existing.media_kind == track.media_kind && existing.codec == track.codec {
+                        continue;
+                    }
+                }
                 if self.tracks.get(&track_key) != Some(track) {
                     changed.push(track.clone());
                     self.tracks.insert(track_key, track.clone());
