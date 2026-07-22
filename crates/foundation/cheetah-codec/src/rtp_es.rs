@@ -28,6 +28,9 @@ pub struct EsDemuxerConfig {
     pub clock_rate_hz: u32,
     /// Optional codec hint, usually derived from the negotiated payload type.
     pub codec: Option<CodecId>,
+    /// Maximum size of an FU-A/FU reassembly buffer; prevents unbounded growth from
+    /// endless continuation fragments or a lost end marker.
+    pub max_fu_reassembly_bytes: usize,
 }
 
 impl Default for EsDemuxerConfig {
@@ -35,6 +38,7 @@ impl Default for EsDemuxerConfig {
         Self {
             clock_rate_hz: 90_000,
             codec: None,
+            max_fu_reassembly_bytes: 8 * 1024 * 1024,
         }
     }
 }
@@ -220,6 +224,11 @@ impl EsDemuxer {
 
         if let Some(ref mut fu) = self.fu {
             if fu.codec == CodecId::H264 {
+                if fu.buffer.len().saturating_add(data.len()) > self.config.max_fu_reassembly_bytes
+                {
+                    self.fu = None;
+                    return;
+                }
                 fu.buffer.extend_from_slice(data);
                 if end {
                     let unit = core::mem::take(&mut fu.buffer);
@@ -279,6 +288,11 @@ impl EsDemuxer {
 
         if let Some(ref mut fu) = self.fu {
             if fu.codec == CodecId::H265 {
+                if fu.buffer.len().saturating_add(data.len()) > self.config.max_fu_reassembly_bytes
+                {
+                    self.fu = None;
+                    return;
+                }
                 fu.buffer.extend_from_slice(data);
                 if end {
                     let unit = core::mem::take(&mut fu.buffer);
@@ -534,6 +548,7 @@ mod tests {
         let config = EsDemuxerConfig {
             clock_rate_hz: 90_000,
             codec: Some(CodecId::H264),
+            ..Default::default()
         };
         let demuxer = EsDemuxer::new(config);
 
@@ -541,5 +556,44 @@ mod tests {
         let payload: &[u8] = &[0x42, 0x01, 0x65, 0x88];
         let codec = demuxer.detect_rtp_packet_codec(payload);
         assert_eq!(codec, Some(CodecId::H264));
+    }
+
+    #[test]
+    fn es_h264_fu_a_drops_buffer_when_reassembly_cap_exceeded() {
+        let config = EsDemuxerConfig {
+            clock_rate_hz: 90_000,
+            codec: Some(CodecId::H264),
+            max_fu_reassembly_bytes: 4,
+        };
+        let mut demuxer = EsDemuxer::new(config);
+
+        let indicator = 0x5c; // F=0, NRI=2, type=28 (FU-A)
+        let start = {
+            let mut p = vec![indicator, 0x81]; // S=1, type=1
+            p.extend_from_slice(&[0x00]); // 1 byte of data
+            p
+        };
+        let cont1 = {
+            let mut p = vec![indicator, 0x01];
+            p.extend_from_slice(&[0x02, 0x03, 0x04]); // 3 bytes -> buffer == 4
+            p
+        };
+        // One more byte would exceed the 4-byte cap; the partial FU must be discarded.
+        let cont_overflow = {
+            let mut p = vec![indicator, 0x01];
+            p.extend_from_slice(&[0x05]);
+            p
+        };
+        // A final end marker should produce nothing because the accumulator was dropped.
+        let end = {
+            let mut p = vec![indicator, 0x41]; // E=1, type=1
+            p.extend_from_slice(&[0x06]);
+            p
+        };
+
+        assert!(demuxer.push_packet(&start, 1000).is_empty());
+        assert!(demuxer.push_packet(&cont1, 1000).is_empty());
+        assert!(demuxer.push_packet(&cont_overflow, 1000).is_empty());
+        assert!(demuxer.push_packet(&end, 1000).is_empty());
     }
 }
