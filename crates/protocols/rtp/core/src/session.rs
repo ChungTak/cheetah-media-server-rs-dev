@@ -21,7 +21,7 @@ enum SessionDemuxer {
     Pending,
     Ts(MpegTsDemuxer),
     Ps(Box<PsDemuxer>),
-    Es, // Raw audio/video ES routing
+    Bypass,
 }
 
 struct RtpSession {
@@ -115,6 +115,10 @@ pub struct RtpCore {
     /// Maximum number of tolerated mid-stream payload-mode switches before treating the
     /// stream as oscillating/spoofed and closing it.
     max_pt_format_changes: u8,
+    /// Per-session budget for consecutive unresolved PT packets on a locked session.
+    /// DTMF/FEC/RED bursts may be longer than the sniff budget, so this is decoupled
+    /// from `max_pt_probe_packets` to avoid closing legitimate streams.
+    max_tolerated_unknown_pt_packets: u8,
     now_ms: u64,
     /// TCP framing mode applied when deframing inbound RTP-over-TCP traffic. Defaults to
     /// `AutoDetect`, matching ABLMediaServer's behaviour of accepting both 2-byte length-prefix
@@ -146,6 +150,7 @@ impl RtpCore {
             max_pt_probe_packets: 8,
             pt_lock_confidence: 2,
             max_pt_format_changes: 3,
+            max_tolerated_unknown_pt_packets: 255,
             now_ms: 0,
             tcp_framing: cheetah_codec::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
@@ -184,6 +189,11 @@ impl RtpCore {
     /// 覆盖动态 PT 锁定所需的连续匹配次数（默认 2）。
     pub fn set_pt_lock_confidence(&mut self, confidence: u8) {
         self.pt_lock_confidence = confidence.max(1);
+    }
+
+    /// Override the default budget for consecutive unresolved PT packets on a locked session.
+    pub fn set_max_tolerated_unknown_pt_packets(&mut self, max: u8) {
+        self.max_tolerated_unknown_pt_packets = max.max(1);
     }
 
     /// Main Sans-I/O entry point. Drive the state machine with one input and return the
@@ -405,7 +415,9 @@ impl RtpCore {
                                         cheetah_codec::PsDemuxerConfig::new(4 * 1024 * 1024, 8),
                                     )));
                                 } else {
-                                    session.demuxer = SessionDemuxer::Es;
+                                    // ES depacketization is implemented in a follow-up PR;
+                                    // bridge the raw ES payload until then.
+                                    session.demuxer = SessionDemuxer::Bypass;
                                 }
 
                                 // Construct Tracks
@@ -847,9 +859,9 @@ impl RtpCore {
         } else {
             // The payload mode is already locked. Accept the first observed PT if none was
             // recorded, and react to mid-stream PT changes. Unresolved transient PTs (e.g.
-            // RFC 4733 telephone-event or FEC/RED sharing the same SSRC) are tolerated up to
-            // the per-session probe budget (max_pt_probe_packets) consecutive packets before
-            // the session is closed.
+            // RFC 4733 telephone-event or FEC/RED sharing the same SSRC) are tolerated up to a
+            // dedicated per-session budget (max_tolerated_unknown_pt_packets) consecutive
+            // packets before the session is closed.
             let current_pt = session.payload_type.unwrap_or(rtp.header.payload_type);
             if session.payload_type.is_none() {
                 session.payload_type = Some(rtp.header.payload_type);
@@ -888,10 +900,11 @@ impl RtpCore {
                     cheetah_codec::RtpPtResolveSource::Weak(_)
                     | cheetah_codec::RtpPtResolveSource::Unknown => {
                         session.pt_change_unknown_count += 1;
-                        // Tolerate a short run of unresolved PT packets (e.g. RFC 4733
-                        // telephone-event or FEC/RED interleaved on the same SSRC) up to the
-                        // probe budget before treating the change as a persistent spoof.
-                        if session.pt_change_unknown_count >= self.max_pt_probe_packets {
+                        // Tolerate a run of unresolved PT packets (e.g. RFC 4733
+                        // telephone-event or FEC/RED interleaved on the same SSRC) up to a
+                        // dedicated budget before treating the change as a persistent spoof.
+                        if session.pt_change_unknown_count >= self.max_tolerated_unknown_pt_packets
+                        {
                             close_reason = Some(format!(
                                 "payload type changed from {current_pt} to {new_pt} and could not be resolved for {} packets",
                                 session.pt_change_unknown_count
@@ -1000,8 +1013,12 @@ impl RtpCore {
                         PsDemuxerConfig::new(4 * 1024 * 1024, 8),
                     )));
                 }
+                RtpPayloadMode::Es => {
+                    // ES depacketization is implemented in a follow-up PR.
+                    session.demuxer = SessionDemuxer::Bypass;
+                }
                 _ => {
-                    session.demuxer = SessionDemuxer::Es;
+                    session.demuxer = SessionDemuxer::Bypass;
                 }
             }
         }
@@ -1066,8 +1083,8 @@ impl RtpCore {
                     }
                 }
             }
-            _ => {
-                // ES modes or unrecognized modes can be bridged directly in later module stages
+            SessionDemuxer::Bypass | SessionDemuxer::Pending => {
+                // Raw audio/video or unrecognized modes are bridged in later module stages.
             }
         }
     }
@@ -2666,6 +2683,9 @@ mod tests {
     #[test]
     fn test_session_closed_on_unresolvable_pt_switch() {
         let mut core = RtpCore::new(10, 30_000);
+        // Keep the close threshold small for this test; the default is much larger to
+        // tolerate legitimate DTMF/FEC/RED bursts.
+        core.set_max_tolerated_unknown_pt_packets(8);
 
         // Lock the session to Es on PT 96.
         for seq in 1..=2u16 {
@@ -2805,5 +2825,80 @@ mod tests {
         };
         let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
         assert!(core.sessions.contains_key("live/6000"));
+    }
+
+    #[test]
+    fn test_long_unknown_pt_burst_is_tolerated_before_returning_to_locked_pt() {
+        let mut core = RtpCore::new(10, 30_000);
+
+        // Lock the session to Es on PT 96.
+        for seq in 1..=2u16 {
+            let rtp = RtpPacket {
+                header: RtpHeader {
+                    version: 2,
+                    payload_type: 96,
+                    sequence_number: seq,
+                    timestamp: u32::from(seq),
+                    ssrc: 6001,
+                    marker: false,
+                },
+                payload: Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x09]),
+            };
+            let dgram = RtpDatagram {
+                source: "127.0.0.1:1".parse().unwrap(),
+                data: rtp.encode(),
+                received_at_ms: 0,
+            };
+            let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        }
+
+        // A 50-packet DTMF/FEC burst (well below the default 255-packet budget) must not
+        // close the session while audio is suspended.
+        for seq in 3..=52u16 {
+            let rtp = RtpPacket {
+                header: RtpHeader {
+                    version: 2,
+                    payload_type: 97,
+                    sequence_number: seq,
+                    timestamp: u32::from(seq),
+                    ssrc: 6001,
+                    marker: false,
+                },
+                payload: Bytes::from(vec![0xAB, 0xCD]),
+            };
+            let dgram = RtpDatagram {
+                source: "127.0.0.1:1".parse().unwrap(),
+                data: rtp.encode(),
+                received_at_ms: 0,
+            };
+            let outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+            assert!(
+                !outputs
+                    .iter()
+                    .any(|o| matches!(o, RtpCoreOutput::CloseSession(key) if key == "live/6001")),
+                "unknown-PT burst should be tolerated"
+            );
+            assert!(core.sessions.contains_key("live/6001"));
+        }
+
+        // Returning to the original PT resumes normal processing.
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 53,
+                timestamp: 53,
+                ssrc: 6001,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x00, 0x01, 0x09]),
+        };
+        let dgram = RtpDatagram {
+            source: "127.0.0.1:1".parse().unwrap(),
+            data: rtp.encode(),
+            received_at_ms: 0,
+        };
+        let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+        assert!(core.sessions.contains_key("live/6001"));
     }
 }
