@@ -148,6 +148,12 @@ impl Module for RtpModule {
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
         self.config = RtpModuleConfig::from_value(ctx.initial_config.clone())
             .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
+
+        if !self.config.enabled {
+            self.state = ModuleState::Initialized;
+            return Ok(());
+        }
+
         let engine = ctx.engine.clone();
         self.ctx = Some(ctx.engine);
 
@@ -166,9 +172,10 @@ impl Module for RtpModule {
 
         // Shared driver handle slot. Populated in `start()` once the Tokio driver is bound.
         let driver_handle: Arc<Mutex<Option<Arc<RtpDriverHandle>>>> = Arc::new(Mutex::new(None));
-        let orchestrator = Arc::new(RtpSessionOrchestrator::new(
+        let orchestrator = Arc::new(RtpSessionOrchestrator::with_max_sessions(
             driver_handle,
             default_bind_addr,
+            self.config.max_sessions,
         ));
         self.orchestrator = Some(orchestrator.clone());
 
@@ -178,6 +185,7 @@ impl Module for RtpModule {
             orchestrator,
             engine.clone(),
             module_cancel,
+            self.config.clone(),
         ));
 
         let rtp_capabilities = {
@@ -279,7 +287,7 @@ impl Module for RtpModule {
             write_queue_capacity: config.write_queue_capacity,
             read_buffer_size: config.read_buffer_size,
             session_idle_timeout_ms: config.idle_timeout_ms,
-            max_sessions: 1024,
+            max_sessions: config.max_sessions,
             tcp_framing,
             max_rtp_len_cap: config.max_rtp_len_cap,
         };
@@ -377,6 +385,9 @@ impl Module for RtpModule {
     }
 
     fn http_routes(&self) -> Vec<HttpRouteDescriptor> {
+        if !self.config.enabled {
+            return Vec::new();
+        }
         vec![
             HttpRouteDescriptor {
                 method: HttpMethod::Post,
@@ -402,6 +413,9 @@ impl Module for RtpModule {
     }
 
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
+        if !self.config.enabled {
+            return None;
+        }
         let engine = self.ctx.clone()?;
         // Cancel token is allocated in `init`; treat its absence as a programming error.
         let module_cancel = self.cancel_token.clone()?;

@@ -1,8 +1,10 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use bytes::Bytes;
 use cheetah_codec::{
     AVFrame, CodecExtradata, CodecId, FrameFlags, FrameFormat, MediaKind, RtpHeader, RtpPacket,
@@ -12,8 +14,9 @@ use cheetah_config::ConfigStore;
 use cheetah_engine::{Engine, EngineBuilder, EngineMediaFacade};
 use cheetah_record_module::RecordModuleFactory;
 use cheetah_runtime_tokio::TokioRuntime;
-use cheetah_sdk::media_api::model::OnlineState;
-use cheetah_sdk::media_api::port::MediaControlApi;
+use cheetah_sdk::media_api::error::Result as MediaResult;
+use cheetah_sdk::media_api::model::{AdmissionRequest, Decision, OnlineState};
+use cheetah_sdk::media_api::port::{MediaAdmissionApi, MediaControlApi};
 use cheetah_sdk::media_api::MediaRequestContext;
 use cheetah_sdk::{
     PublisherOptions, PublisherSink, StreamKey, StreamManagerApi, SubscriberOptions,
@@ -30,6 +33,10 @@ pub struct Gb28181TestHarness {
 
 impl Gb28181TestHarness {
     pub async fn start() -> Self {
+        Self::start_with_rtp_config("").await
+    }
+
+    pub async fn start_with_rtp_config(extra_rtp_config: &str) -> Self {
         let runtime = Arc::new(TokioRuntime::new());
         let temp_dir =
             std::env::temp_dir().join(format!("cheetah-gb28181-test-{}", std::process::id()));
@@ -37,7 +44,7 @@ impl Gb28181TestHarness {
 
         let config = Arc::new(ConfigStore::new());
         let yaml = format!(
-            "modules:\n  rtp:\n    enabled: true\n    listen_udp: \"0.0.0.0:0\"\n    listen_tcp: \"0.0.0.0:0\"\n  record:\n    enabled: true\n    root_path: \"{}\"\n",
+            "modules:\n  rtp:\n    enabled: true\n    listen_udp: \"0.0.0.0:0\"\n    listen_tcp: \"0.0.0.0:0\"\n{extra_rtp_config}  record:\n    enabled: true\n    root_path: \"{}\"\n",
             temp_dir.display()
         );
         config.load_yaml_str(&yaml).expect("load config");
@@ -105,8 +112,43 @@ impl Gb28181TestHarness {
             .expect("open subscriber")
     }
 
+    pub fn set_admission_deny(&self, deny: bool) {
+        let provider = Arc::new(FakeAdmissionProvider::new(deny));
+        self.engine.media_services().register_admission(provider);
+    }
+
     pub async fn stop(self) {
         self.engine.stop().await;
+    }
+}
+
+pub struct FakeAdmissionProvider {
+    deny: AtomicBool,
+}
+
+impl FakeAdmissionProvider {
+    pub fn new(deny: bool) -> Self {
+        Self {
+            deny: AtomicBool::new(deny),
+        }
+    }
+}
+
+#[async_trait]
+impl MediaAdmissionApi for FakeAdmissionProvider {
+    async fn authorize(
+        &self,
+        _ctx: &MediaRequestContext,
+        _request: AdmissionRequest,
+    ) -> MediaResult<Decision> {
+        if self.deny.load(Ordering::SeqCst) {
+            Ok(Decision::Deny {
+                code: cheetah_sdk::media_api::error::MediaErrorCode::PermissionDenied,
+                reason: "admission denied by test".to_string(),
+            })
+        } else {
+            Ok(Decision::Allow)
+        }
     }
 }
 

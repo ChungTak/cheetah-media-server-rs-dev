@@ -7,8 +7,14 @@ use cheetah_codec::AVFrame;
 use cheetah_sdk::media_api::command::{
     RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, StartRecordRequest, StopRecordRequest,
 };
+use cheetah_sdk::media_api::error::{EffectOutcome, MediaErrorCode};
+use cheetah_sdk::media_api::ids::RtpSessionId;
 use cheetah_sdk::media_api::model::{OnlineState, RecordTaskState};
 use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
+use cheetah_sdk::media_api::rtp_session::{
+    MediaContainer, OpenRtpReceiver, RtpDirection, RtpPayloadBinding, RtpSessionParamsBuilder,
+    RtpSessionRef, RtpTransport, StopRtpSession,
+};
 use cheetah_sdk::media_api::{MediaKey, MediaRequestContext};
 use cheetah_sdk::StreamKey;
 use tokio::time::{sleep, timeout};
@@ -375,6 +381,340 @@ async fn gb28181_session_stop_releases_port() {
         .get_rtp_session(&ctx, &session.session_id)
         .await
         .is_err());
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn typed_rtp_session_errors_carry_resource_ref_and_generation() {
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_error", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        })
+        .build();
+    let descriptor = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("open receiver");
+
+    // get_session with a stale generation returns Conflict and carries the resource ref.
+    let stale_ref = RtpSessionRef {
+        session_id: descriptor.session_id.clone(),
+        expected_generation: cheetah_sdk::media_api::rtp_session::RtpSessionGeneration(
+            descriptor.generation.0 + 1,
+        ),
+    };
+    let err = rtp_api
+        .get_session(&ctx, stale_ref.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::Conflict);
+    assert_eq!(err.outcome, EffectOutcome::NotApplied);
+    let resource_ref = err.resource_ref.as_ref().expect("resource ref");
+    assert_eq!(resource_ref.resource_handle, descriptor.session_id.0);
+    assert_eq!(resource_ref.generation.0, stale_ref.expected_generation.0);
+
+    // stop_session with a stale generation returns Conflict and carries the resource ref.
+    let err = rtp_api
+        .stop_session(
+            &ctx,
+            StopRtpSession {
+                session_ref: stale_ref.clone(),
+                release_lease: true,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::Conflict);
+    assert_eq!(err.outcome, EffectOutcome::NotApplied);
+    let resource_ref = err.resource_ref.as_ref().expect("resource ref");
+    assert_eq!(resource_ref.resource_handle, descriptor.session_id.0);
+    assert_eq!(resource_ref.generation.0, stale_ref.expected_generation.0);
+
+    // stop_session on a missing session returns NotApplied (idempotent success).
+    let missing_ref = RtpSessionRef {
+        session_id: RtpSessionId("no-such-session".to_string()),
+        expected_generation: cheetah_sdk::media_api::rtp_session::RtpSessionGeneration(0),
+    };
+    let outcome = rtp_api
+        .stop_session(
+            &ctx,
+            StopRtpSession {
+                session_ref: missing_ref,
+                release_lease: true,
+            },
+        )
+        .await
+        .expect("idempotent stop");
+    assert_eq!(outcome, EffectOutcome::NotApplied);
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_module_profile_and_limits_config_enforced() {
+    let harness = Gb28181TestHarness::start_with_rtp_config("    max_sessions: 1\n").await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let media_key1 = MediaKey::with_default_vhost("gb28181_limits", "cam_001", None).unwrap();
+    let params1 = RtpSessionParamsBuilder::new(media_key1, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        })
+        .build();
+    let _ = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params: params1,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("first session");
+
+    let media_key2 = MediaKey::with_default_vhost("gb28181_limits", "cam_002", None).unwrap();
+    let params2 = RtpSessionParamsBuilder::new(media_key2, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        })
+        .build();
+    let err = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params: params2,
+                playback_range: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::Unavailable);
+    assert!(err.message.contains("limit"), "{}", err.message);
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_module_disabled_profile_is_rejected() {
+    // Only the strict profile is enabled; the default builder uses gb_common, which should fail.
+    let harness =
+        Gb28181TestHarness::start_with_rtp_config("    enabled_profiles:\n      - strict\n").await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_profile", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        })
+        .build();
+    let err = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params,
+                playback_range: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::Unsupported);
+    assert!(err.message.contains("not enabled"), "{}", err.message);
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_module_admission_deny_leaves_no_session() {
+    // Cap sessions at 1 so a leaked session from the denied open would block
+    // the follow-up allowed open, making the "no leak" assertion strict.
+    let harness = Gb28181TestHarness::start_with_rtp_config("    max_sessions: 1\n").await;
+    harness.set_admission_deny(true);
+
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_admission", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        })
+        .build();
+    let err = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params,
+                playback_range: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::PermissionDenied);
+
+    // After admission flips to allow, a new open on a different stream succeeds and
+    // proves the denied request left no session behind.
+    harness.set_admission_deny(false);
+    let media_key2 = MediaKey::with_default_vhost("gb28181_admission", "cam_002", None).unwrap();
+    let params2 = RtpSessionParamsBuilder::new(media_key2, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        })
+        .build();
+    let _desc = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params: params2,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("open after allow");
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_open_is_idempotent_for_same_request_and_key() {
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext {
+        idempotency_key: Some("idempotent-open-1".to_string()),
+        ..Default::default()
+    };
+
+    let media_key = MediaKey::with_default_vhost("gb28181_idem", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        })
+        .build();
+    let request = OpenRtpReceiver {
+        params,
+        playback_range: None,
+    };
+
+    let desc1 = rtp_api
+        .open_receiver(&ctx, request.clone())
+        .await
+        .expect("first open");
+    let desc2 = rtp_api
+        .open_receiver(&ctx, request)
+        .await
+        .expect("idempotent second open");
+    assert_eq!(desc1.session_id, desc2.session_id);
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_idempotent_failure_is_replayed_with_same_key() {
+    // Only strict profile is enabled so the default gb_common request fails.
+    let harness =
+        Gb28181TestHarness::start_with_rtp_config("    enabled_profiles:\n      - strict\n").await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext {
+        idempotency_key: Some("idempotent-fail-1".to_string()),
+        ..Default::default()
+    };
+
+    let media_key = MediaKey::with_default_vhost("gb28181_idem_fail", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+        })
+        .build();
+    let request = OpenRtpReceiver {
+        params,
+        playback_range: None,
+    };
+
+    let err1 = rtp_api
+        .open_receiver(&ctx, request.clone())
+        .await
+        .unwrap_err();
+    assert_eq!(err1.code, MediaErrorCode::Unsupported);
+    let err2 = rtp_api.open_receiver(&ctx, request).await.unwrap_err();
+    assert_eq!(err2.code, MediaErrorCode::Unsupported);
+    assert_eq!(err1.message, err2.message);
 
     harness.stop().await;
 }

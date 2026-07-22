@@ -13,14 +13,15 @@ use cheetah_sdk::media_api::command::{
     RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest,
     UpdateRtpRequest,
 };
-use cheetah_sdk::media_api::error::{EffectOutcome, MediaError, Result};
+use cheetah_sdk::media_api::error::{EffectOutcome, MediaError, MediaErrorCode, Result};
 use cheetah_sdk::media_api::fencing::{ControlledResourceRef, ResourceOrigin};
 use cheetah_sdk::media_api::ids::{
     MediaBindingId, MediaKey, MediaNodeInstanceEpoch, MediaSessionId, OwnerEpoch,
     ResourceGeneration, RtpSessionId, StreamKeyBridge, TenantId,
 };
 use cheetah_sdk::media_api::model::{
-    Page, RtpSession, RtpSessionKind, RtpSessionState as OldRtpSessionState, RtpTcpMode,
+    AdmissionAction, AdmissionRequest, Decision, Page, RtpSession, RtpSessionKind,
+    RtpSessionState as OldRtpSessionState, RtpTcpMode,
 };
 use cheetah_sdk::media_api::port::{MediaRequestContext, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
@@ -29,19 +30,25 @@ use cheetah_sdk::media_api::rtp_session::{
     RtpSessionGeneration, RtpSessionParams, RtpSessionQuery, RtpSessionRef, RtpSessionState,
     RtpTransport, StopRtpSession, TcpRole, UpdateRtpSession,
 };
-use cheetah_sdk::{CancellationToken, Deadline, EngineContext, StreamKey};
+use cheetah_sdk::{
+    CancellationToken, Deadline, EngineContext, IdempotencyError, IdempotencyKey, StreamKey,
+};
 use parking_lot::Mutex;
+use serde::Serialize;
 
+use crate::config::RtpModuleConfig;
 use crate::egress::{run_egress_session, ActiveEgressMap, EgressCleanup};
 use crate::orchestrator::RtpSessionOrchestrator;
 
 /// Media-domain `RtpApi` and `RtpSessionApi` provider.
 ///
 /// `RtpApi` / `RtpSessionApi` provider。
+#[derive(Clone)]
 pub struct RtpMediaProvider {
     orchestrator: Arc<RtpSessionOrchestrator>,
     engine: EngineContext,
     module_cancel: CancellationToken,
+    config: RtpModuleConfig,
     /// Active sender egress tasks keyed by session key so `stop_rtp_session` can cancel them.
     active_senders: ActiveEgressMap,
     /// Per-session typed descriptors carrying parameters not present in the legacy `RtpSession`.
@@ -56,11 +63,13 @@ impl RtpMediaProvider {
         orchestrator: Arc<RtpSessionOrchestrator>,
         engine: EngineContext,
         module_cancel: CancellationToken,
+        config: RtpModuleConfig,
     ) -> Self {
         Self {
             orchestrator,
             engine,
             module_cancel,
+            config,
             active_senders: ActiveEgressMap::default(),
             rtp_descriptors: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -76,6 +85,49 @@ impl RtpMediaProvider {
 
     fn driver(&self) -> Result<Arc<RtpDriverHandle>> {
         self.orchestrator.driver()
+    }
+
+    /// Ask the configured admission provider whether the operation is allowed.
+    /// A missing provider is treated as allow-all so optional admission remains optional.
+    async fn admit(
+        &self,
+        ctx: &MediaRequestContext,
+        action: AdmissionAction,
+        resource: &MediaKey,
+        protocol: &str,
+        source_address: Option<String>,
+    ) -> Result<()> {
+        let Some(provider) = self.engine.media_services.admission() else {
+            return Ok(());
+        };
+        let request = AdmissionRequest {
+            action,
+            principal: ctx.principal.clone(),
+            resource: resource.clone(),
+            protocol: protocol.to_string(),
+            source_address,
+            params: HashMap::new(),
+        };
+        match provider.authorize(ctx, request).await {
+            Ok(Decision::Allow) => Ok(()),
+            Ok(Decision::Deny { code, reason }) => Err(MediaError::new(code, reason)),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Enforce per-module capability/profile and session limits before allocating a session.
+    fn check_profile_and_limits(&self, params: &RtpSessionParams) -> Result<()> {
+        if !self.config.enabled_profiles.contains(&params.profile) {
+            return Err(MediaError::unsupported(format!(
+                "profile {:?} is not enabled",
+                params.profile
+            )));
+        }
+        if self.orchestrator.session_count() >= self.config.max_sessions {
+            return Err(MediaError::unavailable("rtp session limit reached")
+                .with_outcome(EffectOutcome::NotApplied));
+        }
+        Ok(())
     }
 
     /// Build the `StreamKey` that the engine uses for a given `MediaKey`.
@@ -225,6 +277,20 @@ impl RtpMediaProvider {
             generation: ResourceGeneration(generation),
             origin,
         }
+    }
+
+    /// Enrich a media error with the controlled resource reference for a session.
+    fn enrich_error(
+        &self,
+        err: MediaError,
+        ctx: &MediaRequestContext,
+        session_ref: &RtpSessionRef,
+    ) -> MediaError {
+        err.with_resource_ref(self.resource_ref_from_context(
+            ctx,
+            &session_ref.session_id,
+            session_ref.expected_generation.0,
+        ))
     }
 
     fn build_descriptor(
@@ -429,6 +495,98 @@ impl RtpApi for RtpMediaProvider {
     }
 }
 
+impl RtpMediaProvider {
+    fn idempotency_key(
+        &self,
+        ctx: &MediaRequestContext,
+        operation: &str,
+    ) -> Option<IdempotencyKey> {
+        let key = ctx.idempotency_key.as_ref()?;
+        let principal = ctx
+            .principal
+            .as_ref()
+            .map(|p| p.identity.clone())
+            .unwrap_or_default();
+        Some(IdempotencyKey::new(principal, operation, key.clone()))
+    }
+
+    fn request_fingerprint<T: Serialize>(
+        request: &T,
+    ) -> Result<cheetah_sdk::IdempotencyFingerprint> {
+        let bytes = serde_json::to_vec(request).map_err(|e| {
+            MediaError::invalid_argument(format!(
+                "failed to serialize idempotency fingerprint: {e}"
+            ))
+        })?;
+        Ok(cheetah_sdk::canonical_hash(&bytes))
+    }
+
+    fn idempotency_to_media_error(err: IdempotencyError) -> MediaError {
+        match err {
+            IdempotencyError::Conflict { .. } => MediaError::conflict(err.to_string()),
+            IdempotencyError::InProgress => MediaError::new(
+                MediaErrorCode::Busy,
+                "idempotency operation in progress".to_string(),
+            ),
+            IdempotencyError::OperationFailed(msg) | IdempotencyError::Retryable(msg) => {
+                serde_json::from_str::<MediaError>(&msg)
+                    .unwrap_or_else(|_| MediaError::new(MediaErrorCode::Internal, msg))
+            }
+        }
+    }
+
+    /// Run `f` through the shared idempotency repository when the caller supplied a key.
+    /// No key means the operation is executed exactly once without caching.
+    /// Deterministic errors are stored and replayed preserving their original `MediaError` code;
+    /// retryable errors (Busy, Timeout, Unavailable, or explicitly marked retryable) are not cached.
+    async fn idempotent_open<F, Fut>(
+        &self,
+        ctx: &MediaRequestContext,
+        operation: &str,
+        fingerprint: cheetah_sdk::IdempotencyFingerprint,
+        f: F,
+    ) -> Result<RtpSessionDescriptor>
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: std::future::Future<Output = Result<RtpSessionDescriptor>> + Send,
+    {
+        let Some(key) = self.idempotency_key(ctx, operation) else {
+            return f().await;
+        };
+        self.engine
+            .media_services
+            .idempotency()
+            .execute(key, fingerprint, 60_000, || async {
+                f().await
+                    .map_err(|e| {
+                        let encoded = serde_json::to_string(&e)
+                            .unwrap_or_else(|_| format!("internal: {}", e.message));
+                        if e.retryable
+                            || matches!(
+                                e.code,
+                                MediaErrorCode::Busy
+                                    | MediaErrorCode::Timeout
+                                    | MediaErrorCode::Unavailable
+                                    | MediaErrorCode::PermissionDenied
+                                    | MediaErrorCode::Unauthenticated
+                                    | MediaErrorCode::RateLimited
+                            )
+                        {
+                            IdempotencyError::Retryable(encoded)
+                        } else {
+                            IdempotencyError::OperationFailed(encoded)
+                        }
+                    })
+                    .map(|d| {
+                        let sid = d.session_id.0.clone();
+                        (d, Some(sid))
+                    })
+            })
+            .await
+            .map_err(Self::idempotency_to_media_error)
+    }
+}
+
 #[async_trait]
 impl RtpSessionApi for RtpMediaProvider {
     async fn open_receiver(
@@ -436,17 +594,14 @@ impl RtpSessionApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: OpenRtpReceiver,
     ) -> Result<RtpSessionDescriptor> {
-        Deadline::from_context(ctx)
-            .check()
-            .map_err(|e| MediaError::unavailable(e.to_string()))?;
-        let old_req = self.build_old_receiver_request(request.clone())?;
-        let session = self.open_rtp_receiver(ctx, old_req).await?;
-        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
-        self.apply_request_overrides(&mut descriptor, &request.params);
-        self.rtp_descriptors
-            .lock()
-            .insert(descriptor.session_id.clone(), descriptor.clone());
-        Ok(descriptor)
+        let fingerprint = Self::request_fingerprint(&request)?;
+        self.idempotent_open(ctx, "open_rtp_receiver", fingerprint, || {
+            let provider = self.clone();
+            let ctx = ctx.clone();
+            let request = request.clone();
+            async move { provider.open_receiver_impl(&ctx, request).await }
+        })
+        .await
     }
 
     async fn open_sender(
@@ -454,21 +609,14 @@ impl RtpSessionApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: OpenRtpSender,
     ) -> Result<RtpSessionDescriptor> {
-        Deadline::from_context(ctx)
-            .check()
-            .map_err(|e| MediaError::unavailable(e.to_string()))?;
-        let mode = match request.params.tcp_role {
-            Some(TcpRole::Passive) => RtpSenderMode::Passive,
-            _ => RtpSenderMode::Active,
-        };
-        let old_req = self.build_old_sender_request(request.clone(), mode)?;
-        let session = self.open_rtp_sender(ctx, old_req).await?;
-        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
-        self.apply_request_overrides(&mut descriptor, &request.params);
-        self.rtp_descriptors
-            .lock()
-            .insert(descriptor.session_id.clone(), descriptor.clone());
-        Ok(descriptor)
+        let fingerprint = Self::request_fingerprint(&request)?;
+        self.idempotent_open(ctx, "open_rtp_sender", fingerprint, || {
+            let provider = self.clone();
+            let ctx = ctx.clone();
+            let request = request.clone();
+            async move { provider.open_sender_impl(&ctx, request).await }
+        })
+        .await
     }
 
     async fn open_talk(
@@ -476,25 +624,14 @@ impl RtpSessionApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: OpenRtpTalk,
     ) -> Result<RtpSessionDescriptor> {
-        Deadline::from_context(ctx)
-            .check()
-            .map_err(|e| MediaError::unavailable(e.to_string()))?;
-        let sender_req = self.build_old_sender_request(
-            OpenRtpSender {
-                params: request.params.clone(),
-            },
-            RtpSenderMode::Talk,
-        )?;
-        let session = self.open_rtp_sender(ctx, sender_req).await?;
-        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
-        self.apply_request_overrides(&mut descriptor, &request.params);
-        if let Some(binding) = request.talkback_binding {
-            descriptor.payload_bindings.push(binding);
-        }
-        self.rtp_descriptors
-            .lock()
-            .insert(descriptor.session_id.clone(), descriptor.clone());
-        Ok(descriptor)
+        let fingerprint = Self::request_fingerprint(&request)?;
+        self.idempotent_open(ctx, "open_rtp_talk", fingerprint, || {
+            let provider = self.clone();
+            let ctx = ctx.clone();
+            let request = request.clone();
+            async move { provider.open_talk_impl(&ctx, request).await }
+        })
+        .await
     }
 
     async fn update_session(
@@ -508,9 +645,18 @@ impl RtpSessionApi for RtpMediaProvider {
 
         let session = self
             .orchestrator
-            .get_rtp_session(&request.session_ref.session_id)?;
+            .get_rtp_session(&request.session_ref.session_id)
+            .map_err(|e| self.enrich_error(e, ctx, &request.session_ref))?;
         if session.generation != request.session_ref.expected_generation.0 {
-            return Err(MediaError::conflict("generation mismatch"));
+            return Err(
+                MediaError::conflict("generation mismatch").with_resource_ref(
+                    self.resource_ref_from_context(
+                        ctx,
+                        &request.session_ref.session_id,
+                        request.session_ref.expected_generation.0,
+                    ),
+                ),
+            );
         }
 
         let payload_type = request
@@ -528,7 +674,8 @@ impl RtpSessionApi for RtpMediaProvider {
         if let Some(remote) = request.remote_endpoint {
             updated = self
                 .orchestrator
-                .set_session_remote_endpoint(&request.session_ref.session_id, remote)?;
+                .set_session_remote_endpoint(&request.session_ref.session_id, remote)
+                .map_err(|e| self.enrich_error(e, ctx, &request.session_ref))?;
         }
 
         let mut descs = self.rtp_descriptors.lock();
@@ -549,9 +696,20 @@ impl RtpSessionApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         session_ref: RtpSessionRef,
     ) -> Result<RtpSessionDescriptor> {
-        let session = self.orchestrator.get_rtp_session(&session_ref.session_id)?;
+        let session = self
+            .orchestrator
+            .get_rtp_session(&session_ref.session_id)
+            .map_err(|e| self.enrich_error(e, ctx, &session_ref))?;
         if session.generation != session_ref.expected_generation.0 {
-            return Err(MediaError::conflict("generation mismatch"));
+            return Err(
+                MediaError::conflict("generation mismatch").with_resource_ref(
+                    self.resource_ref_from_context(
+                        ctx,
+                        &session_ref.session_id,
+                        session_ref.expected_generation.0,
+                    ),
+                ),
+            );
         }
         let stored = self
             .rtp_descriptors
@@ -576,7 +734,15 @@ impl RtpSessionApi for RtpMediaProvider {
         {
             Ok(session) => {
                 if session.generation != request.session_ref.expected_generation.0 {
-                    return Err(MediaError::conflict("generation mismatch"));
+                    return Err(
+                        MediaError::conflict("generation mismatch").with_resource_ref(
+                            self.resource_ref_from_context(
+                                ctx,
+                                &request.session_ref.session_id,
+                                request.session_ref.expected_generation.0,
+                            ),
+                        ),
+                    );
                 }
             }
             Err(_) => return Ok(EffectOutcome::NotApplied),
@@ -592,11 +758,7 @@ impl RtpSessionApi for RtpMediaProvider {
                     .remove(&request.session_ref.session_id);
                 Ok(EffectOutcome::Applied)
             }
-            Err(e) => {
-                let mut e = e;
-                e.outcome = e.code.into();
-                Err(e)
-            }
+            Err(e) => Err(self.enrich_error(e, ctx, &request.session_ref)),
         }
     }
 
@@ -647,5 +809,98 @@ impl RtpSessionApi for RtpMediaProvider {
             total: page.total,
             next_cursor: page.next_cursor,
         })
+    }
+}
+
+impl RtpMediaProvider {
+    async fn open_receiver_impl(
+        &self,
+        ctx: &MediaRequestContext,
+        request: OpenRtpReceiver,
+    ) -> Result<RtpSessionDescriptor> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.admit(
+            ctx,
+            AdmissionAction::OpenRtpReceiver,
+            &request.params.media_key,
+            "rtp",
+            request.params.remote_endpoint.map(|a| a.to_string()),
+        )
+        .await?;
+        self.check_profile_and_limits(&request.params)?;
+        let old_req = self.build_old_receiver_request(request.clone())?;
+        let session = self.open_rtp_receiver(ctx, old_req).await?;
+        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
+        self.apply_request_overrides(&mut descriptor, &request.params);
+        self.rtp_descriptors
+            .lock()
+            .insert(descriptor.session_id.clone(), descriptor.clone());
+        Ok(descriptor)
+    }
+    async fn open_sender_impl(
+        &self,
+        ctx: &MediaRequestContext,
+        request: OpenRtpSender,
+    ) -> Result<RtpSessionDescriptor> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.admit(
+            ctx,
+            AdmissionAction::OpenRtpSender,
+            &request.params.media_key,
+            "rtp",
+            request.params.remote_endpoint.map(|a| a.to_string()),
+        )
+        .await?;
+        self.check_profile_and_limits(&request.params)?;
+        let mode = match request.params.tcp_role {
+            Some(TcpRole::Passive) => RtpSenderMode::Passive,
+            _ => RtpSenderMode::Active,
+        };
+        let old_req = self.build_old_sender_request(request.clone(), mode)?;
+        let session = self.open_rtp_sender(ctx, old_req).await?;
+        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
+        self.apply_request_overrides(&mut descriptor, &request.params);
+        self.rtp_descriptors
+            .lock()
+            .insert(descriptor.session_id.clone(), descriptor.clone());
+        Ok(descriptor)
+    }
+    async fn open_talk_impl(
+        &self,
+        ctx: &MediaRequestContext,
+        request: OpenRtpTalk,
+    ) -> Result<RtpSessionDescriptor> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.admit(
+            ctx,
+            AdmissionAction::OpenRtpSender,
+            &request.params.media_key,
+            "rtp",
+            request.params.remote_endpoint.map(|a| a.to_string()),
+        )
+        .await?;
+        self.check_profile_and_limits(&request.params)?;
+        let sender_req = self.build_old_sender_request(
+            OpenRtpSender {
+                params: request.params.clone(),
+            },
+            RtpSenderMode::Talk,
+        )?;
+        let session = self.open_rtp_sender(ctx, sender_req).await?;
+        let mut descriptor = self.build_descriptor(ctx, &session, None)?;
+        self.apply_request_overrides(&mut descriptor, &request.params);
+        if let Some(binding) = request.talkback_binding {
+            descriptor.payload_bindings.push(binding);
+        }
+        self.rtp_descriptors
+            .lock()
+            .insert(descriptor.session_id.clone(), descriptor.clone());
+        Ok(descriptor)
     }
 }
