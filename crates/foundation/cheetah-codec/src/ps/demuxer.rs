@@ -339,6 +339,12 @@ impl PsDemuxer {
             new_tracks.insert(es_id, track_info);
         }
 
+        // A PSM that yields no supported tracks carries no actionable track list; treat it
+        // as a no-op rather than removing all existing tracks.
+        if new_tracks.is_empty() {
+            return;
+        }
+
         let new_signature: HashMap<u8, (MediaKind, CodecId)> = new_tracks
             .iter()
             .map(|(es_id, t)| (*es_id, (t.media_kind, t.codec)))
@@ -347,8 +353,6 @@ impl PsDemuxer {
             // Duplicate PSM with identical stream descriptions; ignore.
             return;
         }
-        self.psm_version = Some(version);
-        self.psm_signature = new_signature;
 
         // Compute removed and changed/added tracks before mutating the table.
         let existing_keys: HashSet<u8> = self.tracks.keys().copied().collect();
@@ -369,6 +373,10 @@ impl PsDemuxer {
             }));
             return;
         }
+
+        // Only commit the version/signature once the PSM is actually applied.
+        self.psm_version = Some(version);
+        self.psm_signature = new_signature;
 
         let mut changed = Vec::with_capacity(new_tracks.len());
         for (es_id, track) in &new_tracks {

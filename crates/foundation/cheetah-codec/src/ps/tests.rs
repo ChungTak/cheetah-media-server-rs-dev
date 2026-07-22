@@ -934,3 +934,76 @@ fn ps_demuxer_psm_not_current_next_is_ignored() {
         "PSM with current_next=0 must not announce tracks"
     );
 }
+
+#[test]
+fn ps_demuxer_empty_supported_psm_does_not_wipe_tracks() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    let psm0 = encode_psm_payload(0, &[(0x1B, 0xE0)]);
+    let mut packet0 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet0.extend_from_slice(&(psm0.len() as u16).to_be_bytes());
+    packet0.extend_from_slice(&psm0);
+    let _ = demuxer.push(&packet0);
+
+    // A PSM that lists only an unsupported stream type yields no supported tracks;
+    // it must not remove the existing video track.
+    let psm1 = encode_psm_payload(1, &[(0xFF, 0xC0)]);
+    let mut packet1 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet1.extend_from_slice(&(psm1.len() as u16).to_be_bytes());
+    packet1.extend_from_slice(&psm1);
+    let events = demuxer.push(&packet1);
+
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackRemoved(..))),
+        "unsupported-only PSM must not wipe existing tracks"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackInfo(..))),
+        "unsupported-only PSM must not re-announce tracks"
+    );
+}
+
+#[test]
+fn ps_demuxer_over_limit_psm_retransmission_still_emits_limit() {
+    let mut config = limit_config();
+    config.max_tracks = 1;
+    let mut demuxer = PsDemuxer::new(config);
+
+    // First PSM with one track fits.
+    let psm0 = encode_psm_payload(0, &[(0x1B, 0xE0)]);
+    let mut packet0 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet0.extend_from_slice(&(psm0.len() as u16).to_be_bytes());
+    packet0.extend_from_slice(&psm0);
+    let _ = demuxer.push(&packet0);
+
+    // Second PSM with two tracks exceeds the limit; each retransmission must still
+    // report the limit so the cache does not swallow the diagnostic.
+    let psm1 = encode_psm_payload(1, &[(0x1B, 0xE0), (0x0F, 0xC0)]);
+    let mut packet1 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet1.extend_from_slice(&(psm1.len() as u16).to_be_bytes());
+    packet1.extend_from_slice(&psm1);
+
+    let events1 = demuxer.push(&packet1);
+    let events2 = demuxer.push(&packet1);
+
+    for events in [events1, events2] {
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+                if resource == "tracks"
+            )),
+            "over-limit PSM retransmission must still emit LimitExceeded"
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, PsDemuxEvent::TrackRemoved(..))),
+            "over-limit PSM must not remove existing tracks"
+        );
+    }
+}
