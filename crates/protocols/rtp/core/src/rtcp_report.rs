@@ -186,9 +186,14 @@ impl RtcpReportState {
 
         // Signed 32-bit delta handles wrap-around and out-of-order timestamps near the SR.
         let delta = (rtp as i32).wrapping_sub(sr_rtp as i32) as i64;
-        let unwrapped = sr_unwrapped.wrapping_add(delta as u64);
 
-        let media_us = rtp_to_media_micros(unwrapped, self.clock_rate_hz) + offset_us;
+        // Compute the media offset from the signed delta directly so negative deltas
+        // cannot underflow the absolute u64 media timeline before the SR.
+        let delta_media_us = (i128::from(delta) * i128::from(MICROS_PER_SEC))
+            / i128::from(self.clock_rate_hz.max(1));
+        let media_us = rtp_to_media_micros(sr_unwrapped, self.clock_rate_hz)
+            + delta_media_us as i64
+            + offset_us;
 
         let ntp_delta = (i128::from(delta) * (1i128 << 32)) / i128::from(self.clock_rate_hz.max(1));
         let ntp = if ntp_delta >= 0 {
@@ -373,6 +378,19 @@ mod tests {
     fn map_rtp_to_ntp_and_media_returns_none_before_sr() {
         let state = RtcpReportState::new(90_000);
         assert!(state.map_rtp_to_ntp_and_media(0).is_none());
+    }
+
+    #[test]
+    fn sr_mapping_negative_delta_does_not_underflow_at_stream_start() {
+        let mut state = RtcpReportState::new(90_000);
+        // SR at stream start with RTP timestamp 0. A packet from just before the
+        // wrap boundary (45_000 ticks earlier) must map to a small negative media time.
+        state.on_sender_report(ms_to_ntp_timestamp(0), 0, 0);
+
+        let backward_rtp = 0u32.wrapping_sub(45_000);
+        let (ntp, media_us) = state.map_rtp_to_ntp_and_media(backward_rtp).unwrap();
+        assert_eq!(media_us, -500_000);
+        assert!(ntp < ms_to_ntp_timestamp(0));
     }
 
     #[test]
