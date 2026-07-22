@@ -1,3 +1,4 @@
+#[cfg(test)]
 use bytes::Bytes;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -8,6 +9,8 @@ use cheetah_codec::{
 };
 
 use crate::error::RtpCoreDiagnostic;
+use crate::rtcp::{RtcpCompoundPacket, RtcpPacket};
+use crate::rtcp_report::{default_clock_rate_hz, RtcpReportState};
 use crate::types::{
     RtcpSend, RtpConnectionType, RtpCoreCommand, RtpCoreEvent, RtpCoreInput, RtpCoreOutput,
     RtpDatagram, RtpSessionKey, RtpTcpChunk, RtpTcpSend, RtpTrackFilter, RtpTransportMode,
@@ -71,6 +74,9 @@ struct RtpSession {
     updated_at_ms: u64,
     /// Optional human-readable reason for the last recorded failure.
     last_error: Option<String>,
+
+    /// RTCP report state for this session.
+    rtcp: RtcpReportState,
 }
 
 /// Sans-I/O state machine for one or more RTP/RTCP sessions.
@@ -200,27 +206,30 @@ impl RtpCore {
     /// 包含被报告的源 SSRC；该被描述 SSRC 用于定位本地发送会话并重置其
     /// `last_rr_received_ms`。NACK 或 PLI 等 RTCP 反馈包在此阶段不解析并被忽略。
     fn process_rtcp_packet(&mut self, datagram: RtpDatagram, _outputs: &mut Vec<RtpCoreOutput>) {
-        let data = datagram.data;
-        if data.len() < 8 {
+        let Ok(compound) = RtcpCompoundPacket::parse(datagram.data) else {
             return;
-        }
-        let pt = data[1];
-        // SSRC of report sender at offset 4..8 is who sent the RTCP. The report blocks contain the
-        // SSRC of the source being reported on; for RR (201) the first report block starts at
-        // offset 8 with the source SSRC. For SR (200) the report blocks start at offset 28; here
-        // we only care about the sender SSRC.
-        let reporter_ssrc = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-        let described_ssrc = if pt == 201 && data.len() >= 12 {
-            u32::from_be_bytes([data[8], data[9], data[10], data[11]])
-        } else {
-            reporter_ssrc
         };
 
-        // RR for ssrc S means "the peer is reporting on packets WE sent with SSRC=S". So we look
-        // up the local sender session keyed by `described_ssrc`.
-        if let Some(session_key) = self.ssrc_to_session.get(&described_ssrc) {
-            if let Some(session) = self.sessions.get_mut(session_key) {
-                session.last_rr_received_ms = self.now_ms.max(1);
+        for packet in compound.packets {
+            match packet {
+                RtcpPacket::SenderReport(sr) => {
+                    for session in self.sessions.values_mut() {
+                        if session.peer_ssrc == sr.ssrc {
+                            session.rtcp.on_sender_report(sr.ntp_timestamp, self.now_ms);
+                            session.last_rr_received_ms = self.now_ms.max(1);
+                        }
+                    }
+                }
+                RtcpPacket::ReceiverReport(rr) => {
+                    for block in rr.report_blocks {
+                        if let Some(session_key) = self.ssrc_to_session.get(&block.ssrc) {
+                            if let Some(session) = self.sessions.get_mut(session_key) {
+                                session.last_rr_received_ms = self.now_ms.max(1);
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -322,6 +331,9 @@ impl RtpCore {
                                 generation: 1,
                                 updated_at_ms: 0,
                                 last_error: None,
+                                rtcp: RtcpReportState::new(default_clock_rate_hz(
+                                    RtpPayloadMode::Ehome,
+                                )),
                             };
                             self.sessions.insert(session_key.clone(), session);
                             self.ssrc_to_session.insert(ssrc, session_key.clone());
@@ -689,6 +701,7 @@ impl RtpCore {
                 generation: 1,
                 updated_at_ms: 0,
                 last_error: None,
+                rtcp: RtcpReportState::new(default_clock_rate_hz(mode)),
             };
 
             self.sessions.insert(key.clone(), session);
@@ -709,6 +722,11 @@ impl RtpCore {
         session.packets_received += 1;
         session.bytes_received += rtp.payload.len() as u32;
         session.last_activity_ms = self.now_ms;
+        session.rtcp.on_packet(
+            rtp.header.sequence_number,
+            rtp.header.timestamp,
+            self.now_ms,
+        );
 
         // Dynamic max-RTP-length learner (ABL `nMaxRtpLength`). Track the largest payload
         // observed; if it exceeds the configured cap, emit a diagnostic but still process the
@@ -923,52 +941,44 @@ impl RtpCore {
             if now_ms.saturating_sub(session.last_rtcp_report_ms) >= 5000 {
                 session.last_rtcp_report_ms = now_ms;
 
-                match session.transport_mode {
-                    RtpTransportMode::RecvOnly | RtpTransportMode::SendRecv => {
-                        // Generate a Receiver Report (RR) RTCP packet
-                        // Header: V=2, P=0, RC=1 (1 report block), PT=201 (RR), Length=7 (32-bit words - 1)
-                        let mut rr = Vec::with_capacity(32);
-                        rr.push(0x81); // V=2, RC=1
-                        rr.push(201); // RR type
-                        rr.extend_from_slice(&7u16.to_be_bytes()); // Length = 7 (32 bytes)
-                        rr.extend_from_slice(&session.ssrc.to_be_bytes()); // SSRC of packet sender
-                        rr.extend_from_slice(&session.peer_ssrc.to_be_bytes()); // SSRC of source reported on
-                        rr.push(0); // fraction lost
-                        rr.extend_from_slice(&[0, 0, 0]); // cumulative lost (24-bit)
-                        let highest_seq = u32::from(session.last_seq.unwrap_or(0));
-                        rr.extend_from_slice(&highest_seq.to_be_bytes()); // highest sequence number
-                        rr.extend_from_slice(&0u32.to_be_bytes()); // jitter
-                        rr.extend_from_slice(&0u32.to_be_bytes()); // LSR
-                        rr.extend_from_slice(&0u32.to_be_bytes()); // DLSR
+                let peer_ssrc = session.peer_ssrc;
+                let ssrc = session.ssrc;
+                let packets_sent = session.packets_sent;
+                let bytes_sent = session.bytes_sent;
+                let has_received = session.rtcp.packets_received() > 0;
 
+                let report_packet = if packets_sent > 0 {
+                    let block = if has_received {
+                        session.rtcp.report_block(peer_ssrc, now_ms)
+                    } else {
+                        None
+                    };
+                    Some(RtcpPacket::SenderReport(session.rtcp.sender_report(
+                        ssrc,
+                        packets_sent,
+                        bytes_sent,
+                        now_ms,
+                        block,
+                    )))
+                } else if has_received {
+                    session.rtcp.report_block(peer_ssrc, now_ms).map(|block| {
+                        RtcpPacket::ReceiverReport(session.rtcp.receiver_report(ssrc, block))
+                    })
+                } else {
+                    None
+                };
+
+                if let Some(packet) = report_packet {
+                    let compound = RtcpCompoundPacket {
+                        packets: vec![packet],
+                    };
+                    if let Ok(data) = compound.encode() {
                         if let Some(dest) = session.destination.or(session.source_addr) {
                             outputs.push(RtpCoreOutput::SendRtcp(RtcpSend {
                                 session_key: session._session_key.clone(),
                                 destination: dest,
                                 conn_id: session.tcp_conn_id,
-                                data: Bytes::from(rr),
-                            }));
-                        }
-                    }
-                    RtpTransportMode::SendOnly => {
-                        // Generate a Sender Report (SR) RTCP packet
-                        // Header: V=2, P=0, RC=0, PT=200 (SR), Length=6 (32-bit words - 1)
-                        let mut sr = Vec::with_capacity(28);
-                        sr.push(0x80); // V=2, RC=0
-                        sr.push(200); // SR type
-                        sr.extend_from_slice(&6u16.to_be_bytes()); // Length = 6 (28 bytes)
-                        sr.extend_from_slice(&session.ssrc.to_be_bytes()); // SSRC of sender
-                        sr.extend_from_slice(&0u64.to_be_bytes()); // NTP timestamp
-                        sr.extend_from_slice(&0u32.to_be_bytes()); // RTP timestamp
-                        sr.extend_from_slice(&session.packets_sent.to_be_bytes());
-                        sr.extend_from_slice(&session.bytes_sent.to_be_bytes());
-
-                        if let Some(dest) = session.destination {
-                            outputs.push(RtpCoreOutput::SendRtcp(RtcpSend {
-                                session_key: session._session_key.clone(),
-                                destination: dest,
-                                conn_id: session.tcp_conn_id,
-                                data: Bytes::from(sr),
+                                data,
                             }));
                         }
                     }
@@ -1164,6 +1174,7 @@ impl RtpCore {
                     generation: 1,
                     updated_at_ms: 0,
                     last_error: None,
+                    rtcp: RtcpReportState::new(default_clock_rate_hz(spec.payload_mode)),
                 };
                 self.sessions.insert(spec.session_key.clone(), session);
                 self.ssrc_to_session.insert(ssrc, spec.session_key.clone());
@@ -1228,6 +1239,7 @@ impl RtpCore {
                     generation: 1,
                     updated_at_ms: 0,
                     last_error: None,
+                    rtcp: RtcpReportState::new(default_clock_rate_hz(spec.payload_mode)),
                 };
                 self.sessions.insert(spec.session_key.clone(), session);
                 self.ssrc_to_session
@@ -1276,6 +1288,8 @@ impl RtpCore {
                     };
                     let rtp_clock = cheetah_codec::RtpClock { rate: clock_rate };
                     let timestamp = rtp_clock.micros_to_ticks(send_frame.frame.pts_us);
+                    session.rtcp.set_clock_rate(u64::from(clock_rate));
+                    session.rtcp.on_sent(timestamp);
 
                     let payload_type =
                         match (session.egress_payload_mode, send_frame.frame.media_kind) {
