@@ -697,6 +697,7 @@ impl RtpCore {
             return;
         }
 
+        let mut skip_demuxer = false;
         let ssrc = rtp.header.ssrc;
 
         // Find session by SSRC
@@ -879,8 +880,9 @@ impl RtpCore {
                             ));
                         } else {
                             // Treat as a transient interleaved auxiliary payload; do not feed
-                            // the unresolved bytes into the demuxer.
-                            return;
+                            // the unresolved bytes into the demuxer, but still account for it in
+                            // sequence/RTCP statistics.
+                            skip_demuxer = true;
                         }
                     }
                 }
@@ -961,6 +963,10 @@ impl RtpCore {
             }
         }
         session.last_seq = Some(rtp.header.sequence_number);
+
+        if skip_demuxer {
+            return;
+        }
 
         // Lazily build demuxer
         if let SessionDemuxer::Pending = session.demuxer {
