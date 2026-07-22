@@ -353,10 +353,12 @@ impl RtpCore {
             return Err(reason);
         }
 
-        // Update stats and activity
+        // Update stats and activity. `last_activity_ms` must never move backward because
+        // packets can be released from the reorder buffer after newer packets have already
+        // refreshed the timestamp on arrival.
         session.packets_received += 1;
         session.bytes_received += rtp.payload.len() as u32;
-        session.last_activity_ms = received_at_ms;
+        session.last_activity_ms = session.last_activity_ms.max(received_at_ms);
         session.rtcp.on_packet(
             rtp.header.sequence_number,
             rtp.header.timestamp,
