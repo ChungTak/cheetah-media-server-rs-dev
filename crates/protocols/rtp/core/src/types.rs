@@ -195,6 +195,16 @@ pub struct RtpTcpSend {
 #[derive(Debug, Clone)]
 pub struct RtcpSend {
     pub session_key: RtpSessionKey,
+    /// Preferred RTCP destination (e.g. observed RTCP source address).
+    ///
+    /// When set, the driver should use this address directly for UDP RTCP;
+    /// otherwise it derives the RTCP port from `destination`.
+    ///
+    /// 首选 RTCP 目的地址（如观察到的 RTCP 源地址）。
+    pub rtcp_destination: Option<SocketAddr>,
+    /// Fallback destination used when `rtcp_destination` is `None`.
+    ///
+    /// 当 `rtcp_destination` 为空时使用的回退目的地址。
     pub destination: SocketAddr,
     /// Optional TCP connection ID for RTP-over-TCP RTCP transport.
     ///

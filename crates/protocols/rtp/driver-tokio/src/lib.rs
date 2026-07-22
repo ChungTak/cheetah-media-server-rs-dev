@@ -329,10 +329,12 @@ fn spawn_udp_reader(
 
                             if let Some(rtcp_tx) = rtcp_rx_tx.as_ref() {
                                 if mux {
-                                    // RTP/RTCP mux: parse the datagram to decide which core
-                                    // input it should feed. A successful RTCP parse and a
-                                    // non-RTP-looking payload type routes it to the RTCP path.
-                                    if RtcpCompoundPacket::parse(datagram.data.clone()).is_ok() {
+                                    // RTP/RTCP mux: RFC 5761 disambiguation first, then parse.
+                                    // Only route to the RTCP path when the packet-type byte is
+                                    // in an RTCP range and the compound packet parses cleanly.
+                                    if looks_like_rtcp(&datagram.data)
+                                        && RtcpCompoundPacket::parse(datagram.data.clone()).is_ok()
+                                    {
                                         if rtcp_tx.send(datagram).await.is_err() {
                                             break;
                                         }
@@ -424,6 +426,21 @@ fn resolve_rtcp_destination(rtp_dest: SocketAddr) -> SocketAddr {
         dest.set_port(dest.port().saturating_add(1));
     }
     dest
+}
+
+/// RFC 5761-style disambiguation for RTP/RTCP-muxed UDP sockets.
+///
+/// Returns true when the packet looks like an RTCP compound packet rather than RTP:
+/// RTP version is 2 and the packet-type byte falls in the RTCP ranges (64-95, 192-223).
+///
+/// RFC 5761 风格的 RTP/RTCP 复用端口判别。
+fn looks_like_rtcp(data: &[u8]) -> bool {
+    if data.len() < 2 {
+        return false;
+    }
+    let version = data[0] >> 6;
+    let pt = data[1];
+    version == 2 && (matches!(pt, 64..=95) || matches!(pt, 192..=223))
 }
 
 /// Main Tokio driver loop: bind sockets, spawn I/O tasks, and dispatch core I/O.
@@ -1098,9 +1115,12 @@ async fn run_driver_loop(
                                 }
                             });
                         } else if let Some(rtcp_socket) = rtcp_socket.clone() {
-                            // Dedicated RTCP socket: map even RTP ports to the conventional
-                            // odd RTCP port unless the destination already looks like one.
-                            let dest = resolve_rtcp_destination(rtcp_send.destination);
+                            // Dedicated RTCP socket: use the observed RTCP source address
+                            // directly if known; otherwise derive the RTCP port from the
+                            // RTP destination.
+                            let dest = rtcp_send
+                                .rtcp_destination
+                                .unwrap_or_else(|| resolve_rtcp_destination(rtcp_send.destination));
                             tokio::spawn(async move {
                                 let _ = rtcp_socket.send_to(&rtcp_send.data, dest).await;
                             });
@@ -1113,9 +1133,9 @@ async fn run_driver_loop(
                                 &udp_socket,
                             )
                             .await;
+                            let dest = rtcp_send.rtcp_destination.unwrap_or(rtcp_send.destination);
                             tokio::spawn(async move {
-                                let _ =
-                                    socket.send_to(&rtcp_send.data, rtcp_send.destination).await;
+                                let _ = socket.send_to(&rtcp_send.data, dest).await;
                             });
                         }
                     }

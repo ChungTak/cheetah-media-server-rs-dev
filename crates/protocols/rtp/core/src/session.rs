@@ -1189,11 +1189,12 @@ impl RtpCore {
 
                 let session_key = session._session_key.clone();
                 let conn_id = session.tcp_conn_id;
-                let Some(dest) = session
-                    .rtcp_source_addr
-                    .or(session.destination)
-                    .or(session.source_addr)
-                else {
+
+                // If we have already seen an RTCP packet from the peer, reply directly to
+                // that address. Otherwise, fall back to the RTP destination/source and let
+                // the driver derive the RTCP port when using a dedicated RTCP socket.
+                let rtcp_dest = session.rtcp_source_addr;
+                let Some(dest) = rtcp_dest.or(session.destination).or(session.source_addr) else {
                     continue;
                 };
 
@@ -1231,6 +1232,7 @@ impl RtpCore {
                     if let Ok(data) = compound.encode() {
                         outputs.push(RtpCoreOutput::SendRtcp(RtcpSend {
                             session_key,
+                            rtcp_destination: rtcp_dest,
                             destination: dest,
                             conn_id,
                             data,
