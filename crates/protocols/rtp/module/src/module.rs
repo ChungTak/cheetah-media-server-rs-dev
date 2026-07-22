@@ -2,7 +2,9 @@
 //!
 //! RTP 模块工厂与实现。
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,6 +20,7 @@ use cheetah_sdk::media_api::error::MediaError;
 use cheetah_sdk::media_api::event::{EventHeader, MediaEvent, RtpSessionTimeout};
 use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId};
 use cheetah_sdk::media_api::model::{RtpSessionState, RtpTcpMode};
+use cheetah_sdk::media_api::rtp_session::SourceBindingPolicy;
 use cheetah_sdk::{
     CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest, HttpResponse,
     HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -34,6 +37,12 @@ use crate::config::{RtpClientJobConfig, RtpModuleConfig};
 use crate::egress::{run_egress_session, sleep_or_cancel, EgressCleanup};
 use crate::media_provider::RtpMediaProvider;
 use crate::orchestrator::RtpSessionOrchestrator;
+
+fn hash_endpoint(addr: &SocketAddr) -> String {
+    let mut h = DefaultHasher::new();
+    addr.to_string().hash(&mut h);
+    format!("{:x}", h.finish())
+}
 
 const MODULE_ID: &str = "rtp";
 
@@ -624,6 +633,24 @@ async fn run_ingress_worker(
                     warn!("RTP FormatChanged for unknown session: {session_key}");
                 }
             }
+            RtpCoreEvent::SourceChanged {
+                session_key,
+                old,
+                new,
+            } => {
+                info!(
+                    "RTP source address rebind: key={session_key}, old={}, new={}",
+                    hash_endpoint(&old),
+                    hash_endpoint(&new),
+                );
+                // Keep the orchestrator's remote_endpoint in sync so talkback/feedback
+                // is sent to the new source address after a validated rebind.
+                if let Err(e) = orchestrator
+                    .set_session_remote_endpoint(&RtpSessionId(session_key.clone()), new)
+                {
+                    warn!("Failed to update remote endpoint after source rebind: {e}");
+                }
+            }
             RtpCoreEvent::SessionClosed {
                 session_key,
                 reason,
@@ -743,6 +770,7 @@ async fn run_pull_job_supervisor(
             transport_mode: RtpTransportMode::RecvOnly,
             tcp_conn_id: None,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 
@@ -894,6 +922,7 @@ impl ModuleHttpService for RtpHttpService {
                         bind_addr,
                         false,
                         RtpSessionState::Listening,
+                        SourceBindingPolicy::default(),
                     )
                     .await
                     .map_err(media_error_to_sdk_error)?;
@@ -1091,6 +1120,7 @@ impl ModuleHttpService for RtpHttpService {
                             *transport_mode,
                             connection_type,
                             track_filter,
+                            SourceBindingPolicy::default(),
                         )
                         .await
                         .map_err(media_error_to_sdk_error)?;

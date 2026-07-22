@@ -10,6 +10,7 @@ use bytes::Bytes;
 use cheetah_codec::{RtpHeader, RtpPacket};
 use cheetah_media_api::command::{RtpReceiverRequest, RtpSenderMode, RtpSenderRequest};
 use cheetah_media_api::model::{OnlineState, RtpSessionKind, RtpSessionState};
+use cheetah_media_api::rtp_session::SourceBindingPolicy;
 use cheetah_media_api::{MediaControlApi, RtpApi};
 use std::time::Duration;
 use tokio::net::UdpSocket;
@@ -44,6 +45,7 @@ async fn gb28181_can_open_receiver_and_sender_sessions() {
                 codec_hint: None,
                 reuse_port: false,
                 timeout_ms: 5000,
+                source_binding_policy: SourceBindingPolicy::default(),
             },
         )
         .await
@@ -98,6 +100,7 @@ async fn gb28181_can_open_receiver_and_sender_sessions() {
                 codec_hint: None,
                 mode: RtpSenderMode::Active,
                 transport_options: Default::default(),
+                source_binding_policy: SourceBindingPolicy::default(),
             },
         )
         .await

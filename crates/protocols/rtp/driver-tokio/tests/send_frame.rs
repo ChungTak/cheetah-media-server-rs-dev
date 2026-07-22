@@ -52,6 +52,7 @@ async fn test_send_frame_delivers_udp_rtp_to_peer() {
         transport_mode: RtpTransportMode::SendOnly,
         tcp_conn_id: None,
         connection_type: Some(RtpConnectionType::UdpActive),
+        source_policy: None,
         track_filter: RtpTrackFilter::All,
     };
 

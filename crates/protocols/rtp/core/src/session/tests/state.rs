@@ -67,6 +67,7 @@ fn test_recvonly_session_transitions_inactive_to_receiving() {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -100,6 +101,7 @@ fn test_sendonly_session_transitions_inactive_to_sending() {
             transport_mode: RtpTransportMode::SendOnly,
             tcp_conn_id: None,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -139,6 +141,7 @@ fn test_sendrecv_session_transitions_inactive_to_sendrecv_on_ingress() {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::SendRecv,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -172,6 +175,7 @@ fn test_sendrecv_session_transitions_inactive_to_sendrecv_on_egress() {
             transport_mode: RtpTransportMode::SendRecv,
             tcp_conn_id: None,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -208,6 +212,7 @@ fn test_voicetalk_upgrades_recvonly_to_talk_immediately() {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -221,6 +226,7 @@ fn test_voicetalk_upgrades_recvonly_to_talk_immediately() {
             transport_mode: RtpTransportMode::SendRecv,
             tcp_conn_id: None,
             connection_type: Some(RtpConnectionType::VoiceTalk),
+            source_policy: None,
             track_filter: RtpTrackFilter::OnlyAudio,
         },
     )));
@@ -251,6 +257,7 @@ fn test_voicetalk_keeps_talk_after_ingress_and_egress() {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -272,6 +279,7 @@ fn test_voicetalk_keeps_talk_after_ingress_and_egress() {
             transport_mode: RtpTransportMode::SendRecv,
             tcp_conn_id: None,
             connection_type: Some(RtpConnectionType::VoiceTalk),
+            source_policy: None,
             track_filter: RtpTrackFilter::OnlyAudio,
         },
     )));
@@ -324,6 +332,7 @@ fn test_stop_command_transitions_to_closed() {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -355,6 +364,7 @@ fn test_idle_timeout_transitions_to_closed() {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -384,6 +394,7 @@ fn test_sendframe_in_recvonly_does_not_change_state() {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));
@@ -424,6 +435,7 @@ fn test_ingress_in_sendonly_does_not_change_state() {
             transport_mode: RtpTransportMode::SendOnly,
             tcp_conn_id: None,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));

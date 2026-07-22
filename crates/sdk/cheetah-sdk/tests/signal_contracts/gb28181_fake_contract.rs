@@ -4,6 +4,7 @@ use cheetah_media_api::command::*;
 use cheetah_media_api::error::MediaErrorCode;
 use cheetah_media_api::ids::*;
 use cheetah_media_api::model::*;
+use cheetah_media_api::rtp_session::SourceBindingPolicy;
 use cheetah_sdk::MediaServices;
 
 use crate::fake_support::{ctx, FakeMediaProvider};
@@ -33,6 +34,7 @@ async fn gb28181_flow(services: MediaServices) {
                 codec_hint: Some("H264".to_string()),
                 reuse_port: false,
                 timeout_ms: 30_000,
+                source_binding_policy: SourceBindingPolicy::default(),
             },
         )
         .await
@@ -81,6 +83,7 @@ async fn gb28181_flow(services: MediaServices) {
                 codec_hint: None,
                 mode: RtpSenderMode::Talk,
                 transport_options: std::collections::HashMap::new(),
+                source_binding_policy: SourceBindingPolicy::default(),
             },
         )
         .await
@@ -122,6 +125,7 @@ async fn gb28181_unsupported_capability_is_distinguishable_from_unavailable() {
                 codec_hint: None,
                 mode: RtpSenderMode::Talk,
                 transport_options: std::collections::HashMap::new(),
+                source_binding_policy: SourceBindingPolicy::default(),
             },
         )
         .await

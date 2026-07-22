@@ -408,6 +408,7 @@ fn test_unknown_pt_payload_is_not_fed_to_ps_demuxer() {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         },
     )));

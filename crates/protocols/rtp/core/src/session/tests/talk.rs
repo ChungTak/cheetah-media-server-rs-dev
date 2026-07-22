@@ -14,6 +14,7 @@ fn test_voice_talk_upgrades_session_and_sends_audio() {
         payload_mode: RtpPayloadMode::Ps,
         transport_mode: RtpTransportMode::RecvOnly,
         connection_type: None,
+        source_policy: None,
         track_filter: RtpTrackFilter::All,
     };
     let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(
@@ -32,6 +33,7 @@ fn test_voice_talk_upgrades_session_and_sends_audio() {
         transport_mode: RtpTransportMode::SendRecv,
         tcp_conn_id: None,
         connection_type: Some(RtpConnectionType::VoiceTalk),
+        source_policy: None,
         track_filter: RtpTrackFilter::OnlyAudio,
     };
     let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateClient(

@@ -61,6 +61,7 @@ fn test_rtp_core_session_timeout() {
         payload_mode: RtpPayloadMode::Ps,
         transport_mode: RtpTransportMode::RecvOnly,
         connection_type: None,
+        source_policy: None,
         track_filter: RtpTrackFilter::All,
     };
     let outputs = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
@@ -92,6 +93,7 @@ fn test_rtp_core_pause_check_delays_timeout() {
         payload_mode: RtpPayloadMode::Ps,
         transport_mode: RtpTransportMode::RecvOnly,
         connection_type: None,
+        source_policy: None,
         track_filter: RtpTrackFilter::All,
     };
     let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));

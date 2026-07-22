@@ -10,6 +10,7 @@ fn test_rtp_core_rr_timeout_shuts_down_sender() {
         payload_mode: RtpPayloadMode::Ps,
         transport_mode: RtpTransportMode::SendOnly,
         connection_type: None,
+        source_policy: None,
         track_filter: RtpTrackFilter::All,
     };
     let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
@@ -48,6 +49,7 @@ fn test_rtp_core_rr_resets_sender_timeout() {
         payload_mode: RtpPayloadMode::Ps,
         transport_mode: RtpTransportMode::SendOnly,
         connection_type: None,
+        source_policy: None,
         track_filter: RtpTrackFilter::All,
     };
     let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));

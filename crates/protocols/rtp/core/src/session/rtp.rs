@@ -67,8 +67,12 @@ impl RtpCore {
                 check_paused: false,
                 demuxer: SessionDemuxer::Pending,
                 last_seq: None,
+                last_received_seq: None,
                 reorder: RtpReorderBuffer::new(RtpReorderSettings::default()),
                 source_addr,
+                source_policy: RtpSourcePolicy::AllowValidatedRebind,
+                source_spoof_count: 0,
+                source_rebind_count: 0,
                 rtcp_source_addr: None,
                 last_activity_ms: 0, // Will be updated
                 destination: None,
@@ -103,25 +107,95 @@ impl RtpCore {
             key
         };
 
+        // Source-address binding / rebind policy must run before the packet reaches the
+        // reorder buffer. A spoofed next-sequence packet that is pushed and then discarded
+        // would otherwise advance `expected_seq` and cause a later legitimate packet with
+        // the same sequence number to be treated as late/duplicate.
+        let seq = rtp.header.sequence_number;
+        let source_rebind_idle_window_ms = self.source_rebind_idle_window_ms;
+        let max_source_rebinds = self.max_source_rebinds;
+        let Some(session) = self.sessions.get_mut(&session_key) else {
+            return;
+        };
+        if let Some(src) = source_addr {
+            if let Some(bound) = session.source_addr {
+                if bound != src {
+                    match session.source_policy {
+                        RtpSourcePolicy::Strict => {
+                            session.source_spoof_count += 1;
+                            outputs.push(RtpCoreOutput::Diagnostic(
+                                RtpCoreDiagnostic::SourceSpoofed {
+                                    ssrc,
+                                    expected: bound,
+                                    got: src,
+                                },
+                            ));
+                            return;
+                        }
+                        RtpSourcePolicy::AllowValidatedRebind => {
+                            let idle = received_at_ms.saturating_sub(session.last_activity_ms)
+                                >= source_rebind_idle_window_ms;
+                            let seq_plausible =
+                                plausible_seq_continuation(session.last_received_seq, seq);
+                            let rate_ok = session.source_rebind_count < max_source_rebinds;
+                            if idle && seq_plausible && rate_ok {
+                                session.source_rebind_count += 1;
+                                outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SourceChanged {
+                                    session_key: session_key.clone(),
+                                    old: bound,
+                                    new: src,
+                                }));
+                                session.source_addr = Some(src);
+                                // For SendRecv/SendOnly sessions the inbound source address is
+                                // also the outbound destination (symmetric UDP). Keep it current.
+                                if matches!(
+                                    session.transport_mode,
+                                    RtpTransportMode::SendOnly | RtpTransportMode::SendRecv
+                                ) {
+                                    session.destination = Some(src);
+                                }
+                                // A source rebind often means a camera restart/NAT rebinding
+                                // with a new 16-bit sequence base. Reset the reorder context so
+                                // the new source is not treated as late/duplicate.
+                                session.reorder.reset();
+                                session.last_seq = None;
+                            } else {
+                                session.source_spoof_count += 1;
+                                outputs.push(RtpCoreOutput::Diagnostic(
+                                    RtpCoreDiagnostic::SourceSpoofed {
+                                        ssrc,
+                                        expected: bound,
+                                        got: src,
+                                    },
+                                ));
+                                return;
+                            }
+                        }
+                    }
+                }
+            } else {
+                session.source_addr = Some(src);
+            }
+            // Accepted packet counts as activity and updates the sequence context;
+            // the rebind idle/continuity checks operate on arrival order, not release order.
+            session.last_activity_ms = received_at_ms;
+            session.last_received_seq = Some(seq);
+        }
+
         // Push the packet into the per-session reorder buffer. The buffer releases one
         // or more contiguous packets once their predecessors have arrived, or when a
         // bounded latency/packet budget forces release.
-        let seq = rtp.header.sequence_number;
-        let released = {
-            let Some(session) = self.sessions.get_mut(&session_key) else {
-                return;
-            };
+        let released =
             session
                 .reorder
-                .push(seq, received_at_ms, (rtp, received_at_ms))
-        };
+                .push(seq, received_at_ms, (rtp, received_at_ms, source_addr));
 
-        for (i, (rtp, pkt_received_at_ms)) in released.into_iter().enumerate() {
+        for (i, (rtp, pkt_received_at_ms, source_addr)) in released.into_iter().enumerate() {
             if let Err(reason) = self.process_single_rtp_packet(
                 &session_key,
                 rtp,
-                source_addr,
                 tcp_conn_id,
+                source_addr,
                 pkt_received_at_ms,
                 created && i == 0,
                 outputs,
@@ -142,8 +216,8 @@ impl RtpCore {
         &mut self,
         session_key: &str,
         rtp: RtpPacket,
-        source_addr: Option<SocketAddr>,
         tcp_conn_id: Option<u64>,
+        source_addr: Option<SocketAddr>,
         received_at_ms: u64,
         created: bool,
         outputs: &mut Vec<RtpCoreOutput>,
@@ -153,6 +227,10 @@ impl RtpCore {
         let Some(session) = self.sessions.get_mut(session_key) else {
             return Ok(());
         };
+
+        // Source-address binding / rebind policy has already been applied in
+        // `feed_rtp_packet` before the packet entered the reorder buffer. Rejected
+        // packets therefore cannot advance `expected_seq` or reach the demuxers.
 
         // Resolve the payload mode for sessions created without an explicit mode.
         // Order: external binding (set via spec/UpdateSession), static PT table,
@@ -283,10 +361,12 @@ impl RtpCore {
             return Err(reason);
         }
 
-        // Update stats and activity
+        // Update stats and activity. `last_activity_ms` must never move backward because
+        // packets can be released from the reorder buffer after newer packets have already
+        // refreshed the timestamp on arrival.
         session.packets_received += 1;
         session.bytes_received += rtp.payload.len() as u32;
-        session.last_activity_ms = received_at_ms;
+        session.last_activity_ms = session.last_activity_ms.max(received_at_ms);
         session.rtcp.on_packet(
             rtp.header.sequence_number,
             rtp.header.timestamp,
@@ -317,24 +397,6 @@ impl RtpCore {
                 payload_mode: session.payload_mode,
                 transport_mode: session.transport_mode,
             }));
-        }
-
-        // Check address change
-        if let Some(src) = source_addr {
-            if let Some(old) = session.source_addr {
-                if old != src {
-                    outputs.push(RtpCoreOutput::Diagnostic(
-                        RtpCoreDiagnostic::SourceAddressChanged {
-                            ssrc,
-                            old,
-                            new: src,
-                        },
-                    ));
-                    session.source_addr = Some(src);
-                }
-            } else {
-                session.source_addr = Some(src);
-            }
         }
 
         // Reflect the runtime state transition caused by ingress. For a session just
@@ -395,7 +457,6 @@ impl RtpCore {
 
         // Feed to demuxers
         let track_filter = session.track_filter;
-        let source_addr = session.source_addr;
         match &mut session.demuxer {
             SessionDemuxer::Ts(demuxer) => {
                 let demux_events = demuxer.push(&rtp.payload);
@@ -467,5 +528,24 @@ impl RtpCore {
         }
 
         Ok(())
+    }
+}
+
+/// Check whether `seq` is a plausible continuation of `last_seq` for a source rebind.
+///
+/// Accepts the next expected sequence number, a small forward jump (allowing for a
+/// few dropped packets or reorder), or a large backward jump/wrap that is consistent
+/// with a camera restart. Rejects exact duplicates and packets that land just behind
+/// the last observed sequence, which are more likely to be late/duplicate traffic.
+fn plausible_seq_continuation(last_seq: Option<u16>, seq: u16) -> bool {
+    const WINDOW: u16 = 64;
+    match last_seq {
+        None => true,
+        Some(last) if seq == last => false,
+        Some(last) => {
+            let forward = seq.wrapping_sub(last);
+            let backward = last.wrapping_sub(seq);
+            forward <= WINDOW || backward > WINDOW
+        }
     }
 }
