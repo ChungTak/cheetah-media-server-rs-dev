@@ -32,6 +32,7 @@ use cheetah_sdk::media_api::rtp_session::{
 use cheetah_sdk::{CancellationToken, Deadline, EngineContext, StreamKey};
 use parking_lot::Mutex;
 
+use crate::config::RtpModuleConfig;
 use crate::egress::{run_egress_session, ActiveEgressMap, EgressCleanup};
 use crate::orchestrator::RtpSessionOrchestrator;
 
@@ -42,6 +43,7 @@ pub struct RtpMediaProvider {
     orchestrator: Arc<RtpSessionOrchestrator>,
     engine: EngineContext,
     module_cancel: CancellationToken,
+    config: RtpModuleConfig,
     /// Active sender egress tasks keyed by session key so `stop_rtp_session` can cancel them.
     active_senders: ActiveEgressMap,
     /// Per-session typed descriptors carrying parameters not present in the legacy `RtpSession`.
@@ -56,11 +58,13 @@ impl RtpMediaProvider {
         orchestrator: Arc<RtpSessionOrchestrator>,
         engine: EngineContext,
         module_cancel: CancellationToken,
+        config: RtpModuleConfig,
     ) -> Self {
         Self {
             orchestrator,
             engine,
             module_cancel,
+            config,
             active_senders: ActiveEgressMap::default(),
             rtp_descriptors: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -76,6 +80,22 @@ impl RtpMediaProvider {
 
     fn driver(&self) -> Result<Arc<RtpDriverHandle>> {
         self.orchestrator.driver()
+    }
+
+    /// Enforce per-module capability/profile and session limits before allocating a session.
+    fn check_profile_and_limits(&self, params: &RtpSessionParams) -> Result<()> {
+        if !self.config.enabled_profiles.is_empty()
+            && !self.config.enabled_profiles.contains(&params.profile)
+        {
+            return Err(MediaError::unsupported(format!(
+                "profile {:?} is not enabled",
+                params.profile
+            )));
+        }
+        if self.orchestrator.session_count() >= self.config.max_sessions {
+            return Err(MediaError::unavailable("rtp session limit reached"));
+        }
+        Ok(())
     }
 
     /// Build the `StreamKey` that the engine uses for a given `MediaKey`.
@@ -453,6 +473,7 @@ impl RtpSessionApi for RtpMediaProvider {
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.check_profile_and_limits(&request.params)?;
         let old_req = self.build_old_receiver_request(request.clone())?;
         let session = self.open_rtp_receiver(ctx, old_req).await?;
         let mut descriptor = self.build_descriptor(ctx, &session, None)?;
@@ -471,6 +492,7 @@ impl RtpSessionApi for RtpMediaProvider {
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.check_profile_and_limits(&request.params)?;
         let mode = match request.params.tcp_role {
             Some(TcpRole::Passive) => RtpSenderMode::Passive,
             _ => RtpSenderMode::Active,
@@ -493,6 +515,7 @@ impl RtpSessionApi for RtpMediaProvider {
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.check_profile_and_limits(&request.params)?;
         let sender_req = self.build_old_sender_request(
             OpenRtpSender {
                 params: request.params.clone(),

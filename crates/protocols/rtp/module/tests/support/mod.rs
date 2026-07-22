@@ -30,6 +30,10 @@ pub struct Gb28181TestHarness {
 
 impl Gb28181TestHarness {
     pub async fn start() -> Self {
+        Self::start_with_rtp_config("").await
+    }
+
+    pub async fn start_with_rtp_config(extra_rtp_config: &str) -> Self {
         let runtime = Arc::new(TokioRuntime::new());
         let temp_dir =
             std::env::temp_dir().join(format!("cheetah-gb28181-test-{}", std::process::id()));
@@ -37,7 +41,7 @@ impl Gb28181TestHarness {
 
         let config = Arc::new(ConfigStore::new());
         let yaml = format!(
-            "modules:\n  rtp:\n    enabled: true\n    listen_udp: \"0.0.0.0:0\"\n    listen_tcp: \"0.0.0.0:0\"\n  record:\n    enabled: true\n    root_path: \"{}\"\n",
+            "modules:\n  rtp:\n    enabled: true\n    listen_udp: \"0.0.0.0:0\"\n    listen_tcp: \"0.0.0.0:0\"\n{extra_rtp_config}  record:\n    enabled: true\n    root_path: \"{}\"\n",
             temp_dir.display()
         );
         config.load_yaml_str(&yaml).expect("load config");

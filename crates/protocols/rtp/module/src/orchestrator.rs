@@ -36,11 +36,13 @@ pub struct RtpSessionOrchestrator {
     pub(crate) sessions: Arc<Mutex<HashMap<RtpSessionId, RtpSession>>>,
     /// Default address used when a caller does not supply an explicit IP/port.
     default_bind_addr: SocketAddr,
+    /// Maximum number of tracked RTP sessions before rejecting new ones.
+    max_sessions: usize,
 }
 
 impl RtpSessionOrchestrator {
-    /// Maximum number of tracked RTP sessions before rejecting new ones.
-    const MAX_SESSIONS: usize = 10_000;
+    /// Default maximum number of tracked RTP sessions before rejecting new ones.
+    pub const DEFAULT_MAX_SESSIONS: usize = 10_000;
 
     /// Create an orchestrator bound to the shared driver handle.
     ///
@@ -49,10 +51,20 @@ impl RtpSessionOrchestrator {
         driver_handle: Arc<Mutex<Option<Arc<RtpDriverHandle>>>>,
         default_bind_addr: SocketAddr,
     ) -> Self {
+        Self::with_max_sessions(driver_handle, default_bind_addr, Self::DEFAULT_MAX_SESSIONS)
+    }
+
+    /// Create an orchestrator with a configured session limit.
+    pub fn with_max_sessions(
+        driver_handle: Arc<Mutex<Option<Arc<RtpDriverHandle>>>>,
+        default_bind_addr: SocketAddr,
+        max_sessions: usize,
+    ) -> Self {
         Self {
             driver_handle,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             default_bind_addr,
+            max_sessions,
         }
     }
 
@@ -82,6 +94,11 @@ impl RtpSessionOrchestrator {
     /// 返回调用方未显式请求 IP/port 时使用的默认绑定地址。
     pub fn default_bind_addr(&self) -> SocketAddr {
         self.default_bind_addr
+    }
+
+    /// Return the number of tracked RTP sessions.
+    pub fn session_count(&self) -> usize {
+        self.sessions.lock().len()
     }
 
     fn now_ms(&self) -> i64 {
@@ -170,7 +187,7 @@ impl RtpSessionOrchestrator {
 
     fn insert_session(&self, session: RtpSession) -> Result<()> {
         let mut sessions = self.sessions.lock();
-        if sessions.len() >= Self::MAX_SESSIONS {
+        if sessions.len() >= self.max_sessions {
             return Err(MediaError::unavailable("rtp session limit reached"));
         }
         sessions.insert(session.session_id.clone(), session);
