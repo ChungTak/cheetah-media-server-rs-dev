@@ -892,7 +892,8 @@ impl RtpCore {
     ///
     /// Housekeeping includes idle-timeout for receivers, RR-timeout for senders, and periodic
     /// RTCP report generation. Receivers emit a Receiver Report (PT=201) while senders emit a
-    /// Sender Report (PT=200). Jitter is not computed in this core phase and is reported as 0.
+    /// Sender Report (PT=200). Report blocks carry fraction lost, cumulative loss, highest
+    /// sequence number (with cycle count), interarrival jitter, LSR and DLSR.
     ///
     /// 推进时间并运行每会话的清理工作。
     ///

@@ -17,7 +17,16 @@ const SEQUENCE_PERIOD: u64 = 1_u64 << 16;
 pub fn default_clock_rate_hz(payload_mode: RtpPayloadMode) -> u64 {
     match payload_mode {
         RtpPayloadMode::RawAudio => 8_000,
-        _ => 90_000,
+        // PS/TS/ES/Ehome/XHB/JTT1078 and raw video all use the 90 kHz RTP clock
+        // for timestamping; audio sample rate is configured separately when known.
+        RtpPayloadMode::Ps
+        | RtpPayloadMode::Ts
+        | RtpPayloadMode::Es
+        | RtpPayloadMode::Ehome
+        | RtpPayloadMode::Xhb
+        | RtpPayloadMode::Jtt1078
+        | RtpPayloadMode::RawVideo
+        | RtpPayloadMode::Unknown => 90_000,
     }
 }
 
