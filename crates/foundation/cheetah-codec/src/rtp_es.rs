@@ -165,12 +165,7 @@ impl EsDemuxer {
         }
     }
 
-    fn process_h264_rtp(
-        &mut self,
-        payload: &[u8],
-        timestamp: u32,
-        events: &mut Vec<EsDemuxEvent>,
-    ) {
+    fn process_h264_rtp(&mut self, payload: &[u8], timestamp: u32, events: &mut Vec<EsDemuxEvent>) {
         let nal_type = payload[0] & 0x1f;
         match nal_type {
             1..=23 => self.process_nal(CodecId::H264, payload, timestamp, events),
@@ -235,12 +230,7 @@ impl EsDemuxer {
         }
     }
 
-    fn process_h265_rtp(
-        &mut self,
-        payload: &[u8],
-        timestamp: u32,
-        events: &mut Vec<EsDemuxEvent>,
-    ) {
+    fn process_h265_rtp(&mut self, payload: &[u8], timestamp: u32, events: &mut Vec<EsDemuxEvent>) {
         if payload.len() < 2 {
             return;
         }
@@ -253,12 +243,7 @@ impl EsDemuxer {
         }
     }
 
-    fn process_h265_ap(
-        &mut self,
-        payload: &[u8],
-        timestamp: u32,
-        events: &mut Vec<EsDemuxEvent>,
-    ) {
+    fn process_h265_ap(&mut self, payload: &[u8], timestamp: u32, events: &mut Vec<EsDemuxEvent>) {
         let mut offset = 2;
         while offset + 2 <= payload.len() {
             let size = u16::from_be_bytes([payload[offset], payload[offset + 1]]) as usize;
@@ -272,12 +257,7 @@ impl EsDemuxer {
         }
     }
 
-    fn process_h265_fu(
-        &mut self,
-        payload: &[u8],
-        timestamp: u32,
-        events: &mut Vec<EsDemuxEvent>,
-    ) {
+    fn process_h265_fu(&mut self, payload: &[u8], timestamp: u32, events: &mut Vec<EsDemuxEvent>) {
         if payload.len() < 3 {
             return;
         }
@@ -402,9 +382,7 @@ fn is_h265_packet_type(nal_type: u8) -> bool {
 
 /// H.265 NAL unit types encountered inside an Annex-B stream or aggregated packet.
 fn is_h265_nal_type(nal_type: u8) -> bool {
-    (0..=9).contains(&nal_type)
-        || (16..=21).contains(&nal_type)
-        || (32..=40).contains(&nal_type)
+    (0..=9).contains(&nal_type) || (16..=21).contains(&nal_type) || (32..=40).contains(&nal_type)
 }
 
 /// Split an Annex-B payload into NAL units without the start code.
