@@ -229,7 +229,10 @@ impl RtpCore {
                         }
                     }
                 }
-                _ => {}
+                RtcpPacket::SourceDescription(_)
+                | RtcpPacket::Bye(_)
+                | RtcpPacket::App(_)
+                | RtcpPacket::Unknown { .. } => {}
             }
         }
     }
