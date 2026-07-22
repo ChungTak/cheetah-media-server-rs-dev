@@ -375,4 +375,30 @@ impl RtpCore {
             }
         }
     }
+
+    pub(super) fn process_tcp_connection_closed(
+        &mut self,
+        conn_id: u64,
+        outputs: &mut Vec<RtpCoreOutput>,
+    ) {
+        // Close every session bound to this TCP connection. Collect keys first to avoid
+        // borrow conflicts while close_session mutates the session map.
+        let keys: Vec<_> = self
+            .sessions
+            .iter()
+            .filter_map(|(k, s)| {
+                if s.tcp_conn_id == Some(conn_id) {
+                    Some(k.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for key in keys {
+            self.close_session(key, RtpSessionCloseReason::ConnectionClosed, outputs);
+        }
+        // Clean up any dangling ehome decoder even if no session was ever created.
+        self.ehome_decoders.remove(&conn_id);
+        self.tcp_conn_to_session.remove(&conn_id);
+    }
 }
