@@ -1115,12 +1115,12 @@ impl RtpTimestampNormalizer {
 
     /// Normalize a 32-bit RTP timestamp to microseconds and generate a monotonic DTS.
     ///
-    /// `is_video` controls composition-time clamping. `frame_duration_ticks` is optional
-    /// and, when provided, is expressed in RTP clock ticks.
+    /// `is_video` controls composition-time clamping. For an explicit frame-duration hint,
+    /// use `normalize_with_duration`.
     ///
     /// 将 32 位 RTP 时间戳归一化为微秒并生成单调 DTS。
     ///
-    /// `is_video` 控制合成时间裁剪。`frame_duration_ticks` 可选，以 RTP clock tick 为单位。
+    /// `is_video` 控制合成时间裁剪。如需显式帧时长提示，请使用 `normalize_with_duration`。
     pub fn normalize(
         &mut self,
         rtp_timestamp: u32,
