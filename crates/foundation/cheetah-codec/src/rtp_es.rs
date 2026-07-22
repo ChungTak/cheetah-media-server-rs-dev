@@ -376,7 +376,7 @@ impl EsDemuxer {
         annexb.extend_from_slice(nal_unit);
         let cache_changed = self.parameter_sets.update_from_annexb(codec, &annexb);
 
-        if cache_changed && !self.track_emitted {
+        if cache_changed {
             if let Some(extradata) = self.parameter_sets.extradata_for_codec(codec) {
                 self.emit_track(codec, extradata, events);
             }
