@@ -287,7 +287,7 @@ impl Module for RtpModule {
             write_queue_capacity: config.write_queue_capacity,
             read_buffer_size: config.read_buffer_size,
             session_idle_timeout_ms: config.idle_timeout_ms,
-            max_sessions: 1024,
+            max_sessions: config.max_sessions,
             tcp_framing,
             max_rtp_len_cap: config.max_rtp_len_cap,
         };
