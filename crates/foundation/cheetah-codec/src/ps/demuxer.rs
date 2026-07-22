@@ -29,6 +29,8 @@ pub struct PsDemuxer {
     last_audio_pts: Option<i64>,
     audio_es_id: u8,
     new_ps: bool,
+    probe_pack_count: u32,
+    probe_exceeded: bool,
 }
 
 impl PsDemuxer {
@@ -46,6 +48,8 @@ impl PsDemuxer {
             last_audio_pts: None,
             audio_es_id: 0,
             new_ps: false,
+            probe_pack_count: 0,
+            probe_exceeded: false,
         }
     }
 
@@ -54,6 +58,9 @@ impl PsDemuxer {
     /// 压入原始 PS 字节，返回解析出的事件。
     pub fn push(&mut self, data: &[u8]) -> Vec<PsDemuxEvent> {
         let mut events = Vec::new();
+        if self.probe_exceeded && self.tracks.is_empty() {
+            return events;
+        }
         if self.remain_buffer.len() + data.len() > self.config.max_reassembly_bytes {
             self.remain_buffer.clear();
             events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::BufferOverflow));
@@ -92,6 +99,18 @@ impl PsDemuxer {
                         break;
                     }
                     self.new_ps = true;
+                    self.probe_pack_count = self.probe_pack_count.saturating_add(1);
+                    if self.tracks.is_empty()
+                        && self.probe_pack_count > self.config.max_probe_packets
+                    {
+                        self.probe_exceeded = true;
+                        events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                            resource: "probe_packets".to_string(),
+                        }));
+                        self.remain_buffer.clear();
+                        self.video_buffer.clear();
+                        return events;
+                    }
                     cursor += total_len;
                 }
                 0xBB => {
@@ -140,7 +159,9 @@ impl PsDemuxer {
                         // also match the 3-byte triplet, so we additionally require that the
                         // byte after the prefix is a valid PS-layer stream id; otherwise we
                         // would truncate a video frame mid-NALU.
-                        let scan = &self.remain_buffer[cursor + 6..];
+                        let max_payload = self.config.max_pes_packet_size.saturating_sub(6);
+                        let search_end = (cursor + 6 + max_payload).min(self.remain_buffer.len());
+                        let scan = &self.remain_buffer[cursor + 6..search_end];
                         let mut found: Option<usize> = None;
                         let mut probe = 0usize;
                         while probe + 4 <= scan.len() {
@@ -156,6 +177,15 @@ impl PsDemuxer {
                         }
                         if let Some(pos) = found {
                             6 + pos
+                        } else if self.remain_buffer.len() - (cursor + 6) > max_payload {
+                            // No valid start code within the configured PES size limit.
+                            self.remain_buffer.clear();
+                            events.push(PsDemuxEvent::Diagnostic(
+                                PsDemuxDiagnostic::LimitExceeded {
+                                    resource: "pes_packet_size".to_string(),
+                                },
+                            ));
+                            return events;
                         } else {
                             // Wait for more bytes to disambiguate.
                             break;
@@ -163,6 +193,14 @@ impl PsDemuxer {
                     } else {
                         6 + pes_len
                     };
+
+                    if total_len > self.config.max_pes_packet_size {
+                        self.remain_buffer.clear();
+                        events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                            resource: "pes_packet_size".to_string(),
+                        }));
+                        return events;
+                    }
 
                     if cursor + total_len > self.remain_buffer.len() {
                         break;
@@ -255,9 +293,14 @@ impl PsDemuxer {
 
         if !new_tracks.is_empty() {
             for track in &new_tracks {
-                if self.tracks.len() < self.config.max_tracks {
-                    self.tracks.insert(track.track_id.0 as u8, track.clone());
+                if self.tracks.len() >= self.config.max_tracks {
+                    events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                        resource: "tracks".to_string(),
+                    }));
+                    self.tracks.clear();
+                    return;
                 }
+                self.tracks.insert(track.track_id.0 as u8, track.clone());
             }
             events.push(PsDemuxEvent::TrackInfo(new_tracks));
         }
@@ -318,6 +361,16 @@ impl PsDemuxer {
                     self.emit_video_frame(events);
                 }
 
+                if self.video_buffer.len() + payload.len() > self.config.max_access_unit_size {
+                    self.video_buffer.clear();
+                    self.last_video_pts = None;
+                    self.video_dts = None;
+                    events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                        resource: "access_unit".to_string(),
+                    }));
+                    return;
+                }
+
                 self.video_buffer.extend_from_slice(payload);
                 if pts.is_some() {
                     self.last_video_pts = pts;
@@ -326,6 +379,21 @@ impl PsDemuxer {
                     }
                 }
             } else {
+                if self.tracks.len() >= self.config.max_tracks {
+                    events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                        resource: "tracks".to_string(),
+                    }));
+                    return;
+                }
+                if self.video_buffer.len() + payload.len() > self.config.max_access_unit_size {
+                    self.video_buffer.clear();
+                    self.last_video_pts = None;
+                    self.video_dts = None;
+                    events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                        resource: "access_unit".to_string(),
+                    }));
+                    return;
+                }
                 let track_id = TrackId(stream_id as u32);
                 let track_info = TrackInfo::new(track_id, MediaKind::Video, CodecId::H264, 90_000);
                 self.tracks.insert(stream_id, track_info.clone());
@@ -361,6 +429,12 @@ impl PsDemuxer {
                 events.push(PsDemuxEvent::Frame(Box::new(frame)));
                 self.last_audio_pts = pts;
             } else {
+                if self.tracks.len() >= self.config.max_tracks {
+                    events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
+                        resource: "tracks".to_string(),
+                    }));
+                    return;
+                }
                 let track_id = TrackId(stream_id as u32);
                 let track_info = TrackInfo::new(track_id, MediaKind::Audio, CodecId::G711A, 8_000);
                 self.tracks.insert(stream_id, track_info.clone());

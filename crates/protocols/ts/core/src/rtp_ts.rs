@@ -356,10 +356,10 @@ impl RtpTsIngest {
                         SessionDemuxer::Ts(MpegTsDemuxer::new(self.config.demux_config.clone()));
                 }
                 Some(PayloadProbe::Ps) => {
-                    let ps_config = cheetah_codec::PsDemuxerConfig {
-                        max_reassembly_bytes: self.config.demux_config.max_reassembly_bytes,
-                        max_tracks: 32,
-                    };
+                    let ps_config = cheetah_codec::PsDemuxerConfig::new(
+                        self.config.demux_config.max_reassembly_bytes,
+                        32,
+                    );
                     session.demuxer = SessionDemuxer::Ps(cheetah_codec::PsDemuxer::new(ps_config));
                 }
                 _ => {}

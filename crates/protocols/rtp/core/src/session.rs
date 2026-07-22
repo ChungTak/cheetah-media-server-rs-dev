@@ -344,10 +344,7 @@ impl RtpCore {
                                 // Configure PS Demuxer if the payload mode is ps
                                 if codec.payload_type == "ps" {
                                     session.demuxer = SessionDemuxer::Ps(PsDemuxer::new(
-                                        cheetah_codec::PsDemuxerConfig {
-                                            max_reassembly_bytes: 4 * 1024 * 1024,
-                                            max_tracks: 8,
-                                        },
+                                        cheetah_codec::PsDemuxerConfig::new(4 * 1024 * 1024, 8),
                                     ));
                                 } else {
                                     session.demuxer = SessionDemuxer::Es;
@@ -780,10 +777,10 @@ impl RtpCore {
                     }));
                 }
                 RtpPayloadMode::Ps => {
-                    session.demuxer = SessionDemuxer::Ps(PsDemuxer::new(PsDemuxerConfig {
-                        max_reassembly_bytes: 4 * 1024 * 1024,
-                        max_tracks: 8,
-                    }));
+                    session.demuxer = SessionDemuxer::Ps(PsDemuxer::new(PsDemuxerConfig::new(
+                        4 * 1024 * 1024,
+                        8,
+                    )));
                 }
                 _ => {
                     session.demuxer = SessionDemuxer::Es;
