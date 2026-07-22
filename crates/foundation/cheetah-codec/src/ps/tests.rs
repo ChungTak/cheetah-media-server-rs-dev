@@ -496,3 +496,51 @@ fn ps_demuxer_over_limit_psm_keeps_existing_tracks_and_continues() {
         "video frame after over-limit PSM must still be emitted"
     );
 }
+
+#[test]
+fn ps_demuxer_probe_limit_recovers_when_media_arrives() {
+    let mut config = limit_config();
+    config.max_probe_packets = 0;
+    let mut demuxer = PsDemuxer::new(config);
+
+    let mut buf = Vec::new();
+    // Pack header with zero stuffing.
+    buf.extend_from_slice(&[0x00, 0x00, 0x01, 0xBA]);
+    buf.extend_from_slice(&[0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x88, 0xC3, 0xF8]);
+
+    // Video PES with a payload small enough for the access-unit limit.
+    let payload = Bytes::from(vec![0u8; 8]);
+    let pes = PesPacket {
+        stream_id: 0xE0,
+        kind: PsStreamKind::Video,
+        pts: Some(90_000),
+        dts: None,
+        payload,
+    };
+    buf.extend_from_slice(&pes.encode());
+
+    let events = demuxer.push(&buf);
+    let flushed = demuxer.flush();
+
+    let probe_limit = events.iter().any(|e| {
+        matches!(
+            e,
+            PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded { resource })
+            if resource == "probe_packets"
+        )
+    });
+    assert!(
+        probe_limit,
+        "probe budget exceeded before media should be reported"
+    );
+
+    let found_track = events
+        .iter()
+        .any(|e| matches!(e, PsDemuxEvent::TrackInfo(..)));
+    let found_frame = flushed.iter().any(|e| matches!(e, PsDemuxEvent::Frame(..)));
+    assert!(
+        found_track,
+        "media arriving after probe limit must still be parsed"
+    );
+    assert!(found_frame, "video frame must be emitted after recovery");
+}

@@ -60,9 +60,6 @@ impl PsDemuxer {
     /// 压入原始 PS 字节，返回解析出的事件。
     pub fn push(&mut self, data: &[u8]) -> Vec<PsDemuxEvent> {
         let mut events = Vec::new();
-        if self.probe_exceeded {
-            return events;
-        }
         if self.remain_buffer.len() + data.len() > self.config.max_reassembly_bytes {
             self.remain_buffer.clear();
             events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::BufferOverflow));
@@ -105,13 +102,16 @@ impl PsDemuxer {
                     if !self.tracks_ever_found
                         && self.probe_pack_count > self.config.max_probe_packets
                     {
-                        self.probe_exceeded = true;
-                        events.push(PsDemuxEvent::Diagnostic(PsDemuxDiagnostic::LimitExceeded {
-                            resource: "probe_packets".to_string(),
-                        }));
-                        self.remain_buffer.clear();
-                        self.video_buffer.clear();
-                        return events;
+                        if !self.probe_exceeded {
+                            self.probe_exceeded = true;
+                            events.push(PsDemuxEvent::Diagnostic(
+                                PsDemuxDiagnostic::LimitExceeded {
+                                    resource: "probe_packets".to_string(),
+                                },
+                            ));
+                        }
+                        cursor += total_len;
+                        continue;
                     }
                     cursor += total_len;
                 }
@@ -128,6 +128,8 @@ impl PsDemuxer {
                         break;
                     }
                     cursor += total_len;
+                    self.probe_pack_count = 0;
+                    self.probe_exceeded = false;
                 }
                 0xBC => {
                     if cursor + 6 > self.remain_buffer.len() {
@@ -144,6 +146,8 @@ impl PsDemuxer {
                     let psm_payload = self.remain_buffer[cursor + 6..cursor + total_len].to_vec();
                     self.parse_psm(&psm_payload, &mut events);
                     cursor += total_len;
+                    self.probe_pack_count = 0;
+                    self.probe_exceeded = false;
                 }
                 0xBD | 0xC0..=0xDF | 0xE0..=0xEF => {
                     if cursor + 6 > self.remain_buffer.len() {
@@ -211,6 +215,8 @@ impl PsDemuxer {
                     let pes_payload = self.remain_buffer[cursor..cursor + total_len].to_vec();
                     self.parse_pes(stream_id, &pes_payload, &mut events);
                     cursor += total_len;
+                    self.probe_pack_count = 0;
+                    self.probe_exceeded = false;
                 }
                 _ => {
                     cursor += 4;
