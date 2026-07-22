@@ -573,6 +573,10 @@ async fn run_driver_loop(
     // session's outbound tasks without tearing down the whole driver.
     let session_cancels: Arc<Mutex<HashMap<String, CancellationToken>>> =
         Arc::new(Mutex::new(HashMap::new()));
+    // Fallback token shared by any egress spawn whose session token is missing. It is a
+    // child of the driver-wide cancel so it only fires during driver shutdown, preserving
+    // the previous fail-open behavior for untracked keys.
+    let fallback = cancel.child_token();
 
     // Spawn default UDP recv task.
     let default_udp_addr = udp_socket.local_addr().unwrap_or(config.listen_udp);
@@ -1158,15 +1162,14 @@ async fn run_driver_loop(
                             .lock()
                             .await
                             .get(&udp_send.session_key)
-                            .cloned();
+                            .cloned()
+                            .unwrap_or_else(|| fallback.clone());
                         tokio::spawn(async move {
-                            if let Some(token) = session_cancel {
-                                tokio::select! {
-                                    _ = token.cancelled() => {}
-                                    result = socket.send_to(&udp_send.data, udp_send.destination) => {
-                                        if let Err(e) = result {
-                                            debug!("UDP send error for {}: {e}", udp_send.session_key);
-                                        }
+                            tokio::select! {
+                                _ = session_cancel.cancelled() => {}
+                                result = socket.send_to(&udp_send.data, udp_send.destination) => {
+                                    if let Err(e) = result {
+                                        debug!("UDP send error for {}: {e}", udp_send.session_key);
                                     }
                                 }
                             }
@@ -1178,17 +1181,16 @@ async fn run_driver_loop(
                             .lock()
                             .await
                             .get(&tcp_send.session_key)
-                            .cloned();
+                            .cloned()
+                            .unwrap_or_else(|| fallback.clone());
                         tokio::spawn(async move {
-                            if let Some(token) = session_cancel {
-                                let map = writers.lock().await;
-                                if let Some(tx) = map.get(&tcp_send.conn_id) {
-                                    tokio::select! {
-                                        _ = token.cancelled() => {}
-                                        result = tx.send(tcp_send.data) => {
-                                            if result.is_err() {
-                                                debug!("TCP writer {} closed", tcp_send.conn_id);
-                                            }
+                            let map = writers.lock().await;
+                            if let Some(tx) = map.get(&tcp_send.conn_id) {
+                                tokio::select! {
+                                    _ = session_cancel.cancelled() => {}
+                                    result = tx.send(tcp_send.data) => {
+                                        if result.is_err() {
+                                            debug!("TCP writer {} closed", tcp_send.conn_id);
                                         }
                                     }
                                 }
@@ -1201,19 +1203,21 @@ async fn run_driver_loop(
                             // peer can delimit the compound packet on the byte stream.
                             let writers = tcp_writers.clone();
                             let session_key = rtcp_send.session_key.clone();
-                            let session_cancel =
-                                session_cancels.lock().await.get(&session_key).cloned();
+                            let session_cancel = session_cancels
+                                .lock()
+                                .await
+                                .get(&session_key)
+                                .cloned()
+                                .unwrap_or_else(|| fallback.clone());
                             let data = cheetah_codec::encode_tcp_rtcp_frame(&rtcp_send.data);
                             tokio::spawn(async move {
-                                if let Some(token) = session_cancel {
-                                    let map = writers.lock().await;
-                                    if let Some(tx) = map.get(&conn_id) {
-                                        tokio::select! {
-                                            _ = token.cancelled() => {}
-                                            result = tx.send(data) => {
-                                                if result.is_err() {
-                                                    debug!("TCP RTCP writer {conn_id} closed");
-                                                }
+                                let map = writers.lock().await;
+                                if let Some(tx) = map.get(&conn_id) {
+                                    tokio::select! {
+                                        _ = session_cancel.cancelled() => {}
+                                        result = tx.send(data) => {
+                                            if result.is_err() {
+                                                debug!("TCP RTCP writer {conn_id} closed");
                                             }
                                         }
                                     }
@@ -1230,15 +1234,14 @@ async fn run_driver_loop(
                                 .lock()
                                 .await
                                 .get(&rtcp_send.session_key)
-                                .cloned();
+                                .cloned()
+                                .unwrap_or_else(|| fallback.clone());
                             tokio::spawn(async move {
-                                if let Some(token) = session_cancel {
-                                    tokio::select! {
-                                        _ = token.cancelled() => {}
-                                        result = rtcp_socket.send_to(&rtcp_send.data, dest) => {
-                                            if let Err(e) = result {
-                                                debug!("RTCP send error: {e}");
-                                            }
+                                tokio::select! {
+                                    _ = session_cancel.cancelled() => {}
+                                    result = rtcp_socket.send_to(&rtcp_send.data, dest) => {
+                                        if let Err(e) = result {
+                                            debug!("RTCP send error: {e}");
                                         }
                                     }
                                 }
@@ -1257,15 +1260,14 @@ async fn run_driver_loop(
                                 .lock()
                                 .await
                                 .get(&rtcp_send.session_key)
-                                .cloned();
+                                .cloned()
+                                .unwrap_or_else(|| fallback.clone());
                             tokio::spawn(async move {
-                                if let Some(token) = session_cancel {
-                                    tokio::select! {
-                                        _ = token.cancelled() => {}
-                                        result = socket.send_to(&rtcp_send.data, dest) => {
-                                            if let Err(e) = result {
-                                                debug!("RTCP mux send error: {e}");
-                                            }
+                                tokio::select! {
+                                    _ = session_cancel.cancelled() => {}
+                                    result = socket.send_to(&rtcp_send.data, dest) => {
+                                        if let Err(e) = result {
+                                            debug!("RTCP mux send error: {e}");
                                         }
                                     }
                                 }
