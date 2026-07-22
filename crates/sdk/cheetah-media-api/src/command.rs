@@ -8,6 +8,7 @@ use crate::ids::*;
 use crate::image::ImageFormat;
 use crate::model::*;
 use crate::outbound_policy::OutboundUrlPolicy;
+use crate::rtp_session::SourceBindingPolicy;
 
 /// Query for media list.
 ///
@@ -747,6 +748,8 @@ pub struct UpdateRtpRequest {
     pub payload_type: Option<u8>,
     #[serde(default)]
     pub pause_check: Option<bool>,
+    #[serde(default)]
+    pub source_policy: Option<SourceBindingPolicy>,
 }
 
 #[cfg(test)]

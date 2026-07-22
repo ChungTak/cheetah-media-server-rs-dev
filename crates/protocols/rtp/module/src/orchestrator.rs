@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cheetah_rtp_core::{
-    RtpClientSpec, RtpConnectionType, RtpPayloadMode, RtpServerSpec, RtpTrackFilter,
+    RtpClientSpec, RtpConnectionType, RtpPayloadMode, RtpServerSpec, RtpSourcePolicy, RtpTrackFilter,
     RtpTransportMode,
 };
 use cheetah_rtp_driver_tokio::{RtpDriverCommand, RtpDriverHandle};
@@ -21,6 +21,7 @@ use cheetah_sdk::media_api::command::{
     RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest,
     UpdateRtpRequest,
 };
+use cheetah_sdk::media_api::rtp_session::SourceBindingPolicy;
 use cheetah_sdk::media_api::error::{MediaError, Result};
 use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId, StreamKeyBridge};
 use cheetah_sdk::media_api::model::{
@@ -647,7 +648,10 @@ impl RtpSessionOrchestrator {
     ///
     /// 更新 RTP 会话。
     pub async fn update_rtp_session(&self, request: UpdateRtpRequest) -> Result<RtpSession> {
-        if request.ssrc.is_none() && request.payload_type.is_none() && request.pause_check.is_none()
+        if request.ssrc.is_none()
+            && request.payload_type.is_none()
+            && request.pause_check.is_none()
+            && request.source_policy.is_none()
         {
             return Err(MediaError::invalid_argument("empty patch"));
         }
@@ -665,13 +669,20 @@ impl RtpSessionOrchestrator {
             return Err(MediaError::conflict("generation mismatch"));
         }
 
+        let source_policy = request.source_policy.map(|p| match p {
+            SourceBindingPolicy::Strict => RtpSourcePolicy::Strict,
+            SourceBindingPolicy::AllowValidatedRebind => RtpSourcePolicy::AllowValidatedRebind,
+            _ => RtpSourcePolicy::Strict,
+        });
+
         let ack = driver
-            .update_session(
+            .update_session_with_source_policy(
                 session_key,
                 request.expected_generation,
                 request.ssrc,
                 request.payload_type,
                 request.pause_check,
+                source_policy,
             )
             .await
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
@@ -891,6 +902,7 @@ mod tests {
                 ssrc: Some(3000),
                 payload_type: Some(97),
                 pause_check: None,
+                source_policy: None,
             })
             .await
             .expect("update session");
@@ -920,6 +932,7 @@ mod tests {
                 ssrc: Some(4000),
                 payload_type: None,
                 pause_check: None,
+                source_policy: None,
             })
             .await
             .expect_err("stale generation should fail");

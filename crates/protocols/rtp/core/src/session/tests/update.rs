@@ -21,6 +21,7 @@ fn test_update_session_advances_generation_and_ssrc_index() {
         ssrc: Some(2000),
         payload_type: Some(96),
         pause_check: Some(true),
+        source_policy: None,
     }));
 
     let mut updated = false;
@@ -31,6 +32,7 @@ fn test_update_session_advances_generation_and_ssrc_index() {
             ssrc,
             payload_type,
             pause_check,
+            ..
         }) = output
         {
             assert_eq!(session_key, key);
@@ -95,6 +97,7 @@ fn test_update_session_rejects_wrong_generation_and_conflict() {
         ssrc: Some(3000),
         payload_type: None,
         pause_check: None,
+        source_policy: None,
     }));
     assert!(outputs.iter().any(|o| matches!(
         o,
@@ -111,6 +114,7 @@ fn test_update_session_rejects_wrong_generation_and_conflict() {
         ssrc: Some(2000),
         payload_type: None,
         pause_check: None,
+        source_policy: None,
     }));
     assert!(outputs.iter().any(|o| matches!(
         o,
@@ -163,6 +167,7 @@ fn test_update_session_payload_type_changes_mode_and_generation() {
         ssrc: None,
         payload_type: Some(96),
         pause_check: None,
+        source_policy: None,
     }));
 
     let mut updated = false;
@@ -173,6 +178,7 @@ fn test_update_session_payload_type_changes_mode_and_generation() {
             ssrc,
             payload_type,
             pause_check,
+            ..
         }) = output
         {
             assert_eq!(session_key, key);
@@ -228,6 +234,7 @@ fn test_update_session_no_change_keeps_generation() {
         ssrc: Some(1000),
         payload_type: None,
         pause_check: None,
+        source_policy: None,
     }));
     let updated = outputs.iter().find_map(|o| match o {
         RtpCoreOutput::Event(RtpCoreEvent::SessionUpdated { generation, .. }) => Some(*generation),

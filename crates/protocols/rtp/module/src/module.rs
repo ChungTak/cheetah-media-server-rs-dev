@@ -624,6 +624,13 @@ async fn run_ingress_worker(
                     warn!("RTP FormatChanged for unknown session: {session_key}");
                 }
             }
+            RtpCoreEvent::SourceChanged {
+                session_key,
+                old,
+                new,
+            } => {
+                info!("RTP source address rebind: key={session_key}, old={old}, new={new}");
+            }
             RtpCoreEvent::SessionClosed {
                 session_key,
                 reason,

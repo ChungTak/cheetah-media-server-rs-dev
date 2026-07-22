@@ -669,6 +669,7 @@ impl RtpSessionApi for RtpMediaProvider {
             ssrc: None,
             payload_type,
             pause_check: request.pause_check,
+            source_policy: request.source_binding_policy,
         };
         let mut updated = self.update_rtp_session(ctx, old_req).await?;
         if let Some(remote) = request.remote_endpoint {

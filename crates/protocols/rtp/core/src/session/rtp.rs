@@ -69,6 +69,9 @@ impl RtpCore {
                 last_seq: None,
                 reorder: RtpReorderBuffer::new(RtpReorderSettings::default()),
                 source_addr,
+                source_policy: RtpSourcePolicy::default(),
+                source_spoof_count: 0,
+                source_rebind_count: 0,
                 rtcp_source_addr: None,
                 last_activity_ms: 0, // Will be updated
                 destination: None,
@@ -113,10 +116,10 @@ impl RtpCore {
             };
             session
                 .reorder
-                .push(seq, received_at_ms, (rtp, received_at_ms))
+                .push(seq, received_at_ms, (rtp, received_at_ms, source_addr))
         };
 
-        for (i, (rtp, pkt_received_at_ms)) in released.into_iter().enumerate() {
+        for (i, (rtp, pkt_received_at_ms, source_addr)) in released.into_iter().enumerate() {
             if let Err(reason) = self.process_single_rtp_packet(
                 &session_key,
                 rtp,
@@ -283,6 +286,57 @@ impl RtpCore {
             return Err(reason);
         }
 
+        // Source-address binding / rebind policy.
+        // This runs before stats, events and the demuxer so that rejected packets do not
+        // advance the session state or reach the media unpackers.
+        if let Some(src) = source_addr {
+            if let Some(bound) = session.source_addr {
+                if bound != src {
+                    match session.source_policy {
+                        RtpSourcePolicy::Strict => {
+                            session.source_spoof_count += 1;
+                            outputs.push(RtpCoreOutput::Diagnostic(
+                                RtpCoreDiagnostic::SourceSpoofed {
+                                    ssrc,
+                                    expected: bound,
+                                    got: src,
+                                },
+                            ));
+                            return Ok(());
+                        }
+                        RtpSourcePolicy::AllowValidatedRebind => {
+                            let idle = received_at_ms.saturating_sub(session.last_activity_ms)
+                                >= self.source_rebind_idle_window_ms;
+                            let expected_seq =
+                                bound_seq(session.last_seq, rtp.header.sequence_number);
+                            let rate_ok = session.source_rebind_count < self.max_source_rebinds;
+                            if idle && expected_seq && rate_ok {
+                                session.source_rebind_count += 1;
+                                outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SourceChanged {
+                                    session_key: session_key.to_string(),
+                                    old: bound,
+                                    new: src,
+                                }));
+                                session.source_addr = Some(src);
+                            } else {
+                                session.source_spoof_count += 1;
+                                outputs.push(RtpCoreOutput::Diagnostic(
+                                    RtpCoreDiagnostic::SourceSpoofed {
+                                        ssrc,
+                                        expected: bound,
+                                        got: src,
+                                    },
+                                ));
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            } else {
+                session.source_addr = Some(src);
+            }
+        }
+
         // Update stats and activity
         session.packets_received += 1;
         session.bytes_received += rtp.payload.len() as u32;
@@ -317,24 +371,6 @@ impl RtpCore {
                 payload_mode: session.payload_mode,
                 transport_mode: session.transport_mode,
             }));
-        }
-
-        // Check address change
-        if let Some(src) = source_addr {
-            if let Some(old) = session.source_addr {
-                if old != src {
-                    outputs.push(RtpCoreOutput::Diagnostic(
-                        RtpCoreDiagnostic::SourceAddressChanged {
-                            ssrc,
-                            old,
-                            new: src,
-                        },
-                    ));
-                    session.source_addr = Some(src);
-                }
-            } else {
-                session.source_addr = Some(src);
-            }
         }
 
         // Reflect the runtime state transition caused by ingress. For a session just
@@ -467,5 +503,14 @@ impl RtpCore {
         }
 
         Ok(())
+    }
+}
+
+/// Check whether `seq` is the next in order after `last_seq`. Used by the validated
+/// source-rebind path to ensure the new peer continues the RTP timeline.
+fn bound_seq(last_seq: Option<u16>, seq: u16) -> bool {
+    match last_seq {
+        None => true,
+        Some(last) => seq == last.wrapping_add(1),
     }
 }

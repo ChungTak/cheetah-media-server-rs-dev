@@ -16,7 +16,7 @@ use tracing::{debug, error, info, warn};
 use cheetah_rtp_core::{
     rtcp::RtcpCompoundPacket, RtpClientSpec, RtpConnectionType, RtpCore, RtpCoreCommand,
     RtpCoreEvent, RtpCoreInput, RtpCoreOutput, RtpDatagram, RtpSendFrame, RtpServerSpec,
-    RtpTcpChunk,
+    RtpSourcePolicy, RtpTcpChunk,
 };
 use cheetah_runtime_api::CancellationToken;
 
@@ -130,6 +130,7 @@ pub enum RtpDriverCommand {
         ssrc: Option<u32>,
         payload_type: Option<u8>,
         pause_check: Option<bool>,
+        source_policy: Option<RtpSourcePolicy>,
         ack: Option<oneshot::Sender<Result<RtpSessionUpdateAck, String>>>,
     },
     PauseCheck {
@@ -161,6 +162,7 @@ impl std::fmt::Debug for RtpDriverCommand {
                 ssrc,
                 payload_type,
                 pause_check,
+                source_policy,
                 ..
             } => f
                 .debug_struct("UpdateSession")
@@ -169,6 +171,7 @@ impl std::fmt::Debug for RtpDriverCommand {
                 .field("ssrc", ssrc)
                 .field("payload_type", payload_type)
                 .field("pause_check", pause_check)
+                .field("source_policy", source_policy)
                 .finish(),
             Self::PauseCheck {
                 session_key,
@@ -246,6 +249,29 @@ impl RtpDriverHandle {
         payload_type: Option<u8>,
         pause_check: Option<bool>,
     ) -> Result<RtpSessionUpdateAck, RtpDriverError> {
+        self.update_session_with_source_policy(
+            session_key,
+            expected_generation,
+            ssrc,
+            payload_type,
+            pause_check,
+            None,
+        )
+        .await
+    }
+
+    /// Update a session, optionally changing the source-address binding policy.
+    ///
+    /// 更新会话，可一并修改源地址绑定策略。
+    pub async fn update_session_with_source_policy(
+        &self,
+        session_key: String,
+        expected_generation: u64,
+        ssrc: Option<u32>,
+        payload_type: Option<u8>,
+        pause_check: Option<bool>,
+        source_policy: Option<RtpSourcePolicy>,
+    ) -> Result<RtpSessionUpdateAck, RtpDriverError> {
         let (tx, rx) = oneshot::channel();
         let cmd = RtpDriverCommand::UpdateSession {
             session_key,
@@ -253,6 +279,7 @@ impl RtpDriverHandle {
             ssrc,
             payload_type,
             pause_check,
+            source_policy,
             ack: Some(tx),
         };
         if self.cmd_tx.send(cmd).await.is_err() {
@@ -1045,6 +1072,7 @@ async fn run_driver_loop(
                         ssrc,
                         payload_type,
                         pause_check,
+                        source_policy,
                         ack,
                     } => {
                         if let Some(ack) = ack {
@@ -1056,6 +1084,7 @@ async fn run_driver_loop(
                             ssrc,
                             payload_type,
                             pause_check,
+                            source_policy,
                         }));
                     }
                     RtpDriverCommand::PauseCheck { session_key, paused } => {
@@ -1148,6 +1177,7 @@ async fn run_driver_loop(
                                     ssrc,
                                     payload_type,
                                     pause_check,
+                                    ..
                                 } if session_key == pending_key => {
                                     let _ = ack.send(Ok(RtpSessionUpdateAck {
                                         generation,

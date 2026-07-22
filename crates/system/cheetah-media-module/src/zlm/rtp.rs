@@ -335,6 +335,7 @@ impl ZlmMediaHttpService {
             ssrc: parse_zlm_u32(&params, "ssrc")?,
             payload_type: parse_zlm_u8(&params, "payload_type")?,
             pause_check: None,
+            source_policy: None,
         };
         let session = rtp_api.update_rtp_session(ctx, request).await?;
         Ok(zlm_response(ZlmResponse::ok(RtpUpdateResult {
@@ -379,6 +380,7 @@ impl ZlmMediaHttpService {
             ssrc: None,
             payload_type: None,
             pause_check: Some(paused),
+            source_policy: None,
         };
         let session = rtp_api.update_rtp_session(ctx, request).await?;
         Ok(zlm_response(ZlmResponse::ok(RtpPauseResult {

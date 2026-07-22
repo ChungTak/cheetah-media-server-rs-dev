@@ -101,6 +101,26 @@ pub enum RtpTrackFilter {
     OnlyVideo,
 }
 
+/// Policy controlling whether an inbound RTP session may rebind to a new source address.
+///
+/// `Strict` locks the source on the first packet and drops traffic from any other endpoint.
+/// `AllowValidatedRebind` permits a rebind when the old source has been idle long enough and
+/// the new packet preserves SSRC / payload / sequence continuity.
+///
+/// 控制入站 RTP 会话是否允许重新绑定到新源地址的策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RtpSourcePolicy {
+    /// Lock the source on the first packet and reject every other source.
+    ///
+    /// 首个包锁定源，之后所有其他源都被拒绝。
+    #[default]
+    Strict,
+    /// Allow a rebind if the change passes the configured idle/continuity/rate checks.
+    ///
+    /// 仅在通过配置的空闲/连续/速率检查时才允许重新绑定。
+    AllowValidatedRebind,
+}
+
 /// Specification for an inbound (server) RTP session.
 ///
 /// The session listens for packets on the local socket and auto-creates internal tracks
@@ -263,6 +283,7 @@ pub enum RtpCoreEvent {
         ssrc: Option<u32>,
         payload_type: Option<u8>,
         pause_check: Option<bool>,
+        source_policy: Option<RtpSourcePolicy>,
     },
     /// The payload format changed mid-stream after it had been locked.
     ///
@@ -272,6 +293,14 @@ pub enum RtpCoreEvent {
         payload_type: u8,
         old_payload_mode: RtpPayloadMode,
         new_payload_mode: RtpPayloadMode,
+    },
+    /// The bound source address was validated and rebinding to a new peer endpoint.
+    ///
+    /// 源地址经过验证后重新绑定到新的对端端点。
+    SourceChanged {
+        session_key: RtpSessionKey,
+        old: SocketAddr,
+        new: SocketAddr,
     },
     /// A session update was rejected; the session retains its previous values.
     ///
@@ -377,6 +406,7 @@ pub enum RtpCoreCommand {
         ssrc: Option<u32>,
         payload_type: Option<u8>,
         pause_check: Option<bool>,
+        source_policy: Option<RtpSourcePolicy>,
     },
     /// Pause or resume timeout health checks for a session.
     ///

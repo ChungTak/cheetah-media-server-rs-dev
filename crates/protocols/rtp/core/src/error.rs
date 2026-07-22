@@ -76,6 +76,16 @@ pub enum RtpCoreDiagnostic {
         new: SocketAddr,
     },
 
+    /// A packet arrived from an unexpected source address and was rejected under the
+    /// current binding policy.
+    ///
+    /// 包来自意外源地址，被当前绑定策略拒绝。
+    SourceSpoofed {
+        ssrc: u32,
+        expected: SocketAddr,
+        got: SocketAddr,
+    },
+
     /// An incoming RTP payload exceeded the configured `max_rtp_len_cap`. The packet is still
     /// routed, but operators are notified via this diagnostic. Mirrors ABL's dynamic
     /// `nMaxRtpLength` learner that grows the maximum frame size for huge keyframes.
