@@ -40,6 +40,8 @@ pub struct PsDemuxer {
     psm_version: Option<u8>,
     /// (media_kind, codec) per stream_id as last declared by a processed PSM.
     psm_signature: HashMap<u8, (MediaKind, CodecId)>,
+    /// stream_ids that were introduced by a PSM (as opposed to PES-probed).
+    psm_declared: HashSet<u8>,
 }
 
 impl PsDemuxer {
@@ -64,6 +66,7 @@ impl PsDemuxer {
             unsupported_payload_reported: HashSet::new(),
             psm_version: None,
             psm_signature: HashMap::new(),
+            psm_declared: HashSet::new(),
         }
     }
 
@@ -355,10 +358,12 @@ impl PsDemuxer {
         }
 
         // Compute removed and changed/added tracks before mutating the table.
-        let existing_keys: HashSet<u8> = self.tracks.keys().copied().collect();
+        // Only tracks that were originally declared by a previous PSM may be removed
+        // by a new PSM; PES-probed tracks are left alone.
         let new_keys: HashSet<u8> = new_tracks.keys().copied().collect();
-        let removed: Vec<TrackId> = existing_keys
-            .difference(&new_keys)
+        let removed_keys: Vec<u8> = self.psm_declared.difference(&new_keys).copied().collect();
+        let removed: Vec<TrackId> = removed_keys
+            .iter()
             .map(|k| TrackId(u32::from(*k)))
             .collect();
 
@@ -377,6 +382,7 @@ impl PsDemuxer {
         // Only commit the version/signature once the PSM is actually applied.
         self.psm_version = Some(version);
         self.psm_signature = new_signature;
+        self.psm_declared = new_keys;
 
         let mut changed = Vec::with_capacity(new_tracks.len());
         for (es_id, track) in &new_tracks {
@@ -391,9 +397,9 @@ impl PsDemuxer {
         }
 
         if !removed.is_empty() {
-            for track_id in &removed {
-                self.tracks.remove(&(track_id.0 as u8));
-                self.codec_probe_pes.remove(&(track_id.0 as u8));
+            for es_id in &removed_keys {
+                self.tracks.remove(es_id);
+                self.codec_probe_pes.remove(es_id);
             }
             events.push(PsDemuxEvent::TrackRemoved(removed));
         }

@@ -16,7 +16,7 @@ use cheetah_codec::{
 enum SessionDemuxer {
     Pending,
     Ts(MpegTsDemuxer),
-    Ps(cheetah_codec::PsDemuxer),
+    Ps(Box<cheetah_codec::PsDemuxer>),
 }
 
 /// `SessionDemuxer` flushing and state delegation.
@@ -363,7 +363,8 @@ impl RtpTsIngest {
                         self.config.demux_config.max_reassembly_bytes,
                         32,
                     );
-                    session.demuxer = SessionDemuxer::Ps(cheetah_codec::PsDemuxer::new(ps_config));
+                    session.demuxer =
+                        SessionDemuxer::Ps(Box::new(cheetah_codec::PsDemuxer::new(ps_config)));
                 }
                 _ => {}
             }

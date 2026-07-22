@@ -901,6 +901,47 @@ fn ps_demuxer_psm_version_change_adds_and_removes_tracks() {
 }
 
 #[test]
+fn ps_demuxer_pes_probed_audio_not_removed_on_psm_version_bump() {
+    let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
+
+    // PSM declares only video; audio will be discovered from PES.
+    let psm0 = encode_psm_payload(0, &[(0x1B, 0xE0)]);
+    let mut packet0 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet0.extend_from_slice(&(psm0.len() as u16).to_be_bytes());
+    packet0.extend_from_slice(&psm0);
+    let _ = demuxer.push(&packet0);
+
+    let audio_pes = PesPacket {
+        stream_id: 0xC0,
+        kind: PsStreamKind::Audio,
+        pts: Some(90_000),
+        dts: None,
+        payload: Bytes::from_static(b"g711 audio samples"),
+    };
+    let events_audio = demuxer.push(&audio_pes.encode());
+    assert!(
+        events_audio
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackInfo(..))),
+        "audio track should be discovered from PES"
+    );
+
+    // PSM re-issued with a new version but still declares only video.
+    let psm1 = encode_psm_payload(1, &[(0x1B, 0xE0)]);
+    let mut packet1 = vec![0x00, 0x00, 0x01, 0xBC];
+    packet1.extend_from_slice(&(psm1.len() as u16).to_be_bytes());
+    packet1.extend_from_slice(&psm1);
+    let events = demuxer.push(&packet1);
+
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, PsDemuxEvent::TrackRemoved(..))),
+        "PES-probed audio must not be removed by a PSM that never declared it"
+    );
+}
+
+#[test]
 fn ps_demuxer_psm_not_current_next_is_ignored() {
     let mut demuxer = PsDemuxer::new(PsDemuxerConfig::default());
 
