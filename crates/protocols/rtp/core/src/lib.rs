@@ -20,6 +20,11 @@ pub mod error;
 /// RTCP 复合包解析/编码。
 pub mod rtcp;
 
+/// RTCP report generation from per-session RTP state.
+///
+/// 基于每会话 RTP 状态生成 RTCP 报告。
+pub mod rtcp_report;
+
 /// RTP/RTCP session state machine and packet processing.
 ///
 /// RTP/RTCP 会话状态机与包处理。
