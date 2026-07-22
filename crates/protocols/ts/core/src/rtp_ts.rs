@@ -37,6 +37,9 @@ impl SessionDemuxer {
                                 events.push(MpegTsDemuxEvent::TrackFound(track));
                             }
                         }
+                        cheetah_codec::PsDemuxEvent::TrackRemoved(ids) => {
+                            events.push(MpegTsDemuxEvent::TrackRemoved(ids));
+                        }
                         cheetah_codec::PsDemuxEvent::Frame(frame) => {
                             events.push(MpegTsDemuxEvent::Frame(*frame));
                         }
@@ -501,6 +504,9 @@ impl RtpTsIngest {
                             events.push(MpegTsDemuxEvent::TrackFound(track));
                         }
                     }
+                    cheetah_codec::PsDemuxEvent::TrackRemoved(ids) => {
+                        events.push(MpegTsDemuxEvent::TrackRemoved(ids));
+                    }
                     cheetah_codec::PsDemuxEvent::Frame(frame) => {
                         events.push(MpegTsDemuxEvent::Frame(*frame));
                     }
@@ -566,6 +572,14 @@ impl RtpTsPublishSession {
             MpegTsDemuxEvent::TrackFound(info) => {
                 if !self.tracks.iter().any(|t| t.track_id == info.track_id) {
                     self.tracks.push(info.clone());
+                    self.tracks_dirty = true;
+                    return true;
+                }
+            }
+            MpegTsDemuxEvent::TrackRemoved(ids) => {
+                let before = self.tracks.len();
+                self.tracks.retain(|t| !ids.contains(&t.track_id));
+                if self.tracks.len() != before {
                     self.tracks_dirty = true;
                     return true;
                 }
