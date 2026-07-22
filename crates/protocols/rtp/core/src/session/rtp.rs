@@ -134,9 +134,8 @@ impl RtpCore {
                         RtpSourcePolicy::AllowValidatedRebind => {
                             let idle = received_at_ms.saturating_sub(session.last_activity_ms)
                                 >= source_rebind_idle_window_ms;
-                            let expected_seq = bound_seq(session.last_seq, seq);
                             let rate_ok = session.source_rebind_count < max_source_rebinds;
-                            if idle && expected_seq && rate_ok {
+                            if idle && rate_ok {
                                 session.source_rebind_count += 1;
                                 outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SourceChanged {
                                     session_key: session_key.clone(),
@@ -161,6 +160,9 @@ impl RtpCore {
             } else {
                 session.source_addr = Some(src);
             }
+            // Accepted packet counts as activity; update on arrival so the idle window
+            // used by AllowValidatedRebind is based on receipt time, not release order.
+            session.last_activity_ms = received_at_ms;
         }
 
         // Push the packet into the per-session reorder buffer. The buffer releases one
@@ -171,11 +173,12 @@ impl RtpCore {
                 .reorder
                 .push(seq, received_at_ms, (rtp, received_at_ms, source_addr));
 
-        for (i, (rtp, pkt_received_at_ms, _source_addr)) in released.into_iter().enumerate() {
+        for (i, (rtp, pkt_received_at_ms, source_addr)) in released.into_iter().enumerate() {
             if let Err(reason) = self.process_single_rtp_packet(
                 &session_key,
                 rtp,
                 tcp_conn_id,
+                source_addr,
                 pkt_received_at_ms,
                 created && i == 0,
                 outputs,
@@ -191,11 +194,13 @@ impl RtpCore {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn process_single_rtp_packet(
         &mut self,
         session_key: &str,
         rtp: RtpPacket,
         tcp_conn_id: Option<u64>,
+        source_addr: Option<SocketAddr>,
         received_at_ms: u64,
         created: bool,
         outputs: &mut Vec<RtpCoreOutput>,
@@ -433,7 +438,6 @@ impl RtpCore {
 
         // Feed to demuxers
         let track_filter = session.track_filter;
-        let source_addr = session.source_addr;
         match &mut session.demuxer {
             SessionDemuxer::Ts(demuxer) => {
                 let demux_events = demuxer.push(&rtp.payload);
@@ -505,14 +509,5 @@ impl RtpCore {
         }
 
         Ok(())
-    }
-}
-
-/// Check whether `seq` is the next in order after `last_seq`. Used by the validated
-/// source-rebind path to ensure the new peer continues the RTP timeline.
-fn bound_seq(last_seq: Option<u16>, seq: u16) -> bool {
-    match last_seq {
-        None => true,
-        Some(last) => seq == last.wrapping_add(1),
     }
 }
