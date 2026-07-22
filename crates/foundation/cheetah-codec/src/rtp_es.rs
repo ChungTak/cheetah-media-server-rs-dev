@@ -184,10 +184,10 @@ impl EsDemuxer {
             }
         }
 
-        // H.264 FU-A (28), FU-B (29), STAP-A (24) and single NAL (1-5, 6 SEI, 7 SPS, 8 PPS, 9 AUD).
+        // H.264 FU-A (28), FU-B (29), STAP-A (24) and single NAL (1-23).
         let h264_type = payload[0] & 0x1f;
         if payload[0] & 0x80 == 0
-            && (matches!(h264_type, 1..=9) || matches!(h264_type, 24 | 28 | 29))
+            && (matches!(h264_type, 1..=23) || matches!(h264_type, 24 | 28 | 29))
         {
             return Some(CodecId::H264);
         }
@@ -222,7 +222,7 @@ impl EsDemuxer {
 
         if !unit.is_empty() {
             let h264_type = unit[0] & 0x1f;
-            if unit[0] & 0x80 == 0 && matches!(h264_type, 1..=9) {
+            if unit[0] & 0x80 == 0 && matches!(h264_type, 1..=23) {
                 return Some(CodecId::H264);
             }
         }
@@ -925,5 +925,33 @@ mod tests {
         assert_eq!(frames.len(), 1);
         assert_eq!(frames[0].codec, CodecId::H264);
         assert_eq!(frames[0].payload.len(), 4 + 4); // start code + 4-byte IDR
+    }
+
+    #[test]
+    fn es_h264_non_vcl_single_nal_types_10_to_23_are_detected_before_lock() {
+        let mut demuxer = EsDemuxer::default();
+
+        // A prefix NAL (type 14) or other non-VCL single-NAL type in the 10-23 range should
+        // still be recognized as H.264 before the codec is locked, rather than dropped.
+        let prefix_nal: &[u8] = &[0x0e, 0x00, 0x00, 0x00];
+        let events = demuxer.push_packet(prefix_nal, 1000, false);
+        assert!(events.is_empty());
+        assert_eq!(demuxer.locked_codec, None);
+        assert_eq!(demuxer.au_size, 4);
+
+        // A following IDR locks the codec and the accumulated prefix NAL is part of the AU.
+        let idr: &[u8] = &[0x65, 0x88, 0x84, 0x00];
+        let events = demuxer.push_packet(idr, 1000, true);
+        let frames: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                EsDemuxEvent::Frame(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0].codec, CodecId::H264);
+        // start code + prefix NAL + start code + IDR
+        assert_eq!(frames[0].payload.len(), 4 + 4 + 4 + 4);
     }
 }
