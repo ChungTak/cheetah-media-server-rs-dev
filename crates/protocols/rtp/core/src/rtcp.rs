@@ -25,6 +25,8 @@ pub enum RtcpParseError {
     InvalidVersion { version: u8 },
     #[error("invalid sdes item length")]
     InvalidSdes,
+    #[error("invalid padding count: {count} for pt {pt}")]
+    InvalidPadding { pt: u8, count: u8 },
 }
 
 /// Errors encountered while encoding RTCP packets.
@@ -466,13 +468,6 @@ impl RtcpBye {
                 });
             }
             let text = buf.split_to(len);
-            let pad = padding_to_4(1 + len);
-            if buf.len() < pad {
-                return Err(RtcpParseError::Truncated {
-                    pt: RtcpPacketType::Bye as u8,
-                });
-            }
-            buf.advance(pad);
             Some(String::from_utf8_lossy(&text).into_owned())
         } else {
             None
@@ -615,7 +610,7 @@ impl RtcpCompoundPacket {
             if version != 2 {
                 return Err(RtcpParseError::InvalidVersion { version });
             }
-            let _padding = (byte0 >> 5) & 0x01;
+            let padding = (byte0 >> 5) & 0x01;
             let count = byte0 & 0x1f;
             let pt = buf.get_u8();
             let length = buf.get_u16() as usize * 4;
@@ -623,6 +618,20 @@ impl RtcpCompoundPacket {
                 return Err(RtcpParseError::Truncated { pt });
             }
             let mut body = buf.split_to(length);
+            if padding != 0 {
+                if body.is_empty() {
+                    return Err(RtcpParseError::InvalidPadding { pt, count: 0 });
+                }
+                let pad_count = body[body.len() - 1];
+                if pad_count == 0 || pad_count as usize > body.len() {
+                    return Err(RtcpParseError::InvalidPadding {
+                        pt,
+                        count: pad_count,
+                    });
+                }
+                let trimmed_len = body.len() - pad_count as usize;
+                body = body.split_to(trimmed_len);
+            }
             packets.push(RtcpPacket::parse_body(pt, count, &mut body)?);
         }
         Ok(Self { packets })
@@ -814,6 +823,32 @@ mod tests {
         .is_ok());
         // A 2-byte packet cannot contain the common header.
         assert!(RtcpCompoundPacket::parse(Bytes::from_static(&[0x80, 201])).is_err());
+    }
+
+    #[test]
+    fn parses_padded_bye_with_reason() {
+        // BYE with one SSRC, reason "x" (1 byte), and 2 padding bytes to reach 12 bytes total.
+        // Header: V=2, P=1, count=1, PT=203, length=2 (8 bytes header + 4 bytes body).
+        // Body: SSRC (4) + reason_len 1 + 'x' + pad_count 2 (2 bytes total -> body 6? Wait total 12 -> length=2 -> body 8)
+        // Actually BYE with 1 ssrc (4) + reason_len (1) + text (1) + padding (2) = 8 body. Total 12, length=2.
+        let raw = Bytes::from_static(&[
+            0xa1, 203, 0, 2, 0x44, 0x44, 0x44, 0x44, 0x01, b'x', 0x00, 0x02,
+        ]);
+        let parsed = RtcpCompoundPacket::parse(raw).unwrap();
+        let RtcpPacket::Bye(bye) = &parsed.packets[0] else {
+            panic!("expected bye");
+        };
+        assert_eq!(bye.ssrcs, vec![0x44444444]);
+        assert_eq!(bye.reason, Some("x".to_string()));
+    }
+
+    #[test]
+    fn rejects_invalid_padding() {
+        // pad_count (9) exceeds body length (8).
+        let raw = Bytes::from_static(&[
+            0xa1, 203, 0, 2, 0x44, 0x44, 0x44, 0x44, 0x01, b'x', 0x00, 0x09,
+        ]);
+        assert!(RtcpCompoundPacket::parse(raw).is_err());
     }
 
     #[test]
