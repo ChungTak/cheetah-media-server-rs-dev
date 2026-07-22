@@ -316,7 +316,9 @@ impl RtpMediaProvider {
         descriptor.source_binding_policy = params.source_binding_policy;
         descriptor.payload_bindings = params.payload_bindings.clone();
         if let Some(local) = params.local_endpoint_hint {
-            descriptor.endpoints.local = local;
+            // Keep the actually-bound port and apply only the requested local IP.
+            descriptor.endpoints.local =
+                SocketAddr::new(local.ip(), descriptor.endpoints.local.port());
         }
         if let Some(remote) = params.remote_endpoint {
             descriptor.endpoints.remote = Some(remote);
@@ -621,6 +623,8 @@ impl RtpSessionApi for RtpMediaProvider {
         let old_query = RtpQuery {
             kind: old_kind,
             state: old_state,
+            session_id: query.session_id.clone(),
+            media_key: query.media_key.clone(),
             page: query.page,
             page_size: query.page_size,
         };
@@ -630,16 +634,6 @@ impl RtpSessionApi for RtpMediaProvider {
         let items: Vec<RtpSessionDescriptor> = page
             .items
             .into_iter()
-            .filter(|session| {
-                query
-                    .session_id
-                    .as_ref()
-                    .is_none_or(|id| id == &session.session_id)
-                    && query
-                        .media_key
-                        .as_ref()
-                        .is_none_or(|mk| mk == &session.media_key)
-            })
             .map(|session| {
                 let stored = descs.get(&session.session_id).cloned();
                 self.build_descriptor(ctx, &session, stored)

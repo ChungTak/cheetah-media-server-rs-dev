@@ -713,6 +713,10 @@ pub struct RtpQuery {
     #[serde(default)]
     pub state: Option<RtpSessionState>,
     #[serde(default)]
+    pub session_id: Option<RtpSessionId>,
+    #[serde(default)]
+    pub media_key: Option<MediaKey>,
+    #[serde(default)]
     pub page: u64,
     #[serde(default = "default_page_size")]
     pub page_size: u64,
