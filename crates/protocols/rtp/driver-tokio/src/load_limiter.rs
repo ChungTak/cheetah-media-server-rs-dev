@@ -143,11 +143,7 @@ impl LoadLimiter {
             if current.saturating_add(n as u64) > budget {
                 // Rate-limit the warning to one per measurement window so an overload
                 // does not generate per-packet log traffic.
-                if self
-                    .last_warn_window_ms
-                    .compare_exchange(start, start, Ordering::SeqCst, Ordering::Relaxed)
-                    .is_ok()
-                {
+                if self.last_warn_window_ms.swap(start, Ordering::SeqCst) != start {
                     warn!("incoming byte rate limit exceeded: {current} + {n} > {budget}");
                 }
                 return false;
