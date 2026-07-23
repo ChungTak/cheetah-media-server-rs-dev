@@ -373,17 +373,12 @@ modules:
 
   # gb28181:
   #   enabled: true
-  #   # UDP/TCP 监听地址及端口（国标 SIP 信令端口）
-  #   listen_udp: 0.0.0.0:5060
-  #   listen_tcp: 0.0.0.0:5060
-  #   # 读取缓冲区大小（字节）
-  #   read_buffer_size: 65536
-  #   # 心跳/状态定时检测间隔（毫秒）
-  #   tick_interval_ms: 1000
-  #   # SDP / SIP Contact / Via 中对外公布的 IP；为空时使用 listen_udp 的 IP
-  #   public_ip: ""
-  #   # 主动 INVITE / 语音对讲默认本地媒体端口
+  #   # 默认本地 RTP 端口（被动接收/对讲请求未指定 port 时使用）
   #   default_media_port: 30000
+  #   # 谁拥有 GB28181 控制面：
+  #   #   local    - 媒体进程暴露 REST 媒体端点
+  #   #   signaling - 由外部信令控制面通过 RtpSessionApi 驱动
+  #   control_owner: local
 
 
   # webrtc:
