@@ -85,6 +85,9 @@ impl LoadLimiter {
     }
 
     pub(crate) fn release_tcp_connection(&self) {
+        if self.limits.max_tcp_connections == 0 {
+            return;
+        }
         self.active_tcp_connections.fetch_sub(1, Ordering::SeqCst);
     }
 
