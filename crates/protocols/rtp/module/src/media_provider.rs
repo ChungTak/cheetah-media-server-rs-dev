@@ -979,14 +979,15 @@ impl RtpMediaProvider {
     /// returning both the session and the cancellation token that controls the
     /// background task. The caller is responsible for cancelling the token on
     /// rollback; if the open succeeds, the token is owned by `run_egress_session`.
-    /// `playback_end_ms` is used only for playback/download senders to stop the
-    /// egress when the requested range has been fully transmitted.
+    /// `playback_range` is used only for playback/download senders to normalize
+    /// the timeline and stop the egress when the requested range has been fully
+    /// transmitted.
     async fn open_rtp_sender_with_cancel(
         &self,
         ctx: &MediaRequestContext,
         request: RtpSenderRequest,
         packet_duration_ms: Option<u32>,
-        playback_end_ms: Option<i64>,
+        playback_range: Option<PlaybackRange>,
     ) -> Result<(RtpSession, CancellationToken)> {
         Deadline::from_context(ctx)
             .check()
@@ -1046,7 +1047,7 @@ impl RtpMediaProvider {
                 Some(cleanup),
                 subscriber_options,
                 talkback_max_latency_ms,
-                playback_end_ms,
+                playback_range,
             )
             .await;
         }));
@@ -1113,9 +1114,13 @@ impl RtpMediaProvider {
         };
         let old_req = self.build_old_sender_request(request.clone(), mode)?;
         let packet_duration_ms = Self::packet_duration_ms_from_params(&request.params);
-        let playback_end_ms = request.playback_range.as_ref().and_then(|r| r.end_ms);
         let (session, cancel) = self
-            .open_rtp_sender_with_cancel(ctx, old_req, packet_duration_ms, playback_end_ms)
+            .open_rtp_sender_with_cancel(
+                ctx,
+                old_req,
+                packet_duration_ms,
+                request.playback_range.clone(),
+            )
             .await?;
         let mut guard = RollbackGuard::new(
             self.orchestrator.clone(),

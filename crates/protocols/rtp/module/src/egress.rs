@@ -6,11 +6,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cheetah_codec::{FrameFlags, MediaKind};
+use cheetah_codec::{FrameFlags, FrameSideData, MediaKind, Timebase};
 use cheetah_rtp_core::RtpSendFrame;
 use cheetah_rtp_driver_tokio::{RtpDriverCommand, RtpDriverHandle, RtpSocketReuse};
 use cheetah_sdk::media_api::ids::RtpSessionId;
 use cheetah_sdk::media_api::model::{RtpSessionKind, RtpSessionState};
+use cheetah_sdk::media_api::rtp_session::PlaybackRange;
 use cheetah_sdk::{
     BackpressurePolicy, BootstrapPolicy, CancellationToken, EngineContext, ProtocolEvent,
     StreamKey, SubscriberOptions, SystemEvent,
@@ -139,7 +140,7 @@ pub(crate) async fn run_egress_session(
     cleanup: Option<EgressCleanup>,
     mut subscriber_options: SubscriberOptions,
     talkback_max_latency_ms: u32,
-    playback_end_ms: Option<i64>,
+    playback_range: Option<PlaybackRange>,
 ) {
     // The cleanup guard removes the active-egress tracking entry on any exit,
     // including natural completion, cancellation, and errors.
@@ -182,13 +183,20 @@ pub(crate) async fn run_egress_session(
     };
 
     let max_latency_us = (talkback_max_latency_ms as u64) * 1000;
+    let playback_start_us = playback_range
+        .as_ref()
+        .map(|r| r.start_ms.saturating_mul(1000))
+        .unwrap_or(0);
+    let playback_end_us = playback_range
+        .as_ref()
+        .and_then(|r| (r.end_ms?).checked_mul(1000));
     let mut first_frame = true;
     loop {
         let cancel_fut = cancel.cancelled().fuse();
         let frame_fut = subscriber.recv().fuse();
         pin_mut!(cancel_fut, frame_fut);
 
-        let frame = select_biased! {
+        let mut frame = select_biased! {
             _ = cancel_fut => break,
             res = frame_fut => match res {
                 Ok(Some(f)) => f,
@@ -223,8 +231,8 @@ pub(crate) async fn run_egress_session(
         // Playback range end: stop the egress once the frame presentation time reaches
         // or exceeds the requested end. The driver session is stopped so the receiver
         // sees a normal close rather than an abrupt socket teardown.
-        if let Some(end_ms) = playback_end_ms {
-            if end_ms >= 0 && frame.pts_us >= end_ms.saturating_mul(1000) {
+        if let Some(end_us) = playback_end_us {
+            if frame.pts_us >= end_us {
                 if let Some(o) = orchestrator.as_ref() {
                     for sk in &session_keys {
                         let _ = o.stop_rtp_session(&RtpSessionId(sk.clone())).await;
@@ -232,6 +240,29 @@ pub(crate) async fn run_egress_session(
                 }
                 break;
             }
+        }
+
+        // Playback timeline normalization: shift timestamps so the output RTP timeline
+        // starts from 0 (or the requested start) and grows monotonically. The original
+        // source time is preserved as frame side data for logging/A/V sync.
+        if playback_range.is_some() {
+            let frame = Arc::make_mut(&mut frame);
+            let source_pts_us = frame.pts_us;
+            let source_dts_us = frame.dts_us;
+            let pts_us = source_pts_us.saturating_sub(playback_start_us).max(0);
+            let dts_us = source_dts_us.saturating_sub(playback_start_us).max(0);
+            frame.pts_us = pts_us;
+            frame.dts_us = dts_us;
+            frame.pts = Timebase::from_micros(frame.timebase, pts_us);
+            frame.dts = Timebase::from_micros(frame.timebase, dts_us);
+            frame.side_data.push(FrameSideData::Metadata {
+                key: "playback.source_pts_us".to_string(),
+                value: source_pts_us.to_string(),
+            });
+            frame.side_data.push(FrameSideData::Metadata {
+                key: "playback.start_us".to_string(),
+                value: playback_start_us.to_string(),
+            });
         }
 
         // Late/drop policy: talkback audio frames that are older than the configured

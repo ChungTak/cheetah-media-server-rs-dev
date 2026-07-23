@@ -1073,13 +1073,17 @@ async fn gb28181_playback_sender_reads_from_playback_api_and_emits_rtp() {
         )
         .await;
 
-    // Seed the source stream with a few PS video frames.
+    // Seed the source stream with PS video frames whose source timeline starts at
+    // 5 seconds. The playback range start is also 5 seconds, so the output RTP
+    // timeline should be normalized to begin near 0.
+    let playback_start_us = 5_000_000;
     for i in 0..5 {
-        let ps = mux_ps_frame(&make_video_frame(i * 100_000));
+        let pts_us = playback_start_us + i * 100_000;
+        let ps = mux_ps_frame(&make_video_frame(pts_us));
         publisher
             .push_frame(Arc::new(AVFrame {
                 payload: ps,
-                ..make_video_frame(i * 100_000)
+                ..make_video_frame(pts_us)
             }))
             .unwrap();
     }
@@ -1103,7 +1107,7 @@ async fn gb28181_playback_sender_reads_from_playback_api_and_emits_rtp() {
             .record_source("recordings/cam_001/20250721.mp4")
             .build(),
         playback_range: Some(PlaybackRange {
-            start_ms: 0,
+            start_ms: 5_000,
             end_ms: Some(60_000),
         }),
     };
@@ -1121,6 +1125,13 @@ async fn gb28181_playback_sender_reads_from_playback_api_and_emits_rtp() {
         {
             assert_eq!(header.version, 2);
             assert_eq!(header.ssrc, SSRC);
+            // Source started at 5 s and playback start is also 5 s, so the
+            // normalized RTP timeline should begin near 0.
+            assert!(
+                header.timestamp < 100_000,
+                "playback timeline should be normalized to start near 0, got {}",
+                header.timestamp
+            );
             saw_rtp = true;
         }
     }
