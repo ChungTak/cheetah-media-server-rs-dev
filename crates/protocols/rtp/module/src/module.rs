@@ -496,6 +496,14 @@ async fn run_ingress_worker(
             } => {
                 info!("RTP ingress session created: key={session_key}, ssrc={ssrc}, payload={payload_mode:?}, transport={transport_mode:?}");
                 let sk = parse_session_key(&session_key);
+
+                // Only receiver-side sessions publish into the engine. Sender sessions
+                // pull frames through a separate subscriber/egress path and must not
+                // claim the publish lease here.
+                if transport_mode == RtpTransportMode::SendOnly {
+                    continue;
+                }
+
                 match ctx
                     .publisher_api
                     .acquire_publisher(sk.clone(), PublisherOptions::default())
@@ -518,6 +526,9 @@ async fn run_ingress_worker(
                     }
                     Err(e) => {
                         error!("RTP acquire_publisher failed for {sk}: {e}");
+                        // A receiver that cannot secure the publish lease before the first
+                        // frame must not publish into the engine; tear it down cleanly.
+                        let _ = orchestrator.stop_session_by_key(&session_key).await;
                     }
                 }
             }
