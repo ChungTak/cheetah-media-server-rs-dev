@@ -123,6 +123,53 @@ pub enum RtpSourcePolicy {
     AllowValidatedRebind,
 }
 
+/// Reasons why an RTP session reached a terminal state.
+///
+/// This replaces free-form `String` reasons so drivers and modules can match on a
+/// small, versioned set of lifecycle outcomes.
+///
+/// RTP 会话进入终态的原因。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RtpSessionCloseReason {
+    /// Explicit stop command from the control plane.
+    Stopped,
+    /// No ingress activity within the configured idle window.
+    IdleTimeout,
+    /// Sender received no RTCP receiver reports within the configured window.
+    RrTimeout,
+    /// The peer sent an RTCP BYE packet.
+    Bye,
+    /// The payload type changed and could not be resolved for the tolerated budget.
+    UnresolvablePayloadType { current: u8, new: u8, count: u8 },
+    /// The payload mode oscillated more than the allowed number of times.
+    PayloadModeOscillation {
+        from: RtpPayloadMode,
+        to: RtpPayloadMode,
+    },
+    /// The underlying TCP connection was closed by the peer (half-close or error).
+    ConnectionClosed,
+}
+
+impl std::fmt::Display for RtpSessionCloseReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Stopped => write!(f, "stopped by command"),
+            Self::IdleTimeout => write!(f, "idle timeout"),
+            Self::RrTimeout => write!(f, "RR timeout"),
+            Self::Bye => write!(f, "RTCP BYE"),
+            Self::UnresolvablePayloadType { current, new, count } => write!(
+                f,
+                "payload type changed from {current} to {new} and could not be resolved for {count} packets"
+            ),
+            Self::PayloadModeOscillation { from, to } => write!(
+                f,
+                "payload mode oscillated from {from:?} to {to:?}"
+            ),
+            Self::ConnectionClosed => write!(f, "TCP connection closed by peer"),
+        }
+    }
+}
+
 /// Specification for an inbound (server) RTP session.
 ///
 /// The session listens for packets on the local socket and auto-creates internal tracks
@@ -200,9 +247,11 @@ pub struct RtpSendFrame {
 
 /// A single UDP datagram received from the network.
 ///
-/// `received_at_ms` is the driver-side receive timestamp in Unix-epoch wall-clock
-/// milliseconds, in the same domain as `RtpCoreInput::Tick`. `core` uses it for
-/// per-packet jitter statistics and activity tracking.
+/// `received_at_ms` is the driver-side receive timestamp in milliseconds. It is
+/// in the same monotonic time domain as `RtpCoreInput::Tick`; only differences
+/// are meaningful for jitter and idle/RR-timeout tracking. The driver may keep it
+/// in a runtime-specific monotonic domain or a wall-clock domain, but it must be
+/// consistent across all inputs to the same `RtpCore` instance.
 ///
 /// 从网络收到的单个 UDP 数据报。
 #[derive(Debug, Clone)]
@@ -214,9 +263,9 @@ pub struct RtpDatagram {
 
 /// A chunk of TCP bytes received on a single connection.
 ///
-/// `received_at_ms` is the driver-side receive timestamp in Unix-epoch wall-clock
-/// milliseconds, in the same domain as `RtpCoreInput::Tick`. `core` uses it for
-/// per-packet jitter statistics and activity tracking.
+/// `received_at_ms` is the driver-side receive timestamp in milliseconds. It must
+/// be in the same domain as `RtpCoreInput::Tick`; only differences are used by
+/// `core` for jitter and idle/RR-timeout tracking.
 ///
 /// 在单个连接上收到的一小段 TCP 字节。
 #[derive(Debug, Clone)]
@@ -242,6 +291,7 @@ pub struct RtpUdpSend {
 #[derive(Debug, Clone)]
 pub struct RtpTcpSend {
     pub conn_id: u64,
+    pub session_key: RtpSessionKey,
     pub data: Bytes,
 }
 
@@ -327,12 +377,12 @@ pub enum RtpCoreEvent {
         old_state: RtpSessionState,
         new_state: RtpSessionState,
     },
-    /// A session was closed (idle timeout, RR timeout, or explicit stop).
+    /// A session was closed (idle timeout, RR timeout, explicit stop, BYE, or format change).
     ///
-    /// 会话被关闭（空闲超时、RR 超时或显式停止）。
+    /// 会话被关闭（空闲超时、RR 超时、显式停止、BYE 或格式变更）。
     SessionClosed {
         session_key: RtpSessionKey,
-        reason: String,
+        reason: RtpSessionCloseReason,
     },
     /// One or more tracks were discovered by the demuxer.
     ///
@@ -369,15 +419,25 @@ pub enum RtpCoreInput {
     ///
     /// TCP 分帧 RTP 字节。
     TcpBytes(RtpTcpChunk),
+    /// The peer closed the underlying TCP connection (half-close or read error).
+    ///
+    /// 对端关闭底层 TCP 连接（半关闭或读错误）。
+    TcpConnectionClosed { conn_id: u64, received_at_ms: u64 },
     /// Incoming RTCP datagram (non-RTP UDP arriving on the RTCP port). Used to update
     /// peer-feedback statistics and reset the RR-timeout sender shutdown.
     ///
     /// 入站 RTCP 数据报（RTCP 端口上收到的非 RTP UDP）。用于更新对端反馈统计并重置
     /// 发送者的 RR 超时关闭。
     RtcpPacket(RtpDatagram),
-    /// Periodic timer tick with the current wall-clock time in milliseconds.
+    /// Periodic timer tick with the current driver time in milliseconds.
     ///
-    /// 周期性定时器 tick，当前墙上时间（毫秒）。
+    /// This value only needs to be monotonic and consistent with the timestamps
+    /// on `UdpPacket` / `TcpBytes` / `TcpConnectionClosed` inputs; it is used for
+    /// RTCP scheduling, idle timeout and RR-timeout tracking. `core` adds the
+    /// configured `wall_clock_offset_ms` when producing outbound Sender Report
+    /// NTP timestamps.
+    ///
+    /// 周期性定时器 tick，当前驱动时间（毫秒）。
     Tick { now_ms: u64 },
     /// Control command from the module/driver.
     ///
@@ -457,4 +517,8 @@ pub enum RtpCoreOutput {
     ///
     /// 关闭会话并清理资源。
     CloseSession(RtpSessionKey),
+    /// Close the underlying TCP connection and release its writer task.
+    ///
+    /// 关闭底层 TCP 连接并释放其写任务。
+    CloseTcpConnection { conn_id: u64 },
 }

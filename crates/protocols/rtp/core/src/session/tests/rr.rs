@@ -29,8 +29,10 @@ fn test_rtp_core_rr_timeout_shuts_down_sender() {
     let closed = outputs.iter().any(|o| {
         matches!(
             o,
-            RtpCoreOutput::Event(RtpCoreEvent::SessionClosed { reason, .. })
-                if reason == "RR timeout"
+            RtpCoreOutput::Event(RtpCoreEvent::SessionClosed {
+                reason: RtpSessionCloseReason::RrTimeout,
+                ..
+            })
         )
     });
     assert!(

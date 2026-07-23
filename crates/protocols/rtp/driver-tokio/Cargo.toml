@@ -9,10 +9,11 @@ bytes.workspace = true
 cheetah-codec = { path = "../../../foundation/cheetah-codec" }
 cheetah-rtp-core = { path = "../core" }
 cheetah-runtime-api = { path = "../../../runtime/cheetah-runtime-api" }
+cheetah-runtime-tokio = { path = "../../../runtime/cheetah-runtime-tokio" }
 parking_lot.workspace = true
 tokio = { workspace = true, features = ["net", "rt", "sync", "time"] }
 tracing.workspace = true
 
 [dev-dependencies]
-cheetah-runtime-tokio = { path = "../../../runtime/cheetah-runtime-tokio" }
 cheetah-codec = { path = "../../../foundation/cheetah-codec" }
+tokio = { workspace = true, features = ["test-util"] }

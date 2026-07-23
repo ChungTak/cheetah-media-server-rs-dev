@@ -2,23 +2,31 @@
 //!
 //! 基于 Tokio 的 RTP/RTCP 驱动。
 
+mod load_limiter;
+mod port_lease;
+
+pub use load_limiter::DriverLimits;
+
 use bytes::{Bytes, BytesMut};
+use load_limiter::LoadLimiter;
+use port_lease::PortManager;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::{mpsc, oneshot, Mutex};
-use tokio::time::{self, Duration};
+use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
 
+use cheetah_codec::MonoTime;
 use cheetah_rtp_core::{
     rtcp::RtcpCompoundPacket, RtpClientSpec, RtpConnectionType, RtpCore, RtpCoreCommand,
     RtpCoreEvent, RtpCoreInput, RtpCoreOutput, RtpDatagram, RtpSendFrame, RtpServerSpec,
     RtpSourcePolicy, RtpTcpChunk,
 };
-use cheetah_runtime_api::CancellationToken;
+use cheetah_runtime_api::{CancellationToken, RuntimeApi};
 
 /// Configuration for the Tokio RTP driver.
 ///
@@ -37,6 +45,14 @@ pub struct RtpDriverConfig {
     pub read_buffer_size: usize,
     pub session_idle_timeout_ms: u64,
     pub max_sessions: usize,
+    /// Driver tick interval in milliseconds. The core receives a `Tick` input at this cadence.
+    ///
+    /// 驱动定时器间隔（毫秒）。core 按此频率接收 `Tick` 输入。
+    pub tick_interval_ms: u64,
+    /// Interval between RTCP sender/receiver reports in milliseconds.
+    ///
+    /// RTCP Sender/Receiver Report 生成间隔（毫秒）。
+    pub rtcp_report_interval_ms: u64,
     /// Default TCP framing applied by the core when deframing inbound TCP RTP traffic. Defaults
     /// to `AutoDetect` so we accept both 2-byte length prefixes and 4-byte interleaved frames
     /// without explicit per-session negotiation.
@@ -47,6 +63,9 @@ pub struct RtpDriverConfig {
     ///
     /// 动态 `nMaxRtpLength` 学习器的硬上限（默认 65536 字节）。
     pub max_rtp_len_cap: usize,
+    /// Driver-wide resource limits (sessions, TCP connections, incoming byte rate).
+    /// A limit of `0` disables it.
+    pub limits: DriverLimits,
 }
 
 /// Default values for `RtpDriverConfig`.
@@ -62,8 +81,11 @@ impl Default for RtpDriverConfig {
             read_buffer_size: 65536,
             session_idle_timeout_ms: 30000,
             max_sessions: 1024,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
+            limits: DriverLimits::default(),
         }
     }
 }
@@ -305,16 +327,42 @@ impl RtpDriverHandle {
     pub async fn recv_event(&self) -> Option<RtpCoreEvent> {
         self.event_rx.lock().await.recv().await
     }
+
+    /// Try to receive the next event without blocking.
+    ///
+    /// 尝试非阻塞地从驱动循环接收下一个事件。
+    pub async fn try_recv_event(&self) -> Option<RtpCoreEvent> {
+        self.event_rx.lock().await.try_recv().ok()
+    }
 }
 
-/// Start the Tokio RTP driver and return a handle.
+/// Start the Tokio RTP driver using the default `TokioRuntime` and return a handle.
 ///
-/// 启动 Tokio RTP 驱动并返回句柄。
+/// 使用默认 `TokioRuntime` 启动 Tokio RTP 驱动并返回句柄。
 pub fn start_driver(config: RtpDriverConfig, cancel: CancellationToken) -> RtpDriverHandle {
+    start_driver_with_runtime(
+        config,
+        cancel,
+        Arc::new(cheetah_runtime_tokio::TokioRuntime::new()),
+    )
+}
+
+/// Start the Tokio RTP driver with an injected `RuntimeApi` and return a handle.
+///
+/// This allows tests to drive time via a fake or paused `RuntimeApi` (e.g. `TokioRuntime`
+/// under `tokio::time::pause`) instead of wall-clock time.
+///
+/// 使用注入的 `RuntimeApi` 启动 Tokio RTP 驱动并返回句柄。
+/// 测试可以通过 fake 或 paused 的 `RuntimeApi`（如 `tokio::time::pause` 下的 `TokioRuntime`）控制时间。
+pub fn start_driver_with_runtime(
+    config: RtpDriverConfig,
+    cancel: CancellationToken,
+    runtime: Arc<dyn RuntimeApi>,
+) -> RtpDriverHandle {
     let (cmd_tx, cmd_rx) = mpsc::channel(256);
     let (event_tx, event_rx) = mpsc::channel(256);
 
-    tokio::spawn(run_driver_loop(config, cmd_rx, event_tx, cancel));
+    tokio::spawn(run_driver_loop(config, cmd_rx, event_tx, cancel, runtime));
 
     RtpDriverHandle {
         cmd_tx,
@@ -331,15 +379,15 @@ pub fn start_driver(config: RtpDriverConfig, cancel: CancellationToken) -> RtpDr
 ///
 /// 生成 UDP 接收任务，将数据报转发到 core 输入通道。
 #[allow(clippy::too_many_arguments)]
-fn spawn_udp_reader(
+pub(crate) fn spawn_udp_reader(
     socket: Arc<UdpSocket>,
     cancel: CancellationToken,
     udp_rx_tx: mpsc::Sender<RtpDatagram>,
     rtcp_rx_tx: Option<mpsc::Sender<RtpDatagram>>,
     mux: bool,
     buf_size: usize,
-    start: time::Instant,
-    base_ms: u64,
+    runtime: Arc<dyn RuntimeApi>,
+    load_limiter: LoadLimiter,
 ) {
     tokio::spawn(async move {
         let mut buf = vec![0u8; buf_size];
@@ -349,7 +397,10 @@ fn spawn_udp_reader(
                 res = socket.recv_from(&mut buf) => {
                     match res {
                         Ok((len, src)) => {
-                            let received_at_ms = base_ms + start.elapsed().as_millis() as u64;
+                            if !load_limiter.try_consume_bytes(len) {
+                                continue;
+                            }
+                            let received_at_ms = runtime.now().as_micros() / 1000;
                             let data = Bytes::copy_from_slice(&buf[..len]);
 
                             let datagram = RtpDatagram { source: src, data, received_at_ms };
@@ -396,23 +447,10 @@ fn spawn_udp_reader(
 async fn release_session_socket(
     key: &str,
     session_bind_addrs: &Mutex<HashMap<String, Option<SocketAddr>>>,
-    per_session_counts: &Mutex<HashMap<SocketAddr, usize>>,
-    per_session_sockets: &Mutex<HashMap<SocketAddr, Arc<UdpSocket>>>,
-    per_session_cancels: &Mutex<HashMap<SocketAddr, CancellationToken>>,
+    port_manager: &PortManager,
 ) {
     if let Some(Some(addr)) = session_bind_addrs.lock().await.remove(key) {
-        let mut counts = per_session_counts.lock().await;
-        if let Some(count) = counts.get_mut(&addr) {
-            *count -= 1;
-            if *count == 0 {
-                counts.remove(&addr);
-                drop(counts);
-                per_session_sockets.lock().await.remove(&addr);
-                if let Some(token) = per_session_cancels.lock().await.remove(&addr) {
-                    token.cancel();
-                }
-            }
-        }
+        port_manager.release(addr).await;
     }
 }
 
@@ -423,7 +461,7 @@ async fn release_session_socket(
 async fn resolve_udp_socket(
     session_key: &str,
     session_bind_addrs: &Mutex<HashMap<String, Option<SocketAddr>>>,
-    per_session_sockets: &Mutex<HashMap<SocketAddr, Arc<UdpSocket>>>,
+    port_manager: &PortManager,
     default_socket: &Arc<UdpSocket>,
 ) -> Arc<UdpSocket> {
     let maybe_addr = session_bind_addrs
@@ -433,7 +471,7 @@ async fn resolve_udp_socket(
         .copied()
         .flatten();
     if let Some(addr) = maybe_addr {
-        if let Some(socket) = per_session_sockets.lock().await.get(&addr).cloned() {
+        if let Some(socket) = port_manager.get_socket(addr).await {
             return socket;
         }
     }
@@ -453,6 +491,11 @@ fn resolve_rtcp_destination(rtp_dest: SocketAddr) -> SocketAddr {
         dest.set_port(dest.port().saturating_add(1));
     }
     dest
+}
+
+/// Return the current wall-clock time in milliseconds from the supplied runtime.
+fn now_ms(runtime: &Arc<dyn RuntimeApi>) -> u64 {
+    runtime.now().as_micros() / 1000
 }
 
 /// RFC 5761-style disambiguation for RTP/RTCP-muxed UDP sockets.
@@ -478,6 +521,7 @@ async fn run_driver_loop(
     cmd_rx: mpsc::Receiver<RtpDriverCommand>,
     event_tx: mpsc::Sender<RtpCoreEvent>,
     cancel: CancellationToken,
+    runtime: Arc<dyn RuntimeApi>,
 ) {
     let udp_socket = match UdpSocket::bind(config.listen_udp).await {
         Ok(s) => Arc::new(s),
@@ -524,12 +568,17 @@ async fn run_driver_loop(
     let mut core = RtpCore::new(config.max_sessions, config.session_idle_timeout_ms);
     core.set_tcp_framing(config.tcp_framing);
     core.set_max_rtp_len_cap(config.max_rtp_len_cap);
-    let mut interval = time::interval(Duration::from_millis(100));
-    let start_instant = time::Instant::now();
-    let base_ms = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
+    core.set_rtcp_report_interval_ms(config.rtcp_report_interval_ms);
+    let wall_clock_offset_ms = (SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as u64;
+        .as_millis() as u64)
+        .saturating_sub(runtime.now().as_micros() / 1000);
+    core.set_wall_clock_offset_ms(wall_clock_offset_ms);
+
+    let tick_interval_us = config.tick_interval_ms.max(1).saturating_mul(1000);
+    let mut next_tick = runtime.now().as_micros().saturating_add(tick_interval_us);
+    let mut tick_timer = runtime.sleep_until(MonoTime::from_micros(next_tick));
 
     // Optional separate RTCP UDP socket. When configured, RTCP datagrams arriving on this socket
     // are dispatched into the core via `RtpCoreInput::RtcpPacket` so that RR-timeout sender
@@ -550,30 +599,46 @@ async fn run_driver_loop(
 
     // Channels for async socket read streams to multiplex into the main thread
     let (udp_rx_tx, mut udp_rx_rx) = mpsc::channel::<RtpDatagram>(256);
-    let (tcp_rx_tx, mut tcp_rx_rx) = mpsc::channel::<RtpTcpChunk>(256);
+    let (tcp_rx_tx, mut tcp_rx_rx) = mpsc::channel::<RtpCoreInput>(256);
     let (rtcp_rx_tx, mut rtcp_rx_rx) = mpsc::channel::<RtpDatagram>(64);
 
     // Active TCP connection writers: conn_id -> Writer Channel
     let tcp_writers: Arc<Mutex<HashMap<u64, mpsc::Sender<Bytes>>>> =
         Arc::new(Mutex::new(HashMap::new()));
     let next_conn_id = Arc::new(Mutex::new(1u64));
+    let load_limiter = LoadLimiter::new(runtime.clone(), config.limits);
+
+    let rtcp_mux = config.listen_rtcp_udp.is_none();
 
     // Per-session UDP sockets bound to explicit addresses (e.g. GB28181 port allocations).
     // Each socket has a cancellation token and a session refcount so it is closed when the
     // last session using it stops.
-    let per_session_sockets: Arc<Mutex<HashMap<SocketAddr, Arc<UdpSocket>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let per_session_cancels: Arc<Mutex<HashMap<SocketAddr, CancellationToken>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let per_session_counts: Arc<Mutex<HashMap<SocketAddr, usize>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let port_manager = PortManager::new(
+        udp_rx_tx.clone(),
+        if rtcp_mux {
+            Some(rtcp_rx_tx.clone())
+        } else {
+            None
+        },
+        rtcp_mux,
+        config.read_buffer_size,
+        runtime.clone(),
+        cancel.clone(),
+        load_limiter.clone(),
+    );
     let session_bind_addrs: Arc<Mutex<HashMap<String, Option<SocketAddr>>>> =
         Arc::new(Mutex::new(HashMap::new()));
+    // Per-session cancellation tokens. Stopping or closing a session cancels only that
+    // session's outbound tasks without tearing down the whole driver.
+    let session_cancels: Arc<Mutex<HashMap<String, CancellationToken>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    // Fallback token shared by any egress spawn whose session token is missing. It is a
+    // child of the driver-wide cancel so it only fires during driver shutdown, preserving
+    // the previous fail-open behavior for untracked keys.
+    let fallback = cancel.child_token();
 
     // Spawn default UDP recv task.
     let default_udp_addr = udp_socket.local_addr().unwrap_or(config.listen_udp);
-    let rtcp_mux = config.listen_rtcp_udp.is_none();
-    let rtcp_rx_tx_for_sockets = rtcp_rx_tx.clone();
     spawn_udp_reader(
         udp_socket.clone(),
         cancel.clone(),
@@ -585,8 +650,8 @@ async fn run_driver_loop(
         },
         rtcp_mux,
         config.read_buffer_size,
-        start_instant,
-        base_ms,
+        runtime.clone(),
+        load_limiter.clone(),
     );
 
     // Spawn dedicated RTCP UDP reader if configured.
@@ -598,8 +663,8 @@ async fn run_driver_loop(
             Some(rtcp_rx_tx.clone()),
             false,
             config.read_buffer_size,
-            start_instant,
-            base_ms,
+            runtime.clone(),
+            load_limiter.clone(),
         );
     }
     drop(rtcp_rx_tx);
@@ -612,15 +677,23 @@ async fn run_driver_loop(
         let tcp_rx_tx = tcp_rx_tx.clone();
         let buf_size = config.read_buffer_size;
         let wq_cap = config.write_queue_capacity;
-        let start = start_instant;
+        let runtime = runtime.clone();
+        let load_limiter = load_limiter.clone();
 
         tokio::spawn(async move {
+            let load_limiter = load_limiter;
             loop {
                 tokio::select! {
                     _ = cancel.cancelled() => break,
                     res = tcp_listener.accept() => {
                         match res {
                             Ok((stream, addr)) => {
+                                if !load_limiter.try_new_tcp_connection() {
+                                    warn!("RTP TCP connection limit reached; dropping peer {addr}");
+                                    drop(stream);
+                                    continue;
+                                }
+                                let _tcp_guard = load_limiter.tcp_connection_guard();
                                 debug!("RTP TCP client connected from {}", addr);
                                 let conn_id = {
                                     let mut id_guard = next_conn_id.lock().await;
@@ -637,7 +710,10 @@ async fn run_driver_loop(
                                 {
                                     let tcp_rx_tx = tcp_rx_tx.clone();
                                     let cancel = cancel.child_token();
+                                    let runtime = runtime.clone();
+                                    let load_limiter = load_limiter.clone();
                                     tokio::spawn(async move {
+                                        let _tcp_guard = _tcp_guard;
                                         let mut reader = reader;
                                         let mut buf = vec![0u8; buf_size];
                                         let mut remaining = BytesMut::new();
@@ -648,9 +724,23 @@ async fn run_driver_loop(
                                                 _ = cancel.cancelled() => break,
                                                 res = reader.read(&mut buf) => {
                                                     match res {
-                                                        Ok(0) => break, // EOF
+                                                        Ok(0) => {
+                                                            // Peer half-closed the write side; notify the core so it can close
+                                                            // any sessions bound to this connection while the write side may still
+                                                            // be draining outbound frames.
+                                                            let now_ms = now_ms(&runtime);
+                                                            let _ = tcp_rx_tx.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
+                                                            break;
+                                                        }
                                                         Ok(n) => {
-                                                            let received_at_ms = base_ms + start.elapsed().as_millis() as u64;
+                                                            if !load_limiter.try_consume_bytes(n) {
+                                                                // Byte-rate budget exceeded. TCP is a byte stream, so dropping
+                                                                // bytes mid-stream would corrupt framing; tear down the connection.
+                                                                let now_ms = now_ms(&runtime);
+                                                                let _ = tcp_rx_tx.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
+                                                                break;
+                                                            }
+                                                            let received_at_ms = now_ms(&runtime);
                                                             remaining.extend_from_slice(&buf[..n]);
 
                                                             if !checked_ehome {
@@ -677,7 +767,7 @@ async fn run_driver_loop(
                                                                     // Check for Ehome2 256-byte header
                                                                     if remaining.len() >= 256 && remaining[0] == 0x01 && remaining[1] == 0x00 && (remaining[2] == 0x01 || remaining[2] == 0x02) {
                                                                         let data = remaining.split_to(256).freeze();
-                                                                        if tcp_rx_tx.send(RtpTcpChunk { conn_id, data, received_at_ms }).await.is_err() {
+                                                                        if tcp_rx_tx.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await.is_err() {
                                                                             break;
                                                                         }
                                                                         continue;
@@ -687,7 +777,7 @@ async fn run_driver_loop(
                                                                         let len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
                                                                         if remaining.len() >= 4 + len {
                                                                             let data = remaining.split_to(4 + len).freeze();
-                                                                            if tcp_rx_tx.send(RtpTcpChunk { conn_id, data, received_at_ms }).await.is_err() {
+                                                                            if tcp_rx_tx.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await.is_err() {
                                                                                 break;
                                                                             }
                                                                         } else {
@@ -712,7 +802,7 @@ async fn run_driver_loop(
                                                                             break;
                                                                         }
                                                                         let data = remaining.split_to(4 + len).freeze();
-                                                                        if tcp_rx_tx.send(RtpTcpChunk { conn_id, data, received_at_ms }).await.is_err() {
+                                                                        if tcp_rx_tx.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await.is_err() {
                                                                             break;
                                                                         }
                                                                     } else if remaining.len() >= 2 {
@@ -721,7 +811,7 @@ async fn run_driver_loop(
                                                                             break;
                                                                         }
                                                                         let data = remaining.split_to(2 + len).freeze();
-                                                                        if tcp_rx_tx.send(RtpTcpChunk { conn_id, data, received_at_ms }).await.is_err() {
+                                                                        if tcp_rx_tx.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await.is_err() {
                                                                             break;
                                                                         }
                                                                     } else {
@@ -730,7 +820,11 @@ async fn run_driver_loop(
                                                                 }
                                                             }
                                                         }
-                                                        Err(_) => break,
+                                                        Err(_) => {
+                                                            let now_ms = now_ms(&runtime);
+                                                            let _ = tcp_rx_tx.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
+                                                            break;
+                                                        }
                                                     }
                                                 }
                                             }
@@ -781,9 +875,12 @@ async fn run_driver_loop(
 
         tokio::select! {
             _ = cancel.cancelled() => break,
-            _ = interval.tick() => {
-                let now_ms = base_ms + start_instant.elapsed().as_millis() as u64;
+            _ = tick_timer.wait() => {
+                let now = runtime.now();
+                let now_ms = now.as_micros() / 1000;
                 inputs.push(RtpCoreInput::Tick { now_ms });
+                next_tick = now.as_micros().saturating_add(tick_interval_us);
+                tick_timer = runtime.sleep_until(MonoTime::from_micros(next_tick));
             }
             Some(cmd) = cmd_rx_internal.recv() => {
                 match cmd {
@@ -795,96 +892,42 @@ async fn run_driver_loop(
                     } => {
                         let key = spec.session_key.clone();
                         let explicit_bind = bind_addr.is_some();
+
+                        // Avoid binding a second socket for a session key that already has a
+                        // dedicated UDP socket. Reusing the key would leave the new socket leased
+                        // without a session to release it.
+                        if explicit_bind && session_bind_addrs.lock().await.contains_key(&key) {
+                            if let Some(ack) = ack {
+                                let _ = ack.send(Err(format!(
+                                    "session {key} already has a bound socket"
+                                )));
+                            }
+                            continue;
+                        }
+
+                        if !load_limiter.allow_new_session() {
+                            if let Some(ack) = ack {
+                                let _ = ack.send(Err(
+                                    "RTP session limit reached".to_string()
+                                ));
+                            }
+                            continue;
+                        }
+
                         let actual_addr = match bind_addr {
                             None => default_udp_addr,
                             Some(addr) => {
-                                let should_reuse = reuse == RtpSocketReuse::Reuse && addr.port() != 0;
-                                if should_reuse {
-                                    let sockets = per_session_sockets.lock().await;
-                                    if let Some(socket) = sockets.get(&addr) {
-                                        let actual = socket.local_addr().unwrap_or(addr);
-                                        drop(sockets);
-                                        let mut counts = per_session_counts.lock().await;
-                                        *counts.entry(actual).or_insert(0) += 1;
+                                match port_manager.acquire(addr, reuse == RtpSocketReuse::Reuse).await {
+                                    Ok(lease) => {
+                                        let actual = lease.addr();
+                                        lease.commit();
                                         actual
-                                    } else {
-                                        drop(sockets);
-                                        match UdpSocket::bind(addr).await {
-                                            Ok(s) => {
-                                                let actual = s.local_addr().unwrap_or(addr);
-                                                let socket = Arc::new(s);
-                                                let socket_cancel = cancel.child_token();
-                                                spawn_udp_reader(
-                                                    socket.clone(),
-                                                    socket_cancel.clone(),
-                                                    udp_rx_tx.clone(),
-                                                    if rtcp_mux { Some(rtcp_rx_tx_for_sockets.clone()) } else { None },
-                                                    rtcp_mux,
-                                                    config.read_buffer_size,
-                                                    start_instant,
-                                                    base_ms,
-                                                );
-                                                per_session_sockets
-                                                    .lock()
-                                                    .await
-                                                    .insert(actual, socket);
-                                                per_session_cancels
-                                                    .lock()
-                                                    .await
-                                                    .insert(actual, socket_cancel);
-                                                per_session_counts
-                                                    .lock()
-                                                    .await
-                                                    .insert(actual, 1);
-                                                actual
-                                            }
-                                            Err(e) => {
-                                                let reason = format!(
-                                                    "failed to bind UDP socket {addr}: {e}"
-                                                );
-                                                if let Some(ack) = ack {
-                                                    let _ = ack.send(Err(reason));
-                                                }
-                                                continue;
-                                            }
-                                        }
                                     }
-                                } else {
-                                    match UdpSocket::bind(addr).await {
-                                        Ok(s) => {
-                                            let actual = s.local_addr().unwrap_or(addr);
-                                            let socket = Arc::new(s);
-                                            let socket_cancel = cancel.child_token();
-                                            spawn_udp_reader(
-                                                socket.clone(),
-                                                socket_cancel.clone(),
-                                                udp_rx_tx.clone(),
-                                                if rtcp_mux { Some(rtcp_rx_tx_for_sockets.clone()) } else { None },
-                                                rtcp_mux,
-                                                config.read_buffer_size,
-                                                start_instant,
-                                                base_ms,
-                                            );
-                                            per_session_sockets
-                                                .lock()
-                                                .await
-                                                .insert(actual, socket);
-                                            per_session_cancels
-                                                .lock()
-                                                .await
-                                                .insert(actual, socket_cancel);
-                                            per_session_counts.lock().await.insert(actual, 1);
-                                            actual
+                                    Err(reason) => {
+                                        if let Some(ack) = ack {
+                                            let _ = ack.send(Err(reason));
                                         }
-                                        Err(e) => {
-                                            let reason = format!(
-                                                "failed to bind UDP socket {addr}: {e}"
-                                            );
-                                            if let Some(ack) = ack {
-                                                let _ = ack.send(Err(reason));
-                                            }
-                                            continue;
-                                        }
+                                        continue;
                                     }
                                 }
                             }
@@ -895,13 +938,22 @@ async fn run_driver_loop(
                         session_bind_addrs
                             .lock()
                             .await
-                            .insert(key, if explicit_bind { Some(actual_addr) } else { None });
+                            .insert(key.clone(), if explicit_bind { Some(actual_addr) } else { None });
+                        session_cancels
+                            .lock()
+                            .await
+                            .entry(key)
+                            .or_insert_with(|| cancel.child_token());
                         inputs.push(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
                     }
                     RtpDriverCommand::CreateClient(spec) => {
                         // If it's a TCP client connect, we need to spin up the connection first
                         if spec.tcp_conn_id.is_none() && spec.connection_type == Some(RtpConnectionType::TcpActive) {
                             // Active TCP Client connect
+                            if !load_limiter.allow_new_session() {
+                                warn!("RTP session limit reached; dropping active TCP connect to {}", spec.destination);
+                                continue;
+                            }
                             let dest = spec.destination;
                             let mut spec_clone = spec.clone();
                             let tcp_writers_clone = tcp_writers.clone();
@@ -909,7 +961,8 @@ async fn run_driver_loop(
                             let tcp_rx_tx_clone = tcp_rx_tx.clone();
                             let cmd_tx_clone = cmd_tx.clone();
                             let cancel_clone = cancel.clone();
-                            let start = start_instant;
+                            let runtime = runtime.clone();
+                            let load_limiter = load_limiter.clone();
                                                 tokio::spawn(async move {
                                 match TcpStream::connect(dest).await {
                                     Ok(stream) => {
@@ -935,6 +988,8 @@ async fn run_driver_loop(
 
                                         // Spawn TCP client reader
                                         let cancel_reader = cancel_clone.child_token();
+                                        let runtime = runtime.clone();
+                                        let load_limiter = load_limiter.clone();
                                         tokio::spawn(async move {
                                             let mut reader = reader;
                                             let mut buf = vec![0u8; config.read_buffer_size];
@@ -946,9 +1001,18 @@ async fn run_driver_loop(
                                                     _ = cancel_reader.cancelled() => break,
                                                     res = reader.read(&mut buf) => {
                                                         match res {
-                                                            Ok(0) => break,
+                                                            Ok(0) => {
+                                                                let now_ms = now_ms(&runtime);
+                                                                let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
+                                                                break;
+                                                            }
                                                             Ok(n) => {
-                                                                let received_at_ms = base_ms + start.elapsed().as_millis() as u64;
+                                                                if !load_limiter.try_consume_bytes(n) {
+                                                                    let now_ms = now_ms(&runtime);
+                                                                    let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
+                                                                    break;
+                                                                }
+                                                                let received_at_ms = now_ms(&runtime);
                                                                 remaining.extend_from_slice(&buf[..n]);
 
                                                                 if !checked_ehome {
@@ -970,14 +1034,14 @@ async fn run_driver_loop(
                                                                     loop {
                                                                         if remaining.len() >= 256 && remaining[0] == 0x01 && remaining[1] == 0x00 && (remaining[2] == 0x01 || remaining[2] == 0x02) {
                                                                             let data = remaining.split_to(256).freeze();
-                                                                            let _ = tcp_rx_tx_clone.send(RtpTcpChunk { conn_id, data, received_at_ms }).await;
+                                                                            let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await;
                                                                             continue;
                                                                         }
                                                                         if remaining.len() >= 4 {
                                                                             let len = u16::from_be_bytes([remaining[2], remaining[3]]) as usize;
                                                                             if remaining.len() >= 4 + len {
                                                                                 let data = remaining.split_to(4 + len).freeze();
-                                                                                let _ = tcp_rx_tx_clone.send(RtpTcpChunk { conn_id, data, received_at_ms }).await;
+                                                                                let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await;
                                                                             } else {
                                                                                 break;
                                                                             }
@@ -998,21 +1062,25 @@ async fn run_driver_loop(
                                                                                 break;
                                                                             }
                                                                             let data = remaining.split_to(4 + len).freeze();
-                                                                            let _ = tcp_rx_tx_clone.send(RtpTcpChunk { conn_id, data, received_at_ms }).await;
+                                                                            let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await;
                                                                         } else if remaining.len() >= 2 {
                                                                             let len = u16::from_be_bytes([remaining[0], remaining[1]]) as usize;
                                                                             if remaining.len() < 2 + len {
                                                                                 break;
                                                                             }
                                                                             let data = remaining.split_to(2 + len).freeze();
-                                                                            let _ = tcp_rx_tx_clone.send(RtpTcpChunk { conn_id, data, received_at_ms }).await;
+                                                                            let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpBytes(RtpTcpChunk { conn_id, data, received_at_ms })).await;
                                                                         } else {
                                                                             break;
                                                                         }
                                                                     }
                                                                 }
                                                             }
-                                                            Err(_) => break,
+                                                            Err(_) => {
+                                                                let now_ms = now_ms(&runtime);
+                                                                let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
+                                                                break;
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -1049,6 +1117,11 @@ async fn run_driver_loop(
                                 }
                             });
                         } else {
+                            session_cancels
+                                .lock()
+                                .await
+                                .entry(spec.session_key.clone())
+                                .or_insert_with(|| cancel.child_token());
                             inputs.push(RtpCoreInput::Command(RtpCoreCommand::CreateClient(spec)));
                         }
                     }
@@ -1056,14 +1129,10 @@ async fn run_driver_loop(
                         inputs.push(RtpCoreInput::Command(RtpCoreCommand::SendFrame(*send_frame)));
                     }
                     RtpDriverCommand::StopSession(key) => {
-                        release_session_socket(
-                            &key,
-                            &session_bind_addrs,
-                            &per_session_counts,
-                            &per_session_sockets,
-                            &per_session_cancels,
-                        )
-                        .await;
+                        if let Some(token) = session_cancels.lock().await.remove(&key) {
+                            token.cancel();
+                        }
+                        release_session_socket(&key, &session_bind_addrs, &port_manager).await;
                         inputs.push(RtpCoreInput::Command(RtpCoreCommand::StopSession(key)));
                     }
                     RtpDriverCommand::UpdateSession {
@@ -1098,8 +1167,8 @@ async fn run_driver_loop(
             Some(datagram) = udp_rx_rx.recv() => {
                 inputs.push(RtpCoreInput::UdpPacket(datagram));
             }
-            Some(chunk) = tcp_rx_rx.recv() => {
-                inputs.push(RtpCoreInput::TcpBytes(chunk));
+            Some(input) = tcp_rx_rx.recv() => {
+                inputs.push(input);
             }
             Some(rtcp) = rtcp_rx_rx.recv() => {
                 inputs.push(RtpCoreInput::RtcpPacket(rtcp));
@@ -1114,20 +1183,46 @@ async fn run_driver_loop(
                         let socket = resolve_udp_socket(
                             &udp_send.session_key,
                             &session_bind_addrs,
-                            &per_session_sockets,
+                            &port_manager,
                             &udp_socket,
                         )
                         .await;
+                        let session_cancel = session_cancels
+                            .lock()
+                            .await
+                            .get(&udp_send.session_key)
+                            .cloned()
+                            .unwrap_or_else(|| fallback.clone());
                         tokio::spawn(async move {
-                            let _ = socket.send_to(&udp_send.data, udp_send.destination).await;
+                            tokio::select! {
+                                _ = session_cancel.cancelled() => {}
+                                result = socket.send_to(&udp_send.data, udp_send.destination) => {
+                                    if let Err(e) = result {
+                                        debug!("UDP send error for {}: {e}", udp_send.session_key);
+                                    }
+                                }
+                            }
                         });
                     }
                     RtpCoreOutput::SendTcp(tcp_send) => {
                         let writers = tcp_writers.clone();
+                        let session_cancel = session_cancels
+                            .lock()
+                            .await
+                            .get(&tcp_send.session_key)
+                            .cloned()
+                            .unwrap_or_else(|| fallback.clone());
                         tokio::spawn(async move {
                             let map = writers.lock().await;
                             if let Some(tx) = map.get(&tcp_send.conn_id) {
-                                let _ = tx.send(tcp_send.data).await;
+                                tokio::select! {
+                                    _ = session_cancel.cancelled() => {}
+                                    result = tx.send(tcp_send.data) => {
+                                        if result.is_err() {
+                                            debug!("TCP writer {} closed", tcp_send.conn_id);
+                                        }
+                                    }
+                                }
                             }
                         });
                     }
@@ -1136,11 +1231,25 @@ async fn run_driver_loop(
                             // TCP RTCP frames are RFC 4571 length-prefixed like RTP so the
                             // peer can delimit the compound packet on the byte stream.
                             let writers = tcp_writers.clone();
+                            let session_key = rtcp_send.session_key.clone();
+                            let session_cancel = session_cancels
+                                .lock()
+                                .await
+                                .get(&session_key)
+                                .cloned()
+                                .unwrap_or_else(|| fallback.clone());
                             let data = cheetah_codec::encode_tcp_rtcp_frame(&rtcp_send.data);
                             tokio::spawn(async move {
                                 let map = writers.lock().await;
                                 if let Some(tx) = map.get(&conn_id) {
-                                    let _ = tx.send(data).await;
+                                    tokio::select! {
+                                        _ = session_cancel.cancelled() => {}
+                                        result = tx.send(data) => {
+                                            if result.is_err() {
+                                                debug!("TCP RTCP writer {conn_id} closed");
+                                            }
+                                        }
+                                    }
                                 }
                             });
                         } else if let Some(rtcp_socket) = rtcp_socket.clone() {
@@ -1150,25 +1259,64 @@ async fn run_driver_loop(
                             let dest = rtcp_send
                                 .rtcp_destination
                                 .unwrap_or_else(|| resolve_rtcp_destination(rtcp_send.destination));
+                            let session_cancel = session_cancels
+                                .lock()
+                                .await
+                                .get(&rtcp_send.session_key)
+                                .cloned()
+                                .unwrap_or_else(|| fallback.clone());
                             tokio::spawn(async move {
-                                let _ = rtcp_socket.send_to(&rtcp_send.data, dest).await;
+                                tokio::select! {
+                                    _ = session_cancel.cancelled() => {}
+                                    result = rtcp_socket.send_to(&rtcp_send.data, dest) => {
+                                        if let Err(e) = result {
+                                            debug!("RTCP send error: {e}");
+                                        }
+                                    }
+                                }
                             });
                         } else {
                             // RTP/RTCP mux: reuse the same UDP socket (or per-session socket).
                             let socket = resolve_udp_socket(
                                 &rtcp_send.session_key,
                                 &session_bind_addrs,
-                                &per_session_sockets,
+                                &port_manager,
                                 &udp_socket,
                             )
                             .await;
                             let dest = rtcp_send.rtcp_destination.unwrap_or(rtcp_send.destination);
+                            let session_cancel = session_cancels
+                                .lock()
+                                .await
+                                .get(&rtcp_send.session_key)
+                                .cloned()
+                                .unwrap_or_else(|| fallback.clone());
                             tokio::spawn(async move {
-                                let _ = socket.send_to(&rtcp_send.data, dest).await;
+                                tokio::select! {
+                                    _ = session_cancel.cancelled() => {}
+                                    result = socket.send_to(&rtcp_send.data, dest) => {
+                                        if let Err(e) = result {
+                                            debug!("RTCP mux send error: {e}");
+                                        }
+                                    }
+                                }
                             });
                         }
                     }
                     RtpCoreOutput::Event(ev) => {
+                        if let RtpCoreEvent::SessionCreated { session_key, .. } = &ev {
+                            load_limiter.session_created();
+                            session_cancels
+                                .lock()
+                                .await
+                                .entry(session_key.clone())
+                                .or_insert_with(|| cancel.child_token());
+                        }
+                        if let RtpCoreEvent::SessionClosed { session_key, .. } = &ev {
+                            if let Some(token) = session_cancels.lock().await.remove(session_key) {
+                                token.cancel();
+                            }
+                        }
                         if let Some((pending_key, ack)) = pending_update_ack.take() {
                             match ev {
                                 RtpCoreEvent::SessionUpdated {
@@ -1205,14 +1353,19 @@ async fn run_driver_loop(
                     }
                     RtpCoreOutput::CloseSession(key) => {
                         debug!("Closing RTP session key: {key}");
-                        release_session_socket(
-                            &key,
-                            &session_bind_addrs,
-                            &per_session_counts,
-                            &per_session_sockets,
-                            &per_session_cancels,
-                        )
-                        .await;
+                        load_limiter.session_closed();
+                        if let Some(token) = session_cancels.lock().await.remove(&key) {
+                            token.cancel();
+                        }
+                        release_session_socket(&key, &session_bind_addrs, &port_manager).await;
+                    }
+                    RtpCoreOutput::CloseTcpConnection { conn_id } => {
+                        debug!("Closing TCP connection: {conn_id}");
+                        // Dropping the writer sender causes the per-connection writer task to
+                        // exit, which closes the write half of the socket and frees the entry.
+                        if let Some(writer_tx) = tcp_writers.lock().await.remove(&conn_id) {
+                            drop(writer_tx);
+                        }
                     }
                 }
             }
@@ -1229,7 +1382,7 @@ mod tests {
     };
     use cheetah_rtp_core::{
         RtpClientSpec, RtpConnectionType, RtpPayloadMode, RtpSendFrame, RtpServerSpec,
-        RtpTrackFilter, RtpTransportMode,
+        RtpSessionCloseReason, RtpTrackFilter, RtpTransportMode,
     };
     use std::time::Duration;
 
@@ -1254,8 +1407,11 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
+            limits: DriverLimits::default(),
         };
 
         let handle = start_driver(config, cancel.clone());
@@ -1340,6 +1496,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_rtp_driver_tcp_passive_half_close_closes_session() {
+        let cancel = CancellationToken::new();
+
+        let temp_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let tcp_addr = temp_tcp.local_addr().unwrap();
+        drop(temp_tcp);
+
+        // We still need a UDP address for the driver, but it won't be used in this test.
+        let temp_udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let udp_addr = temp_udp.local_addr().unwrap();
+        drop(temp_udp);
+
+        let config = RtpDriverConfig {
+            listen_udp: udp_addr,
+            listen_tcp: tcp_addr,
+            listen_rtcp_udp: None,
+            write_queue_capacity: 10,
+            read_buffer_size: 4096,
+            session_idle_timeout_ms: 5000,
+            max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
+            tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
+            max_rtp_len_cap: 65536,
+            limits: DriverLimits::default(),
+        };
+
+        let handle = start_driver(config, cancel.clone());
+
+        // Give the driver a moment to bind its TCP listener.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let mut tcp_stream = tokio::net::TcpStream::connect(tcp_addr).await.unwrap();
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: 1,
+                timestamp: 100,
+                ssrc: 4444,
+                marker: false,
+            },
+            payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0x05, 0x06, 0x07]),
+        };
+        let framed = cheetah_codec::encode_tcp_rtp_frame(&rtp);
+        tcp_stream.write_all(&framed).await.unwrap();
+
+        let event = tokio::time::timeout(Duration::from_secs(5), handle.recv_event())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            event,
+            RtpCoreEvent::SessionCreated { ssrc: 4444, .. }
+        ));
+
+        // Half-close the TCP connection from the client side.
+        tcp_stream.shutdown().await.unwrap();
+
+        let event = tokio::time::timeout(Duration::from_secs(5), handle.recv_event())
+            .await
+            .unwrap()
+            .unwrap();
+        match event {
+            RtpCoreEvent::SessionClosed { reason, .. } => {
+                assert_eq!(reason, RtpSessionCloseReason::ConnectionClosed);
+            }
+            _ => panic!("Expected SessionClosed after TCP half-close, got {event:?}"),
+        }
+
+        cancel.cancel();
+    }
+
+    #[tokio::test]
     async fn test_create_server_binds_and_returns_actual_port() {
         let cancel = CancellationToken::new();
 
@@ -1355,8 +1585,11 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
+            limits: DriverLimits::default(),
         };
 
         let handle = start_driver(config, cancel.clone());
@@ -1443,8 +1676,11 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
+            limits: DriverLimits::default(),
         };
 
         let handle = start_driver(config, cancel.clone());
@@ -1524,8 +1760,11 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
+            limits: DriverLimits::default(),
         };
 
         let handle = start_driver(config, cancel.clone());
@@ -1609,8 +1848,11 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
+            limits: DriverLimits::default(),
         };
 
         let handle = start_driver(config, cancel.clone());
@@ -1679,8 +1921,11 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
+            limits: DriverLimits::default(),
         };
 
         let handle = start_driver(config, cancel.clone());
