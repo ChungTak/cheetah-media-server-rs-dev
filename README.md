@@ -622,10 +622,7 @@ cargo test -p cheetah-rtp-property-tests
 GB28181 相关改动优先跑：
 
 ```bash
-cargo test -p cheetah-gb28181-core
-cargo test -p cheetah-gb28181-driver-tokio
 cargo test -p cheetah-gb28181-module
-cargo test -p cheetah-gb28181-property-tests
 ```
 
 ### 4.2 提交前最低检查

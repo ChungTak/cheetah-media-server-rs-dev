@@ -907,31 +907,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cheetah-gb28181-core"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "md5",
- "serde",
- "serde_json",
- "thiserror",
-]
-
-[[package]]
-name = "cheetah-gb28181-driver-tokio"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "cheetah-codec",
- "cheetah-gb28181-core",
- "cheetah-runtime-api",
- "cheetah-runtime-tokio",
- "parking_lot",
- "tokio",
- "tracing",
-]
-
-[[package]]
 name = "cheetah-gb28181-module"
 version = "0.1.0"
 dependencies = [
@@ -940,16 +915,6 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "cheetah-gb28181-property-tests"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "cheetah-codec",
- "cheetah-gb28181-core",
- "proptest",
 ]
 
 [[package]]
