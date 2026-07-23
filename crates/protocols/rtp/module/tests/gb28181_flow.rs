@@ -9,8 +9,9 @@ use cheetah_sdk::media_api::command::{
     StopRecordRequest,
 };
 use cheetah_sdk::media_api::error::{EffectOutcome, MediaErrorCode};
+use cheetah_sdk::media_api::event::{MediaEvent, SessionClosed, SessionOpened};
 use cheetah_sdk::media_api::ids::RtpSessionId;
-use cheetah_sdk::media_api::model::{OnlineState, RecordTaskState};
+use cheetah_sdk::media_api::model::{CloseReason, OnlineState, RecordTaskState, SessionKind};
 use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
     MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk, PlaybackRange, RtpDirection,
@@ -1808,6 +1809,89 @@ async fn rtp_module_restart_creates_init_starts_and_clears_sessions() {
         )
         .await
         .expect("open receiver after restart");
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_emits_opened_and_closed_media_events() {
+    // Verifies that open_session publishes SessionOpened and stop_session publishes
+    // SessionClosed on the media event bus.
+    let harness = Gb28181TestHarness::start().await;
+    let (_sub, events) = subscribe_media_events(&harness.engine, 16);
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_events", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key.clone(), RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90_000,
+            channels: None,
+            packet_duration_ms: None,
+        })
+        .build();
+    let created = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("open receiver");
+
+    // Wait for the async event dispatch to land in the subscriber.
+    sleep(Duration::from_millis(50)).await;
+    let opened = events.lock().unwrap().iter().find_map(|e| match e {
+        MediaEvent::SessionOpened(SessionOpened {
+            session_id, kind, ..
+        }) if session_id.0 == created.session_id.0 => Some(*kind),
+        _ => None,
+    });
+    assert_eq!(
+        opened,
+        Some(SessionKind::RtpReceiver),
+        "SessionOpened should fire"
+    );
+
+    rtp_api
+        .stop_session(
+            &ctx,
+            StopRtpSession {
+                session_ref: RtpSessionRef {
+                    session_id: created.session_id.clone(),
+                    expected_generation: created.generation,
+                },
+                release_lease: true,
+            },
+        )
+        .await
+        .expect("stop receiver");
+
+    sleep(Duration::from_millis(50)).await;
+    let closed = events.lock().unwrap().iter().find_map(|e| match e {
+        MediaEvent::SessionClosed(SessionClosed {
+            session_id,
+            kind,
+            reason,
+            ..
+        }) if session_id.0 == created.session_id.0 => Some((*kind, reason.clone())),
+        _ => None,
+    });
+    assert_eq!(
+        closed,
+        Some((SessionKind::RtpReceiver, CloseReason::Normal)),
+        "SessionClosed should fire with Normal reason"
+    );
 
     harness.stop().await;
 }

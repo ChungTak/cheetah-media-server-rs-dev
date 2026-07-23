@@ -14,14 +14,15 @@ use cheetah_sdk::media_api::command::{
     RtpSenderRequest, UpdateRtpRequest,
 };
 use cheetah_sdk::media_api::error::{EffectOutcome, MediaError, MediaErrorCode, Result};
+use cheetah_sdk::media_api::event::{EventHeader, MediaEvent, SessionOpened};
 use cheetah_sdk::media_api::fencing::{ControlledResourceRef, ResourceOrigin};
 use cheetah_sdk::media_api::ids::{
     FileHandle, MediaBindingId, MediaKey, MediaNodeInstanceEpoch, MediaSessionId, OwnerEpoch,
-    PlaybackSessionId, ResourceGeneration, RtpSessionId, StreamKeyBridge, TenantId,
+    PlaybackSessionId, ResourceGeneration, RtpSessionId, SessionId, StreamKeyBridge, TenantId,
 };
 use cheetah_sdk::media_api::model::{
     AdmissionAction, AdmissionRequest, Decision, Page, RtpSession, RtpSessionKind,
-    RtpSessionState as OldRtpSessionState, RtpTcpMode,
+    RtpSessionState as OldRtpSessionState, RtpTcpMode, SessionKind,
 };
 use cheetah_sdk::media_api::port::{MediaRequestContext, PlaybackApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
@@ -356,6 +357,33 @@ impl RtpMediaProvider {
             &session_ref.session_id,
             session_ref.expected_generation.0,
         ))
+    }
+
+    fn publish_session_opened(&self, media_key: &MediaKey, descriptor: &RtpSessionDescriptor) {
+        if descriptor.state == RtpSessionState::Stopped {
+            return;
+        }
+        let kind = match descriptor.direction {
+            RtpDirection::Receive => SessionKind::RtpReceiver,
+            RtpDirection::Send | RtpDirection::DuplexTalk => SessionKind::RtpSender,
+            _ => SessionKind::RtpSender,
+        };
+        let now_ms = (self.engine.runtime_api.now().as_micros() / 1000) as i64;
+        let event = MediaEvent::SessionOpened(SessionOpened {
+            header: EventHeader {
+                event_id: format!("rtp-session-opened-{}-{now_ms}", descriptor.session_id.0),
+                occurred_at: now_ms,
+                sequence: None,
+                media_key: Some(media_key.clone()),
+                source: "rtp-module".to_string(),
+                correlation_id: Some(descriptor.session_id.0.clone()),
+            },
+            kind,
+            session_id: SessionId(descriptor.session_id.0.clone()),
+            remote_endpoint: descriptor.endpoints.remote.map(|a| a.to_string()),
+            protocol: "rtp".to_string(),
+        });
+        let _ = self.engine.media_event_bus.publish(event);
     }
 
     fn build_descriptor(
@@ -1022,6 +1050,7 @@ impl RtpMediaProvider {
             .lock()
             .insert(descriptor.session_id.clone(), descriptor.clone());
         guard.commit();
+        self.publish_session_opened(&request.params.media_key, &descriptor);
         Ok(descriptor)
     }
 
@@ -1211,6 +1240,7 @@ impl RtpMediaProvider {
             .lock()
             .insert(descriptor.session_id.clone(), descriptor.clone());
         guard.commit();
+        self.publish_session_opened(&request.params.media_key, &descriptor);
         if let Some((playback, playback_session)) = playback.as_ref().zip(playback_session.as_ref())
         {
             self.playback_sessions.lock().insert(
@@ -1270,6 +1300,7 @@ impl RtpMediaProvider {
             .lock()
             .insert(descriptor.session_id.clone(), descriptor.clone());
         guard.commit();
+        self.publish_session_opened(&request.params.media_key, &descriptor);
         Ok(descriptor)
     }
 }
