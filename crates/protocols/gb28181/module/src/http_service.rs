@@ -198,6 +198,7 @@ impl ModuleHttpService for GbHttpService {
             (HttpMethod::Post, "/recv/create") => {
                 let body: GbRecvRequest = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
+                body.validate()?;
 
                 let ssrc = body.ssrc();
                 let port = body.port(self.default_media_port);
@@ -235,6 +236,7 @@ impl ModuleHttpService for GbHttpService {
             (HttpMethod::Post, "/recv/stop") => {
                 let body: GbStopRequest = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
+                body.validate()?;
 
                 let app = body.base.app;
                 let stream = body.base.stream;
@@ -259,6 +261,7 @@ impl ModuleHttpService for GbHttpService {
             (HttpMethod::Post, "/send/create") => {
                 let body: GbSendRequest = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
+                body.validate()?;
 
                 let app = body.base.app;
                 let stream = body.base.stream;
@@ -296,6 +299,7 @@ impl ModuleHttpService for GbHttpService {
             (HttpMethod::Post, "/send/stop") => {
                 let body: GbStopRequest = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
+                body.validate()?;
 
                 let app = body.base.app;
                 let stream = body.base.stream;
@@ -319,6 +323,7 @@ impl ModuleHttpService for GbHttpService {
             (HttpMethod::Post, "/talk/start") => {
                 let body: GbTalkRequest = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
+                body.validate()?;
 
                 let ssrc = body.ssrc();
                 let local_port = body.local_port(self.default_media_port);
@@ -360,6 +365,7 @@ impl ModuleHttpService for GbHttpService {
             (HttpMethod::Post, "/talk/stop") => {
                 let body: GbStopRequest = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
+                body.validate()?;
 
                 let app = body.base.app;
                 let stream = body.base.stream;
