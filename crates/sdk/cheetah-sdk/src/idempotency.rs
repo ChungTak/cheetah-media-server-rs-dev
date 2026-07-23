@@ -97,6 +97,16 @@ pub enum IdempotencyOutcome {
     Error { message: String },
 }
 
+/// A stored idempotency record containing the canonical request digest and the
+/// final resource/outcome.
+///
+/// 包含 canonical 请求摘要与最终资源/结果的幂等记录。
+#[derive(Debug, Clone, PartialEq)]
+pub struct IdempotencyRecord {
+    pub fingerprint: IdempotencyFingerprint,
+    pub outcome: IdempotencyOutcome,
+}
+
 /// Errors returned by the idempotency repository.
 ///
 /// 幂等仓库返回的错误。
@@ -429,6 +439,29 @@ impl InMemoryIdempotencyRepository {
             }),
             _ => None,
         }
+    }
+
+    /// Return the stored idempotency record for a key, including the canonical
+    /// fingerprint and the terminal outcome.
+    ///
+    /// 返回指定键的完整幂等记录，包括 canonical 指纹与终态结果。
+    pub fn record(&self, key: &IdempotencyKey) -> Option<IdempotencyRecord> {
+        let map = self.inner.lock().unwrap();
+        map.get(key).and_then(|entry| {
+            let outcome = match entry {
+                Entry::Completed { outcome, .. } => IdempotencyOutcome::Success {
+                    resource_id: outcome.resource_id.clone(),
+                },
+                Entry::Error { message, .. } => IdempotencyOutcome::Error {
+                    message: message.clone(),
+                },
+                Entry::InProgress { .. } => return None,
+            };
+            Some(IdempotencyRecord {
+                fingerprint: entry.fingerprint(),
+                outcome,
+            })
+        })
     }
 }
 
