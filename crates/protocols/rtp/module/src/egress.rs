@@ -6,13 +6,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use cheetah_codec::{FrameFlags, MediaKind};
 use cheetah_rtp_core::RtpSendFrame;
 use cheetah_rtp_driver_tokio::{RtpDriverCommand, RtpDriverHandle, RtpSocketReuse};
 use cheetah_sdk::media_api::ids::RtpSessionId;
 use cheetah_sdk::media_api::model::{RtpSessionKind, RtpSessionState};
 use cheetah_sdk::{
-    BootstrapPolicy, CancellationToken, EngineContext, ProtocolEvent, StreamKey, SubscriberOptions,
-    SystemEvent,
+    BackpressurePolicy, BootstrapPolicy, CancellationToken, EngineContext, ProtocolEvent,
+    StreamKey, SubscriberOptions, SystemEvent,
 };
 use futures::{pin_mut, select_biased, FutureExt};
 use parking_lot::Mutex;
@@ -127,6 +128,7 @@ fn bootstrap_policy_for_sessions(
 ///
 /// 订阅引擎流并将每帧扇出到一个或多个 RTP 目标会话。
 /// 首帧成功发送后，每个目标会话进入 Connected 并发布一次 media_online 事件。
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_egress_session(
     engine: EngineContext,
     driver_handle: Arc<RtpDriverHandle>,
@@ -135,6 +137,8 @@ pub(crate) async fn run_egress_session(
     cancel: CancellationToken,
     orchestrator: Option<Arc<RtpSessionOrchestrator>>,
     cleanup: Option<EgressCleanup>,
+    mut subscriber_options: SubscriberOptions,
+    talkback_max_latency_ms: u32,
 ) {
     // The cleanup guard removes the active-egress tracking entry on any exit,
     // including natural completion, cancellation, and errors.
@@ -149,17 +153,24 @@ pub(crate) async fn run_egress_session(
         return;
     };
 
+    let is_talk = orchestrator.as_ref().is_some_and(|o| {
+        let sessions = o.sessions.lock();
+        session_keys.iter().any(|k| {
+            sessions
+                .get(&RtpSessionId(k.clone()))
+                .is_some_and(|s| s.kind == RtpSessionKind::Talk)
+        })
+    });
+
     let bootstrap_policy = bootstrap_policy_for_sessions(orchestrator.as_ref(), &session_keys);
+    subscriber_options.bootstrap_policy = bootstrap_policy;
+    // For talkback, use the supplied bounded queue + drop policy to keep latency low.
+    if is_talk {
+        subscriber_options.backpressure = BackpressurePolicy::DropDroppableFirst;
+    }
     let mut subscriber = match engine
         .subscriber_api
-        .subscribe(
-            stream_key.clone(),
-            SubscriberOptions {
-                queue_capacity: 256,
-                bootstrap_policy,
-                ..Default::default()
-            },
-        )
+        .subscribe(stream_key.clone(), subscriber_options)
         .await
     {
         Ok(s) => s,
@@ -169,6 +180,7 @@ pub(crate) async fn run_egress_session(
         }
     };
 
+    let max_latency_us = (talkback_max_latency_ms as u64) * 1000;
     let mut first_frame = true;
     loop {
         let cancel_fut = cancel.cancelled().fuse();
@@ -207,13 +219,43 @@ pub(crate) async fn run_egress_session(
             }
         }
 
+        // Late/drop policy: talkback audio frames that are older than the configured
+        // latency budget are dropped unless they are key/config frames. This isolates a
+        // slow downstream device from the upstream publisher.
+        if is_talk && max_latency_us > 0 {
+            let now_us = engine.runtime_api.now().as_micros();
+            let age_us = now_us.saturating_sub(frame.pts_us as u64);
+            let droppable =
+                frame.flags.contains(FrameFlags::DROPPABLE) || frame.media_kind == MediaKind::Audio;
+            if age_us > max_latency_us && droppable {
+                warn!(
+                    "Dropping late talkback frame for {} (age {} ms > {} ms)",
+                    stream_key,
+                    age_us / 1000,
+                    talkback_max_latency_ms
+                );
+                continue;
+            }
+        }
+
         // Fan out the same frame to every configured target session.
         for sk in &session_keys {
             let cmd = RtpDriverCommand::SendFrame(Box::new(RtpSendFrame {
                 session_key: sk.clone(),
                 frame: (*frame).clone(),
             }));
-            driver_handle.send_command(cmd).await;
+            if is_talk {
+                // Non-blocking send for talkback: if the driver is saturated, drop the
+                // frame for this target instead of stalling the whole fan-out.
+                if !driver_handle.try_send_command(cmd) {
+                    warn!(
+                        "Driver queue full; dropping talkback frame for session {}",
+                        sk
+                    );
+                }
+            } else {
+                driver_handle.send_command(cmd).await;
+            }
         }
     }
 

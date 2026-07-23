@@ -70,6 +70,18 @@ pub struct RtpModuleConfig {
     /// 对讲允许使用的音频 codec。默认启用 PCMA/PCMU；AAC 必须在能力协商后显式添加。
     #[serde(default = "default_enabled_talk_codecs")]
     pub enabled_talk_codecs: Vec<String>,
+    /// Per-talkback subscriber queue capacity. A smaller queue keeps latency low and lets the
+    /// drop policy shed audio frames when the downstream device is slow.
+    ///
+    /// 对讲订阅队列容量。较小的队列可以降低延迟，并在下游设备慢时让丢弃策略丢弃音频帧。
+    #[serde(default = "default_talkback_queue_capacity")]
+    pub talkback_queue_capacity: usize,
+    /// Maximum acceptable latency for a talkback audio frame in milliseconds. Frames older than
+    /// this are dropped unless they are non-droppable (e.g. key/config frames).
+    ///
+    /// 对讲音频帧最大可接受延迟（毫秒）。超过此值的帧将被丢弃，除非是不可丢弃帧（如关键帧/参数集帧）。
+    #[serde(default = "default_talkback_max_latency_ms")]
+    pub talkback_max_latency_ms: u32,
     /// UDP socket receive buffer (`SO_RCVBUF`). 0 keeps the OS default.
     ///
     /// UDP 套接字接收缓冲区（SO_RCVBUF）。0 保持 OS 默认。
@@ -162,6 +174,8 @@ impl Default for RtpModuleConfig {
             max_rtp_kb: 0,
             g711_packet_duration_ms: default_g711_packet_duration_ms(),
             enabled_talk_codecs: default_enabled_talk_codecs(),
+            talkback_queue_capacity: default_talkback_queue_capacity(),
+            talkback_max_latency_ms: default_talkback_max_latency_ms(),
             udp_recv_buffer: default_udp_recv_buffer(),
             publish_frame_cache_frames: default_publish_frame_cache(),
             save_debug_payload: false,
@@ -226,6 +240,10 @@ impl RtpModuleConfig {
 
         if self.rtcp_report_interval_ms < 1 {
             errors.push("rtcp_report_interval_ms must be >= 1".to_string());
+        }
+
+        if self.talkback_queue_capacity < 1 {
+            errors.push("talkback_queue_capacity must be >= 1".to_string());
         }
 
         match self.tcp_header_type.to_lowercase().as_str() {
@@ -439,6 +457,14 @@ fn default_max_sessions() -> usize {
 
 fn default_enabled_talk_codecs() -> Vec<String> {
     vec!["PCMA".to_string(), "PCMU".to_string()]
+}
+
+fn default_talkback_queue_capacity() -> usize {
+    32
+}
+
+fn default_talkback_max_latency_ms() -> u32 {
+    500
 }
 
 fn default_enabled_profiles() -> Vec<GbMediaCompatibilityProfile> {

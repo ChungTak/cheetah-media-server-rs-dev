@@ -831,3 +831,95 @@ async fn rtp_session_talk_codec_enables_pcma_pcmu_and_rejects_aac_by_default() {
 
     harness.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gb28181_talkback_late_frame_drop_policy() {
+    // Configure a very tight talkback latency budget and a small subscriber queue.
+    // Late audio frames (pts_us in the past) must be dropped instead of being packetized
+    // and sent back to the peer.
+    let harness = Gb28181TestHarness::start_with_rtp_config(
+        "    talkback_max_latency_ms: 1\n    talkback_queue_capacity: 4\n",
+    )
+    .await;
+    let media = harness.media_facade();
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_talk_late", "cam_001", None).unwrap();
+    let request = RtpReceiverRequest {
+        media_key: media_key.clone(),
+        port: Some(0),
+        ip: None,
+        ssrc: Some(SSRC),
+        enable_rtcp: false,
+        tcp_mode: None,
+        payload_type: Some(INGEST_PT),
+        codec_hint: Some("ps".to_string()),
+        reuse_port: false,
+        timeout_ms: 0,
+        source_binding_policy: SourceBindingPolicy::default(),
+    };
+
+    let session = media.open_rtp_receiver(&ctx, request).await.unwrap();
+    let recv_port = session.local_port.unwrap();
+    let recv_addr: SocketAddr = format!("127.0.0.1:{recv_port}").parse().unwrap();
+
+    let socket = bind_udp_socket().await;
+    let src_addr = socket.local_addr().unwrap();
+
+    // Warm up the inbound session with one audio PS packet so the source endpoint is learned.
+    send_rtp(
+        &socket,
+        recv_addr,
+        mux_ps_frame(&make_audio_frame(80)),
+        SSRC,
+        1,
+        0,
+        INGEST_PT,
+    )
+    .await;
+    sleep(Duration::from_millis(200)).await;
+
+    // Upgrade to talkback, echoing audio back to `src_addr`.
+    let talk_request = RtpSenderRequest {
+        media_key,
+        destination_endpoint: src_addr.to_string(),
+        ssrc: Some(SSRC),
+        payload_type: Some(8),
+        codec_hint: Some("raw_audio".to_string()),
+        mode: RtpSenderMode::Talk,
+        transport_options: HashMap::new(),
+        source_binding_policy: SourceBindingPolicy::default(),
+    };
+    media.open_rtp_sender(&ctx, talk_request).await.unwrap();
+
+    // Feed audio frames whose pts_us is 0; they are far behind the current monotonic clock,
+    // so the talkback egress should drop them under the 1 ms latency budget.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let mut seq: u16 = 2;
+    while tokio::time::Instant::now() < deadline {
+        send_rtp(
+            &socket,
+            recv_addr,
+            mux_ps_frame(&make_audio_frame(0)),
+            SSRC,
+            seq,
+            0,
+            INGEST_PT,
+        )
+        .await;
+        seq = seq.wrapping_add(1);
+
+        if let Some((header, _, addr)) = recv_rtp(&socket, Duration::from_millis(100)).await {
+            assert!(
+                !(addr == src_addr && header.payload_type == 8),
+                "late talkback audio frame should have been dropped"
+            );
+        }
+    }
+
+    media
+        .stop_rtp_session(&ctx, &session.session_id)
+        .await
+        .unwrap();
+    harness.stop().await;
+}

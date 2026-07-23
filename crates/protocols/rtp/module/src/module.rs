@@ -24,11 +24,11 @@ use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId};
 use cheetah_sdk::media_api::model::{RtpSessionState, RtpTcpMode};
 use cheetah_sdk::media_api::rtp_session::SourceBindingPolicy;
 use cheetah_sdk::{
-    CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest, HttpResponse,
-    HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
+    BackpressurePolicy, CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest,
+    HttpResponse, HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
     ModuleHttpService, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
     ModuleSchemaRegistration, ModuleState, ProtocolEvent, ProviderRegistration, PublishLease,
-    PublisherOptions, PublisherSink, SdkError, StreamKey, SystemEvent,
+    PublisherOptions, PublisherSink, SdkError, StreamKey, SubscriberOptions, SystemEvent,
 };
 use futures::{pin_mut, select_biased, FutureExt};
 use parking_lot::Mutex;
@@ -1196,6 +1196,10 @@ impl ModuleHttpService for RtpHttpService {
                     let orchestrator = self.orchestrator.clone();
                     let cleanup =
                         EgressCleanup::new(self.active_egress.clone(), session_key.clone());
+                    let subscriber_options = SubscriberOptions {
+                        backpressure: BackpressurePolicy::DropDroppableFirst,
+                        ..Default::default()
+                    };
 
                     runtime_api.spawn(Box::pin(async move {
                         run_egress_session(
@@ -1206,6 +1210,8 @@ impl ModuleHttpService for RtpHttpService {
                             cancel_clone,
                             Some(orchestrator),
                             Some(cleanup),
+                            subscriber_options,
+                            0,
                         )
                         .await;
                     }));
