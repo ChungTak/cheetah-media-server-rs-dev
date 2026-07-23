@@ -146,11 +146,34 @@ impl RtpMediaProvider {
                 params.profile
             )));
         }
+        if !Self::profile_container_compatible(params.profile, params.container) {
+            return Err(MediaError::invalid_argument(format!(
+                "profile {:?} is incompatible with container {:?}",
+                params.profile, params.container
+            )));
+        }
         if self.orchestrator.session_count() >= self.config.max_sessions {
             return Err(MediaError::unavailable("rtp session limit reached")
                 .with_outcome(EffectOutcome::NotApplied));
         }
         Ok(())
+    }
+
+    /// Some profiles imply a specific container; reject obvious mismatches early.
+    fn profile_container_compatible(
+        profile: GbMediaCompatibilityProfile,
+        container: MediaContainer,
+    ) -> bool {
+        match profile {
+            GbMediaCompatibilityProfile::HikvisionEhome => {
+                matches!(container, MediaContainer::Ehome2)
+            }
+            GbMediaCompatibilityProfile::Jtt1078 => {
+                matches!(container, MediaContainer::Jtt1078)
+            }
+            // Other profiles may use the generic PS/TS/ES containers or auto-detect.
+            _ => !matches!(container, MediaContainer::Ehome2 | MediaContainer::Jtt1078),
+        }
     }
 
     /// Normalize a codec name for case-insensitive comparison.
@@ -200,6 +223,8 @@ impl RtpMediaProvider {
             MediaContainer::Ps => Some("ps".to_string()),
             MediaContainer::Ts => Some("ts".to_string()),
             MediaContainer::ElementaryStream => Some("es".to_string()),
+            MediaContainer::Ehome2 => Some("ehome".to_string()),
+            MediaContainer::Jtt1078 => Some("jtt1078".to_string()),
             MediaContainer::AutoDetect | _ => None,
         }
     }
@@ -219,6 +244,8 @@ impl RtpMediaProvider {
                 "ps" => Some("ps".to_string()),
                 "ts" => Some("ts".to_string()),
                 "es" => Some("es".to_string()),
+                "ehome" | "ehome2" => Some("ehome".to_string()),
+                "jtt1078" | "1078" => Some("jtt1078".to_string()),
                 _ => None,
             })
     }

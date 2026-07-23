@@ -102,6 +102,16 @@ pub enum MediaContainer {
     Ts,
     /// Elementary Stream (no PSM).
     ElementaryStream,
+    /// Hikvision Ehome2 framing.
+    ///
+    /// 海康 Ehome2 帧格式。
+    #[serde(rename = "ehome2")]
+    Ehome2,
+    /// JT/T 1078 vehicle streaming container.
+    ///
+    /// JT/T 1078 车载视频流容器。
+    #[serde(rename = "jtt1078")]
+    Jtt1078,
     /// Probe a bounded prefix before deciding.
     AutoDetect,
 }
