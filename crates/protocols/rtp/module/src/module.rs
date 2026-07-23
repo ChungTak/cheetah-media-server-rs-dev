@@ -18,11 +18,13 @@ use cheetah_rtp_core::{
 use cheetah_rtp_driver_tokio::{
     start_driver, DriverLimits, RtpDriverCommand, RtpDriverConfig, RtpDriverHandle,
 };
+use cheetah_sdk::media_api::capability::default_operations;
 use cheetah_sdk::media_api::error::MediaError;
 use cheetah_sdk::media_api::event::{EventHeader, MediaEvent, RtpSessionTimeout};
 use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId};
 use cheetah_sdk::media_api::model::{RtpSessionState, RtpTcpMode};
 use cheetah_sdk::media_api::rtp_session::SourceBindingPolicy;
+use cheetah_sdk::media_api::{MediaCapability, MediaCapabilitySet};
 use cheetah_sdk::{
     BackpressurePolicy, CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest,
     HttpResponse, HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
@@ -106,6 +108,9 @@ pub struct RtpModule {
     client_targets: Arc<Mutex<HashMap<String, Vec<String>>>>,
     media_services_registration: Option<ProviderRegistration>,
     rtp_session_registration: Option<ProviderRegistration>,
+    /// The shared `RtpMediaProvider` is kept so `start()` can re-register the
+    /// `RtpSessionApi` with capabilities that depend on the playback provider.
+    rtp_provider: Option<Arc<RtpMediaProvider>>,
 }
 
 /// `RtpModule` constructor.
@@ -126,6 +131,7 @@ impl RtpModule {
             client_targets: Arc::new(Mutex::new(HashMap::new())),
             media_services_registration: None,
             rtp_session_registration: None,
+            rtp_provider: None,
         }
     }
 }
@@ -210,8 +216,12 @@ impl Module for RtpModule {
                 .register_rtp_with_capabilities(rtp_provider.clone(), rtp_capabilities),
         );
 
-        self.rtp_session_registration =
-            Some(engine.media_services.register_rtp_session(rtp_provider));
+        self.rtp_session_registration = Some(
+            engine
+                .media_services
+                .register_rtp_session(rtp_provider.clone()),
+        );
+        self.rtp_provider = Some(rtp_provider);
         self.state = ModuleState::Initialized;
         Ok(())
     }
@@ -231,6 +241,33 @@ impl Module for RtpModule {
         let config = self.config.clone();
 
         self.state = ModuleState::Running;
+
+        // Re-register the RtpSessionApi with a capability set that reflects the
+        // playback provider. The `control` operation is advertised only when a
+        // playback provider is present and itself advertises `control`.
+        if let Some(rtp_provider) = self.rtp_provider.clone() {
+            let mut capabilities = MediaCapabilitySet::empty();
+            capabilities.add(MediaCapability::RtpSession, 1);
+            let playback_has_control = ctx
+                .media_services
+                .capability_report()
+                .descriptors
+                .iter()
+                .any(|d| {
+                    d.capability == MediaCapability::Playback
+                        && d.operations.contains(&"control".to_string())
+                });
+            if playback_has_control {
+                let mut ops = default_operations(MediaCapability::RtpSession);
+                ops.push("control".to_string());
+                capabilities.set_operations(MediaCapability::RtpSession, ops);
+            }
+            self.rtp_session_registration = Some(
+                ctx.media_services
+                    .register_rtp_session_with_capabilities(rtp_provider, capabilities),
+            );
+        }
+
         // Re-use the cancel token allocated in `init` so the HTTP service (which captured a
         // clone of it at mount time) sees stop signals. We additionally chain the engine's
         // root cancellation by spawning a propagator below.

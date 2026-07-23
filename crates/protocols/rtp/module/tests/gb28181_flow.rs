@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use cheetah_codec::AVFrame;
 use cheetah_sdk::media_api::command::{
-    RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, StartRecordRequest, StopRecordRequest,
+    PlaybackControl, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, StartRecordRequest,
+    StopRecordRequest,
 };
 use cheetah_sdk::media_api::error::{EffectOutcome, MediaErrorCode};
 use cheetah_sdk::media_api::ids::RtpSessionId;
@@ -14,9 +15,9 @@ use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
     MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk, PlaybackRange, RtpDirection,
     RtpPayloadBinding, RtpSessionParamsBuilder, RtpSessionQuery, RtpSessionRef, RtpTransport,
-    SourceBindingPolicy, StopRtpSession,
+    SourceBindingPolicy, StopRtpSession, UpdateRtpSession,
 };
-use cheetah_sdk::media_api::{MediaKey, MediaRequestContext};
+use cheetah_sdk::media_api::{MediaCapabilitySet, MediaKey, MediaRequestContext};
 use cheetah_sdk::StreamKey;
 use tokio::time::{sleep, timeout};
 
@@ -1166,4 +1167,127 @@ async fn gb28181_playback_sender_reads_from_playback_api_and_emits_rtp() {
     assert_eq!(fake.stop_count(), 1);
 
     harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn playback_control_update_is_allowed_when_provider_advertises_control() {
+    let fake = FakePlayback::default();
+    let mut playback_caps = MediaCapabilitySet::empty();
+    playback_caps.add(cheetah_sdk::media_api::MediaCapability::Playback, 1);
+    let harness =
+        Gb28181TestHarness::start_with_playback(Arc::new(fake.clone()), playback_caps, "").await;
+
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+    let media_key = MediaKey::with_default_vhost("live", "pb", None).expect("media key");
+    let request = OpenRtpSender {
+        params: RtpSessionParamsBuilder::new(media_key, RtpDirection::Send)
+            .transport(RtpTransport::Udp)
+            .remote_endpoint(SocketAddr::from(([127, 0, 0, 1], 30001)))
+            .ssrc(SSRC)
+            .payload_binding(RtpPayloadBinding {
+                payload_type: 100,
+                codec: "H264".to_string(),
+                clock_rate: 90_000,
+                channels: None,
+                packet_duration_ms: None,
+            })
+            .record_source("recordings/cam_001/20250721.mp4")
+            .build(),
+        playback_range: Some(PlaybackRange {
+            start_ms: 0,
+            end_ms: Some(60_000),
+        }),
+    };
+
+    let session = rtp_api
+        .open_sender(&ctx, request)
+        .await
+        .expect("open playback sender");
+
+    let update = UpdateRtpSession {
+        session_ref: RtpSessionRef {
+            session_id: session.session_id,
+            expected_generation: session.generation,
+        },
+        payload_bindings: None,
+        source_binding_policy: None,
+        remote_endpoint: None,
+        max_rebind_attempts: None,
+        max_probe_bytes: None,
+        pause_check: None,
+        playback_control: Some(PlaybackControl::Pause),
+    };
+    rtp_api
+        .update_session(&ctx, update)
+        .await
+        .expect("pause playback");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn playback_control_update_is_rejected_when_provider_lacks_control() {
+    let fake = FakePlayback::default();
+    let mut playback_caps = MediaCapabilitySet::empty();
+    playback_caps.add_with_operations(
+        cheetah_sdk::media_api::MediaCapability::Playback,
+        1,
+        vec!["open".to_string(), "get".to_string(), "list".to_string()],
+    );
+    let harness =
+        Gb28181TestHarness::start_with_playback(Arc::new(fake.clone()), playback_caps, "").await;
+
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+    let media_key = MediaKey::with_default_vhost("live", "pb", None).expect("media key");
+    let request = OpenRtpSender {
+        params: RtpSessionParamsBuilder::new(media_key, RtpDirection::Send)
+            .transport(RtpTransport::Udp)
+            .remote_endpoint(SocketAddr::from(([127, 0, 0, 1], 30002)))
+            .ssrc(SSRC)
+            .payload_binding(RtpPayloadBinding {
+                payload_type: 100,
+                codec: "H264".to_string(),
+                clock_rate: 90_000,
+                channels: None,
+                packet_duration_ms: None,
+            })
+            .record_source("recordings/cam_001/20250721.mp4")
+            .build(),
+        playback_range: Some(PlaybackRange {
+            start_ms: 0,
+            end_ms: Some(60_000),
+        }),
+    };
+
+    let session = rtp_api
+        .open_sender(&ctx, request)
+        .await
+        .expect("open playback sender");
+
+    let update = UpdateRtpSession {
+        session_ref: RtpSessionRef {
+            session_id: session.session_id,
+            expected_generation: session.generation,
+        },
+        payload_bindings: None,
+        source_binding_policy: None,
+        remote_endpoint: None,
+        max_rebind_attempts: None,
+        max_probe_bytes: None,
+        pause_check: None,
+        playback_control: Some(PlaybackControl::Pause),
+    };
+    let err = rtp_api
+        .update_session(&ctx, update)
+        .await
+        .expect_err("pause should fail without control capability");
+    assert_eq!(err.code, MediaErrorCode::Unsupported);
 }

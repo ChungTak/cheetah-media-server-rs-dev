@@ -12,6 +12,7 @@ use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::command::PlaybackControl;
 use crate::error::EffectOutcome;
 use crate::fencing::ControlledResourceRef;
 use crate::ids::{MediaKey, RtpSessionId};
@@ -319,6 +320,11 @@ pub struct UpdateRtpSession {
     pub max_probe_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pause_check: Option<bool>,
+    /// Playback control command (pause/resume/seek/scale). Only applied when the
+    /// session was opened with a playback source and the playback provider
+    /// advertises the `control` operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playback_control: Option<PlaybackControl>,
 }
 
 /// Reference to an RTP session used for get/update/stop.
