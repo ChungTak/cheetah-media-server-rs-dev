@@ -226,6 +226,7 @@ impl RtpSessionOrchestrator {
         reuse_port: bool,
         state: RtpSessionState,
         source_binding_policy: SourceBindingPolicy,
+        packet_duration_ms: Option<u32>,
     ) -> Result<RtpSession> {
         let driver = self.driver()?;
         let spec = RtpServerSpec {
@@ -233,6 +234,7 @@ impl RtpSessionOrchestrator {
             ssrc,
             payload_mode,
             transport_mode,
+            packet_duration_ms,
             connection_type,
             source_policy: Some(Self::map_source_policy(source_binding_policy)),
             track_filter,
@@ -276,6 +278,7 @@ impl RtpSessionOrchestrator {
         connection_type: Option<RtpConnectionType>,
         track_filter: RtpTrackFilter,
         source_binding_policy: SourceBindingPolicy,
+        packet_duration_ms: Option<u32>,
     ) -> Result<RtpSession> {
         let driver = self.driver()?;
         let session_id = RtpSessionId(session_key.clone());
@@ -299,6 +302,7 @@ impl RtpSessionOrchestrator {
             ssrc: ssrc.unwrap_or(0),
             payload_mode,
             transport_mode,
+            packet_duration_ms,
             tcp_conn_id: None,
             connection_type,
             source_policy: Some(Self::map_source_policy(source_binding_policy)),
@@ -360,6 +364,7 @@ impl RtpSessionOrchestrator {
             request.reuse_port,
             state,
             request.source_binding_policy,
+            None,
         )
         .await
     }
@@ -419,6 +424,7 @@ impl RtpSessionOrchestrator {
             ssrc,
             payload_mode,
             transport_mode: RtpTransportMode::RecvOnly,
+            packet_duration_ms: None,
             tcp_conn_id: None,
             connection_type,
             source_policy: None,
@@ -515,8 +521,21 @@ impl RtpSessionOrchestrator {
     ///
     /// 通过领域请求打开 RTP 发送端。
     pub async fn open_rtp_sender(&self, request: RtpSenderRequest) -> Result<RtpSession> {
+        self.open_rtp_sender_with_duration(request, None).await
+    }
+
+    /// Open an RTP sender with an explicit audio packet duration hint.
+    ///
+    /// 用显式音频包时长提示打开 RTP 发送端。
+    pub async fn open_rtp_sender_with_duration(
+        &self,
+        request: RtpSenderRequest,
+        packet_duration_ms: Option<u32>,
+    ) -> Result<RtpSession> {
         if request.mode == RtpSenderMode::Talk {
-            return self.open_rtp_talk(request).await;
+            return self
+                .open_rtp_talk_with_duration(request, packet_duration_ms)
+                .await;
         }
 
         let session_key = Self::session_key_from_media_key(&request.media_key, "send");
@@ -538,6 +557,7 @@ impl RtpSessionOrchestrator {
             connection_type,
             RtpTrackFilter::All,
             request.source_binding_policy,
+            packet_duration_ms,
         )
         .await
     }
@@ -546,6 +566,18 @@ impl RtpSessionOrchestrator {
     ///
     /// 将现有入站会话升级为双向对讲音频。
     pub async fn open_rtp_talk(&self, request: RtpSenderRequest) -> Result<RtpSession> {
+        self.open_rtp_talk_with_duration(request, None).await
+    }
+
+    /// Upgrade an existing inbound session to bidirectional talkback audio with an
+    /// explicit audio packet duration hint.
+    ///
+    /// 将现有入站会话升级为双向对讲音频，并携带显式音频包时长提示。
+    pub async fn open_rtp_talk_with_duration(
+        &self,
+        request: RtpSenderRequest,
+        packet_duration_ms: Option<u32>,
+    ) -> Result<RtpSession> {
         let recv_key = Self::session_key_from_media_key(&request.media_key, "recv");
         let id = RtpSessionId(recv_key.clone());
 
@@ -584,6 +616,7 @@ impl RtpSessionOrchestrator {
             ssrc,
             payload_mode,
             transport_mode: RtpTransportMode::SendRecv,
+            packet_duration_ms,
             tcp_conn_id: None,
             connection_type: Some(RtpConnectionType::VoiceTalk),
             source_policy: Some(Self::map_source_policy(request.source_binding_policy)),

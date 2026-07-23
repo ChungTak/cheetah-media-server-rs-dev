@@ -71,6 +71,15 @@ pub(crate) struct RtpSession {
     pub(super) destination: Option<SocketAddr>,
     pub(super) tcp_conn_id: Option<u64>,
     pub(super) next_seq: u16,
+    /// Next RTP timestamp to use for the first packet of the next raw-audio frame.
+    /// Keeps G.711 talkback timestamps continuous across frames.
+    ///
+    /// 下一帧原始音频第一个 RTP 包应使用的时间戳；保证 G.711 对讲跨帧连续。
+    pub(super) next_timestamp: Option<u32>,
+    /// Target audio packet duration in milliseconds when packetizing raw audio.
+    ///
+    /// 原始音频打包时的目标包时长（毫秒）。
+    pub(super) packet_duration_ms: Option<u32>,
     pub(super) peer_ssrc: u32,
 
     // Statistics

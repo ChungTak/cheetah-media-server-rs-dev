@@ -50,6 +50,7 @@ async fn test_send_frame_delivers_udp_rtp_to_peer() {
         ssrc,
         payload_mode: RtpPayloadMode::Ps,
         transport_mode: RtpTransportMode::SendOnly,
+        packet_duration_ms: None,
         tcp_conn_id: None,
         connection_type: Some(RtpConnectionType::UdpActive),
         source_policy: None,

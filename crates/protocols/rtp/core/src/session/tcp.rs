@@ -67,6 +67,8 @@ impl RtpCore {
                                 destination: None,
                                 tcp_conn_id: Some(chunk.conn_id),
                                 next_seq: 0,
+                                next_timestamp: None,
+                                packet_duration_ms: None,
                                 peer_ssrc: ssrc,
                                 packets_received: 0,
                                 bytes_received: 0,

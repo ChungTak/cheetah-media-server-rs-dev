@@ -183,6 +183,8 @@ impl RtpCore {
                     destination: None,
                     tcp_conn_id: None,
                     next_seq: 1,
+                    next_timestamp: None,
+                    packet_duration_ms: spec.packet_duration_ms,
                     peer_ssrc: ssrc,
                     packets_received: 0,
                     bytes_received: 0,
@@ -231,6 +233,7 @@ impl RtpCore {
                         session.transport_mode = spec.transport_mode;
                         session.egress_track_filter = spec.track_filter;
                         session.egress_payload_mode = spec.payload_mode;
+                        session.packet_duration_ms = spec.packet_duration_ms;
                         session.destination = Some(spec.destination);
                         if let Some(old) = session.transition_to(RtpSessionState::Talk) {
                             outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SessionStateChanged {
@@ -267,6 +270,8 @@ impl RtpCore {
                     destination: Some(spec.destination),
                     tcp_conn_id: spec.tcp_conn_id,
                     next_seq: 1,
+                    next_timestamp: None,
+                    packet_duration_ms: spec.packet_duration_ms,
                     peer_ssrc: spec.ssrc,
                     packets_received: 0,
                     bytes_received: 0,
@@ -331,8 +336,6 @@ impl RtpCore {
                         }
                     };
                     let rtp_clock = cheetah_codec::RtpClock { rate: clock_rate };
-                    let timestamp = rtp_clock.micros_to_ticks(send_frame.frame.pts_us);
-                    session.rtcp.on_sent(timestamp);
 
                     let payload_type =
                         match (session.egress_payload_mode, send_frame.frame.media_kind) {
@@ -352,6 +355,22 @@ impl RtpCore {
                             _ => 97,
                         };
 
+                    let is_raw_audio = session.egress_payload_mode == RtpPayloadMode::RawAudio
+                        && send_frame.frame.media_kind == cheetah_codec::MediaKind::Audio
+                        && matches!(
+                            send_frame.frame.codec,
+                            cheetah_codec::CodecId::G711U | cheetah_codec::CodecId::G711A
+                        );
+
+                    let timestamp = if is_raw_audio {
+                        session
+                            .next_timestamp
+                            .unwrap_or_else(|| rtp_clock.micros_to_ticks(send_frame.frame.pts_us))
+                    } else {
+                        rtp_clock.micros_to_ticks(send_frame.frame.pts_us)
+                    };
+                    session.rtcp.on_sent(timestamp);
+
                     let rtp_header = RtpHeader {
                         version: 2,
                         payload_type,
@@ -361,7 +380,28 @@ impl RtpCore {
                         marker: false,
                     };
 
-                    let packets = cheetah_codec::packetize_payload(payload, 1400, rtp_header);
+                    let packets: Vec<cheetah_codec::RtpPacket> = if is_raw_audio {
+                        let packet_duration_ms = session.packet_duration_ms.unwrap_or(20).max(1);
+                        let sample_rate = clock_rate;
+                        cheetah_codec::packetize_g711(
+                            payload,
+                            sample_rate,
+                            packet_duration_ms,
+                            rtp_header,
+                        )
+                    } else {
+                        cheetah_codec::packetize_payload(payload, 1400, rtp_header)
+                    };
+
+                    if is_raw_audio {
+                        if let Some(last) = packets.last() {
+                            session.next_timestamp = Some(
+                                last.header
+                                    .timestamp
+                                    .wrapping_add(last.payload.len() as u32),
+                            );
+                        }
+                    }
                     let packet_count = packets.len() as u16;
                     for pkt in packets {
                         let encoded = pkt.encode();
