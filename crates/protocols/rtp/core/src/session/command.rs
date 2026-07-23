@@ -1,5 +1,6 @@
 use cheetah_codec::{RtpHeader, RtpPayloadMode, RtpReorderBuffer, RtpReorderSettings};
 
+use crate::error::RtpCoreDiagnostic;
 use crate::rtcp_report::{default_clock_rate_hz, RtcpReportState};
 use crate::types::*;
 
@@ -470,6 +471,20 @@ impl RtpCore {
             }
             RtpCoreCommand::StopSession(key) => {
                 self.close_session(key, RtpSessionCloseReason::Stopped, outputs);
+            }
+            RtpCoreCommand::ReportSendFailure {
+                session_key,
+                reason,
+            } => {
+                outputs.push(RtpCoreOutput::Diagnostic(RtpCoreDiagnostic::SendFailed {
+                    session_key: session_key.clone(),
+                    reason: reason.clone(),
+                }));
+                self.close_session(
+                    session_key,
+                    RtpSessionCloseReason::ConnectionClosed,
+                    outputs,
+                );
             }
             RtpCoreCommand::PauseCheck {
                 session_key,

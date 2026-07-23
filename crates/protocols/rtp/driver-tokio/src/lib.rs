@@ -1211,12 +1211,19 @@ async fn run_driver_loop(
                             .get(&udp_send.session_key)
                             .cloned()
                             .unwrap_or_else(|| fallback.clone());
+                        let core_input_tx = tcp_rx_tx.clone();
                         tokio::spawn(async move {
                             tokio::select! {
                                 _ = session_cancel.cancelled() => {}
                                 result = socket.send_to(&udp_send.data, udp_send.destination) => {
                                     if let Err(e) = result {
                                         debug!("UDP send error for {}: {e}", udp_send.session_key);
+                                        let _ = core_input_tx.send(RtpCoreInput::Command(
+                                            RtpCoreCommand::ReportSendFailure {
+                                                session_key: udp_send.session_key,
+                                                reason: e.to_string(),
+                                            }
+                                        )).await;
                                     }
                                 }
                             }
@@ -1230,14 +1237,22 @@ async fn run_driver_loop(
                             .get(&tcp_send.session_key)
                             .cloned()
                             .unwrap_or_else(|| fallback.clone());
+                        let core_input_tx = tcp_rx_tx.clone();
                         tokio::spawn(async move {
                             let map = writers.lock().await;
                             if let Some(tx) = map.get(&tcp_send.conn_id) {
+                                let session_key = tcp_send.session_key.clone();
                                 tokio::select! {
                                     _ = session_cancel.cancelled() => {}
                                     result = tx.send(tcp_send.data) => {
                                         if result.is_err() {
                                             debug!("TCP writer {} closed", tcp_send.conn_id);
+                                            let _ = core_input_tx.send(RtpCoreInput::Command(
+                                                RtpCoreCommand::ReportSendFailure {
+                                                    session_key,
+                                                    reason: "tcp writer closed".to_string(),
+                                                }
+                                            )).await;
                                         }
                                     }
                                 }
@@ -1257,6 +1272,7 @@ async fn run_driver_loop(
                                 .cloned()
                                 .unwrap_or_else(|| fallback.clone());
                             let data = cheetah_codec::encode_tcp_rtcp_frame(&rtcp_send.data);
+                            let core_input_tx = tcp_rx_tx.clone();
                             tokio::spawn(async move {
                                 let map = writers.lock().await;
                                 if let Some(tx) = map.get(&conn_id) {
@@ -1265,6 +1281,12 @@ async fn run_driver_loop(
                                         result = tx.send(data) => {
                                             if result.is_err() {
                                                 debug!("TCP RTCP writer {conn_id} closed");
+                                                let _ = core_input_tx.send(RtpCoreInput::Command(
+                                                    RtpCoreCommand::ReportSendFailure {
+                                                        session_key,
+                                                        reason: "tcp rtcp writer closed".to_string(),
+                                                    }
+                                                )).await;
                                             }
                                         }
                                     }
@@ -1283,12 +1305,19 @@ async fn run_driver_loop(
                                 .get(&rtcp_send.session_key)
                                 .cloned()
                                 .unwrap_or_else(|| fallback.clone());
+                            let core_input_tx = tcp_rx_tx.clone();
                             tokio::spawn(async move {
                                 tokio::select! {
                                     _ = session_cancel.cancelled() => {}
                                     result = rtcp_socket.send_to(&rtcp_send.data, dest) => {
                                         if let Err(e) = result {
                                             debug!("RTCP send error: {e}");
+                                            let _ = core_input_tx.send(RtpCoreInput::Command(
+                                                RtpCoreCommand::ReportSendFailure {
+                                                    session_key: rtcp_send.session_key,
+                                                    reason: e.to_string(),
+                                                }
+                                            )).await;
                                         }
                                     }
                                 }
@@ -1309,12 +1338,19 @@ async fn run_driver_loop(
                                 .get(&rtcp_send.session_key)
                                 .cloned()
                                 .unwrap_or_else(|| fallback.clone());
+                            let core_input_tx = tcp_rx_tx.clone();
                             tokio::spawn(async move {
                                 tokio::select! {
                                     _ = session_cancel.cancelled() => {}
                                     result = socket.send_to(&rtcp_send.data, dest) => {
                                         if let Err(e) = result {
                                             debug!("RTCP mux send error: {e}");
+                                            let _ = core_input_tx.send(RtpCoreInput::Command(
+                                                RtpCoreCommand::ReportSendFailure {
+                                                    session_key: rtcp_send.session_key,
+                                                    reason: e.to_string(),
+                                                }
+                                            )).await;
                                         }
                                     }
                                 }

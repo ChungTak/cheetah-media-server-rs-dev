@@ -102,6 +102,11 @@ pub enum RtpCoreDiagnostic {
     /// 入站 RTP 负载超过配置的 `max_rtp_len_cap`。该包仍被路由，但会通过此诊断通知运维。
     /// 对应 ABL 动态 `nMaxRtpLength` 学习器，用于在出现巨大关键帧时自适应最大帧大小。
     OversizedPayload { ssrc: u32, len: usize, cap: usize },
+
+    /// The driver failed to send an outbound packet for the given session.
+    ///
+    /// 驱动层未能发送会话的出站包。
+    SendFailed { session_key: String, reason: String },
 }
 
 impl fmt::Display for RtpCoreDiagnostic {
@@ -148,6 +153,12 @@ impl fmt::Display for RtpCoreDiagnostic {
             }
             Self::OversizedPayload { ssrc, len, cap } => {
                 write!(f, "oversized RTP payload from SSRC {ssrc}: {len} > {cap}")
+            }
+            Self::SendFailed {
+                session_key,
+                reason,
+            } => {
+                write!(f, "send failed for session {session_key}: {reason}")
             }
         }
     }
