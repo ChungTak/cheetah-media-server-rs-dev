@@ -74,6 +74,7 @@ impl Gb28181TestHarness {
         engine.start().await.expect("start engine");
 
         sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
 
         Self { engine, temp_dir }
     }
@@ -100,8 +101,10 @@ impl Gb28181TestHarness {
 
         engine.start().await.expect("start engine");
 
-        // Give the RTP driver a moment to bind its default sockets.
+        // Give the RTP driver a moment to bind its default sockets and let the
+        // ingress worker task start before test logic runs.
         sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await;
 
         Self { engine, temp_dir }
     }

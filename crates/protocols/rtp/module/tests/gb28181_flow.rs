@@ -1581,6 +1581,135 @@ async fn rtp_receiver_fails_when_stream_already_has_publisher_lease() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_open_replays_final_resource_after_response_loss() {
+    // Simulates the client losing the first response and retrying with the same
+    // idempotency key. The second call must return the exact final descriptor
+    // without creating a duplicate session/port.
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext {
+        idempotency_key: Some("response-loss-key-1".to_string()),
+        ..Default::default()
+    };
+
+    let media_key = MediaKey::with_default_vhost("gb28181_idem", "response_loss", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90_000,
+            channels: None,
+            packet_duration_ms: None,
+        })
+        .build();
+    let request = OpenRtpReceiver {
+        params,
+        playback_range: None,
+    };
+
+    let first = rtp_api
+        .open_receiver(&ctx, request.clone())
+        .await
+        .expect("first open");
+
+    // "Lose" the response and retry with the same key.
+    let replay = rtp_api
+        .open_receiver(&ctx, request)
+        .await
+        .expect("replay after response loss");
+
+    assert_eq!(first.session_id, replay.session_id);
+    assert_eq!(first.generation, replay.generation);
+    assert_eq!(first.resource_ref, replay.resource_ref);
+    assert_eq!(first, replay);
+
+    // Only a single session should exist; no duplicate port allocation happened.
+    let page = rtp_api
+        .list_sessions(&MediaRequestContext::default(), RtpSessionQuery::default())
+        .await
+        .expect("list sessions");
+    assert_eq!(
+        page.items
+            .iter()
+            .filter(|d| d.session_id == first.session_id)
+            .count(),
+        1,
+        "response-loss replay must not create duplicate sessions"
+    );
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_open_conflicts_when_request_digest_differs() {
+    // Same idempotency key with a different canonical request digest must be
+    // rejected as a conflict, proving the repository keeps the canonical digest.
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext {
+        idempotency_key: Some("digest-conflict-key-1".to_string()),
+        ..Default::default()
+    };
+
+    let media_key = MediaKey::with_default_vhost("gb28181_idem", "digest_conflict", None).unwrap();
+    let params_a = RtpSessionParamsBuilder::new(media_key.clone(), RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90_000,
+            channels: None,
+            packet_duration_ms: None,
+        })
+        .build();
+    let request_a = OpenRtpReceiver {
+        params: params_a,
+        playback_range: None,
+    };
+
+    let _ = rtp_api
+        .open_receiver(&ctx, request_a)
+        .await
+        .expect("first open with digest A");
+
+    // Change a media parameter so the canonical digest differs.
+    let params_b = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: 101,
+            codec: "PS".to_string(),
+            clock_rate: 90_000,
+            channels: None,
+            packet_duration_ms: None,
+        })
+        .build();
+    let request_b = OpenRtpReceiver {
+        params: params_b,
+        playback_range: None,
+    };
+
+    let err = rtp_api
+        .open_receiver(&ctx, request_b)
+        .await
+        .expect_err("same key with different digest should conflict");
+    assert_eq!(err.code, MediaErrorCode::Conflict);
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn rtp_module_restart_creates_init_starts_and_clears_sessions() {
     // Verifies the base layer stops, recreates, re-initializes and restarts the
     // RTP module, and that the module re-registers the typed RtpSessionApi.
