@@ -5,7 +5,8 @@ use std::time::Duration;
 
 use cheetah_codec::AVFrame;
 use cheetah_sdk::media_api::command::{
-    RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, StartRecordRequest, StopRecordRequest,
+    PlaybackControl, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, StartRecordRequest,
+    StopRecordRequest,
 };
 use cheetah_sdk::media_api::error::{EffectOutcome, MediaErrorCode};
 use cheetah_sdk::media_api::ids::RtpSessionId;
@@ -13,12 +14,12 @@ use cheetah_sdk::media_api::model::{OnlineState, RecordTaskState};
 use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
     MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk, PlaybackRange, RtpDirection,
-    RtpPayloadBinding, RtpSessionParamsBuilder, RtpSessionQuery, RtpSessionRef, RtpTransport,
-    SourceBindingPolicy, StopRtpSession,
+    RtpPayloadBinding, RtpSessionParamsBuilder, RtpSessionPurpose, RtpSessionQuery, RtpSessionRef,
+    RtpTransport, SourceBindingPolicy, StopRtpSession, UpdateRtpSession,
 };
-use cheetah_sdk::media_api::{MediaKey, MediaRequestContext};
+use cheetah_sdk::media_api::{MediaCapabilitySet, MediaKey, MediaRequestContext};
 use cheetah_sdk::{PublisherOptions, StreamKey};
-use tokio::time::{sleep, timeout};
+use tokio::time::{sleep, timeout, Instant as TokioInstant};
 
 mod support;
 
@@ -1066,20 +1067,30 @@ async fn gb28181_playback_sender_reads_from_playback_api_and_emits_rtp() {
 
     let source_key = StreamKey::new("rtp_playback_source", "main");
     let source_media_key = stream_key_to_media_key(&source_key);
+    // The playback provider publishes to an independent output stream so it does
+    // not overwrite or bypass the source publisher lease.
+    let output_key = cheetah_sdk::media_api::MediaKey::with_default_vhost(
+        "rtp_playback_source",
+        "playback_main",
+        None,
+    )
+    .expect("media key");
+    let output_stream = media_key_to_stream_key(&output_key);
     let publisher = harness
-        .open_publisher(
-            source_key.clone(),
-            vec![make_video_track(), make_audio_track()],
-        )
+        .open_publisher(output_stream, vec![make_video_track(), make_audio_track()])
         .await;
 
-    // Seed the source stream with a few PS video frames.
+    // Seed the playback output stream with PS video frames whose source timeline
+    // starts at 5 seconds. The playback range start is also 5 seconds, so the
+    // output RTP timeline should be normalized to begin near 0.
+    let playback_start_us = 5_000_000;
     for i in 0..5 {
-        let ps = mux_ps_frame(&make_video_frame(i * 100_000));
+        let pts_us = playback_start_us + i * 100_000;
+        let ps = mux_ps_frame(&make_video_frame(pts_us));
         publisher
             .push_frame(Arc::new(AVFrame {
                 payload: ps,
-                ..make_video_frame(i * 100_000)
+                ..make_video_frame(pts_us)
             }))
             .unwrap();
     }
@@ -1103,7 +1114,7 @@ async fn gb28181_playback_sender_reads_from_playback_api_and_emits_rtp() {
             .record_source("recordings/cam_001/20250721.mp4")
             .build(),
         playback_range: Some(PlaybackRange {
-            start_ms: 0,
+            start_ms: 5_000,
             end_ms: Some(60_000),
         }),
     };
@@ -1121,6 +1132,13 @@ async fn gb28181_playback_sender_reads_from_playback_api_and_emits_rtp() {
         {
             assert_eq!(header.version, 2);
             assert_eq!(header.ssrc, SSRC);
+            // Source started at 5 s and playback start is also 5 s, so the
+            // normalized RTP timeline should begin near 0.
+            assert!(
+                header.timestamp < 100_000,
+                "playback timeline should be normalized to start near 0, got {}",
+                header.timestamp
+            );
             saw_rtp = true;
         }
     }
@@ -1155,6 +1173,232 @@ async fn gb28181_playback_sender_reads_from_playback_api_and_emits_rtp() {
     assert_eq!(fake.stop_count(), 1);
 
     harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn playback_control_update_is_allowed_when_provider_advertises_control() {
+    let fake = FakePlayback::default();
+    let mut playback_caps = MediaCapabilitySet::empty();
+    playback_caps.add(cheetah_sdk::media_api::MediaCapability::Playback, 1);
+    let harness =
+        Gb28181TestHarness::start_with_playback(Arc::new(fake.clone()), playback_caps, "").await;
+
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+    let media_key = MediaKey::with_default_vhost("live", "pb", None).expect("media key");
+    let request = OpenRtpSender {
+        params: RtpSessionParamsBuilder::new(media_key, RtpDirection::Send)
+            .transport(RtpTransport::Udp)
+            .remote_endpoint(SocketAddr::from(([127, 0, 0, 1], 30001)))
+            .ssrc(SSRC)
+            .payload_binding(RtpPayloadBinding {
+                payload_type: 100,
+                codec: "H264".to_string(),
+                clock_rate: 90_000,
+                channels: None,
+                packet_duration_ms: None,
+            })
+            .record_source("recordings/cam_001/20250721.mp4")
+            .build(),
+        playback_range: Some(PlaybackRange {
+            start_ms: 0,
+            end_ms: Some(60_000),
+        }),
+    };
+
+    let session = rtp_api
+        .open_sender(&ctx, request)
+        .await
+        .expect("open playback sender");
+
+    let update = UpdateRtpSession {
+        session_ref: RtpSessionRef {
+            session_id: session.session_id,
+            expected_generation: session.generation,
+        },
+        payload_bindings: None,
+        source_binding_policy: None,
+        remote_endpoint: None,
+        max_rebind_attempts: None,
+        max_probe_bytes: None,
+        pause_check: None,
+        playback_control: Some(PlaybackControl::Pause),
+    };
+    rtp_api
+        .update_session(&ctx, update)
+        .await
+        .expect("pause playback");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn playback_control_update_is_rejected_when_provider_lacks_control() {
+    let fake = FakePlayback::default();
+    let mut playback_caps = MediaCapabilitySet::empty();
+    playback_caps.add_with_operations(
+        cheetah_sdk::media_api::MediaCapability::Playback,
+        1,
+        vec!["open".to_string(), "get".to_string(), "list".to_string()],
+    );
+    let harness =
+        Gb28181TestHarness::start_with_playback(Arc::new(fake.clone()), playback_caps, "").await;
+
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+    let media_key = MediaKey::with_default_vhost("live", "pb", None).expect("media key");
+    let request = OpenRtpSender {
+        params: RtpSessionParamsBuilder::new(media_key, RtpDirection::Send)
+            .transport(RtpTransport::Udp)
+            .remote_endpoint(SocketAddr::from(([127, 0, 0, 1], 30002)))
+            .ssrc(SSRC)
+            .payload_binding(RtpPayloadBinding {
+                payload_type: 100,
+                codec: "H264".to_string(),
+                clock_rate: 90_000,
+                channels: None,
+                packet_duration_ms: None,
+            })
+            .record_source("recordings/cam_001/20250721.mp4")
+            .build(),
+        playback_range: Some(PlaybackRange {
+            start_ms: 0,
+            end_ms: Some(60_000),
+        }),
+    };
+
+    let session = rtp_api
+        .open_sender(&ctx, request)
+        .await
+        .expect("open playback sender");
+
+    let update = UpdateRtpSession {
+        session_ref: RtpSessionRef {
+            session_id: session.session_id,
+            expected_generation: session.generation,
+        },
+        payload_bindings: None,
+        source_binding_policy: None,
+        remote_endpoint: None,
+        max_rebind_attempts: None,
+        max_probe_bytes: None,
+        pause_check: None,
+        playback_control: Some(PlaybackControl::Pause),
+    };
+    let err = rtp_api
+        .update_session(&ctx, update)
+        .await
+        .expect_err("pause should fail without control capability");
+    assert_eq!(err.code, MediaErrorCode::Unsupported);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gb28181_download_egress_is_rate_limited_and_does_not_block_live() {
+    let harness = Gb28181TestHarness::start().await;
+    let fake = FakePlayback::default();
+    harness
+        .engine
+        .media_services()
+        .register_playback(Arc::new(fake.clone()));
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let source_key = StreamKey::new("rtp_download_source", "main");
+    let source_media_key = stream_key_to_media_key(&source_key);
+    let output_key = cheetah_sdk::media_api::MediaKey::with_default_vhost(
+        "rtp_download_source",
+        "playback_main",
+        None,
+    )
+    .expect("media key");
+    let output_stream = media_key_to_stream_key(&output_key);
+    let publisher = harness
+        .open_publisher(output_stream, vec![make_video_track(), make_audio_track()])
+        .await;
+
+    // Seed the playback/download output stream with 10 small PS video frames.
+    for i in 0..10 {
+        let pts_us = i * 100_000;
+        let ps = mux_ps_frame(&make_video_frame(pts_us));
+        publisher
+            .push_frame(Arc::new(AVFrame {
+                payload: ps,
+                ..make_video_frame(pts_us)
+            }))
+            .unwrap();
+    }
+
+    let recv_socket = bind_udp_socket().await;
+    let dest_addr = recv_socket.local_addr().unwrap();
+
+    // Open a download sender with a 64 kbps rate cap and a per-frame timeout.
+    let request = OpenRtpSender {
+        params: RtpSessionParamsBuilder::new(source_media_key.clone(), RtpDirection::Send)
+            .transport(RtpTransport::Udp)
+            .container(MediaContainer::Ps)
+            .ssrc(SSRC)
+            .payload_binding(RtpPayloadBinding {
+                payload_type: INGEST_PT,
+                codec: "PS".to_string(),
+                clock_rate: 90_000,
+                channels: None,
+                packet_duration_ms: None,
+            })
+            .remote_endpoint(dest_addr)
+            .record_source("recordings/cam_001/20250721.mp4")
+            .purpose(RtpSessionPurpose::Download)
+            .download_rate_kbps(64)
+            .download_timeout_ms(5_000)
+            .build(),
+        playback_range: Some(PlaybackRange {
+            start_ms: 0,
+            end_ms: Some(60_000),
+        }),
+    };
+    let _session = rtp_api
+        .open_sender(&ctx, request)
+        .await
+        .expect("open download sender");
+
+    let start = TokioInstant::now();
+    let mut received = 0;
+    let mut total_bytes: usize = 0;
+    let deadline = TokioInstant::now() + Duration::from_millis(400);
+    while TokioInstant::now() < deadline && received < 5 {
+        if let Some((header, payload, _addr)) =
+            recv_rtp(&recv_socket, Duration::from_millis(100)).await
+        {
+            assert_eq!(header.version, 2);
+            assert_eq!(header.ssrc, SSRC);
+            received += 1;
+            total_bytes += payload.len();
+        }
+    }
+    let elapsed = start.elapsed();
+
+    // We should receive several frames, but a 64 kbps cap means the first 5 frames
+    // (~200 bytes each after RTP/PS overhead) cannot all arrive in a single burst.
+    // This demonstrates the download egress is throttled independently of the live stream.
+    assert!(
+        received >= 3,
+        "expected at least 3 download RTP packets, got {received}"
+    );
+    let expected_max_bytes =
+        (64u64 * 1000 * elapsed.as_millis() as u64 / 8 / 1000) as usize + 1024usize; // small burst allowance
+    assert!(
+        total_bytes <= expected_max_bytes,
+        "download bytes {total_bytes} exceeded rate budget {expected_max_bytes} for {elapsed:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -6,11 +6,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cheetah_codec::{FrameFlags, MediaKind};
+use cheetah_codec::{FrameFlags, FrameSideData, MediaKind, MonoTime, Timebase};
 use cheetah_rtp_core::RtpSendFrame;
 use cheetah_rtp_driver_tokio::{RtpDriverCommand, RtpDriverHandle, RtpSocketReuse};
 use cheetah_sdk::media_api::ids::RtpSessionId;
 use cheetah_sdk::media_api::model::{RtpSessionKind, RtpSessionState};
+use cheetah_sdk::media_api::rtp_session::PlaybackRange;
 use cheetah_sdk::{
     BackpressurePolicy, BootstrapPolicy, CancellationToken, EngineContext, ProtocolEvent,
     StreamKey, SubscriberOptions, SystemEvent,
@@ -121,6 +122,32 @@ fn bootstrap_policy_for_sessions(
     BootstrapPolicy::live_tail(150, None)
 }
 
+/// Per-download egress controls.
+///
+/// 每个下载出站的控制参数。
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct DownloadOptions {
+    pub rate_kbps: u32,
+    pub timeout_ms: u32,
+    pub queue_capacity: usize,
+    pub backpressure: BackpressurePolicy,
+    pub bootstrap_policy: BootstrapPolicy,
+}
+
+impl Default for DownloadOptions {
+    fn default() -> Self {
+        Self {
+            rate_kbps: 0,
+            timeout_ms: 0,
+            queue_capacity: 1024,
+            backpressure: BackpressurePolicy::DropUntilNextKeyframe,
+            // Downloads start from the earliest available keyframe so the whole
+            // requested range can be pulled without racing the live tail.
+            bootstrap_policy: BootstrapPolicy::full_gop(150, None),
+        }
+    }
+}
+
 /// Subscribe to an engine stream and fan out frames to one or more RTP target sessions.
 ///
 /// On the first successfully delivered frame, every target session is promoted to
@@ -139,7 +166,8 @@ pub(crate) async fn run_egress_session(
     cleanup: Option<EgressCleanup>,
     mut subscriber_options: SubscriberOptions,
     talkback_max_latency_ms: u32,
-    playback_end_ms: Option<i64>,
+    playback_range: Option<PlaybackRange>,
+    download_options: Option<DownloadOptions>,
 ) {
     // The cleanup guard removes the active-egress tracking entry on any exit,
     // including natural completion, cancellation, and errors.
@@ -166,8 +194,14 @@ pub(crate) async fn run_egress_session(
     let bootstrap_policy = bootstrap_policy_for_sessions(orchestrator.as_ref(), &session_keys);
     subscriber_options.bootstrap_policy = bootstrap_policy;
     // For talkback, use the supplied bounded queue + drop policy to keep latency low.
+    // For download, set an independent queue capacity and backpressure policy so a
+    // slow consumer does not block the live dispatcher.
     if is_talk {
         subscriber_options.backpressure = BackpressurePolicy::DropDroppableFirst;
+    } else if let Some(opts) = download_options {
+        subscriber_options.queue_capacity = opts.queue_capacity;
+        subscriber_options.backpressure = opts.backpressure;
+        subscriber_options.bootstrap_policy = opts.bootstrap_policy;
     }
     let mut subscriber = match engine
         .subscriber_api
@@ -182,14 +216,50 @@ pub(crate) async fn run_egress_session(
     };
 
     let max_latency_us = (talkback_max_latency_ms as u64) * 1000;
+    let playback_start_us = playback_range
+        .as_ref()
+        .map(|r| r.start_ms.saturating_mul(1000))
+        .unwrap_or(0);
+    let playback_end_us = playback_range
+        .as_ref()
+        .and_then(|r| (r.end_ms?).checked_mul(1000));
+
+    // Download token-bucket rate limiter. `tokens` and `last_send_us` are kept in
+    // bytes and microseconds.
+    let download_rate_kbps = download_options.map(|o| o.rate_kbps).unwrap_or(0);
+    let download_timeout_ms = download_options.map(|o| o.timeout_ms).unwrap_or(0);
+    let download_rate_bps = u64::from(download_rate_kbps) * 1000;
+    let mut token_bucket_tokens: u64 = 0;
+    let mut token_bucket_last_send_us: u64 = engine.runtime_api.now().as_micros();
+    let token_bucket_capacity: u64 = if download_rate_bps > 0 {
+        // One second of data, capped at 1 MiB to limit burst.
+        (download_rate_bps / 8).min(1024 * 1024)
+    } else {
+        0
+    };
+
     let mut first_frame = true;
     loop {
+        let now_us = engine.runtime_api.now().as_micros();
+        let timeout_us = if download_timeout_ms > 0 {
+            u64::from(download_timeout_ms) * 1000
+        } else {
+            u64::MAX
+        };
+        let timeout_deadline = MonoTime::from_micros(now_us.saturating_add(timeout_us));
+        let mut timeout_timer = engine.runtime_api.sleep_until(timeout_deadline);
+
         let cancel_fut = cancel.cancelled().fuse();
         let frame_fut = subscriber.recv().fuse();
-        pin_mut!(cancel_fut, frame_fut);
+        let timeout_fut = timeout_timer.wait().fuse();
+        pin_mut!(cancel_fut, frame_fut, timeout_fut);
 
-        let frame = select_biased! {
+        let mut frame = select_biased! {
             _ = cancel_fut => break,
+            _ = timeout_fut => {
+                warn!("Download egress timeout waiting for frame on {}", stream_key);
+                break;
+            }
             res = frame_fut => match res {
                 Ok(Some(f)) => f,
                 Ok(None) | Err(_) => break,
@@ -223,8 +293,8 @@ pub(crate) async fn run_egress_session(
         // Playback range end: stop the egress once the frame presentation time reaches
         // or exceeds the requested end. The driver session is stopped so the receiver
         // sees a normal close rather than an abrupt socket teardown.
-        if let Some(end_ms) = playback_end_ms {
-            if end_ms >= 0 && frame.pts_us >= end_ms.saturating_mul(1000) {
+        if let Some(end_us) = playback_end_us {
+            if frame.pts_us >= end_us {
                 if let Some(o) = orchestrator.as_ref() {
                     for sk in &session_keys {
                         let _ = o.stop_rtp_session(&RtpSessionId(sk.clone())).await;
@@ -232,6 +302,67 @@ pub(crate) async fn run_egress_session(
                 }
                 break;
             }
+        }
+
+        // Playback timeline normalization: shift timestamps so the output RTP timeline
+        // starts from 0 (or the requested start) and grows monotonically. The original
+        // source time is preserved as frame side data for logging/A/V sync.
+        if playback_range.is_some() {
+            let frame = Arc::make_mut(&mut frame);
+            let source_pts_us = frame.pts_us;
+            let source_dts_us = frame.dts_us;
+            let pts_us = source_pts_us.saturating_sub(playback_start_us).max(0);
+            let dts_us = source_dts_us.saturating_sub(playback_start_us).max(0);
+            frame.pts_us = pts_us;
+            frame.dts_us = dts_us;
+            frame.pts = Timebase::from_micros(frame.timebase, pts_us);
+            frame.dts = Timebase::from_micros(frame.timebase, dts_us);
+            frame.side_data.push(FrameSideData::Metadata {
+                key: "playback.source_pts_us".to_string(),
+                value: source_pts_us.to_string(),
+            });
+            frame.side_data.push(FrameSideData::Metadata {
+                key: "playback.start_us".to_string(),
+                value: playback_start_us.to_string(),
+            });
+        }
+
+        // Download rate limiter: throttle egress to the configured kilobit rate using a
+        // token bucket. This keeps a download from saturating the link and stalling live
+        // traffic. `download_rate_kbps == 0` means unlimited.
+        if download_rate_bps > 0 {
+            let frame_bytes = frame.payload.len() as u64;
+            let now_us = engine.runtime_api.now().as_micros();
+            let elapsed_us = now_us.saturating_sub(token_bucket_last_send_us);
+            let added = elapsed_us.saturating_mul(download_rate_bps) / 8_000_000;
+            token_bucket_tokens = token_bucket_tokens
+                .saturating_add(added)
+                .min(token_bucket_capacity);
+
+            if frame_bytes > token_bucket_tokens {
+                let deficit = frame_bytes.saturating_sub(token_bucket_tokens);
+                let wait_us = deficit.saturating_mul(8_000_000) / download_rate_bps;
+                if sleep_or_cancel(
+                    engine.runtime_api.as_ref(),
+                    &cancel,
+                    Duration::from_micros(wait_us),
+                )
+                .await
+                {
+                    break;
+                }
+                let after_wait_us = engine.runtime_api.now().as_micros();
+                let elapsed_after_wait = after_wait_us.saturating_sub(token_bucket_last_send_us);
+                token_bucket_tokens = token_bucket_tokens
+                    .saturating_add(
+                        elapsed_after_wait.saturating_mul(download_rate_bps) / 8_000_000,
+                    )
+                    .min(token_bucket_capacity);
+                token_bucket_last_send_us = after_wait_us;
+            } else {
+                token_bucket_last_send_us = now_us;
+            }
+            token_bucket_tokens = token_bucket_tokens.saturating_sub(frame_bytes);
         }
 
         // Late/drop policy: talkback audio frames that are older than the configured
