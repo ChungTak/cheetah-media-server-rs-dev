@@ -43,6 +43,7 @@ use serde::Serialize;
 use crate::config::RtpModuleConfig;
 use crate::egress::{run_egress_session, ActiveEgressMap, DownloadOptions, EgressCleanup};
 use crate::orchestrator::RtpSessionOrchestrator;
+use crate::rate_limit::{rate_limit_key, RateLimiter};
 use crate::rollback::RollbackGuard;
 
 type PlaybackSessionMap =
@@ -57,6 +58,8 @@ pub struct RtpMediaProvider {
     engine: EngineContext,
     module_cancel: CancellationToken,
     config: RtpModuleConfig,
+    /// Per-principal sliding-window rate limiter for media API mutations.
+    rate_limiter: RateLimiter,
     /// Active sender egress tasks keyed by session key so `stop_rtp_session` can cancel them.
     active_senders: ActiveEgressMap,
     /// Per-session typed descriptors carrying parameters not present in the legacy `RtpSession`.
@@ -76,11 +79,13 @@ impl RtpMediaProvider {
         module_cancel: CancellationToken,
         config: RtpModuleConfig,
     ) -> Self {
+        let rate_limit = config.request_rate_limit_per_minute;
         Self {
             orchestrator,
             engine,
             module_cancel,
             config,
+            rate_limiter: RateLimiter::new(60_000_000, rate_limit),
             active_senders: ActiveEgressMap::default(),
             rtp_descriptors: Arc::new(Mutex::new(HashMap::new())),
             playback_sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -125,6 +130,12 @@ impl RtpMediaProvider {
             Ok(Decision::Deny { code, reason }) => Err(MediaError::new(code, reason)),
             Err(e) => Err(e),
         }
+    }
+
+    /// Check the per-principal request rate limit before processing a mutation.
+    fn check_rate_limit(&self, ctx: &MediaRequestContext) -> Result<()> {
+        let now = self.engine.runtime_api.now();
+        self.rate_limiter.check(&rate_limit_key(ctx), now)
     }
 
     /// Enforce per-module capability/profile and session limits before allocating a session.
@@ -704,6 +715,7 @@ impl RtpSessionApi for RtpMediaProvider {
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.check_rate_limit(ctx)?;
 
         let session = self
             .orchestrator
@@ -824,6 +836,7 @@ impl RtpSessionApi for RtpMediaProvider {
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.check_rate_limit(ctx)?;
 
         match self
             .orchestrator
@@ -1025,6 +1038,7 @@ impl RtpMediaProvider {
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.check_rate_limit(ctx)?;
         self.admit(
             ctx,
             AdmissionAction::OpenRtpReceiver,
@@ -1148,6 +1162,7 @@ impl RtpMediaProvider {
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.check_rate_limit(ctx)?;
         self.admit(
             ctx,
             AdmissionAction::OpenRtpSender,
@@ -1258,6 +1273,7 @@ impl RtpMediaProvider {
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.check_rate_limit(ctx)?;
         self.admit(
             ctx,
             AdmissionAction::OpenRtpSender,
