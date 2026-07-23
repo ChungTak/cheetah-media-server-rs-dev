@@ -15,6 +15,7 @@ use cheetah_sdk::CancellationToken;
 use tracing::debug;
 
 use crate::egress::ActiveEgressMap;
+use crate::metrics::RtpModuleMetrics;
 use crate::orchestrator::RtpSessionOrchestrator;
 
 pub(crate) struct RollbackGuard {
@@ -23,6 +24,7 @@ pub(crate) struct RollbackGuard {
     session_id: RtpSessionId,
     egress_cancel: Option<(ActiveEgressMap, CancellationToken)>,
     playback_stop: Option<(Arc<dyn PlaybackApi>, PlaybackSessionId)>,
+    metrics: Option<Arc<RtpModuleMetrics>>,
     committed: bool,
 }
 
@@ -31,6 +33,7 @@ impl RollbackGuard {
         orchestrator: Arc<RtpSessionOrchestrator>,
         runtime_api: Arc<dyn RuntimeApi>,
         session_id: RtpSessionId,
+        metrics: Option<Arc<RtpModuleMetrics>>,
     ) -> Self {
         Self {
             orchestrator,
@@ -38,6 +41,7 @@ impl RollbackGuard {
             session_id,
             egress_cancel: None,
             playback_stop: None,
+            metrics,
             committed: false,
         }
     }
@@ -72,6 +76,9 @@ impl Drop for RollbackGuard {
     fn drop(&mut self) {
         if self.committed {
             return;
+        }
+        if let Some(metrics) = self.metrics.take() {
+            metrics.inc_rollback();
         }
         if let Some((active_senders, cancel)) = self.egress_cancel.take() {
             cancel.cancel();

@@ -83,6 +83,7 @@ impl RtpMediaProvider {
         config: RtpModuleConfig,
     ) -> Self {
         let rate_limit = config.request_rate_limit_per_minute;
+        let metrics = RtpModuleMetrics::new(Some(engine.metrics_api.clone()));
         Self {
             orchestrator,
             engine,
@@ -92,7 +93,7 @@ impl RtpMediaProvider {
             active_senders: ActiveEgressMap::default(),
             rtp_descriptors: Arc::new(Mutex::new(HashMap::new())),
             playback_sessions: Arc::new(Mutex::new(HashMap::new())),
-            metrics: RtpModuleMetrics::new(),
+            metrics,
         }
     }
 
@@ -101,7 +102,8 @@ impl RtpMediaProvider {
     ///
     /// 返回指标快照，活跃会话仪表盘使用编排器的实时会话计数。
     pub fn metrics_snapshot(&self) -> RtpModuleMetricsSnapshot {
-        self.metrics.snapshot(self.orchestrator.session_count() as u64)
+        self.metrics
+            .snapshot(self.orchestrator.session_count() as u64)
     }
 
     /// Return the orchestrator so the module can share the same instance with
@@ -150,10 +152,11 @@ impl RtpMediaProvider {
     /// Check the per-principal request rate limit before processing a mutation.
     fn check_rate_limit(&self, ctx: &MediaRequestContext) -> Result<()> {
         let now = self.engine.runtime_api.now();
-        self.rate_limiter.check(&rate_limit_key(ctx), now).map_err(|e| {
+        let result = self.rate_limiter.check(&rate_limit_key(ctx), now);
+        if result.is_err() {
             self.metrics.inc_rate_limited();
-            e
-        })
+        }
+        result
     }
 
     /// Validate the cluster mutation context when present.
@@ -738,14 +741,23 @@ impl RtpSessionApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: OpenRtpReceiver,
     ) -> Result<RtpSessionDescriptor> {
+        self.metrics.inc_session_requested();
         let fingerprint = Self::request_fingerprint(&request)?;
-        self.idempotent_open(ctx, "open_rtp_receiver", fingerprint, || {
-            let provider = self.clone();
-            let ctx = ctx.clone();
-            let request = request.clone();
-            async move { provider.open_receiver_impl(&ctx, request).await }
-        })
-        .await
+        let result = self
+            .idempotent_open(ctx, "open_rtp_receiver", fingerprint, || {
+                let provider = self.clone();
+                let ctx = ctx.clone();
+                let request = request.clone();
+                async move { provider.open_receiver_impl(&ctx, request).await }
+            })
+            .await;
+        match &result {
+            Ok(_) => self
+                .metrics
+                .inc_session_opened(self.orchestrator.session_count() as u64),
+            Err(_) => self.metrics.inc_session_failed(),
+        }
+        result
     }
 
     async fn open_sender(
@@ -753,14 +765,23 @@ impl RtpSessionApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: OpenRtpSender,
     ) -> Result<RtpSessionDescriptor> {
+        self.metrics.inc_session_requested();
         let fingerprint = Self::request_fingerprint(&request)?;
-        self.idempotent_open(ctx, "open_rtp_sender", fingerprint, || {
-            let provider = self.clone();
-            let ctx = ctx.clone();
-            let request = request.clone();
-            async move { provider.open_sender_impl(&ctx, request).await }
-        })
-        .await
+        let result = self
+            .idempotent_open(ctx, "open_rtp_sender", fingerprint, || {
+                let provider = self.clone();
+                let ctx = ctx.clone();
+                let request = request.clone();
+                async move { provider.open_sender_impl(&ctx, request).await }
+            })
+            .await;
+        match &result {
+            Ok(_) => self
+                .metrics
+                .inc_session_opened(self.orchestrator.session_count() as u64),
+            Err(_) => self.metrics.inc_session_failed(),
+        }
+        result
     }
 
     async fn open_talk(
@@ -768,14 +789,23 @@ impl RtpSessionApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: OpenRtpTalk,
     ) -> Result<RtpSessionDescriptor> {
+        self.metrics.inc_session_requested();
         let fingerprint = Self::request_fingerprint(&request)?;
-        self.idempotent_open(ctx, "open_rtp_talk", fingerprint, || {
-            let provider = self.clone();
-            let ctx = ctx.clone();
-            let request = request.clone();
-            async move { provider.open_talk_impl(&ctx, request).await }
-        })
-        .await
+        let result = self
+            .idempotent_open(ctx, "open_rtp_talk", fingerprint, || {
+                let provider = self.clone();
+                let ctx = ctx.clone();
+                let request = request.clone();
+                async move { provider.open_talk_impl(&ctx, request).await }
+            })
+            .await;
+        match &result {
+            Ok(_) => self
+                .metrics
+                .inc_session_opened(self.orchestrator.session_count() as u64),
+            Err(_) => self.metrics.inc_session_failed(),
+        }
+        result
     }
 
     async fn update_session(
@@ -946,6 +976,8 @@ impl RtpSessionApi for RtpMediaProvider {
                 if let Some((playback, playback_id)) = playback_pair {
                     let _ = playback.stop_playback(ctx, &playback_id).await;
                 }
+                self.metrics
+                    .inc_session_closed(self.orchestrator.session_count() as u64);
                 Ok(EffectOutcome::Applied)
             }
             Err(e) => Err(self.enrich_error(e, ctx, &request.session_ref)),
@@ -1130,6 +1162,7 @@ impl RtpMediaProvider {
             self.orchestrator.clone(),
             self.engine.runtime_api.clone(),
             session.session_id.clone(),
+            Some(self.metrics.clone()),
         );
         let mut descriptor = self.build_descriptor(ctx, &session, None)?;
         self.apply_request_overrides(&mut descriptor, &request.params);
@@ -1316,6 +1349,7 @@ impl RtpMediaProvider {
             self.orchestrator.clone(),
             self.engine.runtime_api.clone(),
             session.session_id.clone(),
+            Some(self.metrics.clone()),
         )
         .with_egress_cancel(self.active_senders.clone(), cancel);
         if let Some((playback, playback_session)) = playback.as_ref().zip(playback_session.as_ref())
@@ -1378,6 +1412,7 @@ impl RtpMediaProvider {
             self.orchestrator.clone(),
             self.engine.runtime_api.clone(),
             session.session_id.clone(),
+            Some(self.metrics.clone()),
         )
         .with_egress_cancel(self.active_senders.clone(), cancel);
         let mut descriptor = self.build_descriptor(ctx, &session, None)?;

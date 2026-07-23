@@ -2352,3 +2352,79 @@ async fn rtp_session_cluster_mutation_context_is_validated() {
 
     harness.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_module_metrics_record_open_close_and_active_gauge() {
+    // Verifies that `RtpMediaProvider` increments engine metrics counters for
+    // session lifecycle events and keeps the active-session gauge in sync.
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let metrics_api = harness.engine.metrics_api();
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_metrics", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90_000,
+            channels: None,
+            packet_duration_ms: None,
+        })
+        .build();
+
+    let created = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("open receiver");
+
+    let rendered = metrics_api.render();
+    assert!(
+        rendered.contains("rtp_sessions_requested_total 1"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("rtp_sessions_opened_total 1"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("rtp_sessions_active 1"), "{rendered}");
+    assert!(
+        !rendered.contains("rtp_sessions_failed_total 1"),
+        "{rendered}"
+    );
+
+    rtp_api
+        .stop_session(
+            &ctx,
+            StopRtpSession {
+                session_ref: RtpSessionRef {
+                    session_id: created.session_id,
+                    expected_generation: created.generation,
+                },
+                release_lease: true,
+            },
+        )
+        .await
+        .expect("stop receiver");
+
+    let rendered = metrics_api.render();
+    assert!(
+        rendered.contains("rtp_sessions_closed_total 1"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("rtp_sessions_active 0"), "{rendered}");
+
+    harness.stop().await;
+}
