@@ -1,4 +1,4 @@
-use cheetah_codec::{RtpHeader, RtpPayloadMode};
+use cheetah_codec::{RtpHeader, RtpPayloadMode, RtpReorderBuffer, RtpReorderSettings};
 
 use crate::rtcp_report::{default_clock_rate_hz, RtcpReportState};
 use crate::types::*;
@@ -6,6 +6,7 @@ use crate::types::*;
 use super::{state::*, RtpCore};
 
 impl RtpCore {
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_update_session(
         &mut self,
         session_key: RtpSessionKey,
@@ -13,6 +14,7 @@ impl RtpCore {
         ssrc: Option<u32>,
         payload_type: Option<u8>,
         pause_check: Option<bool>,
+        source_policy: Option<RtpSourcePolicy>,
         outputs: &mut Vec<RtpCoreOutput>,
     ) {
         let Some(mut session) = self.sessions.remove(&session_key) else {
@@ -23,7 +25,11 @@ impl RtpCore {
             return;
         };
 
-        if ssrc.is_none() && payload_type.is_none() && pause_check.is_none() {
+        if ssrc.is_none()
+            && payload_type.is_none()
+            && pause_check.is_none()
+            && source_policy.is_none()
+        {
             self.sessions.insert(session_key.clone(), session);
             outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SessionUpdateFailed {
                 session_key,
@@ -91,6 +97,15 @@ impl RtpCore {
             }
         }
 
+        let mut result_source_policy: Option<RtpSourcePolicy> = None;
+        if let Some(policy) = source_policy {
+            if session.source_policy != policy {
+                session.source_policy = policy;
+                changed = true;
+                result_source_policy = Some(policy);
+            }
+        }
+
         if changed {
             session.generation += 1;
             session.updated_at_ms = self.now_ms;
@@ -105,6 +120,7 @@ impl RtpCore {
             ssrc: result_ssrc,
             payload_type,
             pause_check: result_pause,
+            source_policy: result_source_policy,
         }));
     }
 
@@ -156,7 +172,12 @@ impl RtpCore {
                     check_paused: false,
                     demuxer: SessionDemuxer::Pending,
                     last_seq: None,
+                    last_received_seq: None,
+                    reorder: RtpReorderBuffer::new(RtpReorderSettings::default()),
                     source_addr: None,
+                    source_policy: spec.source_policy.unwrap_or_default(),
+                    source_spoof_count: 0,
+                    source_rebind_count: 0,
                     rtcp_source_addr: None,
                     last_activity_ms: 0,
                     destination: None,
@@ -235,7 +256,12 @@ impl RtpCore {
                     check_paused: false,
                     demuxer: SessionDemuxer::Pending,
                     last_seq: None,
+                    last_received_seq: None,
+                    reorder: RtpReorderBuffer::new(RtpReorderSettings::default()),
                     source_addr: None,
+                    source_policy: spec.source_policy.unwrap_or_default(),
+                    source_spoof_count: 0,
+                    source_rebind_count: 0,
                     rtcp_source_addr: None,
                     last_activity_ms: 0,
                     destination: Some(spec.destination),
@@ -383,6 +409,7 @@ impl RtpCore {
                 ssrc,
                 payload_type,
                 pause_check,
+                source_policy,
             } => {
                 self.handle_update_session(
                     session_key,
@@ -390,6 +417,7 @@ impl RtpCore {
                     ssrc,
                     payload_type,
                     pause_check,
+                    source_policy,
                     outputs,
                 );
             }

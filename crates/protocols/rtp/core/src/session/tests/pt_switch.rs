@@ -1,4 +1,27 @@
 use super::*;
+use cheetah_codec::{FrameFlags, PsMuxer, TrackReadiness};
+
+fn ps_payload(pts: i64) -> Bytes {
+    let mut muxer = PsMuxer::new();
+    let mut track = TrackInfo::new(TrackId(0xE0), MediaKind::Video, CodecId::H264, 90_000);
+    track.readiness = TrackReadiness::Ready;
+    muxer.add_track(track);
+
+    let mut payload = vec![0, 0, 0, 1, 0x67, 0x42, 0, 0x0A];
+    payload.extend_from_slice(b"frame");
+    let mut frame = AVFrame::new(
+        TrackId(0xE0),
+        MediaKind::Video,
+        CodecId::H264,
+        FrameFormat::CanonicalH26x,
+        pts,
+        pts,
+        Timebase::new(1, 90_000),
+        Bytes::from(payload),
+    );
+    frame.flags.insert(FrameFlags::KEY);
+    muxer.mux(&frame).expect("mux PS frame")
+}
 
 #[test]
 fn test_format_changed_on_resolvable_pt_switch() {
@@ -368,4 +391,106 @@ fn test_long_unknown_pt_burst_is_tolerated_before_returning_to_locked_pt() {
     };
     let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
     assert!(core.sessions.contains_key("live/6001"));
+}
+
+#[test]
+fn test_unknown_pt_payload_is_not_fed_to_ps_demuxer() {
+    let mut core = RtpCore::new(10, 30_000);
+
+    let session_key = "test/ps-skip".to_string();
+    let ssrc = 7000;
+    let source: SocketAddr = "127.0.0.1:1".parse().unwrap();
+
+    let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(
+        RtpServerSpec {
+            session_key,
+            ssrc: Some(ssrc),
+            payload_mode: RtpPayloadMode::Ps,
+            transport_mode: RtpTransportMode::RecvOnly,
+            connection_type: None,
+            source_policy: None,
+            track_filter: RtpTrackFilter::All,
+        },
+    )));
+
+    // Lock the session to PS on PT 96.
+    for seq in 1..=2u16 {
+        let rtp = RtpPacket {
+            header: RtpHeader {
+                version: 2,
+                payload_type: 96,
+                sequence_number: seq,
+                timestamp: u32::from(seq),
+                ssrc,
+                marker: false,
+            },
+            payload: ps_payload(i64::from(seq) * 1_000),
+        };
+        let dgram = RtpDatagram {
+            source,
+            data: rtp.encode(),
+            received_at_ms: 0,
+        };
+        let _ = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+    }
+
+    let session = core.sessions.get("test/ps-skip").expect("created session");
+    assert_eq!(session.payload_mode, RtpPayloadMode::Ps);
+
+    // An interleaved unknown PT packet must not be passed to the PS demuxer.
+    let rtp = RtpPacket {
+        header: RtpHeader {
+            version: 2,
+            payload_type: 97,
+            sequence_number: 3,
+            timestamp: 3,
+            ssrc,
+            marker: false,
+        },
+        payload: Bytes::from(vec![0xAB, 0xCD]),
+    };
+    let dgram = RtpDatagram {
+        source,
+        data: rtp.encode(),
+        received_at_ms: 0,
+    };
+    let outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+    assert!(
+        !outputs
+            .iter()
+            .any(|o| matches!(o, RtpCoreOutput::CloseSession(_))),
+        "single unknown PT should be tolerated"
+    );
+    assert!(core.sessions.contains_key("test/ps-skip"));
+
+    // Resume normal PS packets; the demuxer must still produce the next frame in order,
+    // which would not happen if the unknown bytes had been fed into it.
+    let rtp = RtpPacket {
+        header: RtpHeader {
+            version: 2,
+            payload_type: 96,
+            sequence_number: 4,
+            timestamp: 4,
+            ssrc,
+            marker: false,
+        },
+        payload: ps_payload(4_000),
+    };
+    let dgram = RtpDatagram {
+        source,
+        data: rtp.encode(),
+        received_at_ms: 0,
+    };
+    let outputs = core.handle_input(RtpCoreInput::UdpPacket(dgram));
+    let frame_pts: Vec<_> = outputs
+        .iter()
+        .filter_map(|o| match o {
+            RtpCoreOutput::Event(RtpCoreEvent::Frame { frame, .. }) => Some(frame.pts),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !frame_pts.is_empty(),
+        "PS demuxer must continue after an interleaved unknown PT"
+    );
 }

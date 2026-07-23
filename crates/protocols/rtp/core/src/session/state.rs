@@ -1,9 +1,13 @@
 use std::net::SocketAddr;
 
-use cheetah_codec::{MpegTsDemuxer, PsDemuxer, RtpPayloadMode, RtpPayloadProfile};
+use cheetah_codec::{
+    MpegTsDemuxer, PsDemuxer, RtpPacket, RtpPayloadMode, RtpPayloadProfile, RtpReorderBuffer,
+};
 
-use crate::rtcp_report::RtcpReportState;
-use crate::types::{RtpSessionKey, RtpSessionState, RtpTrackFilter, RtpTransportMode};
+use crate::rtcp_report::{default_clock_rate_hz, RtcpReportState};
+use crate::types::{
+    RtpSessionKey, RtpSessionState, RtpSourcePolicy, RtpTrackFilter, RtpTransportMode,
+};
 
 pub(super) enum SessionDemuxer {
     Pending,
@@ -31,6 +35,15 @@ pub(crate) struct RtpSession {
     // Ingress state
     pub(super) demuxer: SessionDemuxer,
     pub(super) last_seq: Option<u16>,
+    /// Last sequence number observed on arrival, used by the rebind gate. This is
+    /// updated on packet acceptance (before reorder buffering) so the continuity
+    /// check operates on arrival order, not release order.
+    pub(super) last_received_seq: Option<u16>,
+    /// Bounded RTP reorder buffer for this session. Packets that arrive out of order
+    /// are held until their predecessors arrive or a latency/packet budget is exceeded.
+    /// The buffer stores `(packet, arrival_ms, source_addr)` tuples so per-packet
+    /// timestamps and source addresses are preserved when buffered packets are released.
+    pub(super) reorder: RtpReorderBuffer<(RtpPacket, u64, Option<SocketAddr>)>,
     /// Count of payload-mode sniff attempts for sessions created with `Unknown` mode.
     /// Scoped per session so unrelated streams do not share the budget.
     pub(super) pt_probe_attempts: u8,
@@ -43,6 +56,12 @@ pub(crate) struct RtpSession {
     /// Number of mid-stream payload-mode switches already performed on this session.
     pub(super) pt_format_change_count: u8,
     pub(super) source_addr: Option<SocketAddr>,
+    /// Source-address binding policy for this session. Defaults to `Strict`.
+    pub(super) source_policy: RtpSourcePolicy,
+    /// Number of source-address packets rejected under `Strict` or a failed rebind attempt.
+    pub(super) source_spoof_count: u32,
+    /// Number of validated source-address rebinds performed for this session.
+    pub(super) source_rebind_count: u32,
     /// Last observed RTCP source address for this peer. Separate from `source_addr` because
     /// RTCP may travel on its own UDP port or even a different address.
     pub(super) rtcp_source_addr: Option<SocketAddr>,
@@ -157,6 +176,19 @@ pub(super) fn state_after_egress(
         | (RtpTransportMode::SendRecv, RtpSessionState::Sending) => Some(RtpSessionState::SendRecv),
         _ => None,
     }
+}
+
+/// Commit a resolved payload profile to a session, resetting the demuxer and PT state
+/// so the next packet is parsed under the new mode.
+pub(super) fn commit_payload_profile(session: &mut RtpSession, pt: u8, profile: RtpPayloadProfile) {
+    session.payload_type = Some(pt);
+    session.payload_mode = profile.mode;
+    session.egress_payload_mode = profile.mode;
+    session.demuxer = SessionDemuxer::Pending;
+    session.pt_change_unknown_count = 0;
+    session
+        .rtcp
+        .set_clock_rate_hz(default_clock_rate_hz(profile.mode));
 }
 
 impl RtpSession {

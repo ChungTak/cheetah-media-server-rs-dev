@@ -49,6 +49,10 @@ pub struct RtpCore {
     /// DTMF/FEC/RED bursts may be longer than the sniff budget, so this is decoupled
     /// from `max_pt_probe_packets` to avoid closing legitimate streams.
     pub(super) max_tolerated_unknown_pt_packets: u8,
+    /// Minimum idle time (ms) before `AllowValidatedRebind` will consider a new source.
+    pub(super) source_rebind_idle_window_ms: u64,
+    /// Maximum number of validated source rebinds allowed per session.
+    pub(super) max_source_rebinds: u32,
     pub(super) now_ms: u64,
     /// TCP framing mode applied when deframing inbound RTP-over-TCP traffic. Defaults to
     /// `AutoDetect`, matching ABLMediaServer's behaviour of accepting both 2-byte length-prefix
@@ -81,6 +85,8 @@ impl RtpCore {
             pt_lock_confidence: 2,
             max_pt_format_changes: 3,
             max_tolerated_unknown_pt_packets: 255,
+            source_rebind_idle_window_ms: 1_000,
+            max_source_rebinds: 10,
             now_ms: 0,
             tcp_framing: cheetah_codec::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
@@ -124,6 +130,16 @@ impl RtpCore {
     /// Override the default budget for consecutive unresolved PT packets on a locked session.
     pub fn set_max_tolerated_unknown_pt_packets(&mut self, max: u8) {
         self.max_tolerated_unknown_pt_packets = max.max(1);
+    }
+
+    /// Override the minimum idle time (ms) before a validated source rebind is allowed.
+    pub fn set_source_rebind_idle_window_ms(&mut self, ms: u64) {
+        self.source_rebind_idle_window_ms = ms.max(1);
+    }
+
+    /// Override the maximum number of validated source rebinds per session.
+    pub fn set_max_source_rebinds(&mut self, max: u32) {
+        self.max_source_rebinds = max.max(1);
     }
 
     /// Main Sans-I/O entry point. Drive the state machine with one input and return the

@@ -20,6 +20,7 @@ use cheetah_media_api::model::{
 use cheetah_media_api::port::{
     MediaAdmissionApi, MediaRequestContext, ProxyApi, PublishSubscribeApi, RtpApi,
 };
+use cheetah_media_api::rtp_session::SourceBindingPolicy;
 use cheetah_sdk::MediaServices;
 
 struct NoopEventBus;
@@ -585,6 +586,7 @@ async fn admission_deny_blocks_rtp_receiver() {
                 codec_hint: None,
                 reuse_port: false,
                 timeout_ms: 0,
+                source_binding_policy: SourceBindingPolicy::default(),
             },
         )
         .await
@@ -613,6 +615,7 @@ async fn admission_deny_blocks_rtp_sender() {
                 codec_hint: None,
                 mode: Default::default(),
                 transport_options: HashMap::new(),
+                source_binding_policy: SourceBindingPolicy::default(),
             },
         )
         .await

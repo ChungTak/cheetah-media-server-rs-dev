@@ -56,5 +56,5 @@ pub use session::RtpCore;
 pub use types::{
     RtcpSend, RtpClientSpec, RtpConnectionType, RtpCoreCommand, RtpCoreEvent, RtpCoreInput,
     RtpCoreOutput, RtpDatagram, RtpSendFrame, RtpServerSpec, RtpSessionKey, RtpSessionState,
-    RtpTcpChunk, RtpTcpSend, RtpTrackFilter, RtpTransportMode, RtpUdpSend,
+    RtpSourcePolicy, RtpTcpChunk, RtpTcpSend, RtpTrackFilter, RtpTransportMode, RtpUdpSend,
 };

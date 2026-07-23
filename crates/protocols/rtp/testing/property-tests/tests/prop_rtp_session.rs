@@ -20,7 +20,7 @@ use bytes::{Bytes, BytesMut};
 use cheetah_codec::{
     encode_tcp_rtp_frame, parse_tcp_rtp_frame, AVFrame, CodecId, EhomeDecoder, EhomeOutput,
     FrameFormat, MediaKind, PsDemuxEvent, PsDemuxer, PsDemuxerConfig, PsMuxer, RtpHeader,
-    RtpPacket, Timebase, TrackId, TrackInfo, TrackReadiness,
+    RtpPacket, RtpReorderBuffer, RtpReorderSettings, Timebase, TrackId, TrackInfo, TrackReadiness,
 };
 use proptest::prelude::*;
 
@@ -312,5 +312,50 @@ proptest! {
             prop_assert_eq!(last_decoded.codec, frame.codec);
             prop_assert_eq!(last_decoded.payload.to_vec(), payload);
         }
+    }
+
+    /// The per-session RTP reorder buffer keeps a bounded window, never emits packets
+    /// out of order, and drops duplicates.
+    ///
+    /// 每个 RTP session 的重排缓冲区保持有界窗口、不会乱序释放包，并且会丢弃重复包。
+    #[test]
+    fn test_rtp_reorder_buffer_bounded_monotonic_and_dedup(
+        seqs in prop::collection::vec(0u16..1024, 1..64),
+        arrival_ms in prop::collection::vec(0u64..10_000u64, 1..64),
+    ) {
+        let mut buffer = RtpReorderBuffer::new(RtpReorderSettings {
+            max_packets: 4,
+            max_delay_ms: 100,
+        });
+        let mut last_released: Option<u64> = None;
+        let mut released_count: usize = 0;
+
+        for (seq, arrival) in seqs.into_iter().zip(arrival_ms.into_iter()) {
+            let released = buffer.push(seq, arrival, seq as u64);
+
+            // Pending length must never exceed the absolute cap plus the configured window.
+            prop_assert!(buffer.pending_len() <= 4 + 1, "pending exceeded configured window");
+
+            // Each released batch and the cross-batch sequence must be monotonically increasing.
+            let mut prev: Option<u64> = last_released;
+            for extended in &released {
+                if let Some(p) = prev {
+                    prop_assert!(*extended > p, "released sequence {extended} after {p} is not monotonic");
+                }
+                prev = Some(*extended);
+            }
+            if let Some(last) = released.last() {
+                last_released = Some(*last);
+            }
+            released_count += released.len();
+        }
+
+        // The hard cap guarantees the buffer never grows without bound.
+        prop_assert!(buffer.pending_len() <= 64, "pending exceeded hard cap");
+
+        // No sequence number is released twice (duplicates are dropped or still pending).
+        // This is an invariant: all released values are strictly increasing, so duplicates
+        // in the input cannot be emitted more than once.
+        prop_assert!(released_count <= 64, "released more packets than were pushed");
     }
 }

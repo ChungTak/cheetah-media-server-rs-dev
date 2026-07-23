@@ -1,4 +1,6 @@
-use cheetah_codec::{PsDemuxEvent, PsDemuxer, RtpPayloadMode};
+use cheetah_codec::{
+    PsDemuxEvent, PsDemuxer, RtpPayloadMode, RtpReorderBuffer, RtpReorderSettings,
+};
 
 use crate::error::RtpCoreDiagnostic;
 use crate::rtcp_report::{default_clock_rate_hz, RtcpReportState};
@@ -54,7 +56,12 @@ impl RtpCore {
                                 check_paused: false,
                                 demuxer: SessionDemuxer::Pending,
                                 last_seq: None,
+                                last_received_seq: None,
+                                reorder: RtpReorderBuffer::new(RtpReorderSettings::default()),
                                 source_addr: None,
+                                source_policy: RtpSourcePolicy::AllowValidatedRebind,
+                                source_spoof_count: 0,
+                                source_rebind_count: 0,
                                 rtcp_source_addr: None,
                                 last_activity_ms: 0,
                                 destination: None,

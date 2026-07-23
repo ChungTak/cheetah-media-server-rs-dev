@@ -12,6 +12,7 @@ use cheetah_media_api::command::{
 use cheetah_media_api::ids::{MediaKey, RtpSessionId, StreamKeyBridge};
 use cheetah_media_api::model::{AdmissionAction, RtpSessionKind, RtpTcpMode};
 use cheetah_media_api::port::MediaRequestContext;
+use cheetah_media_api::rtp_session::SourceBindingPolicy;
 use cheetah_sdk::{HttpRequest, HttpResponse};
 
 use crate::error::AdapterError;
@@ -44,6 +45,7 @@ impl ZlmMediaHttpService {
                 .map(String::from),
             reuse_port: crate::util::parse_json_bool(&params["reuse_port"]).unwrap_or(false),
             timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
+            source_binding_policy: SourceBindingPolicy::default(),
         };
         self.check_admission(
             ctx,
@@ -93,6 +95,7 @@ impl ZlmMediaHttpService {
                 .map(String::from),
             reuse_port,
             timeout_ms: crate::util::parse_json_u64(&params["timeout_ms"]).unwrap_or(10_000),
+            source_binding_policy: SourceBindingPolicy::default(),
         };
         self.check_admission(
             ctx,
@@ -231,6 +234,7 @@ impl ZlmMediaHttpService {
             codec_hint,
             mode,
             transport_options,
+            source_binding_policy: SourceBindingPolicy::default(),
         };
         self.check_admission(
             ctx,
@@ -335,6 +339,7 @@ impl ZlmMediaHttpService {
             ssrc: parse_zlm_u32(&params, "ssrc")?,
             payload_type: parse_zlm_u8(&params, "payload_type")?,
             pause_check: None,
+            source_policy: None,
         };
         let session = rtp_api.update_rtp_session(ctx, request).await?;
         Ok(zlm_response(ZlmResponse::ok(RtpUpdateResult {
@@ -379,6 +384,7 @@ impl ZlmMediaHttpService {
             ssrc: None,
             payload_type: None,
             pause_check: Some(paused),
+            source_policy: None,
         };
         let session = rtp_api.update_rtp_session(ctx, request).await?;
         Ok(zlm_response(ZlmResponse::ok(RtpPauseResult {

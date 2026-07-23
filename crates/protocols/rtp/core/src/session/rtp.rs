@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 
 use cheetah_codec::{
     probe_rtp_payload, MpegTsDemuxEvent, MpegTsDemuxer, MpegTsDemuxerConfig, PsDemuxEvent,
-    PsDemuxer, PsDemuxerConfig, RtpPacket, RtpPayloadMode, RtpPayloadProfile,
+    PsDemuxer, PsDemuxerConfig, RtpPacket, RtpPayloadMode, RtpReorderBuffer, RtpReorderSettings,
 };
 
 use crate::error::RtpCoreDiagnostic;
@@ -36,10 +36,7 @@ impl RtpCore {
             return;
         }
 
-        let mut skip_demuxer = false;
         let ssrc = rtp.header.ssrc;
-
-        // Find session by SSRC
         let mut created = false;
         let session_key = if let Some(key) = self.ssrc_to_session.get(&ssrc) {
             key.clone()
@@ -70,7 +67,12 @@ impl RtpCore {
                 check_paused: false,
                 demuxer: SessionDemuxer::Pending,
                 last_seq: None,
+                last_received_seq: None,
+                reorder: RtpReorderBuffer::new(RtpReorderSettings::default()),
                 source_addr,
+                source_policy: RtpSourcePolicy::AllowValidatedRebind,
+                source_spoof_count: 0,
+                source_rebind_count: 0,
                 rtcp_source_addr: None,
                 last_activity_ms: 0, // Will be updated
                 destination: None,
@@ -105,26 +107,138 @@ impl RtpCore {
             key
         };
 
+        // Source-address binding / rebind policy must run before the packet reaches the
+        // reorder buffer. A spoofed next-sequence packet that is pushed and then discarded
+        // would otherwise advance `expected_seq` and cause a later legitimate packet with
+        // the same sequence number to be treated as late/duplicate.
+        let seq = rtp.header.sequence_number;
+        let source_rebind_idle_window_ms = self.source_rebind_idle_window_ms;
+        let max_source_rebinds = self.max_source_rebinds;
         let Some(session) = self.sessions.get_mut(&session_key) else {
             return;
         };
+        if let Some(src) = source_addr {
+            if let Some(bound) = session.source_addr {
+                if bound != src {
+                    match session.source_policy {
+                        RtpSourcePolicy::Strict => {
+                            session.source_spoof_count += 1;
+                            outputs.push(RtpCoreOutput::Diagnostic(
+                                RtpCoreDiagnostic::SourceSpoofed {
+                                    ssrc,
+                                    expected: bound,
+                                    got: src,
+                                },
+                            ));
+                            return;
+                        }
+                        RtpSourcePolicy::AllowValidatedRebind => {
+                            let idle = received_at_ms.saturating_sub(session.last_activity_ms)
+                                >= source_rebind_idle_window_ms;
+                            let seq_plausible =
+                                plausible_seq_continuation(session.last_received_seq, seq);
+                            let rate_ok = session.source_rebind_count < max_source_rebinds;
+                            if idle && seq_plausible && rate_ok {
+                                session.source_rebind_count += 1;
+                                outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SourceChanged {
+                                    session_key: session_key.clone(),
+                                    old: bound,
+                                    new: src,
+                                }));
+                                session.source_addr = Some(src);
+                                // For SendRecv/SendOnly sessions the inbound source address is
+                                // also the outbound destination (symmetric UDP). Keep it current.
+                                if matches!(
+                                    session.transport_mode,
+                                    RtpTransportMode::SendOnly | RtpTransportMode::SendRecv
+                                ) {
+                                    session.destination = Some(src);
+                                }
+                                // A source rebind often means a camera restart/NAT rebinding
+                                // with a new 16-bit sequence base. Reset the reorder context so
+                                // the new source is not treated as late/duplicate.
+                                session.reorder.reset();
+                                session.last_seq = None;
+                            } else {
+                                session.source_spoof_count += 1;
+                                outputs.push(RtpCoreOutput::Diagnostic(
+                                    RtpCoreDiagnostic::SourceSpoofed {
+                                        ssrc,
+                                        expected: bound,
+                                        got: src,
+                                    },
+                                ));
+                                return;
+                            }
+                        }
+                    }
+                }
+            } else {
+                session.source_addr = Some(src);
+            }
+            // Accepted packet counts as activity and updates the sequence context;
+            // the rebind idle/continuity checks operate on arrival order, not release order.
+            session.last_activity_ms = received_at_ms;
+            session.last_received_seq = Some(seq);
+        }
+
+        // Push the packet into the per-session reorder buffer. The buffer releases one
+        // or more contiguous packets once their predecessors have arrived, or when a
+        // bounded latency/packet budget forces release.
+        let released =
+            session
+                .reorder
+                .push(seq, received_at_ms, (rtp, received_at_ms, source_addr));
+
+        for (i, (rtp, pkt_received_at_ms, source_addr)) in released.into_iter().enumerate() {
+            if let Err(reason) = self.process_single_rtp_packet(
+                &session_key,
+                rtp,
+                tcp_conn_id,
+                source_addr,
+                pkt_received_at_ms,
+                created && i == 0,
+                outputs,
+            ) {
+                self.close_session(session_key.clone(), reason, outputs);
+                return;
+            }
+
+            // If a prior released packet closed the session, stop processing.
+            if !self.sessions.contains_key(&session_key) {
+                break;
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn process_single_rtp_packet(
+        &mut self,
+        session_key: &str,
+        rtp: RtpPacket,
+        tcp_conn_id: Option<u64>,
+        source_addr: Option<SocketAddr>,
+        received_at_ms: u64,
+        created: bool,
+        outputs: &mut Vec<RtpCoreOutput>,
+    ) -> Result<(), String> {
+        let ssrc = rtp.header.ssrc;
+
+        let Some(session) = self.sessions.get_mut(session_key) else {
+            return Ok(());
+        };
+
+        // Source-address binding / rebind policy has already been applied in
+        // `feed_rtp_packet` before the packet entered the reorder buffer. Rejected
+        // packets therefore cannot advance `expected_seq` or reach the demuxers.
 
         // Resolve the payload mode for sessions created without an explicit mode.
         // Order: external binding (set via spec/UpdateSession), static PT table,
         // then payload sniff. The sniff budget is per-session so one stream cannot
         // exhaust it for others.
         let mut format_change = None;
-        let mut close_reason = None;
-        let commit_profile = |session: &mut RtpSession, pt: u8, profile: RtpPayloadProfile| {
-            session.payload_type = Some(pt);
-            session.payload_mode = profile.mode;
-            session.egress_payload_mode = profile.mode;
-            session.demuxer = SessionDemuxer::Pending;
-            session.pt_change_unknown_count = 0;
-            session
-                .rtcp
-                .set_clock_rate_hz(default_clock_rate_hz(profile.mode));
-        };
+        let mut close_reason: Option<String> = None;
+        let mut skip_demuxer = false;
 
         if session.payload_mode == RtpPayloadMode::Unknown {
             if session.pt_probe_attempts < self.max_pt_probe_packets {
@@ -140,7 +254,7 @@ impl RtpCore {
                         // sync/pack header (PS/TS/JTT/Ehome). Treat as immediately confirmed.
                         session.pt_pending_profile = Some(profile);
                         session.pt_pending_confirm_count = self.pt_lock_confidence;
-                        commit_profile(session, rtp.header.payload_type, profile);
+                        commit_payload_profile(session, rtp.header.payload_type, profile);
                     }
                     cheetah_codec::RtpPtResolveSource::Weak(profile) => {
                         // Weak pattern-based sniff (Annex-B start code / AAC ADTS) requires
@@ -154,7 +268,7 @@ impl RtpCore {
                             session.pt_pending_confirm_count = 1;
                         }
                         if session.pt_pending_confirm_count >= self.pt_lock_confidence {
-                            commit_profile(session, rtp.header.payload_type, profile);
+                            commit_payload_profile(session, rtp.header.payload_type, profile);
                         }
                     }
                     cheetah_codec::RtpPtResolveSource::Unknown => {
@@ -207,9 +321,9 @@ impl RtpCore {
                                 ));
                             } else {
                                 let old_mode = session.payload_mode;
-                                commit_profile(session, new_pt, profile);
+                                commit_payload_profile(session, new_pt, profile);
                                 format_change = Some(RtpCoreEvent::FormatChanged {
-                                    session_key: session_key.clone(),
+                                    session_key: session_key.to_string(),
                                     payload_type: new_pt,
                                     old_payload_mode: old_mode,
                                     new_payload_mode: profile.mode,
@@ -221,10 +335,11 @@ impl RtpCore {
                     }
                     cheetah_codec::RtpPtResolveSource::Weak(_)
                     | cheetah_codec::RtpPtResolveSource::Unknown => {
+                        // Treat the unresolved PT as a transient interleaved auxiliary payload
+                        // (e.g. RFC 4733 telephone-event or FEC/RED sharing the same SSRC).
+                        // It is counted but not fed to the demuxer; exceeding a dedicated
+                        // per-session budget closes the session.
                         session.pt_change_unknown_count += 1;
-                        // Tolerate a run of unresolved PT packets (e.g. RFC 4733
-                        // telephone-event or FEC/RED interleaved on the same SSRC) up to a
-                        // dedicated budget before treating the change as a persistent spoof.
                         if session.pt_change_unknown_count >= self.max_tolerated_unknown_pt_packets
                         {
                             close_reason = Some(format!(
@@ -232,9 +347,6 @@ impl RtpCore {
                                 session.pt_change_unknown_count
                             ));
                         } else {
-                            // Treat as a transient interleaved auxiliary payload; do not feed
-                            // the unresolved bytes into the demuxer, but still account for it in
-                            // sequence/RTCP statistics.
                             skip_demuxer = true;
                         }
                     }
@@ -246,14 +358,15 @@ impl RtpCore {
             outputs.push(RtpCoreOutput::Event(ev));
         }
         if let Some(reason) = close_reason {
-            self.close_session(session_key, reason, outputs);
-            return;
+            return Err(reason);
         }
 
-        // Update stats and activity
+        // Update stats and activity. `last_activity_ms` must never move backward because
+        // packets can be released from the reorder buffer after newer packets have already
+        // refreshed the timestamp on arrival.
         session.packets_received += 1;
         session.bytes_received += rtp.payload.len() as u32;
-        session.last_activity_ms = received_at_ms;
+        session.last_activity_ms = session.last_activity_ms.max(received_at_ms);
         session.rtcp.on_packet(
             rtp.header.sequence_number,
             rtp.header.timestamp,
@@ -279,29 +392,11 @@ impl RtpCore {
 
         if created {
             outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SessionCreated {
-                session_key: session_key.clone(),
+                session_key: session_key.to_string(),
                 ssrc,
                 payload_mode: session.payload_mode,
                 transport_mode: session.transport_mode,
             }));
-        }
-
-        // Check address change
-        if let Some(src) = source_addr {
-            if let Some(old) = session.source_addr {
-                if old != src {
-                    outputs.push(RtpCoreOutput::Diagnostic(
-                        RtpCoreDiagnostic::SourceAddressChanged {
-                            ssrc,
-                            old,
-                            new: src,
-                        },
-                    ));
-                    session.source_addr = Some(src);
-                }
-            } else {
-                session.source_addr = Some(src);
-            }
         }
 
         // Reflect the runtime state transition caused by ingress. For a session just
@@ -312,7 +407,7 @@ impl RtpCore {
                 session.state = new_state;
             } else if let Some(old) = session.transition_to(new_state) {
                 outputs.push(RtpCoreOutput::Event(RtpCoreEvent::SessionStateChanged {
-                    session_key: session_key.clone(),
+                    session_key: session_key.to_string(),
                     old_state: old,
                     new_state,
                 }));
@@ -333,7 +428,7 @@ impl RtpCore {
         session.last_seq = Some(rtp.header.sequence_number);
 
         if skip_demuxer {
-            return;
+            return Ok(());
         }
 
         // Lazily build demuxer
@@ -362,7 +457,6 @@ impl RtpCore {
 
         // Feed to demuxers
         let track_filter = session.track_filter;
-        let source_addr = session.source_addr;
         match &mut session.demuxer {
             SessionDemuxer::Ts(demuxer) => {
                 let demux_events = demuxer.push(&rtp.payload);
@@ -373,7 +467,7 @@ impl RtpCore {
                             if track_filter_allows_track(track_filter, track.media_kind) =>
                         {
                             outputs.push(RtpCoreOutput::Event(RtpCoreEvent::TrackFound {
-                                session_key: session_key.clone(),
+                                session_key: session_key.to_string(),
                                 tracks: vec![track],
                             }));
                         }
@@ -381,7 +475,7 @@ impl RtpCore {
                             if track_filter_allows_track(track_filter, frame.media_kind) =>
                         {
                             outputs.push(RtpCoreOutput::Event(RtpCoreEvent::Frame {
-                                session_key: session_key.clone(),
+                                session_key: session_key.to_string(),
                                 frame,
                                 source_addr,
                             }));
@@ -402,7 +496,7 @@ impl RtpCore {
                                 .collect();
                             if !filtered.is_empty() {
                                 outputs.push(RtpCoreOutput::Event(RtpCoreEvent::TrackFound {
-                                    session_key: session_key.clone(),
+                                    session_key: session_key.to_string(),
                                     tracks: filtered,
                                 }));
                             }
@@ -411,7 +505,7 @@ impl RtpCore {
                             if track_filter_allows_track(track_filter, frame.media_kind) =>
                         {
                             outputs.push(RtpCoreOutput::Event(RtpCoreEvent::Frame {
-                                session_key: session_key.clone(),
+                                session_key: session_key.to_string(),
                                 frame: *frame,
                                 source_addr,
                             }));
@@ -423,6 +517,35 @@ impl RtpCore {
             SessionDemuxer::Bypass | SessionDemuxer::Pending => {
                 // Raw audio/video or unrecognized modes are bridged in later module stages.
             }
+        }
+
+        // Register the TCP connection id if this packet arrived over a TCP channel and the
+        // session has not yet been associated with a connection. This is a no-op for UDP.
+        if let (None, Some(conn_id)) = (session.tcp_conn_id, tcp_conn_id) {
+            session.tcp_conn_id = Some(conn_id);
+            self.tcp_conn_to_session
+                .insert(conn_id, session_key.to_string());
+        }
+
+        Ok(())
+    }
+}
+
+/// Check whether `seq` is a plausible continuation of `last_seq` for a source rebind.
+///
+/// Accepts the next expected sequence number, a small forward jump (allowing for a
+/// few dropped packets or reorder), or a large backward jump/wrap that is consistent
+/// with a camera restart. Rejects exact duplicates and packets that land just behind
+/// the last observed sequence, which are more likely to be late/duplicate traffic.
+fn plausible_seq_continuation(last_seq: Option<u16>, seq: u16) -> bool {
+    const WINDOW: u16 = 64;
+    match last_seq {
+        None => true,
+        Some(last) if seq == last => false,
+        Some(last) => {
+            let forward = seq.wrapping_sub(last);
+            let backward = last.wrapping_sub(seq);
+            forward <= WINDOW || backward > WINDOW
         }
     }
 }

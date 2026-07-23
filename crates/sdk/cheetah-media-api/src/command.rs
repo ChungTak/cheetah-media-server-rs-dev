@@ -8,6 +8,7 @@ use crate::ids::*;
 use crate::image::ImageFormat;
 use crate::model::*;
 use crate::outbound_policy::OutboundUrlPolicy;
+use crate::rtp_session::SourceBindingPolicy;
 
 /// Query for media list.
 ///
@@ -658,6 +659,8 @@ pub struct RtpReceiverRequest {
     pub reuse_port: bool,
     #[serde(default)]
     pub timeout_ms: u64,
+    #[serde(default)]
+    pub source_binding_policy: SourceBindingPolicy,
 }
 
 /// RTP connect request.
@@ -689,6 +692,8 @@ pub struct RtpSenderRequest {
     pub mode: RtpSenderMode,
     #[serde(default)]
     pub transport_options: HashMap<String, String>,
+    #[serde(default)]
+    pub source_binding_policy: SourceBindingPolicy,
 }
 
 /// RTP sender mode.
@@ -747,6 +752,8 @@ pub struct UpdateRtpRequest {
     pub payload_type: Option<u8>,
     #[serde(default)]
     pub pause_check: Option<bool>,
+    #[serde(default)]
+    pub source_policy: Option<SourceBindingPolicy>,
 }
 
 #[cfg(test)]
