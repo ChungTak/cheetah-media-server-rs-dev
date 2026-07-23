@@ -14,10 +14,10 @@ use cheetah_sdk::media_api::ids::RtpSessionId;
 use cheetah_sdk::media_api::model::{CloseReason, OnlineState, RecordTaskState, SessionKind};
 use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
-    MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk, PlaybackRange, RtpDirection,
-    RtpPayloadBinding, RtpSessionGeneration, RtpSessionParamsBuilder, RtpSessionPurpose,
-    RtpSessionQuery, RtpSessionRef, RtpTransport, SourceBindingPolicy, StopRtpSession,
-    UpdateRtpSession,
+    GbMediaCompatibilityProfile, MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk,
+    PlaybackRange, RtpDirection, RtpPayloadBinding, RtpSessionGeneration, RtpSessionParamsBuilder,
+    RtpSessionPurpose, RtpSessionQuery, RtpSessionRef, RtpTransport, SourceBindingPolicy,
+    StopRtpSession, UpdateRtpSession,
 };
 use cheetah_sdk::media_api::{MediaCapabilitySet, MediaKey, MediaRequestContext, Principal};
 use cheetah_sdk::{ModuleId, PublisherOptions, StreamKey};
@@ -656,6 +656,71 @@ async fn rtp_module_disabled_profile_is_rejected() {
         .unwrap_err();
     assert_eq!(err.code, MediaErrorCode::Unsupported);
     assert!(err.message.contains("not enabled"), "{}", err.message);
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compat_profile_enforces_container_match() {
+    // Ehome and JTT profiles require their matching containers.
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let ehome_key = MediaKey::with_default_vhost("gb28181_compat", "ehome_cam", None).unwrap();
+    let ehome_params = RtpSessionParamsBuilder::new(ehome_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .profile(GbMediaCompatibilityProfile::HikvisionEhome)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+            packet_duration_ms: None,
+        })
+        .build();
+    let err = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params: ehome_params,
+                playback_range: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::InvalidArgument);
+    assert!(err.message.contains("incompatible"), "{}", err.message);
+
+    let jtt_key = MediaKey::with_default_vhost("gb28181_compat", "jtt_cam", None).unwrap();
+    let jtt_params = RtpSessionParamsBuilder::new(jtt_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Jtt1078)
+        .profile(GbMediaCompatibilityProfile::Jtt1078)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+            packet_duration_ms: None,
+        })
+        .build();
+    let descriptor = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params: jtt_params,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("JTT1078 profile with Jtt1078 container should open");
+    assert_eq!(descriptor.container, MediaContainer::Jtt1078);
 
     harness.stop().await;
 }
