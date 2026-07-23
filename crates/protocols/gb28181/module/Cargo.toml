@@ -6,16 +6,7 @@ license.workspace = true
 
 [dependencies]
 async-trait = "0.1"
-bytes.workspace = true
-cheetah-gb28181-core = { path = "../core" }
-cheetah-gb28181-driver-tokio = { path = "../driver-tokio" }
-cheetah-runtime-api = { path = "../../../runtime/cheetah-runtime-api" }
 cheetah-sdk = { path = "../../../sdk/cheetah-sdk" }
-futures = "0.3"
 parking_lot.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
-tracing.workspace = true
-
-[dev-dependencies]
-cheetah-runtime-tokio = { path = "../../../runtime/cheetah-runtime-tokio" }

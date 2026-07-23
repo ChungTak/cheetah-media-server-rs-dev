@@ -936,17 +936,10 @@ name = "cheetah-gb28181-module"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "bytes",
- "cheetah-gb28181-core",
- "cheetah-gb28181-driver-tokio",
- "cheetah-runtime-api",
- "cheetah-runtime-tokio",
  "cheetah-sdk",
- "futures",
  "parking_lot",
  "serde",
  "serde_json",
- "tracing",
 ]
 
 [[package]]

@@ -11,6 +11,7 @@
 
 use crate::prelude::*;
 use crate::rtp::{probe_rtp_payload, RtpPayloadMode};
+use crate::track::CodecId;
 
 /// Resolved payload profile for a single RTP payload type.
 ///
@@ -19,6 +20,7 @@ use crate::rtp::{probe_rtp_payload, RtpPayloadMode};
 pub struct RtpPayloadProfile {
     pub mode: RtpPayloadMode,
     pub clock_rate_hz: u32,
+    pub codec: Option<CodecId>,
 }
 
 /// Source of a PT resolution.
@@ -55,8 +57,56 @@ impl RtpPayloadProfile {
         Self {
             mode,
             clock_rate_hz,
+            codec: None,
         }
     }
+
+    pub const fn with_codec(self, codec: Option<CodecId>) -> Self {
+        Self { codec, ..self }
+    }
+}
+
+/// Best-effort codec sniff for an RTP payload that has already been identified as
+/// `RtpPayloadMode::Es`. Returns `None` when the first NAL is too ambiguous to commit.
+fn probe_es_codec(payload: &[u8]) -> Option<CodecId> {
+    // Strip an Annex-B start code if present.
+    let unit = if payload.starts_with(&[0x00, 0x00, 0x00, 0x01]) {
+        &payload[4..]
+    } else if payload.starts_with(&[0x00, 0x00, 0x01]) {
+        &payload[3..]
+    } else {
+        payload
+    };
+    if unit.is_empty() {
+        return None;
+    }
+
+    // H.264 SPS (7) / PPS (8) / IDR (5) are strong, unambiguous H.264 signals.
+    let h264_type = unit[0] & 0x1f;
+    if unit[0] & 0x80 == 0 && matches!(h264_type, 5 | 7 | 8) {
+        return Some(CodecId::H264);
+    }
+
+    if unit.len() >= 2 {
+        let h265_type = (unit[0] >> 1) & 0x3f;
+        let tid = unit[1] & 0x07;
+        let layer_id = ((unit[0] & 0x01) << 5) | (unit[1] >> 3);
+        if unit[0] & 0x80 == 0
+            && layer_id == 0
+            && (1..=8).contains(&tid)
+            && matches!(h265_type, 32 | 33 | 34 | 16..=21)
+        {
+            // H.265 parameter sets and IRAP slices are strong H.265 signals.
+            // Type 19/20 IRAP bytes (`0x26`/`0x28`) overlap with H.264 SEI/PPS; require
+            // the first slice flag (high bit of the third byte) to be set for VCL.
+            let is_vcl_irap = (16..=21).contains(&h265_type);
+            if !is_vcl_irap || unit.len() < 3 || (unit[2] & 0x80) != 0 {
+                return Some(CodecId::H265);
+            }
+        }
+    }
+
+    None
 }
 
 fn default_clock_rate_for_mode(mode: RtpPayloadMode) -> u32 {
@@ -121,10 +171,14 @@ impl RtpPtResolver {
         // Encapsulation probes (PS pack header, TS sync, JTT, Ehome) are strong signals.
         let mode = probe_rtp_payload(payload);
         if mode != RtpPayloadMode::Unknown {
-            return RtpPtResolveSource::Encapsulation(RtpPayloadProfile::new(
-                mode,
-                default_clock_rate_for_mode(mode),
-            ));
+            let codec = if mode == RtpPayloadMode::Es {
+                probe_es_codec(payload)
+            } else {
+                None
+            };
+            return RtpPtResolveSource::Encapsulation(
+                RtpPayloadProfile::new(mode, default_clock_rate_for_mode(mode)).with_codec(codec),
+            );
         }
 
         // Weak pattern-based sniff for raw Annex-B video / AAC ADTS.
@@ -181,7 +235,8 @@ fn weak_sniff_profile(payload: &[u8]) -> Option<RtpPayloadProfile> {
             && payload[2] == 0x01
             && payload[3] < 0x80);
     if is_annexb_nal {
-        return Some(RtpPayloadProfile::new(RtpPayloadMode::Es, 90_000));
+        let codec = probe_es_codec(payload);
+        return Some(RtpPayloadProfile::new(RtpPayloadMode::Es, 90_000).with_codec(codec));
     }
 
     // AAC ADTS: sync word 0xFF with upper nibble of next byte set to 0xF.
