@@ -27,19 +27,20 @@ use cheetah_sdk::media_api::port::{MediaRequestContext, PlaybackApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
     GbMediaCompatibilityProfile, MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk,
     PlaybackRange, RtpDirection, RtpEndpoints, RtpFraming, RtpPayloadBinding, RtpSessionApi,
-    RtpSessionDescriptor, RtpSessionGeneration, RtpSessionParams, RtpSessionQuery, RtpSessionRef,
-    RtpSessionState, RtpTransport, StopRtpSession, TcpRole, UpdateRtpSession,
+    RtpSessionDescriptor, RtpSessionGeneration, RtpSessionParams, RtpSessionPurpose,
+    RtpSessionQuery, RtpSessionRef, RtpSessionState, RtpTransport, StopRtpSession, TcpRole,
+    UpdateRtpSession,
 };
 use cheetah_sdk::media_api::MediaCapability;
 use cheetah_sdk::{
-    BackpressurePolicy, CancellationToken, Deadline, EngineContext, IdempotencyError,
-    IdempotencyKey, StreamKey, SubscriberOptions,
+    BackpressurePolicy, BootstrapPolicy, CancellationToken, Deadline, EngineContext,
+    IdempotencyError, IdempotencyKey, StreamKey, SubscriberOptions,
 };
 use parking_lot::Mutex;
 use serde::Serialize;
 
 use crate::config::RtpModuleConfig;
-use crate::egress::{run_egress_session, ActiveEgressMap, EgressCleanup};
+use crate::egress::{run_egress_session, ActiveEgressMap, DownloadOptions, EgressCleanup};
 use crate::orchestrator::RtpSessionOrchestrator;
 use crate::rollback::RollbackGuard;
 
@@ -485,7 +486,7 @@ impl RtpApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: RtpSenderRequest,
     ) -> Result<RtpSession> {
-        self.open_rtp_sender_with_cancel(ctx, request, None, None)
+        self.open_rtp_sender_with_cancel(ctx, request, None, None, None)
             .await
             .map(|(s, _)| s)
     }
@@ -1037,6 +1038,7 @@ impl RtpMediaProvider {
         request: RtpSenderRequest,
         packet_duration_ms: Option<u32>,
         playback_range: Option<PlaybackRange>,
+        download_options: Option<DownloadOptions>,
     ) -> Result<(RtpSession, CancellationToken)> {
         Deadline::from_context(ctx)
             .check()
@@ -1097,6 +1099,7 @@ impl RtpMediaProvider {
                 subscriber_options,
                 talkback_max_latency_ms,
                 playback_range,
+                download_options,
             )
             .await;
         }));
@@ -1161,6 +1164,17 @@ impl RtpMediaProvider {
             Some(TcpRole::Passive) => RtpSenderMode::Passive,
             _ => RtpSenderMode::Active,
         };
+        let download_options = if request.params.purpose == RtpSessionPurpose::Download {
+            Some(DownloadOptions {
+                rate_kbps: request.params.download_rate_kbps,
+                timeout_ms: request.params.download_timeout_ms,
+                queue_capacity: self.config.download_queue_capacity,
+                backpressure: BackpressurePolicy::DropUntilNextKeyframe,
+                bootstrap_policy: BootstrapPolicy::full_gop(150, None),
+            })
+        } else {
+            None
+        };
         let old_req = self.build_old_sender_request(request.clone(), mode)?;
         let packet_duration_ms = Self::packet_duration_ms_from_params(&request.params);
         let (session, cancel) = self
@@ -1169,6 +1183,7 @@ impl RtpMediaProvider {
                 old_req,
                 packet_duration_ms,
                 request.playback_range.clone(),
+                download_options,
             )
             .await?;
         let mut guard = RollbackGuard::new(
@@ -1229,7 +1244,7 @@ impl RtpMediaProvider {
                     .and_then(|b| b.packet_duration_ms)
             });
         let (session, cancel) = self
-            .open_rtp_sender_with_cancel(ctx, sender_req, packet_duration_ms, None)
+            .open_rtp_sender_with_cancel(ctx, sender_req, packet_duration_ms, None, None)
             .await?;
         let guard = RollbackGuard::new(
             self.orchestrator.clone(),

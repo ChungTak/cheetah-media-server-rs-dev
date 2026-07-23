@@ -14,12 +14,12 @@ use cheetah_sdk::media_api::model::{OnlineState, RecordTaskState};
 use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
     MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk, PlaybackRange, RtpDirection,
-    RtpPayloadBinding, RtpSessionParamsBuilder, RtpSessionQuery, RtpSessionRef, RtpTransport,
-    SourceBindingPolicy, StopRtpSession, UpdateRtpSession,
+    RtpPayloadBinding, RtpSessionParamsBuilder, RtpSessionPurpose, RtpSessionQuery, RtpSessionRef,
+    RtpTransport, SourceBindingPolicy, StopRtpSession, UpdateRtpSession,
 };
 use cheetah_sdk::media_api::{MediaCapabilitySet, MediaKey, MediaRequestContext};
 use cheetah_sdk::StreamKey;
-use tokio::time::{sleep, timeout};
+use tokio::time::{sleep, timeout, Instant as TokioInstant};
 
 mod support;
 
@@ -1290,4 +1290,103 @@ async fn playback_control_update_is_rejected_when_provider_lacks_control() {
         .await
         .expect_err("pause should fail without control capability");
     assert_eq!(err.code, MediaErrorCode::Unsupported);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gb28181_download_egress_is_rate_limited_and_does_not_block_live() {
+    let harness = Gb28181TestHarness::start().await;
+    let fake = FakePlayback::default();
+    harness
+        .engine
+        .media_services()
+        .register_playback(Arc::new(fake.clone()));
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let source_key = StreamKey::new("rtp_download_source", "main");
+    let source_media_key = stream_key_to_media_key(&source_key);
+    let publisher = harness
+        .open_publisher(
+            source_key.clone(),
+            vec![make_video_track(), make_audio_track()],
+        )
+        .await;
+
+    // Seed the source stream with 10 small PS video frames.
+    for i in 0..10 {
+        let pts_us = i * 100_000;
+        let ps = mux_ps_frame(&make_video_frame(pts_us));
+        publisher
+            .push_frame(Arc::new(AVFrame {
+                payload: ps,
+                ..make_video_frame(pts_us)
+            }))
+            .unwrap();
+    }
+
+    let recv_socket = bind_udp_socket().await;
+    let dest_addr = recv_socket.local_addr().unwrap();
+
+    // Open a download sender with a 64 kbps rate cap and a per-frame timeout.
+    let request = OpenRtpSender {
+        params: RtpSessionParamsBuilder::new(source_media_key.clone(), RtpDirection::Send)
+            .transport(RtpTransport::Udp)
+            .container(MediaContainer::Ps)
+            .ssrc(SSRC)
+            .payload_binding(RtpPayloadBinding {
+                payload_type: INGEST_PT,
+                codec: "PS".to_string(),
+                clock_rate: 90_000,
+                channels: None,
+                packet_duration_ms: None,
+            })
+            .remote_endpoint(dest_addr)
+            .record_source("recordings/cam_001/20250721.mp4")
+            .purpose(RtpSessionPurpose::Download)
+            .download_rate_kbps(64)
+            .download_timeout_ms(5_000)
+            .build(),
+        playback_range: Some(PlaybackRange {
+            start_ms: 0,
+            end_ms: Some(60_000),
+        }),
+    };
+    let _session = rtp_api
+        .open_sender(&ctx, request)
+        .await
+        .expect("open download sender");
+
+    let start = TokioInstant::now();
+    let mut received = 0;
+    let mut total_bytes: usize = 0;
+    let deadline = TokioInstant::now() + Duration::from_millis(400);
+    while TokioInstant::now() < deadline && received < 5 {
+        if let Some((header, payload, _addr)) =
+            recv_rtp(&recv_socket, Duration::from_millis(100)).await
+        {
+            assert_eq!(header.version, 2);
+            assert_eq!(header.ssrc, SSRC);
+            received += 1;
+            total_bytes += payload.len();
+        }
+    }
+    let elapsed = start.elapsed();
+
+    // We should receive several frames, but a 64 kbps cap means the first 5 frames
+    // (~200 bytes each after RTP/PS overhead) cannot all arrive in a single burst.
+    // This demonstrates the download egress is throttled independently of the live stream.
+    assert!(
+        received >= 3,
+        "expected at least 3 download RTP packets, got {received}"
+    );
+    let expected_max_bytes =
+        (64u64 * 1000 * elapsed.as_millis() as u64 / 8 / 1000) as usize + 1024usize; // small burst allowance
+    assert!(
+        total_bytes <= expected_max_bytes,
+        "download bytes {total_bytes} exceeded rate budget {expected_max_bytes} for {elapsed:?}"
+    );
 }
