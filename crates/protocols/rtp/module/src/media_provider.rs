@@ -687,7 +687,7 @@ impl RtpSessionApi for RtpMediaProvider {
                     self.resource_ref_from_context(
                         ctx,
                         &request.session_ref.session_id,
-                        request.session_ref.expected_generation.0,
+                        session.generation,
                     ),
                 ),
             );
@@ -775,7 +775,7 @@ impl RtpSessionApi for RtpMediaProvider {
                     self.resource_ref_from_context(
                         ctx,
                         &session_ref.session_id,
-                        session_ref.expected_generation.0,
+                        session.generation,
                     ),
                 ),
             );
@@ -808,7 +808,7 @@ impl RtpSessionApi for RtpMediaProvider {
                             self.resource_ref_from_context(
                                 ctx,
                                 &request.session_ref.session_id,
-                                request.session_ref.expected_generation.0,
+                                session.generation,
                             ),
                         ),
                     );
