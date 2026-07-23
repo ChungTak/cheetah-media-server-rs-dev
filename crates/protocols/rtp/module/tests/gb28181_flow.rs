@@ -11,15 +11,20 @@ use cheetah_sdk::media_api::command::{
 use cheetah_sdk::media_api::error::{EffectOutcome, MediaErrorCode};
 use cheetah_sdk::media_api::event::{MediaEvent, SessionClosed, SessionOpened};
 use cheetah_sdk::media_api::ids::RtpSessionId;
+use cheetah_sdk::media_api::ids::{
+    MediaNodeId, MediaNodeInstanceEpoch, MessageId, OperationId, OperationStepId, OwnerEpoch,
+    TenantId,
+};
 use cheetah_sdk::media_api::model::{CloseReason, OnlineState, RecordTaskState, SessionKind};
 use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
+use cheetah_sdk::media_api::port::{MediaMutationContext, MediaRequestContext};
 use cheetah_sdk::media_api::rtp_session::{
     GbMediaCompatibilityProfile, MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk,
     PlaybackRange, RtpDirection, RtpPayloadBinding, RtpSessionGeneration, RtpSessionParamsBuilder,
     RtpSessionPurpose, RtpSessionQuery, RtpSessionRef, RtpTransport, SourceBindingPolicy,
     StopRtpSession, UpdateRtpSession,
 };
-use cheetah_sdk::media_api::{MediaCapabilitySet, MediaKey, MediaRequestContext, Principal};
+use cheetah_sdk::media_api::{MediaCapabilitySet, MediaKey, Principal};
 use cheetah_sdk::{ModuleId, PublisherOptions, StreamKey};
 use tokio::time::{sleep, timeout, Instant as TokioInstant};
 
@@ -2244,6 +2249,106 @@ async fn rtp_session_rate_limit_blocks_excess_per_principal() {
             assert_eq!(err.code, MediaErrorCode::RateLimited);
         }
     }
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_cluster_mutation_context_is_validated() {
+    // Verifies that a non-empty MediaMutationContext is validated before any
+    // session allocation happens (SEC-02).
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let key = MediaKey::with_default_vhost("gb28181_sec02", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+            packet_duration_ms: None,
+        })
+        .build();
+
+    fn cluster_ctx(owner_epoch: u64, node_instance_epoch: u64) -> MediaRequestContext {
+        MediaRequestContext {
+            request_id: cheetah_sdk::media_api::ids::RequestId("req-1".to_string()),
+            correlation_id: None,
+            principal: None,
+            source_adapter: "test".to_string(),
+            trace_context: None,
+            deadline: None,
+            idempotency_key: None,
+            mutation: Some(MediaMutationContext {
+                tenant_id: TenantId::new("tenant-1").unwrap(),
+                message_id: MessageId::new("msg-1").unwrap(),
+                source_signaling_node_id: MediaNodeId::new("550e8400-e29b-41d4-a716-446655440000")
+                    .unwrap(),
+                owner_epoch: OwnerEpoch(owner_epoch),
+                target_media_node_id: MediaNodeId::new("550e8400-e29b-41d4-a716-446655440001")
+                    .unwrap(),
+                target_media_node_instance_epoch: MediaNodeInstanceEpoch(node_instance_epoch),
+                operation_id: OperationId::new("op-1").unwrap(),
+                operation_step_id: OperationStepId::new("step-1").unwrap(),
+                media_session_id: None,
+                media_binding_id: None,
+                contract_version: "v1".to_string(),
+                traceparent: None,
+                tracestate: None,
+            }),
+        }
+    }
+
+    let err = rtp_api
+        .open_receiver(
+            &cluster_ctx(0, 1),
+            OpenRtpReceiver {
+                params: params.clone(),
+                playback_range: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::InvalidArgument);
+    assert!(err.message.contains("owner_epoch"), "{}", err.message);
+
+    let err = rtp_api
+        .open_receiver(
+            &cluster_ctx(1, 0),
+            OpenRtpReceiver {
+                params: params.clone(),
+                playback_range: None,
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::InvalidArgument);
+    assert!(
+        err.message.contains("target_media_node_instance_epoch"),
+        "{}",
+        err.message
+    );
+
+    let descriptor = rtp_api
+        .open_receiver(
+            &cluster_ctx(1, 1),
+            OpenRtpReceiver {
+                params,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("valid cluster mutation context should open");
+    assert_eq!(
+        descriptor.resource_ref.origin,
+        cheetah_sdk::media_api::fencing::ResourceOrigin::Cluster
+    );
 
     harness.stop().await;
 }

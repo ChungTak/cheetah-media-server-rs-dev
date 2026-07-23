@@ -138,6 +138,31 @@ impl RtpMediaProvider {
         self.rate_limiter.check(&rate_limit_key(ctx), now)
     }
 
+    /// Validate the cluster mutation context when present.
+    ///
+    /// Local adapters leave `ctx.mutation` as `None`; cluster mutations must
+    /// carry non-zero owner/instance epochs and a non-empty contract version.
+    fn validate_mutation_context(ctx: &MediaRequestContext) -> Result<()> {
+        if let Some(m) = &ctx.mutation {
+            if m.owner_epoch.0 == 0 {
+                return Err(MediaError::invalid_argument(
+                    "cluster mutation owner_epoch must be non-zero",
+                ));
+            }
+            if m.target_media_node_instance_epoch.0 == 0 {
+                return Err(MediaError::invalid_argument(
+                    "cluster mutation target_media_node_instance_epoch must be non-zero",
+                ));
+            }
+            if m.contract_version.is_empty() {
+                return Err(MediaError::invalid_argument(
+                    "cluster mutation contract_version must not be empty",
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Enforce per-module capability/profile and session limits before allocating a session.
     fn check_profile_and_limits(&self, params: &RtpSessionParams) -> Result<()> {
         if !self.config.enabled_profiles.contains(&params.profile) {
@@ -650,6 +675,7 @@ impl RtpMediaProvider {
         F: FnOnce() -> Fut + Send,
         Fut: std::future::Future<Output = Result<RtpSessionDescriptor>> + Send,
     {
+        Self::validate_mutation_context(ctx)?;
         let Some(key) = self.idempotency_key(ctx, operation) else {
             return f().await;
         };
@@ -739,6 +765,7 @@ impl RtpSessionApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: UpdateRtpSession,
     ) -> Result<RtpSessionDescriptor> {
+        Self::validate_mutation_context(ctx)?;
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
@@ -860,6 +887,7 @@ impl RtpSessionApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: StopRtpSession,
     ) -> Result<EffectOutcome> {
+        Self::validate_mutation_context(ctx)?;
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
