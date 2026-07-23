@@ -847,6 +847,47 @@ impl RtpMediaProvider {
             .and_then(|b| b.packet_duration_ms)
     }
 
+    /// Verify that a socket or peer endpoint is not already bound to a different
+    /// media key. This enforces the TALK-05 rule that reuse must match the
+    /// source/device binding (media_key) of the existing session.
+    fn check_endpoint_ownership(
+        &self,
+        media_key: &MediaKey,
+        remote_endpoint: Option<&str>,
+        local_port: Option<u16>,
+    ) -> Result<()> {
+        let sessions = self.orchestrator.sessions.lock();
+        for session in sessions.values() {
+            if session.state == OldRtpSessionState::Stopped
+                || session.state == OldRtpSessionState::Failed
+                || session.state == OldRtpSessionState::TimedOut
+            {
+                continue;
+            }
+            if session.media_key == *media_key {
+                continue;
+            }
+            if let Some(endpoint) = remote_endpoint {
+                if !endpoint.is_empty()
+                    && endpoint != "0.0.0.0:0"
+                    && session.remote_endpoint.as_deref() == Some(endpoint)
+                {
+                    return Err(MediaError::conflict(format!(
+                        "remote endpoint {endpoint} already bound to a different media key"
+                    )));
+                }
+            }
+            if let Some(port) = local_port {
+                if port != 0 && session.local_port == Some(port) {
+                    return Err(MediaError::conflict(format!(
+                        "local port {port} already bound to a different media key"
+                    )));
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn open_receiver_impl(
         &self,
         ctx: &MediaRequestContext,
@@ -864,6 +905,8 @@ impl RtpMediaProvider {
         )
         .await?;
         self.check_profile_and_limits(&request.params)?;
+        let local_port = request.params.local_endpoint_hint.map(|a| a.port());
+        self.check_endpoint_ownership(&request.params.media_key, None, local_port)?;
         let old_req = self.build_old_receiver_request(request.clone())?;
         let session = self.open_rtp_receiver(ctx, old_req).await?;
         let guard = RollbackGuard::new(
@@ -893,6 +936,11 @@ impl RtpMediaProvider {
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        self.check_endpoint_ownership(
+            &request.media_key,
+            Some(&request.destination_endpoint),
+            None,
+        )?;
         // Create the driver-side sender session first.
         let session = self
             .orchestrator

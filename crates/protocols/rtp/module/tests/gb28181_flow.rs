@@ -833,6 +833,52 @@ async fn rtp_session_talk_codec_enables_pcma_pcmu_and_rejects_aac_by_default() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_rejects_peer_reuse_by_different_media_key() {
+    // Opening two senders to the same peer endpoint for two different media keys
+    // must be denied with Conflict (TALK-05 cross-session denial).
+    let harness = Gb28181TestHarness::start().await;
+    let media = harness.media_facade();
+    let ctx = MediaRequestContext::default();
+
+    let recv_socket = bind_udp_socket().await;
+    let dest_addr = recv_socket.local_addr().unwrap();
+
+    let media_key1 = MediaKey::with_default_vhost("gb28181_peer_reuse", "cam_001", None).unwrap();
+    let request1 = RtpSenderRequest {
+        media_key: media_key1,
+        destination_endpoint: dest_addr.to_string(),
+        ssrc: Some(SSRC),
+        payload_type: Some(INGEST_PT),
+        codec_hint: Some("ps".to_string()),
+        mode: RtpSenderMode::Active,
+        transport_options: HashMap::new(),
+        source_binding_policy: SourceBindingPolicy::default(),
+    };
+    let _first = media.open_rtp_sender(&ctx, request1).await.unwrap();
+
+    let media_key2 = MediaKey::with_default_vhost("gb28181_peer_reuse", "cam_002", None).unwrap();
+    let request2 = RtpSenderRequest {
+        media_key: media_key2,
+        destination_endpoint: dest_addr.to_string(),
+        ssrc: Some(SSRC),
+        payload_type: Some(INGEST_PT),
+        codec_hint: Some("ps".to_string()),
+        mode: RtpSenderMode::Active,
+        transport_options: HashMap::new(),
+        source_binding_policy: SourceBindingPolicy::default(),
+    };
+    let err = media.open_rtp_sender(&ctx, request2).await.unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::Conflict);
+    assert!(
+        err.message.contains("already bound"),
+        "expected conflict message, got: {}",
+        err.message
+    );
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn gb28181_talkback_late_frame_drop_policy() {
     // Configure a very tight talkback latency budget and a small subscriber queue.
     // Late audio frames (pts_us in the past) must be dropped instead of being packetized
