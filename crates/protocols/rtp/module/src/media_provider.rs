@@ -30,6 +30,7 @@ use cheetah_sdk::media_api::rtp_session::{
     RtpSessionDescriptor, RtpSessionGeneration, RtpSessionParams, RtpSessionQuery, RtpSessionRef,
     RtpSessionState, RtpTransport, StopRtpSession, TcpRole, UpdateRtpSession,
 };
+use cheetah_sdk::media_api::MediaCapability;
 use cheetah_sdk::{
     BackpressurePolicy, CancellationToken, Deadline, EngineContext, IdempotencyError,
     IdempotencyKey, StreamKey, SubscriberOptions,
@@ -691,19 +692,53 @@ impl RtpSessionApi for RtpMediaProvider {
             );
         }
 
-        let payload_type = request
-            .payload_bindings
-            .as_ref()
-            .and_then(|b| b.first().map(|b| b.payload_type));
-        let old_req = UpdateRtpRequest {
-            session_id: request.session_ref.session_id.clone(),
-            expected_generation: request.session_ref.expected_generation.0,
-            ssrc: None,
-            payload_type,
-            pause_check: request.pause_check,
-            source_policy: request.source_binding_policy,
+        if let Some(cmd) = request.playback_control.clone() {
+            if !self.playback_supports_control() {
+                return Err(MediaError::unsupported(
+                    "playback control not supported by provider",
+                ));
+            }
+            let playback_pair = self
+                .playback_sessions
+                .lock()
+                .get(&request.session_ref.session_id)
+                .cloned();
+            let Some((playback, playback_id)) = playback_pair else {
+                return Err(MediaError::invalid_argument(
+                    "session has no playback source",
+                ));
+            };
+            playback
+                .control_playback(ctx, &playback_id, cmd)
+                .await
+                .map_err(|e| self.enrich_error(e, ctx, &request.session_ref))?;
+        }
+
+        let has_old_update = request.payload_bindings.is_some()
+            || request.pause_check.is_some()
+            || request.source_binding_policy.is_some()
+            || request.max_rebind_attempts.is_some()
+            || request.max_probe_bytes.is_some();
+
+        let mut updated = if has_old_update {
+            let payload_type = request
+                .payload_bindings
+                .as_ref()
+                .and_then(|b| b.first().map(|b| b.payload_type));
+            let old_req = UpdateRtpRequest {
+                session_id: request.session_ref.session_id.clone(),
+                expected_generation: request.session_ref.expected_generation.0,
+                ssrc: None,
+                payload_type,
+                pause_check: request.pause_check,
+                source_policy: request.source_binding_policy,
+            };
+            self.update_rtp_session(ctx, old_req).await?
+        } else {
+            self.orchestrator
+                .get_rtp_session(&request.session_ref.session_id)
+                .map_err(|e| self.enrich_error(e, ctx, &request.session_ref))?
         };
-        let mut updated = self.update_rtp_session(ctx, old_req).await?;
         if let Some(remote) = request.remote_endpoint {
             updated = self
                 .orchestrator
@@ -853,6 +888,20 @@ impl RtpSessionApi for RtpMediaProvider {
 }
 
 impl RtpMediaProvider {
+    /// Check whether the registered playback provider advertises the `control`
+    /// operation. This gates pause/resume/seek/speed on provider capability.
+    fn playback_supports_control(&self) -> bool {
+        self.engine
+            .media_services
+            .capability_report()
+            .descriptors
+            .iter()
+            .any(|d| {
+                d.capability == MediaCapability::Playback
+                    && d.operations.contains(&"control".to_string())
+            })
+    }
+
     /// Validate that playback/download requests carry an explicit, safe record source
     /// and a sane time range.
     fn validate_playback_contract(

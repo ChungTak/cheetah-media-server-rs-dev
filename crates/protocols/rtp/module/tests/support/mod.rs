@@ -22,6 +22,7 @@ use cheetah_sdk::media_api::model::{
     AdmissionRequest, Decision, OnlineState, Page, PlaybackSession, PlaybackSessionState,
 };
 use cheetah_sdk::media_api::port::{MediaAdmissionApi, MediaControlApi, PlaybackApi};
+use cheetah_sdk::media_api::MediaCapabilitySet;
 use cheetah_sdk::media_api::MediaRequestContext;
 use cheetah_sdk::{
     PublisherOptions, PublisherSink, StreamKey, StreamManagerApi, SubscriberOptions,
@@ -39,6 +40,42 @@ pub struct Gb28181TestHarness {
 impl Gb28181TestHarness {
     pub async fn start() -> Self {
         Self::start_with_rtp_config("").await
+    }
+
+    /// Start the RTP module with a custom `PlaybackApi` provider and capability set.
+    /// The `record` module is omitted so the harness can control playback capability
+    /// registration exactly.
+    pub async fn start_with_playback(
+        playback: Arc<dyn PlaybackApi>,
+        playback_capabilities: MediaCapabilitySet,
+        extra_rtp_config: &str,
+    ) -> Self {
+        let runtime = Arc::new(TokioRuntime::new());
+        let temp_dir =
+            std::env::temp_dir().join(format!("cheetah-gb28181-test-{}", std::process::id()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+
+        let config = Arc::new(ConfigStore::new());
+        let yaml = format!(
+            "modules:\n  rtp:\n    enabled: true\n    listen_udp: \"0.0.0.0:0\"\n    listen_tcp: \"0.0.0.0:0\"\n{extra_rtp_config}"
+        );
+        config.load_yaml_str(&yaml).expect("load config");
+
+        let engine = EngineBuilder::new(config.clone(), config.clone(), runtime.clone())
+            .with_config_schema_registry(config)
+            .register_module_factory(Arc::new(cheetah_rtp_module::RtpModuleFactory))
+            .build()
+            .expect("build engine");
+
+        engine
+            .media_services()
+            .register_playback_with_capabilities(playback, playback_capabilities);
+
+        engine.start().await.expect("start engine");
+
+        sleep(Duration::from_millis(50)).await;
+
+        Self { engine, temp_dir }
     }
 
     pub async fn start_with_rtp_config(extra_rtp_config: &str) -> Self {
