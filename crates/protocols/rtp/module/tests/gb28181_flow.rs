@@ -19,7 +19,7 @@ use cheetah_sdk::media_api::rtp_session::{
     UpdateRtpSession,
 };
 use cheetah_sdk::media_api::{MediaCapabilitySet, MediaKey, MediaRequestContext};
-use cheetah_sdk::StreamKey;
+use cheetah_sdk::{PublisherOptions, StreamKey};
 use tokio::time::{sleep, timeout, Instant as TokioInstant};
 
 mod support;
@@ -1508,6 +1508,74 @@ async fn rtp_session_get_and_list_roundtrip() {
         .await
         .expect_err("session removed after stop");
     assert_eq!(err.code, MediaErrorCode::NotFound);
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_receiver_fails_when_stream_already_has_publisher_lease() {
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let stream_key = StreamKey::new("life02_conflict", "main");
+    let media_key = stream_key_to_media_key(&stream_key);
+
+    let _publisher = harness
+        .open_publisher(
+            stream_key.clone(),
+            vec![make_video_track(), make_audio_track()],
+        )
+        .await;
+    let dup = harness
+        .stream_manager()
+        .open_publisher(stream_key.clone(), PublisherOptions::default())
+        .await;
+    assert!(dup.is_err(), "second publisher should conflict");
+
+    let request = OpenRtpReceiver {
+        params: RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+            .transport(RtpTransport::Udp)
+            .payload_binding(RtpPayloadBinding {
+                payload_type: INGEST_PT,
+                codec: "PS".to_string(),
+                clock_rate: 90_000,
+                channels: None,
+                packet_duration_ms: None,
+            })
+            .build(),
+        playback_range: None,
+    };
+    let session = rtp_api
+        .open_receiver(&ctx, request)
+        .await
+        .expect("open receiver returns before lease check");
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let mut gone = false;
+    while tokio::time::Instant::now() < deadline && !gone {
+        match rtp_api
+            .get_session(
+                &ctx,
+                RtpSessionRef {
+                    session_id: session.session_id.clone(),
+                    expected_generation: session.generation,
+                },
+            )
+            .await
+        {
+            Err(_) => gone = true,
+            Ok(_) => sleep(Duration::from_millis(50)).await,
+        }
+    }
+    assert!(
+        gone,
+        "receiver session must stop when publisher lease is already held"
+    );
 
     harness.stop().await;
 }
