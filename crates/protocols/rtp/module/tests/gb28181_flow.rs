@@ -18,7 +18,7 @@ use cheetah_sdk::media_api::rtp_session::{
     RtpSessionQuery, RtpSessionRef, RtpTransport, SourceBindingPolicy, StopRtpSession,
     UpdateRtpSession,
 };
-use cheetah_sdk::media_api::{MediaCapabilitySet, MediaKey, MediaRequestContext};
+use cheetah_sdk::media_api::{MediaCapabilitySet, MediaKey, MediaRequestContext, Principal};
 use cheetah_sdk::{ModuleId, PublisherOptions, StreamKey};
 use tokio::time::{sleep, timeout, Instant as TokioInstant};
 
@@ -2041,6 +2041,60 @@ async fn rtp_session_stop_failure_matrix() {
         .await
         .expect("missing stop should be idempotent");
     assert_eq!(outcome, EffectOutcome::NotApplied);
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_rate_limit_blocks_excess_per_principal() {
+    // Verifies that request rate limit is enforced per principal across different sessions.
+    let harness =
+        Gb28181TestHarness::start_with_rtp_config("\n    request_rate_limit_per_minute: 2\n").await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+
+    let ctx = MediaRequestContext {
+        principal: Some(Principal {
+            identity: "rate-limited-user".to_string(),
+            scopes: vec![],
+            resource_grants: vec![],
+        }),
+        ..Default::default()
+    };
+
+    for i in 0..3 {
+        let media_key =
+            MediaKey::with_default_vhost("gb28181_rate_limit", format!("cam_{i}"), None).unwrap();
+        let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+            .transport(RtpTransport::Udp)
+            .container(MediaContainer::Ps)
+            .payload_binding(RtpPayloadBinding {
+                payload_type: INGEST_PT,
+                codec: "PS".to_string(),
+                clock_rate: 90_000,
+                channels: None,
+                packet_duration_ms: None,
+            })
+            .build();
+        let result = rtp_api
+            .open_receiver(
+                &ctx,
+                OpenRtpReceiver {
+                    params,
+                    playback_range: None,
+                },
+            )
+            .await;
+        if i < 2 {
+            result.expect("open within rate limit");
+        } else {
+            let err = result.expect_err("third request should exceed rate limit");
+            assert_eq!(err.code, MediaErrorCode::RateLimited);
+        }
+    }
 
     harness.stop().await;
 }

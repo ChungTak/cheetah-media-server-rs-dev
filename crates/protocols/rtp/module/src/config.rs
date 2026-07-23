@@ -135,6 +135,12 @@ pub struct RtpModuleConfig {
     /// 新会话允许的兼容 profile 列表。空列表表示禁用所有 profile。
     #[serde(default = "default_enabled_profiles")]
     pub enabled_profiles: Vec<GbMediaCompatibilityProfile>,
+    /// Per-principal request rate limit for RTP media API mutations, in requests per minute.
+    /// 0 disables rate limiting.
+    ///
+    /// RTP 媒体 API 变更操作的每 principal 速率限制（次/分钟）。0 表示不限制。
+    #[serde(default = "default_request_rate_limit_per_minute")]
+    pub request_rate_limit_per_minute: usize,
 }
 
 /// Configuration for a pull/egress RTP client job.
@@ -192,6 +198,7 @@ impl Default for RtpModuleConfig {
             pull_jobs: Vec::new(),
             max_sessions: default_max_sessions(),
             enabled_profiles: default_enabled_profiles(),
+            request_rate_limit_per_minute: default_request_rate_limit_per_minute(),
         }
     }
 }
@@ -488,4 +495,10 @@ fn default_enabled_profiles() -> Vec<GbMediaCompatibilityProfile> {
         GbMediaCompatibilityProfile::HikvisionEhome,
         GbMediaCompatibilityProfile::Jtt1078,
     ]
+}
+
+fn default_request_rate_limit_per_minute() -> usize {
+    // Disabled by default; operators can enable once they have set up a real
+    // principal/tenant identity source.
+    0
 }
