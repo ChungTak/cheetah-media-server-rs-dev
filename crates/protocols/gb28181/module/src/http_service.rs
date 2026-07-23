@@ -122,7 +122,10 @@ impl GbHttpService {
             .payload_binding(self.ps_payload_binding())
             .remote_endpoint(remote)
             .build();
-        let request = OpenRtpSender { params };
+        let request = OpenRtpSender {
+            params,
+            playback_range: None,
+        };
         let ctx = MediaRequestContext::default();
         let api = self.rtp_session_api()?;
         api.open_sender(&ctx, request)

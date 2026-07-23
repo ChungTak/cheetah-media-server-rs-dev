@@ -271,6 +271,10 @@ pub struct OpenRtpReceiver {
 pub struct OpenRtpSender {
     #[serde(flatten)]
     pub params: RtpSessionParams,
+    /// Optional playback/download time range. When `record_source` is set, the
+    /// sender reads from the playback provider instead of a live stream.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playback_range: Option<PlaybackRange>,
 }
 
 /// Open a bi-directional voice talk session.

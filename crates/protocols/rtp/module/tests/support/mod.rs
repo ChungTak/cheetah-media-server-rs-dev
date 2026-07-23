@@ -1,7 +1,8 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -14,9 +15,13 @@ use cheetah_config::ConfigStore;
 use cheetah_engine::{Engine, EngineBuilder, EngineMediaFacade};
 use cheetah_record_module::RecordModuleFactory;
 use cheetah_runtime_tokio::TokioRuntime;
-use cheetah_sdk::media_api::error::Result as MediaResult;
-use cheetah_sdk::media_api::model::{AdmissionRequest, Decision, OnlineState};
-use cheetah_sdk::media_api::port::{MediaAdmissionApi, MediaControlApi};
+use cheetah_sdk::media_api::command::{OpenPlaybackRequest, PlaybackControl, PlaybackQuery};
+use cheetah_sdk::media_api::error::{MediaError, Result as MediaResult};
+use cheetah_sdk::media_api::ids::PlaybackSessionId;
+use cheetah_sdk::media_api::model::{
+    AdmissionRequest, Decision, OnlineState, Page, PlaybackSession, PlaybackSessionState,
+};
+use cheetah_sdk::media_api::port::{MediaAdmissionApi, MediaControlApi, PlaybackApi};
 use cheetah_sdk::media_api::MediaRequestContext;
 use cheetah_sdk::{
     PublisherOptions, PublisherSink, StreamKey, StreamManagerApi, SubscriberOptions,
@@ -256,6 +261,118 @@ pub async fn send_rtp(
 ) {
     let packet = encode_rtp(payload, ssrc, sequence, timestamp, payload_type);
     socket.send_to(&packet, dest).await.expect("send rtp");
+}
+
+/// Minimal fake `PlaybackApi` for tests that need playback source support.
+#[derive(Clone, Default)]
+pub struct FakePlayback {
+    sessions: Arc<Mutex<HashMap<String, PlaybackSession>>>,
+    open_count: Arc<AtomicUsize>,
+    stop_count: Arc<AtomicUsize>,
+}
+
+impl FakePlayback {
+    pub fn open_count(&self) -> usize {
+        self.open_count.load(Ordering::SeqCst)
+    }
+
+    pub fn stop_count(&self) -> usize {
+        self.stop_count.load(Ordering::SeqCst)
+    }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+#[async_trait]
+impl PlaybackApi for FakePlayback {
+    async fn open_playback(
+        &self,
+        _ctx: &MediaRequestContext,
+        request: OpenPlaybackRequest,
+    ) -> MediaResult<PlaybackSession> {
+        self.open_count.fetch_add(1, Ordering::SeqCst);
+        let id = format!("pb-{}", self.open_count.load(Ordering::SeqCst));
+        let session = PlaybackSession {
+            session_id: PlaybackSessionId(id.clone()),
+            media_key: request.media_key.clone(),
+            file_handle: request.file_handle.clone(),
+            state: PlaybackSessionState::Playing,
+            duration_ms: 0,
+            position_ms: request.start_position_ms,
+            scale: request.scale,
+            generation: 1,
+            output_key: Some(request.media_key),
+            last_error: None,
+            created_at: now_ms(),
+            updated_at: now_ms(),
+        };
+        self.sessions.lock().unwrap().insert(id, session.clone());
+        Ok(session)
+    }
+
+    async fn get_playback(
+        &self,
+        _ctx: &MediaRequestContext,
+        id: &PlaybackSessionId,
+    ) -> MediaResult<PlaybackSession> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(&id.0)
+            .cloned()
+            .ok_or_else(|| MediaError::not_found(format!("playback session not found: {}", id.0)))
+    }
+
+    async fn list_playbacks(
+        &self,
+        _ctx: &MediaRequestContext,
+        _query: PlaybackQuery,
+    ) -> MediaResult<Page<PlaybackSession>> {
+        let items: Vec<_> = self.sessions.lock().unwrap().values().cloned().collect();
+        let total = items.len() as u64;
+        Ok(Page {
+            items,
+            page: 1,
+            page_size: total.max(1),
+            total,
+            next_cursor: None,
+        })
+    }
+
+    async fn control_playback(
+        &self,
+        _ctx: &MediaRequestContext,
+        id: &PlaybackSessionId,
+        command: PlaybackControl,
+    ) -> MediaResult<PlaybackSession> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let session = sessions.get_mut(&id.0).ok_or_else(|| {
+            MediaError::not_found(format!("playback session not found: {}", id.0))
+        })?;
+        match command {
+            PlaybackControl::Pause => session.state = PlaybackSessionState::Paused,
+            PlaybackControl::Resume => session.state = PlaybackSessionState::Playing,
+            PlaybackControl::Seek { position_ms } => session.position_ms = position_ms,
+            PlaybackControl::SetScale { scale } => session.scale = scale,
+        }
+        session.updated_at = now_ms();
+        Ok(session.clone())
+    }
+
+    async fn stop_playback(
+        &self,
+        _ctx: &MediaRequestContext,
+        id: &PlaybackSessionId,
+    ) -> MediaResult<()> {
+        self.stop_count.fetch_add(1, Ordering::SeqCst);
+        self.sessions.lock().unwrap().remove(&id.0);
+        Ok(())
+    }
 }
 
 pub async fn recv_rtp(
