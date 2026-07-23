@@ -4,6 +4,7 @@
 //! carry or parse SIP/SDP/XML signaling fields.
 
 use cheetah_sdk::media_api::rtp_session::RtpPayloadBinding;
+use cheetah_sdk::SdkError;
 use serde::Deserialize;
 
 fn default_app() -> String {
@@ -55,6 +56,24 @@ pub struct GbBaseRequest {
     pub stream: String,
 }
 
+impl GbBaseRequest {
+    pub fn validate(&self) -> Result<(), SdkError> {
+        if self.app.is_empty() || self.app.len() > MAX_NAME_LEN {
+            return Err(SdkError::InvalidArgument(format!(
+                "app length {} out of bounds",
+                self.app.len()
+            )));
+        }
+        if self.stream.is_empty() || self.stream.len() > MAX_NAME_LEN {
+            return Err(SdkError::InvalidArgument(format!(
+                "stream length {} out of bounds",
+                self.stream.len()
+            )));
+        }
+        Ok(())
+    }
+}
+
 fn default_ssrc_from_stream(stream: &str) -> u32 {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -62,6 +81,13 @@ fn default_ssrc_from_stream(stream: &str) -> u32 {
     stream.hash(&mut s);
     (s.finish() % 1_000_000_000) as u32
 }
+
+const MAX_NAME_LEN: usize = 256;
+const MAX_U32: u64 = u32::MAX as u64;
+const MAX_U16: u64 = u16::MAX as u64;
+const MAX_CLOCK_RATE: u32 = 192_000;
+const MAX_RTP_PT: u8 = 127;
+const MAX_CHANNELS: u8 = 2;
 
 /// Request body for `/recv/create`.
 #[derive(Debug, Clone, Deserialize)]
@@ -75,6 +101,25 @@ pub struct GbRecvRequest {
 }
 
 impl GbRecvRequest {
+    pub fn validate(&self) -> Result<(), SdkError> {
+        self.base.validate()?;
+        if let Some(ssrc) = self.ssrc {
+            if ssrc > MAX_U32 {
+                return Err(SdkError::InvalidArgument(format!(
+                    "ssrc {ssrc} exceeds u32 range"
+                )));
+            }
+        }
+        if let Some(port) = self.port {
+            if port == 0 || port > MAX_U16 {
+                return Err(SdkError::InvalidArgument(format!(
+                    "port {port} out of range"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub fn ssrc(&self) -> u32 {
         self.ssrc
             .map(|v| v as u32)
@@ -93,6 +138,12 @@ pub struct GbStopRequest {
     pub base: GbBaseRequest,
 }
 
+impl GbStopRequest {
+    pub fn validate(&self) -> Result<(), SdkError> {
+        self.base.validate()
+    }
+}
+
 /// Request body for `/send/create`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct GbSendRequest {
@@ -101,6 +152,28 @@ pub struct GbSendRequest {
     pub ip: String,
     pub port: u64,
     pub ssrc: u64,
+}
+
+impl GbSendRequest {
+    pub fn validate(&self) -> Result<(), SdkError> {
+        self.base.validate()?;
+        if self.ip.is_empty() || self.ip.len() > MAX_NAME_LEN {
+            return Err(SdkError::InvalidArgument("invalid ip".to_string()));
+        }
+        if self.port == 0 || self.port > MAX_U16 {
+            return Err(SdkError::InvalidArgument(format!(
+                "port {} out of range",
+                self.port
+            )));
+        }
+        if self.ssrc > MAX_U32 {
+            return Err(SdkError::InvalidArgument(format!(
+                "ssrc {} exceeds u32 range",
+                self.ssrc
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// Request body for `/talk/start`.
@@ -127,6 +200,59 @@ pub struct GbTalkRequest {
 }
 
 impl GbTalkRequest {
+    pub fn validate(&self) -> Result<(), SdkError> {
+        self.base.validate()?;
+        if self.ip.is_empty() || self.ip.len() > MAX_NAME_LEN {
+            return Err(SdkError::InvalidArgument("invalid ip".to_string()));
+        }
+        if self.port == 0 {
+            return Err(SdkError::InvalidArgument(format!(
+                "port {} out of range",
+                self.port
+            )));
+        }
+        if let Some(local_port) = self.local_port {
+            if local_port == 0 || local_port > MAX_U16 {
+                return Err(SdkError::InvalidArgument(format!(
+                    "local_port {local_port} out of range"
+                )));
+            }
+        }
+        if let Some(ssrc) = self.ssrc {
+            if ssrc > MAX_U32 {
+                return Err(SdkError::InvalidArgument(format!(
+                    "ssrc {ssrc} exceeds u32 range"
+                )));
+            }
+        }
+        if self.pt > MAX_RTP_PT {
+            return Err(SdkError::InvalidArgument(format!(
+                "payload type {} exceeds 127",
+                self.pt
+            )));
+        }
+        if self.codec.is_empty() || self.codec.len() > MAX_NAME_LEN {
+            return Err(SdkError::InvalidArgument(format!(
+                "codec length {} out of bounds",
+                self.codec.len()
+            )));
+        }
+        if self.clock_rate == 0 || self.clock_rate > MAX_CLOCK_RATE {
+            return Err(SdkError::InvalidArgument(format!(
+                "clock_rate {} out of range",
+                self.clock_rate
+            )));
+        }
+        if let Some(channels) = self.channels {
+            if channels == 0 || channels > MAX_CHANNELS {
+                return Err(SdkError::InvalidArgument(format!(
+                    "channels {channels} out of range"
+                )));
+            }
+        }
+        Ok(())
+    }
+
     pub fn payload_binding(&self) -> RtpPayloadBinding {
         RtpPayloadBinding {
             payload_type: self.pt,
@@ -226,5 +352,30 @@ mod tests {
         assert_eq!(req.clock_rate, 16000);
         assert_eq!(req.payload_binding().payload_type, 0);
         assert_eq!(req.payload_binding().codec, "PCMU");
+    }
+
+    #[test]
+    fn validation_rejects_out_of_range_fields() {
+        let json = serde_json::json!({"stream": "cam-1", "ssrc": u64::MAX, "port": 70000});
+        let req: GbRecvRequest = serde_json::from_value(json).unwrap();
+        assert!(req.validate().is_err());
+
+        let json = serde_json::json!({
+            "stream": "cam-1",
+            "ip": "10.0.0.1",
+            "port": 0,
+            "ssrc": u64::MAX
+        });
+        let req: GbSendRequest = serde_json::from_value(json).unwrap();
+        assert!(req.validate().is_err());
+
+        let json = serde_json::json!({
+            "stream": "cam-1",
+            "pt": 200,
+            "clockRate": 0,
+            "channels": 3
+        });
+        let req: GbTalkRequest = serde_json::from_value(json).unwrap();
+        assert!(req.validate().is_err());
     }
 }
