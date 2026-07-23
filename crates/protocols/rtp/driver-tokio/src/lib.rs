@@ -734,7 +734,11 @@ async fn run_driver_loop(
                                                         }
                                                         Ok(n) => {
                                                             if !load_limiter.try_consume_bytes(n) {
-                                                                continue;
+                                                                // Byte-rate budget exceeded. TCP is a byte stream, so dropping
+                                                                // bytes mid-stream would corrupt framing; tear down the connection.
+                                                                let now_ms = now_ms(&runtime);
+                                                                let _ = tcp_rx_tx.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
+                                                                break;
                                                             }
                                                             let received_at_ms = now_ms(&runtime);
                                                             remaining.extend_from_slice(&buf[..n]);
@@ -1004,7 +1008,9 @@ async fn run_driver_loop(
                                                             }
                                                             Ok(n) => {
                                                                 if !load_limiter.try_consume_bytes(n) {
-                                                                    continue;
+                                                                    let now_ms = now_ms(&runtime);
+                                                                    let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
+                                                                    break;
                                                                 }
                                                                 let received_at_ms = now_ms(&runtime);
                                                                 remaining.extend_from_slice(&buf[..n]);

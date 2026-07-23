@@ -107,7 +107,7 @@ impl LoadLimiter {
                     .compare_exchange(start, now_ms, Ordering::SeqCst, Ordering::Relaxed)
                     .is_ok();
                 if swapped {
-                    self.bytes_in_window.store(n as u64, Ordering::SeqCst);
+                    self.bytes_in_window.store(0, Ordering::SeqCst);
                 }
                 start = self.bytes_window_start_ms.load(Ordering::Relaxed);
             }
