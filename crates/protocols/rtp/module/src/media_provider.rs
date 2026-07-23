@@ -26,9 +26,9 @@ use cheetah_sdk::media_api::model::{
 use cheetah_sdk::media_api::port::{MediaRequestContext, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
     GbMediaCompatibilityProfile, MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk,
-    RtpDirection, RtpEndpoints, RtpFraming, RtpPayloadBinding, RtpSessionApi, RtpSessionDescriptor,
-    RtpSessionGeneration, RtpSessionParams, RtpSessionQuery, RtpSessionRef, RtpSessionState,
-    RtpTransport, StopRtpSession, TcpRole, UpdateRtpSession,
+    PlaybackRange, RtpDirection, RtpEndpoints, RtpFraming, RtpPayloadBinding, RtpSessionApi,
+    RtpSessionDescriptor, RtpSessionGeneration, RtpSessionParams, RtpSessionQuery, RtpSessionRef,
+    RtpSessionState, RtpTransport, StopRtpSession, TcpRole, UpdateRtpSession,
 };
 use cheetah_sdk::{
     BackpressurePolicy, CancellationToken, Deadline, EngineContext, IdempotencyError,
@@ -839,6 +839,28 @@ impl RtpSessionApi for RtpMediaProvider {
 }
 
 impl RtpMediaProvider {
+    /// Validate that playback/download requests carry an explicit, safe record source.
+    fn validate_playback_contract(
+        &self,
+        params: &RtpSessionParams,
+        playback_range: Option<&PlaybackRange>,
+    ) -> Result<()> {
+        if playback_range.is_none() {
+            return Ok(());
+        }
+        let Some(source) = params.record_source.as_ref().filter(|s| !s.is_empty()) else {
+            return Err(MediaError::invalid_argument(
+                "playback/download requires a non-empty record_source",
+            ));
+        };
+        if source.contains("..") || source.starts_with('/') || source.starts_with('~') {
+            return Err(MediaError::invalid_argument(
+                "record_source contains path traversal or absolute path",
+            ));
+        }
+        Ok(())
+    }
+
     /// Extract the audio packet duration from the first payload binding, if any.
     fn packet_duration_ms_from_params(params: &RtpSessionParams) -> Option<u32> {
         params
@@ -905,6 +927,7 @@ impl RtpMediaProvider {
         )
         .await?;
         self.check_profile_and_limits(&request.params)?;
+        self.validate_playback_contract(&request.params, request.playback_range.as_ref())?;
         let local_port = request.params.local_endpoint_hint.map(|a| a.port());
         self.check_endpoint_ownership(&request.params.media_key, None, local_port)?;
         let old_req = self.build_old_receiver_request(request.clone())?;

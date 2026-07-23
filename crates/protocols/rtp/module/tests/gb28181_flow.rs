@@ -12,7 +12,7 @@ use cheetah_sdk::media_api::ids::RtpSessionId;
 use cheetah_sdk::media_api::model::{OnlineState, RecordTaskState};
 use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
-    MediaContainer, OpenRtpReceiver, OpenRtpTalk, RtpDirection, RtpPayloadBinding,
+    MediaContainer, OpenRtpReceiver, OpenRtpTalk, PlaybackRange, RtpDirection, RtpPayloadBinding,
     RtpSessionParamsBuilder, RtpSessionRef, RtpTransport, SourceBindingPolicy, StopRtpSession,
 };
 use cheetah_sdk::media_api::{MediaKey, MediaRequestContext};
@@ -473,6 +473,84 @@ async fn typed_rtp_session_errors_carry_resource_ref_and_generation() {
         .await
         .expect("idempotent stop");
     assert_eq!(outcome, EffectOutcome::NotApplied);
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_playback_request_requires_record_source_and_time_range() {
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_playback", "cam_001", None).unwrap();
+    let base_params = || {
+        RtpSessionParamsBuilder::new(media_key.clone(), RtpDirection::Receive)
+            .transport(RtpTransport::Udp)
+            .container(MediaContainer::Ps)
+            .payload_binding(RtpPayloadBinding {
+                payload_type: INGEST_PT,
+                codec: "PS".to_string(),
+                clock_rate: 90000,
+                channels: None,
+                packet_duration_ms: None,
+            })
+    };
+
+    // Missing record_source with a playback range is rejected.
+    let err = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params: base_params().build(),
+                playback_range: Some(PlaybackRange {
+                    start_ms: 0,
+                    end_ms: None,
+                }),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::InvalidArgument);
+
+    // Unsafe record source is rejected.
+    let err = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params: base_params().record_source("/etc/passwd").build(),
+                playback_range: Some(PlaybackRange {
+                    start_ms: 0,
+                    end_ms: None,
+                }),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::InvalidArgument);
+
+    // Valid playback contract is accepted (live ingest path is still used; playback
+    // reader integration is covered by PLAY-02).
+    let descriptor = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params: base_params()
+                    .record_source("recordings/cam_001/20250721.mp4")
+                    .build(),
+                playback_range: Some(PlaybackRange {
+                    start_ms: 0,
+                    end_ms: Some(60_000),
+                }),
+            },
+        )
+        .await
+        .expect("playback receiver with valid record source");
+    assert_eq!(descriptor.direction, RtpDirection::Receive);
 
     harness.stop().await;
 }

@@ -246,6 +246,10 @@ pub struct RtpSessionParams {
     /// RTP/RTCP mux flag; when true RTCP shares the RTP socket.
     #[serde(default)]
     pub rtcp_mux: bool,
+    /// Optional record source for playback/download sessions.
+    /// For live sessions this is left empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub record_source: Option<String>,
 }
 
 /// Open a passive or active RTP receiver.
@@ -531,6 +535,11 @@ impl RtpSessionParamsBuilder {
         self
     }
 
+    pub fn record_source(mut self, source: impl Into<String>) -> Self {
+        self.params.record_source = Some(source.into());
+        self
+    }
+
     pub fn build(self) -> RtpSessionParams {
         self.params
     }
@@ -562,6 +571,7 @@ impl Default for RtpSessionParams {
             max_rebind_attempts: 0,
             max_probe_bytes: 64 * 1024,
             rtcp_mux: false,
+            record_source: None,
         }
     }
 }
