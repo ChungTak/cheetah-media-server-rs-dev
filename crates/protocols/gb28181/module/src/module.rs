@@ -453,7 +453,10 @@ impl ModuleHttpService for GbHttpService {
                         (s.finish() % 1_000_000_000) as u32
                     });
 
-                let port = body.get("port").and_then(|v| v.as_u64()).unwrap_or(30000) as u16;
+                let port = body
+                    .get("port")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(self.default_media_port as u64) as u16;
 
                 // Allocate RTP server port and session in-process.
                 // SIP INVITE/SDP negotiation is performed by the external signaling system.
