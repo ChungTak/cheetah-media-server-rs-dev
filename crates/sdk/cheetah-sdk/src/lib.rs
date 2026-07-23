@@ -71,7 +71,7 @@ pub use event::{
 };
 pub use idempotency::{
     canonical_hash, IdempotencyError, IdempotencyFingerprint, IdempotencyKey, IdempotencyOutcome,
-    InMemoryIdempotencyRepository,
+    IdempotencyRecord, InMemoryIdempotencyRepository,
 };
 pub use ids::{
     ModuleId, PublisherId, RoomId, SessionId, StreamId, StreamKey, SubscriberId, TaskId,
