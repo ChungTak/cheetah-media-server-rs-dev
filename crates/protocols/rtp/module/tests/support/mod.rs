@@ -17,6 +17,7 @@ use cheetah_record_module::RecordModuleFactory;
 use cheetah_runtime_tokio::TokioRuntime;
 use cheetah_sdk::media_api::command::{OpenPlaybackRequest, PlaybackControl, PlaybackQuery};
 use cheetah_sdk::media_api::error::{MediaError, Result as MediaResult};
+use cheetah_sdk::media_api::event::{MediaEvent, MediaEventSender};
 use cheetah_sdk::media_api::ids::PlaybackSessionId;
 use cheetah_sdk::media_api::model::{
     AdmissionRequest, Decision, OnlineState, Page, PlaybackSession, PlaybackSessionState,
@@ -443,4 +444,42 @@ pub async fn recv_rtp(
         }
         _ => None,
     }
+}
+
+#[derive(Clone)]
+struct CollectingMediaEventSender {
+    events: Arc<Mutex<Vec<MediaEvent>>>,
+}
+
+impl MediaEventSender for CollectingMediaEventSender {
+    fn send(&self, event: MediaEvent) -> MediaResult<()> {
+        self.events.lock().unwrap().push(event);
+        Ok(())
+    }
+
+    fn lagged(&self, _dropped: u64) -> MediaResult<()> {
+        Ok(())
+    }
+}
+
+/// Subscribe to the engine media event bus and return a handle plus a shared event log.
+///
+/// The returned subscription must be kept alive for the duration of the test.
+pub fn subscribe_media_events(
+    engine: &Engine,
+    capacity: usize,
+) -> (
+    Box<dyn cheetah_sdk::media_api::event::MediaEventSubscription>,
+    Arc<Mutex<Vec<MediaEvent>>>,
+) {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let sender = Box::new(CollectingMediaEventSender {
+        events: events.clone(),
+    });
+    let sub = engine
+        .media_facade()
+        .media_event_bus()
+        .subscribe(sender, capacity)
+        .expect("subscribe to media events");
+    (sub, events)
 }

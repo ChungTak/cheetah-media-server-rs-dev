@@ -20,9 +20,11 @@ use cheetah_rtp_driver_tokio::{
 };
 use cheetah_sdk::media_api::capability::default_operations;
 use cheetah_sdk::media_api::error::MediaError;
-use cheetah_sdk::media_api::event::{EventHeader, MediaEvent, RtpSessionTimeout};
-use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId};
-use cheetah_sdk::media_api::model::{RtpSessionState, RtpTcpMode};
+use cheetah_sdk::media_api::event::{EventHeader, MediaEvent, RtpSessionTimeout, SessionClosed};
+use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId, SessionId};
+use cheetah_sdk::media_api::model::{
+    CloseReason, RtpSessionKind, RtpSessionState, RtpTcpMode, SessionKind,
+};
 use cheetah_sdk::media_api::rtp_session::SourceBindingPolicy;
 use cheetah_sdk::media_api::{MediaCapability, MediaCapabilitySet};
 use cheetah_sdk::{
@@ -732,13 +734,9 @@ async fn run_ingress_worker(
                 );
                 info!("RTP ingress session closed: key={session_key}, reason={reason}");
                 let id = RtpSessionId(session_key.clone());
-                let timeout_session = {
+                let closed_session = {
                     let mut guard = orchestrator.sessions.lock();
-                    let session = if is_timeout {
-                        guard.get(&id).cloned()
-                    } else {
-                        None
-                    };
+                    let session = guard.get(&id).cloned();
                     guard.remove(&id);
                     session
                 };
@@ -760,8 +758,51 @@ async fn run_ingress_worker(
                     }),
                 }));
 
-                if let Some(rtp_session) = timeout_session {
-                    let now_ms = (ctx.runtime_api.now().as_micros() / 1000) as i64;
+                let close_reason = match reason {
+                    RtpSessionCloseReason::Stopped => CloseReason::Normal,
+                    RtpSessionCloseReason::IdleTimeout => CloseReason::Idle,
+                    RtpSessionCloseReason::RrTimeout => CloseReason::Timeout,
+                    RtpSessionCloseReason::Bye => CloseReason::Other("rtcp_bye".to_string()),
+                    RtpSessionCloseReason::UnresolvablePayloadType { .. }
+                    | RtpSessionCloseReason::PayloadModeOscillation { .. } => {
+                        CloseReason::Unsupported
+                    }
+                    RtpSessionCloseReason::ConnectionClosed => {
+                        CloseReason::Other("connection_closed".to_string())
+                    }
+                };
+                let kind = closed_session
+                    .as_ref()
+                    .map(|s| rtp_session_kind_to_session_kind(s.kind))
+                    .or_else(|| rtp_session_kind_from_session_key(&session_key));
+                let media_key = closed_session
+                    .as_ref()
+                    .map(|s| s.media_key.clone())
+                    .or_else(|| media_key_from_session_key(&session_key));
+                let now_ms = (ctx.runtime_api.now().as_micros() / 1000) as i64;
+                if !is_timeout {
+                    if let (Some(kind), Some(media_key)) = (kind, media_key) {
+                        let _ =
+                            ctx.media_event_bus
+                                .publish(MediaEvent::SessionClosed(SessionClosed {
+                                    header: EventHeader {
+                                        event_id: format!(
+                                            "rtp-session-closed-{session_key}-{now_ms}"
+                                        ),
+                                        occurred_at: now_ms,
+                                        sequence: None,
+                                        media_key: Some(media_key),
+                                        source: "rtp-module".to_string(),
+                                        correlation_id: Some(session_key.clone()),
+                                    },
+                                    kind,
+                                    session_id: SessionId(session_key.clone()),
+                                    reason: close_reason.clone(),
+                                }));
+                    }
+                }
+
+                if let Some(rtp_session) = closed_session.filter(|_| is_timeout) {
                     let _ = ctx.media_event_bus.publish(MediaEvent::RtpSessionTimeout(
                         RtpSessionTimeout {
                             header: EventHeader {
@@ -813,6 +854,31 @@ fn parse_session_key(key: &str) -> StreamKey {
         (Some(path), None, None) => StreamKey::new("live", path),
         _ => StreamKey::new("live", key),
     }
+}
+
+fn rtp_session_kind_to_session_kind(kind: RtpSessionKind) -> SessionKind {
+    match kind {
+        RtpSessionKind::Receiver => SessionKind::RtpReceiver,
+        RtpSessionKind::Sender | RtpSessionKind::Talk => SessionKind::RtpSender,
+    }
+}
+
+fn rtp_session_kind_from_session_key(key: &str) -> Option<SessionKind> {
+    if key.starts_with("recv:") {
+        Some(SessionKind::RtpReceiver)
+    } else if key.starts_with("send:") || key.starts_with("pull:") {
+        Some(SessionKind::RtpSender)
+    } else if key.starts_with("talk:") {
+        // Talkback is a duplex sender session from the event consumer's point of view.
+        Some(SessionKind::RtpSender)
+    } else {
+        None
+    }
+}
+
+fn media_key_from_session_key(key: &str) -> Option<MediaKey> {
+    let stream_key = parse_session_key(key);
+    MediaKey::with_default_vhost(&stream_key.namespace, &stream_key.path, None).ok()
 }
 
 /// Supervise a configured RTP pull job with exponential retry backoff.

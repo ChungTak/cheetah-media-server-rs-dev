@@ -42,6 +42,13 @@ impl EngineMediaFacade {
         }
     }
 
+    /// Return the shared media event bus.
+    ///
+    /// 返回共享的媒体事件总线。
+    pub fn media_event_bus(&self) -> Arc<dyn MediaEventBusApi> {
+        self.media_event_bus.clone()
+    }
+
     /// Ask the configured admission provider whether a side-effecting media
     /// operation should proceed. A missing provider is treated as allow-all.
     ///
