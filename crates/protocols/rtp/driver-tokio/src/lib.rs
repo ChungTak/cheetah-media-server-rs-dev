@@ -6,6 +6,7 @@ use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -566,6 +567,12 @@ async fn run_driver_loop(
     core.set_tcp_framing(config.tcp_framing);
     core.set_max_rtp_len_cap(config.max_rtp_len_cap);
     core.set_rtcp_report_interval_ms(config.rtcp_report_interval_ms);
+    let wall_clock_offset_ms = (SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64)
+        .saturating_sub(runtime.now().as_micros() / 1000);
+    core.set_wall_clock_offset_ms(wall_clock_offset_ms);
 
     let tick_interval_us = config.tick_interval_ms.saturating_mul(1000);
     let mut next_tick = runtime.now().as_micros().saturating_add(tick_interval_us);

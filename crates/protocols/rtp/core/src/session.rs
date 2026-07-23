@@ -55,6 +55,9 @@ pub struct RtpCore {
     pub(super) max_source_rebinds: u32,
     /// Interval between RTCP sender/receiver reports in milliseconds.
     pub(super) rtcp_report_interval_ms: u64,
+    /// Wall-clock offset in milliseconds added to monotonic `now_ms` when producing
+    /// outbound Sender Report NTP timestamps.
+    pub(super) wall_clock_offset_ms: u64,
     pub(super) now_ms: u64,
     /// TCP framing mode applied when deframing inbound RTP-over-TCP traffic. Defaults to
     /// `AutoDetect`, matching ABLMediaServer's behaviour of accepting both 2-byte length-prefix
@@ -90,6 +93,7 @@ impl RtpCore {
             source_rebind_idle_window_ms: 1_000,
             max_source_rebinds: 10,
             rtcp_report_interval_ms: 5_000,
+            wall_clock_offset_ms: 0,
             now_ms: 0,
             tcp_framing: cheetah_codec::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
@@ -112,6 +116,15 @@ impl RtpCore {
     /// Override the RTCP sender/receiver report interval (defaults to 5 seconds).
     pub fn set_rtcp_report_interval_ms(&mut self, ms: u64) {
         self.rtcp_report_interval_ms = ms.max(1);
+    }
+
+    /// Override the wall-clock offset used for outbound Sender Report NTP timestamps.
+    /// Drivers inject this because core is Sans-I/O and cannot read the system clock.
+    pub fn set_wall_clock_offset_ms(&mut self, offset_ms: u64) {
+        self.wall_clock_offset_ms = offset_ms;
+        for session in self.sessions.values_mut() {
+            session.rtcp.set_wall_clock_offset_ms(offset_ms);
+        }
     }
 
     /// Override the dynamic max-RTP-length cap (defaults to 65 536 bytes).

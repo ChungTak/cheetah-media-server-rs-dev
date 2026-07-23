@@ -247,9 +247,11 @@ pub struct RtpSendFrame {
 
 /// A single UDP datagram received from the network.
 ///
-/// `received_at_ms` is the driver-side receive timestamp in Unix-epoch wall-clock
-/// milliseconds, in the same domain as `RtpCoreInput::Tick`. `core` uses it for
-/// per-packet jitter statistics and activity tracking.
+/// `received_at_ms` is the driver-side receive timestamp in milliseconds. It is
+/// in the same monotonic time domain as `RtpCoreInput::Tick`; only differences
+/// are meaningful for jitter and idle/RR-timeout tracking. The driver may keep it
+/// in a runtime-specific monotonic domain or a wall-clock domain, but it must be
+/// consistent across all inputs to the same `RtpCore` instance.
 ///
 /// 从网络收到的单个 UDP 数据报。
 #[derive(Debug, Clone)]
@@ -261,9 +263,9 @@ pub struct RtpDatagram {
 
 /// A chunk of TCP bytes received on a single connection.
 ///
-/// `received_at_ms` is the driver-side receive timestamp in Unix-epoch wall-clock
-/// milliseconds, in the same domain as `RtpCoreInput::Tick`. `core` uses it for
-/// per-packet jitter statistics and activity tracking.
+/// `received_at_ms` is the driver-side receive timestamp in milliseconds. It must
+/// be in the same domain as `RtpCoreInput::Tick`; only differences are used by
+/// `core` for jitter and idle/RR-timeout tracking.
 ///
 /// 在单个连接上收到的一小段 TCP 字节。
 #[derive(Debug, Clone)]
@@ -427,9 +429,15 @@ pub enum RtpCoreInput {
     /// 入站 RTCP 数据报（RTCP 端口上收到的非 RTP UDP）。用于更新对端反馈统计并重置
     /// 发送者的 RR 超时关闭。
     RtcpPacket(RtpDatagram),
-    /// Periodic timer tick with the current wall-clock time in milliseconds.
+    /// Periodic timer tick with the current driver time in milliseconds.
     ///
-    /// 周期性定时器 tick，当前墙上时间（毫秒）。
+    /// This value only needs to be monotonic and consistent with the timestamps
+    /// on `UdpPacket` / `TcpBytes` / `TcpConnectionClosed` inputs; it is used for
+    /// RTCP scheduling, idle timeout and RR-timeout tracking. `core` adds the
+    /// configured `wall_clock_offset_ms` when producing outbound Sender Report
+    /// NTP timestamps.
+    ///
+    /// 周期性定时器 tick，当前驱动时间（毫秒）。
     Tick { now_ms: u64 },
     /// Control command from the module/driver.
     ///

@@ -199,7 +199,10 @@ impl RtpCore {
                     pt_change_unknown_count: 0,
                     pt_format_change_count: 0,
                     last_error: None,
-                    rtcp: RtcpReportState::new(default_clock_rate_hz(spec.payload_mode)),
+                    rtcp: RtcpReportState::new_with_offset(
+                        default_clock_rate_hz(spec.payload_mode),
+                        self.wall_clock_offset_ms,
+                    ),
                 };
                 self.sessions.insert(spec.session_key.clone(), session);
                 self.ssrc_to_session.insert(ssrc, spec.session_key.clone());
@@ -283,7 +286,10 @@ impl RtpCore {
                     pt_change_unknown_count: 0,
                     pt_format_change_count: 0,
                     last_error: None,
-                    rtcp: RtcpReportState::new(default_clock_rate_hz(spec.payload_mode)),
+                    rtcp: RtcpReportState::new_with_offset(
+                        default_clock_rate_hz(spec.payload_mode),
+                        self.wall_clock_offset_ms,
+                    ),
                 };
                 self.sessions.insert(spec.session_key.clone(), session);
                 self.ssrc_to_session
