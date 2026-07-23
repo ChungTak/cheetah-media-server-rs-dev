@@ -493,6 +493,15 @@ pub enum RtpCoreCommand {
         session_key: RtpSessionKey,
         paused: bool,
     },
+    /// The driver failed to transmit an outbound packet for the session.
+    /// The core should close the session so that the upper layer can release
+    /// the socket, task and lease.
+    ///
+    /// 驱动层未能发送会话的出站包；core 应关闭会话，以便上层释放 socket/task/lease。
+    ReportSendFailure {
+        session_key: RtpSessionKey,
+        reason: String,
+    },
 }
 
 /// Outputs produced by `RtpCore` for the driver to act on.

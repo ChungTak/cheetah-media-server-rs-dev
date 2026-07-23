@@ -130,6 +130,43 @@ fn test_sendonly_session_transitions_inactive_to_sending() {
 }
 
 #[test]
+fn test_report_send_failure_closes_session() {
+    let mut core = RtpCore::new(10, 5000);
+    let key = "send-fail".to_string();
+    let dest = "127.0.0.1:15060".parse::<SocketAddr>().unwrap();
+
+    let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateClient(
+        RtpClientSpec {
+            session_key: key.clone(),
+            destination: dest,
+            ssrc: 2000,
+            payload_mode: RtpPayloadMode::RawAudio,
+            transport_mode: RtpTransportMode::SendOnly,
+            packet_duration_ms: None,
+            tcp_conn_id: None,
+            connection_type: None,
+            source_policy: None,
+            track_filter: RtpTrackFilter::All,
+        },
+    )));
+
+    let outputs = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::ReportSendFailure {
+        session_key: key.clone(),
+        reason: "network unreachable".to_string(),
+    }));
+
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        RtpCoreOutput::Event(RtpCoreEvent::SessionClosed { session_key, .. }) if session_key == &key
+    )));
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        RtpCoreOutput::CloseSession(k) if k == &key
+    )));
+    assert!(!core.sessions.contains_key(&key));
+}
+
+#[test]
 fn test_sendrecv_session_transitions_inactive_to_sendrecv_on_ingress() {
     let mut core = RtpCore::new(10, 5000);
     let key = "sendrecv-ingress".to_string();
