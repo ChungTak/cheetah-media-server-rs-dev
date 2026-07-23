@@ -45,6 +45,8 @@ pub(crate) struct LoadLimiter {
     active_tcp_connections: Arc<AtomicU64>,
     bytes_window_start_ms: Arc<AtomicU64>,
     bytes_in_window: Arc<AtomicU64>,
+    /// Last window start (ms) for which a byte-rate warning was emitted.
+    last_warn_window_ms: Arc<AtomicU64>,
 }
 
 impl LoadLimiter {
@@ -56,6 +58,7 @@ impl LoadLimiter {
             active_tcp_connections: Arc::new(AtomicU64::new(0)),
             bytes_window_start_ms: Arc::new(AtomicU64::new(0)),
             bytes_in_window: Arc::new(AtomicU64::new(0)),
+            last_warn_window_ms: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -138,7 +141,15 @@ impl LoadLimiter {
 
             let budget = self.byte_budget();
             if current.saturating_add(n as u64) > budget {
-                warn!("incoming byte rate limit exceeded: {current} + {n} > {budget}");
+                // Rate-limit the warning to one per measurement window so an overload
+                // does not generate per-packet log traffic.
+                if self
+                    .last_warn_window_ms
+                    .compare_exchange(start, start, Ordering::SeqCst, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    warn!("incoming byte rate limit exceeded: {current} + {n} > {budget}");
+                }
                 return false;
             }
 
