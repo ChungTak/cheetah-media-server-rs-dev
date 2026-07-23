@@ -53,6 +53,8 @@ pub struct RtpCore {
     pub(super) source_rebind_idle_window_ms: u64,
     /// Maximum number of validated source rebinds allowed per session.
     pub(super) max_source_rebinds: u32,
+    /// Interval between RTCP sender/receiver reports in milliseconds.
+    pub(super) rtcp_report_interval_ms: u64,
     pub(super) now_ms: u64,
     /// TCP framing mode applied when deframing inbound RTP-over-TCP traffic. Defaults to
     /// `AutoDetect`, matching ABLMediaServer's behaviour of accepting both 2-byte length-prefix
@@ -87,6 +89,7 @@ impl RtpCore {
             max_tolerated_unknown_pt_packets: 255,
             source_rebind_idle_window_ms: 1_000,
             max_source_rebinds: 10,
+            rtcp_report_interval_ms: 5_000,
             now_ms: 0,
             tcp_framing: cheetah_codec::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
@@ -104,6 +107,11 @@ impl RtpCore {
     /// 交错帧（`$ + channel + length`）。
     pub fn set_tcp_framing(&mut self, framing: cheetah_codec::RtpTcpFraming) {
         self.tcp_framing = framing;
+    }
+
+    /// Override the RTCP sender/receiver report interval (defaults to 5 seconds).
+    pub fn set_rtcp_report_interval_ms(&mut self, ms: u64) {
+        self.rtcp_report_interval_ms = ms.max(1);
     }
 
     /// Override the dynamic max-RTP-length cap (defaults to 65 536 bytes).

@@ -6,19 +6,19 @@ use bytes::{Bytes, BytesMut};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::SystemTime;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream, UdpSocket};
 use tokio::sync::{mpsc, oneshot, Mutex};
-use tokio::time::{self, Duration};
+use tokio::time::Duration;
 use tracing::{debug, error, info, warn};
 
+use cheetah_codec::MonoTime;
 use cheetah_rtp_core::{
     rtcp::RtcpCompoundPacket, RtpClientSpec, RtpConnectionType, RtpCore, RtpCoreCommand,
     RtpCoreEvent, RtpCoreInput, RtpCoreOutput, RtpDatagram, RtpSendFrame, RtpServerSpec,
     RtpSourcePolicy, RtpTcpChunk,
 };
-use cheetah_runtime_api::CancellationToken;
+use cheetah_runtime_api::{CancellationToken, RuntimeApi};
 
 /// Configuration for the Tokio RTP driver.
 ///
@@ -37,6 +37,14 @@ pub struct RtpDriverConfig {
     pub read_buffer_size: usize,
     pub session_idle_timeout_ms: u64,
     pub max_sessions: usize,
+    /// Driver tick interval in milliseconds. The core receives a `Tick` input at this cadence.
+    ///
+    /// 驱动定时器间隔（毫秒）。core 按此频率接收 `Tick` 输入。
+    pub tick_interval_ms: u64,
+    /// Interval between RTCP sender/receiver reports in milliseconds.
+    ///
+    /// RTCP Sender/Receiver Report 生成间隔（毫秒）。
+    pub rtcp_report_interval_ms: u64,
     /// Default TCP framing applied by the core when deframing inbound TCP RTP traffic. Defaults
     /// to `AutoDetect` so we accept both 2-byte length prefixes and 4-byte interleaved frames
     /// without explicit per-session negotiation.
@@ -62,6 +70,8 @@ impl Default for RtpDriverConfig {
             read_buffer_size: 65536,
             session_idle_timeout_ms: 30000,
             max_sessions: 1024,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
         }
@@ -305,16 +315,42 @@ impl RtpDriverHandle {
     pub async fn recv_event(&self) -> Option<RtpCoreEvent> {
         self.event_rx.lock().await.recv().await
     }
+
+    /// Try to receive the next event without blocking.
+    ///
+    /// 尝试非阻塞地从驱动循环接收下一个事件。
+    pub async fn try_recv_event(&self) -> Option<RtpCoreEvent> {
+        self.event_rx.lock().await.try_recv().ok()
+    }
 }
 
-/// Start the Tokio RTP driver and return a handle.
+/// Start the Tokio RTP driver using the default `TokioRuntime` and return a handle.
 ///
-/// 启动 Tokio RTP 驱动并返回句柄。
+/// 使用默认 `TokioRuntime` 启动 Tokio RTP 驱动并返回句柄。
 pub fn start_driver(config: RtpDriverConfig, cancel: CancellationToken) -> RtpDriverHandle {
+    start_driver_with_runtime(
+        config,
+        cancel,
+        Arc::new(cheetah_runtime_tokio::TokioRuntime::new()),
+    )
+}
+
+/// Start the Tokio RTP driver with an injected `RuntimeApi` and return a handle.
+///
+/// This allows tests to drive time via a fake or paused `RuntimeApi` (e.g. `TokioRuntime`
+/// under `tokio::time::pause`) instead of wall-clock time.
+///
+/// 使用注入的 `RuntimeApi` 启动 Tokio RTP 驱动并返回句柄。
+/// 测试可以通过 fake 或 paused 的 `RuntimeApi`（如 `tokio::time::pause` 下的 `TokioRuntime`）控制时间。
+pub fn start_driver_with_runtime(
+    config: RtpDriverConfig,
+    cancel: CancellationToken,
+    runtime: Arc<dyn RuntimeApi>,
+) -> RtpDriverHandle {
     let (cmd_tx, cmd_rx) = mpsc::channel(256);
     let (event_tx, event_rx) = mpsc::channel(256);
 
-    tokio::spawn(run_driver_loop(config, cmd_rx, event_tx, cancel));
+    tokio::spawn(run_driver_loop(config, cmd_rx, event_tx, cancel, runtime));
 
     RtpDriverHandle {
         cmd_tx,
@@ -338,8 +374,7 @@ fn spawn_udp_reader(
     rtcp_rx_tx: Option<mpsc::Sender<RtpDatagram>>,
     mux: bool,
     buf_size: usize,
-    start: time::Instant,
-    base_ms: u64,
+    runtime: Arc<dyn RuntimeApi>,
 ) {
     tokio::spawn(async move {
         let mut buf = vec![0u8; buf_size];
@@ -349,7 +384,7 @@ fn spawn_udp_reader(
                 res = socket.recv_from(&mut buf) => {
                     match res {
                         Ok((len, src)) => {
-                            let received_at_ms = base_ms + start.elapsed().as_millis() as u64;
+                            let received_at_ms = runtime.now().as_micros() / 1000;
                             let data = Bytes::copy_from_slice(&buf[..len]);
 
                             let datagram = RtpDatagram { source: src, data, received_at_ms };
@@ -455,6 +490,11 @@ fn resolve_rtcp_destination(rtp_dest: SocketAddr) -> SocketAddr {
     dest
 }
 
+/// Return the current wall-clock time in milliseconds from the supplied runtime.
+fn now_ms(runtime: &Arc<dyn RuntimeApi>) -> u64 {
+    runtime.now().as_micros() / 1000
+}
+
 /// RFC 5761-style disambiguation for RTP/RTCP-muxed UDP sockets.
 ///
 /// Returns true when the packet looks like an RTCP compound packet rather than RTP:
@@ -478,6 +518,7 @@ async fn run_driver_loop(
     cmd_rx: mpsc::Receiver<RtpDriverCommand>,
     event_tx: mpsc::Sender<RtpCoreEvent>,
     cancel: CancellationToken,
+    runtime: Arc<dyn RuntimeApi>,
 ) {
     let udp_socket = match UdpSocket::bind(config.listen_udp).await {
         Ok(s) => Arc::new(s),
@@ -524,12 +565,11 @@ async fn run_driver_loop(
     let mut core = RtpCore::new(config.max_sessions, config.session_idle_timeout_ms);
     core.set_tcp_framing(config.tcp_framing);
     core.set_max_rtp_len_cap(config.max_rtp_len_cap);
-    let mut interval = time::interval(Duration::from_millis(100));
-    let start_instant = time::Instant::now();
-    let base_ms = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64;
+    core.set_rtcp_report_interval_ms(config.rtcp_report_interval_ms);
+
+    let tick_interval_us = config.tick_interval_ms.saturating_mul(1000);
+    let mut next_tick = runtime.now().as_micros().saturating_add(tick_interval_us);
+    let mut tick_timer = runtime.sleep_until(MonoTime::from_micros(next_tick));
 
     // Optional separate RTCP UDP socket. When configured, RTCP datagrams arriving on this socket
     // are dispatched into the core via `RtpCoreInput::RtcpPacket` so that RR-timeout sender
@@ -593,8 +633,7 @@ async fn run_driver_loop(
         },
         rtcp_mux,
         config.read_buffer_size,
-        start_instant,
-        base_ms,
+        runtime.clone(),
     );
 
     // Spawn dedicated RTCP UDP reader if configured.
@@ -606,8 +645,7 @@ async fn run_driver_loop(
             Some(rtcp_rx_tx.clone()),
             false,
             config.read_buffer_size,
-            start_instant,
-            base_ms,
+            runtime.clone(),
         );
     }
     drop(rtcp_rx_tx);
@@ -620,7 +658,7 @@ async fn run_driver_loop(
         let tcp_rx_tx = tcp_rx_tx.clone();
         let buf_size = config.read_buffer_size;
         let wq_cap = config.write_queue_capacity;
-        let start = start_instant;
+        let runtime = runtime.clone();
 
         tokio::spawn(async move {
             loop {
@@ -645,6 +683,7 @@ async fn run_driver_loop(
                                 {
                                     let tcp_rx_tx = tcp_rx_tx.clone();
                                     let cancel = cancel.child_token();
+                                    let runtime = runtime.clone();
                                     tokio::spawn(async move {
                                         let mut reader = reader;
                                         let mut buf = vec![0u8; buf_size];
@@ -660,12 +699,12 @@ async fn run_driver_loop(
                                                             // Peer half-closed the write side; notify the core so it can close
                                                             // any sessions bound to this connection while the write side may still
                                                             // be draining outbound frames.
-                                                            let now_ms = base_ms + start.elapsed().as_millis() as u64;
+                                                            let now_ms = now_ms(&runtime);
                                                             let _ = tcp_rx_tx.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
                                                             break;
                                                         }
                                                         Ok(n) => {
-                                                            let received_at_ms = base_ms + start.elapsed().as_millis() as u64;
+                                                            let received_at_ms = now_ms(&runtime);
                                                             remaining.extend_from_slice(&buf[..n]);
 
                                                             if !checked_ehome {
@@ -746,7 +785,7 @@ async fn run_driver_loop(
                                                             }
                                                         }
                                                         Err(_) => {
-                                                            let now_ms = base_ms + start.elapsed().as_millis() as u64;
+                                                            let now_ms = now_ms(&runtime);
                                                             let _ = tcp_rx_tx.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
                                                             break;
                                                         }
@@ -800,9 +839,12 @@ async fn run_driver_loop(
 
         tokio::select! {
             _ = cancel.cancelled() => break,
-            _ = interval.tick() => {
-                let now_ms = base_ms + start_instant.elapsed().as_millis() as u64;
+            _ = tick_timer.wait() => {
+                let now = runtime.now();
+                let now_ms = now.as_micros() / 1000;
                 inputs.push(RtpCoreInput::Tick { now_ms });
+                next_tick = now.as_micros().saturating_add(tick_interval_us);
+                tick_timer = runtime.sleep_until(MonoTime::from_micros(next_tick));
             }
             Some(cmd) = cmd_rx_internal.recv() => {
                 match cmd {
@@ -840,8 +882,7 @@ async fn run_driver_loop(
                                                     if rtcp_mux { Some(rtcp_rx_tx_for_sockets.clone()) } else { None },
                                                     rtcp_mux,
                                                     config.read_buffer_size,
-                                                    start_instant,
-                                                    base_ms,
+                                                    runtime.clone(),
                                                 );
                                                 per_session_sockets
                                                     .lock()
@@ -881,8 +922,7 @@ async fn run_driver_loop(
                                                 if rtcp_mux { Some(rtcp_rx_tx_for_sockets.clone()) } else { None },
                                                 rtcp_mux,
                                                 config.read_buffer_size,
-                                                start_instant,
-                                                base_ms,
+                                                runtime.clone(),
                                             );
                                             per_session_sockets
                                                 .lock()
@@ -933,7 +973,7 @@ async fn run_driver_loop(
                             let tcp_rx_tx_clone = tcp_rx_tx.clone();
                             let cmd_tx_clone = cmd_tx.clone();
                             let cancel_clone = cancel.clone();
-                            let start = start_instant;
+                            let runtime = runtime.clone();
                                                 tokio::spawn(async move {
                                 match TcpStream::connect(dest).await {
                                     Ok(stream) => {
@@ -959,6 +999,7 @@ async fn run_driver_loop(
 
                                         // Spawn TCP client reader
                                         let cancel_reader = cancel_clone.child_token();
+                                        let runtime = runtime.clone();
                                         tokio::spawn(async move {
                                             let mut reader = reader;
                                             let mut buf = vec![0u8; config.read_buffer_size];
@@ -971,12 +1012,12 @@ async fn run_driver_loop(
                                                     res = reader.read(&mut buf) => {
                                                         match res {
                                                             Ok(0) => {
-                                                                let now_ms = base_ms + start.elapsed().as_millis() as u64;
+                                                                let now_ms = now_ms(&runtime);
                                                                 let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
                                                                 break;
                                                             }
                                                             Ok(n) => {
-                                                                let received_at_ms = base_ms + start.elapsed().as_millis() as u64;
+                                                                let received_at_ms = now_ms(&runtime);
                                                                 remaining.extend_from_slice(&buf[..n]);
 
                                                                 if !checked_ehome {
@@ -1041,7 +1082,7 @@ async fn run_driver_loop(
                                                                 }
                                                             }
                                                             Err(_) => {
-                                                                let now_ms = base_ms + start.elapsed().as_millis() as u64;
+                                                                let now_ms = now_ms(&runtime);
                                                                 let _ = tcp_rx_tx_clone.send(RtpCoreInput::TcpConnectionClosed { conn_id, received_at_ms: now_ms }).await;
                                                                 break;
                                                             }
@@ -1383,6 +1424,8 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
         };
@@ -1489,6 +1532,8 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
         };
@@ -1555,6 +1600,8 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
         };
@@ -1643,6 +1690,8 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
         };
@@ -1724,6 +1773,8 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
         };
@@ -1809,6 +1860,8 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
         };
@@ -1879,6 +1932,8 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 5,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
         };

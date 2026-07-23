@@ -60,7 +60,7 @@ impl RtpCore {
                 session.last_rtcp_report_ms = now_ms;
             }
 
-            if now_ms.saturating_sub(session.last_rtcp_report_ms) >= 5000 {
+            if now_ms.saturating_sub(session.last_rtcp_report_ms) >= self.rtcp_report_interval_ms {
                 session.last_rtcp_report_ms = now_ms;
 
                 let session_key = session._session_key.clone();
