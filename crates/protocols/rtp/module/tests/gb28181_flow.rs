@@ -13,8 +13,8 @@ use cheetah_sdk::media_api::model::{OnlineState, RecordTaskState};
 use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
     MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk, PlaybackRange, RtpDirection,
-    RtpPayloadBinding, RtpSessionParamsBuilder, RtpSessionQuery, RtpSessionRef, RtpTransport,
-    SourceBindingPolicy, StopRtpSession,
+    RtpPayloadBinding, RtpSessionGeneration, RtpSessionParamsBuilder, RtpSessionQuery,
+    RtpSessionRef, RtpTransport, SourceBindingPolicy, StopRtpSession,
 };
 use cheetah_sdk::media_api::{MediaKey, MediaRequestContext};
 use cheetah_sdk::StreamKey;
@@ -1153,6 +1153,120 @@ async fn gb28181_playback_sender_reads_from_playback_api_and_emits_rtp() {
         .await
         .expect("stop playback sender");
     assert_eq!(fake.stop_count(), 1);
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_get_and_list_roundtrip() {
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("live", "query_test", None).expect("media key");
+    let request = OpenRtpReceiver {
+        params: RtpSessionParamsBuilder::new(media_key.clone(), RtpDirection::Receive)
+            .transport(RtpTransport::Udp)
+            .payload_binding(RtpPayloadBinding {
+                payload_type: INGEST_PT,
+                codec: "PS".to_string(),
+                clock_rate: 90_000,
+                channels: None,
+                packet_duration_ms: None,
+            })
+            .build(),
+        playback_range: None,
+    };
+
+    let session = rtp_api
+        .open_receiver(&ctx, request)
+        .await
+        .expect("open receiver for query test");
+
+    // get_session returns the same descriptor for the matching generation.
+    let got = rtp_api
+        .get_session(
+            &ctx,
+            RtpSessionRef {
+                session_id: session.session_id.clone(),
+                expected_generation: session.generation,
+            },
+        )
+        .await
+        .expect("get session");
+    assert_eq!(got.session_id, session.session_id);
+    assert_eq!(got.direction, RtpDirection::Receive);
+    assert_eq!(got.transport, RtpTransport::Udp);
+
+    // list_sessions filters by direction and returns the opened receiver.
+    let query = RtpSessionQuery {
+        direction: Some(RtpDirection::Receive),
+        ..Default::default()
+    };
+    let page = rtp_api
+        .list_sessions(&ctx, query)
+        .await
+        .expect("list sessions");
+    assert_eq!(page.page, 1);
+    assert!(
+        page.items
+            .iter()
+            .any(|d| d.session_id == session.session_id),
+        "list sessions should contain the receiver"
+    );
+
+    // Stale generation is rejected.
+    let stale_ref = RtpSessionRef {
+        session_id: session.session_id.clone(),
+        expected_generation: RtpSessionGeneration(session.generation.0 + 99),
+    };
+    let err = rtp_api
+        .get_session(&ctx, stale_ref)
+        .await
+        .expect_err("stale generation");
+    assert_eq!(err.code, MediaErrorCode::Conflict);
+
+    // Stop and then get should fail.
+    let page = rtp_api
+        .list_sessions(
+            &ctx,
+            RtpSessionQuery {
+                session_id: Some(session.session_id.clone()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("list current session");
+    let updated = page.items.into_iter().next().expect("session exists");
+    rtp_api
+        .stop_session(
+            &ctx,
+            StopRtpSession {
+                session_ref: RtpSessionRef {
+                    session_id: session.session_id.clone(),
+                    expected_generation: updated.generation,
+                },
+                release_lease: true,
+            },
+        )
+        .await
+        .expect("stop receiver");
+
+    let err = rtp_api
+        .get_session(
+            &ctx,
+            RtpSessionRef {
+                session_id: session.session_id,
+                expected_generation: updated.generation,
+            },
+        )
+        .await
+        .expect_err("session removed after stop");
+    assert_eq!(err.code, MediaErrorCode::NotFound);
 
     harness.stop().await;
 }
