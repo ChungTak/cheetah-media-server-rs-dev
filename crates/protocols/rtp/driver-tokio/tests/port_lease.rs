@@ -6,7 +6,9 @@ use cheetah_rtp_core::RtpTcpFraming;
 use cheetah_rtp_core::{
     RtpPayloadMode, RtpServerSpec, RtpSourcePolicy, RtpTrackFilter, RtpTransportMode,
 };
-use cheetah_rtp_driver_tokio::{start_driver, RtpDriverConfig, RtpDriverHandle, RtpSocketReuse};
+use cheetah_rtp_driver_tokio::{
+    start_driver, DriverLimits, RtpDriverConfig, RtpDriverHandle, RtpSocketReuse,
+};
 use cheetah_runtime_api::CancellationToken;
 use std::net::{SocketAddr, TcpListener, UdpSocket as StdUdpSocket};
 use std::time::Duration;
@@ -24,6 +26,7 @@ fn test_config(udp_addr: SocketAddr, tcp_addr: SocketAddr) -> RtpDriverConfig {
         rtcp_report_interval_ms: 5_000,
         tcp_framing: RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65_536,
+        limits: DriverLimits::default(),
     }
 }
 

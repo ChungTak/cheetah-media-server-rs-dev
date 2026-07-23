@@ -16,6 +16,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error};
 
+use crate::load_limiter::LoadLimiter;
 use crate::spawn_udp_reader;
 
 #[derive(Clone)]
@@ -42,6 +43,8 @@ struct PortManagerInner {
     runtime: Arc<dyn RuntimeApi>,
     /// Driver-wide cancellation token.
     cancel: CancellationToken,
+    /// Shared driver load limiter.
+    load_limiter: LoadLimiter,
 }
 
 impl PortManager {
@@ -52,6 +55,7 @@ impl PortManager {
         read_buffer_size: usize,
         runtime: Arc<dyn RuntimeApi>,
         cancel: CancellationToken,
+        load_limiter: LoadLimiter,
     ) -> Self {
         Self {
             inner: Arc::new(PortManagerInner {
@@ -64,6 +68,7 @@ impl PortManager {
                 read_buffer_size,
                 runtime,
                 cancel,
+                load_limiter,
             }),
         }
     }
@@ -112,6 +117,7 @@ impl PortManager {
                     self.inner.rtcp_mux,
                     self.inner.read_buffer_size,
                     self.inner.runtime.clone(),
+                    self.inner.load_limiter.clone(),
                 );
 
                 self.inner.sockets.lock().await.insert(actual, socket);

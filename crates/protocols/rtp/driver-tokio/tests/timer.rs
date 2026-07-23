@@ -2,7 +2,7 @@ use bytes::Bytes;
 use cheetah_codec::{RtpHeader, RtpPacket};
 use cheetah_rtp_core::rtcp::{RtcpCompoundPacket, RtcpPacket, RtcpReceiverReport, RtcpReportBlock};
 use cheetah_rtp_core::{RtpCoreEvent, RtpSessionCloseReason, RtpTcpFraming};
-use cheetah_rtp_driver_tokio::{start_driver, RtpDriverConfig, RtpDriverHandle};
+use cheetah_rtp_driver_tokio::{start_driver, DriverLimits, RtpDriverConfig, RtpDriverHandle};
 use cheetah_runtime_api::CancellationToken;
 use std::net::{SocketAddr, TcpListener, UdpSocket};
 use std::time::Duration;
@@ -56,6 +56,7 @@ fn test_config(udp_addr: SocketAddr, tcp_addr: SocketAddr) -> RtpDriverConfig {
         rtcp_report_interval_ms: 1000,
         tcp_framing: RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
+        limits: DriverLimits::default(),
     }
 }
 

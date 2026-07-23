@@ -15,7 +15,9 @@ use cheetah_rtp_core::{
     RtpClientSpec, RtpConnectionType, RtpCoreEvent, RtpPayloadMode, RtpSessionCloseReason,
     RtpTrackFilter, RtpTransportMode,
 };
-use cheetah_rtp_driver_tokio::{start_driver, RtpDriverCommand, RtpDriverConfig, RtpDriverHandle};
+use cheetah_rtp_driver_tokio::{
+    start_driver, DriverLimits, RtpDriverCommand, RtpDriverConfig, RtpDriverHandle,
+};
 use cheetah_sdk::media_api::error::MediaError;
 use cheetah_sdk::media_api::event::{EventHeader, MediaEvent, RtpSessionTimeout};
 use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId};
@@ -301,6 +303,7 @@ impl Module for RtpModule {
             rtcp_report_interval_ms: config.rtcp_report_interval_ms,
             tcp_framing,
             max_rtp_len_cap: config.max_rtp_len_cap,
+            limits: DriverLimits::default(),
         };
 
         let handle = Arc::new(start_driver(driver_config, cancel.clone()));
