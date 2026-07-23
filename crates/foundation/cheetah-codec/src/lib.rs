@@ -182,10 +182,11 @@ pub use record::{
     RecordWriteEvent,
 };
 pub use rtp::{
-    depacketize_payload, encode_interleaved_rtp_frame, encode_tcp_rtp_frame, packetize_g711,
-    packetize_payload, parse_interleaved_rtp_frame, parse_tcp_rtp_frame, parse_tcp_rtp_frame_with,
-    probe_rtp_payload, EhomeCodecInfo, EhomeDecoder, EhomeOutput, ParsedTcpRtpFrame, RtpClock,
-    RtpHeader, RtpPacket, RtpPayloadMode, RtpTcpFraming, RtpTimestampNormalizer,
+    depacketize_payload, encode_interleaved_rtp_frame, encode_tcp_rtcp_frame, encode_tcp_rtp_frame,
+    packetize_g711, packetize_payload, parse_interleaved_rtp_frame, parse_tcp_rtp_frame,
+    parse_tcp_rtp_frame_with, probe_rtp_payload, EhomeCodecInfo, EhomeDecoder, EhomeOutput,
+    ParsedTcpRtpFrame, RtpClock, RtpHeader, RtpPacket, RtpPayloadMode, RtpTcpFraming,
+    RtpTimestampNormalizer,
 };
 pub use rtp_es::{EsDemuxEvent, EsDemuxer, EsDemuxerConfig};
 pub use rtp_pt::{RtpPayloadProfile, RtpPtResolveSource, RtpPtResolver};

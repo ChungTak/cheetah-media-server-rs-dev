@@ -14,8 +14,9 @@ use tokio::time::{self, Duration};
 use tracing::{debug, error, info, warn};
 
 use cheetah_rtp_core::{
-    RtpClientSpec, RtpConnectionType, RtpCore, RtpCoreCommand, RtpCoreEvent, RtpCoreInput,
-    RtpCoreOutput, RtpDatagram, RtpSendFrame, RtpServerSpec, RtpTcpChunk,
+    rtcp::RtcpCompoundPacket, RtpClientSpec, RtpConnectionType, RtpCore, RtpCoreCommand,
+    RtpCoreEvent, RtpCoreInput, RtpCoreOutput, RtpDatagram, RtpSendFrame, RtpServerSpec,
+    RtpSourcePolicy, RtpTcpChunk,
 };
 use cheetah_runtime_api::CancellationToken;
 
@@ -129,6 +130,7 @@ pub enum RtpDriverCommand {
         ssrc: Option<u32>,
         payload_type: Option<u8>,
         pause_check: Option<bool>,
+        source_policy: Option<RtpSourcePolicy>,
         ack: Option<oneshot::Sender<Result<RtpSessionUpdateAck, String>>>,
     },
     PauseCheck {
@@ -160,6 +162,7 @@ impl std::fmt::Debug for RtpDriverCommand {
                 ssrc,
                 payload_type,
                 pause_check,
+                source_policy,
                 ..
             } => f
                 .debug_struct("UpdateSession")
@@ -168,6 +171,7 @@ impl std::fmt::Debug for RtpDriverCommand {
                 .field("ssrc", ssrc)
                 .field("payload_type", payload_type)
                 .field("pause_check", pause_check)
+                .field("source_policy", source_policy)
                 .finish(),
             Self::PauseCheck {
                 session_key,
@@ -245,6 +249,29 @@ impl RtpDriverHandle {
         payload_type: Option<u8>,
         pause_check: Option<bool>,
     ) -> Result<RtpSessionUpdateAck, RtpDriverError> {
+        self.update_session_with_source_policy(
+            session_key,
+            expected_generation,
+            ssrc,
+            payload_type,
+            pause_check,
+            None,
+        )
+        .await
+    }
+
+    /// Update a session, optionally changing the source-address binding policy.
+    ///
+    /// 更新会话，可一并修改源地址绑定策略。
+    pub async fn update_session_with_source_policy(
+        &self,
+        session_key: String,
+        expected_generation: u64,
+        ssrc: Option<u32>,
+        payload_type: Option<u8>,
+        pause_check: Option<bool>,
+        source_policy: Option<RtpSourcePolicy>,
+    ) -> Result<RtpSessionUpdateAck, RtpDriverError> {
         let (tx, rx) = oneshot::channel();
         let cmd = RtpDriverCommand::UpdateSession {
             session_key,
@@ -252,6 +279,7 @@ impl RtpDriverHandle {
             ssrc,
             payload_type,
             pause_check,
+            source_policy,
             ack: Some(tx),
         };
         if self.cmd_tx.send(cmd).await.is_err() {
@@ -294,13 +322,21 @@ pub fn start_driver(config: RtpDriverConfig, cancel: CancellationToken) -> RtpDr
     }
 }
 
-/// Spawn a UDP recv task that forwards datagrams into the core input channel.
+/// Spawn a UDP recv task that forwards datagrams into the core input channels.
+///
+/// When `rtcp_rx_tx` is `Some`, datagrams that look like RTCP are routed to the RTCP
+/// channel; otherwise they are sent as RTP. `mux` enables RTCP/RTP mux detection on this
+/// socket; when false the socket is assumed to be a dedicated RTCP socket and all
+/// datagrams are forwarded as RTCP.
 ///
 /// 生成 UDP 接收任务，将数据报转发到 core 输入通道。
+#[allow(clippy::too_many_arguments)]
 fn spawn_udp_reader(
     socket: Arc<UdpSocket>,
     cancel: CancellationToken,
     udp_rx_tx: mpsc::Sender<RtpDatagram>,
+    rtcp_rx_tx: Option<mpsc::Sender<RtpDatagram>>,
+    mux: bool,
     buf_size: usize,
     start: time::Instant,
     base_ms: u64,
@@ -315,7 +351,32 @@ fn spawn_udp_reader(
                         Ok((len, src)) => {
                             let received_at_ms = base_ms + start.elapsed().as_millis() as u64;
                             let data = Bytes::copy_from_slice(&buf[..len]);
-                            if udp_rx_tx.send(RtpDatagram { source: src, data, received_at_ms }).await.is_err() {
+
+                            let datagram = RtpDatagram { source: src, data, received_at_ms };
+
+                            if let Some(rtcp_tx) = rtcp_rx_tx.as_ref() {
+                                if mux {
+                                    // RTP/RTCP mux: RFC 5761 disambiguation first, then parse.
+                                    // Only route to the RTCP path when the packet-type byte is
+                                    // in an RTCP range and the compound packet parses cleanly.
+                                    if looks_like_rtcp(&datagram.data)
+                                        && RtcpCompoundPacket::parse(datagram.data.clone()).is_ok()
+                                    {
+                                        if rtcp_tx.send(datagram).await.is_err() {
+                                            break;
+                                        }
+                                        continue;
+                                    }
+                                } else {
+                                    // Dedicated RTCP socket.
+                                    if rtcp_tx.send(datagram).await.is_err() {
+                                        break;
+                                    }
+                                    continue;
+                                }
+                            }
+
+                            if udp_rx_tx.send(datagram).await.is_err() {
                                 break;
                             }
                         }
@@ -377,6 +438,36 @@ async fn resolve_udp_socket(
         }
     }
     default_socket.clone()
+}
+
+/// Derive the RTCP destination from an RTP peer address.
+///
+/// RTP conventionally uses an even port and RTCP the next odd port. When the supplied
+/// address already looks like an RTCP port (odd) we leave it unchanged; otherwise we
+/// map the even RTP port to `port + 1`.
+///
+/// 由 RTP 对端地址推导 RTCP 目的地址。
+fn resolve_rtcp_destination(rtp_dest: SocketAddr) -> SocketAddr {
+    let mut dest = rtp_dest;
+    if dest.port().is_multiple_of(2) {
+        dest.set_port(dest.port().saturating_add(1));
+    }
+    dest
+}
+
+/// RFC 5761-style disambiguation for RTP/RTCP-muxed UDP sockets.
+///
+/// Returns true when the packet looks like an RTCP compound packet rather than RTP:
+/// RTP version is 2 and the packet-type byte falls in the RTCP ranges (64-95, 192-223).
+///
+/// RFC 5761 风格的 RTP/RTCP 复用端口判别。
+fn looks_like_rtcp(data: &[u8]) -> bool {
+    if data.len() < 2 {
+        return false;
+    }
+    let version = data[0] >> 6;
+    let pt = data[1];
+    version == 2 && (matches!(pt, 64..=95) || matches!(pt, 192..=223))
 }
 
 /// Main Tokio driver loop: bind sockets, spawn I/O tasks, and dispatch core I/O.
@@ -481,10 +572,18 @@ async fn run_driver_loop(
 
     // Spawn default UDP recv task.
     let default_udp_addr = udp_socket.local_addr().unwrap_or(config.listen_udp);
+    let rtcp_mux = config.listen_rtcp_udp.is_none();
+    let rtcp_rx_tx_for_sockets = rtcp_rx_tx.clone();
     spawn_udp_reader(
         udp_socket.clone(),
         cancel.clone(),
         udp_rx_tx.clone(),
+        if rtcp_mux {
+            Some(rtcp_rx_tx.clone())
+        } else {
+            None
+        },
+        rtcp_mux,
         config.read_buffer_size,
         start_instant,
         base_ms,
@@ -492,32 +591,16 @@ async fn run_driver_loop(
 
     // Spawn dedicated RTCP UDP reader if configured.
     if let Some(rtcp_socket) = rtcp_socket.clone() {
-        let cancel = cancel.clone();
-        let buf_size = config.read_buffer_size;
-        let rtcp_rx_tx = rtcp_rx_tx.clone();
-        let start = start_instant;
-        tokio::spawn(async move {
-            let mut buf = vec![0u8; buf_size];
-            loop {
-                tokio::select! {
-                    _ = cancel.cancelled() => break,
-                    res = rtcp_socket.recv_from(&mut buf) => {
-                        match res {
-                            Ok((len, src)) => {
-                                let received_at_ms = base_ms + start.elapsed().as_millis() as u64;
-                                let data = Bytes::copy_from_slice(&buf[..len]);
-                                if rtcp_rx_tx.send(RtpDatagram { source: src, data, received_at_ms }).await.is_err() {
-                                    break;
-                                }
-                            }
-                            Err(e) => {
-                                warn!("RTCP receive error: {e}");
-                            }
-                        }
-                    }
-                }
-            }
-        });
+        spawn_udp_reader(
+            rtcp_socket,
+            cancel.clone(),
+            udp_rx_tx.clone(),
+            Some(rtcp_rx_tx.clone()),
+            false,
+            config.read_buffer_size,
+            start_instant,
+            base_ms,
+        );
     }
     drop(rtcp_rx_tx);
 
@@ -735,6 +818,8 @@ async fn run_driver_loop(
                                                     socket.clone(),
                                                     socket_cancel.clone(),
                                                     udp_rx_tx.clone(),
+                                                    if rtcp_mux { Some(rtcp_rx_tx_for_sockets.clone()) } else { None },
+                                                    rtcp_mux,
                                                     config.read_buffer_size,
                                                     start_instant,
                                                     base_ms,
@@ -774,6 +859,8 @@ async fn run_driver_loop(
                                                 socket.clone(),
                                                 socket_cancel.clone(),
                                                 udp_rx_tx.clone(),
+                                                if rtcp_mux { Some(rtcp_rx_tx_for_sockets.clone()) } else { None },
+                                                rtcp_mux,
                                                 config.read_buffer_size,
                                                 start_instant,
                                                 base_ms,
@@ -985,6 +1072,7 @@ async fn run_driver_loop(
                         ssrc,
                         payload_type,
                         pause_check,
+                        source_policy,
                         ack,
                     } => {
                         if let Some(ack) = ack {
@@ -996,6 +1084,7 @@ async fn run_driver_loop(
                             ssrc,
                             payload_type,
                             pause_check,
+                            source_policy,
                         }));
                     }
                     RtpDriverCommand::PauseCheck { session_key, paused } => {
@@ -1044,23 +1133,28 @@ async fn run_driver_loop(
                     }
                     RtpCoreOutput::SendRtcp(rtcp_send) => {
                         if let Some(conn_id) = rtcp_send.conn_id {
+                            // TCP RTCP frames are RFC 4571 length-prefixed like RTP so the
+                            // peer can delimit the compound packet on the byte stream.
                             let writers = tcp_writers.clone();
+                            let data = cheetah_codec::encode_tcp_rtcp_frame(&rtcp_send.data);
                             tokio::spawn(async move {
                                 let map = writers.lock().await;
                                 if let Some(tx) = map.get(&conn_id) {
-                                    let _ = tx.send(rtcp_send.data).await;
+                                    let _ = tx.send(data).await;
                                 }
                             });
                         } else if let Some(rtcp_socket) = rtcp_socket.clone() {
-                            // Use the dedicated RTCP UDP socket when configured.
+                            // Dedicated RTCP socket: use the observed RTCP source address
+                            // directly if known; otherwise derive the RTCP port from the
+                            // RTP destination.
+                            let dest = rtcp_send
+                                .rtcp_destination
+                                .unwrap_or_else(|| resolve_rtcp_destination(rtcp_send.destination));
                             tokio::spawn(async move {
-                                let _ = rtcp_socket
-                                    .send_to(&rtcp_send.data, rtcp_send.destination)
-                                    .await;
+                                let _ = rtcp_socket.send_to(&rtcp_send.data, dest).await;
                             });
                         } else {
-                            // Fallback: tunnel RTCP over the same UDP socket as RTP,
-                            // using the session's dedicated socket if it exists.
+                            // RTP/RTCP mux: reuse the same UDP socket (or per-session socket).
                             let socket = resolve_udp_socket(
                                 &rtcp_send.session_key,
                                 &session_bind_addrs,
@@ -1068,9 +1162,9 @@ async fn run_driver_loop(
                                 &udp_socket,
                             )
                             .await;
+                            let dest = rtcp_send.rtcp_destination.unwrap_or(rtcp_send.destination);
                             tokio::spawn(async move {
-                                let _ =
-                                    socket.send_to(&rtcp_send.data, rtcp_send.destination).await;
+                                let _ = socket.send_to(&rtcp_send.data, dest).await;
                             });
                         }
                     }
@@ -1083,6 +1177,7 @@ async fn run_driver_loop(
                                     ssrc,
                                     payload_type,
                                     pause_check,
+                                    ..
                                 } if session_key == pending_key => {
                                     let _ = ack.send(Ok(RtpSessionUpdateAck {
                                         generation,
@@ -1106,7 +1201,7 @@ async fn run_driver_loop(
                         }
                     }
                     RtpCoreOutput::Diagnostic(diag) => {
-                        debug!("RTP Diagnostic: {:?}", diag);
+                        debug!("RTP Diagnostic: {}", diag);
                     }
                     RtpCoreOutput::CloseSession(key) => {
                         debug!("Closing RTP session key: {key}");
@@ -1274,6 +1369,7 @@ mod tests {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 
@@ -1359,6 +1455,7 @@ mod tests {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 
@@ -1441,6 +1538,7 @@ mod tests {
             transport_mode: RtpTransportMode::RecvOnly,
             tcp_conn_id: None,
             connection_type: Some(RtpConnectionType::TcpActive),
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 
@@ -1523,6 +1621,7 @@ mod tests {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 
@@ -1594,6 +1693,7 @@ mod tests {
             transport_mode: RtpTransportMode::SendOnly,
             tcp_conn_id: None,
             connection_type: Some(RtpConnectionType::TcpActive),
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 
@@ -1641,6 +1741,7 @@ mod tests {
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
             connection_type: None,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 

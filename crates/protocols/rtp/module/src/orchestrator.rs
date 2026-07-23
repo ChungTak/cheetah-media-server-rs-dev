@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cheetah_rtp_core::{
-    RtpClientSpec, RtpConnectionType, RtpPayloadMode, RtpServerSpec, RtpTrackFilter,
-    RtpTransportMode,
+    RtpClientSpec, RtpConnectionType, RtpPayloadMode, RtpServerSpec, RtpSourcePolicy,
+    RtpTrackFilter, RtpTransportMode,
 };
 use cheetah_rtp_driver_tokio::{RtpDriverCommand, RtpDriverHandle};
 use cheetah_sdk::media_api::command::{
@@ -26,6 +26,7 @@ use cheetah_sdk::media_api::ids::{MediaKey, RtpSessionId, StreamKeyBridge};
 use cheetah_sdk::media_api::model::{
     Page, RtpSession, RtpSessionKind, RtpSessionState, RtpTcpMode,
 };
+use cheetah_sdk::media_api::rtp_session::SourceBindingPolicy;
 use parking_lot::Mutex;
 
 /// Shared RTP session state and driver command dispatcher.
@@ -43,6 +44,13 @@ pub struct RtpSessionOrchestrator {
 impl RtpSessionOrchestrator {
     /// Default maximum number of tracked RTP sessions before rejecting new ones.
     pub const DEFAULT_MAX_SESSIONS: usize = 10_000;
+
+    fn map_source_policy(policy: SourceBindingPolicy) -> RtpSourcePolicy {
+        match policy {
+            SourceBindingPolicy::AllowValidatedRebind => RtpSourcePolicy::AllowValidatedRebind,
+            _ => RtpSourcePolicy::Strict,
+        }
+    }
 
     /// Create an orchestrator bound to the shared driver handle.
     ///
@@ -217,6 +225,7 @@ impl RtpSessionOrchestrator {
         bind_addr: Option<SocketAddr>,
         reuse_port: bool,
         state: RtpSessionState,
+        source_binding_policy: SourceBindingPolicy,
     ) -> Result<RtpSession> {
         let driver = self.driver()?;
         let spec = RtpServerSpec {
@@ -225,6 +234,7 @@ impl RtpSessionOrchestrator {
             payload_mode,
             transport_mode,
             connection_type,
+            source_policy: Some(Self::map_source_policy(source_binding_policy)),
             track_filter,
         };
         let actual_addr = driver
@@ -265,6 +275,7 @@ impl RtpSessionOrchestrator {
         transport_mode: RtpTransportMode,
         connection_type: Option<RtpConnectionType>,
         track_filter: RtpTrackFilter,
+        source_binding_policy: SourceBindingPolicy,
     ) -> Result<RtpSession> {
         let driver = self.driver()?;
         let session_id = RtpSessionId(session_key.clone());
@@ -290,6 +301,7 @@ impl RtpSessionOrchestrator {
             transport_mode,
             tcp_conn_id: None,
             connection_type,
+            source_policy: Some(Self::map_source_policy(source_binding_policy)),
             track_filter,
         };
         driver
@@ -347,6 +359,7 @@ impl RtpSessionOrchestrator {
             bind_addr,
             request.reuse_port,
             state,
+            request.source_binding_policy,
         )
         .await
     }
@@ -408,6 +421,7 @@ impl RtpSessionOrchestrator {
             transport_mode: RtpTransportMode::RecvOnly,
             tcp_conn_id: None,
             connection_type,
+            source_policy: None,
             track_filter: RtpTrackFilter::All,
         };
 
@@ -523,6 +537,7 @@ impl RtpSessionOrchestrator {
             RtpTransportMode::SendOnly,
             connection_type,
             RtpTrackFilter::All,
+            request.source_binding_policy,
         )
         .await
     }
@@ -571,6 +586,7 @@ impl RtpSessionOrchestrator {
             transport_mode: RtpTransportMode::SendRecv,
             tcp_conn_id: None,
             connection_type: Some(RtpConnectionType::VoiceTalk),
+            source_policy: Some(Self::map_source_policy(request.source_binding_policy)),
             track_filter: RtpTrackFilter::OnlyAudio,
         };
 
@@ -647,7 +663,10 @@ impl RtpSessionOrchestrator {
     ///
     /// 更新 RTP 会话。
     pub async fn update_rtp_session(&self, request: UpdateRtpRequest) -> Result<RtpSession> {
-        if request.ssrc.is_none() && request.payload_type.is_none() && request.pause_check.is_none()
+        if request.ssrc.is_none()
+            && request.payload_type.is_none()
+            && request.pause_check.is_none()
+            && request.source_policy.is_none()
         {
             return Err(MediaError::invalid_argument("empty patch"));
         }
@@ -665,13 +684,20 @@ impl RtpSessionOrchestrator {
             return Err(MediaError::conflict("generation mismatch"));
         }
 
+        let source_policy = request.source_policy.map(|p| match p {
+            SourceBindingPolicy::Strict => RtpSourcePolicy::Strict,
+            SourceBindingPolicy::AllowValidatedRebind => RtpSourcePolicy::AllowValidatedRebind,
+            _ => RtpSourcePolicy::Strict,
+        });
+
         let ack = driver
-            .update_session(
+            .update_session_with_source_policy(
                 session_key,
                 request.expected_generation,
                 request.ssrc,
                 request.payload_type,
                 request.pause_check,
+                source_policy,
             )
             .await
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
@@ -774,6 +800,7 @@ mod tests {
             codec_hint: Some("ps".to_string()),
             reuse_port: false,
             timeout_ms: 0,
+            source_binding_policy: SourceBindingPolicy::default(),
         }
     }
 
@@ -891,6 +918,7 @@ mod tests {
                 ssrc: Some(3000),
                 payload_type: Some(97),
                 pause_check: None,
+                source_policy: None,
             })
             .await
             .expect("update session");
@@ -920,6 +948,7 @@ mod tests {
                 ssrc: Some(4000),
                 payload_type: None,
                 pause_check: None,
+                source_policy: None,
             })
             .await
             .expect_err("stale generation should fail");
@@ -953,6 +982,7 @@ mod tests {
                 codec_hint: Some("raw_audio".to_string()),
                 mode: RtpSenderMode::Talk,
                 transport_options: HashMap::new(),
+                source_binding_policy: SourceBindingPolicy::default(),
             })
             .await
             .expect("open talk");
@@ -1004,6 +1034,7 @@ mod tests {
                 codec_hint: Some("ps".to_string()),
                 mode: RtpSenderMode::Active,
                 transport_options: HashMap::new(),
+                source_binding_policy: SourceBindingPolicy::default(),
             })
             .await
             .expect("open sender");
@@ -1056,6 +1087,7 @@ mod tests {
                 codec_hint: Some("ps".to_string()),
                 mode: RtpSenderMode::Active,
                 transport_options: HashMap::new(),
+                source_binding_policy: SourceBindingPolicy::default(),
             })
             .await
             .expect("open sender");

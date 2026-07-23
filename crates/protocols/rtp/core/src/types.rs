@@ -32,6 +32,32 @@ pub enum RtpTransportMode {
     SendRecv,
 }
 
+/// Runtime state of an RTP session.
+///
+/// The state machine makes receiver / sender / talkback transitions explicit and is
+/// independent of the negotiated `RtpTransportMode`. A `SendRecv` session, for example,
+/// starts in `Inactive` and moves to `SendRecv` once media flows in either direction.
+/// `Talk` is a distinct state because voice talkback reuses an inbound socket for
+/// outbound audio and has its own timeout / codec assumptions.
+///
+/// RTP 会话的运行时状态。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RtpSessionState {
+    /// Session exists but no media has flowed yet.
+    #[default]
+    Inactive,
+    /// Receiving RTP from the peer.
+    Receiving,
+    /// Sending RTP to the peer.
+    Sending,
+    /// Bidirectional media is active.
+    SendRecv,
+    /// Voice talkback is active (ingress + egress audio on the same socket).
+    Talk,
+    /// Terminal state: the session has been closed.
+    Closed,
+}
+
 /// ZLMediaKit-style connection types. Mirrors `kTcpActive`/`kTcpPassive`/`kUdpActive`/
 /// `kUdpPassive`/`kVoiceTalk` from `vendor-ref/ZLMediaKit/src/Rtp/RtpSender.cpp`.
 ///
@@ -75,6 +101,28 @@ pub enum RtpTrackFilter {
     OnlyVideo,
 }
 
+/// Policy controlling whether an inbound RTP session may rebind to a new source address.
+///
+/// `Strict` locks the source on the first packet and drops traffic from any other endpoint.
+/// `AllowValidatedRebind` permits a rebind when the old source has been idle long enough and
+/// the new packet preserves SSRC / payload / sequence continuity.
+///
+/// 控制入站 RTP 会话是否允许重新绑定到新源地址的策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RtpSourcePolicy {
+    /// Lock the source on the first packet and reject every other source.
+    ///
+    /// This is the default for explicitly created server/client sessions so
+    /// that the effective policy matches the SDK's `SourceBindingPolicy::Strict` default.
+    #[default]
+    Strict,
+    /// Allow a rebind if the change passes the configured idle/continuity/rate checks.
+    ///
+    /// Used for auto-created fallback sessions where the source cannot be
+    /// pre-negotiated and NAT/port migrations must be tolerated.
+    AllowValidatedRebind,
+}
+
 /// Specification for an inbound (server) RTP session.
 ///
 /// The session listens for packets on the local socket and auto-creates internal tracks
@@ -97,6 +145,10 @@ pub struct RtpServerSpec {
     /// 可选的连接类型提示。未设置时默认为 `UdpPassive`。
     #[allow(dead_code)]
     pub connection_type: Option<RtpConnectionType>,
+    /// Source-address binding policy. `None` uses the core default (`Strict`).
+    ///
+    /// 源地址绑定策略。`None` 使用 core 默认值（`Strict`）。
+    pub source_policy: Option<RtpSourcePolicy>,
     /// Track filter to apply on ingress.
     ///
     /// 入站时应用的轨道过滤器。
@@ -127,6 +179,10 @@ pub struct RtpClientSpec {
     /// 可选的连接类型提示。未设置时默认为 `UdpActive`。
     #[allow(dead_code)]
     pub connection_type: Option<RtpConnectionType>,
+    /// Source-address binding policy. `None` uses the core default (`Strict`).
+    ///
+    /// 源地址绑定策略。`None` 使用 core 默认值（`Strict`）。
+    pub source_policy: Option<RtpSourcePolicy>,
     /// Track filter to apply on egress.
     ///
     /// 出站时应用的轨道过滤器。
@@ -195,6 +251,16 @@ pub struct RtpTcpSend {
 #[derive(Debug, Clone)]
 pub struct RtcpSend {
     pub session_key: RtpSessionKey,
+    /// Preferred RTCP destination (e.g. observed RTCP source address).
+    ///
+    /// When set, the driver should use this address directly for UDP RTCP;
+    /// otherwise it derives the RTCP port from `destination`.
+    ///
+    /// 首选 RTCP 目的地址（如观察到的 RTCP 源地址）。
+    pub rtcp_destination: Option<SocketAddr>,
+    /// Fallback destination used when `rtcp_destination` is `None`.
+    ///
+    /// 当 `rtcp_destination` 为空时使用的回退目的地址。
     pub destination: SocketAddr,
     /// Optional TCP connection ID for RTP-over-TCP RTCP transport.
     ///
@@ -227,6 +293,7 @@ pub enum RtpCoreEvent {
         ssrc: Option<u32>,
         payload_type: Option<u8>,
         pause_check: Option<bool>,
+        source_policy: Option<RtpSourcePolicy>,
     },
     /// The payload format changed mid-stream after it had been locked.
     ///
@@ -237,12 +304,28 @@ pub enum RtpCoreEvent {
         old_payload_mode: RtpPayloadMode,
         new_payload_mode: RtpPayloadMode,
     },
+    /// The bound source address was validated and rebinding to a new peer endpoint.
+    ///
+    /// 源地址经过验证后重新绑定到新的对端端点。
+    SourceChanged {
+        session_key: RtpSessionKey,
+        old: SocketAddr,
+        new: SocketAddr,
+    },
     /// A session update was rejected; the session retains its previous values.
     ///
     /// 会话更新被拒绝；会话保留旧值。
     SessionUpdateFailed {
         session_key: RtpSessionKey,
         reason: String,
+    },
+    /// The runtime session state changed.
+    ///
+    /// 运行时会话状态已改变。
+    SessionStateChanged {
+        session_key: RtpSessionKey,
+        old_state: RtpSessionState,
+        new_state: RtpSessionState,
     },
     /// A session was closed (idle timeout, RR timeout, or explicit stop).
     ///
@@ -333,6 +416,7 @@ pub enum RtpCoreCommand {
         ssrc: Option<u32>,
         payload_type: Option<u8>,
         pause_check: Option<bool>,
+        source_policy: Option<RtpSourcePolicy>,
     },
     /// Pause or resume timeout health checks for a session.
     ///
