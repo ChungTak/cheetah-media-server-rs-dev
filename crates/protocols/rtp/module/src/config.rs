@@ -141,6 +141,19 @@ pub struct RtpModuleConfig {
     /// RTP 媒体 API 变更操作的每 principal 速率限制（次/分钟）。0 表示不限制。
     #[serde(default = "default_request_rate_limit_per_minute")]
     pub request_rate_limit_per_minute: usize,
+    /// Optional inclusive start of the bounded UDP port pool for per-session sockets.
+    /// When both start and end are non-zero and start <= end, port 0 requests allocate
+    /// from this range instead of the OS ephemeral pool.
+    ///
+    /// 可选的每会话 UDP 端口池起始端口。与 end 同时非零且 start <= end 时，端口 0 请求将
+    /// 从此范围分配而非使用 OS 临时端口。
+    #[serde(default)]
+    pub udp_port_pool_start: u16,
+    /// Inclusive end of the bounded UDP port pool.
+    ///
+    /// 每会话 UDP 端口池结束端口（含）。
+    #[serde(default)]
+    pub udp_port_pool_end: u16,
 }
 
 /// Configuration for a pull/egress RTP client job.
@@ -199,6 +212,8 @@ impl Default for RtpModuleConfig {
             max_sessions: default_max_sessions(),
             enabled_profiles: default_enabled_profiles(),
             request_rate_limit_per_minute: default_request_rate_limit_per_minute(),
+            udp_port_pool_start: 0,
+            udp_port_pool_end: 0,
         }
     }
 }
@@ -273,6 +288,27 @@ impl RtpModuleConfig {
                 "max_rtp_len_initial ({}) > max_rtp_len_cap ({})",
                 self.max_rtp_len_initial, self.max_rtp_len_cap
             ));
+        }
+
+        if self.udp_port_pool_start != 0 || self.udp_port_pool_end != 0 {
+            if self.udp_port_pool_start == 0 {
+                errors.push(
+                    "udp_port_pool_start must be non-zero when udp_port_pool_end is set"
+                        .to_string(),
+                );
+            }
+            if self.udp_port_pool_end == 0 {
+                errors.push(
+                    "udp_port_pool_end must be non-zero when udp_port_pool_start is set"
+                        .to_string(),
+                );
+            }
+            if self.udp_port_pool_start > self.udp_port_pool_end {
+                errors.push(format!(
+                    "udp_port_pool_start ({}) > udp_port_pool_end ({})",
+                    self.udp_port_pool_start, self.udp_port_pool_end
+                ));
+            }
         }
 
         for job in &self.pull_jobs {

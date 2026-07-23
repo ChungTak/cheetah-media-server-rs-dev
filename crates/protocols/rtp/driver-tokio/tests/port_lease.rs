@@ -7,13 +7,21 @@ use cheetah_rtp_core::{
     RtpPayloadMode, RtpServerSpec, RtpSourcePolicy, RtpTrackFilter, RtpTransportMode,
 };
 use cheetah_rtp_driver_tokio::{
-    start_driver, DriverLimits, RtpDriverConfig, RtpDriverHandle, RtpSocketReuse,
+    start_driver, DriverLimits, PortRange, RtpDriverConfig, RtpDriverHandle, RtpSocketReuse,
 };
 use cheetah_runtime_api::CancellationToken;
 use std::net::{SocketAddr, TcpListener, UdpSocket as StdUdpSocket};
 use std::time::Duration;
 
 fn test_config(udp_addr: SocketAddr, tcp_addr: SocketAddr) -> RtpDriverConfig {
+    test_config_with_pool(udp_addr, tcp_addr, None)
+}
+
+fn test_config_with_pool(
+    udp_addr: SocketAddr,
+    tcp_addr: SocketAddr,
+    pool: Option<PortRange>,
+) -> RtpDriverConfig {
     RtpDriverConfig {
         listen_udp: udp_addr,
         listen_tcp: tcp_addr,
@@ -27,6 +35,7 @@ fn test_config(udp_addr: SocketAddr, tcp_addr: SocketAddr) -> RtpDriverConfig {
         tcp_framing: RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65_536,
         limits: DriverLimits::default(),
+        udp_port_pool: pool,
     }
 }
 
@@ -208,5 +217,72 @@ async fn duplicate_session_key_prevents_double_socket() {
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let _rebound = tokio::net::UdpSocket::bind(bind_addr).await.unwrap();
+    cancel.cancel();
+}
+
+#[tokio::test]
+async fn udp_port_pool_allocates_from_range_and_exhausts() {
+    let cancel = CancellationToken::new();
+    let (udp_addr, tcp_addr) = free_udp_and_tcp();
+    let pool = PortRange::new(30_000, 30_001).unwrap();
+    let handle = start_driver(
+        test_config_with_pool(udp_addr, tcp_addr, Some(pool)),
+        cancel.clone(),
+    );
+
+    // Two ports in the pool: both should succeed and fall inside the range.
+    let a = create_server(
+        &handle,
+        "recv/pool-a",
+        "127.0.0.1:0".parse().unwrap(),
+        RtpSocketReuse::Exclusive,
+    )
+    .await
+    .unwrap();
+    assert!(a.port() >= 30_000 && a.port() <= 30_001);
+
+    let b = create_server(
+        &handle,
+        "recv/pool-b",
+        "127.0.0.1:0".parse().unwrap(),
+        RtpSocketReuse::Exclusive,
+    )
+    .await
+    .unwrap();
+    assert!(b.port() >= 30_000 && b.port() <= 30_001);
+    assert_ne!(a.port(), b.port());
+
+    // Pool is exhausted; a third allocation must fail.
+    let err = create_server(
+        &handle,
+        "recv/pool-c",
+        "127.0.0.1:0".parse().unwrap(),
+        RtpSocketReuse::Exclusive,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        err.contains("no port available") || err.contains("Address already in use"),
+        "unexpected: {err}"
+    );
+
+    // Stop the first session; its port is released and can be reused.
+    handle
+        .send_command(cheetah_rtp_driver_tokio::RtpDriverCommand::StopSession(
+            "recv/pool-a".to_string(),
+        ))
+        .await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let c = create_server(
+        &handle,
+        "recv/pool-c",
+        "127.0.0.1:0".parse().unwrap(),
+        RtpSocketReuse::Exclusive,
+    )
+    .await
+    .unwrap();
+    assert!(c.port() >= 30_000 && c.port() <= 30_001);
+
     cancel.cancel();
 }
