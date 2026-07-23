@@ -384,6 +384,14 @@ pub struct StopRtpSession {
     pub release_lease: bool,
 }
 
+/// Reconcile the set of active RTP sessions against an expected list.
+///
+/// Sessions not in `keep` are stopped and emit `SessionClosed` events.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReconcileRtpSessions {
+    pub keep: Vec<RtpSessionRef>,
+}
+
 /// RTP session descriptor returned by open/update/get.
 ///
 /// open/update/get 返回的 RTP 会话描述符。
@@ -487,6 +495,12 @@ pub trait RtpSessionApi: Send + Sync {
         &self,
         ctx: &crate::port::MediaRequestContext,
         request: StopRtpSession,
+    ) -> crate::error::Result<EffectOutcome>;
+
+    async fn reconcile_sessions(
+        &self,
+        ctx: &crate::port::MediaRequestContext,
+        request: ReconcileRtpSessions,
     ) -> crate::error::Result<EffectOutcome>;
 
     async fn list_sessions(

@@ -27,8 +27,8 @@ use cheetah_sdk::media_api::model::{
 use cheetah_sdk::media_api::port::{MediaRequestContext, PlaybackApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
     GbMediaCompatibilityProfile, MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk,
-    PlaybackRange, RtpDirection, RtpEndpoints, RtpFraming, RtpPayloadBinding, RtpSessionApi,
-    RtpSessionDescriptor, RtpSessionGeneration, RtpSessionParams, RtpSessionPurpose,
+    PlaybackRange, ReconcileRtpSessions, RtpDirection, RtpEndpoints, RtpFraming, RtpPayloadBinding,
+    RtpSessionApi, RtpSessionDescriptor, RtpSessionGeneration, RtpSessionParams, RtpSessionPurpose,
     RtpSessionQuery, RtpSessionRef, RtpSessionState, RtpTransport, StopRtpSession, TcpRole,
     UpdateRtpSession,
 };
@@ -932,6 +932,50 @@ impl RtpSessionApi for RtpMediaProvider {
             }
             Err(e) => Err(self.enrich_error(e, ctx, &request.session_ref)),
         }
+    }
+
+    async fn reconcile_sessions(
+        &self,
+        ctx: &MediaRequestContext,
+        request: ReconcileRtpSessions,
+    ) -> Result<EffectOutcome> {
+        let keep: std::collections::HashSet<RtpSessionId> =
+            request.keep.iter().map(|r| r.session_id.clone()).collect();
+        let to_stop: Vec<(RtpSessionId, u64)> = {
+            let sessions = self.orchestrator.sessions.lock();
+            sessions
+                .values()
+                .filter(|s| !keep.contains(&s.session_id))
+                .map(|s| (s.session_id.clone(), s.generation))
+                .collect()
+        };
+        if to_stop.is_empty() {
+            return Ok(EffectOutcome::NotApplied);
+        }
+        let mut any_applied = false;
+        let mut last_error = None;
+        for (session_id, generation) in to_stop {
+            let stop = StopRtpSession {
+                session_ref: RtpSessionRef {
+                    session_id,
+                    expected_generation: RtpSessionGeneration(generation),
+                },
+                release_lease: true,
+            };
+            match self.stop_session(ctx, stop).await {
+                Ok(EffectOutcome::Applied) => any_applied = true,
+                Ok(_) => {}
+                Err(e) => last_error = Some(e),
+            }
+        }
+        if let Some(e) = last_error {
+            return Err(e);
+        }
+        Ok(if any_applied {
+            EffectOutcome::Applied
+        } else {
+            EffectOutcome::NotApplied
+        })
     }
 
     async fn list_sessions(
