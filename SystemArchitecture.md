@@ -177,25 +177,24 @@ RTP boundary clarification:
 
 ## 3.4 GB28181 Reference Mapping
 
-Current GB28181 crates:
+Current GB28181 crate:
 
-- `crates/protocols/gb28181/core` (`cheetah-gb28181-core`)
-- `crates/protocols/gb28181/driver-tokio` (`cheetah-gb28181-driver-tokio`)
 - `crates/protocols/gb28181/module` (`cheetah-gb28181-module`)
+
+The legacy `cheetah-gb28181-core` and `cheetah-gb28181-driver-tokio` crates (SIP/SDP/XML parser, digest auth, transaction/dialog state machine, UDP/TCP listener) have been removed under plan task RMV-04.
 
 GB28181 capability snapshot:
 
 - control plane: **not implemented in this project**. SIP/MANSCDP/SDP/XML parsing, device registry, keepalive, call/dialog handling, and authentication are the responsibility of a third-party signaling system.
-- media sessions: GB28181 media data plane only — RTP/RTCP over UDP or TCP (active and passive), RFC 4571 2-byte and RTSP-style 4-byte interleaved framing, PS/TS/ES/raw payload, SSRC/PT binding and bounded fallback, live passive reception, active device stream pull, playback, and download.
+- media sessions: GB28181 media data plane only — RTP/RTCP over UDP or TCP (active and passive), RFC 4571 2-byte and RTSP-style 4-byte interleaved framing, PS/TS/ES/raw payload, SSRC/PT binding and bounded fallback, live passive reception, active device stream pull, playback, and download. The actual RTP/RTCP transport and session state are implemented by `cheetah-rtp-core`, `cheetah-rtp-driver-tokio`, and `cheetah-rtp-module`.
 - audio talkback: bi-directional voice talk media loop driven by structured media parameters from the third-party controller.
 - compatibility baseline: media-level tolerance for ABLMediaServer, ZLMediaKit, and simple-media-server wire behavior (framing, payload sniffing, timestamp/PT quirks), implemented in `cheetah-codec` and the GB media module with bounded recovery. No signaling parsing or device database is maintained.
 
 GB28181 boundary clarification:
 
-- `cheetah-gb28181-core` is purely Sans-I/O. It models GB media session state (transport, framing, SSRC/PT/container validation, request/result effects, and events). It does not model SIP requests/responses, device registry, keepalive dialogs, or SDP. Interaction is driven via explicit `Gb28181CoreInput` actions and yields `Gb28181CoreOutput` such as `SendRtp`, `SendRtcp`, and `Gb28181Event`.
-- `cheetah-gb28181-driver-tokio` executes the RTP/RTCP media I/O loop over UDP/TCP, handles TCP framing, manages timer-based ticks, and routes outgoing RTP/RTCP buffers. It does not listen for or parse SIP traffic.
-- `cheetah-gb28181-module` manages GB media business logic: media admission, resource allocation, `StreamKey` binding, publish-lease checks, and bridging incoming/outgoing media streams to the core media engine. It exposes runtime-neutral typed media APIs and optional REST aliases that only normalize media fields; it does not accept raw SIP/SDP/XML or device directory DTOs.
-- The legacy SIP/SDP/auth/listener code in `crates/protocols/gb28181/core` is historical and is scheduled for removal under plan task RMV-04; it is not part of the supported media data plane.
+- `cheetah-gb28181-module` only maps external, structured media parameters to `RtpSessionApi` calls. It performs media admission, resource allocation, `StreamKey` binding, and publish-lease checks. It exposes optional REST aliases (`/recv/*`, `/send/*`, `/talk/*`) that only normalize media fields; it does not accept raw SIP/SDP/XML or device directory DTOs.
+- `cheetah-rtp-core` / `cheetah-rtp-driver-tokio` / `cheetah-rtp-module` handle the shared RTP/RTCP data plane and session lifecycle for GB28181, just as they do for other protocols.
+- The media process does not listen on SIP ports, maintain dialogs, or process SIP messages.
 
 ## 3.5 HLS Reference Mapping
 
@@ -666,9 +665,5 @@ CI/check baseline for RTP:
 
 CI/check baseline for GB28181:
 
-- `cargo clippy -p cheetah-gb28181-core`
-- `cargo test -p cheetah-gb28181-core`
-- `cargo clippy -p cheetah-gb28181-driver-tokio`
-- `cargo test -p cheetah-gb28181-driver-tokio`
 - `cargo clippy -p cheetah-gb28181-module --tests`
 - `cargo test -p cheetah-gb28181-module`
