@@ -28,6 +28,33 @@ use cheetah_rtp_core::{
 };
 use cheetah_runtime_api::{CancellationToken, RuntimeApi};
 
+/// Inclusive UDP port range used for per-session socket allocation.
+///
+/// 用于每会话套接字分配的 UDP 端口范围（含边界）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PortRange {
+    pub start: u16,
+    pub end: u16,
+}
+
+impl PortRange {
+    /// Create a new port range. Returns `None` if `start > end` or `start == 0`.
+    ///
+    /// 创建新的端口范围。`start > end` 或 `start == 0` 时返回 `None`。
+    pub fn new(start: u16, end: u16) -> Option<Self> {
+        if start == 0 || start > end {
+            None
+        } else {
+            Some(Self { start, end })
+        }
+    }
+
+    /// Number of ports in the range.
+    pub fn count(&self) -> usize {
+        (self.end as usize).saturating_sub(self.start as usize) + 1
+    }
+}
+
 /// Configuration for the Tokio RTP driver.
 ///
 /// Tokio RTP 驱动配置。
@@ -66,6 +93,12 @@ pub struct RtpDriverConfig {
     /// Driver-wide resource limits (sessions, TCP connections, incoming byte rate).
     /// A limit of `0` disables it.
     pub limits: DriverLimits,
+    /// Optional bounded UDP port pool for per-session sockets. When present and a
+    /// request uses port `0`, the driver allocates from this range instead of the
+    /// OS ephemeral pool. Explicit non-zero ports are bound directly.
+    ///
+    /// 可选的每会话 UDP 端口池。请求端口为 `0` 时从此范围分配；显式非零端口直接绑定。
+    pub udp_port_pool: Option<PortRange>,
 }
 
 /// Default values for `RtpDriverConfig`.
@@ -86,6 +119,7 @@ impl Default for RtpDriverConfig {
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
             limits: DriverLimits::default(),
+            udp_port_pool: None,
         }
     }
 }
@@ -643,6 +677,7 @@ async fn run_driver_loop(
         runtime.clone(),
         cancel.clone(),
         load_limiter.clone(),
+        config.udp_port_pool,
     );
     let session_bind_addrs: Arc<Mutex<HashMap<String, Option<SocketAddr>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -1466,6 +1501,7 @@ mod tests {
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
             limits: DriverLimits::default(),
+            udp_port_pool: None,
         };
 
         let handle = start_driver(config, cancel.clone());
@@ -1575,6 +1611,7 @@ mod tests {
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
             limits: DriverLimits::default(),
+            udp_port_pool: None,
         };
 
         let handle = start_driver(config, cancel.clone());
@@ -1644,6 +1681,7 @@ mod tests {
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
             limits: DriverLimits::default(),
+            udp_port_pool: None,
         };
 
         let handle = start_driver(config, cancel.clone());
@@ -1736,6 +1774,7 @@ mod tests {
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
             limits: DriverLimits::default(),
+            udp_port_pool: None,
         };
 
         let handle = start_driver(config, cancel.clone());
@@ -1821,6 +1860,7 @@ mod tests {
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
             limits: DriverLimits::default(),
+            udp_port_pool: None,
         };
 
         let handle = start_driver(config, cancel.clone());
@@ -1910,6 +1950,7 @@ mod tests {
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
             limits: DriverLimits::default(),
+            udp_port_pool: None,
         };
 
         let handle = start_driver(config, cancel.clone());
@@ -1984,6 +2025,7 @@ mod tests {
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
             limits: DriverLimits::default(),
+            udp_port_pool: None,
         };
 
         let handle = start_driver(config, cancel.clone());

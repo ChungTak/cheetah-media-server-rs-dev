@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 
 use cheetah_runtime_api::{CancellationToken, RuntimeApi};
@@ -18,6 +19,7 @@ use tracing::{debug, error};
 
 use crate::load_limiter::LoadLimiter;
 use crate::spawn_udp_reader;
+use crate::PortRange;
 
 #[derive(Clone)]
 pub(crate) struct PortManager {
@@ -45,9 +47,14 @@ struct PortManagerInner {
     cancel: CancellationToken,
     /// Shared driver load limiter.
     load_limiter: LoadLimiter,
+    /// Optional bounded UDP port pool. Used when `addr.port() == 0`.
+    udp_port_pool: Option<PortRange>,
+    /// Next port to try in the pool, to spread allocations across the range.
+    next_port: AtomicU16,
 }
 
 impl PortManager {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         udp_tx: mpsc::Sender<crate::RtpDatagram>,
         rtcp_tx: Option<mpsc::Sender<crate::RtpDatagram>>,
@@ -56,7 +63,9 @@ impl PortManager {
         runtime: Arc<dyn RuntimeApi>,
         cancel: CancellationToken,
         load_limiter: LoadLimiter,
+        udp_port_pool: Option<PortRange>,
     ) -> Self {
+        let next_port = udp_port_pool.as_ref().map_or(0, |p| p.start);
         Self {
             inner: Arc::new(PortManagerInner {
                 sockets: Mutex::new(HashMap::new()),
@@ -69,6 +78,8 @@ impl PortManager {
                 runtime,
                 cancel,
                 load_limiter,
+                udp_port_pool,
+                next_port: AtomicU16::new(next_port),
             }),
         }
     }
@@ -79,6 +90,10 @@ impl PortManager {
     /// its reference count is incremented and a lease sharing that socket is
     /// returned. Otherwise a new socket is bound; on bind failure the maps are
     /// left unchanged and an error is returned.
+    ///
+    /// When a bounded `udp_port_pool` is configured and `addr.port() == 0`,
+    /// the driver scans the pool for an available port instead of relying on
+    /// the OS ephemeral allocator.
     ///
     /// The returned `PortLease` must be `commit()`-ed once the caller is sure the
     /// socket should be kept (e.g. after `RtpCore` accepted the session). If the
@@ -104,6 +119,50 @@ impl PortManager {
 
         drop(sockets);
 
+        let bind_addrs = self.bind_candidates(addr);
+        let mut last_error = String::new();
+        for candidate in bind_addrs {
+            match self.try_bind(candidate).await {
+                Ok(lease) => return Ok(lease),
+                Err(reason) => last_error = reason,
+            }
+        }
+
+        let reason = if last_error.is_empty() {
+            format!("failed to bind UDP socket {addr}: no port available")
+        } else {
+            format!("failed to bind UDP socket {addr}: {last_error}")
+        };
+        error!("{reason}");
+        Err(reason)
+    }
+
+    /// Build the list of addresses to attempt binding, applying the configured
+    /// port pool when the requested port is `0`.
+    fn bind_candidates(&self, addr: SocketAddr) -> Vec<SocketAddr> {
+        if addr.port() != 0 {
+            return vec![addr];
+        }
+        if let Some(pool) = self.inner.udp_port_pool {
+            let start = pool.start;
+            let end = pool.end;
+            let offset =
+                self.inner.next_port.fetch_add(1, Ordering::Relaxed) as u32 % (pool.count() as u32);
+            let first = (start as u32 + offset) as u16;
+            let mut ports: Vec<u16> = (first..=end).collect();
+            if start < first {
+                ports.extend(start..first);
+            }
+            return ports
+                .into_iter()
+                .map(|p| SocketAddr::new(addr.ip(), p))
+                .collect();
+        }
+        vec![addr]
+    }
+
+    /// Try to bind a single UDP socket and register it.
+    async fn try_bind(&self, addr: SocketAddr) -> Result<PortLease, String> {
         match UdpSocket::bind(addr).await {
             Ok(s) => {
                 let actual = s.local_addr().unwrap_or(addr);
@@ -135,11 +194,7 @@ impl PortManager {
                     committed: false,
                 })
             }
-            Err(e) => {
-                let reason = format!("failed to bind UDP socket {addr}: {e}");
-                error!("{reason}");
-                Err(reason)
-            }
+            Err(e) => Err(format!("{e}")),
         }
     }
 

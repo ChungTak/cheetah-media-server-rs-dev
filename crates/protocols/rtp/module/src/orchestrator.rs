@@ -852,6 +852,7 @@ mod tests {
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
             limits: DriverLimits::default(),
+            udp_port_pool: None,
         }
     }
 

@@ -43,6 +43,7 @@ async fn test_send_frame_delivers_udp_rtp_to_peer() {
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
         limits: DriverLimits::default(),
+        udp_port_pool: None,
     };
 
     let handle = start_driver(config, cancel.clone());
@@ -150,6 +151,7 @@ async fn test_stop_session_drops_egress_for_stopped_sender() {
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
         limits: DriverLimits::default(),
+        udp_port_pool: None,
     };
 
     let handle = start_driver(config, cancel.clone());
@@ -253,6 +255,7 @@ async fn test_per_session_cancel_does_not_affect_other_sessions() {
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
         limits: DriverLimits::default(),
+        udp_port_pool: None,
     };
 
     let handle = start_driver(config, cancel.clone());
@@ -374,6 +377,7 @@ async fn test_send_failure_closes_sender_session() {
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
         limits: DriverLimits::default(),
+        udp_port_pool: None,
     };
 
     let handle = start_driver(config, cancel.clone());

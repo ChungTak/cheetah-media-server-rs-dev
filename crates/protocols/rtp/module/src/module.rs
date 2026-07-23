@@ -16,7 +16,7 @@ use cheetah_rtp_core::{
     RtpTrackFilter, RtpTransportMode,
 };
 use cheetah_rtp_driver_tokio::{
-    start_driver, DriverLimits, RtpDriverCommand, RtpDriverConfig, RtpDriverHandle,
+    start_driver, DriverLimits, PortRange, RtpDriverCommand, RtpDriverConfig, RtpDriverHandle,
 };
 use cheetah_sdk::media_api::capability::default_operations;
 use cheetah_sdk::media_api::error::MediaError;
@@ -331,6 +331,11 @@ impl Module for RtpModule {
             _ => cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         };
 
+        let udp_port_pool = if config.udp_port_pool_start != 0 && config.udp_port_pool_end != 0 {
+            PortRange::new(config.udp_port_pool_start, config.udp_port_pool_end)
+        } else {
+            None
+        };
         let driver_config = RtpDriverConfig {
             listen_udp,
             listen_tcp,
@@ -344,6 +349,7 @@ impl Module for RtpModule {
             tcp_framing,
             max_rtp_len_cap: config.max_rtp_len_cap,
             limits: DriverLimits::default(),
+            udp_port_pool,
         };
 
         let handle = Arc::new(start_driver(driver_config, cancel.clone()));

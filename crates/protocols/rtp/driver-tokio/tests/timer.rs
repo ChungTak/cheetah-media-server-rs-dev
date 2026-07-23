@@ -57,6 +57,7 @@ fn test_config(udp_addr: SocketAddr, tcp_addr: SocketAddr) -> RtpDriverConfig {
         tcp_framing: RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
         limits: DriverLimits::default(),
+        udp_port_pool: None,
     }
 }
 
