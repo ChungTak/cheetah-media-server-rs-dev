@@ -357,6 +357,8 @@ modules:
   #   max_rtp_kb: 0
   #   # G711 RTP 包时长（毫秒），ZLM 默认 100
   #   g711_packet_duration_ms: 100
+  #   # 对讲允许的音频 codec（默认 PCMA/PCMU；AAC 需显式添加）
+  #   enabled_talk_codecs: [PCMA, PCMU]
   #   # UDP socket 接收缓冲（SO_RCVBUF），0 = 系统默认
   #   udp_recv_buffer: 4194304
   #   # 鉴权前帧缓存条数（ZLM 风格 RtpProcess 缓存）

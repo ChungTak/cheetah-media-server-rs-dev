@@ -12,8 +12,8 @@ use cheetah_sdk::media_api::ids::RtpSessionId;
 use cheetah_sdk::media_api::model::{OnlineState, RecordTaskState};
 use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
-    MediaContainer, OpenRtpReceiver, RtpDirection, RtpPayloadBinding, RtpSessionParamsBuilder,
-    RtpSessionRef, RtpTransport, SourceBindingPolicy, StopRtpSession,
+    MediaContainer, OpenRtpReceiver, OpenRtpTalk, RtpDirection, RtpPayloadBinding,
+    RtpSessionParamsBuilder, RtpSessionRef, RtpTransport, SourceBindingPolicy, StopRtpSession,
 };
 use cheetah_sdk::media_api::{MediaKey, MediaRequestContext};
 use cheetah_sdk::StreamKey;
@@ -728,6 +728,106 @@ async fn rtp_session_idempotent_failure_is_replayed_with_same_key() {
     let err2 = rtp_api.open_receiver(&ctx, request).await.unwrap_err();
     assert_eq!(err2.code, MediaErrorCode::Unsupported);
     assert_eq!(err1.message, err2.message);
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_talk_codec_enables_pcma_pcmu_and_rejects_aac_by_default() {
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    // AAC talk is rejected by the codec capability gate before any session is allocated.
+    let media_key_aac = MediaKey::with_default_vhost("gb28181_talk_codec", "aac", None).unwrap();
+    let aac_binding = RtpPayloadBinding {
+        payload_type: 97,
+        codec: "AAC".to_string(),
+        clock_rate: 48000,
+        channels: Some(2),
+        packet_duration_ms: Some(20),
+    };
+    let aac_params = RtpSessionParamsBuilder::new(media_key_aac, RtpDirection::DuplexTalk)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::ElementaryStream)
+        .payload_binding(aac_binding.clone())
+        .build();
+    let aac_request = OpenRtpTalk {
+        params: aac_params,
+        talkback_binding: Some(aac_binding),
+    };
+    let err = rtp_api.open_talk(&ctx, aac_request).await.unwrap_err();
+    assert_eq!(err.code, MediaErrorCode::Unsupported);
+    assert!(
+        err.message.to_lowercase().contains("aac"),
+        "error should name the disabled codec: {}",
+        err.message
+    );
+
+    // PCMU talk is accepted; open_talk upgrades an existing receiver whose remote endpoint
+    // has been learned from inbound traffic.
+    let media_key_pcmu = MediaKey::with_default_vhost("gb28181_talk_codec", "pcmu", None).unwrap();
+    let recv_params = RtpSessionParamsBuilder::new(media_key_pcmu.clone(), RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .ssrc(SSRC)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90000,
+            channels: None,
+            packet_duration_ms: None,
+        })
+        .build();
+    let recv_descriptor = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params: recv_params,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("open receiver for talk upgrade");
+    let recv_addr = recv_descriptor.endpoints.local;
+
+    let socket = bind_udp_socket().await;
+    send_rtp(
+        &socket,
+        recv_addr,
+        mux_ps_frame(&make_audio_frame(80)),
+        SSRC,
+        1,
+        0,
+        INGEST_PT,
+    )
+    .await;
+    sleep(Duration::from_millis(200)).await;
+
+    let pcmu_binding = RtpPayloadBinding {
+        payload_type: 0,
+        codec: "pcmu".to_string(),
+        clock_rate: 8000,
+        channels: Some(1),
+        packet_duration_ms: Some(20),
+    };
+    let pcmu_params = RtpSessionParamsBuilder::new(media_key_pcmu, RtpDirection::DuplexTalk)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::ElementaryStream)
+        .payload_binding(pcmu_binding.clone())
+        .build();
+    let pcmu_request = OpenRtpTalk {
+        params: pcmu_params,
+        talkback_binding: Some(pcmu_binding),
+    };
+    rtp_api
+        .open_talk(&ctx, pcmu_request)
+        .await
+        .expect("PCMU talk should be accepted by default");
 
     harness.stop().await;
 }
