@@ -186,28 +186,18 @@ impl RtpMediaProvider {
     }
 
     fn codec_hint_from_params(params: &RtpSessionParams) -> Option<String> {
-        let first_codec = params
-            .payload_bindings
-            .first()
-            .map(|b| b.codec.trim().to_lowercase());
-
-        if let Some(ref codec) = first_codec {
-            match codec.as_str() {
-                "pcma" | "pcmu" | "g711a" | "g711u" => return Some("raw_audio".to_string()),
-                _ => {}
-            }
-        }
-
         if params.container != MediaContainer::AutoDetect {
             return Self::container_to_codec_hint(params.container);
         }
-
-        first_codec.and_then(|c| match c.as_str() {
-            "ps" => Some("ps".to_string()),
-            "ts" => Some("ts".to_string()),
-            "es" => Some("es".to_string()),
-            _ => None,
-        })
+        params
+            .payload_bindings
+            .first()
+            .and_then(|b| match b.codec.to_lowercase().as_str() {
+                "ps" => Some("ps".to_string()),
+                "ts" => Some("ts".to_string()),
+                "es" => Some("es".to_string()),
+                _ => None,
+            })
     }
 
     fn build_old_receiver_request(&self, req: OpenRtpReceiver) -> Result<RtpReceiverRequest> {
@@ -258,6 +248,22 @@ impl RtpMediaProvider {
         }
         let payload_type = Self::payload_type_from_bindings(&params.payload_bindings);
         let codec_hint = Self::codec_hint_from_params(&params);
+        // Voice talkback with raw G.711 belongs to the raw-audio packetizer, not the generic
+        // ES packetizer, regardless of whether the container is explicitly ElementaryStream
+        // or left as AutoDetect.
+        let codec_hint = if matches!(
+            params.container,
+            MediaContainer::ElementaryStream | MediaContainer::AutoDetect
+        ) && params.payload_bindings.first().is_some_and(|b| {
+            matches!(
+                b.codec.to_lowercase().as_str(),
+                "pcma" | "pcmu" | "g711a" | "g711u"
+            )
+        }) {
+            Some("raw_audio".to_string())
+        } else {
+            codec_hint
+        };
         Ok(RtpSenderRequest {
             media_key: params.media_key,
             destination_endpoint,
@@ -965,7 +971,13 @@ impl RtpMediaProvider {
             },
             RtpSenderMode::Talk,
         )?;
-        let packet_duration_ms = Self::packet_duration_ms_from_params(&request.params);
+        let packet_duration_ms =
+            Self::packet_duration_ms_from_params(&request.params).or_else(|| {
+                request
+                    .talkback_binding
+                    .as_ref()
+                    .and_then(|b| b.packet_duration_ms)
+            });
         let session = self
             .open_rtp_sender_internal(sender_req, packet_duration_ms)
             .await?;
