@@ -22,6 +22,7 @@ use cheetah_sdk::media_api::model::{
     AdmissionRequest, Decision, OnlineState, Page, PlaybackSession, PlaybackSessionState,
 };
 use cheetah_sdk::media_api::port::{MediaAdmissionApi, MediaControlApi, PlaybackApi};
+use cheetah_sdk::media_api::MediaCapabilitySet;
 use cheetah_sdk::media_api::MediaRequestContext;
 use cheetah_sdk::{
     PublisherOptions, PublisherSink, StreamKey, StreamManagerApi, SubscriberOptions,
@@ -39,6 +40,42 @@ pub struct Gb28181TestHarness {
 impl Gb28181TestHarness {
     pub async fn start() -> Self {
         Self::start_with_rtp_config("").await
+    }
+
+    /// Start the RTP module with a custom `PlaybackApi` provider and capability set.
+    /// The `record` module is omitted so the harness can control playback capability
+    /// registration exactly.
+    pub async fn start_with_playback(
+        playback: Arc<dyn PlaybackApi>,
+        playback_capabilities: MediaCapabilitySet,
+        extra_rtp_config: &str,
+    ) -> Self {
+        let runtime = Arc::new(TokioRuntime::new());
+        let temp_dir =
+            std::env::temp_dir().join(format!("cheetah-gb28181-test-{}", std::process::id()));
+        tokio::fs::create_dir_all(&temp_dir).await.unwrap();
+
+        let config = Arc::new(ConfigStore::new());
+        let yaml = format!(
+            "modules:\n  rtp:\n    enabled: true\n    listen_udp: \"0.0.0.0:0\"\n    listen_tcp: \"0.0.0.0:0\"\n{extra_rtp_config}"
+        );
+        config.load_yaml_str(&yaml).expect("load config");
+
+        let engine = EngineBuilder::new(config.clone(), config.clone(), runtime.clone())
+            .with_config_schema_registry(config)
+            .register_module_factory(Arc::new(cheetah_rtp_module::RtpModuleFactory))
+            .build()
+            .expect("build engine");
+
+        engine
+            .media_services()
+            .register_playback_with_capabilities(playback, playback_capabilities);
+
+        engine.start().await.expect("start engine");
+
+        sleep(Duration::from_millis(50)).await;
+
+        Self { engine, temp_dir }
     }
 
     pub async fn start_with_rtp_config(extra_rtp_config: &str) -> Self {
@@ -164,6 +201,12 @@ pub fn stream_key_to_media_key(stream_key: &StreamKey) -> cheetah_sdk::media_api
         None,
     )
     .expect("media key")
+}
+
+pub fn media_key_to_stream_key(media_key: &cheetah_sdk::media_api::MediaKey) -> StreamKey {
+    let (namespace, path) =
+        cheetah_sdk::media_api::ids::StreamKeyBridge::to_namespace_path(media_key);
+    StreamKey::new(&namespace, &path)
 }
 
 pub fn make_video_track() -> TrackInfo {
@@ -297,6 +340,16 @@ impl PlaybackApi for FakePlayback {
     ) -> MediaResult<PlaybackSession> {
         self.open_count.fetch_add(1, Ordering::SeqCst);
         let id = format!("pb-{}", self.open_count.load(Ordering::SeqCst));
+        // Playback output uses an independent stream key so it never overwrites
+        // or bypasses the live source publisher lease.
+        let output_key = cheetah_sdk::media_api::MediaKey::new(
+            request.media_key.vhost.0.clone(),
+            request.media_key.app.0.clone(),
+            format!("playback_{}", request.media_key.stream.0),
+            None,
+        )
+        .ok()
+        .or(Some(request.media_key.clone()));
         let session = PlaybackSession {
             session_id: PlaybackSessionId(id.clone()),
             media_key: request.media_key.clone(),
@@ -306,7 +359,7 @@ impl PlaybackApi for FakePlayback {
             position_ms: request.start_position_ms,
             scale: request.scale,
             generation: 1,
-            output_key: Some(request.media_key),
+            output_key,
             last_error: None,
             created_at: now_ms(),
             updated_at: now_ms(),

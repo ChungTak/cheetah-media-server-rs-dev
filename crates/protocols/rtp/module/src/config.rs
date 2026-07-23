@@ -82,6 +82,12 @@ pub struct RtpModuleConfig {
     /// 对讲音频帧最大可接受延迟（毫秒）。超过此值的帧将被丢弃，除非是不可丢弃帧（如关键帧/参数集帧）。
     #[serde(default = "default_talkback_max_latency_ms")]
     pub talkback_max_latency_ms: u32,
+    /// Subscriber queue capacity for playback/download egress. A larger queue absorbs
+    /// bursty readers without blocking the live dispatcher.
+    ///
+    /// 回放/下载出站订阅队列容量。较大的队列可以在不阻塞直播分发器的情况下吸收突发读取。
+    #[serde(default = "default_download_queue_capacity")]
+    pub download_queue_capacity: usize,
     /// UDP socket receive buffer (`SO_RCVBUF`). 0 keeps the OS default.
     ///
     /// UDP 套接字接收缓冲区（SO_RCVBUF）。0 保持 OS 默认。
@@ -176,6 +182,7 @@ impl Default for RtpModuleConfig {
             enabled_talk_codecs: default_enabled_talk_codecs(),
             talkback_queue_capacity: default_talkback_queue_capacity(),
             talkback_max_latency_ms: default_talkback_max_latency_ms(),
+            download_queue_capacity: default_download_queue_capacity(),
             udp_recv_buffer: default_udp_recv_buffer(),
             publish_frame_cache_frames: default_publish_frame_cache(),
             save_debug_payload: false,
@@ -465,6 +472,10 @@ fn default_talkback_queue_capacity() -> usize {
 
 fn default_talkback_max_latency_ms() -> u32 {
     500
+}
+
+fn default_download_queue_capacity() -> usize {
+    1024
 }
 
 fn default_enabled_profiles() -> Vec<GbMediaCompatibilityProfile> {
