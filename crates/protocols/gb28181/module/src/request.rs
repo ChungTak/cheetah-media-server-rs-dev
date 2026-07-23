@@ -114,13 +114,13 @@ pub struct GbTalkRequest {
     pub ip: String,
     #[serde(default = "default_talk_port")]
     pub port: u16,
-    #[serde(default)]
+    #[serde(default, alias = "localPort")]
     pub local_port: Option<u64>,
     #[serde(default = "default_pcma_pt")]
     pub pt: u8,
     #[serde(default = "default_pcma_codec")]
     pub codec: String,
-    #[serde(default = "default_pcma_clock_rate")]
+    #[serde(default = "default_pcma_clock_rate", alias = "clockRate")]
     pub clock_rate: u32,
     #[serde(default)]
     pub channels: Option<u8>,
@@ -210,5 +210,21 @@ mod tests {
         assert_eq!(binding.clock_rate, 8000);
         assert_eq!(req.ip, "127.0.0.1");
         assert_eq!(req.port, 30000);
+    }
+
+    #[test]
+    fn talk_request_accepts_camel_case_aliases() {
+        let json = serde_json::json!({
+            "stream": "cam-1",
+            "localPort": 40000,
+            "clockRate": 16000,
+            "pt": 0,
+            "codec": "PCMU"
+        });
+        let req: GbTalkRequest = serde_json::from_value(json).unwrap();
+        assert_eq!(req.local_port(30000), 40000);
+        assert_eq!(req.clock_rate, 16000);
+        assert_eq!(req.payload_binding().payload_type, 0);
+        assert_eq!(req.payload_binding().codec, "PCMU");
     }
 }
