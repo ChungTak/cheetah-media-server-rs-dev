@@ -12,6 +12,7 @@ use std::net::SocketAddr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::command::PlaybackControl;
 use crate::error::EffectOutcome;
 use crate::fencing::ControlledResourceRef;
 use crate::ids::{MediaKey, RtpSessionId};
@@ -119,6 +120,22 @@ pub enum RtpDirection {
     Send,
     /// Bi-directional voice talk.
     DuplexTalk,
+}
+
+/// RTP session media purpose.
+///
+/// RTP 会话媒体用途。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum RtpSessionPurpose {
+    /// Live streaming (default).
+    #[default]
+    Live,
+    /// Playback from a local/recorded source.
+    Playback,
+    /// Download of a recorded source, possibly with rate/timeout control.
+    Download,
 }
 
 /// SSRC / source binding policy.
@@ -250,6 +267,15 @@ pub struct RtpSessionParams {
     /// For live sessions this is left empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub record_source: Option<String>,
+    /// Media purpose: live, playback or download.
+    #[serde(default)]
+    pub purpose: RtpSessionPurpose,
+    /// Download rate limit in kilobits per second. 0 means unlimited.
+    #[serde(default)]
+    pub download_rate_kbps: u32,
+    /// Download inactivity/frame timeout in milliseconds. 0 means no timeout.
+    #[serde(default)]
+    pub download_timeout_ms: u32,
 }
 
 /// Open a passive or active RTP receiver.
@@ -319,6 +345,11 @@ pub struct UpdateRtpSession {
     pub max_probe_bytes: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pause_check: Option<bool>,
+    /// Playback control command (pause/resume/seek/scale). Only applied when the
+    /// session was opened with a playback source and the playback provider
+    /// advertises the `control` operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playback_control: Option<PlaybackControl>,
 }
 
 /// Reference to an RTP session used for get/update/stop.
@@ -544,6 +575,21 @@ impl RtpSessionParamsBuilder {
         self
     }
 
+    pub fn purpose(mut self, purpose: RtpSessionPurpose) -> Self {
+        self.params.purpose = purpose;
+        self
+    }
+
+    pub fn download_rate_kbps(mut self, rate: u32) -> Self {
+        self.params.download_rate_kbps = rate;
+        self
+    }
+
+    pub fn download_timeout_ms(mut self, ms: u32) -> Self {
+        self.params.download_timeout_ms = ms;
+        self
+    }
+
     pub fn build(self) -> RtpSessionParams {
         self.params
     }
@@ -576,6 +622,9 @@ impl Default for RtpSessionParams {
             max_probe_bytes: 64 * 1024,
             rtcp_mux: false,
             record_source: None,
+            purpose: RtpSessionPurpose::default(),
+            download_rate_kbps: 0,
+            download_timeout_ms: 0,
         }
     }
 }

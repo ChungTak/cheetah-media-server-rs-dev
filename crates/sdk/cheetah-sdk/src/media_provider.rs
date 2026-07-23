@@ -581,10 +581,20 @@ impl MediaServices {
         &self,
         rtp_session: Arc<dyn RtpSessionApi>,
     ) -> ProviderRegistration {
+        self.register_rtp_session_with_capabilities(rtp_session, rtp_session_default_capabilities())
+    }
+
+    /// Register the typed RTP session provider with an explicit capability set.
+    ///
+    /// 用显式能力集注册类型化的 RTP session provider。
+    pub fn register_rtp_session_with_capabilities(
+        &self,
+        rtp_session: Arc<dyn RtpSessionApi>,
+        capabilities: MediaCapabilitySet,
+    ) -> ProviderRegistration {
         let mut registry = self.inner.write().expect("media services lock");
         registry.generation += 1;
         let generation = registry.generation;
-        let capabilities = rtp_session_default_capabilities();
         let provider_id = format!("rtp_session:{generation}");
         let descriptors = descriptors_from_set(&capabilities, &provider_id);
         registry.rtp_session = Some(ProviderEntry {
