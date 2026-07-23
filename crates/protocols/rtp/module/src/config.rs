@@ -25,6 +25,16 @@ pub struct RtpModuleConfig {
     pub max_tracks: usize,
     #[serde(default = "default_idle_timeout_ms")]
     pub idle_timeout_ms: u64,
+    /// Driver tick interval in milliseconds.
+    ///
+    /// 驱动 tick 间隔（毫秒）。
+    #[serde(default = "default_tick_interval_ms")]
+    pub tick_interval_ms: u64,
+    /// Interval between RTCP sender/receiver reports in milliseconds.
+    ///
+    /// RTCP Sender/Receiver Report 生成间隔（毫秒）。
+    #[serde(default = "default_rtcp_report_interval_ms")]
+    pub rtcp_report_interval_ms: u64,
     #[serde(
         default = "default_payload_mode",
         serialize_with = "serialize_payload_mode",
@@ -136,6 +146,8 @@ impl Default for RtpModuleConfig {
             max_reassembly_bytes: 4 * 1024 * 1024,
             max_tracks: 32,
             idle_timeout_ms: 15000,
+            tick_interval_ms: default_tick_interval_ms(),
+            rtcp_report_interval_ms: default_rtcp_report_interval_ms(),
             default_payload: RtpPayloadMode::Ps,
             allow_unaligned_payload: true,
             video_mtu: default_video_mtu(),
@@ -198,6 +210,14 @@ impl RtpModuleConfig {
 
         if self.max_sessions < 1 {
             errors.push("max_sessions must be >= 1".to_string());
+        }
+
+        if self.tick_interval_ms < 1 {
+            errors.push("tick_interval_ms must be >= 1".to_string());
+        }
+
+        if self.rtcp_report_interval_ms < 1 {
+            errors.push("rtcp_report_interval_ms must be >= 1".to_string());
         }
 
         match self.tcp_header_type.to_lowercase().as_str() {
@@ -267,6 +287,18 @@ fn default_max_tracks() -> usize {
 /// 默认会话空闲超时（毫秒）。
 fn default_idle_timeout_ms() -> u64 {
     15000
+}
+/// Default driver tick interval in milliseconds.
+///
+/// 默认驱动 tick 间隔（毫秒）。
+fn default_tick_interval_ms() -> u64 {
+    100
+}
+/// Default RTCP sender/receiver report interval in milliseconds.
+///
+/// 默认 RTCP Sender/Receiver Report 间隔（毫秒）。
+fn default_rtcp_report_interval_ms() -> u64 {
+    5000
 }
 /// Default RTP payload mode.
 ///

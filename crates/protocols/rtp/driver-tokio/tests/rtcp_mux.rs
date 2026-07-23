@@ -28,6 +28,8 @@ async fn test_rtcp_mux_on_udp_socket_closes_session() {
         read_buffer_size: 4096,
         session_idle_timeout_ms: 30_000,
         max_sessions: 5,
+        tick_interval_ms: 100,
+        rtcp_report_interval_ms: 5000,
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
     };
@@ -110,6 +112,8 @@ async fn test_rtcp_separate_port_reply_uses_rtcp_address() {
         read_buffer_size: 4096,
         session_idle_timeout_ms: 30_000,
         max_sessions: 5,
+        tick_interval_ms: 100,
+        rtcp_report_interval_ms: 5000,
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
     };

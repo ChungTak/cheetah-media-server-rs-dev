@@ -94,7 +94,10 @@ impl RtpCore {
                 pt_change_unknown_count: 0,
                 pt_format_change_count: 0,
                 last_error: None,
-                rtcp: RtcpReportState::new(default_clock_rate_hz(mode)),
+                rtcp: RtcpReportState::new_with_offset(
+                    default_clock_rate_hz(mode),
+                    self.wall_clock_offset_ms,
+                ),
             };
 
             self.sessions.insert(key.clone(), session);

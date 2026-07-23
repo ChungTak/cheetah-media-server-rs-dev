@@ -87,6 +87,10 @@ pub struct RtcpReportState {
     last_sent_rtp_timestamp: u32,
     /// Unwraps 32-bit RTP timestamps to 64-bit values for SR mapping.
     timestamp_unwrapper: WrapUnwrapper,
+    /// Wall-clock offset in milliseconds added to the monotonic `now_ms` when producing
+    /// outbound Sender Report NTP timestamps. `RtcpReportState` is Sans-I/O and cannot read
+    /// the wall clock, so the driver supplies this offset.
+    wall_clock_offset_ms: u64,
 }
 
 impl Default for RtcpReportState {
@@ -98,6 +102,12 @@ impl Default for RtcpReportState {
 impl RtcpReportState {
     /// Create a new state with the given RTP clock rate (Hz).
     pub fn new(clock_rate_hz: u64) -> Self {
+        Self::new_with_offset(clock_rate_hz, 0)
+    }
+
+    /// Create a new state with an explicit wall-clock offset for outbound Sender Report
+    /// NTP timestamps.
+    pub fn new_with_offset(clock_rate_hz: u64, wall_clock_offset_ms: u64) -> Self {
         Self {
             seq: RtpSequenceUnwrapper::new(),
             base_seq: None,
@@ -114,6 +124,7 @@ impl RtcpReportState {
             clock_rate_hz,
             last_sent_rtp_timestamp: 0,
             timestamp_unwrapper: WrapUnwrapper::new(32).expect("32-bit wrap is valid"),
+            wall_clock_offset_ms,
         }
     }
 
@@ -251,6 +262,11 @@ impl RtcpReportState {
         })
     }
 
+    /// Override the wall-clock offset used for outbound Sender Report NTP timestamps.
+    pub fn set_wall_clock_offset_ms(&mut self, offset_ms: u64) {
+        self.wall_clock_offset_ms = offset_ms;
+    }
+
     /// Build an `RtcpSenderReport` for a sending session.
     pub fn sender_report(
         &self,
@@ -260,9 +276,10 @@ impl RtcpReportState {
         now_ms: u64,
         report_block: Option<RtcpReportBlock>,
     ) -> RtcpSenderReport {
+        let wall_clock_ms = now_ms.saturating_add(self.wall_clock_offset_ms);
         RtcpSenderReport {
             ssrc,
-            ntp_timestamp: ms_to_ntp_timestamp(now_ms),
+            ntp_timestamp: ms_to_ntp_timestamp(wall_clock_ms),
             rtp_timestamp: self.last_sent_rtp_timestamp,
             packets_sent,
             octets_sent,
@@ -413,5 +430,21 @@ mod tests {
         state.on_packet(2, 900, 20); // wrapped
         let block = state.report_block(0, 30).unwrap();
         assert_eq!(block.jitter, 0);
+    }
+
+    #[test]
+    fn sender_report_ntp_uses_wall_clock_offset() {
+        // The driver supplies the Unix-epoch wall-clock timestamp at runtime start as
+        // the offset. `now_ms` is monotonic-from-start, so adding the offset yields
+        // the real wall-clock time used for the RTCP Sender Report NTP field.
+        let offset_ms = 1_720_000_000_000u64;
+        let mut state = RtcpReportState::new_with_offset(90_000, offset_ms);
+        state.on_sent(0);
+
+        let sr = state.sender_report(0, 0, 0, 0, None);
+        assert_eq!(sr.ntp_timestamp, ms_to_ntp_timestamp(offset_ms));
+
+        let sr = state.sender_report(0, 0, 0, 1_000, None);
+        assert_eq!(sr.ntp_timestamp, ms_to_ntp_timestamp(offset_ms + 1_000));
     }
 }

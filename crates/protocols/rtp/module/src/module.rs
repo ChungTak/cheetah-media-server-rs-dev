@@ -297,6 +297,8 @@ impl Module for RtpModule {
             read_buffer_size: config.read_buffer_size,
             session_idle_timeout_ms: config.idle_timeout_ms,
             max_sessions: config.max_sessions,
+            tick_interval_ms: config.tick_interval_ms,
+            rtcp_report_interval_ms: config.rtcp_report_interval_ms,
             tcp_framing,
             max_rtp_len_cap: config.max_rtp_len_cap,
         };

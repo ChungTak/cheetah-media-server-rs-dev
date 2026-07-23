@@ -36,6 +36,8 @@ async fn test_send_frame_delivers_udp_rtp_to_peer() {
         read_buffer_size: 4096,
         session_idle_timeout_ms: 5000,
         max_sessions: 5,
+        tick_interval_ms: 100,
+        rtcp_report_interval_ms: 5000,
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
     };
@@ -139,6 +141,8 @@ async fn test_stop_session_drops_egress_for_stopped_sender() {
         read_buffer_size: 4096,
         session_idle_timeout_ms: 5000,
         max_sessions: 5,
+        tick_interval_ms: 100,
+        rtcp_report_interval_ms: 5000,
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
     };
@@ -238,6 +242,8 @@ async fn test_per_session_cancel_does_not_affect_other_sessions() {
         read_buffer_size: 4096,
         session_idle_timeout_ms: 5000,
         max_sessions: 5,
+        tick_interval_ms: 100,
+        rtcp_report_interval_ms: 5000,
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
     };
