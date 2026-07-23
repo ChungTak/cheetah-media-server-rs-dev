@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use cheetah_sdk::media_api::ids::MediaKey;
+use cheetah_sdk::media_api::model::{CloseReason, SessionKind};
 use cheetah_sdk::media_api::port::MediaRequestContext;
 use cheetah_sdk::media_api::rtp_session::{
     MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk, RtpDirection, RtpPayloadBinding,
@@ -19,15 +20,18 @@ use cheetah_sdk::{
 };
 use parking_lot::Mutex;
 
+use crate::event;
 use crate::request::{GbRecvRequest, GbSendRequest, GbStopRequest, GbTalkRequest};
+
+/// Tracked GB28181 session state stored under a `app/stream` session key.
+type GbSessionEntry = (String, RtpSessionRef, SessionKind);
 
 /// HTTP control API for the GB28181 module.
 ///
 /// GB28181 模块的 HTTP 控制 API。
 pub(crate) struct GbHttpService {
     engine: EngineContext,
-    /// session_key -> (device_id, rtp_session_ref)
-    active_sessions: Arc<Mutex<HashMap<String, (String, RtpSessionRef)>>>,
+    active_sessions: Arc<Mutex<HashMap<String, GbSessionEntry>>>,
     /// Default local RTP port for media reception when REST request omits `port`.
     default_media_port: u16,
 }
@@ -39,7 +43,7 @@ impl GbHttpService {
     /// Create a new `GbHttpService`.
     pub(crate) fn new(
         engine: EngineContext,
-        active_sessions: Arc<Mutex<HashMap<String, (String, RtpSessionRef)>>>,
+        active_sessions: Arc<Mutex<HashMap<String, GbSessionEntry>>>,
         default_media_port: u16,
     ) -> Self {
         Self {
@@ -47,6 +51,13 @@ impl GbHttpService {
             active_sessions,
             default_media_port,
         }
+    }
+
+    /// Publish a structured media event to the engine event bus.
+    ///
+    /// Publication failures are not propagated to the caller; the event bus is best-effort.
+    fn publish_event(&self, event: cheetah_sdk::media_api::event::MediaEvent) {
+        let _ = self.engine.media_event_bus.publish(event);
     }
 
     /// Return the typed RTP session provider.
@@ -214,9 +225,12 @@ impl ModuleHttpService for GbHttpService {
                     session_id: descriptor.session_id.clone(),
                     expected_generation: descriptor.generation,
                 };
+                let kind = SessionKind::RtpReceiver;
                 self.active_sessions
                     .lock()
-                    .insert(session_key.clone(), (String::new(), rtp_session_ref));
+                    .insert(session_key.clone(), (String::new(), rtp_session_ref, kind));
+
+                self.publish_event(event::session_opened(&descriptor.session_id.0, kind, None));
 
                 let local_port = descriptor.endpoints.local.port();
 
@@ -242,12 +256,19 @@ impl ModuleHttpService for GbHttpService {
                 let stream = body.base.stream;
                 let session_key = format!("{app}/{stream}");
 
-                let session_ref = {
+                if let Some((_, session_ref, kind)) = {
                     let mut sessions = self.active_sessions.lock();
-                    sessions.remove(&session_key).map(|(_, r)| r)
-                };
-                if let Some(session_ref) = session_ref {
-                    self.stop_gb_session(session_ref).await.ok();
+                    sessions.remove(&session_key)
+                } {
+                    let session_id = session_ref.session_id.0.clone();
+                    let stopped = self.stop_gb_session(session_ref).await.unwrap_or(false);
+                    if stopped {
+                        self.publish_event(event::session_closed(
+                            &session_id,
+                            kind,
+                            CloseReason::Normal,
+                        ));
+                    }
                 }
 
                 let response = serde_json::json!({
@@ -278,9 +299,16 @@ impl ModuleHttpService for GbHttpService {
                     session_id: descriptor.session_id.clone(),
                     expected_generation: descriptor.generation,
                 };
+                let kind = SessionKind::RtpSender;
                 self.active_sessions
                     .lock()
-                    .insert(session_key, (String::new(), rtp_session_ref));
+                    .insert(session_key.clone(), (String::new(), rtp_session_ref, kind));
+
+                self.publish_event(event::session_opened(
+                    &descriptor.session_id.0,
+                    kind,
+                    Some(&format!("{}:{}", body.ip, body.port)),
+                ));
 
                 let response = serde_json::json!({
                     "code": 200,
@@ -289,7 +317,7 @@ impl ModuleHttpService for GbHttpService {
                         "appName": app,
                         "streamName": stream,
                         "ssrc": ssrc,
-                        "sessionKey": format!("{app}/{stream}")
+                        "sessionKey": session_key
                     }
                 });
                 Ok(HttpResponse::ok_json(
@@ -304,12 +332,19 @@ impl ModuleHttpService for GbHttpService {
                 let app = body.base.app;
                 let stream = body.base.stream;
                 let session_key = format!("{app}/{stream}");
-                let session_ref = {
+                if let Some((_, session_ref, kind)) = {
                     let mut sessions = self.active_sessions.lock();
-                    sessions.remove(&session_key).map(|(_, r)| r)
-                };
-                if let Some(session_ref) = session_ref {
-                    self.stop_gb_session(session_ref).await.ok();
+                    sessions.remove(&session_key)
+                } {
+                    let session_id = session_ref.session_id.0.clone();
+                    let stopped = self.stop_gb_session(session_ref).await.unwrap_or(false);
+                    if stopped {
+                        self.publish_event(event::session_closed(
+                            &session_id,
+                            kind,
+                            CloseReason::Normal,
+                        ));
+                    }
                 }
 
                 let response = serde_json::json!({
@@ -345,9 +380,16 @@ impl ModuleHttpService for GbHttpService {
                     session_id: descriptor.session_id.clone(),
                     expected_generation: descriptor.generation,
                 };
+                let kind = SessionKind::RtpSender;
                 self.active_sessions
                     .lock()
-                    .insert(session_key.clone(), (String::new(), rtp_session_ref));
+                    .insert(session_key.clone(), (String::new(), rtp_session_ref, kind));
+
+                self.publish_event(event::session_opened(
+                    &descriptor.session_id.0,
+                    kind,
+                    Some(&format!("{}:{}", body.ip, body.port)),
+                ));
 
                 let response = serde_json::json!({
                     "code": 200,
@@ -371,12 +413,19 @@ impl ModuleHttpService for GbHttpService {
                 let stream = body.base.stream;
                 let session_key = format!("{app}/{stream}");
 
-                let session_ref = {
+                if let Some((_, session_ref, kind)) = {
                     let mut sessions = self.active_sessions.lock();
-                    sessions.remove(&session_key).map(|(_, r)| r)
-                };
-                if let Some(session_ref) = session_ref {
-                    self.stop_gb_session(session_ref).await.ok();
+                    sessions.remove(&session_key)
+                } {
+                    let session_id = session_ref.session_id.0.clone();
+                    let stopped = self.stop_gb_session(session_ref).await.unwrap_or(false);
+                    if stopped {
+                        self.publish_event(event::session_closed(
+                            &session_id,
+                            kind,
+                            CloseReason::Normal,
+                        ));
+                    }
                 }
 
                 let response = serde_json::json!({

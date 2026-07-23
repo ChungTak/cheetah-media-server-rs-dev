@@ -6,7 +6,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use cheetah_sdk::media_api::model::SessionKind;
 use cheetah_sdk::media_api::rtp_session::RtpSessionRef;
+
+/// Tracked GB28181 session state stored under a `app/stream` session key.
+pub(crate) type GbSessionEntry = (String, RtpSessionRef, SessionKind);
 use cheetah_sdk::{
     CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRouteDescriptor, Module,
     ModuleCapability, ModuleConfigChange, ModuleFactory, ModuleHttpService, ModuleId, ModuleInfo,
@@ -71,8 +75,7 @@ pub struct Gb28181Module {
     config: Gb28181ModuleConfig,
     ctx: Option<EngineContext>,
     cancel_token: Option<CancellationToken>,
-    /// session_key -> (device_id, rtp_session_ref)
-    active_sessions: Arc<Mutex<HashMap<String, (String, RtpSessionRef)>>>,
+    active_sessions: Arc<Mutex<HashMap<String, GbSessionEntry>>>,
 }
 
 /// `Gb28181Module` constructor.
