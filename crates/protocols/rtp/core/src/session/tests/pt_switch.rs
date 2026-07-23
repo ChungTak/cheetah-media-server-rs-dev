@@ -407,6 +407,7 @@ fn test_unknown_pt_payload_is_not_fed_to_ps_demuxer() {
             ssrc: Some(ssrc),
             payload_mode: RtpPayloadMode::Ps,
             transport_mode: RtpTransportMode::RecvOnly,
+            packet_duration_ms: None,
             connection_type: None,
             source_policy: None,
             track_filter: RtpTrackFilter::All,

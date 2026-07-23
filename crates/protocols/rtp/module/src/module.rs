@@ -777,6 +777,7 @@ async fn run_pull_job_supervisor(
             ssrc: job.ssrc,
             payload_mode: job.payload_mode,
             transport_mode: RtpTransportMode::RecvOnly,
+            packet_duration_ms: None,
             tcp_conn_id: None,
             connection_type: None,
             source_policy: None,
@@ -932,6 +933,7 @@ impl ModuleHttpService for RtpHttpService {
                         false,
                         RtpSessionState::Listening,
                         SourceBindingPolicy::default(),
+                        None,
                     )
                     .await
                     .map_err(media_error_to_sdk_error)?;
@@ -1130,6 +1132,7 @@ impl ModuleHttpService for RtpHttpService {
                             connection_type,
                             track_filter,
                             SourceBindingPolicy::default(),
+                            None,
                         )
                         .await
                         .map_err(media_error_to_sdk_error)?;

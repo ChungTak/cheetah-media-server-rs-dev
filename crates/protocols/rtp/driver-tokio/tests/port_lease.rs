@@ -36,6 +36,7 @@ fn make_spec(session_key: &str) -> RtpServerSpec {
         ssrc: Some(0x1111_2222),
         payload_mode: RtpPayloadMode::Ps,
         transport_mode: RtpTransportMode::RecvOnly,
+        packet_duration_ms: None,
         connection_type: None,
         source_policy: Some(RtpSourcePolicy::Strict),
         track_filter: RtpTrackFilter::All,

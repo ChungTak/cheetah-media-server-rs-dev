@@ -249,6 +249,22 @@ impl RtpMediaProvider {
         }
         let payload_type = Self::payload_type_from_bindings(&params.payload_bindings);
         let codec_hint = Self::codec_hint_from_params(&params);
+        // Voice talkback with raw G.711 belongs to the raw-audio packetizer, not the generic
+        // ES packetizer, regardless of whether the container is explicitly ElementaryStream
+        // or left as AutoDetect.
+        let codec_hint = if matches!(
+            params.container,
+            MediaContainer::ElementaryStream | MediaContainer::AutoDetect
+        ) && params.payload_bindings.first().is_some_and(|b| {
+            matches!(
+                b.codec.to_lowercase().as_str(),
+                "pcma" | "pcmu" | "g711a" | "g711u"
+            )
+        }) {
+            Some("raw_audio".to_string())
+        } else {
+            codec_hint
+        };
         Ok(RtpSenderRequest {
             media_key: params.media_key,
             destination_endpoint,
@@ -460,7 +476,7 @@ impl RtpApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: RtpSenderRequest,
     ) -> Result<RtpSession> {
-        self.open_rtp_sender_with_cancel(ctx, request)
+        self.open_rtp_sender_with_cancel(ctx, request, None)
             .await
             .map(|(s, _)| s)
     }
@@ -822,6 +838,14 @@ impl RtpSessionApi for RtpMediaProvider {
 }
 
 impl RtpMediaProvider {
+    /// Extract the audio packet duration from the first payload binding, if any.
+    fn packet_duration_ms_from_params(params: &RtpSessionParams) -> Option<u32> {
+        params
+            .payload_bindings
+            .first()
+            .and_then(|b| b.packet_duration_ms)
+    }
+
     async fn open_receiver_impl(
         &self,
         ctx: &MediaRequestContext,
@@ -863,12 +887,16 @@ impl RtpMediaProvider {
         &self,
         ctx: &MediaRequestContext,
         request: RtpSenderRequest,
+        packet_duration_ms: Option<u32>,
     ) -> Result<(RtpSession, CancellationToken)> {
         Deadline::from_context(ctx)
             .check()
             .map_err(|e| MediaError::unavailable(e.to_string()))?;
         // Create the driver-side sender session first.
-        let session = self.orchestrator.open_rtp_sender(request.clone()).await?;
+        let session = self
+            .orchestrator
+            .open_rtp_sender_with_duration(request.clone(), packet_duration_ms)
+            .await?;
         let session_key = session.session_id.0.clone();
 
         // Determine the engine stream we need to subscribe to.
@@ -923,7 +951,10 @@ impl RtpMediaProvider {
             _ => RtpSenderMode::Active,
         };
         let old_req = self.build_old_sender_request(request.clone(), mode)?;
-        let (session, cancel) = self.open_rtp_sender_with_cancel(ctx, old_req).await?;
+        let packet_duration_ms = Self::packet_duration_ms_from_params(&request.params);
+        let (session, cancel) = self
+            .open_rtp_sender_with_cancel(ctx, old_req, packet_duration_ms)
+            .await?;
         let guard = RollbackGuard::new(
             self.orchestrator.clone(),
             self.engine.runtime_api.clone(),
@@ -962,7 +993,16 @@ impl RtpMediaProvider {
             },
             RtpSenderMode::Talk,
         )?;
-        let (session, cancel) = self.open_rtp_sender_with_cancel(ctx, sender_req).await?;
+        let packet_duration_ms =
+            Self::packet_duration_ms_from_params(&request.params).or_else(|| {
+                request
+                    .talkback_binding
+                    .as_ref()
+                    .and_then(|b| b.packet_duration_ms)
+            });
+        let (session, cancel) = self
+            .open_rtp_sender_with_cancel(ctx, sender_req, packet_duration_ms)
+            .await?;
         let guard = RollbackGuard::new(
             self.orchestrator.clone(),
             self.engine.runtime_api.clone(),

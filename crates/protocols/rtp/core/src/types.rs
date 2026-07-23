@@ -187,6 +187,10 @@ pub struct RtpServerSpec {
     pub ssrc: Option<u32>,
     pub payload_mode: RtpPayloadMode,
     pub transport_mode: RtpTransportMode,
+    /// Audio packet duration for raw audio packetizers (e.g. G.711 talkback).
+    ///
+    /// 原始音频打包器的音频包时长（毫秒），例如 G.711 对讲回传。
+    pub packet_duration_ms: Option<u32>,
     /// Optional connection-type hint. Defaults to `UdpPassive` when unset.
     ///
     /// 可选的连接类型提示。未设置时默认为 `UdpPassive`。
@@ -217,6 +221,10 @@ pub struct RtpClientSpec {
     pub ssrc: u32,
     pub payload_mode: RtpPayloadMode,
     pub transport_mode: RtpTransportMode,
+    /// Audio packet duration for raw audio packetizers (e.g. G.711 talkback).
+    ///
+    /// 原始音频打包器的音频包时长（毫秒），例如 G.711 对讲回传。
+    pub packet_duration_ms: Option<u32>,
     /// Optional TCP connection ID for RTP-over-TCP egress.
     ///
     /// 可选的 RTP-over-TCP 出向 TCP 连接 ID。
