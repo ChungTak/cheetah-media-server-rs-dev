@@ -12,8 +12,9 @@ use cheetah_sdk::media_api::ids::RtpSessionId;
 use cheetah_sdk::media_api::model::{OnlineState, RecordTaskState};
 use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
-    MediaContainer, OpenRtpReceiver, OpenRtpTalk, PlaybackRange, RtpDirection, RtpPayloadBinding,
-    RtpSessionParamsBuilder, RtpSessionRef, RtpTransport, SourceBindingPolicy, StopRtpSession,
+    MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk, PlaybackRange, RtpDirection,
+    RtpPayloadBinding, RtpSessionParamsBuilder, RtpSessionQuery, RtpSessionRef, RtpTransport,
+    SourceBindingPolicy, StopRtpSession,
 };
 use cheetah_sdk::media_api::{MediaKey, MediaRequestContext};
 use cheetah_sdk::StreamKey;
@@ -1045,5 +1046,113 @@ async fn gb28181_talkback_late_frame_drop_policy() {
         .stop_rtp_session(&ctx, &session.session_id)
         .await
         .unwrap();
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gb28181_playback_sender_reads_from_playback_api_and_emits_rtp() {
+    let harness = Gb28181TestHarness::start().await;
+    let fake = FakePlayback::default();
+    harness
+        .engine
+        .media_services()
+        .register_playback(Arc::new(fake.clone()));
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let source_key = StreamKey::new("rtp_playback_source", "main");
+    let source_media_key = stream_key_to_media_key(&source_key);
+    let publisher = harness
+        .open_publisher(
+            source_key.clone(),
+            vec![make_video_track(), make_audio_track()],
+        )
+        .await;
+
+    // Seed the source stream with a few PS video frames.
+    for i in 0..5 {
+        let ps = mux_ps_frame(&make_video_frame(i * 100_000));
+        publisher
+            .push_frame(Arc::new(AVFrame {
+                payload: ps,
+                ..make_video_frame(i * 100_000)
+            }))
+            .unwrap();
+    }
+
+    let recv_socket = bind_udp_socket().await;
+    let dest_addr = recv_socket.local_addr().unwrap();
+
+    let request = OpenRtpSender {
+        params: RtpSessionParamsBuilder::new(source_media_key.clone(), RtpDirection::Send)
+            .transport(RtpTransport::Udp)
+            .container(MediaContainer::Ps)
+            .ssrc(SSRC)
+            .payload_binding(RtpPayloadBinding {
+                payload_type: INGEST_PT,
+                codec: "PS".to_string(),
+                clock_rate: 90_000,
+                channels: None,
+                packet_duration_ms: None,
+            })
+            .remote_endpoint(dest_addr)
+            .record_source("recordings/cam_001/20250721.mp4")
+            .build(),
+        playback_range: Some(PlaybackRange {
+            start_ms: 0,
+            end_ms: Some(60_000),
+        }),
+    };
+    let session = rtp_api
+        .open_sender(&ctx, request)
+        .await
+        .expect("open playback sender");
+    assert_eq!(fake.open_count(), 1);
+
+    let mut saw_rtp = false;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline && !saw_rtp {
+        if let Some((header, _payload, _addr)) =
+            recv_rtp(&recv_socket, Duration::from_millis(200)).await
+        {
+            assert_eq!(header.version, 2);
+            assert_eq!(header.ssrc, SSRC);
+            saw_rtp = true;
+        }
+    }
+    assert!(saw_rtp, "expected RTP packets from playback sender");
+
+    // Stopping the RTP session should also stop the playback source.
+    // The background egress bumps the generation to Connected after the first
+    // frame, so fetch the current generation from the session list before stopping.
+    let query = RtpSessionQuery {
+        session_id: Some(session.session_id.clone()),
+        ..Default::default()
+    };
+    let page = rtp_api
+        .list_sessions(&ctx, query)
+        .await
+        .expect("list sessions");
+    let updated = page.items.into_iter().next().expect("session still exists");
+    let stop_ref = RtpSessionRef {
+        session_id: session.session_id,
+        expected_generation: updated.generation,
+    };
+    rtp_api
+        .stop_session(
+            &ctx,
+            StopRtpSession {
+                session_ref: stop_ref,
+                release_lease: true,
+            },
+        )
+        .await
+        .expect("stop playback sender");
+    assert_eq!(fake.stop_count(), 1);
+
     harness.stop().await;
 }

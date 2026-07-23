@@ -139,6 +139,7 @@ pub(crate) async fn run_egress_session(
     cleanup: Option<EgressCleanup>,
     mut subscriber_options: SubscriberOptions,
     talkback_max_latency_ms: u32,
+    playback_end_ms: Option<i64>,
 ) {
     // The cleanup guard removes the active-egress tracking entry on any exit,
     // including natural completion, cancellation, and errors.
@@ -216,6 +217,20 @@ pub(crate) async fn run_egress_session(
                             }),
                         }));
                 }
+            }
+        }
+
+        // Playback range end: stop the egress once the frame presentation time reaches
+        // or exceeds the requested end. The driver session is stopped so the receiver
+        // sees a normal close rather than an abrupt socket teardown.
+        if let Some(end_ms) = playback_end_ms {
+            if end_ms >= 0 && frame.pts_us >= end_ms.saturating_mul(1000) {
+                if let Some(o) = orchestrator.as_ref() {
+                    for sk in &session_keys {
+                        let _ = o.stop_rtp_session(&RtpSessionId(sk.clone())).await;
+                    }
+                }
+                break;
             }
         }
 

@@ -10,20 +10,20 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use cheetah_rtp_driver_tokio::RtpDriverHandle;
 use cheetah_sdk::media_api::command::{
-    RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest,
-    UpdateRtpRequest,
+    OpenPlaybackRequest, RtpConnectRequest, RtpQuery, RtpReceiverRequest, RtpSenderMode,
+    RtpSenderRequest, UpdateRtpRequest,
 };
 use cheetah_sdk::media_api::error::{EffectOutcome, MediaError, MediaErrorCode, Result};
 use cheetah_sdk::media_api::fencing::{ControlledResourceRef, ResourceOrigin};
 use cheetah_sdk::media_api::ids::{
-    MediaBindingId, MediaKey, MediaNodeInstanceEpoch, MediaSessionId, OwnerEpoch,
-    ResourceGeneration, RtpSessionId, StreamKeyBridge, TenantId,
+    FileHandle, MediaBindingId, MediaKey, MediaNodeInstanceEpoch, MediaSessionId, OwnerEpoch,
+    PlaybackSessionId, ResourceGeneration, RtpSessionId, StreamKeyBridge, TenantId,
 };
 use cheetah_sdk::media_api::model::{
     AdmissionAction, AdmissionRequest, Decision, Page, RtpSession, RtpSessionKind,
     RtpSessionState as OldRtpSessionState, RtpTcpMode,
 };
-use cheetah_sdk::media_api::port::{MediaRequestContext, RtpApi};
+use cheetah_sdk::media_api::port::{MediaRequestContext, PlaybackApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
     GbMediaCompatibilityProfile, MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk,
     PlaybackRange, RtpDirection, RtpEndpoints, RtpFraming, RtpPayloadBinding, RtpSessionApi,
@@ -42,6 +42,9 @@ use crate::egress::{run_egress_session, ActiveEgressMap, EgressCleanup};
 use crate::orchestrator::RtpSessionOrchestrator;
 use crate::rollback::RollbackGuard;
 
+type PlaybackSessionMap =
+    Arc<Mutex<HashMap<RtpSessionId, (Arc<dyn PlaybackApi>, PlaybackSessionId)>>>;
+
 /// Media-domain `RtpApi` and `RtpSessionApi` provider.
 ///
 /// `RtpApi` / `RtpSessionApi` provider。
@@ -55,6 +58,9 @@ pub struct RtpMediaProvider {
     active_senders: ActiveEgressMap,
     /// Per-session typed descriptors carrying parameters not present in the legacy `RtpSession`.
     rtp_descriptors: Arc<Mutex<HashMap<RtpSessionId, RtpSessionDescriptor>>>,
+    /// Playback sessions associated with RTP senders that read from recorded files.
+    /// Kept so `stop_session` can release the underlying playback source.
+    playback_sessions: PlaybackSessionMap,
 }
 
 impl RtpMediaProvider {
@@ -74,6 +80,7 @@ impl RtpMediaProvider {
             config,
             active_senders: ActiveEgressMap::default(),
             rtp_descriptors: Arc::new(Mutex::new(HashMap::new())),
+            playback_sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -477,7 +484,7 @@ impl RtpApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: RtpSenderRequest,
     ) -> Result<RtpSession> {
-        self.open_rtp_sender_with_cancel(ctx, request, None)
+        self.open_rtp_sender_with_cancel(ctx, request, None, None)
             .await
             .map(|(s, _)| s)
     }
@@ -782,6 +789,13 @@ impl RtpSessionApi for RtpMediaProvider {
                 self.rtp_descriptors
                     .lock()
                     .remove(&request.session_ref.session_id);
+                let playback_pair = self
+                    .playback_sessions
+                    .lock()
+                    .remove(&request.session_ref.session_id);
+                if let Some((playback, playback_id)) = playback_pair {
+                    let _ = playback.stop_playback(ctx, &playback_id).await;
+                }
                 Ok(EffectOutcome::Applied)
             }
             Err(e) => Err(self.enrich_error(e, ctx, &request.session_ref)),
@@ -839,13 +853,16 @@ impl RtpSessionApi for RtpMediaProvider {
 }
 
 impl RtpMediaProvider {
-    /// Validate that playback/download requests carry an explicit, safe record source.
+    /// Validate that playback/download requests carry an explicit, safe record source
+    /// and a sane time range.
     fn validate_playback_contract(
         &self,
         params: &RtpSessionParams,
         playback_range: Option<&PlaybackRange>,
     ) -> Result<()> {
-        if playback_range.is_none() {
+        let is_playback = params.record_source.as_ref().is_some_and(|s| !s.is_empty())
+            || playback_range.is_some();
+        if !is_playback {
             return Ok(());
         }
         let Some(source) = params.record_source.as_ref().filter(|s| !s.is_empty()) else {
@@ -857,6 +874,18 @@ impl RtpMediaProvider {
             return Err(MediaError::invalid_argument(
                 "record_source contains path traversal or absolute path",
             ));
+        }
+        if let Some(range) = playback_range {
+            if range.start_ms < 0 {
+                return Err(MediaError::invalid_argument(
+                    "playback_range.start_ms must be >= 0",
+                ));
+            }
+            if range.end_ms.is_some_and(|end| end <= range.start_ms) {
+                return Err(MediaError::invalid_argument(
+                    "playback_range.end_ms must be > start_ms",
+                ));
+            }
         }
         Ok(())
     }
@@ -950,11 +979,14 @@ impl RtpMediaProvider {
     /// returning both the session and the cancellation token that controls the
     /// background task. The caller is responsible for cancelling the token on
     /// rollback; if the open succeeds, the token is owned by `run_egress_session`.
+    /// `playback_end_ms` is used only for playback/download senders to stop the
+    /// egress when the requested range has been fully transmitted.
     async fn open_rtp_sender_with_cancel(
         &self,
         ctx: &MediaRequestContext,
         request: RtpSenderRequest,
         packet_duration_ms: Option<u32>,
+        playback_end_ms: Option<i64>,
     ) -> Result<(RtpSession, CancellationToken)> {
         Deadline::from_context(ctx)
             .check()
@@ -1014,6 +1046,7 @@ impl RtpMediaProvider {
                 Some(cleanup),
                 subscriber_options,
                 talkback_max_latency_ms,
+                playback_end_ms,
             )
             .await;
         }));
@@ -1038,27 +1071,75 @@ impl RtpMediaProvider {
         )
         .await?;
         self.check_profile_and_limits(&request.params)?;
+        self.validate_playback_contract(&request.params, request.playback_range.as_ref())?;
+
+        let playback = request.params.record_source.as_ref().map(|_| {
+            self.engine
+                .media_services
+                .playback()
+                .ok_or_else(|| MediaError::unsupported("playback provider not available"))
+        });
+        let (playback, playback_session) = match playback {
+            Some(playback) => {
+                let playback = playback?;
+                let range = request.playback_range.clone().unwrap_or(PlaybackRange {
+                    start_ms: 0,
+                    end_ms: None,
+                });
+                let source = request
+                    .params
+                    .record_source
+                    .clone()
+                    .expect("record_source checked by validate_playback_contract");
+                let playback_session = playback
+                    .open_playback(
+                        ctx,
+                        OpenPlaybackRequest {
+                            file_handle: FileHandle(source),
+                            media_key: request.params.media_key.clone(),
+                            start_position_ms: range.start_ms,
+                            scale: 1.0,
+                        },
+                    )
+                    .await?;
+                (Some(playback), Some(playback_session))
+            }
+            None => (None, None),
+        };
+
         let mode = match request.params.tcp_role {
             Some(TcpRole::Passive) => RtpSenderMode::Passive,
             _ => RtpSenderMode::Active,
         };
         let old_req = self.build_old_sender_request(request.clone(), mode)?;
         let packet_duration_ms = Self::packet_duration_ms_from_params(&request.params);
+        let playback_end_ms = request.playback_range.as_ref().and_then(|r| r.end_ms);
         let (session, cancel) = self
-            .open_rtp_sender_with_cancel(ctx, old_req, packet_duration_ms)
+            .open_rtp_sender_with_cancel(ctx, old_req, packet_duration_ms, playback_end_ms)
             .await?;
-        let guard = RollbackGuard::new(
+        let mut guard = RollbackGuard::new(
             self.orchestrator.clone(),
             self.engine.runtime_api.clone(),
             session.session_id.clone(),
         )
         .with_egress_cancel(self.active_senders.clone(), cancel);
+        if let Some((playback, playback_session)) = playback.as_ref().zip(playback_session.as_ref())
+        {
+            guard = guard.with_playback_stop(playback.clone(), playback_session.session_id.clone());
+        }
         let mut descriptor = self.build_descriptor(ctx, &session, None)?;
         self.apply_request_overrides(&mut descriptor, &request.params);
         self.rtp_descriptors
             .lock()
             .insert(descriptor.session_id.clone(), descriptor.clone());
         guard.commit();
+        if let Some((playback, playback_session)) = playback.as_ref().zip(playback_session.as_ref())
+        {
+            self.playback_sessions.lock().insert(
+                session.session_id.clone(),
+                (playback.clone(), playback_session.session_id.clone()),
+            );
+        }
         Ok(descriptor)
     }
     async fn open_talk_impl(
@@ -1082,6 +1163,7 @@ impl RtpMediaProvider {
         let sender_req = self.build_old_sender_request(
             OpenRtpSender {
                 params: request.params.clone(),
+                playback_range: None,
             },
             RtpSenderMode::Talk,
         )?;
@@ -1093,7 +1175,7 @@ impl RtpMediaProvider {
                     .and_then(|b| b.packet_duration_ms)
             });
         let (session, cancel) = self
-            .open_rtp_sender_with_cancel(ctx, sender_req, packet_duration_ms)
+            .open_rtp_sender_with_cancel(ctx, sender_req, packet_duration_ms, None)
             .await?;
         let guard = RollbackGuard::new(
             self.orchestrator.clone(),
