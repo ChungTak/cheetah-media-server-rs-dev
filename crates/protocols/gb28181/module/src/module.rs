@@ -6,11 +6,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use cheetah_sdk::media_api::model::SessionKind;
-use cheetah_sdk::media_api::rtp_session::RtpSessionRef;
-
-/// Tracked GB28181 session state stored under a `app/stream` session key.
-pub(crate) type GbSessionEntry = (String, RtpSessionRef, SessionKind);
+use cheetah_sdk::media_api::model::{CloseReason, SessionKind};
+use cheetah_sdk::media_api::port::MediaRequestContext;
+use cheetah_sdk::media_api::rtp_session::{RtpSessionRef, StopRtpSession};
 use cheetah_sdk::{
     CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRouteDescriptor, Module,
     ModuleCapability, ModuleConfigChange, ModuleFactory, ModuleHttpService, ModuleId, ModuleInfo,
@@ -20,7 +18,11 @@ use parking_lot::Mutex;
 use serde_json::Value;
 
 use crate::config::{ControlOwner, Gb28181ModuleConfig};
+use crate::event;
 use crate::http_service::GbHttpService;
+
+/// Tracked GB28181 session state stored under a `app/stream` session key.
+pub(crate) type GbSessionEntry = (String, RtpSessionRef, SessionKind);
 
 const MODULE_ID: &str = "gb28181";
 
@@ -208,8 +210,39 @@ impl Module for Gb28181Module {
         if let Some(cancel) = self.cancel_token.take() {
             cancel.cancel();
         }
-        // Drop any tracked active sessions so the module restarts from a clean state.
-        self.active_sessions.lock().clear();
+        // Stop any remaining media sessions before the module restarts from a clean
+        // state, mirroring the explicit REST stop handlers.
+        let sessions: Vec<GbSessionEntry> = self
+            .active_sessions
+            .lock()
+            .drain()
+            .map(|(_, v)| v)
+            .collect();
+        if let Some(ctx) = self.ctx.as_ref() {
+            if let Some(api) = ctx.media_services.rtp_session() {
+                let req_ctx = MediaRequestContext::default();
+                for (_, session_ref, kind) in sessions {
+                    let session_id = session_ref.session_id.0.clone();
+                    let stopped = api
+                        .stop_session(
+                            &req_ctx,
+                            StopRtpSession {
+                                session_ref,
+                                release_lease: true,
+                            },
+                        )
+                        .await
+                        .is_ok();
+                    if stopped {
+                        let _ = ctx.media_event_bus.publish(event::session_closed(
+                            &session_id,
+                            kind,
+                            CloseReason::Normal,
+                        ));
+                    }
+                }
+            }
+        }
         self.state = ModuleState::Stopped;
         Ok(())
     }
