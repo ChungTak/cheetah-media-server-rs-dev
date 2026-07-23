@@ -36,8 +36,8 @@
 - 第三方信令系统完成信令和 SDP 协商后，只能通过本项目公开的媒体 API 传入已解析、已协商的结构化媒体参数，例如 session/stream 标识、媒体方向、UDP/TCP、active/passive、本地/远端 endpoint、RTP/RTCP mux、framing、SSRC、payload type、codec、clock rate、channels、PS/TS/ES 和回放时间范围。
 - SDK、Domain、protocol core 和 module 公共接口不得接受 raw SIP、raw SDP、MANSCDP/XML、Digest、Call-ID/CSeq/Via/Contact/Route 或第三方设备目录 DTO。第三方相关 DTO 只能存在于边界 adapter，并必须立即映射为 runtime-neutral、framework-neutral 的媒体请求。
 - 对外 HTTP、gRPC、C API 或应用内 trait 只封装媒体 open/connect/update/stop/get/list、媒体事件和统计；adapter 不得隐式发起、代理或处理信令操作。
-- `cheetah-gb28181-core` 只保留 GB 媒体会话状态、SSRC/PT/container/framing 校验和显式媒体 action；`cheetah-gb28181-driver-<runtime>` 只驱动 RTP/RTCP 媒体 I/O；`cheetah-gb28181-module` 只负责媒体准入、资源分配、StreamKey 绑定和引擎接入。
-- 仓库中既有 SIP/SDP/XML/listener/transaction/auth 代码属于待迁移删除的历史实现，不得继续补功能、加兼容分支或接入生产路径。过渡适配必须放在仓库外或独立第三方进程，通过公开媒体 API 调用本项目。
+- `cheetah-gb28181-module` 只负责媒体准入、资源分配、StreamKey 绑定和引擎接入。GB 媒体会话状态、RTP/RTCP I/O、SSRC/PT/container/framing 校验统一由 `cheetah-rtp-core`、`cheetah-rtp-driver-tokio`、`cheetah-rtp-module` 提供。
+- 仓库中不再保留 SIP/SDP/XML/listener/transaction/auth 实现；过渡适配必须放在仓库外或独立第三方进程，通过公开媒体 API 调用本项目。
 - 参考 ABLMediaServer、ZLMediaKit、simple-media-server 等项目时，只吸收其 RTP/RTCP、PS/TS/ES、JTT1078、Ehome、对讲、回放、传输兼容、鲁棒性和性能经验；不得移植其 SIP、SDP、XML、设备管理或其他信令业务实现。
 
 ## 2. 分层与依赖方向
