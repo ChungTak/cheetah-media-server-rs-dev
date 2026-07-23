@@ -7,19 +7,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use parking_lot::Mutex;
-use serde_json::Value;
-use tracing::{debug, info, warn};
-
-use cheetah_gb28181_core::{GbDevice, GbInviteSpec, GbTalkSpec};
-use cheetah_gb28181_driver_tokio::{
-    start_driver, Gb28181DriverConfig, Gb28181DriverHandle, GbDriverCommand,
-};
 use cheetah_sdk::media_api::ids::MediaKey;
 use cheetah_sdk::media_api::port::MediaRequestContext;
 use cheetah_sdk::media_api::rtp_session::{
-    MediaContainer, OpenRtpReceiver, OpenRtpSender, RtpDirection, RtpPayloadBinding, RtpSessionApi,
-    RtpSessionParamsBuilder, RtpSessionRef, RtpTransport, StopRtpSession,
+    MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk, RtpDirection, RtpPayloadBinding,
+    RtpSessionApi, RtpSessionParamsBuilder, RtpSessionRef, RtpTransport, StopRtpSession,
 };
 use cheetah_sdk::{
     CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest, HttpResponse,
@@ -27,6 +19,8 @@ use cheetah_sdk::{
     ModuleHttpService, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
     ModuleSchemaRegistration, ModuleState, SdkError,
 };
+use parking_lot::Mutex;
+use serde_json::Value;
 
 use crate::config::{ControlOwner, Gb28181ModuleConfig};
 
@@ -82,12 +76,7 @@ pub struct Gb28181Module {
     state: ModuleState,
     config: Gb28181ModuleConfig,
     ctx: Option<EngineContext>,
-    /// Shared with the HTTP service so the latter sees the driver as soon as `start` sets it.
-    /// `update_http_mount` runs at init time — before `start` — so the module can't pass a
-    /// concrete handle directly.
-    driver_handle: Arc<Mutex<Option<Arc<Gb28181DriverHandle>>>>,
     cancel_token: Option<CancellationToken>,
-    devices: Arc<Mutex<HashMap<String, GbDevice>>>,
     /// session_key -> (device_id, rtp_session_ref)
     active_sessions: Arc<Mutex<HashMap<String, (String, RtpSessionRef)>>>,
 }
@@ -104,9 +93,7 @@ impl Gb28181Module {
             state: ModuleState::Created,
             config: Gb28181ModuleConfig::default(),
             ctx: None,
-            driver_handle: Arc::new(Mutex::new(None)),
             cancel_token: None,
-            devices: Arc::new(Mutex::new(HashMap::new())),
             active_sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -198,124 +185,24 @@ impl Module for Gb28181Module {
     }
 
     async fn start(&mut self, cancel: CancellationToken) -> Result<(), SdkError> {
-        if !self.config.enabled || self.config.control_owner == ControlOwner::Signaling {
-            // When the signaling control plane owns GB control, the media process must not
-            // bind the local SIP/GB listener or expose local HTTP control routes.
+        if !self.config.enabled {
+            // Module is disabled; nothing to run.
             self.state = ModuleState::Running;
             cancel.cancelled().await;
             return Ok(());
         }
 
-        let ctx = self.ctx.clone().ok_or_else(|| {
+        self.ctx.clone().ok_or_else(|| {
             SdkError::InvalidArgument(
                 "Gb28181Module::start called before init (engine context missing)".to_string(),
             )
         })?;
-        let config = self.config.clone();
 
         self.state = ModuleState::Running;
         self.cancel_token = Some(cancel.clone());
 
-        let listen_udp = config
-            .listen_udp
-            .parse::<SocketAddr>()
-            .map_err(|e| SdkError::InvalidArgument(format!("invalid listen_udp: {e}")))?;
-
-        let listen_tcp = config
-            .listen_tcp
-            .parse::<SocketAddr>()
-            .map_err(|e| SdkError::InvalidArgument(format!("invalid listen_tcp: {e}")))?;
-
-        let driver_config = Gb28181DriverConfig {
-            listen_udp,
-            listen_tcp,
-            read_buffer_size: config.read_buffer_size,
-            tick_interval_ms: config.tick_interval_ms,
-        };
-
-        let handle = Arc::new(start_driver(
-            driver_config,
-            ctx.runtime_api.clone(),
-            cancel.clone(),
-        ));
-        *self.driver_handle.lock() = Some(handle.clone());
-
-        // Spawn events worker
-        {
-            let devices = self.devices.clone();
-            let runtime_api = ctx.runtime_api.clone();
-            let runtime_for_now = ctx.runtime_api.clone();
-            let handle_clone = handle.clone();
-            let cancel_clone = cancel.clone();
-            runtime_api.spawn(Box::pin(async move {
-                loop {
-                    if cancel_clone.is_cancelled() {
-                        break;
-                    }
-                    match handle_clone.recv_event().await {
-                        Some(cheetah_gb28181_core::Gb28181Event::DeviceRegistered {
-                            device_id,
-                            contact_addr,
-                        }) => {
-                            info!("GB28181 device registered: {device_id} at {contact_addr}");
-                            let now = runtime_for_now.now().as_micros() / 1000;
-                            devices.lock().insert(
-                                device_id.clone(),
-                                GbDevice {
-                                    id: device_id,
-                                    contact_addr,
-                                    expires_at_ms: now + 3600 * 1000,
-                                    last_keepalive_ms: now,
-                                },
-                            );
-                        }
-                        Some(cheetah_gb28181_core::Gb28181Event::DeviceKeepalive { device_id }) => {
-                            debug!("GB28181 device keepalive: {device_id}");
-                            let now = runtime_for_now.now().as_micros() / 1000;
-                            if let Some(dev) = devices.lock().get_mut(&device_id) {
-                                dev.last_keepalive_ms = now;
-                                dev.expires_at_ms = now + 3600 * 1000;
-                            }
-                        }
-                        Some(cheetah_gb28181_core::Gb28181Event::DeviceOffline { device_id }) => {
-                            info!("GB28181 device offline: {device_id}");
-                            devices.lock().remove(&device_id);
-                        }
-                        Some(cheetah_gb28181_core::Gb28181Event::InviteSuccess {
-                            session_key,
-                            ssrc,
-                        }) => {
-                            info!("GB28181 invite success: session={session_key}, ssrc={ssrc}");
-                        }
-                        Some(cheetah_gb28181_core::Gb28181Event::InviteClosed { session_key }) => {
-                            info!("GB28181 invite closed: session={session_key}");
-                        }
-                        None => break,
-                    }
-                }
-            }));
-        }
-
-        // Spawn diagnostics worker
-        {
-            let runtime_api = ctx.runtime_api.clone();
-            let handle_clone = handle.clone();
-            let cancel_clone = cancel.clone();
-            runtime_api.spawn(Box::pin(async move {
-                loop {
-                    if cancel_clone.is_cancelled() {
-                        break;
-                    }
-                    match handle_clone.recv_diagnostic().await {
-                        Some(d) => {
-                            warn!("GB28181 diagnostic warning: {:?}", d);
-                        }
-                        None => break,
-                    }
-                }
-            }));
-        }
-
+        // The module only exposes the structured media REST API. SIP/SDP signaling is handled
+        // by an external control plane, so no local listener or driver is started here.
         cancel.cancelled().await;
         Ok(())
     }
@@ -324,12 +211,7 @@ impl Module for Gb28181Module {
         if let Some(cancel) = self.cancel_token.take() {
             cancel.cancel();
         }
-        // Drop the driver handle so any HTTP request that arrives while we're stopping (or
-        // before a subsequent restart re-initialises) gets `Unavailable`.
-        *self.driver_handle.lock() = None;
-        // Clear device registry and active session map so the module can be restarted from
-        // a clean state. The driver will reissue REGISTER state on the next start.
-        self.devices.lock().clear();
+        // Drop any tracked active sessions so the module restarts from a clean state.
         self.active_sessions.lock().clear();
         self.state = ModuleState::Stopped;
         Ok(())
@@ -367,18 +249,6 @@ impl Module for Gb28181Module {
                 path: "/send/stop".to_string(),
             },
             HttpRouteDescriptor {
-                method: HttpMethod::Get,
-                path: "/devices".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/invite".to_string(),
-            },
-            HttpRouteDescriptor {
-                method: HttpMethod::Post,
-                path: "/bye".to_string(),
-            },
-            HttpRouteDescriptor {
                 method: HttpMethod::Post,
                 path: "/talk/start".to_string(),
             },
@@ -394,23 +264,9 @@ impl Module for Gb28181Module {
             return None;
         }
         let engine = self.ctx.clone()?;
-        let local_ip = if self.config.public_ip.is_empty() {
-            self.config
-                .listen_udp
-                .parse::<SocketAddr>()
-                .map(|addr| addr.ip().to_string())
-                .unwrap_or_else(|_| "127.0.0.1".to_string())
-        } else {
-            self.config.public_ip.clone()
-        };
         Some(Arc::new(GbHttpService {
             engine,
-            // Shared handle storage: at init time this slot is empty; `start` populates it
-            // before the HTTP service starts dispatching requests.
-            driver_handle: self.driver_handle.clone(),
-            devices: self.devices.clone(),
             active_sessions: self.active_sessions.clone(),
-            local_ip,
             default_media_port: self.config.default_media_port,
         }))
     }
@@ -421,14 +277,8 @@ impl Module for Gb28181Module {
 /// GB28181 模块的 HTTP 控制 API。
 struct GbHttpService {
     engine: EngineContext,
-    /// Shared with `Gb28181Module`. Populated by `start()` and read on every HTTP request;
-    /// when the driver isn't yet started, returns `Unavailable`.
-    driver_handle: Arc<Mutex<Option<Arc<Gb28181DriverHandle>>>>,
-    devices: Arc<Mutex<HashMap<String, GbDevice>>>,
     /// session_key -> (device_id, rtp_session_ref)
     active_sessions: Arc<Mutex<HashMap<String, (String, RtpSessionRef)>>>,
-    /// Local IP advertised in SIP INVITE/SDP for media reception.
-    local_ip: String,
     /// Default local RTP port for media reception when REST request omits `port`.
     default_media_port: u16,
 }
@@ -437,16 +287,6 @@ struct GbHttpService {
 ///
 /// `GbHttpService` 辅助。
 impl GbHttpService {
-    /// Retrieve the driver handle, returning `Unavailable` if not started.
-    ///
-    /// 获取驱动句柄；若未启动则返回 `Unavailable`。
-    fn driver(&self) -> Result<Arc<Gb28181DriverHandle>, SdkError> {
-        self.driver_handle
-            .lock()
-            .clone()
-            .ok_or_else(|| SdkError::Unavailable("GB28181 driver not yet started".to_string()))
-    }
-
     /// Return the typed RTP session provider.
     fn rtp_session_api(&self) -> Result<Arc<dyn RtpSessionApi>, SdkError> {
         self.engine.media_services.rtp_session().ok_or_else(|| {
@@ -527,6 +367,42 @@ impl GbHttpService {
             .map_err(|e| SdkError::Internal(e.to_string()))
     }
 
+    /// Open a duplex voice-talk session and return the descriptor.
+    async fn open_gb_talk(
+        &self,
+        app: &str,
+        stream: &str,
+        ssrc: u32,
+        remote: SocketAddr,
+        local_port: u16,
+        payload_binding: RtpPayloadBinding,
+    ) -> Result<cheetah_sdk::media_api::rtp_session::RtpSessionDescriptor, SdkError> {
+        let media_key = self.media_key(app, stream)?;
+        let local_endpoint_hint = SocketAddr::new(
+            "0.0.0.0"
+                .parse::<std::net::IpAddr>()
+                .map_err(|e| SdkError::Internal(e.to_string()))?,
+            local_port,
+        );
+        let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::DuplexTalk)
+            .transport(RtpTransport::Udp)
+            .container(MediaContainer::ElementaryStream)
+            .ssrc(ssrc)
+            .payload_binding(payload_binding.clone())
+            .remote_endpoint(remote)
+            .local_endpoint_hint(local_endpoint_hint)
+            .build();
+        let request = OpenRtpTalk {
+            params,
+            talkback_binding: Some(payload_binding),
+        };
+        let ctx = MediaRequestContext::default();
+        let api = self.rtp_session_api()?;
+        api.open_talk(&ctx, request)
+            .await
+            .map_err(|e| SdkError::Internal(e.to_string()))
+    }
+
     /// Stop a previously tracked RTP session and return whether it was found.
     async fn stop_gb_session(&self, session_ref: RtpSessionRef) -> Result<bool, SdkError> {
         let ctx = MediaRequestContext::default();
@@ -557,30 +433,7 @@ impl GbHttpService {
 impl ModuleHttpService for GbHttpService {
     async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
         match (req.method, req.path.as_str()) {
-            (HttpMethod::Get, "/devices") => {
-                let devs = self.devices.lock();
-                let list: Vec<serde_json::Value> = devs
-                    .values()
-                    .map(|d| {
-                        serde_json::json!({
-                            "deviceId": d.id,
-                            "contactAddr": d.contact_addr.to_string(),
-                            "expiresAtMs": d.expires_at_ms,
-                            "lastKeepaliveMs": d.last_keepalive_ms
-                        })
-                    })
-                    .collect();
-
-                let response = serde_json::json!({
-                    "code": 200,
-                    "msg": "success",
-                    "data": list
-                });
-                Ok(HttpResponse::ok_json(
-                    serde_json::to_vec(&response).unwrap(),
-                ))
-            }
-            (HttpMethod::Post, "/recv/create") | (HttpMethod::Post, "/invite") => {
+            (HttpMethod::Post, "/recv/create") => {
                 let body: Value = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
 
@@ -589,7 +442,6 @@ impl ModuleHttpService for GbHttpService {
                     SdkError::InvalidArgument("missing field: stream".to_string())
                 })?;
 
-                let active = body.get("active").and_then(|v| v.as_bool()).unwrap_or(true);
                 let ssrc = body
                     .get("ssrc")
                     .and_then(|v| v.as_u64())
@@ -603,112 +455,35 @@ impl ModuleHttpService for GbHttpService {
 
                 let port = body.get("port").and_then(|v| v.as_u64()).unwrap_or(30000) as u16;
 
-                if active {
-                    let device_id = body
-                        .get("deviceId")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or(&stream)
-                        .to_string();
+                // Allocate RTP server port and session in-process.
+                // SIP INVITE/SDP negotiation is performed by the external signaling system.
+                let descriptor = self.open_gb_receiver(&app, &stream, ssrc, port).await?;
 
-                    let contact_addr = {
-                        let devs = self.devices.lock();
-                        devs.get(&device_id).map(|d| d.contact_addr)
-                    };
+                let session_key = format!("{app}/{stream}");
+                let rtp_session_ref = RtpSessionRef {
+                    session_id: descriptor.session_id.clone(),
+                    expected_generation: descriptor.generation,
+                };
+                self.active_sessions
+                    .lock()
+                    .insert(session_key.clone(), (String::new(), rtp_session_ref));
 
-                    let contact_addr = match contact_addr {
-                        Some(addr) => addr,
-                        None => {
-                            if let Some(dest_str) = body.get("ip").and_then(|v| v.as_str()) {
-                                let dest_port =
-                                    body.get("port").and_then(|v| v.as_u64()).unwrap_or(5060)
-                                        as u16;
-                                format!("{dest_str}:{dest_port}")
-                                    .parse::<SocketAddr>()
-                                    .map_err(|e| {
-                                        SdkError::InvalidArgument(format!(
-                                            "invalid fallback destination: {e}"
-                                        ))
-                                    })?
-                            } else {
-                                return Err(SdkError::InvalidArgument(format!(
-                                    "Device {device_id} is not registered"
-                                )));
-                            }
-                        }
-                    };
+                let local_port = descriptor.endpoints.local.port();
 
-                    // Allocate RTP server port and session in-process
-                    let descriptor = self.open_gb_receiver(&app, &stream, ssrc, port).await?;
-
-                    let session_key = format!("{app}/{stream}");
-                    let rtp_session_ref = RtpSessionRef {
-                        session_id: descriptor.session_id.clone(),
-                        expected_generation: descriptor.generation,
-                    };
-                    self.active_sessions
-                        .lock()
-                        .insert(session_key.clone(), (device_id.clone(), rtp_session_ref));
-
-                    // Start SIP INVITE
-                    let local_port = descriptor.endpoints.local.port();
-                    let spec = GbInviteSpec {
-                        session_key: session_key.clone(),
-                        ssrc,
-                        destination: contact_addr,
-                        app_name: app.clone(),
-                        stream_name: stream.clone(),
-                        is_video: true,
-                        local_ip: self.local_ip.clone(),
-                        local_port,
-                    };
-                    self.driver()?
-                        .send_command(GbDriverCommand::StartInvite(spec))
-                        .await
-                        .map_err(|e| SdkError::Internal(e.to_string()))?;
-
-                    let response = serde_json::json!({
-                        "code": 200,
-                        "msg": "success",
-                        "data": {
-                            "port": local_port,
-                            "ssrc": ssrc,
-                            "sessionKey": session_key,
-                            "deviceId": device_id,
-                        }
-                    });
-                    Ok(HttpResponse::ok_json(
-                        serde_json::to_vec(&response).unwrap(),
-                    ))
-                } else {
-                    // Passive receive mode: Allocate RTP server and return
-                    let descriptor = self.open_gb_receiver(&app, &stream, ssrc, port).await?;
-
-                    let session_key = format!("{app}/{stream}");
-                    let rtp_session_ref = RtpSessionRef {
-                        session_id: descriptor.session_id.clone(),
-                        expected_generation: descriptor.generation,
-                    };
-                    self.active_sessions
-                        .lock()
-                        .insert(session_key.clone(), (String::new(), rtp_session_ref));
-
-                    let local_port = descriptor.endpoints.local.port();
-
-                    let response = serde_json::json!({
-                        "code": 200,
-                        "msg": "success",
-                        "data": {
-                            "port": local_port,
-                            "ssrc": ssrc,
-                            "sessionKey": session_key,
-                        }
-                    });
-                    Ok(HttpResponse::ok_json(
-                        serde_json::to_vec(&response).unwrap(),
-                    ))
-                }
+                let response = serde_json::json!({
+                    "code": 200,
+                    "msg": "success",
+                    "data": {
+                        "port": local_port,
+                        "ssrc": ssrc,
+                        "sessionKey": session_key,
+                    }
+                });
+                Ok(HttpResponse::ok_json(
+                    serde_json::to_vec(&response).unwrap(),
+                ))
             }
-            (HttpMethod::Post, "/recv/stop") | (HttpMethod::Post, "/bye") => {
+            (HttpMethod::Post, "/recv/stop") => {
                 let body: Value = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
 
@@ -719,21 +494,11 @@ impl ModuleHttpService for GbHttpService {
 
                 let session_key = format!("{app}/{stream}");
 
-                let maybe_session = {
+                let session_ref = {
                     let mut sessions = self.active_sessions.lock();
-                    sessions.remove(&session_key)
+                    sessions.remove(&session_key).map(|(_, r)| r)
                 };
-                if let Some((device_id, session_ref)) = maybe_session {
-                    if !device_id.is_empty() {
-                        if let Ok(driver) = self.driver() {
-                            driver
-                                .send_command(GbDriverCommand::StopInvite {
-                                    session_key: session_key.clone(),
-                                })
-                                .await
-                                .ok();
-                        }
-                    }
+                if let Some(session_ref) = session_ref {
                     self.stop_gb_session(session_ref).await.ok();
                 }
 
@@ -851,30 +616,55 @@ impl ModuleHttpService for GbHttpService {
                     SdkError::InvalidArgument(format!("invalid destination address: {e}"))
                 })?;
 
-                let session_key = format!("{app}/{stream}");
-
                 let local_port = body
                     .get("localPort")
                     .and_then(|v| v.as_u64())
                     .map(|v| v as u16)
                     .unwrap_or(self.default_media_port);
-                let talk_spec = GbTalkSpec {
-                    session_key,
-                    ssrc,
-                    destination: dest_addr,
-                    app_name: app,
-                    stream_name: stream,
-                    local_ip: self.local_ip.clone(),
-                    local_port,
+
+                let payload_type = body.get("pt").and_then(|v| v.as_u64()).unwrap_or(8) as u8;
+                let codec = body
+                    .get("codec")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("PCMA")
+                    .to_string();
+                let clock_rate = body
+                    .get("clockRate")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(8000) as u32;
+                let channels = body
+                    .get("channels")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u8);
+
+                let payload_binding = RtpPayloadBinding {
+                    payload_type,
+                    codec,
+                    clock_rate,
+                    channels,
                 };
-                self.driver()?
-                    .send_command(GbDriverCommand::StartTalk(talk_spec))
-                    .await
-                    .map_err(|e| SdkError::Internal(e.to_string()))?;
+
+                let descriptor = self
+                    .open_gb_talk(&app, &stream, ssrc, dest_addr, local_port, payload_binding)
+                    .await?;
+
+                let session_key = format!("{app}/{stream}");
+                let rtp_session_ref = RtpSessionRef {
+                    session_id: descriptor.session_id.clone(),
+                    expected_generation: descriptor.generation,
+                };
+                self.active_sessions
+                    .lock()
+                    .insert(session_key.clone(), (String::new(), rtp_session_ref));
 
                 let response = serde_json::json!({
                     "code": 200,
-                    "msg": "success"
+                    "msg": "success",
+                    "data": {
+                        "port": descriptor.endpoints.local.port(),
+                        "ssrc": ssrc,
+                        "sessionKey": session_key,
+                    }
                 });
                 Ok(HttpResponse::ok_json(
                     serde_json::to_vec(&response).unwrap(),
@@ -891,11 +681,12 @@ impl ModuleHttpService for GbHttpService {
 
                 let session_key = format!("{app}/{stream}");
 
-                if let Ok(driver) = self.driver() {
-                    driver
-                        .send_command(GbDriverCommand::StopTalk { session_key })
-                        .await
-                        .ok();
+                let session_ref = {
+                    let mut sessions = self.active_sessions.lock();
+                    sessions.remove(&session_key).map(|(_, r)| r)
+                };
+                if let Some(session_ref) = session_ref {
+                    self.stop_gb_session(session_ref).await.ok();
                 }
 
                 let response = serde_json::json!({
@@ -1000,6 +791,6 @@ mod tests {
     fn local_owner_keeps_http_routes() {
         let module = Gb28181Module::new();
         assert_eq!(module.config.control_owner, ControlOwner::Local);
-        assert_eq!(module.http_routes().len(), 9);
+        assert_eq!(module.http_routes().len(), 6);
     }
 }
