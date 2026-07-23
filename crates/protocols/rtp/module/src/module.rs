@@ -29,8 +29,9 @@ use cheetah_sdk::{
     BackpressurePolicy, CancellationToken, ConfigEffect, EngineContext, HttpMethod, HttpRequest,
     HttpResponse, HttpRouteDescriptor, Module, ModuleCapability, ModuleConfigChange, ModuleFactory,
     ModuleHttpService, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
-    ModuleSchemaRegistration, ModuleState, ProtocolEvent, ProviderRegistration, PublishLease,
-    PublisherOptions, PublisherSink, SdkError, StreamKey, SubscriberOptions, SystemEvent,
+    ModuleSchemaRegistration, ModuleState, OneShotSender, ProtocolEvent, ProviderRegistration,
+    PublishLease, PublisherOptions, PublisherSink, SdkError, StreamKey, SubscriberOptions,
+    SystemEvent,
 };
 use futures::{pin_mut, select_biased, FutureExt};
 use parking_lot::Mutex;
@@ -354,10 +355,12 @@ impl Module for RtpModule {
             .driver()
             .map_err(|e| SdkError::Unavailable(e.message.to_string()))?;
 
-        // Spawn ingress worker
+        // Spawn ingress worker and wait until it has been polled so the first
+        // `open_*` request does not race against the worker entering its event loop.
+        let runtime_api = ctx.runtime_api.clone();
+        let (ingress_ready_tx, mut ingress_ready_rx) = runtime_api.oneshot();
         {
             let ctx = ctx.clone();
-            let runtime_api = ctx.runtime_api.clone();
             let handle = driver.clone();
             let cancel = cancel.clone();
             let orchestrator_for_ingress = orchestrator.clone();
@@ -369,10 +372,12 @@ impl Module for RtpModule {
                     orchestrator_for_ingress,
                     cancel,
                     publish_frame_cache,
+                    Some(ingress_ready_tx),
                 )
                 .await;
             }));
         }
+        let _ = ingress_ready_rx.recv().await;
 
         // Spawn configured pull jobs
         for job in &config.pull_jobs {
@@ -508,8 +513,16 @@ async fn run_ingress_worker(
     orchestrator: Arc<RtpSessionOrchestrator>,
     cancel: CancellationToken,
     publish_frame_cache_capacity: usize,
+    ready: Option<OneShotSender>,
 ) {
     let mut sessions: HashMap<String, ActiveIngressSession> = HashMap::new();
+
+    // Signal that the ingress worker has been polled and is ready to consume
+    // driver events. This prevents races where the first `open_*` call returns
+    // before the worker has entered its event loop.
+    if let Some(ready) = ready {
+        let _ = ready.send();
+    }
 
     loop {
         let cancel_fut = cancel.cancelled().fuse();
@@ -565,7 +578,12 @@ async fn run_ingress_worker(
                         error!("RTP acquire_publisher failed for {sk}: {e}");
                         // A receiver that cannot secure the publish lease before the first
                         // frame must not publish into the engine; tear it down cleanly.
-                        let _ = orchestrator.stop_session_by_key(&session_key).await;
+                        // Send the stop command directly: the orchestrator entry may not
+                        // exist yet because `SessionCreated` is emitted before the provider
+                        // inserts the session record. `SessionClosed` will remove the entry.
+                        handle
+                            .send_command(RtpDriverCommand::StopSession(session_key))
+                            .await;
                     }
                 }
             }

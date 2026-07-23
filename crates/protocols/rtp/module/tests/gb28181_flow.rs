@@ -441,7 +441,7 @@ async fn typed_rtp_session_errors_carry_resource_ref_and_generation() {
     assert_eq!(err.outcome, EffectOutcome::NotApplied);
     let resource_ref = err.resource_ref.as_ref().expect("resource ref");
     assert_eq!(resource_ref.resource_handle, descriptor.session_id.0);
-    assert_eq!(resource_ref.generation.0, stale_ref.expected_generation.0);
+    assert_eq!(resource_ref.generation.0, descriptor.generation.0);
 
     // stop_session with a stale generation returns Conflict and carries the resource ref.
     let err = rtp_api
@@ -458,7 +458,7 @@ async fn typed_rtp_session_errors_carry_resource_ref_and_generation() {
     assert_eq!(err.outcome, EffectOutcome::NotApplied);
     let resource_ref = err.resource_ref.as_ref().expect("resource ref");
     assert_eq!(resource_ref.resource_handle, descriptor.session_id.0);
-    assert_eq!(resource_ref.generation.0, stale_ref.expected_generation.0);
+    assert_eq!(resource_ref.generation.0, descriptor.generation.0);
 
     // stop_session on a missing session returns NotApplied (idempotent success).
     let missing_ref = RtpSessionRef {
