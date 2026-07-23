@@ -226,6 +226,24 @@ impl RtpDriverHandle {
         let _ = self.cmd_tx.send(cmd).await;
     }
 
+    /// Try to send a command without blocking.
+    ///
+    /// Returns `true` when the command was accepted by the driver queue. When the
+    /// queue is full the command is dropped and `false` is returned so callers can
+    /// apply their own backpressure / slow-peer isolation policy.
+    ///
+    /// 尝试非阻塞地向驱动循环发送命令。队列满时返回 false，调用方可自行决定反压策略。
+    pub fn try_send_command(&self, cmd: RtpDriverCommand) -> bool {
+        match self.cmd_tx.try_send(cmd) {
+            Ok(()) => true,
+            Err(e) => {
+                // Drop the rejected command to avoid back-propagating pressure.
+                drop(e);
+                false
+            }
+        }
+    }
+
     /// Bind a server socket for the given spec and wait for the driver to confirm
     /// the actual local address. `bind_addr` of `None` reuses the driver's default UDP socket.
     ///

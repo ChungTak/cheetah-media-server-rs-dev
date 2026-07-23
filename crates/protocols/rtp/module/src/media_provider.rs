@@ -31,7 +31,8 @@ use cheetah_sdk::media_api::rtp_session::{
     RtpTransport, StopRtpSession, TcpRole, UpdateRtpSession,
 };
 use cheetah_sdk::{
-    CancellationToken, Deadline, EngineContext, IdempotencyError, IdempotencyKey, StreamKey,
+    BackpressurePolicy, CancellationToken, Deadline, EngineContext, IdempotencyError,
+    IdempotencyKey, StreamKey, SubscriberOptions,
 };
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -913,6 +914,24 @@ impl RtpMediaProvider {
         let cleanup = EgressCleanup::new(self.active_senders.clone(), session_key.clone());
         let runtime_api = self.engine.runtime_api.clone();
         let cancel_for_task = cancel.clone();
+
+        let is_talk = request.mode == RtpSenderMode::Talk;
+        let queue_capacity = if is_talk {
+            self.config.talkback_queue_capacity
+        } else {
+            self.config.write_queue_capacity
+        };
+        let subscriber_options = SubscriberOptions {
+            queue_capacity,
+            backpressure: BackpressurePolicy::DropDroppableFirst,
+            ..Default::default()
+        };
+        let talkback_max_latency_ms = if is_talk {
+            self.config.talkback_max_latency_ms
+        } else {
+            0
+        };
+
         runtime_api.spawn(Box::pin(async move {
             run_egress_session(
                 engine,
@@ -922,6 +941,8 @@ impl RtpMediaProvider {
                 cancel_for_task,
                 Some(orchestrator),
                 Some(cleanup),
+                subscriber_options,
+                talkback_max_latency_ms,
             )
             .await;
         }));
