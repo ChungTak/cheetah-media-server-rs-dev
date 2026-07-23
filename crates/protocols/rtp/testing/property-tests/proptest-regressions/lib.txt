@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 019dda3c8ec7fcf22bc5edeb967eee6d0cf7f0aba9ad29e9380487cd211651a0 # shrinks to inputs = [(3239, 0, 0), (3706, 0, 2043063617), (18681, 0, 0), (3707, 0, 1404382530), (0, 0, 0)]
+cc ab018f4fbbe736eb7af836f7d595e11aad8c9482eace17b3ef11e07b8d4295ac # shrinks to packets = [Bye(RtcpBye { ssrcs: [], reason: Some("") })]
