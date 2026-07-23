@@ -6,7 +6,9 @@ use cheetah_rtp_core::{
     RtpClientSpec, RtpConnectionType, RtpPayloadMode, RtpSendFrame, RtpServerSpec, RtpSessionState,
     RtpTrackFilter, RtpTransportMode,
 };
-use cheetah_rtp_driver_tokio::{start_driver, RtpDriverCommand, RtpDriverConfig, RtpSocketReuse};
+use cheetah_rtp_driver_tokio::{
+    start_driver, DriverLimits, RtpDriverCommand, RtpDriverConfig, RtpSocketReuse,
+};
 use cheetah_runtime_api::CancellationToken;
 use std::time::Duration;
 
@@ -40,6 +42,7 @@ async fn test_send_frame_delivers_udp_rtp_to_peer() {
         rtcp_report_interval_ms: 5000,
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
+        limits: DriverLimits::default(),
     };
 
     let handle = start_driver(config, cancel.clone());
@@ -145,6 +148,7 @@ async fn test_stop_session_drops_egress_for_stopped_sender() {
         rtcp_report_interval_ms: 5000,
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
+        limits: DriverLimits::default(),
     };
 
     let handle = start_driver(config, cancel.clone());
@@ -246,6 +250,7 @@ async fn test_per_session_cancel_does_not_affect_other_sessions() {
         rtcp_report_interval_ms: 5000,
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
+        limits: DriverLimits::default(),
     };
 
     let handle = start_driver(config, cancel.clone());
