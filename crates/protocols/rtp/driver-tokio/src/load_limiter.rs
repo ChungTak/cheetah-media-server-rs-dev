@@ -168,27 +168,11 @@ impl LoadLimiter {
         }
     }
 
-    /// Check whether a new session would currently violate limits without
-    /// actually acquiring a slot.
+    /// Check whether a new session would currently violate the session limit.
+    /// The byte-rate limit is enforced on ingress packets, not on session setup.
     pub(crate) fn allow_new_session(&self) -> bool {
-        let session_ok = self.limits.max_sessions == 0
-            || self.active_sessions.load(Ordering::SeqCst) < self.limits.max_sessions as u64;
-
-        let byte_rate_ok = if self.limits.max_incoming_bytes_per_second == 0 {
-            true
-        } else {
-            let window_ms = self.limits.bytes_rate_window_ms.max(1);
-            let now_ms = self.runtime.now().as_micros() / 1000;
-            let start = self.bytes_window_start_ms.load(Ordering::Relaxed);
-            if now_ms.saturating_sub(start) >= window_ms {
-                true
-            } else {
-                let bytes = self.bytes_in_window.load(Ordering::Relaxed);
-                bytes < self.byte_budget()
-            }
-        };
-
-        session_ok && byte_rate_ok
+        self.limits.max_sessions == 0
+            || self.active_sessions.load(Ordering::SeqCst) < self.limits.max_sessions as u64
     }
 }
 
