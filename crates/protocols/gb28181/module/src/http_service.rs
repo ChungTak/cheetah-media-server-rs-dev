@@ -63,6 +63,7 @@ impl GbHttpService {
             codec: "PS".to_string(),
             clock_rate: 90000,
             channels: None,
+            packet_duration_ms: None,
         }
     }
 

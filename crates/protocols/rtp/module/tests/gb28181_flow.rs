@@ -404,6 +404,7 @@ async fn typed_rtp_session_errors_carry_resource_ref_and_generation() {
             codec: "PS".to_string(),
             clock_rate: 90000,
             channels: None,
+            packet_duration_ms: None,
         })
         .build();
     let descriptor = rtp_api
@@ -490,6 +491,7 @@ async fn rtp_module_profile_and_limits_config_enforced() {
             codec: "PS".to_string(),
             clock_rate: 90000,
             channels: None,
+            packet_duration_ms: None,
         })
         .build();
     let _ = rtp_api
@@ -512,6 +514,7 @@ async fn rtp_module_profile_and_limits_config_enforced() {
             codec: "PS".to_string(),
             clock_rate: 90000,
             channels: None,
+            packet_duration_ms: None,
         })
         .build();
     let err = rtp_api
@@ -551,6 +554,7 @@ async fn rtp_module_disabled_profile_is_rejected() {
             codec: "PS".to_string(),
             clock_rate: 90000,
             channels: None,
+            packet_duration_ms: None,
         })
         .build();
     let err = rtp_api
@@ -592,6 +596,7 @@ async fn rtp_module_admission_deny_leaves_no_session() {
             codec: "PS".to_string(),
             clock_rate: 90000,
             channels: None,
+            packet_duration_ms: None,
         })
         .build();
     let err = rtp_api
@@ -618,6 +623,7 @@ async fn rtp_module_admission_deny_leaves_no_session() {
             codec: "PS".to_string(),
             clock_rate: 90000,
             channels: None,
+            packet_duration_ms: None,
         })
         .build();
     let _desc = rtp_api
@@ -656,6 +662,7 @@ async fn rtp_session_open_is_idempotent_for_same_request_and_key() {
             codec: "PS".to_string(),
             clock_rate: 90000,
             channels: None,
+            packet_duration_ms: None,
         })
         .build();
     let request = OpenRtpReceiver {
@@ -700,6 +707,7 @@ async fn rtp_session_idempotent_failure_is_replayed_with_same_key() {
             codec: "PS".to_string(),
             clock_rate: 90000,
             channels: None,
+            packet_duration_ms: None,
         })
         .build();
     let request = OpenRtpReceiver {
