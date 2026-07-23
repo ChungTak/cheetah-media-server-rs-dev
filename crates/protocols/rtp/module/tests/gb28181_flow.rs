@@ -442,7 +442,7 @@ async fn typed_rtp_session_errors_carry_resource_ref_and_generation() {
     assert_eq!(err.outcome, EffectOutcome::NotApplied);
     let resource_ref = err.resource_ref.as_ref().expect("resource ref");
     assert_eq!(resource_ref.resource_handle, descriptor.session_id.0);
-    assert_eq!(resource_ref.generation.0, stale_ref.expected_generation.0);
+    assert_eq!(resource_ref.generation.0, descriptor.generation.0);
 
     // stop_session with a stale generation returns Conflict and carries the resource ref.
     let err = rtp_api
@@ -459,7 +459,7 @@ async fn typed_rtp_session_errors_carry_resource_ref_and_generation() {
     assert_eq!(err.outcome, EffectOutcome::NotApplied);
     let resource_ref = err.resource_ref.as_ref().expect("resource ref");
     assert_eq!(resource_ref.resource_handle, descriptor.session_id.0);
-    assert_eq!(resource_ref.generation.0, stale_ref.expected_generation.0);
+    assert_eq!(resource_ref.generation.0, descriptor.generation.0);
 
     // stop_session on a missing session returns NotApplied (idempotent success).
     let missing_ref = RtpSessionRef {
@@ -1809,6 +1809,118 @@ async fn rtp_module_restart_creates_init_starts_and_clears_sessions() {
         )
         .await
         .expect("open receiver after restart");
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_update_rejects_stale_generation_and_applies_remote_endpoint() {
+    // Verifies update_session generation fencing: stale expected_generation is
+    // rejected with the current resource ref, and a current-generation update
+    // applies a remote endpoint and bumps the generation.
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_update", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90_000,
+            channels: None,
+            packet_duration_ms: None,
+        })
+        .build();
+    let created = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("open receiver");
+
+    let stale_ref = RtpSessionRef {
+        session_id: created.session_id.clone(),
+        expected_generation: RtpSessionGeneration(created.generation.0 - 1),
+    };
+    let err = rtp_api
+        .update_session(
+            &ctx,
+            UpdateRtpSession {
+                session_ref: stale_ref,
+                payload_bindings: None,
+                source_binding_policy: None,
+                remote_endpoint: None,
+                max_rebind_attempts: None,
+                max_probe_bytes: None,
+                pause_check: None,
+                playback_control: None,
+            },
+        )
+        .await
+        .expect_err("stale generation should conflict");
+    assert_eq!(err.code, MediaErrorCode::Conflict);
+    assert_eq!(err.outcome, EffectOutcome::NotApplied);
+    let resource_ref = err
+        .resource_ref
+        .as_ref()
+        .expect("conflict should carry the current resource ref");
+    assert_eq!(resource_ref.resource_handle, created.session_id.0);
+    assert_eq!(resource_ref.generation.0, created.generation.0);
+
+    let remote: SocketAddr = "127.0.0.1:12345".parse().unwrap();
+    let current_ref = RtpSessionRef {
+        session_id: created.session_id.clone(),
+        expected_generation: created.generation,
+    };
+    let updated = rtp_api
+        .update_session(
+            &ctx,
+            UpdateRtpSession {
+                session_ref: current_ref,
+                payload_bindings: None,
+                source_binding_policy: None,
+                remote_endpoint: Some(remote),
+                max_rebind_attempts: None,
+                max_probe_bytes: None,
+                pause_check: None,
+                playback_control: None,
+            },
+        )
+        .await
+        .expect("update with current generation");
+    assert_eq!(updated.session_id, created.session_id);
+    assert!(
+        updated.generation.0 > created.generation.0,
+        "generation must increase on update"
+    );
+    assert_eq!(
+        updated.endpoints.remote,
+        Some(remote),
+        "remote endpoint must be updated"
+    );
+
+    let fetched = rtp_api
+        .get_session(
+            &ctx,
+            RtpSessionRef {
+                session_id: created.session_id,
+                expected_generation: updated.generation,
+            },
+        )
+        .await
+        .expect("get updated session");
+    assert_eq!(fetched.endpoints.remote, Some(remote));
 
     harness.stop().await;
 }
