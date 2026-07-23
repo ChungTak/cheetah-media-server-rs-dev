@@ -3,8 +3,8 @@ use cheetah_codec::{
     AVFrame, CodecId, FrameFlags, FrameFormat, FrameOrigin, MediaKind, Timebase, TrackId,
 };
 use cheetah_rtp_core::{
-    RtpClientSpec, RtpConnectionType, RtpPayloadMode, RtpSendFrame, RtpServerSpec, RtpSessionState,
-    RtpTrackFilter, RtpTransportMode,
+    RtpClientSpec, RtpConnectionType, RtpPayloadMode, RtpSendFrame, RtpServerSpec,
+    RtpSessionCloseReason, RtpSessionState, RtpTrackFilter, RtpTransportMode,
 };
 use cheetah_rtp_driver_tokio::{
     start_driver, DriverLimits, RtpDriverCommand, RtpDriverConfig, RtpSocketReuse,
@@ -344,6 +344,115 @@ async fn test_per_session_cancel_does_not_affect_other_sessions() {
             } if session_key == "multi/2"
         ),
         "stopping one session must not cancel the driver or other sessions: got {event:?}"
+    );
+
+    cancel.cancel();
+}
+
+#[tokio::test]
+async fn test_send_failure_closes_sender_session() {
+    let cancel = CancellationToken::new();
+
+    let temp_udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let udp_addr = temp_udp.local_addr().unwrap();
+    drop(temp_udp);
+
+    let temp_tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let tcp_addr = temp_tcp.local_addr().unwrap();
+    drop(temp_tcp);
+
+    let config = RtpDriverConfig {
+        listen_udp: udp_addr,
+        listen_tcp: tcp_addr,
+        listen_rtcp_udp: None,
+        write_queue_capacity: 10,
+        read_buffer_size: 4096,
+        session_idle_timeout_ms: 5000,
+        max_sessions: 5,
+        tick_interval_ms: 100,
+        rtcp_report_interval_ms: 5000,
+        tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
+        max_rtp_len_cap: 65536,
+        limits: DriverLimits::default(),
+    };
+
+    let handle = start_driver(config, cancel.clone());
+
+    let session_key = "send/fail".to_string();
+    let ssrc = 12347u32;
+    // Sending to the IPv4 broadcast address without SO_BROADCAST triggers EPERM,
+    // which the driver reports back to the core as a send failure.
+    let bad_dest: std::net::SocketAddr = "255.255.255.255:1234".parse().unwrap();
+    let spec = RtpClientSpec {
+        session_key: session_key.clone(),
+        destination: bad_dest,
+        ssrc,
+        payload_mode: RtpPayloadMode::Ps,
+        transport_mode: RtpTransportMode::SendOnly,
+        packet_duration_ms: None,
+        tcp_conn_id: None,
+        connection_type: Some(RtpConnectionType::UdpActive),
+        source_policy: None,
+        track_filter: RtpTrackFilter::All,
+    };
+
+    handle
+        .send_command(RtpDriverCommand::CreateClient(spec))
+        .await;
+
+    let event = tokio::time::timeout(Duration::from_secs(5), handle.recv_event())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        event,
+        cheetah_rtp_core::RtpCoreEvent::SessionCreated { .. }
+    ));
+
+    let frame = AVFrame {
+        track_id: TrackId(0),
+        media_kind: MediaKind::Video,
+        codec: CodecId::H264,
+        format: FrameFormat::CanonicalH26x,
+        pts: 0,
+        dts: 0,
+        timebase: Timebase::new(1, 90_000),
+        pts_us: 0,
+        dts_us: 0,
+        duration: 0,
+        duration_us: 0,
+        flags: FrameFlags::KEY,
+        payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0x00, 0x00, 0x01, 0xE0]),
+        side_data: Default::default(),
+        origin: FrameOrigin::Relay,
+    };
+
+    handle
+        .send_command(RtpDriverCommand::SendFrame(Box::new(RtpSendFrame {
+            session_key: session_key.clone(),
+            frame,
+        })))
+        .await;
+
+    // Drain events until the session is closed by the send failure report.
+    let mut deadline = tokio::time::timeout(Duration::from_secs(5), handle.recv_event());
+    let mut found = false;
+    while let Ok(Some(event)) = deadline.await {
+        if matches!(
+            event,
+            cheetah_rtp_core::RtpCoreEvent::SessionClosed {
+                ref session_key,
+                reason: RtpSessionCloseReason::ConnectionClosed,
+            } if session_key == session_key,
+        ) {
+            found = true;
+            break;
+        }
+        deadline = tokio::time::timeout(Duration::from_secs(5), handle.recv_event());
+    }
+    assert!(
+        found,
+        "expected SessionClosed(ConnectionClosed) after send failure"
     );
 
     cancel.cancel();
