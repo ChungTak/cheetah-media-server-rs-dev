@@ -2,7 +2,10 @@
 //!
 //! 基于 Tokio 的 RTP/RTCP 驱动。
 
+mod port_lease;
+
 use bytes::{Bytes, BytesMut};
+use port_lease::PortManager;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -368,7 +371,7 @@ pub fn start_driver_with_runtime(
 ///
 /// 生成 UDP 接收任务，将数据报转发到 core 输入通道。
 #[allow(clippy::too_many_arguments)]
-fn spawn_udp_reader(
+pub(crate) fn spawn_udp_reader(
     socket: Arc<UdpSocket>,
     cancel: CancellationToken,
     udp_rx_tx: mpsc::Sender<RtpDatagram>,
@@ -432,23 +435,10 @@ fn spawn_udp_reader(
 async fn release_session_socket(
     key: &str,
     session_bind_addrs: &Mutex<HashMap<String, Option<SocketAddr>>>,
-    per_session_counts: &Mutex<HashMap<SocketAddr, usize>>,
-    per_session_sockets: &Mutex<HashMap<SocketAddr, Arc<UdpSocket>>>,
-    per_session_cancels: &Mutex<HashMap<SocketAddr, CancellationToken>>,
+    port_manager: &PortManager,
 ) {
     if let Some(Some(addr)) = session_bind_addrs.lock().await.remove(key) {
-        let mut counts = per_session_counts.lock().await;
-        if let Some(count) = counts.get_mut(&addr) {
-            *count -= 1;
-            if *count == 0 {
-                counts.remove(&addr);
-                drop(counts);
-                per_session_sockets.lock().await.remove(&addr);
-                if let Some(token) = per_session_cancels.lock().await.remove(&addr) {
-                    token.cancel();
-                }
-            }
-        }
+        port_manager.release(addr).await;
     }
 }
 
@@ -459,7 +449,7 @@ async fn release_session_socket(
 async fn resolve_udp_socket(
     session_key: &str,
     session_bind_addrs: &Mutex<HashMap<String, Option<SocketAddr>>>,
-    per_session_sockets: &Mutex<HashMap<SocketAddr, Arc<UdpSocket>>>,
+    port_manager: &PortManager,
     default_socket: &Arc<UdpSocket>,
 ) -> Arc<UdpSocket> {
     let maybe_addr = session_bind_addrs
@@ -469,7 +459,7 @@ async fn resolve_udp_socket(
         .copied()
         .flatten();
     if let Some(addr) = maybe_addr {
-        if let Some(socket) = per_session_sockets.lock().await.get(&addr).cloned() {
+        if let Some(socket) = port_manager.get_socket(addr).await {
             return socket;
         }
     }
@@ -605,15 +595,23 @@ async fn run_driver_loop(
         Arc::new(Mutex::new(HashMap::new()));
     let next_conn_id = Arc::new(Mutex::new(1u64));
 
+    let rtcp_mux = config.listen_rtcp_udp.is_none();
+
     // Per-session UDP sockets bound to explicit addresses (e.g. GB28181 port allocations).
     // Each socket has a cancellation token and a session refcount so it is closed when the
     // last session using it stops.
-    let per_session_sockets: Arc<Mutex<HashMap<SocketAddr, Arc<UdpSocket>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let per_session_cancels: Arc<Mutex<HashMap<SocketAddr, CancellationToken>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    let per_session_counts: Arc<Mutex<HashMap<SocketAddr, usize>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let port_manager = PortManager::new(
+        udp_rx_tx.clone(),
+        if rtcp_mux {
+            Some(rtcp_rx_tx.clone())
+        } else {
+            None
+        },
+        rtcp_mux,
+        config.read_buffer_size,
+        runtime.clone(),
+        cancel.clone(),
+    );
     let session_bind_addrs: Arc<Mutex<HashMap<String, Option<SocketAddr>>>> =
         Arc::new(Mutex::new(HashMap::new()));
     // Per-session cancellation tokens. Stopping or closing a session cancels only that
@@ -627,8 +625,6 @@ async fn run_driver_loop(
 
     // Spawn default UDP recv task.
     let default_udp_addr = udp_socket.local_addr().unwrap_or(config.listen_udp);
-    let rtcp_mux = config.listen_rtcp_udp.is_none();
-    let rtcp_rx_tx_for_sockets = rtcp_rx_tx.clone();
     spawn_udp_reader(
         udp_socket.clone(),
         cancel.clone(),
@@ -863,94 +859,33 @@ async fn run_driver_loop(
                     } => {
                         let key = spec.session_key.clone();
                         let explicit_bind = bind_addr.is_some();
+
+                        // Avoid binding a second socket for a session key that already has a
+                        // dedicated UDP socket. Reusing the key would leave the new socket leased
+                        // without a session to release it.
+                        if explicit_bind && session_bind_addrs.lock().await.contains_key(&key) {
+                            if let Some(ack) = ack {
+                                let _ = ack.send(Err(format!(
+                                    "session {key} already has a bound socket"
+                                )));
+                            }
+                            continue;
+                        }
+
                         let actual_addr = match bind_addr {
                             None => default_udp_addr,
                             Some(addr) => {
-                                let should_reuse = reuse == RtpSocketReuse::Reuse && addr.port() != 0;
-                                if should_reuse {
-                                    let sockets = per_session_sockets.lock().await;
-                                    if let Some(socket) = sockets.get(&addr) {
-                                        let actual = socket.local_addr().unwrap_or(addr);
-                                        drop(sockets);
-                                        let mut counts = per_session_counts.lock().await;
-                                        *counts.entry(actual).or_insert(0) += 1;
+                                match port_manager.acquire(addr, reuse == RtpSocketReuse::Reuse).await {
+                                    Ok(lease) => {
+                                        let actual = lease.addr();
+                                        lease.commit();
                                         actual
-                                    } else {
-                                        drop(sockets);
-                                        match UdpSocket::bind(addr).await {
-                                            Ok(s) => {
-                                                let actual = s.local_addr().unwrap_or(addr);
-                                                let socket = Arc::new(s);
-                                                let socket_cancel = cancel.child_token();
-                                                spawn_udp_reader(
-                                                    socket.clone(),
-                                                    socket_cancel.clone(),
-                                                    udp_rx_tx.clone(),
-                                                    if rtcp_mux { Some(rtcp_rx_tx_for_sockets.clone()) } else { None },
-                                                    rtcp_mux,
-                                                    config.read_buffer_size,
-                                                    runtime.clone(),
-                                                );
-                                                per_session_sockets
-                                                    .lock()
-                                                    .await
-                                                    .insert(actual, socket);
-                                                per_session_cancels
-                                                    .lock()
-                                                    .await
-                                                    .insert(actual, socket_cancel);
-                                                per_session_counts
-                                                    .lock()
-                                                    .await
-                                                    .insert(actual, 1);
-                                                actual
-                                            }
-                                            Err(e) => {
-                                                let reason = format!(
-                                                    "failed to bind UDP socket {addr}: {e}"
-                                                );
-                                                if let Some(ack) = ack {
-                                                    let _ = ack.send(Err(reason));
-                                                }
-                                                continue;
-                                            }
-                                        }
                                     }
-                                } else {
-                                    match UdpSocket::bind(addr).await {
-                                        Ok(s) => {
-                                            let actual = s.local_addr().unwrap_or(addr);
-                                            let socket = Arc::new(s);
-                                            let socket_cancel = cancel.child_token();
-                                            spawn_udp_reader(
-                                                socket.clone(),
-                                                socket_cancel.clone(),
-                                                udp_rx_tx.clone(),
-                                                if rtcp_mux { Some(rtcp_rx_tx_for_sockets.clone()) } else { None },
-                                                rtcp_mux,
-                                                config.read_buffer_size,
-                                                runtime.clone(),
-                                            );
-                                            per_session_sockets
-                                                .lock()
-                                                .await
-                                                .insert(actual, socket);
-                                            per_session_cancels
-                                                .lock()
-                                                .await
-                                                .insert(actual, socket_cancel);
-                                            per_session_counts.lock().await.insert(actual, 1);
-                                            actual
+                                    Err(reason) => {
+                                        if let Some(ack) = ack {
+                                            let _ = ack.send(Err(reason));
                                         }
-                                        Err(e) => {
-                                            let reason = format!(
-                                                "failed to bind UDP socket {addr}: {e}"
-                                            );
-                                            if let Some(ack) = ack {
-                                                let _ = ack.send(Err(reason));
-                                            }
-                                            continue;
-                                        }
+                                        continue;
                                     }
                                 }
                             }
@@ -1144,14 +1079,7 @@ async fn run_driver_loop(
                         if let Some(token) = session_cancels.lock().await.remove(&key) {
                             token.cancel();
                         }
-                        release_session_socket(
-                            &key,
-                            &session_bind_addrs,
-                            &per_session_counts,
-                            &per_session_sockets,
-                            &per_session_cancels,
-                        )
-                        .await;
+                        release_session_socket(&key, &session_bind_addrs, &port_manager).await;
                         inputs.push(RtpCoreInput::Command(RtpCoreCommand::StopSession(key)));
                     }
                     RtpDriverCommand::UpdateSession {
@@ -1202,7 +1130,7 @@ async fn run_driver_loop(
                         let socket = resolve_udp_socket(
                             &udp_send.session_key,
                             &session_bind_addrs,
-                            &per_session_sockets,
+                            &port_manager,
                             &udp_socket,
                         )
                         .await;
@@ -1299,7 +1227,7 @@ async fn run_driver_loop(
                             let socket = resolve_udp_socket(
                                 &rtcp_send.session_key,
                                 &session_bind_addrs,
-                                &per_session_sockets,
+                                &port_manager,
                                 &udp_socket,
                             )
                             .await;
@@ -1374,14 +1302,7 @@ async fn run_driver_loop(
                         if let Some(token) = session_cancels.lock().await.remove(&key) {
                             token.cancel();
                         }
-                        release_session_socket(
-                            &key,
-                            &session_bind_addrs,
-                            &per_session_counts,
-                            &per_session_sockets,
-                            &per_session_cancels,
-                        )
-                        .await;
+                        release_session_socket(&key, &session_bind_addrs, &port_manager).await;
                     }
                     RtpCoreOutput::CloseTcpConnection { conn_id } => {
                         debug!("Closing TCP connection: {conn_id}");
