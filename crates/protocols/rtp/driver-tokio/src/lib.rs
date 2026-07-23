@@ -574,7 +574,7 @@ async fn run_driver_loop(
         .saturating_sub(runtime.now().as_micros() / 1000);
     core.set_wall_clock_offset_ms(wall_clock_offset_ms);
 
-    let tick_interval_us = config.tick_interval_ms.saturating_mul(1000);
+    let tick_interval_us = config.tick_interval_ms.max(1).saturating_mul(1000);
     let mut next_tick = runtime.now().as_micros().saturating_add(tick_interval_us);
     let mut tick_timer = runtime.sleep_until(MonoTime::from_micros(next_tick));
 
