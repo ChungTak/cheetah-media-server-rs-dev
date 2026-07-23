@@ -88,6 +88,7 @@ const MAX_U16: u64 = u16::MAX as u64;
 const MAX_CLOCK_RATE: u32 = 192_000;
 const MAX_RTP_PT: u8 = 127;
 const MAX_CHANNELS: u8 = 2;
+const MAX_PACKET_DURATION_MS: u32 = 2_000;
 
 /// Request body for `/recv/create`.
 #[derive(Debug, Clone, Deserialize)]
@@ -197,6 +198,8 @@ pub struct GbTalkRequest {
     pub clock_rate: u32,
     #[serde(default)]
     pub channels: Option<u8>,
+    #[serde(default, alias = "packetDuration")]
+    pub packet_duration_ms: Option<u32>,
 }
 
 impl GbTalkRequest {
@@ -250,6 +253,13 @@ impl GbTalkRequest {
                 )));
             }
         }
+        if let Some(packet_duration_ms) = self.packet_duration_ms {
+            if packet_duration_ms == 0 || packet_duration_ms > MAX_PACKET_DURATION_MS {
+                return Err(SdkError::InvalidArgument(format!(
+                    "packet_duration_ms {packet_duration_ms} out of range"
+                )));
+            }
+        }
         Ok(())
     }
 
@@ -259,6 +269,7 @@ impl GbTalkRequest {
             codec: self.codec.clone(),
             clock_rate: self.clock_rate,
             channels: self.channels,
+            packet_duration_ms: self.packet_duration_ms,
         }
     }
 
@@ -334,6 +345,7 @@ mod tests {
         assert_eq!(binding.payload_type, 8);
         assert_eq!(binding.codec, "PCMA");
         assert_eq!(binding.clock_rate, 8000);
+        assert_eq!(binding.packet_duration_ms, None);
         assert_eq!(req.ip, "127.0.0.1");
         assert_eq!(req.port, 30000);
     }
@@ -344,14 +356,17 @@ mod tests {
             "stream": "cam-1",
             "localPort": 40000,
             "clockRate": 16000,
+            "packetDuration": 60,
             "pt": 0,
             "codec": "PCMU"
         });
         let req: GbTalkRequest = serde_json::from_value(json).unwrap();
         assert_eq!(req.local_port(30000), 40000);
         assert_eq!(req.clock_rate, 16000);
+        assert_eq!(req.packet_duration_ms, Some(60));
         assert_eq!(req.payload_binding().payload_type, 0);
         assert_eq!(req.payload_binding().codec, "PCMU");
+        assert_eq!(req.payload_binding().packet_duration_ms, Some(60));
     }
 
     #[test]
@@ -373,7 +388,8 @@ mod tests {
             "stream": "cam-1",
             "pt": 200,
             "clockRate": 0,
-            "channels": 3
+            "channels": 3,
+            "packetDuration": 3000
         });
         let req: GbTalkRequest = serde_json::from_value(json).unwrap();
         assert!(req.validate().is_err());

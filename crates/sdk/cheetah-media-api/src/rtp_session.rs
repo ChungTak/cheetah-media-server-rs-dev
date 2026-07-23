@@ -175,6 +175,9 @@ pub struct RtpPayloadBinding {
     /// Number of audio channels, when applicable.
     #[serde(default)]
     pub channels: Option<u8>,
+    /// Audio packet duration in milliseconds, when applicable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packet_duration_ms: Option<u32>,
 }
 
 /// RTP session lifecycle state.
