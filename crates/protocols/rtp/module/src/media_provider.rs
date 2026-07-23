@@ -42,6 +42,7 @@ use serde::Serialize;
 
 use crate::config::RtpModuleConfig;
 use crate::egress::{run_egress_session, ActiveEgressMap, DownloadOptions, EgressCleanup};
+use crate::metrics::{RtpModuleMetrics, RtpModuleMetricsSnapshot};
 use crate::orchestrator::RtpSessionOrchestrator;
 use crate::rate_limit::{rate_limit_key, RateLimiter};
 use crate::rollback::RollbackGuard;
@@ -67,6 +68,8 @@ pub struct RtpMediaProvider {
     /// Playback sessions associated with RTP senders that read from recorded files.
     /// Kept so `stop_session` can release the underlying playback source.
     playback_sessions: PlaybackSessionMap,
+    /// Monotonic counters and active-session gauge for operator observability.
+    metrics: Arc<RtpModuleMetrics>,
 }
 
 impl RtpMediaProvider {
@@ -89,7 +92,16 @@ impl RtpMediaProvider {
             active_senders: ActiveEgressMap::default(),
             rtp_descriptors: Arc::new(Mutex::new(HashMap::new())),
             playback_sessions: Arc::new(Mutex::new(HashMap::new())),
+            metrics: RtpModuleMetrics::new(),
         }
+    }
+
+    /// Return a metrics snapshot, with the active session gauge filled from
+    /// the orchestrator's live session count.
+    ///
+    /// 返回指标快照，活跃会话仪表盘使用编排器的实时会话计数。
+    pub fn metrics_snapshot(&self) -> RtpModuleMetricsSnapshot {
+        self.metrics.snapshot(self.orchestrator.session_count() as u64)
     }
 
     /// Return the orchestrator so the module can share the same instance with
@@ -127,7 +139,10 @@ impl RtpMediaProvider {
         };
         match provider.authorize(ctx, request).await {
             Ok(Decision::Allow) => Ok(()),
-            Ok(Decision::Deny { code, reason }) => Err(MediaError::new(code, reason)),
+            Ok(Decision::Deny { code, reason }) => {
+                self.metrics.inc_admission_denied();
+                Err(MediaError::new(code, reason))
+            }
             Err(e) => Err(e),
         }
     }
@@ -135,7 +150,10 @@ impl RtpMediaProvider {
     /// Check the per-principal request rate limit before processing a mutation.
     fn check_rate_limit(&self, ctx: &MediaRequestContext) -> Result<()> {
         let now = self.engine.runtime_api.now();
-        self.rate_limiter.check(&rate_limit_key(ctx), now)
+        self.rate_limiter.check(&rate_limit_key(ctx), now).map_err(|e| {
+            self.metrics.inc_rate_limited();
+            e
+        })
     }
 
     /// Validate the cluster mutation context when present.
