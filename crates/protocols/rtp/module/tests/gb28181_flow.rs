@@ -1923,3 +1923,124 @@ async fn rtp_session_update_rejects_stale_generation_and_applies_remote_endpoint
 
     harness.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_stop_failure_matrix() {
+    // Verifies stop_session cleanup outcomes: conflict on stale generation, applied
+    // on first stop, and NotApplied (idempotent success) on duplicate/missing stops.
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_stop", "failure_matrix", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90_000,
+            channels: None,
+            packet_duration_ms: None,
+        })
+        .build();
+    let created = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("open receiver");
+
+    // Stopping with a stale generation conflicts and carries the current resource ref.
+    let stale_ref = RtpSessionRef {
+        session_id: created.session_id.clone(),
+        expected_generation: RtpSessionGeneration(created.generation.0 + 1),
+    };
+    let err = rtp_api
+        .stop_session(
+            &ctx,
+            StopRtpSession {
+                session_ref: stale_ref,
+                release_lease: true,
+            },
+        )
+        .await
+        .expect_err("stale stop should conflict");
+    assert_eq!(err.code, MediaErrorCode::Conflict);
+    assert_eq!(err.outcome, EffectOutcome::NotApplied);
+    let resource_ref = err.resource_ref.as_ref().expect("resource ref");
+    assert_eq!(resource_ref.generation.0, created.generation.0);
+
+    // First valid stop returns Applied and the session disappears.
+    let stop_ref = RtpSessionRef {
+        session_id: created.session_id.clone(),
+        expected_generation: created.generation,
+    };
+    let outcome = rtp_api
+        .stop_session(
+            &ctx,
+            StopRtpSession {
+                session_ref: stop_ref,
+                release_lease: false,
+            },
+        )
+        .await
+        .expect("stop with current generation");
+    assert_eq!(outcome, EffectOutcome::Applied);
+
+    assert!(
+        rtp_api
+            .get_session(
+                &ctx,
+                RtpSessionRef {
+                    session_id: created.session_id.clone(),
+                    expected_generation: created.generation,
+                },
+            )
+            .await
+            .is_err(),
+        "session must be gone after stop"
+    );
+
+    // Idempotent stops on a removed session return NotApplied regardless of generation.
+    let outcome = rtp_api
+        .stop_session(
+            &ctx,
+            StopRtpSession {
+                session_ref: RtpSessionRef {
+                    session_id: created.session_id.clone(),
+                    expected_generation: created.generation,
+                },
+                release_lease: true,
+            },
+        )
+        .await
+        .expect("duplicate stop should be idempotent");
+    assert_eq!(outcome, EffectOutcome::NotApplied);
+
+    let missing_ref = RtpSessionRef {
+        session_id: RtpSessionId("no-such-session".to_string()),
+        expected_generation: RtpSessionGeneration(0),
+    };
+    let outcome = rtp_api
+        .stop_session(
+            &ctx,
+            StopRtpSession {
+                session_ref: missing_ref,
+                release_lease: true,
+            },
+        )
+        .await
+        .expect("missing stop should be idempotent");
+    assert_eq!(outcome, EffectOutcome::NotApplied);
+
+    harness.stop().await;
+}
