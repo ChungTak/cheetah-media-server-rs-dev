@@ -39,6 +39,7 @@ use serde::Serialize;
 use crate::config::RtpModuleConfig;
 use crate::egress::{run_egress_session, ActiveEgressMap, EgressCleanup};
 use crate::orchestrator::RtpSessionOrchestrator;
+use crate::rollback::RollbackGuard;
 
 /// Media-domain `RtpApi` and `RtpSessionApi` provider.
 ///
@@ -475,10 +476,9 @@ impl RtpApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: RtpSenderRequest,
     ) -> Result<RtpSession> {
-        Deadline::from_context(ctx)
-            .check()
-            .map_err(|e| MediaError::unavailable(e.to_string()))?;
-        self.open_rtp_sender_internal(request, None).await
+        self.open_rtp_sender_with_cancel(ctx, request, None)
+            .await
+            .map(|(s, _)| s)
     }
 
     async fn stop_rtp_session(&self, ctx: &MediaRequestContext, id: &RtpSessionId) -> Result<()> {
@@ -846,48 +846,6 @@ impl RtpMediaProvider {
             .and_then(|b| b.packet_duration_ms)
     }
 
-    /// Internal helper shared by the legacy `RtpApi` and the typed `RtpSessionApi` paths.
-    /// Accepts an optional `packet_duration_ms` hint so G.711 talkback can honor the
-    /// configured/negotiated packet duration.
-    async fn open_rtp_sender_internal(
-        &self,
-        request: RtpSenderRequest,
-        packet_duration_ms: Option<u32>,
-    ) -> Result<RtpSession> {
-        let session = self
-            .orchestrator
-            .open_rtp_sender_with_duration(request.clone(), packet_duration_ms)
-            .await?;
-        let session_key = session.session_id.0.clone();
-
-        let stream_key = Self::stream_key_for_media_key(&request.media_key);
-
-        let driver = self.driver()?;
-        let cancel = self.module_cancel.child_token();
-        self.active_senders
-            .lock()
-            .insert(session_key.clone(), cancel.clone());
-
-        let engine = self.engine.clone();
-        let orchestrator = self.orchestrator.clone();
-        let cleanup = EgressCleanup::new(self.active_senders.clone(), session_key.clone());
-        let runtime_api = self.engine.runtime_api.clone();
-        runtime_api.spawn(Box::pin(async move {
-            run_egress_session(
-                engine,
-                driver,
-                vec![session_key],
-                stream_key,
-                cancel,
-                Some(orchestrator),
-                Some(cleanup),
-            )
-            .await;
-        }));
-
-        Ok(session)
-    }
-
     async fn open_receiver_impl(
         &self,
         ctx: &MediaRequestContext,
@@ -907,13 +865,70 @@ impl RtpMediaProvider {
         self.check_profile_and_limits(&request.params)?;
         let old_req = self.build_old_receiver_request(request.clone())?;
         let session = self.open_rtp_receiver(ctx, old_req).await?;
+        let guard = RollbackGuard::new(
+            self.orchestrator.clone(),
+            self.engine.runtime_api.clone(),
+            session.session_id.clone(),
+        );
         let mut descriptor = self.build_descriptor(ctx, &session, None)?;
         self.apply_request_overrides(&mut descriptor, &request.params);
         self.rtp_descriptors
             .lock()
             .insert(descriptor.session_id.clone(), descriptor.clone());
+        guard.commit();
         Ok(descriptor)
     }
+
+    /// Create a driver-side sender/talk session and start the egress worker,
+    /// returning both the session and the cancellation token that controls the
+    /// background task. The caller is responsible for cancelling the token on
+    /// rollback; if the open succeeds, the token is owned by `run_egress_session`.
+    async fn open_rtp_sender_with_cancel(
+        &self,
+        ctx: &MediaRequestContext,
+        request: RtpSenderRequest,
+        packet_duration_ms: Option<u32>,
+    ) -> Result<(RtpSession, CancellationToken)> {
+        Deadline::from_context(ctx)
+            .check()
+            .map_err(|e| MediaError::unavailable(e.to_string()))?;
+        // Create the driver-side sender session first.
+        let session = self
+            .orchestrator
+            .open_rtp_sender_with_duration(request.clone(), packet_duration_ms)
+            .await?;
+        let session_key = session.session_id.0.clone();
+
+        // Determine the engine stream we need to subscribe to.
+        let stream_key = Self::stream_key_for_media_key(&request.media_key);
+
+        let driver = self.driver()?;
+        let cancel = self.module_cancel.child_token();
+        self.active_senders
+            .lock()
+            .insert(session_key.clone(), cancel.clone());
+
+        let engine = self.engine.clone();
+        let orchestrator = self.orchestrator.clone();
+        let cleanup = EgressCleanup::new(self.active_senders.clone(), session_key.clone());
+        let runtime_api = self.engine.runtime_api.clone();
+        let cancel_for_task = cancel.clone();
+        runtime_api.spawn(Box::pin(async move {
+            run_egress_session(
+                engine,
+                driver,
+                vec![session_key],
+                stream_key,
+                cancel_for_task,
+                Some(orchestrator),
+                Some(cleanup),
+            )
+            .await;
+        }));
+
+        Ok((session, cancel))
+    }
+
     async fn open_sender_impl(
         &self,
         ctx: &MediaRequestContext,
@@ -937,14 +952,21 @@ impl RtpMediaProvider {
         };
         let old_req = self.build_old_sender_request(request.clone(), mode)?;
         let packet_duration_ms = Self::packet_duration_ms_from_params(&request.params);
-        let session = self
-            .open_rtp_sender_internal(old_req, packet_duration_ms)
+        let (session, cancel) = self
+            .open_rtp_sender_with_cancel(ctx, old_req, packet_duration_ms)
             .await?;
+        let guard = RollbackGuard::new(
+            self.orchestrator.clone(),
+            self.engine.runtime_api.clone(),
+            session.session_id.clone(),
+        )
+        .with_egress_cancel(self.active_senders.clone(), cancel);
         let mut descriptor = self.build_descriptor(ctx, &session, None)?;
         self.apply_request_overrides(&mut descriptor, &request.params);
         self.rtp_descriptors
             .lock()
             .insert(descriptor.session_id.clone(), descriptor.clone());
+        guard.commit();
         Ok(descriptor)
     }
     async fn open_talk_impl(
@@ -978,9 +1000,15 @@ impl RtpMediaProvider {
                     .as_ref()
                     .and_then(|b| b.packet_duration_ms)
             });
-        let session = self
-            .open_rtp_sender_internal(sender_req, packet_duration_ms)
+        let (session, cancel) = self
+            .open_rtp_sender_with_cancel(ctx, sender_req, packet_duration_ms)
             .await?;
+        let guard = RollbackGuard::new(
+            self.orchestrator.clone(),
+            self.engine.runtime_api.clone(),
+            session.session_id.clone(),
+        )
+        .with_egress_cancel(self.active_senders.clone(), cancel);
         let mut descriptor = self.build_descriptor(ctx, &session, None)?;
         self.apply_request_overrides(&mut descriptor, &request.params);
         if let Some(binding) = request.talkback_binding {
@@ -989,6 +1017,7 @@ impl RtpMediaProvider {
         self.rtp_descriptors
             .lock()
             .insert(descriptor.session_id.clone(), descriptor.clone());
+        guard.commit();
         Ok(descriptor)
     }
 }

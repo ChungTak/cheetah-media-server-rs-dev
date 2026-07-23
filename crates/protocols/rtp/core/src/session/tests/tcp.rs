@@ -95,3 +95,91 @@ fn test_rtp_core_tcp_interleaved_framing_dispatches() {
         RtpCoreOutput::Diagnostic(RtpCoreDiagnostic::RtpHeaderError)
     )));
 }
+
+#[test]
+fn test_rtp_core_tcp_connection_closed_terminates_bound_sessions() {
+    // A peer half-close on the TCP connection should immediately close all sessions bound to
+    // that connection id, emitting a terminal SessionClosed event with ConnectionClosed reason.
+    let mut core = RtpCore::new(10, 30_000);
+    let ssrc = 0xDEADBEEFu32;
+    let spec = RtpServerSpec {
+        session_key: "live/tcp-close".to_string(),
+        ssrc: Some(ssrc),
+        payload_mode: RtpPayloadMode::Ps,
+        transport_mode: RtpTransportMode::RecvOnly,
+        packet_duration_ms: None,
+        connection_type: None,
+        source_policy: None,
+        track_filter: RtpTrackFilter::All,
+    };
+    let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateServer(spec)));
+
+    let rtp = RtpPacket {
+        header: RtpHeader {
+            version: 2,
+            payload_type: 96,
+            sequence_number: 1,
+            timestamp: 0,
+            ssrc,
+            marker: false,
+        },
+        payload: Bytes::from(vec![0x00, 0x00, 0x01, 0xBA, 0xAA, 0xBB]),
+    };
+    let frame = cheetah_codec::encode_tcp_rtp_frame(&rtp);
+    let _ = core.handle_input(RtpCoreInput::TcpBytes(crate::types::RtpTcpChunk {
+        conn_id: 7,
+        data: frame,
+        received_at_ms: 0,
+    }));
+
+    let outputs = core.handle_input(RtpCoreInput::TcpConnectionClosed {
+        conn_id: 7,
+        received_at_ms: 1,
+    });
+
+    assert!(outputs.iter().any(|o| matches!(
+        o,
+        RtpCoreOutput::Event(RtpCoreEvent::SessionClosed {
+            session_key,
+            reason: RtpSessionCloseReason::ConnectionClosed,
+        }) if session_key == "live/tcp-close"
+    )));
+    assert!(outputs
+        .iter()
+        .any(|o| matches!(o, RtpCoreOutput::CloseSession(_))));
+}
+
+#[test]
+fn test_tcp_connection_closed_keeps_send_capable_session_alive() {
+    // A peer half-close must not terminate a send-only (or sendrecv) session because the
+    // outbound write path may still be draining frames/RTCP.
+    let mut core = RtpCore::new(10, 30_000);
+    let dest = "127.0.0.1:1234".parse().unwrap();
+    let spec = RtpClientSpec {
+        session_key: "live/tcp-push".to_string(),
+        destination: dest,
+        ssrc: 0xC0FFEE,
+        payload_mode: RtpPayloadMode::Es,
+        transport_mode: RtpTransportMode::SendOnly,
+        packet_duration_ms: None,
+        tcp_conn_id: Some(42),
+        connection_type: None,
+        source_policy: None,
+        track_filter: RtpTrackFilter::All,
+    };
+    let _ = core.handle_input(RtpCoreInput::Command(RtpCoreCommand::CreateClient(spec)));
+
+    let outputs = core.handle_input(RtpCoreInput::TcpConnectionClosed {
+        conn_id: 42,
+        received_at_ms: 0,
+    });
+
+    assert!(!outputs
+        .iter()
+        .any(|o| matches!(o, RtpCoreOutput::CloseSession(_))));
+    assert!(!outputs
+        .iter()
+        .any(|o| matches!(o, RtpCoreOutput::CloseTcpConnection { conn_id: 42 })));
+    // The session should still be present and send-capable.
+    assert!(core.sessions.contains_key("live/tcp-push"));
+}

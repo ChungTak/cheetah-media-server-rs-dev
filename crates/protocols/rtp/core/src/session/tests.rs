@@ -19,4 +19,5 @@ mod rtcp;
 mod state;
 mod talk;
 mod tcp;
+mod terminal;
 mod update;

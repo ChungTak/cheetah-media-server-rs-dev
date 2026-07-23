@@ -3,7 +3,7 @@ use cheetah_codec::{RtpHeader, RtpPacket};
 use cheetah_rtp_core::rtcp::{
     RtcpBye, RtcpCompoundPacket, RtcpPacket, RtcpReceiverReport, RtcpReportBlock,
 };
-use cheetah_rtp_driver_tokio::{start_driver, RtpDriverConfig};
+use cheetah_rtp_driver_tokio::{start_driver, DriverLimits, RtpDriverConfig};
 use cheetah_runtime_api::CancellationToken;
 use std::time::Duration;
 
@@ -28,8 +28,11 @@ async fn test_rtcp_mux_on_udp_socket_closes_session() {
         read_buffer_size: 4096,
         session_idle_timeout_ms: 30_000,
         max_sessions: 5,
+        tick_interval_ms: 100,
+        rtcp_report_interval_ms: 5000,
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
+        limits: DriverLimits::default(),
     };
 
     let handle = start_driver(config, cancel.clone());
@@ -110,8 +113,11 @@ async fn test_rtcp_separate_port_reply_uses_rtcp_address() {
         read_buffer_size: 4096,
         session_idle_timeout_ms: 30_000,
         max_sessions: 5,
+        tick_interval_ms: 100,
+        rtcp_report_interval_ms: 5000,
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
+        limits: DriverLimits::default(),
     };
 
     let handle = start_driver(config, cancel.clone());

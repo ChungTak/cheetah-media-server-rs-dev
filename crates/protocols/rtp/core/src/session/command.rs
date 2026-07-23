@@ -127,7 +127,7 @@ impl RtpCore {
     pub(super) fn close_session(
         &mut self,
         key: RtpSessionKey,
-        reason: String,
+        reason: RtpSessionCloseReason,
         outputs: &mut Vec<RtpCoreOutput>,
     ) {
         if let Some(mut session) = self.sessions.remove(&key) {
@@ -201,7 +201,10 @@ impl RtpCore {
                     pt_change_unknown_count: 0,
                     pt_format_change_count: 0,
                     last_error: None,
-                    rtcp: RtcpReportState::new(default_clock_rate_hz(spec.payload_mode)),
+                    rtcp: RtcpReportState::new_with_offset(
+                        default_clock_rate_hz(spec.payload_mode),
+                        self.wall_clock_offset_ms,
+                    ),
                 };
                 self.sessions.insert(spec.session_key.clone(), session);
                 self.ssrc_to_session.insert(ssrc, spec.session_key.clone());
@@ -288,7 +291,10 @@ impl RtpCore {
                     pt_change_unknown_count: 0,
                     pt_format_change_count: 0,
                     last_error: None,
-                    rtcp: RtcpReportState::new(default_clock_rate_hz(spec.payload_mode)),
+                    rtcp: RtcpReportState::new_with_offset(
+                        default_clock_rate_hz(spec.payload_mode),
+                        self.wall_clock_offset_ms,
+                    ),
                 };
                 self.sessions.insert(spec.session_key.clone(), session);
                 self.ssrc_to_session
@@ -412,6 +418,7 @@ impl RtpCore {
                             let frame_tcp = cheetah_codec::encode_tcp_rtp_frame(&pkt);
                             outputs.push(RtpCoreOutput::SendTcp(RtpTcpSend {
                                 conn_id,
+                                session_key: session._session_key.clone(),
                                 data: frame_tcp,
                             }));
                         } else if let Some(dest) = session.destination {
@@ -462,7 +469,7 @@ impl RtpCore {
                 );
             }
             RtpCoreCommand::StopSession(key) => {
-                self.close_session(key, "Stopped by command".to_string(), outputs);
+                self.close_session(key, RtpSessionCloseReason::Stopped, outputs);
             }
             RtpCoreCommand::PauseCheck {
                 session_key,

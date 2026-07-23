@@ -787,7 +787,7 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use cheetah_rtp_driver_tokio::{start_driver, RtpDriverConfig};
+    use cheetah_rtp_driver_tokio::{start_driver, DriverLimits, RtpDriverConfig};
     use cheetah_runtime_api::CancellationToken;
     use cheetah_sdk::media_api::command::{
         RtpConnectRequest, RtpReceiverRequest, RtpSenderMode, RtpSenderRequest, UpdateRtpRequest,
@@ -805,8 +805,11 @@ mod tests {
             read_buffer_size: 4096,
             session_idle_timeout_ms: 5000,
             max_sessions: 10,
+            tick_interval_ms: 100,
+            rtcp_report_interval_ms: 5000,
             tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
             max_rtp_len_cap: 65536,
+            limits: DriverLimits::default(),
         }
     }
 

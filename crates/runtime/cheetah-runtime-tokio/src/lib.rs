@@ -1,3 +1,10 @@
+use async_trait::async_trait;
+use cheetah_codec::MonoTime;
+use cheetah_runtime_api::{
+    oneshot_channel, AsyncTcpListener, AsyncTcpStream, AsyncTimer, AsyncUdpSocket,
+    ConnectTcpFuture, ConnectTlsFuture, JoinHandle, OneShotReceiver, OneShotSender, Runtime,
+    RuntimeApi, SpawnError, TaskJoinError, UdpRecvMeta,
+};
 use std::future::Future;
 use std::io;
 use std::net::{
@@ -6,18 +13,9 @@ use std::net::{
 };
 use std::pin::Pin;
 use std::sync::{Arc, LazyLock};
-use std::time::Instant;
-
-use async_trait::async_trait;
-use cheetah_codec::MonoTime;
-use cheetah_runtime_api::{
-    oneshot_channel, AsyncTcpListener, AsyncTcpStream, AsyncTimer, AsyncUdpSocket,
-    ConnectTcpFuture, ConnectTlsFuture, JoinHandle, OneShotReceiver, OneShotSender, Runtime,
-    RuntimeApi, SpawnError, TaskJoinError, UdpRecvMeta,
-};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{lookup_host, TcpListener, TcpStream, UdpSocket};
-use tokio::time::{sleep_until, Duration, Instant as TokioInstant, Sleep};
+use tokio::time::{sleep_until, Duration, Instant, Sleep};
 use tokio_rustls::TlsConnector;
 
 static TLS_CONFIG: LazyLock<Arc<rustls::ClientConfig>> = LazyLock::new(|| {
@@ -67,7 +65,6 @@ fn apply_low_latency_tcp_options(stream: &TcpStream) {
 #[derive(Clone, Debug)]
 pub struct TokioRuntime {
     start: Instant,
-    start_tokio: TokioInstant,
 }
 
 impl TokioRuntime {
@@ -77,15 +74,14 @@ impl TokioRuntime {
     pub fn new() -> Self {
         Self {
             start: Instant::now(),
-            start_tokio: TokioInstant::now(),
         }
     }
 
     /// Convert a `MonoTime` deadline to a Tokio `Instant`.
     ///
     /// 将 `MonoTime` 截止时间转换为 Tokio `Instant`。
-    fn deadline_to_instant(&self, deadline: MonoTime) -> TokioInstant {
-        self.start_tokio + Duration::from_micros(deadline.as_micros())
+    fn deadline_to_instant(&self, deadline: MonoTime) -> Instant {
+        self.start + Duration::from_micros(deadline.as_micros())
     }
 
     /// Asynchronously connect to `addr` over plain TCP.
