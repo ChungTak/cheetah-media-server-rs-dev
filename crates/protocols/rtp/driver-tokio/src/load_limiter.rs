@@ -14,6 +14,9 @@ use tracing::warn;
 /// Driver-side resource limits.
 ///
 /// A value of `0` means the corresponding resource is unlimited.
+/// `max_incoming_bytes_per_second` is a per-second cap; the rolling measurement
+/// window is `bytes_rate_window_ms` (default 1000 ms) and the per-window budget
+/// is scaled proportionally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DriverLimits {
     pub max_sessions: usize,
@@ -87,8 +90,18 @@ impl LoadLimiter {
         TcpConnectionGuard(self.clone())
     }
 
-    /// Record `n` incoming bytes and return `true` if the current 1-second window
-    /// is within budget.
+    /// Per-window byte budget derived from `max_incoming_bytes_per_second`
+    /// and `bytes_rate_window_ms`. A window of 1000 ms is the identity.
+    fn byte_budget(&self) -> u64 {
+        let window_ms = self.limits.bytes_rate_window_ms.max(1);
+        self.limits
+            .max_incoming_bytes_per_second
+            .saturating_mul(window_ms)
+            / 1000
+    }
+
+    /// Record `n` incoming bytes and return `true` if the current measurement
+    /// window is within budget.
     pub(crate) fn try_consume_bytes(&self, n: usize) -> bool {
         if self.limits.max_incoming_bytes_per_second == 0 {
             return true;
@@ -123,11 +136,9 @@ impl LoadLimiter {
                 continue;
             }
 
-            if current.saturating_add(n as u64) > self.limits.max_incoming_bytes_per_second {
-                warn!(
-                    "incoming byte rate limit exceeded: {current} + {n} > {}",
-                    self.limits.max_incoming_bytes_per_second
-                );
+            let budget = self.byte_budget();
+            if current.saturating_add(n as u64) > budget {
+                warn!("incoming byte rate limit exceeded: {current} + {n} > {budget}");
                 return false;
             }
 
@@ -163,7 +174,7 @@ impl LoadLimiter {
                 true
             } else {
                 let bytes = self.bytes_in_window.load(Ordering::Relaxed);
-                bytes < self.limits.max_incoming_bytes_per_second
+                bytes < self.byte_budget()
             }
         };
 

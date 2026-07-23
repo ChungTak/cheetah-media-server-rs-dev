@@ -177,3 +177,53 @@ async fn max_incoming_bytes_per_second_drops_excess_packets() {
 
     cancel.cancel();
 }
+
+#[tokio::test(start_paused = true)]
+async fn byte_rate_window_is_scaled_from_per_second_cap() {
+    let cancel = CancellationToken::new();
+
+    let temp_udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let udp_addr = temp_udp.local_addr().unwrap();
+    drop(temp_udp);
+
+    let temp_tcp = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tcp_addr = temp_tcp.local_addr().unwrap();
+    drop(temp_tcp);
+
+    // 100 bytes/second with a 100 ms window => 10 bytes per window.
+    let limits = DriverLimits {
+        max_sessions: 0,
+        max_tcp_connections: 0,
+        max_incoming_bytes_per_second: 100,
+        bytes_rate_window_ms: 100,
+    };
+    let handle = start_driver(test_config(udp_addr, tcp_addr, limits), cancel.clone());
+
+    let ssrc = 0x1111_2222u32;
+    let rtp = |payload: Vec<u8>| RtpPacket {
+        header: RtpHeader {
+            version: 2,
+            payload_type: 96,
+            sequence_number: 1,
+            timestamp: 0,
+            ssrc,
+            marker: false,
+        },
+        payload: Bytes::from(payload),
+    };
+
+    let client = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+
+    // A 20-byte datagram exceeds the 10-byte window budget and is dropped.
+    client
+        .send_to(&rtp(vec![0u8; 20]).encode(), udp_addr)
+        .await
+        .unwrap();
+    let event = recv_event_within(&handle, 200).await;
+    assert!(
+        event.is_none(),
+        "expected packet over per-window budget to be dropped, got {event:?}"
+    );
+
+    cancel.cancel();
+}
