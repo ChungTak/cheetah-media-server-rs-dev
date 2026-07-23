@@ -39,6 +39,7 @@ use serde::Serialize;
 use crate::config::RtpModuleConfig;
 use crate::egress::{run_egress_session, ActiveEgressMap, EgressCleanup};
 use crate::orchestrator::RtpSessionOrchestrator;
+use crate::rollback::RollbackGuard;
 
 /// Media-domain `RtpApi` and `RtpSessionApi` provider.
 ///
@@ -835,11 +836,17 @@ impl RtpMediaProvider {
         self.check_profile_and_limits(&request.params)?;
         let old_req = self.build_old_receiver_request(request.clone())?;
         let session = self.open_rtp_receiver(ctx, old_req).await?;
+        let guard = RollbackGuard::new(
+            self.orchestrator.clone(),
+            self.engine.runtime_api.clone(),
+            session.session_id.clone(),
+        );
         let mut descriptor = self.build_descriptor(ctx, &session, None)?;
         self.apply_request_overrides(&mut descriptor, &request.params);
         self.rtp_descriptors
             .lock()
             .insert(descriptor.session_id.clone(), descriptor.clone());
+        guard.commit();
         Ok(descriptor)
     }
     async fn open_sender_impl(
@@ -865,11 +872,17 @@ impl RtpMediaProvider {
         };
         let old_req = self.build_old_sender_request(request.clone(), mode)?;
         let session = self.open_rtp_sender(ctx, old_req).await?;
+        let guard = RollbackGuard::new(
+            self.orchestrator.clone(),
+            self.engine.runtime_api.clone(),
+            session.session_id.clone(),
+        );
         let mut descriptor = self.build_descriptor(ctx, &session, None)?;
         self.apply_request_overrides(&mut descriptor, &request.params);
         self.rtp_descriptors
             .lock()
             .insert(descriptor.session_id.clone(), descriptor.clone());
+        guard.commit();
         Ok(descriptor)
     }
     async fn open_talk_impl(
@@ -896,6 +909,11 @@ impl RtpMediaProvider {
             RtpSenderMode::Talk,
         )?;
         let session = self.open_rtp_sender(ctx, sender_req).await?;
+        let guard = RollbackGuard::new(
+            self.orchestrator.clone(),
+            self.engine.runtime_api.clone(),
+            session.session_id.clone(),
+        );
         let mut descriptor = self.build_descriptor(ctx, &session, None)?;
         self.apply_request_overrides(&mut descriptor, &request.params);
         if let Some(binding) = request.talkback_binding {
@@ -904,6 +922,7 @@ impl RtpMediaProvider {
         self.rtp_descriptors
             .lock()
             .insert(descriptor.session_id.clone(), descriptor.clone());
+        guard.commit();
         Ok(descriptor)
     }
 }
