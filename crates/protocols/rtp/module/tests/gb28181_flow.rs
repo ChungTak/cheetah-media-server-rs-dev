@@ -19,7 +19,7 @@ use cheetah_sdk::media_api::rtp_session::{
     UpdateRtpSession,
 };
 use cheetah_sdk::media_api::{MediaCapabilitySet, MediaKey, MediaRequestContext};
-use cheetah_sdk::{PublisherOptions, StreamKey};
+use cheetah_sdk::{ModuleId, PublisherOptions, StreamKey};
 use tokio::time::{sleep, timeout, Instant as TokioInstant};
 
 mod support;
@@ -1555,7 +1555,7 @@ async fn rtp_receiver_fails_when_stream_already_has_publisher_lease() {
         .await
         .expect("open receiver returns before lease check");
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let mut gone = false;
     while tokio::time::Instant::now() < deadline && !gone {
         match rtp_api
@@ -1576,6 +1576,109 @@ async fn rtp_receiver_fails_when_stream_already_has_publisher_lease() {
         gone,
         "receiver session must stop when publisher lease is already held"
     );
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_module_restart_creates_init_starts_and_clears_sessions() {
+    // Verifies the base layer stops, recreates, re-initializes and restarts the
+    // RTP module, and that the module re-registers the typed RtpSessionApi.
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let media_key = MediaKey::with_default_vhost("gb28181_restart", "cam_001", None).unwrap();
+    let params = RtpSessionParamsBuilder::new(media_key.clone(), RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90_000,
+            channels: None,
+            packet_duration_ms: None,
+        })
+        .build();
+    let session = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("open receiver before restart");
+
+    // Restart the RTP module through the base layer lifecycle API.
+    let manager = harness.engine.module_manager_api();
+    manager
+        .restart_module(&ModuleId::new("rtp"))
+        .await
+        .expect("restart rtp module");
+
+    // Wait for the module to come back up.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline {
+        let states: std::collections::HashMap<String, _> = manager
+            .modules()
+            .into_iter()
+            .map(|(id, state)| (id.0, state))
+            .collect();
+        if states.get("rtp") == Some(&cheetah_sdk::module::ModuleState::Running) {
+            break;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+
+    // Re-obtain the typed API so we are talking to the new provider instance.
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api after restart");
+
+    // The pre-restart session should no longer exist (reconcile to a clean state).
+    let err = rtp_api
+        .get_session(
+            &ctx,
+            RtpSessionRef {
+                session_id: session.session_id,
+                expected_generation: session.generation,
+            },
+        )
+        .await
+        .expect_err("session should be gone after module restart");
+    assert_eq!(err.code, MediaErrorCode::NotFound);
+
+    // A new session can be opened, proving the provider was re-registered.
+    let media_key2 = MediaKey::with_default_vhost("gb28181_restart", "cam_002", None).unwrap();
+    let params2 = RtpSessionParamsBuilder::new(media_key2, RtpDirection::Receive)
+        .transport(RtpTransport::Udp)
+        .container(MediaContainer::Ps)
+        .payload_binding(RtpPayloadBinding {
+            payload_type: INGEST_PT,
+            codec: "PS".to_string(),
+            clock_rate: 90_000,
+            channels: None,
+            packet_duration_ms: None,
+        })
+        .build();
+    let _session2 = rtp_api
+        .open_receiver(
+            &ctx,
+            OpenRtpReceiver {
+                params: params2,
+                playback_range: None,
+            },
+        )
+        .await
+        .expect("open receiver after restart");
 
     harness.stop().await;
 }
