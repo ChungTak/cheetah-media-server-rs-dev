@@ -53,6 +53,13 @@ pub struct RtpModuleConfig {
     /// G711 RTP 包时长（毫秒）。ZLM 为 GB28181 互操作默认 100ms。
     #[serde(default = "default_g711_packet_duration_ms")]
     pub g711_packet_duration_ms: u32,
+    /// Audio codecs enabled for talk (duplex voice) sessions.
+    /// PCMA/PCMU are enabled by default; AAC must be explicitly added after capability
+    /// negotiation.
+    ///
+    /// 对讲允许使用的音频 codec。默认启用 PCMA/PCMU；AAC 必须在能力协商后显式添加。
+    #[serde(default = "default_enabled_talk_codecs")]
+    pub enabled_talk_codecs: Vec<String>,
     /// UDP socket receive buffer (`SO_RCVBUF`). 0 keeps the OS default.
     ///
     /// UDP 套接字接收缓冲区（SO_RCVBUF）。0 保持 OS 默认。
@@ -142,6 +149,7 @@ impl Default for RtpModuleConfig {
             audio_mtu: default_audio_mtu(),
             max_rtp_kb: 0,
             g711_packet_duration_ms: default_g711_packet_duration_ms(),
+            enabled_talk_codecs: default_enabled_talk_codecs(),
             udp_recv_buffer: default_udp_recv_buffer(),
             publish_frame_cache_frames: default_publish_frame_cache(),
             save_debug_payload: false,
@@ -395,6 +403,10 @@ where
 
 fn default_max_sessions() -> usize {
     10_000
+}
+
+fn default_enabled_talk_codecs() -> Vec<String> {
+    vec!["PCMA".to_string(), "PCMU".to_string()]
 }
 
 fn default_enabled_profiles() -> Vec<GbMediaCompatibilityProfile> {

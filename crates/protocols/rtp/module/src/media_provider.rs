@@ -130,6 +130,42 @@ impl RtpMediaProvider {
         Ok(())
     }
 
+    /// Normalize a codec name for case-insensitive comparison.
+    fn normalize_codec_name(codec: &str) -> String {
+        codec.trim().to_lowercase()
+    }
+
+    /// Enforce talk codec capability: PCMA/PCMU are preferred; AAC is only allowed when
+    /// explicitly enabled in the RTP module configuration.
+    fn check_talk_codec(&self, request: &OpenRtpTalk) -> Result<()> {
+        if self.config.enabled_talk_codecs.is_empty() {
+            return Err(MediaError::unsupported("no talk codecs are enabled"));
+        }
+        let enabled: std::collections::HashSet<String> = self
+            .config
+            .enabled_talk_codecs
+            .iter()
+            .map(|c| Self::normalize_codec_name(c))
+            .collect();
+        let check = |binding: &RtpPayloadBinding| {
+            let codec = Self::normalize_codec_name(&binding.codec);
+            if !enabled.contains(&codec) {
+                return Err(MediaError::unsupported(format!(
+                    "talk codec {} is not enabled",
+                    binding.codec
+                )));
+            }
+            Ok(())
+        };
+        for binding in &request.params.payload_bindings {
+            check(binding)?;
+        }
+        if let Some(binding) = &request.talkback_binding {
+            check(binding)?;
+        }
+        Ok(())
+    }
+
     /// Build the `StreamKey` that the engine uses for a given `MediaKey`.
     fn stream_key_for_media_key(media_key: &MediaKey) -> StreamKey {
         let (namespace, path) = StreamKeyBridge::to_namespace_path(media_key);
@@ -889,6 +925,7 @@ impl RtpMediaProvider {
         )
         .await?;
         self.check_profile_and_limits(&request.params)?;
+        self.check_talk_codec(&request)?;
         let sender_req = self.build_old_sender_request(
             OpenRtpSender {
                 params: request.params.clone(),
