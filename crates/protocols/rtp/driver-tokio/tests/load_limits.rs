@@ -30,6 +30,7 @@ fn test_config(
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
         limits,
+        udp_port_pool: None,
     }
 }
 

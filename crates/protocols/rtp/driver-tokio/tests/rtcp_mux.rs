@@ -33,6 +33,7 @@ async fn test_rtcp_mux_on_udp_socket_closes_session() {
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
         limits: DriverLimits::default(),
+        udp_port_pool: None,
     };
 
     let handle = start_driver(config, cancel.clone());
@@ -118,6 +119,7 @@ async fn test_rtcp_separate_port_reply_uses_rtcp_address() {
         tcp_framing: cheetah_rtp_core::RtpTcpFraming::AutoDetect,
         max_rtp_len_cap: 65536,
         limits: DriverLimits::default(),
+        udp_port_pool: None,
     };
 
     let handle = start_driver(config, cancel.clone());

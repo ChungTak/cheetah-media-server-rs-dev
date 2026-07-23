@@ -370,6 +370,10 @@ modules:
   #   # 动态最大 RTP 长度学习起点和上限
   #   max_rtp_len_initial: 2048
   #   max_rtp_len_cap: 65536
+  #   # 可选的每会话 UDP 端口池范围（含边界）。start/end 均为 0 表示使用 OS 临时端口。
+  #   # 推荐为 GB28181 等需要显式端口的场景预留一段连续端口。
+  #   udp_port_pool_start: 0
+  #   udp_port_pool_end: 0
   #   # 拉流/转推任务列表
   #   pull_jobs: []
 
