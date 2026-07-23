@@ -13,6 +13,7 @@ pub(crate) mod egress;
 pub mod media_provider;
 pub mod module;
 pub mod orchestrator;
+pub(crate) mod rollback;
 
 pub use config::RtpModuleConfig;
 pub use media_provider::RtpMediaProvider;
