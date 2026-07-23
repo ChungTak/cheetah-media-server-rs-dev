@@ -203,7 +203,8 @@ impl RtpSessionOrchestrator {
     }
 
     fn remove_session(&self, id: &RtpSessionId) {
-        self.sessions.lock().remove(id);
+        let mut sessions = self.sessions.lock();
+        sessions.remove(id);
     }
 
     /// Create a server (receiver) session, bind the requested local socket, and
@@ -239,25 +240,66 @@ impl RtpSessionOrchestrator {
             source_policy: Some(Self::map_source_policy(source_binding_policy)),
             track_filter,
         };
-        let actual_addr = driver
-            .create_server(spec, bind_addr, crate::egress::reuse_from_flag(reuse_port))
-            .await
-            .map_err(|e| MediaError::unavailable(e.to_string()))?;
-
         let session_id = RtpSessionId(session_key);
-        let session = self.build_session(
-            session_id,
+
+        // Pre-insert a placeholder so the ingress worker can stop the session as soon
+        // as it receives `SessionCreated`, even though the driver ack (and therefore
+        // the final local port) is still in flight.
+        let placeholder = self.build_session(
+            session_id.clone(),
             RtpSessionKind::Receiver,
-            media_key,
+            media_key.clone(),
             None,
             ssrc,
             payload_type,
-            Some(actual_addr.port()),
+            None,
             tcp_mode,
             reuse_port,
-            state,
+            RtpSessionState::Created,
         );
-        self.insert_session(session.clone())?;
+        self.insert_session(placeholder)?;
+
+        let actual_addr = driver
+            .create_server(spec, bind_addr, crate::egress::reuse_from_flag(reuse_port))
+            .await
+            .map_err(|e| {
+                self.remove_session(&session_id);
+                MediaError::unavailable(e.to_string())
+            })?;
+
+        let mut sessions = self.sessions.lock();
+        let session = if sessions.contains_key(&session_id) {
+            let s = self.build_session(
+                session_id,
+                RtpSessionKind::Receiver,
+                media_key,
+                None,
+                ssrc,
+                payload_type,
+                Some(actual_addr.port()),
+                tcp_mode,
+                reuse_port,
+                state,
+            );
+            sessions.insert(s.session_id.clone(), s.clone());
+            s
+        } else {
+            // The ingress worker stopped the session before the driver bound the port
+            // (e.g. the publish lease could not be secured). Return a consistent
+            // descriptor but do not re-insert into the orchestrator.
+            self.build_session(
+                session_id,
+                RtpSessionKind::Receiver,
+                media_key,
+                None,
+                ssrc,
+                payload_type,
+                Some(actual_addr.port()),
+                tcp_mode,
+                reuse_port,
+                RtpSessionState::Stopped,
+            )
+        };
         Ok(session)
     }
 

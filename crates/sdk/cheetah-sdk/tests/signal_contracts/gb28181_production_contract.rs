@@ -11,7 +11,7 @@ use cheetah_codec::{RtpHeader, RtpPacket};
 use cheetah_media_api::command::{RtpReceiverRequest, RtpSenderMode, RtpSenderRequest};
 use cheetah_media_api::model::{OnlineState, RtpSessionKind, RtpSessionState};
 use cheetah_media_api::rtp_session::SourceBindingPolicy;
-use cheetah_media_api::{MediaControlApi, RtpApi};
+use cheetah_media_api::{MediaControlApi, MediaKey, RtpApi};
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::time::timeout;
@@ -30,12 +30,18 @@ async fn gb28181_can_open_receiver_and_sender_sessions() {
         .expect("is_media_online");
     assert_eq!(online, OnlineState::Online);
 
+    // Use a fresh stream for the loopback pair: the golden fixture already holds a
+    // publisher lease on `golden_key`, so publishing into it from a receiver would
+    // conflict. The receiver writes to `loopback_key`, and the sender reads from it.
+    let loopback_key =
+        MediaKey::with_default_vhost("live", "rtp_loopback", None).expect("valid loopback key");
+
     // Open a UDP RTP receiver with an ephemeral port.
     let recv_session = facade
         .open_rtp_receiver(
             &ctx(),
             RtpReceiverRequest {
-                media_key: golden_key(),
+                media_key: loopback_key.clone(),
                 port: Some(0),
                 ip: Some("127.0.0.1".to_string()),
                 ssrc: Some(0x12345678),
