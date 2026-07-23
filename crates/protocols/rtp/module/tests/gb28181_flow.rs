@@ -15,9 +15,9 @@ use cheetah_sdk::media_api::model::{CloseReason, OnlineState, RecordTaskState, S
 use cheetah_sdk::media_api::port::{MediaControlApi, RecordApi, RtpApi};
 use cheetah_sdk::media_api::rtp_session::{
     GbMediaCompatibilityProfile, MediaContainer, OpenRtpReceiver, OpenRtpSender, OpenRtpTalk,
-    PlaybackRange, RtpDirection, RtpPayloadBinding, RtpSessionGeneration, RtpSessionParamsBuilder,
-    RtpSessionPurpose, RtpSessionQuery, RtpSessionRef, RtpTransport, SourceBindingPolicy,
-    StopRtpSession, UpdateRtpSession,
+    PlaybackRange, ReconcileRtpSessions, RtpDirection, RtpPayloadBinding, RtpSessionGeneration,
+    RtpSessionParamsBuilder, RtpSessionPurpose, RtpSessionQuery, RtpSessionRef, RtpTransport,
+    SourceBindingPolicy, StopRtpSession, UpdateRtpSession,
 };
 use cheetah_sdk::media_api::{MediaCapabilitySet, MediaKey, MediaRequestContext, Principal};
 use cheetah_sdk::{ModuleId, PublisherOptions, StreamKey};
@@ -1986,6 +1986,103 @@ async fn rtp_session_update_rejects_stale_generation_and_applies_remote_endpoint
         .await
         .expect("get updated session");
     assert_eq!(fetched.endpoints.remote, Some(remote));
+
+    harness.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rtp_session_reconcile_stops_missing_sessions_and_emits_events() {
+    let harness = Gb28181TestHarness::start().await;
+    let rtp_api = harness
+        .engine
+        .media_services()
+        .rtp_session()
+        .expect("rtp session api");
+    let ctx = MediaRequestContext::default();
+
+    let open = |key: MediaKey| async {
+        let params = RtpSessionParamsBuilder::new(key, RtpDirection::Receive)
+            .transport(RtpTransport::Udp)
+            .container(MediaContainer::Ps)
+            .payload_binding(RtpPayloadBinding {
+                payload_type: INGEST_PT,
+                codec: "PS".to_string(),
+                clock_rate: 90000,
+                channels: None,
+                packet_duration_ms: None,
+            })
+            .build();
+        rtp_api
+            .open_receiver(
+                &ctx,
+                OpenRtpReceiver {
+                    params,
+                    playback_range: None,
+                },
+            )
+            .await
+            .unwrap()
+    };
+
+    let key1 = MediaKey::with_default_vhost("gb28181_reconcile", "cam_001", None).unwrap();
+    let key2 = MediaKey::with_default_vhost("gb28181_reconcile", "cam_002", None).unwrap();
+    let key3 = MediaKey::with_default_vhost("gb28181_reconcile", "cam_003", None).unwrap();
+    let desc1 = open(key1.clone()).await;
+    let desc2 = open(key2.clone()).await;
+    let desc3 = open(key3.clone()).await;
+
+    let result = rtp_api
+        .reconcile_sessions(
+            &ctx,
+            ReconcileRtpSessions {
+                keep: vec![
+                    RtpSessionRef {
+                        session_id: desc1.session_id.clone(),
+                        expected_generation: desc1.generation,
+                    },
+                    RtpSessionRef {
+                        session_id: desc3.session_id.clone(),
+                        expected_generation: desc3.generation,
+                    },
+                ],
+            },
+        )
+        .await
+        .expect("reconcile");
+    assert_eq!(result, EffectOutcome::Applied);
+
+    // Give the driver stop command a moment to release the socket.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    let list = rtp_api
+        .list_sessions(&ctx, RtpSessionQuery::default())
+        .await
+        .unwrap();
+    let remaining: Vec<_> = list.items.into_iter().map(|d| d.session_id).collect();
+    assert!(remaining.contains(&desc1.session_id));
+    assert!(!remaining.contains(&desc2.session_id));
+    assert!(remaining.contains(&desc3.session_id));
+
+    // Re-running with the same keep set is a no-op.
+    let result = rtp_api
+        .reconcile_sessions(
+            &ctx,
+            ReconcileRtpSessions {
+                keep: vec![
+                    RtpSessionRef {
+                        session_id: desc1.session_id,
+                        expected_generation: desc1.generation,
+                    },
+                    RtpSessionRef {
+                        session_id: desc3.session_id,
+                        expected_generation: desc3.generation,
+                    },
+                ],
+            },
+        )
+        .await
+        .expect("reconcile idempotent");
+    assert_eq!(result, EffectOutcome::NotApplied);
 
     harness.stop().await;
 }
