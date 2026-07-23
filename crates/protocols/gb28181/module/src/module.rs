@@ -23,6 +23,7 @@ use parking_lot::Mutex;
 use serde_json::Value;
 
 use crate::config::{ControlOwner, Gb28181ModuleConfig};
+use crate::request::{GbRecvRequest, GbSendRequest, GbStopRequest, GbTalkRequest};
 
 const MODULE_ID: &str = "gb28181";
 
@@ -434,29 +435,13 @@ impl ModuleHttpService for GbHttpService {
     async fn handle(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
         match (req.method, req.path.as_str()) {
             (HttpMethod::Post, "/recv/create") => {
-                let body: Value = serde_json::from_slice(&req.body)
+                let body: GbRecvRequest = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
 
-                let app = extract_app_alias(&body);
-                let stream = extract_stream_alias(&body).ok_or_else(|| {
-                    SdkError::InvalidArgument("missing field: stream".to_string())
-                })?;
-
-                let ssrc = body
-                    .get("ssrc")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as u32)
-                    .unwrap_or_else(|| {
-                        use std::hash::{Hash, Hasher};
-                        let mut s = std::collections::hash_map::DefaultHasher::new();
-                        stream.hash(&mut s);
-                        (s.finish() % 1_000_000_000) as u32
-                    });
-
-                let port = body
-                    .get("port")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(self.default_media_port as u64) as u16;
+                let ssrc = body.ssrc();
+                let port = body.port(self.default_media_port);
+                let app = body.base.app;
+                let stream = body.base.stream;
 
                 // Allocate RTP server port and session in-process.
                 // SIP INVITE/SDP negotiation is performed by the external signaling system.
@@ -487,14 +472,11 @@ impl ModuleHttpService for GbHttpService {
                 ))
             }
             (HttpMethod::Post, "/recv/stop") => {
-                let body: Value = serde_json::from_slice(&req.body)
+                let body: GbStopRequest = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
 
-                let app = extract_app_alias(&body);
-                let stream = extract_stream_alias(&body).ok_or_else(|| {
-                    SdkError::InvalidArgument("missing field: stream".to_string())
-                })?;
-
+                let app = body.base.app;
+                let stream = body.base.stream;
                 let session_key = format!("{app}/{stream}");
 
                 let session_ref = {
@@ -514,33 +496,15 @@ impl ModuleHttpService for GbHttpService {
                 ))
             }
             (HttpMethod::Post, "/send/create") => {
-                let body: Value = serde_json::from_slice(&req.body)
+                let body: GbSendRequest = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
 
-                let app = extract_app_alias(&body);
-                let stream = extract_stream_alias(&body).ok_or_else(|| {
-                    SdkError::InvalidArgument("missing field: stream".to_string())
-                })?;
-
-                let ip = body
-                    .get("ip")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| SdkError::InvalidArgument("missing field: ip".to_string()))?
-                    .to_string();
-
-                let port =
-                    body.get("port").and_then(|v| v.as_u64()).ok_or_else(|| {
-                        SdkError::InvalidArgument("missing field: port".to_string())
-                    })? as u16;
-
-                let ssrc =
-                    body.get("ssrc").and_then(|v| v.as_u64()).ok_or_else(|| {
-                        SdkError::InvalidArgument("missing field: ssrc".to_string())
-                    })? as u32;
-
-                let remote = format!("{ip}:{port}")
+                let app = body.base.app;
+                let stream = body.base.stream;
+                let remote = format!("{}:{}", body.ip, body.port)
                     .parse::<SocketAddr>()
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid destination: {e}")))?;
+                let ssrc = body.ssrc as u32;
 
                 // Create RTP sender and start egress in one typed call.
                 let descriptor = self.open_gb_sender(&app, &stream, ssrc, remote).await?;
@@ -569,14 +533,11 @@ impl ModuleHttpService for GbHttpService {
                 ))
             }
             (HttpMethod::Post, "/send/stop") => {
-                let body: Value = serde_json::from_slice(&req.body)
+                let body: GbStopRequest = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
 
-                let app = extract_app_alias(&body);
-                let stream = extract_stream_alias(&body).ok_or_else(|| {
-                    SdkError::InvalidArgument("missing field: stream".to_string())
-                })?;
-
+                let app = body.base.app;
+                let stream = body.base.stream;
                 let session_key = format!("{app}/{stream}");
                 let session_ref = {
                     let mut sessions = self.active_sessions.lock();
@@ -595,57 +556,19 @@ impl ModuleHttpService for GbHttpService {
                 ))
             }
             (HttpMethod::Post, "/talk/start") => {
-                let body: Value = serde_json::from_slice(&req.body)
+                let body: GbTalkRequest = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
 
-                let app = extract_app_alias(&body);
-                let stream = extract_stream_alias(&body).ok_or_else(|| {
-                    SdkError::InvalidArgument("missing field: stream".to_string())
-                })?;
-
-                let ssrc = body
-                    .get("ssrc")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as u32)
-                    .unwrap_or(0);
-                let ip = body
-                    .get("ip")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("127.0.0.1")
-                    .to_string();
-                let port = body.get("port").and_then(|v| v.as_u64()).unwrap_or(30000) as u16;
-
-                let dest_addr = format!("{ip}:{port}").parse::<SocketAddr>().map_err(|e| {
-                    SdkError::InvalidArgument(format!("invalid destination address: {e}"))
-                })?;
-
-                let local_port = body
-                    .get("localPort")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as u16)
-                    .unwrap_or(self.default_media_port);
-
-                let payload_type = body.get("pt").and_then(|v| v.as_u64()).unwrap_or(8) as u8;
-                let codec = body
-                    .get("codec")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("PCMA")
-                    .to_string();
-                let clock_rate = body
-                    .get("clockRate")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(8000) as u32;
-                let channels = body
-                    .get("channels")
-                    .and_then(|v| v.as_u64())
-                    .map(|v| v as u8);
-
-                let payload_binding = RtpPayloadBinding {
-                    payload_type,
-                    codec,
-                    clock_rate,
-                    channels,
-                };
+                let ssrc = body.ssrc();
+                let local_port = body.local_port(self.default_media_port);
+                let dest_addr = format!("{}:{}", body.ip, body.port)
+                    .parse::<SocketAddr>()
+                    .map_err(|e| {
+                        SdkError::InvalidArgument(format!("invalid destination address: {e}"))
+                    })?;
+                let payload_binding = body.payload_binding();
+                let app = body.base.app;
+                let stream = body.base.stream;
 
                 let descriptor = self
                     .open_gb_talk(&app, &stream, ssrc, dest_addr, local_port, payload_binding)
@@ -674,14 +597,11 @@ impl ModuleHttpService for GbHttpService {
                 ))
             }
             (HttpMethod::Post, "/talk/stop") => {
-                let body: Value = serde_json::from_slice(&req.body)
+                let body: GbStopRequest = serde_json::from_slice(&req.body)
                     .map_err(|e| SdkError::InvalidArgument(format!("invalid JSON body: {e}")))?;
 
-                let app = extract_app_alias(&body);
-                let stream = extract_stream_alias(&body).ok_or_else(|| {
-                    SdkError::InvalidArgument("missing field: stream".to_string())
-                })?;
-
+                let app = body.base.app;
+                let stream = body.base.stream;
                 let session_key = format!("{app}/{stream}");
 
                 let session_ref = {
@@ -720,39 +640,6 @@ fn now_ms() -> u64 {
 #[allow(dead_code)]
 fn _now_ms_keepalive() {
     let _ = now_ms();
-}
-
-/// Pull the `stream` identifier out of an inbound REST body, accepting all the alias spellings
-/// observed across SMS / ZLM / ABL deployments.
-///
-/// 从 REST 请求体中提取 `stream` 标识符，兼容 SMS/ZLM/ABL 的字段别名。
-fn extract_stream_alias(body: &serde_json::Value) -> Option<String> {
-    body.get("stream")
-        .and_then(|v| v.as_str())
-        .or_else(|| body.get("streamName").and_then(|v| v.as_str()))
-        .or_else(|| body.get("recv_stream").and_then(|v| v.as_str()))
-        .or_else(|| body.get("recvStream").and_then(|v| v.as_str()))
-        .or_else(|| body.get("recvStreamId").and_then(|v| v.as_str()))
-        .or_else(|| body.get("send_stream").and_then(|v| v.as_str()))
-        .or_else(|| body.get("sendStream").and_then(|v| v.as_str()))
-        .or_else(|| body.get("send_stream_id").and_then(|v| v.as_str()))
-        .or_else(|| body.get("sendStreamId").and_then(|v| v.as_str()))
-        .map(|s| s.to_string())
-}
-
-/// Pull the `app` identifier out of an inbound REST body, accepting alias spellings.
-///
-/// 从 REST 请求体中提取 `app` 标识符，兼容字段别名。
-fn extract_app_alias(body: &serde_json::Value) -> String {
-    body.get("app")
-        .and_then(|v| v.as_str())
-        .or_else(|| body.get("appName").and_then(|v| v.as_str()))
-        .or_else(|| body.get("recv_app").and_then(|v| v.as_str()))
-        .or_else(|| body.get("recvApp").and_then(|v| v.as_str()))
-        .or_else(|| body.get("send_app").and_then(|v| v.as_str()))
-        .or_else(|| body.get("sendApp").and_then(|v| v.as_str()))
-        .unwrap_or("live")
-        .to_string()
 }
 
 #[cfg(test)]
