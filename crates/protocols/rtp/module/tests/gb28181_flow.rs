@@ -1067,16 +1067,22 @@ async fn gb28181_playback_sender_reads_from_playback_api_and_emits_rtp() {
 
     let source_key = StreamKey::new("rtp_playback_source", "main");
     let source_media_key = stream_key_to_media_key(&source_key);
+    // The playback provider publishes to an independent output stream so it does
+    // not overwrite or bypass the source publisher lease.
+    let output_key = cheetah_sdk::media_api::MediaKey::with_default_vhost(
+        "rtp_playback_source",
+        "playback_main",
+        None,
+    )
+    .expect("media key");
+    let output_stream = media_key_to_stream_key(&output_key);
     let publisher = harness
-        .open_publisher(
-            source_key.clone(),
-            vec![make_video_track(), make_audio_track()],
-        )
+        .open_publisher(output_stream, vec![make_video_track(), make_audio_track()])
         .await;
 
-    // Seed the source stream with PS video frames whose source timeline starts at
-    // 5 seconds. The playback range start is also 5 seconds, so the output RTP
-    // timeline should be normalized to begin near 0.
+    // Seed the playback output stream with PS video frames whose source timeline
+    // starts at 5 seconds. The playback range start is also 5 seconds, so the
+    // output RTP timeline should be normalized to begin near 0.
     let playback_start_us = 5_000_000;
     for i in 0..5 {
         let pts_us = playback_start_us + i * 100_000;
@@ -1309,14 +1315,18 @@ async fn gb28181_download_egress_is_rate_limited_and_does_not_block_live() {
 
     let source_key = StreamKey::new("rtp_download_source", "main");
     let source_media_key = stream_key_to_media_key(&source_key);
+    let output_key = cheetah_sdk::media_api::MediaKey::with_default_vhost(
+        "rtp_download_source",
+        "playback_main",
+        None,
+    )
+    .expect("media key");
+    let output_stream = media_key_to_stream_key(&output_key);
     let publisher = harness
-        .open_publisher(
-            source_key.clone(),
-            vec![make_video_track(), make_audio_track()],
-        )
+        .open_publisher(output_stream, vec![make_video_track(), make_audio_track()])
         .await;
 
-    // Seed the source stream with 10 small PS video frames.
+    // Seed the playback/download output stream with 10 small PS video frames.
     for i in 0..10 {
         let pts_us = i * 100_000;
         let ps = mux_ps_frame(&make_video_frame(pts_us));

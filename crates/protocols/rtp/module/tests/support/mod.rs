@@ -203,6 +203,12 @@ pub fn stream_key_to_media_key(stream_key: &StreamKey) -> cheetah_sdk::media_api
     .expect("media key")
 }
 
+pub fn media_key_to_stream_key(media_key: &cheetah_sdk::media_api::MediaKey) -> StreamKey {
+    let (namespace, path) =
+        cheetah_sdk::media_api::ids::StreamKeyBridge::to_namespace_path(media_key);
+    StreamKey::new(&namespace, &path)
+}
+
 pub fn make_video_track() -> TrackInfo {
     let mut track = TrackInfo::new(TrackId(0xE0), MediaKind::Video, CodecId::H264, 90_000);
     track.extradata = CodecExtradata::H264 {
@@ -334,6 +340,16 @@ impl PlaybackApi for FakePlayback {
     ) -> MediaResult<PlaybackSession> {
         self.open_count.fetch_add(1, Ordering::SeqCst);
         let id = format!("pb-{}", self.open_count.load(Ordering::SeqCst));
+        // Playback output uses an independent stream key so it never overwrites
+        // or bypasses the live source publisher lease.
+        let output_key = cheetah_sdk::media_api::MediaKey::new(
+            request.media_key.vhost.0.clone(),
+            request.media_key.app.0.clone(),
+            format!("playback_{}", request.media_key.stream.0),
+            None,
+        )
+        .ok()
+        .or(Some(request.media_key.clone()));
         let session = PlaybackSession {
             session_id: PlaybackSessionId(id.clone()),
             media_key: request.media_key.clone(),
@@ -343,7 +359,7 @@ impl PlaybackApi for FakePlayback {
             position_ms: request.start_position_ms,
             scale: request.scale,
             generation: 1,
-            output_key: Some(request.media_key),
+            output_key,
             last_error: None,
             created_at: now_ms(),
             updated_at: now_ms(),

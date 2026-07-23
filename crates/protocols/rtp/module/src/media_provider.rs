@@ -486,7 +486,7 @@ impl RtpApi for RtpMediaProvider {
         ctx: &MediaRequestContext,
         request: RtpSenderRequest,
     ) -> Result<RtpSession> {
-        self.open_rtp_sender_with_cancel(ctx, request, None, None, None)
+        self.open_rtp_sender_with_cancel(ctx, request, None, None, None, None)
             .await
             .map(|(s, _)| s)
     }
@@ -1039,6 +1039,7 @@ impl RtpMediaProvider {
         packet_duration_ms: Option<u32>,
         playback_range: Option<PlaybackRange>,
         download_options: Option<DownloadOptions>,
+        playback_stream_key: Option<StreamKey>,
     ) -> Result<(RtpSession, CancellationToken)> {
         Deadline::from_context(ctx)
             .check()
@@ -1055,8 +1056,11 @@ impl RtpMediaProvider {
             .await?;
         let session_key = session.session_id.0.clone();
 
-        // Determine the engine stream we need to subscribe to.
-        let stream_key = Self::stream_key_for_media_key(&request.media_key);
+        // Determine the engine stream we need to subscribe to. Playback/download
+        // sources publish to an independent output key so they do not overwrite
+        // or bypass the live source publisher lease.
+        let stream_key = playback_stream_key
+            .unwrap_or_else(|| Self::stream_key_for_media_key(&request.media_key));
 
         let driver = self.driver()?;
         let cancel = self.module_cancel.child_token();
@@ -1175,6 +1179,10 @@ impl RtpMediaProvider {
         } else {
             None
         };
+        let playback_stream_key = playback_session
+            .as_ref()
+            .and_then(|s| s.output_key.as_ref())
+            .map(Self::stream_key_for_media_key);
         let old_req = self.build_old_sender_request(request.clone(), mode)?;
         let packet_duration_ms = Self::packet_duration_ms_from_params(&request.params);
         let (session, cancel) = self
@@ -1184,6 +1192,7 @@ impl RtpMediaProvider {
                 packet_duration_ms,
                 request.playback_range.clone(),
                 download_options,
+                playback_stream_key,
             )
             .await?;
         let mut guard = RollbackGuard::new(
@@ -1244,7 +1253,7 @@ impl RtpMediaProvider {
                     .and_then(|b| b.packet_duration_ms)
             });
         let (session, cancel) = self
-            .open_rtp_sender_with_cancel(ctx, sender_req, packet_duration_ms, None, None)
+            .open_rtp_sender_with_cancel(ctx, sender_req, packet_duration_ms, None, None, None)
             .await?;
         let guard = RollbackGuard::new(
             self.orchestrator.clone(),
