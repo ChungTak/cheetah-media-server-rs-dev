@@ -11,6 +11,11 @@ pub mod config;
 /// GB28181 模块生命周期与 HTTP 媒体 API。
 pub mod module;
 
+/// GB28181 HTTP media request handlers and REST aliases.
+///
+/// GB28181 HTTP 媒体请求处理器与 REST 别名。
+pub mod http_service;
+
 /// Typed GB28181 REST media request DTOs and field aliases.
 ///
 /// GB28181 REST 媒体请求 DTO 与字段别名。
