@@ -16,6 +16,7 @@ cheetah-codec = { path = "../../foundation/cheetah-codec" }
 cheetah-media-api = { path = "../cheetah-media-api" }
 cheetah-runtime-api = { path = "../../runtime/cheetah-runtime-api" }
 cheetah-sdk-macros = { path = "../cheetah-sdk-macros", optional = true }
+parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

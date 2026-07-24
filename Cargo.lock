@@ -1476,6 +1476,7 @@ dependencies = [
  "cheetah-runtime-tokio",
  "cheetah-sdk-macros",
  "cheetah-snapshot-module",
+ "parking_lot",
  "serde",
  "serde_json",
  "sha2",

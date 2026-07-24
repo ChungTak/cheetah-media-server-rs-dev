@@ -100,6 +100,35 @@ fn is_secret_header(name: &str) -> bool {
     )
 }
 
+fn is_secret_query_key(name: &str) -> bool {
+    matches!(
+        name.to_lowercase().as_str(),
+        "authorization"
+            | "token"
+            | "api_key"
+            | "apikey"
+            | "secret"
+            | "password"
+            | "passwd"
+            | "x-zlm-secret"
+    )
+}
+
+fn redact_query(query: &str) -> String {
+    query
+        .split('&')
+        .map(|part| {
+            if let Some((key, _value)) = part.split_once('=') {
+                if is_secret_query_key(key) {
+                    return format!("{key}=<redacted>");
+                }
+            }
+            part.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 /// HTTP request delivered to a module's `ModuleHttpService`.
 ///
 /// 传递给模块 `ModuleHttpService` 的 HTTP 请求。
@@ -126,10 +155,11 @@ impl fmt::Debug for HttpRequest {
                 },
             })
             .collect();
+        let redacted_query = self.query.as_ref().map(|q| redact_query(q));
         f.debug_struct("HttpRequest")
             .field("method", &self.method)
             .field("path", &self.path)
-            .field("query", &self.query)
+            .field("query", &redacted_query)
             .field("headers", &redacted_headers)
             .field("body", &format!("<{} bytes>", self.body.len()))
             .finish()
@@ -395,5 +425,28 @@ mod tests {
         assert!(!out.contains("zlm-key"), "x-zlm-secret must be redacted");
         assert!(out.contains("application/json"), "non-secret header kept");
         assert!(out.contains("<7 bytes>"), "body shown as length");
+    }
+
+    #[test]
+    fn http_request_debug_redacts_secret_query_params() {
+        let req = HttpRequest {
+            method: HttpMethod::Get,
+            path: "/api/test".to_string(),
+            query: Some("token=secret-token&api_key=secret-key&foo=bar".to_string()),
+            headers: vec![],
+            body: Bytes::new(),
+        };
+        let out = format!("{req:?}");
+        assert!(
+            !out.contains("secret-token"),
+            "token value must be redacted"
+        );
+        assert!(
+            !out.contains("secret-key"),
+            "api_key value must be redacted"
+        );
+        assert!(out.contains("foo=bar"), "non-secret query param kept");
+        assert!(out.contains("token=<redacted>"), "token key preserved");
+        assert!(out.contains("api_key=<redacted>"), "api_key key preserved");
     }
 }

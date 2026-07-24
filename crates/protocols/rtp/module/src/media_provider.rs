@@ -408,7 +408,7 @@ impl RtpMediaProvider {
             )
         } else {
             (
-                TenantId::new("default").unwrap_or_else(|_| TenantId::new("cheetah").unwrap()),
+                TenantId::new("default").expect("default tenant id must be valid"),
                 OwnerEpoch(0),
                 MediaNodeInstanceEpoch(0),
                 None::<MediaSessionId>,
@@ -1337,11 +1337,9 @@ impl RtpMediaProvider {
                     start_ms: 0,
                     end_ms: None,
                 });
-                let source = request
-                    .params
-                    .record_source
-                    .clone()
-                    .expect("record_source checked by validate_playback_contract");
+                let source = request.params.record_source.clone().ok_or_else(|| {
+                    MediaError::invalid_argument("record_source required for playback/download")
+                })?;
                 let playback_session = playback
                     .open_playback(
                         ctx,

@@ -1,4 +1,6 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+use parking_lot::RwLock;
 
 use crate::idempotency::InMemoryIdempotencyRepository;
 use crate::output::OutputRegistryRegistration;
@@ -64,7 +66,7 @@ impl MediaServices {
         &self,
         registry: Arc<dyn MediaOutputRegistryApi>,
     ) -> OutputRegistryRegistration {
-        let mut inner = self.inner.write().expect("media services lock");
+        let mut inner = self.inner.write();
         inner.generation += 1;
         let generation = inner.generation;
         let provider_id = format!("output_registry:{generation}");
@@ -84,7 +86,6 @@ impl MediaServices {
     pub fn output_registry(&self) -> Option<Arc<dyn MediaOutputRegistryApi>> {
         self.inner
             .read()
-            .expect("media services lock")
             .output_registry
             .as_ref()
             .map(|s| s.registry.clone())
@@ -94,7 +95,7 @@ impl MediaServices {
     ///
     /// 使用之前返回的注册句柄注销输出注册表。
     pub fn unregister_output_registry(&self, registration: &OutputRegistryRegistration) -> bool {
-        let mut inner = self.inner.write().expect("media services lock");
+        let mut inner = self.inner.write();
         if inner
             .output_registry
             .as_ref()
@@ -124,7 +125,7 @@ impl MediaServices {
         control: Arc<dyn MediaControlApi>,
         capabilities: MediaCapabilitySet,
     ) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let provider_id = format!("control:{generation}");
@@ -148,7 +149,6 @@ impl MediaServices {
     pub fn control(&self) -> Option<Arc<dyn MediaControlApi>> {
         self.inner
             .read()
-            .expect("media services lock")
             .control
             .as_ref()
             .map(|e| e.provider.clone())
@@ -175,7 +175,7 @@ impl MediaServices {
         publish_subscribe: Arc<dyn PublishSubscribeApi>,
         capabilities: MediaCapabilitySet,
     ) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let provider_id = format!("publish_subscribe:{generation}");
@@ -199,7 +199,6 @@ impl MediaServices {
     pub fn publish_subscribe(&self) -> Option<Arc<dyn PublishSubscribeApi>> {
         self.inner
             .read()
-            .expect("media services lock")
             .publish_subscribe
             .as_ref()
             .map(|e| e.provider.clone())
@@ -220,7 +219,7 @@ impl MediaServices {
         record: Arc<dyn RecordApi>,
         capabilities: MediaCapabilitySet,
     ) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let provider_id = format!("record:{generation}");
@@ -244,7 +243,6 @@ impl MediaServices {
     pub fn record(&self) -> Option<Arc<dyn RecordApi>> {
         self.inner
             .read()
-            .expect("media services lock")
             .record
             .as_ref()
             .map(|e| e.provider.clone())
@@ -265,7 +263,7 @@ impl MediaServices {
         snapshot: Arc<dyn SnapshotApi>,
         capabilities: MediaCapabilitySet,
     ) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let provider_id = format!("snapshot:{generation}");
@@ -289,7 +287,6 @@ impl MediaServices {
     pub fn snapshot(&self) -> Option<Arc<dyn SnapshotApi>> {
         self.inner
             .read()
-            .expect("media services lock")
             .snapshot
             .as_ref()
             .map(|e| e.provider.clone())
@@ -310,7 +307,7 @@ impl MediaServices {
         playback: Arc<dyn PlaybackApi>,
         capabilities: MediaCapabilitySet,
     ) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let provider_id = format!("playback:{generation}");
@@ -334,7 +331,6 @@ impl MediaServices {
     pub fn playback(&self) -> Option<Arc<dyn PlaybackApi>> {
         self.inner
             .read()
-            .expect("media services lock")
             .playback
             .as_ref()
             .map(|e| e.provider.clone())
@@ -359,7 +355,7 @@ impl MediaServices {
         image_encode: Arc<dyn ImageEncodeApi>,
         capabilities: MediaCapabilitySet,
     ) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let provider_id = format!("image_encode:{generation}");
@@ -383,7 +379,6 @@ impl MediaServices {
     pub fn image_encode(&self) -> Option<Arc<dyn ImageEncodeApi>> {
         self.inner
             .read()
-            .expect("media services lock")
             .image_encode
             .as_ref()
             .map(|e| e.provider.clone())
@@ -408,7 +403,7 @@ impl MediaServices {
         image_process: Arc<dyn ImageProcessApi>,
         capabilities: MediaCapabilitySet,
     ) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let provider_id = format!("image_process:{generation}");
@@ -432,7 +427,6 @@ impl MediaServices {
     pub fn image_process(&self) -> Option<Arc<dyn ImageProcessApi>> {
         self.inner
             .read()
-            .expect("media services lock")
             .image_process
             .as_ref()
             .map(|e| e.provider.clone())
@@ -454,7 +448,7 @@ impl MediaServices {
         processing: Arc<dyn MediaProcessingApi>,
         capabilities: MediaCapabilitySet,
     ) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let provider_id = format!("processing:{generation}");
@@ -478,7 +472,6 @@ impl MediaServices {
     pub fn processing(&self) -> Option<Arc<dyn MediaProcessingApi>> {
         self.inner
             .read()
-            .expect("media services lock")
             .processing
             .as_ref()
             .map(|e| e.provider.clone())
@@ -499,7 +492,7 @@ impl MediaServices {
         proxy: Arc<dyn ProxyApi>,
         capabilities: MediaCapabilitySet,
     ) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let provider_id = format!("proxy:{generation}");
@@ -521,12 +514,7 @@ impl MediaServices {
     ///
     /// 返回当前代理 provider（如有）。
     pub fn proxy(&self) -> Option<Arc<dyn ProxyApi>> {
-        self.inner
-            .read()
-            .expect("media services lock")
-            .proxy
-            .as_ref()
-            .map(|e| e.provider.clone())
+        self.inner.read().proxy.as_ref().map(|e| e.provider.clone())
     }
 
     /// Register the RTP provider.
@@ -544,7 +532,7 @@ impl MediaServices {
         rtp: Arc<dyn RtpApi>,
         capabilities: MediaCapabilitySet,
     ) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let provider_id = format!("rtp:{generation}");
@@ -566,12 +554,7 @@ impl MediaServices {
     ///
     /// 返回当前 RTP provider（如有）。
     pub fn rtp(&self) -> Option<Arc<dyn RtpApi>> {
-        self.inner
-            .read()
-            .expect("media services lock")
-            .rtp
-            .as_ref()
-            .map(|e| e.provider.clone())
+        self.inner.read().rtp.as_ref().map(|e| e.provider.clone())
     }
 
     /// Register the typed RTP session provider.
@@ -592,7 +575,7 @@ impl MediaServices {
         rtp_session: Arc<dyn RtpSessionApi>,
         capabilities: MediaCapabilitySet,
     ) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let provider_id = format!("rtp_session:{generation}");
@@ -616,7 +599,6 @@ impl MediaServices {
     pub fn rtp_session(&self) -> Option<Arc<dyn RtpSessionApi>> {
         self.inner
             .read()
-            .expect("media services lock")
             .rtp_session
             .as_ref()
             .map(|e| e.provider.clone())
@@ -626,7 +608,7 @@ impl MediaServices {
     ///
     /// 注册 webhook provider。
     pub fn register_webhook(&self, webhook: Arc<dyn WebhookApi>) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let capabilities = webhook_default_capabilities();
@@ -651,7 +633,6 @@ impl MediaServices {
     pub fn webhook(&self) -> Option<Arc<dyn WebhookApi>> {
         self.inner
             .read()
-            .expect("media services lock")
             .webhook
             .as_ref()
             .map(|e| e.provider.clone())
@@ -661,7 +642,7 @@ impl MediaServices {
     ///
     /// 注册 webhook 管理 provider。
     pub fn register_webhook_admin(&self, admin: Arc<dyn WebhookAdminApi>) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let capabilities = webhook_admin_default_capabilities();
@@ -686,7 +667,6 @@ impl MediaServices {
     pub fn webhook_admin(&self) -> Option<Arc<dyn WebhookAdminApi>> {
         self.inner
             .read()
-            .expect("media services lock")
             .webhook_admin
             .as_ref()
             .map(|e| e.provider.clone())
@@ -710,7 +690,7 @@ impl MediaServices {
         admission: Arc<dyn MediaAdmissionApi>,
         capabilities: MediaCapabilitySet,
     ) -> ProviderRegistration {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         registry.generation += 1;
         let generation = registry.generation;
         let provider_id = format!("admission:{generation}");
@@ -734,7 +714,6 @@ impl MediaServices {
     pub fn admission(&self) -> Option<Arc<dyn MediaAdmissionApi>> {
         self.inner
             .read()
-            .expect("media services lock")
             .admission
             .as_ref()
             .map(|e| e.provider.clone())
@@ -745,7 +724,7 @@ impl MediaServices {
     ///
     /// 使用之前返回的 `ProviderRegistration` 注销 provider。若 generation 匹配且成功移除则返回 `true`。
     pub fn unregister(&self, registration: &ProviderRegistration) -> bool {
-        let mut registry = self.inner.write().expect("media services lock");
+        let mut registry = self.inner.write();
         let mut slot = match registry.slot_for(registration.capability) {
             Some(slot) => slot,
             None => return false,
@@ -763,7 +742,7 @@ impl MediaServices {
     ///
     /// 返回注册表当前宣告的能力集，即所有已注册 provider 能力集的并集。
     pub fn capabilities(&self) -> MediaCapabilitySet {
-        let registry = self.inner.read().expect("media services lock");
+        let registry = self.inner.read();
         let mut set = MediaCapabilitySet::empty();
         if let Some(entry) = &registry.control {
             set.merge(&entry.capabilities);
@@ -811,7 +790,7 @@ impl MediaServices {
     ///
     /// 返回带每个 provider 描述符的聚合能力报告。
     pub fn capability_report(&self) -> MediaCapabilityReport {
-        let registry = self.inner.read().expect("media services lock");
+        let registry = self.inner.read();
         let mut descriptors = Vec::new();
         if let Some(entry) = &registry.control {
             descriptors.extend(entry.descriptors.clone());
