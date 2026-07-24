@@ -2,6 +2,7 @@
 //!
 //! HTTP(S)/WS(S) fMP4 拉取客户端。
 
+use std::fmt;
 use std::sync::Arc;
 
 use bytes::Bytes;
@@ -10,14 +11,80 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
+const REDACT_SECRET_QUERY_KEYS: &[&str] = &[
+    "authorization",
+    "token",
+    "access_token",
+    "refresh_token",
+    "api_key",
+    "apikey",
+    "key",
+    "secret",
+    "signature",
+    "sign",
+    "auth",
+    "ticket",
+    "password",
+    "passwd",
+    "x-api-key",
+    "x_zlm_secret",
+    "x-zlm-secret",
+    "cookie",
+    "proxy-authorization",
+    "passphrase",
+];
+
+fn is_secret_query_key(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    REDACT_SECRET_QUERY_KEYS.iter().any(|k| lower == *k)
+}
+
+fn redact_url_for_debug(url: &str) -> String {
+    let mut s = url.to_string();
+    if let Some(scheme_end) = s.find("://") {
+        let after = &s[scheme_end + 3..];
+        if let Some(at) = after.find('@') {
+            s = format!("{}://{}", &s[..scheme_end], &after[at + 1..]);
+        }
+    }
+
+    if let Some((path, query)) = s.split_once('?') {
+        let redacted = query
+            .split('&')
+            .map(|part| {
+                if let Some((key, _)) = part.split_once('=') {
+                    if is_secret_query_key(key) {
+                        return format!("{key}=<redacted>");
+                    }
+                }
+                part.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        format!("{path}?{redacted}")
+    } else {
+        s
+    }
+}
+
 /// Configuration for the pull client.
 ///
 /// 拉取客户端配置。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Fmp4PullClientConfig {
     pub url: String,
     pub read_buffer_size: usize,
     pub insecure_tls: bool,
+}
+
+impl fmt::Debug for Fmp4PullClientConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Fmp4PullClientConfig")
+            .field("url", &redact_url_for_debug(&self.url))
+            .field("read_buffer_size", &self.read_buffer_size)
+            .field("insecure_tls", &self.insecure_tls)
+            .finish()
+    }
 }
 
 /// Events from the pull client.
@@ -667,5 +734,18 @@ mod tests {
         assert!(matches!(detect_scheme("ws://x"), Ok(Scheme::Ws)));
         assert!(matches!(detect_scheme("wss://x"), Ok(Scheme::Wss)));
         assert!(detect_scheme("ftp://x").is_err());
+    }
+
+    #[test]
+    fn debug_redacts_url_secrets_and_userinfo() {
+        let cfg = Fmp4PullClientConfig {
+            url: "https://user:pass@host/live/test.mp4?token=secret&other=ok".to_string(),
+            read_buffer_size: 8192,
+            insecure_tls: false,
+        };
+        let out = format!("{cfg:?}");
+        assert!(!out.contains("user:pass"), "{out}");
+        assert!(!out.contains("token=secret"), "{out}");
+        assert!(out.contains("other=ok"), "{out}");
     }
 }

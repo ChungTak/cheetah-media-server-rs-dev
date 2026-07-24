@@ -2,6 +2,9 @@
 //!
 //! TS 模块配置。
 
+use std::fmt;
+
+use cheetah_sdk::redact_url_secrets_for_debug;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for the TS module.
@@ -56,7 +59,7 @@ pub struct TsTlsConfig {
 /// Configuration for a TS pull job.
 ///
 /// TS 拉流任务配置。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct TsPullJobConfig {
     pub name: String,
     #[serde(default = "default_true")]
@@ -69,6 +72,23 @@ pub struct TsPullJobConfig {
     pub max_retry_backoff_ms: u64,
     #[serde(default)]
     pub insecure_tls: bool,
+}
+
+impl fmt::Debug for TsPullJobConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TsPullJobConfig")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field(
+                "source_url",
+                &redact_url_secrets_for_debug(&self.source_url),
+            )
+            .field("target_stream_key", &self.target_stream_key)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_retry_backoff_ms", &self.max_retry_backoff_ms)
+            .field("insecure_tls", &self.insecure_tls)
+            .finish()
+    }
 }
 
 impl Default for TsModuleConfig {
@@ -341,5 +361,22 @@ mod tests {
         });
         let err = config.validate().unwrap_err();
         assert!(err.contains("retry_backoff_ms"));
+    }
+
+    #[test]
+    fn debug_redacts_url_secrets_and_userinfo() {
+        let job = TsPullJobConfig {
+            name: "test".to_string(),
+            enabled: true,
+            source_url: "http://user:pass@host/live/test.ts?token=secret&other=ok".to_string(),
+            target_stream_key: "live/test".to_string(),
+            retry_backoff_ms: 500,
+            max_retry_backoff_ms: 5_000,
+            insecure_tls: false,
+        };
+        let out = format!("{job:?}");
+        assert!(!out.contains("user:pass"), "{out}");
+        assert!(!out.contains("token=secret"), "{out}");
+        assert!(out.contains("other=ok"), "{out}");
     }
 }
