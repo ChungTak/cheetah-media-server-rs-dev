@@ -30,4 +30,9 @@ pub enum HlsCoreError {
     /// 时间戳或 cue 时间无效。
     #[error("invalid timestamp")]
     InvalidTimestamp,
+    /// Playlist text is malformed or contains values that violate the HLS spec.
+    ///
+    /// 播放列表文本格式错误或包含违反 HLS 规范的内容。
+    #[error("invalid playlist: {reason}")]
+    InvalidPlaylist { reason: String },
 }

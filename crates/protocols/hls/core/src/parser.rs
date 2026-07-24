@@ -60,8 +60,8 @@ pub fn parse_media_playlist(input: &str) -> Result<ParsedMediaPlaylist, HlsCoreE
         });
     }
 
-    let mut target_duration: u32 = 0;
-    let mut media_sequence: u64 = 0;
+    let mut target_duration: Option<u32> = None;
+    let mut media_sequence: Option<u64> = None;
     let mut segments = Vec::new();
     let mut end_list = false;
     let mut pending_duration: Option<f64> = None;
@@ -73,15 +73,44 @@ pub fn parse_media_playlist(input: &str) -> Result<ParsedMediaPlaylist, HlsCoreE
         }
 
         if let Some(val) = line.strip_prefix("#EXT-X-TARGETDURATION:") {
-            target_duration = val.trim().parse().unwrap_or(0);
+            let parsed: u32 = val
+                .trim()
+                .parse()
+                .map_err(|_| HlsCoreError::InvalidPlaylist {
+                    reason: format!("invalid #EXT-X-TARGETDURATION: {}", val.trim()),
+                })?;
+            if parsed == 0 {
+                return Err(HlsCoreError::InvalidPlaylist {
+                    reason: "#EXT-X-TARGETDURATION must be > 0".to_string(),
+                });
+            }
+            target_duration = Some(parsed);
         } else if let Some(val) = line.strip_prefix("#EXT-X-MEDIA-SEQUENCE:") {
-            media_sequence = val.trim().parse().unwrap_or(0);
+            let parsed: u64 = val
+                .trim()
+                .parse()
+                .map_err(|_| HlsCoreError::InvalidPlaylist {
+                    reason: format!("invalid #EXT-X-MEDIA-SEQUENCE: {}", val.trim()),
+                })?;
+            media_sequence = Some(parsed);
         } else if line == "#EXT-X-ENDLIST" {
             end_list = true;
         } else if let Some(val) = line.strip_prefix("#EXTINF:") {
             // Format: duration[,title]
             let dur_str = val.split(',').next().unwrap_or("0");
-            pending_duration = Some(dur_str.trim().parse().unwrap_or(0.0));
+            let parsed: f64 =
+                dur_str
+                    .trim()
+                    .parse()
+                    .map_err(|_| HlsCoreError::InvalidPlaylist {
+                        reason: format!("invalid #EXTINF duration: {}", dur_str.trim()),
+                    })?;
+            if parsed < 0.0 {
+                return Err(HlsCoreError::InvalidPlaylist {
+                    reason: "#EXTINF duration must be >= 0".to_string(),
+                });
+            }
+            pending_duration = Some(parsed);
         } else if !line.starts_with('#') {
             // URI line
             if let Some(dur) = pending_duration.take() {
@@ -93,9 +122,13 @@ pub fn parse_media_playlist(input: &str) -> Result<ParsedMediaPlaylist, HlsCoreE
         }
     }
 
+    let target_duration = target_duration.ok_or_else(|| HlsCoreError::InvalidPlaylist {
+        reason: "missing #EXT-X-TARGETDURATION".to_string(),
+    })?;
+
     Ok(ParsedMediaPlaylist {
         target_duration,
-        media_sequence,
+        media_sequence: media_sequence.unwrap_or(1),
         segments,
         end_list,
     })
@@ -189,6 +222,52 @@ mod tests {
         assert_eq!(pl.variants[0].bandwidth, 1280000);
         assert_eq!(pl.variants[0].uri, "low/index.m3u8");
         assert_eq!(pl.variants[1].bandwidth, 2560000);
+    }
+
+    #[test]
+    fn parse_media_playlist_defaults_missing_media_sequence() {
+        let input = "#EXTM3U\n\
+                     #EXT-X-TARGETDURATION:4\n\
+                     #EXTINF:3.967,\n\
+                     seg_10.ts\n";
+        let pl = parse_media_playlist(input).unwrap();
+        assert_eq!(pl.media_sequence, 1);
+    }
+
+    #[test]
+    fn rejects_missing_target_duration() {
+        let input = "#EXTM3U\n\
+                     #EXTINF:3.967,\n\
+                     seg_10.ts\n";
+        assert!(parse_media_playlist(input).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_target_duration() {
+        let input = "#EXTM3U\n\
+                     #EXT-X-TARGETDURATION:0\n\
+                     #EXTINF:3.967,\n\
+                     seg_10.ts\n";
+        assert!(parse_media_playlist(input).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_media_sequence() {
+        let input = "#EXTM3U\n\
+                     #EXT-X-TARGETDURATION:4\n\
+                     #EXT-X-MEDIA-SEQUENCE:abc\n\
+                     #EXTINF:3.967,\n\
+                     seg_10.ts\n";
+        assert!(parse_media_playlist(input).is_err());
+    }
+
+    #[test]
+    fn rejects_negative_extinf_duration() {
+        let input = "#EXTM3U\n\
+                     #EXT-X-TARGETDURATION:4\n\
+                     #EXTINF:-1.0,\n\
+                     seg_10.ts\n";
+        assert!(parse_media_playlist(input).is_err());
     }
 
     #[test]

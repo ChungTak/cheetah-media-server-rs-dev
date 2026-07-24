@@ -572,6 +572,7 @@ impl HlsCore {
                     HlsCoreError::NotReady => (503, "Not Ready"),
                     HlsCoreError::InvalidPath { .. } => (400, "Bad Request"),
                     HlsCoreError::InvalidTimestamp => (400, "Bad Request"),
+                    HlsCoreError::InvalidPlaylist { .. } => (400, "Bad Request"),
                 };
                 vec![HlsCoreOutput::SendResponse {
                     connection_id,
