@@ -1,0 +1,47 @@
+name: SBOM
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    name: Generate SBOM artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@7ccf588e3cf3cc2611714c2eeae48550fbc17552
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: cheetah-sbom.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload CycloneDX SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cheetah-sbom-cdx-json
+          path: cheetah-sbom.cdx.json
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@7ccf588e3cf3cc2611714c2eeae48550fbc17552
+        with:
+          path: .
+          format: spdx-json
+          output-file: cheetah-sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload SPDX SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cheetah-sbom-spdx-json
+          path: cheetah-sbom.spdx.json
