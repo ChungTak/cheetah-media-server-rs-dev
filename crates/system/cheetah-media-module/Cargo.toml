@@ -12,6 +12,7 @@ bytes.workspace = true
 cheetah-media-api = { path = "../../sdk/cheetah-media-api" }
 cheetah-sdk = { path = "../../sdk/cheetah-sdk" }
 getrandom.workspace = true
+parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_urlencoded.workspace = true

@@ -242,10 +242,7 @@ async fn run_webhook_test(
         event_id: RequestId(format!("test-{}", ctx.request_id.0)),
         kind: "WebhookTest".to_string(),
         media_key: cheetah_media_api::ids::MediaKey::with_default_vhost("test", "test", None)
-            .unwrap_or_else(|_| {
-                cheetah_media_api::ids::MediaKey::new("__defaultVhost__", "test", "test", None)
-                    .expect("default key valid")
-            }),
+            .expect("default media key is valid"),
         payload: "webhook test payload".to_string(),
     };
 

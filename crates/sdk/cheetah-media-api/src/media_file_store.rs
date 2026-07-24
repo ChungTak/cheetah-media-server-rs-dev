@@ -33,12 +33,8 @@ pub struct FileStoreEntry {
 impl Default for FileStoreEntry {
     fn default() -> Self {
         Self {
-            media_key: MediaKey::with_default_vhost("*", "*", None).unwrap_or_else(|_| MediaKey {
-                vhost: crate::ids::VhostName("__defaultVhost__".to_string()),
-                app: crate::ids::AppName("*".to_string()),
-                stream: crate::ids::StreamName("*".to_string()),
-                schema: None,
-            }),
+            media_key: MediaKey::with_default_vhost("live", "default", None)
+                .expect("default media key is valid"),
             file_type: String::new(),
             content_type: String::new(),
             size_bytes: 0,

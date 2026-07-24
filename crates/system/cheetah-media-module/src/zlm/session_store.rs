@@ -3,9 +3,9 @@
 //! Session state and failed-login counters are kept inside the adapter module;
 //! they are not passed into the domain layer.
 
+use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::RwLock;
 use std::time::{Duration, Instant};
 
 use cheetah_media_api::{MediaScope, Principal};
@@ -45,7 +45,7 @@ impl SessionStore {
     /// Validate a session token and return the associated principal if it is
     /// still valid. Expired entries are removed on lookup.
     pub(crate) fn validate(&self, token: &str, now: Instant) -> Option<Principal> {
-        let mut sessions = self.sessions.write().unwrap();
+        let mut sessions = self.sessions.write();
         let entry = sessions.get(token)?;
         if now > entry.expires_at {
             sessions.remove(token);
@@ -61,7 +61,7 @@ impl SessionStore {
         let expires_at = now + ttl;
 
         let max_sessions = self.max_sessions.load(Ordering::Relaxed);
-        let mut sessions = self.sessions.write().unwrap();
+        let mut sessions = self.sessions.write();
         if sessions.len() >= max_sessions {
             // Evict expired sessions.
             sessions.retain(|_, e| now <= e.expires_at);
@@ -87,7 +87,7 @@ impl SessionStore {
 
     /// Remove a session (logout).
     pub(crate) fn remove(&self, token: &str) {
-        self.sessions.write().unwrap().remove(token);
+        self.sessions.write().remove(token);
     }
 
     /// Check whether a username is currently rate limited, without recording a
@@ -95,7 +95,7 @@ impl SessionStore {
     pub(crate) fn is_rate_limited(&self, username: &str) -> bool {
         let window = Duration::from_secs(FAILED_ATTEMPT_WINDOW_SECS);
         let now = Instant::now();
-        let attempts = self.failed_attempts.read().unwrap();
+        let attempts = self.failed_attempts.read();
         if let Some(entry) = attempts.get(username) {
             let recent = entry
                 .iter()
@@ -112,7 +112,7 @@ impl SessionStore {
     pub(crate) fn record_failed_attempt(&self, username: &str) -> bool {
         let window = Duration::from_secs(FAILED_ATTEMPT_WINDOW_SECS);
         let now = Instant::now();
-        let mut attempts = self.failed_attempts.write().unwrap();
+        let mut attempts = self.failed_attempts.write();
         // Keep the username map bounded: drop expired/stale timestamps and remove
         // entries that become empty, then refuse to create new keys once the
         // distinct-username cap is reached.
@@ -131,7 +131,7 @@ impl SessionStore {
 
     /// Clear failed login attempts for a username after a successful login.
     pub(crate) fn clear_failed_logins(&self, username: &str) {
-        self.failed_attempts.write().unwrap().remove(username);
+        self.failed_attempts.write().remove(username);
     }
 
     /// Convenience to build the full-scope principal used for a ZLM session.

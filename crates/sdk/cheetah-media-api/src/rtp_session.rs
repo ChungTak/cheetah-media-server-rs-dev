@@ -622,15 +622,8 @@ impl RtpSessionParamsBuilder {
 impl Default for RtpSessionParams {
     fn default() -> Self {
         Self {
-            media_key: MediaKey::with_default_vhost("live", "default", None).unwrap_or_else(|_| {
-                // This fallback is unreachable because "live" and "default" are valid.
-                MediaKey {
-                    vhost: crate::ids::VhostName::default_value(),
-                    app: crate::ids::AppName::new("live").unwrap(),
-                    stream: crate::ids::StreamName::new("default").unwrap(),
-                    schema: None,
-                }
-            }),
+            media_key: MediaKey::with_default_vhost("live", "default", None)
+                .expect("default media key is valid"),
             direction: RtpDirection::default(),
             transport: RtpTransport::default(),
             tcp_role: None,
