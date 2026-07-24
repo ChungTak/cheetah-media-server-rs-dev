@@ -7,7 +7,9 @@
 //! 节点生命周期 supervisor：注册、心跳、租约丢失、drain 与关机。
 
 use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use async_trait::async_trait;
 use cheetah_media_api::error::MediaError;
@@ -185,15 +187,16 @@ impl NodeSupervisor {
 
     /// Snapshot the current node runtime state, if registered.
     pub fn runtime_state(&self) -> Option<NodeRuntimeState> {
-        self.inner.lock().ok().and_then(|g| g.runtime.clone())
+        self.inner.lock().runtime.clone()
     }
 
     /// Current lifecycle state (Disabled when not yet registered).
     pub fn state(&self) -> NodeState {
         self.inner
             .lock()
-            .ok()
-            .and_then(|g| g.runtime.as_ref().map(|r| r.state))
+            .runtime
+            .as_ref()
+            .map(|r| r.state)
             .unwrap_or(NodeState::Disabled)
     }
 
@@ -212,16 +215,13 @@ impl NodeSupervisor {
 
     /// Heartbeat interval currently requested by the registry.
     pub fn heartbeat_interval_ms(&self) -> u64 {
-        self.inner
-            .lock()
-            .map(|g| g.next_heartbeat_interval_ms)
-            .unwrap_or(5_000)
+        self.inner.lock().next_heartbeat_interval_ms
     }
 
     /// Begin registration: Binding -> Registering -> Active (or stay Registering on failure).
     pub async fn register(&self) -> Result<NodeRegistrationResponse, ControlPlaneError> {
         {
-            let mut g = self.lock()?;
+            let mut g = self.inner.lock();
             match g.runtime.as_ref().map(|r| r.state) {
                 None | Some(NodeState::Disabled) | Some(NodeState::Isolated) => {
                     g.runtime = Some(placeholder_runtime(&g.identity, NodeState::Binding));
@@ -248,7 +248,7 @@ impl NodeSupervisor {
         self.capacity.set_node_gate(false).await?;
 
         let request = {
-            let g = self.lock()?;
+            let g = self.inner.lock();
             NodeRegistrationRequest {
                 node_identity: g.identity.clone(),
                 previous_lease_id: g
@@ -265,7 +265,7 @@ impl NodeSupervisor {
                 Ok(resp)
             }
             Err(e) => {
-                let mut g = self.lock()?;
+                let mut g = self.inner.lock();
                 // Stay in Registering so the host can retry with backoff.
                 if let Some(rt) = g.runtime.as_mut() {
                     rt.state = NodeState::Registering;
@@ -281,7 +281,7 @@ impl NodeSupervisor {
         resp: &NodeRegistrationResponse,
     ) -> Result<(), ControlPlaneError> {
         {
-            let mut g = self.lock()?;
+            let mut g = self.inner.lock();
             g.identity.instance_epoch = resp.instance_epoch;
             let identity = g.identity.clone();
             g.runtime = Some(NodeRuntimeState {
@@ -311,7 +311,7 @@ impl NodeSupervisor {
     /// Send one heartbeat if the node is Active or Draining.
     pub async fn heartbeat(&self) -> Result<NodeHeartbeatResponse, ControlPlaneError> {
         let (mut hb, expected_epoch, expected_lease) = {
-            let g = self.lock()?;
+            let g = self.inner.lock();
             let rt = g.runtime.as_ref().ok_or_else(|| {
                 ControlPlaneError::Media(MediaError::unavailable(
                     "node is not registered".to_string(),
@@ -364,7 +364,7 @@ impl NodeSupervisor {
     ) -> Result<(), ControlPlaneError> {
         let mut replaced = false;
         {
-            let mut g = self.lock()?;
+            let mut g = self.inner.lock();
             let Some(rt) = g.runtime.as_mut() else {
                 return Ok(());
             };
@@ -386,8 +386,10 @@ impl NodeSupervisor {
         }
         if replaced {
             let (node_id, instance_id) = {
-                let g = self.lock()?;
-                let rt = g.runtime.as_ref().unwrap();
+                let g = self.inner.lock();
+                let Some(rt) = g.runtime.as_ref() else {
+                    return Ok(());
+                };
                 (rt.node_id.clone(), rt.instance_id.clone())
             };
             let _ = self
@@ -406,7 +408,7 @@ impl NodeSupervisor {
     pub async fn check_lease(&self) -> Result<(), ControlPlaneError> {
         let now = self.clock.now_ms();
         let action = {
-            let g = self.lock()?;
+            let g = self.inner.lock();
             let Some(rt) = g.runtime.as_ref() else {
                 return Ok(());
             };
@@ -423,8 +425,10 @@ impl NodeSupervisor {
         };
         if let Some(reason) = action {
             let (node_id, instance_id) = {
-                let g = self.lock()?;
-                let rt = g.runtime.as_ref().unwrap();
+                let g = self.inner.lock();
+                let Some(rt) = g.runtime.as_ref() else {
+                    return Ok(());
+                };
                 (rt.node_id.clone(), rt.instance_id.clone())
             };
             let _ = self
@@ -445,7 +449,7 @@ impl NodeSupervisor {
         request: NodeDrainRequest,
     ) -> Result<NodeDrainResponse, ControlPlaneError> {
         {
-            let mut g = self.lock()?;
+            let mut g = self.inner.lock();
             let Some(rt) = g.runtime.as_mut() else {
                 return Err(ControlPlaneError::Media(MediaError::unavailable(
                     "node is not registered".to_string(),
@@ -469,7 +473,7 @@ impl NodeSupervisor {
     /// Leave drain and return to Active when the lease is still valid.
     pub async fn leave_drain(&self) -> Result<(), ControlPlaneError> {
         let open_gate = {
-            let mut g = self.lock()?;
+            let mut g = self.inner.lock();
             let Some(rt) = g.runtime.as_mut() else {
                 return Err(ControlPlaneError::Media(MediaError::unavailable(
                     "node is not registered".to_string(),
@@ -501,7 +505,7 @@ impl NodeSupervisor {
         request: NodeIsolateRequest,
     ) -> Result<NodeIsolateResponse, ControlPlaneError> {
         {
-            let mut g = self.lock()?;
+            let mut g = self.inner.lock();
             let Some(rt) = g.runtime.as_mut() else {
                 return Err(ControlPlaneError::Media(MediaError::unavailable(
                     "node is not registered".to_string(),
@@ -547,7 +551,7 @@ impl NodeSupervisor {
             .await;
 
         let (node_id, instance_id) = {
-            let mut g = self.lock()?;
+            let mut g = self.inner.lock();
             if let Some(rt) = g.runtime.as_mut() {
                 rt.state = NodeState::Deregistering;
                 (rt.node_id.clone(), rt.instance_id.clone())
@@ -566,7 +570,7 @@ impl NodeSupervisor {
             .await;
         // Always transition to Stopped and close the gate, even if deregister failed.
         {
-            let mut g = self.lock()?;
+            let mut g = self.inner.lock();
             if let Some(rt) = g.runtime.as_mut() {
                 rt.state = NodeState::Stopped;
             }
@@ -577,16 +581,7 @@ impl NodeSupervisor {
 
     /// Current register backoff in milliseconds (for host retry scheduling).
     pub fn register_backoff_ms(&self) -> u64 {
-        self.inner
-            .lock()
-            .map(|g| g.register_backoff_ms)
-            .unwrap_or(1_000)
-    }
-
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, SupervisorInner>, ControlPlaneError> {
-        self.inner
-            .lock()
-            .map_err(|_| ControlPlaneError::Internal("node supervisor mutex poisoned".to_string()))
+        self.inner.lock().register_backoff_ms
     }
 }
 
@@ -653,13 +648,13 @@ mod tests {
             _request: NodeRegistrationRequest,
         ) -> Result<NodeRegistrationResponse, ControlPlaneError> {
             self.register_calls.fetch_add(1, Ordering::SeqCst);
-            if *self.fail_register.lock().unwrap() {
+            if *self.fail_register.lock() {
                 return Err(ControlPlaneError::Media(MediaError::unavailable(
                     "registry down".to_string(),
                 )));
             }
             let epoch = {
-                let mut e = self.epoch.lock().unwrap();
+                let mut e = self.epoch.lock();
                 let v = *e;
                 *e += 1;
                 MediaNodeInstanceEpoch(v)
@@ -704,7 +699,7 @@ mod tests {
             &self,
             _request: NodeDeregisterRequest,
         ) -> Result<NodeDeregisterResponse, ControlPlaneError> {
-            if *self.fail_deregister.lock().unwrap() {
+            if *self.fail_deregister.lock() {
                 return Err(ControlPlaneError::Media(MediaError::unavailable(
                     "deregister failed".to_string(),
                 )));
@@ -761,7 +756,7 @@ mod tests {
     async fn register_failure_keeps_gate_closed() {
         let clock = Arc::new(FakeClock::new(1_000_000));
         let registry = Arc::new(FakeRegistry::new());
-        *registry.fail_register.lock().unwrap() = true;
+        *registry.fail_register.lock() = true;
         let sup = supervisor(registry, clock);
         assert!(sup.register().await.is_err());
         assert_eq!(sup.state(), NodeState::Registering);
@@ -827,7 +822,7 @@ mod tests {
     async fn shutdown_stops_even_if_deregister_fails() {
         let clock = Arc::new(FakeClock::new(1_000_000));
         let registry = Arc::new(FakeRegistry::new());
-        *registry.fail_deregister.lock().unwrap() = true;
+        *registry.fail_deregister.lock() = true;
         let sup = supervisor(registry, clock);
         sup.register().await.unwrap();
         let err = sup.shutdown("bye").await;

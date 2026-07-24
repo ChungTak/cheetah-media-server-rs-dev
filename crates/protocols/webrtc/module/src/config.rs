@@ -399,7 +399,7 @@ impl WebRtcModuleConfig {
     ///
     /// 返回默认配置的 JSON 值。
     pub fn default_json() -> serde_json::Value {
-        serde_json::to_value(Self::default()).expect("default WebRtcModuleConfig serialises")
+        serde_json::to_value(Self::default()).unwrap_or_default()
     }
 
     /// Deserialize a WebRtcModuleConfig from a JSON value.

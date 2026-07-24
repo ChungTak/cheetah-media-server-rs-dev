@@ -8,6 +8,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use cheetah_sdk::media_api::error::MediaErrorCode;
 use cheetah_sdk::media_api::ids::MediaKey;
 use cheetah_sdk::media_api::port::MediaRequestContext;
 use cheetah_sdk::media_api::rtp_session::{
@@ -103,7 +104,7 @@ impl GbHttpService {
         let api = self.rtp_session_api()?;
         api.open_receiver(&ctx, request)
             .await
-            .map_err(|e| SdkError::Internal(e.to_string()))
+            .map_err(map_media_error)
     }
 
     /// Open an RTP sender for the given GB session and return the descriptor.
@@ -130,7 +131,7 @@ impl GbHttpService {
         let api = self.rtp_session_api()?;
         api.open_sender(&ctx, request)
             .await
-            .map_err(|e| SdkError::Internal(e.to_string()))
+            .map_err(map_media_error)
     }
 
     /// Open a duplex voice-talk session and return the descriptor.
@@ -164,9 +165,7 @@ impl GbHttpService {
         };
         let ctx = MediaRequestContext::default();
         let api = self.rtp_session_api()?;
-        api.open_talk(&ctx, request)
-            .await
-            .map_err(|e| SdkError::Internal(e.to_string()))
+        api.open_talk(&ctx, request).await.map_err(map_media_error)
     }
 
     /// Stop a previously tracked RTP session and return whether it was found.
@@ -184,10 +183,8 @@ impl GbHttpService {
             .await
         {
             Ok(_) => Ok(true),
-            Err(e) if e.code == cheetah_sdk::media_api::error::MediaErrorCode::NotFound => {
-                Ok(false)
-            }
-            Err(e) => Err(SdkError::Internal(e.to_string())),
+            Err(e) if e.code == MediaErrorCode::NotFound => Ok(false),
+            Err(e) => Err(map_media_error(e)),
         }
     }
 }
@@ -233,9 +230,7 @@ impl ModuleHttpService for GbHttpService {
                         "sessionKey": session_key,
                     }
                 });
-                Ok(HttpResponse::ok_json(
-                    serde_json::to_vec(&response).unwrap(),
-                ))
+                json_response(response)
             }
             (HttpMethod::Post, "/recv/stop") => {
                 let body: GbStopRequest = serde_json::from_slice(&req.body)
@@ -258,9 +253,7 @@ impl ModuleHttpService for GbHttpService {
                     "code": 200,
                     "msg": "success"
                 });
-                Ok(HttpResponse::ok_json(
-                    serde_json::to_vec(&response).unwrap(),
-                ))
+                json_response(response)
             }
             (HttpMethod::Post, "/send/create") => {
                 let body: GbSendRequest = serde_json::from_slice(&req.body)
@@ -296,9 +289,7 @@ impl ModuleHttpService for GbHttpService {
                         "sessionKey": format!("{app}/{stream}")
                     }
                 });
-                Ok(HttpResponse::ok_json(
-                    serde_json::to_vec(&response).unwrap(),
-                ))
+                json_response(response)
             }
             (HttpMethod::Post, "/send/stop") => {
                 let body: GbStopRequest = serde_json::from_slice(&req.body)
@@ -320,9 +311,7 @@ impl ModuleHttpService for GbHttpService {
                     "code": 200,
                     "msg": "success"
                 });
-                Ok(HttpResponse::ok_json(
-                    serde_json::to_vec(&response).unwrap(),
-                ))
+                json_response(response)
             }
             (HttpMethod::Post, "/talk/start") => {
                 let body: GbTalkRequest = serde_json::from_slice(&req.body)
@@ -362,9 +351,7 @@ impl ModuleHttpService for GbHttpService {
                         "sessionKey": session_key,
                     }
                 });
-                Ok(HttpResponse::ok_json(
-                    serde_json::to_vec(&response).unwrap(),
-                ))
+                json_response(response)
             }
             (HttpMethod::Post, "/talk/stop") => {
                 let body: GbStopRequest = serde_json::from_slice(&req.body)
@@ -387,11 +374,31 @@ impl ModuleHttpService for GbHttpService {
                     "code": 200,
                     "msg": "success"
                 });
-                Ok(HttpResponse::ok_json(
-                    serde_json::to_vec(&response).unwrap(),
-                ))
+                json_response(response)
             }
             _ => Err(SdkError::InvalidArgument("Not Found".to_string())),
         }
     }
+}
+
+/// Map a domain `MediaError` into the module-facing `SdkError` used by HTTP routes.
+fn map_media_error(err: cheetah_sdk::media_api::error::MediaError) -> SdkError {
+    use cheetah_sdk::media_api::error::MediaErrorCode;
+    let msg = err.message.to_string();
+    match err.code {
+        MediaErrorCode::InvalidArgument => SdkError::InvalidArgument(msg),
+        MediaErrorCode::NotFound => SdkError::NotFound(msg),
+        MediaErrorCode::AlreadyExists => SdkError::AlreadyExists(msg),
+        MediaErrorCode::Conflict => SdkError::Conflict(msg),
+        MediaErrorCode::Unavailable => SdkError::Unavailable(msg),
+        MediaErrorCode::RateLimited | MediaErrorCode::Busy => SdkError::Unavailable(msg),
+        _ => SdkError::Internal(msg),
+    }
+}
+
+/// Serialize a JSON response, returning an internal error if serialization fails.
+fn json_response(value: serde_json::Value) -> Result<HttpResponse, SdkError> {
+    let body = serde_json::to_vec(&value)
+        .map_err(|e| SdkError::Internal(format!("failed to serialize response: {e}")))?;
+    Ok(HttpResponse::ok_json(body))
 }

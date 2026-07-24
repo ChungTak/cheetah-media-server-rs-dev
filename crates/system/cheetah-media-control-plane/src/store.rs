@@ -342,6 +342,6 @@ pub trait OrphanStore: Send + Sync {
 pub(crate) fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("system time before Unix epoch")
+        .unwrap_or(std::time::Duration::ZERO)
         .as_millis() as i64
 }

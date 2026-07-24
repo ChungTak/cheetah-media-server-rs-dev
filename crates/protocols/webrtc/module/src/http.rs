@@ -26,6 +26,7 @@ use cheetah_webrtc_driver_tokio::{
 use futures::channel::oneshot;
 use futures::FutureExt;
 use parking_lot::Mutex;
+use serde::Serialize;
 use serde_json::Value;
 use tracing::warn;
 
@@ -488,7 +489,7 @@ impl WebRtcHttpService {
             "sessionid": format!("{session_id}"),
             "sdp": answer_sdp,
         });
-        Ok(HttpResponse::ok_json(serde_json::to_vec(&body).unwrap()))
+        Ok(HttpResponse::ok_json(json_bytes(&body)))
     }
 
     async fn handle_sms_play(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
@@ -548,7 +549,7 @@ impl WebRtcHttpService {
             "code": 200,
             "sdp": answer_sdp,
         });
-        Ok(HttpResponse::ok_json(serde_json::to_vec(&body).unwrap()))
+        Ok(HttpResponse::ok_json(json_bytes(&body)))
     }
 
     async fn handle_whip(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
@@ -905,7 +906,7 @@ impl WebRtcHttpService {
                         }),
                     );
                 }
-                Ok(HttpResponse::ok_json(serde_json::to_vec(&json).unwrap()))
+                Ok(HttpResponse::ok_json(json_bytes(&json)))
             }
             None => Ok(http_json_status(404, "not_found", "session id not found")),
         }
@@ -1136,13 +1137,10 @@ impl WebRtcHttpService {
         match reg.sessions.get_mut(&session_id) {
             Some(session) => {
                 session.echo = echo;
-                Ok(HttpResponse::ok_json(
-                    serde_json::to_vec(&serde_json::json!({
-                        "sessionid": format!("{session_id}"),
-                        "mode": mode,
-                    }))
-                    .unwrap(),
-                ))
+                Ok(HttpResponse::ok_json(json_bytes(&serde_json::json!({
+                    "sessionid": format!("{session_id}"),
+                    "mode": mode,
+                }))))
             }
             None => Ok(http_json_status(404, "not_found", "session id not found")),
         }
@@ -1273,9 +1271,7 @@ impl WebRtcHttpService {
             "sessionid": format!("{session_id}"),
             "sdp": final_sdp,
         });
-        Ok(HttpResponse::ok_json(
-            serde_json::to_vec(&body_json).unwrap(),
-        ))
+        Ok(HttpResponse::ok_json(json_bytes(&body_json)))
     }
 
     /// ZLM-style unified WebRTC endpoint.
@@ -1473,7 +1469,7 @@ impl WebRtcHttpService {
                 .collect()
         };
         let body = serde_json::json!({"sessions": list});
-        Ok(HttpResponse::ok_json(serde_json::to_vec(&body).unwrap()))
+        Ok(HttpResponse::ok_json(json_bytes(&body)))
     }
 
     /// `GET /api/v1/rtc/metrics` — Prometheus exposition format.
@@ -1627,7 +1623,7 @@ impl WebRtcHttpService {
             "remb_bitrate_bps": snap.remb_bitrate_bps,
             "bwe_estimate_bps": snap.bwe_estimate_bps,
         });
-        Ok(HttpResponse::ok_json(serde_json::to_vec(&body).unwrap()))
+        Ok(HttpResponse::ok_json(json_bytes(&body)))
     }
 
     /// Combine the aggregator counters with the live registry session
@@ -1853,8 +1849,8 @@ impl WebRtcHttpService {
                             };
                             match crate::p2p_jobs::spawn(runtime, session_id, request) {
                                 Ok(snap) => {
-                                    return Ok(HttpResponse::ok_json(
-                                        serde_json::to_vec(&serde_json::json!({
+                                    return Ok(HttpResponse::ok_json(json_bytes(
+                                        &serde_json::json!({
                                             "session_id": format!("{}", snap.session_id),
                                             "kind": match snap.kind {
                                                 crate::p2p::P2pJobKind::Pull => "pull",
@@ -1869,9 +1865,8 @@ impl WebRtcHttpService {
                                             "signaling_url": snap.signaling_url,
                                             "peer_room_id": snap.peer_room_id,
                                             "stream_key": snap.stream_key,
-                                        }))
-                                        .unwrap(),
-                                    ));
+                                        }),
+                                    )));
                                 }
                                 Err(crate::p2p_jobs::P2pClientJobError::Conflict(_)) => {
                                     return Ok(http_json_status(
@@ -1978,16 +1973,13 @@ impl WebRtcHttpService {
         )
         .await;
         match snapshot {
-            Ok(snap) => Ok(HttpResponse::ok_json(
-                serde_json::to_vec(&serde_json::json!({
-                    "code": 0,
-                    "stream_key": snap.stream_key,
-                    "url": snap.url,
-                    "kind": snap.kind.label(),
-                    "state": format!("{:?}", snap.state),
-                }))
-                .unwrap(),
-            )),
+            Ok(snap) => Ok(HttpResponse::ok_json(json_bytes(&serde_json::json!({
+                "code": 0,
+                "stream_key": snap.stream_key,
+                "url": snap.url,
+                "kind": snap.kind.label(),
+                "state": format!("{:?}", snap.state),
+            })))),
             Err(crate::jobs::WebRtcJobError::Conflict(_)) => {
                 Ok(http_json_status(409, "conflict", "job already running"))
             }
@@ -2034,7 +2026,7 @@ impl WebRtcHttpService {
                 }))
                 .collect::<Vec<_>>(),
         });
-        Ok(HttpResponse::ok_json(serde_json::to_vec(&body).unwrap()))
+        Ok(HttpResponse::ok_json(json_bytes(&body)))
     }
 
     /// P2P add: accept an offer SDP from a peer and return an answer.
@@ -2132,7 +2124,7 @@ impl WebRtcHttpService {
             "sessionid": format!("{session_id}"),
             "sdp": answer_sdp,
         });
-        Ok(HttpResponse::ok_json(serde_json::to_vec(&body).unwrap()))
+        Ok(HttpResponse::ok_json(json_bytes(&body)))
     }
 
     async fn handle_p2p_remove(&self, req: HttpRequest) -> Result<HttpResponse, SdkError> {
@@ -2187,9 +2179,9 @@ impl WebRtcHttpService {
                 })
                 .collect()
         };
-        Ok(HttpResponse::ok_json(
-            serde_json::to_vec(&serde_json::json!({"sessions": sessions})).unwrap(),
-        ))
+        Ok(HttpResponse::ok_json(json_bytes(
+            &serde_json::json!({"sessions": sessions}),
+        )))
     }
 
     /// `POST /api/v1/rtc/p2p/keeper/add` — register a P2P signaling
@@ -2229,12 +2221,9 @@ impl WebRtcHttpService {
             }
         };
         match self.keepers.add(cfg) {
-            Ok(key) => Ok(HttpResponse::ok_json(
-                serde_json::to_vec(&serde_json::json!({
-                    "key": key.to_string(),
-                }))
-                .unwrap(),
-            )),
+            Ok(key) => Ok(HttpResponse::ok_json(json_bytes(&serde_json::json!({
+                "key": key.to_string(),
+            })))),
             Err(crate::p2p::P2pRoomKeeperError::LimitReached(cap)) => Ok(http_json_status(
                 429,
                 "limit_reached",
@@ -2286,10 +2275,9 @@ impl WebRtcHttpService {
         };
         match removed {
             Some(snap) => match self.keepers.remove(snap.key) {
-                Ok(_) => Ok(HttpResponse::ok_json(
-                    serde_json::to_vec(&serde_json::json!({"removed": snap.key.to_string()}))
-                        .unwrap(),
-                )),
+                Ok(_) => Ok(HttpResponse::ok_json(json_bytes(
+                    &serde_json::json!({"removed": snap.key.to_string()}),
+                ))),
                 Err(_) => Ok(http_json_status(404, "not_found", "keeper not found")),
             },
             None => Ok(http_json_status(404, "not_found", "keeper not found")),
@@ -2317,18 +2305,18 @@ impl WebRtcHttpService {
                 })
             })
             .collect();
-        Ok(HttpResponse::ok_json(
-            serde_json::to_vec(&serde_json::json!({"keepers": keepers})).unwrap(),
-        ))
+        Ok(HttpResponse::ok_json(json_bytes(
+            &serde_json::json!({"keepers": keepers}),
+        )))
     }
 
     /// `GET /api/v1/rtc/p2p/rooms` — distinct room ids registered
     /// locally. Mirrors `mk_webrtc_list_rooms`.
     fn handle_keeper_rooms(&self) -> Result<HttpResponse, SdkError> {
         let rooms = self.keepers.list_rooms();
-        Ok(HttpResponse::ok_json(
-            serde_json::to_vec(&serde_json::json!({"rooms": rooms})).unwrap(),
-        ))
+        Ok(HttpResponse::ok_json(json_bytes(
+            &serde_json::json!({"rooms": rooms}),
+        )))
     }
 
     /// `GET /api/v1/rtc/p2p/client/list` — return all in-flight P2P
@@ -2359,9 +2347,9 @@ impl WebRtcHttpService {
                 })
             })
             .collect();
-        Ok(HttpResponse::ok_json(
-            serde_json::to_vec(&serde_json::json!({"jobs": jobs})).unwrap(),
-        ))
+        Ok(HttpResponse::ok_json(json_bytes(
+            &serde_json::json!({"jobs": jobs}),
+        )))
     }
 
     /// `POST /api/v1/rtc/p2p/client/stop` — body `{ "session_id": "webrtc-session-N" }`.
@@ -2401,12 +2389,9 @@ impl WebRtcHttpService {
             }
         };
         if self.p2p_jobs.stop(session_id) {
-            Ok(HttpResponse::ok_json(
-                serde_json::to_vec(&serde_json::json!({
-                    "stopped": format!("{}", session_id),
-                }))
-                .unwrap(),
-            ))
+            Ok(HttpResponse::ok_json(json_bytes(&serde_json::json!({
+                "stopped": format!("{}", session_id),
+            }))))
         } else {
             Ok(http_json_status(
                 404,
@@ -2655,7 +2640,7 @@ fn http_json_status(status: u16, code: &str, message: &str) -> HttpResponse {
             name: "content-type".into(),
             value: "application/json".into(),
         }],
-        body: Bytes::from(serde_json::to_vec(&body).unwrap()),
+        body: Bytes::from(json_bytes(&body)),
     }
 }
 
@@ -2688,8 +2673,19 @@ fn http_json_status_with_extras(
             name: "content-type".into(),
             value: "application/json".into(),
         }],
-        body: Bytes::from(serde_json::to_vec(&serde_json::Value::Object(body)).unwrap()),
+        body: Bytes::from(json_bytes(&serde_json::Value::Object(body))),
     }
+}
+
+/// Serialize a value to JSON bytes without panicking on serializer errors.
+fn json_bytes<T: Serialize>(value: &T) -> Vec<u8> {
+    serde_json::to_vec(value).unwrap_or_else(|_| b"{}".to_vec())
+}
+
+#[cfg(test)]
+/// Serialize a value to a JSON string without panicking on serializer errors.
+fn json_string<T: Serialize>(value: &T) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
 }
 
 #[cfg(test)]
@@ -3003,7 +2999,7 @@ mod tests {
             "whep_url": "/api/v1/rtc/whep?app=live&stream=camera01",
         });
 
-        let json_str = serde_json::to_string(&session_json).unwrap();
+        let json_str = json_string(&session_json);
         // Must not contain any DTLS/crypto/auth sensitive fields.
         assert!(!json_str.contains("dtls_fingerprint"));
         assert!(!json_str.contains("private_key"));

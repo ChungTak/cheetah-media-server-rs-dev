@@ -324,7 +324,7 @@ impl SrtModuleConfig {
     ///
     /// 将默认配置序列化为 JSON。
     pub fn default_json() -> serde_json::Value {
-        serde_json::to_value(Self::default()).unwrap()
+        serde_json::to_value(Self::default()).unwrap_or_default()
     }
 
     /// Validate runtime constraints beyond serde parsing.

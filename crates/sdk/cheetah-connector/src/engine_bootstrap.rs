@@ -169,7 +169,11 @@ impl ConnectorBuilder {
             let apply = apply.unwrap_or_else(|| store.clone() as Arc<dyn ConfigApplyApi>);
             (provider, apply)
         } else {
-            (provider.unwrap(), apply.unwrap())
+            let provider = provider
+                .ok_or_else(|| ConnectorError::Internal("config provider required".to_string()))?;
+            let apply = apply
+                .ok_or_else(|| ConnectorError::Internal("config apply required".to_string()))?;
+            (provider, apply)
         };
 
         let mut builder = EngineBuilder::new(config_provider, config_apply, self.runtime)

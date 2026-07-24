@@ -1,6 +1,8 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::time::Instant;
+
+use parking_lot::RwLock;
 
 use crate::adapter_config::{extract_zlm_config, load_zlm_config, ZlmAdapterConfig};
 use async_trait::async_trait;
@@ -104,7 +106,7 @@ impl Module for ZlmMediaModule {
 
     async fn init(&mut self, ctx: ModuleInitContext) -> Result<(), SdkError> {
         let cfg = load_zlm_config(&ctx.engine.config_provider.global());
-        *self.config.write().unwrap() = cfg;
+        *self.config.write() = cfg;
         self.ctx = Some(ctx.engine);
         self.state = ModuleState::Initialized;
         Ok(())
@@ -123,28 +125,28 @@ impl Module for ZlmMediaModule {
     async fn apply_config(&mut self, change: ModuleConfigChange) -> Result<ConfigEffect, SdkError> {
         let next = change.next_global.as_ref().unwrap_or(&change.next);
         let next = extract_zlm_config(next);
-        let previous = self.config.read().unwrap().clone();
+        let previous = self.config.read().clone();
         if previous.enabled != next.enabled || previous.path_prefix != next.path_prefix {
             return Ok(ConfigEffect::ModuleRestartRequired);
         }
         let max_sessions = next.auth.session.as_ref().and_then(|s| s.max_sessions);
         self.session_store.set_max_sessions(max_sessions);
-        *self.config.write().unwrap() = next;
+        *self.config.write() = next;
         Ok(ConfigEffect::Immediate)
     }
 
     fn http_routes(&self) -> Vec<HttpRouteDescriptor> {
-        if !self.config.read().unwrap().enabled {
+        if !self.config.read().enabled {
             return Vec::new();
         }
         routes::zlm_http_routes()
     }
 
     fn http_service(&self) -> Option<Arc<dyn ModuleHttpService>> {
-        if !self.config.read().unwrap().enabled {
+        if !self.config.read().enabled {
             return None;
         }
-        if let Some(session_cfg) = self.config.read().unwrap().auth.session.as_ref() {
+        if let Some(session_cfg) = self.config.read().auth.session.as_ref() {
             self.session_store
                 .set_max_sessions(session_cfg.max_sessions);
         }
@@ -156,15 +158,15 @@ impl Module for ZlmMediaModule {
     }
 
     fn http_mount_prefix(&self) -> Option<String> {
-        Some(self.config.read().unwrap().path_prefix.clone())
+        Some(self.config.read().path_prefix.clone())
     }
 
     fn http_max_body_bytes(&self) -> usize {
-        self.config.read().unwrap().max_body_bytes
+        self.config.read().max_body_bytes
     }
 
     fn http_request_timeout_ms(&self) -> Option<u64> {
-        Some(self.config.read().unwrap().request_timeout_ms)
+        Some(self.config.read().request_timeout_ms)
     }
 }
 
@@ -366,7 +368,7 @@ impl ZlmMediaHttpService {
         let client_deadline =
             header_value(&req.headers, "x-deadline").and_then(|v| v.parse::<i64>().ok());
         let deadline = crate::util::request_deadline(client_deadline, 60_000);
-        let cfg = self.config.read().unwrap();
+        let cfg = self.config.read();
         let principal = Some(self.authenticate(req, &cfg)?);
         drop(cfg);
         Ok(MediaRequestContext {
@@ -533,7 +535,7 @@ impl ZlmMediaHttpService {
 #[async_trait]
 impl ModuleHttpService for ZlmMediaHttpService {
     async fn handle(&self, mut req: HttpRequest) -> Result<HttpResponse, SdkError> {
-        let max_body_bytes = self.config.read().unwrap().max_body_bytes;
+        let max_body_bytes = self.config.read().max_body_bytes;
         if req.body.len() > max_body_bytes {
             return Err(SdkError::InvalidArgument(
                 "request body too large".to_string(),

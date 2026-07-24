@@ -3,7 +3,9 @@
 //! 输出端点注册表与辅助类型。
 
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+
+use parking_lot::RwLock;
 
 use cheetah_media_api::error::{MediaError, Result};
 pub use cheetah_media_api::output::{EndpointState, MediaOutputEndpoint};
@@ -43,7 +45,7 @@ impl InMemoryMediaOutputRegistry {
 #[async_trait::async_trait]
 impl MediaOutputRegistryApi for InMemoryMediaOutputRegistry {
     async fn register_endpoint(&self, mut endpoint: MediaOutputEndpoint) -> Result<String> {
-        let mut state = self.inner.write().expect("output registry lock");
+        let mut state = self.inner.write();
         state.generation += 1;
         state.next_id += 1;
         let id = format!("{}-{}", endpoint.provider, state.next_id);
@@ -54,7 +56,7 @@ impl MediaOutputRegistryApi for InMemoryMediaOutputRegistry {
     }
 
     async fn unregister_endpoint(&self, registration_id: &str) -> Result<()> {
-        let mut state = self.inner.write().expect("output registry lock");
+        let mut state = self.inner.write();
         if state.endpoints.remove(registration_id).is_none() {
             return Err(MediaError::not_found(format!(
                 "output endpoint {registration_id} not found"
@@ -65,7 +67,7 @@ impl MediaOutputRegistryApi for InMemoryMediaOutputRegistry {
     }
 
     async fn snapshot(&self) -> Result<Vec<MediaOutputEndpoint>> {
-        let state = self.inner.read().expect("output registry lock");
+        let state = self.inner.read();
         let mut endpoints: Vec<_> = state.endpoints.values().cloned().collect();
         // Stable ordering makes resolver output deterministic.
         endpoints.sort_by(|a, b| a.registration_id.cmp(&b.registration_id));

@@ -584,15 +584,21 @@ fn insert_path(root: &mut Value, path: &[String], value: Value) {
         if !cursor.is_object() {
             *cursor = Value::Object(Map::new());
         }
-        let map = cursor.as_object_mut().expect("object ensured");
+        let Some(map) = cursor.as_object_mut() else {
+            return;
+        };
         cursor = map
             .entry(key.clone())
             .or_insert_with(|| Value::Object(Map::new()));
     }
 
-    let leaf = path.last().expect("path not empty").clone();
-    let map = cursor.as_object_mut().expect("object ensured");
-    map.insert(leaf, value);
+    let Some(leaf) = path.last() else {
+        return;
+    };
+    let Some(map) = cursor.as_object_mut() else {
+        return;
+    };
+    map.insert(leaf.clone(), value);
 }
 
 #[cfg(test)]

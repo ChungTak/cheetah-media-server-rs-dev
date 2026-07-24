@@ -92,7 +92,7 @@ impl MediaProcessingModuleConfig {
 
     /// Returns the default configuration as a JSON value.
     pub fn default_json() -> serde_json::Value {
-        serde_json::to_value(Self::default()).expect("default config serializes")
+        serde_json::to_value(Self::default()).unwrap_or_default()
     }
 
     /// Parses the configuration from a JSON value.

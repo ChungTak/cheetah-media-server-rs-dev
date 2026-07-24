@@ -69,9 +69,7 @@ impl AdminApi for ControlPlane {
         }
 
         let open_gate = {
-            let mut guard = self.node.lock().map_err(|_| {
-                MediaError::new(MediaErrorCode::Internal, "node runtime mutex poisoned")
-            })?;
+            let mut guard = self.node.lock();
             let Some(state) = guard.as_mut() else {
                 return Err(MediaError::new(
                     MediaErrorCode::Unavailable,

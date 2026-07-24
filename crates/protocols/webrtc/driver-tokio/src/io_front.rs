@@ -573,12 +573,12 @@ pub(crate) fn spawn_shards(
             let mut restarts: u32 = 0;
             let mut backoff_ms = initial_backoff_ms;
             loop {
-                let cmd_rx_owned = cmd_rx
-                    .take()
-                    .expect("shard command receiver must be present at top of loop");
-                let pkt_rx_owned = pkt_rx
-                    .take()
-                    .expect("shard packet receiver must be present at top of loop");
+                let Some(cmd_rx_owned) = cmd_rx.take() else {
+                    break;
+                };
+                let Some(pkt_rx_owned) = pkt_rx.take() else {
+                    break;
+                };
 
                 let cfg_inner = cfg.clone();
                 let socket_inner = socket.clone();

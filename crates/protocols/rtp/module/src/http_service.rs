@@ -181,8 +181,7 @@ impl ModuleHttpService for RtpHttpService {
                     }
                 });
 
-                let body_bytes = serde_json::to_vec(&response).unwrap();
-                Ok(HttpResponse::ok_json(body_bytes))
+                json_response(response)
             }
             (HttpMethod::Post, "/server/stop") => {
                 let body: Value = serde_json::from_slice(&req.body)
@@ -207,8 +206,7 @@ impl ModuleHttpService for RtpHttpService {
                     "msg": "success",
                 });
 
-                let body_bytes = serde_json::to_vec(&response).unwrap();
-                Ok(HttpResponse::ok_json(body_bytes))
+                json_response(response)
             }
             (HttpMethod::Post, "/client/create") => {
                 let body: Value = serde_json::from_slice(&req.body)
@@ -368,8 +366,7 @@ impl ModuleHttpService for RtpHttpService {
                     }
                 });
 
-                let body_bytes = serde_json::to_vec(&response).unwrap();
-                Ok(HttpResponse::ok_json(body_bytes))
+                json_response(response)
             }
             (HttpMethod::Post, "/client/start") => {
                 let body: Value = serde_json::from_slice(&req.body)
@@ -442,8 +439,7 @@ impl ModuleHttpService for RtpHttpService {
                     "msg": "success",
                 });
 
-                let body_bytes = serde_json::to_vec(&response).unwrap();
-                Ok(HttpResponse::ok_json(body_bytes))
+                json_response(response)
             }
             (HttpMethod::Post, "/client/stop") => {
                 let body: Value = serde_json::from_slice(&req.body)
@@ -480,8 +476,7 @@ impl ModuleHttpService for RtpHttpService {
                     "msg": "success",
                 });
 
-                let body_bytes = serde_json::to_vec(&response).unwrap();
-                Ok(HttpResponse::ok_json(body_bytes))
+                json_response(response)
             }
             _ => Ok(HttpResponse {
                 status: 404,
@@ -684,17 +679,24 @@ pub(crate) fn parse_only_audio_to_filter(val: &serde_json::Value) -> RtpTrackFil
 ///
 /// 将领域 `MediaError` 映射为 HTTP 路由使用的模块 `SdkError`。
 pub(crate) fn media_error_to_sdk_error(err: MediaError) -> SdkError {
+    use cheetah_sdk::media_api::error::MediaErrorCode;
     let msg = err.message.to_string();
     match err.code {
-        cheetah_sdk::media_api::error::MediaErrorCode::InvalidArgument => {
-            SdkError::InvalidArgument(msg)
-        }
-        cheetah_sdk::media_api::error::MediaErrorCode::NotFound => SdkError::NotFound(msg),
-        cheetah_sdk::media_api::error::MediaErrorCode::AlreadyExists => {
-            SdkError::AlreadyExists(msg)
-        }
-        cheetah_sdk::media_api::error::MediaErrorCode::Conflict => SdkError::Conflict(msg),
-        cheetah_sdk::media_api::error::MediaErrorCode::Unavailable => SdkError::Unavailable(msg),
+        MediaErrorCode::InvalidArgument => SdkError::InvalidArgument(msg),
+        MediaErrorCode::NotFound => SdkError::NotFound(msg),
+        MediaErrorCode::AlreadyExists => SdkError::AlreadyExists(msg),
+        MediaErrorCode::Conflict => SdkError::Conflict(msg),
+        MediaErrorCode::Unavailable => SdkError::Unavailable(msg),
+        MediaErrorCode::RateLimited | MediaErrorCode::Busy => SdkError::Unavailable(msg),
         _ => SdkError::Internal(msg),
     }
+}
+
+/// Serialize a JSON response, returning an internal error if serialization fails.
+///
+/// 序列化 JSON 响应；序列化失败时返回内部错误。
+fn json_response(value: serde_json::Value) -> Result<HttpResponse, SdkError> {
+    let body = serde_json::to_vec(&value)
+        .map_err(|e| SdkError::Internal(format!("failed to serialize response: {e}")))?;
+    Ok(HttpResponse::ok_json(body))
 }

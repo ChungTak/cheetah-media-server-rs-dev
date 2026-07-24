@@ -22,7 +22,7 @@ impl ZlmMediaHttpService {
         _ctx: &MediaRequestContext,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
-        let cfg = self.config.read().unwrap();
+        let cfg = self.config.read();
         let session_cfg = cfg.auth.session.as_ref().ok_or_else(|| {
             AdapterError::Media(
                 cheetah_media_api::error::MediaError::unsupported_capability("session auth"),
@@ -100,7 +100,7 @@ impl ZlmMediaHttpService {
         _ctx: &MediaRequestContext,
         req: HttpRequest,
     ) -> Result<HttpResponse, AdapterError> {
-        let cfg = self.config.read().unwrap();
+        let cfg = self.config.read();
         if let Some(session_cfg) = cfg.auth.session.as_ref() {
             if let Some(token) = cookie_from_header(&req, &session_cfg.cookie_name) {
                 self.session_store.remove(&token);

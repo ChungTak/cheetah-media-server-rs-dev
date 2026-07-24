@@ -315,6 +315,6 @@ impl HlsModuleConfig {
     ///
     /// 为控制面和配置编辑器提供默认 schema。
     pub fn default_json() -> serde_json::Value {
-        serde_json::to_value(Self::default()).unwrap()
+        serde_json::to_value(Self::default()).unwrap_or_default()
     }
 }

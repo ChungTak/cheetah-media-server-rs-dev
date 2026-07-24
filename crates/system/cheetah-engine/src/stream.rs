@@ -8,7 +8,9 @@ use cheetah_codec::{AVFrame, FrameFlags, TrackInfo};
 use cheetah_media_api::event::{
     MediaEvent, MediaEventBusApi, StreamOnlineChanged, StreamPublished, StreamUnpublished,
 };
-use cheetah_media_api::ids::{MediaKey, MediaSchema, SessionId, StreamKeyBridge};
+use cheetah_media_api::ids::{
+    AppName, MediaKey, MediaSchema, SessionId, StreamKeyBridge, StreamName, VhostName,
+};
 use cheetah_media_api::model::{CloseReason, OnlineState};
 use cheetah_sdk::{
     BackpressurePolicy, BootstrapMode, BootstrapPolicy, DispatchResult, EventBus, MediaFilter,
@@ -738,14 +740,11 @@ impl StreamManagerInner {
     /// Convert a `StreamKey` to a `MediaKey` for event headers.
     fn media_key_for(stream_key: &StreamKey) -> MediaKey {
         StreamKeyBridge::from_namespace_path(&stream_key.namespace, &stream_key.path)
-            .unwrap_or_else(|_| {
-                MediaKey::new(
-                    "__fallback__",
-                    &stream_key.namespace,
-                    &stream_key.path,
-                    None,
-                )
-                .unwrap_or(MediaKey::with_default_vhost("unknown", "unknown", None).unwrap())
+            .unwrap_or_else(|_| MediaKey {
+                vhost: VhostName::default_value(),
+                app: AppName(stream_key.namespace.clone()),
+                stream: StreamName(stream_key.path.clone()),
+                schema: None,
             })
     }
 

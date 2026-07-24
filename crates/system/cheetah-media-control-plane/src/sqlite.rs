@@ -7,7 +7,9 @@
 //! SQLite 持久化控制面 store。所有 I/O 都通过 `RuntimeApi::spawn_blocking` 在阻塞线程中执行。
 
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use async_trait::async_trait;
 use cheetah_media_api::error::EffectOutcome;
@@ -32,11 +34,11 @@ impl From<rusqlite::Error> for ControlPlaneError {
 
 /// A SQLite-backed control-plane store.
 ///
-/// The internal `Connection` is held behind a `std::sync::Mutex` and only
+/// The internal `Connection` is held behind a `parking_lot::Mutex` and only
 /// accessed from `RuntimeApi::spawn_blocking` workers so it never blocks an
 /// async runtime thread.
 ///
-/// 基于 SQLite 的控制面 store。内部 `Connection` 由 `std::sync::Mutex` 保护，
+/// 基于 SQLite 的控制面 store。内部 `Connection` 由 `parking_lot::Mutex` 保护，
 /// 只在 `RuntimeApi::spawn_blocking` worker 中访问。
 #[derive(Clone)]
 pub struct SqliteStore {
@@ -79,9 +81,7 @@ impl SqliteStore {
             runtime.as_ref(),
             name,
             move || -> Result<R, ControlPlaneError> {
-                let mut guard = conn.lock().map_err(|_| {
-                    ControlPlaneError::RuntimeError("sqlite mutex poisoned".to_string())
-                })?;
+                let mut guard = conn.lock();
                 f(&mut guard)
             },
         )

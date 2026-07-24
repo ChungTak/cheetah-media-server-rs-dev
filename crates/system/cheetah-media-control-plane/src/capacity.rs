@@ -2,7 +2,9 @@
 //!
 //! 容量编排器：原子地检查硬上限、发放 RAII 许可，并在 drop 时释放。
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use async_trait::async_trait;
 use cheetah_media_api::capacity::{
@@ -61,7 +63,7 @@ impl MediaCapacityApi for CapacityOrchestrator {
         &self,
         request: CapacityRequest,
     ) -> cheetah_media_api::error::Result<Box<dyn CapacityPermit>> {
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.lock();
 
         if !state.node_gate_open {
             return Err(
@@ -91,19 +93,19 @@ impl MediaCapacityApi for CapacityOrchestrator {
     }
 
     async fn snapshot(&self) -> cheetah_media_api::error::Result<CapacitySnapshot> {
-        let state = self.inner.lock().unwrap();
+        let state = self.inner.lock();
         Ok(CapacityOrchestrator::snapshot_locked(&state))
     }
 
     async fn update_limits(&self, limits: CapacityLimits) -> cheetah_media_api::error::Result<()> {
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.lock();
         state.limits = limits;
         state.updated_at_ms = now_ms();
         Ok(())
     }
 
     async fn set_node_gate(&self, open: bool) -> cheetah_media_api::error::Result<()> {
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.lock();
         state.node_gate_open = open;
         state.updated_at_ms = now_ms();
         Ok(())
@@ -132,7 +134,7 @@ impl OwnedCapacityPermit {
         if self.released {
             return;
         }
-        let mut state = self.inner.lock().unwrap();
+        let mut state = self.inner.lock();
         state.used = sub(&state.used, &self.request);
         state.updated_at_ms = now_ms();
         self.released = true;

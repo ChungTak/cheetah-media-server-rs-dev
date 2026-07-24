@@ -87,8 +87,11 @@ impl StreamMediaProvider {
 
     fn stream_key_to_media_key(key: &StreamKey) -> MediaKey {
         cheetah_sdk::media_api::ids::StreamKeyBridge::from_namespace_path(&key.namespace, &key.path)
-            .unwrap_or_else(|_| {
-                MediaKey::new("__fallback__", &key.namespace, &key.path, None).unwrap()
+            .unwrap_or_else(|_| MediaKey {
+                vhost: VhostName::default_value(),
+                app: AppName(key.namespace.clone()),
+                stream: StreamName(key.path.clone()),
+                schema: None,
             })
     }
 

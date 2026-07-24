@@ -35,9 +35,9 @@ impl RtcpBye {
         for ssrc in &self.ssrcs {
             out.put_u32(*ssrc);
         }
-        if reason_len > 0 {
+        if let Some(reason) = self.reason.as_ref() {
             out.put_u8(reason_len as u8);
-            out.extend_from_slice(self.reason.as_ref().unwrap().as_bytes());
+            out.extend_from_slice(reason.as_bytes());
             let pad = padding_to_4(1 + reason_len);
             for _ in 0..pad {
                 out.put_u8(0);

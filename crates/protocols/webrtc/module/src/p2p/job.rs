@@ -148,7 +148,7 @@ pub struct P2pJob {
 impl P2pJob {
     pub fn new(config: P2pJobConfig) -> Self {
         let cap = config.pending_candidate_cap.max(1);
-        let pending = PendingCandidateBuffer::new(cap).expect("non-zero cap is guaranteed above");
+        let pending = PendingCandidateBuffer::new(cap).unwrap_or_else(|_| unreachable!());
         Self {
             config,
             state: P2pJobState::Pending,

@@ -250,7 +250,7 @@ impl HttpFlvModuleConfig {
     ///
     /// 将默认配置以 JSON 值形式返回，用于 schema 注册。
     pub fn default_json() -> serde_json::Value {
-        serde_json::to_value(Self::default()).expect("serialize default http_flv config")
+        serde_json::to_value(Self::default()).unwrap_or_default()
     }
 }
 

@@ -20,7 +20,7 @@ use cheetah_codec::record::{
 };
 use cheetah_codec::TrackInfo;
 use cheetah_media_api::event::{EventHeader, MediaEvent, RecordCompleted};
-use cheetah_media_api::ids::RecordTaskId;
+use cheetah_media_api::ids::{AppName, RecordTaskId, StreamName, VhostName};
 use cheetah_media_api::{FileStoreEntry, MediaKey};
 use cheetah_sdk::{
     BootstrapPolicy, CancellationToken, EngineContext, JoinHandle, StreamKey, SubscriberOptions,
@@ -398,9 +398,11 @@ async fn run_record_task(
         &task.template.stream,
         None,
     )
-    .unwrap_or_else(|_| {
-        MediaKey::with_default_vhost(&task.template.app, &task.template.stream, None)
-            .expect("media key must be valid")
+    .unwrap_or_else(|_| MediaKey {
+        vhost: VhostName::default_value(),
+        app: AppName(task.template.app.clone()),
+        stream: StreamName(task.template.stream.clone()),
+        schema: None,
     });
     let file_entry = FileStoreEntry {
         media_key: media_key.clone(),

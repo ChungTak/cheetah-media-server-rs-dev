@@ -107,8 +107,8 @@ pub struct RtpDriverConfig {
 impl Default for RtpDriverConfig {
     fn default() -> Self {
         Self {
-            listen_udp: "127.0.0.1:20000".parse().unwrap(),
-            listen_tcp: "127.0.0.1:20000".parse().unwrap(),
+            listen_udp: SocketAddr::from(([127, 0, 0, 1], 20000)),
+            listen_tcp: SocketAddr::from(([127, 0, 0, 1], 20000)),
             listen_rtcp_udp: None,
             write_queue_capacity: 256,
             read_buffer_size: 65536,

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use cheetah_media_api::error::{MediaError, MediaErrorCode};
-use cheetah_media_api::ids::RequestId;
+use cheetah_media_api::ids::{AppName, RequestId, StreamName, VhostName};
 use cheetah_media_api::port::{MediaRequestContext, WebhookAdminApi};
 use cheetah_media_api::webhook::{
     CreateWebhookProfileRequest, UpdateWebhookProfileRequest, WebhookProfile, WebhookProfileId,
@@ -241,11 +241,12 @@ async fn run_webhook_test(
     let test = WebhookTest {
         event_id: RequestId(format!("test-{}", ctx.request_id.0)),
         kind: "WebhookTest".to_string(),
-        media_key: cheetah_media_api::ids::MediaKey::with_default_vhost("test", "test", None)
-            .unwrap_or_else(|_| {
-                cheetah_media_api::ids::MediaKey::new("__defaultVhost__", "test", "test", None)
-                    .expect("default key valid")
-            }),
+        media_key: cheetah_media_api::ids::MediaKey {
+            vhost: VhostName::default_value(),
+            app: AppName("test".to_string()),
+            stream: StreamName("test".to_string()),
+            schema: None,
+        },
         payload: "webhook test payload".to_string(),
     };
 

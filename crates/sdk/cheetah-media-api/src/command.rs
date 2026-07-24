@@ -132,8 +132,12 @@ pub struct SubscribeRequest {
 impl Default for SubscribeRequest {
     fn default() -> Self {
         Self {
-            media_key: MediaKey::new("__defaultVhost__", "live", "test", None)
-                .expect("default key valid"),
+            media_key: MediaKey {
+                vhost: VhostName::default_value(),
+                app: AppName("live".to_string()),
+                stream: StreamName("test".to_string()),
+                schema: None,
+            },
             output_schema: MediaSchema::Hls,
             subscriber_kind: String::new(),
             start_policy: String::new(),

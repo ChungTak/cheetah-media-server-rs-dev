@@ -104,7 +104,7 @@ impl ResourceFilter {
         let mut s = String::with_capacity(bytes.len() * 2);
         for b in bytes {
             use std::fmt::Write;
-            write!(s, "{:02x}", b).unwrap();
+            let _ = write!(s, "{:02x}", b);
         }
         s
     }

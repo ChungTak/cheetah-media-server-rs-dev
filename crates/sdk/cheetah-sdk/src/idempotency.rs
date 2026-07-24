@@ -13,8 +13,10 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
 use std::future::Future;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use parking_lot::Mutex;
 
 use cheetah_runtime_api::{oneshot_channel, OneShotSender};
 use sha2::{Digest, Sha256};
@@ -87,6 +89,16 @@ pub fn canonical_hash(input: impl AsRef<[u8]>) -> IdempotencyFingerprint {
     hasher.update(input.as_ref());
     IdempotencyFingerprint::from_bytes(hasher.finalize().into())
 }
+
+/// Maximum number of distinct idempotency records kept in memory.
+///
+/// 内存中保留的幂等记录数量上限。
+const MAX_ENTRIES: usize = 100_000;
+
+/// Maximum number of concurrent callers that may wait on the same in-progress key.
+///
+/// 同一进行中的 key 允许同时等待的最大调用方数。
+const MAX_CONCURRENT_WAITERS: usize = 64;
 
 /// Terminal outcome of an idempotent operation.
 ///
@@ -193,6 +205,45 @@ struct InProgressGuard {
     key: Option<IdempotencyKey>,
 }
 
+/// Remove expired records and, if still over the cap, evict the oldest
+/// completed/error record. In-progress records are never evicted.
+fn prune_entries_if_needed(
+    map: &mut HashMap<IdempotencyKey, Entry>,
+    now: i64,
+) -> Result<(), IdempotencyError> {
+    if map.len() < MAX_ENTRIES {
+        return Ok(());
+    }
+
+    map.retain(|_, entry| !entry.is_expired(now));
+    if map.len() < MAX_ENTRIES {
+        return Ok(());
+    }
+
+    let oldest = map
+        .iter()
+        .filter_map(|(k, entry)| match entry {
+            Entry::Completed { expiry, .. } | Entry::Error { expiry, .. } => {
+                Some((*expiry, k.clone()))
+            }
+            Entry::InProgress { .. } => None,
+        })
+        .min_by_key(|(expiry, _)| *expiry)
+        .map(|(_, k)| k);
+
+    if let Some(key) = oldest {
+        map.remove(&key);
+    }
+
+    if map.len() < MAX_ENTRIES {
+        Ok(())
+    } else {
+        Err(IdempotencyError::OperationFailed(
+            "idempotency repository capacity exceeded".to_string(),
+        ))
+    }
+}
+
 impl InProgressGuard {
     fn new(inner: Arc<Mutex<HashMap<IdempotencyKey, Entry>>>, key: IdempotencyKey) -> Self {
         Self {
@@ -213,7 +264,7 @@ impl Drop for InProgressGuard {
             (Some(i), Some(k)) => (i, k),
             _ => return,
         };
-        let mut map = inner.lock().unwrap();
+        let mut map = inner.lock();
         if let Some(Entry::InProgress { waiters, .. }) = map.remove(&key) {
             drop(map);
             for w in waiters {
@@ -307,7 +358,7 @@ impl InMemoryIdempotencyRepository {
         // a block so the guard is dropped before any await point.
         loop {
             let waiter_rx = {
-                let mut map = self.inner.lock().unwrap();
+                let mut map = self.inner.lock();
                 let now = Self::now_ms();
                 if let Some(entry) = map.get_mut(&key) {
                     if entry.is_expired(now) {
@@ -320,12 +371,22 @@ impl InMemoryIdempotencyRepository {
 
                 match map.get_mut(&key) {
                     Some(Entry::InProgress { waiters, .. }) => {
+                        if waiters.len() >= MAX_CONCURRENT_WAITERS {
+                            return Err(IdempotencyError::OperationFailed(
+                                "too many concurrent idempotency waiters".to_string(),
+                            ));
+                        }
                         let (tx, rx) = oneshot_channel();
                         waiters.push(tx);
                         Some(rx)
                     }
-                    Some(_) => unreachable!("check_existing handled non-in-progress entries"),
+                    Some(_) => {
+                        return Err(IdempotencyError::OperationFailed(
+                            "idempotency entry changed during lookup".to_string(),
+                        ));
+                    }
                     None => {
+                        prune_entries_if_needed(&mut map, now)?;
                         map.insert(
                             key.clone(),
                             Entry::InProgress {
@@ -371,7 +432,7 @@ impl InMemoryIdempotencyRepository {
 
         // Commit the terminal outcome, wake waiters and return.
         let waiters = {
-            let mut map = self.inner.lock().unwrap();
+            let mut map = self.inner.lock();
             let entry = map.get_mut(&key);
             match (&result, entry) {
                 (Ok((value, resource_id)), Some(Entry::InProgress { waiters, .. })) => {
@@ -429,7 +490,7 @@ impl InMemoryIdempotencyRepository {
     ///
     /// 返回指定键的当前结果（如有）。
     pub fn outcome(&self, key: &IdempotencyKey) -> Option<IdempotencyOutcome> {
-        let map = self.inner.lock().unwrap();
+        let map = self.inner.lock();
         match map.get(key) {
             Some(Entry::Completed { outcome, .. }) => Some(IdempotencyOutcome::Success {
                 resource_id: outcome.resource_id.clone(),
@@ -446,7 +507,7 @@ impl InMemoryIdempotencyRepository {
     ///
     /// 返回指定键的完整幂等记录，包括 canonical 指纹与终态结果。
     pub fn record(&self, key: &IdempotencyKey) -> Option<IdempotencyRecord> {
-        let map = self.inner.lock().unwrap();
+        let map = self.inner.lock();
         map.get(key).and_then(|entry| {
             let outcome = match entry {
                 Entry::Completed { outcome, .. } => IdempotencyOutcome::Success {

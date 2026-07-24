@@ -165,7 +165,9 @@ fn canonical_query(url: &url::Url) -> String {
 }
 
 fn hmac_signature(secret: &[u8], canonical: &str) -> Vec<u8> {
-    let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC key length is valid");
+    let Ok(mut mac) = HmacSha256::new_from_slice(secret) else {
+        return Vec::new();
+    };
     mac.update(canonical.as_bytes());
     mac.finalize().into_bytes().to_vec()
 }

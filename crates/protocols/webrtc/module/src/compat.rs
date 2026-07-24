@@ -683,8 +683,13 @@ pub fn parse_zlm_rtc_url(input: &str) -> Result<ZlmRtcUrl, ZlmRtcUrlError> {
             // rest as extra path noise. We surface the trailing
             // path via `extra_params` under `path_extra` so the
             // caller can reject if it cares.
-            let stream = segments.last().unwrap();
-            let app = segments[segments.len() - 2];
+            let Some(stream) = segments.last().copied() else {
+                return Err(ZlmRtcUrlError::MissingStream);
+            };
+            let app = segments
+                .get(segments.len().saturating_sub(2))
+                .copied()
+                .unwrap_or(stream);
             let extra = vec![(
                 "path_extra".to_string(),
                 segments[..segments.len() - 2].join("/"),

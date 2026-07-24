@@ -76,7 +76,7 @@ impl Mp4ModuleConfig {
     }
 
     pub fn default_json() -> Value {
-        serde_json::to_value(Self::default()).expect("default config serializes")
+        serde_json::to_value(Self::default()).unwrap_or_default()
     }
 
     pub fn validate(&self) -> Result<(), String> {

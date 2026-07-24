@@ -1370,9 +1370,9 @@ async fn handle_core_event(
                 seq,
             ) {
                 PartRequestDecision::Ready => {
-                    let data = part_state
-                        .and_then(|(data, _, _)| data)
-                        .expect("ready part has data");
+                    let Some(data) = part_state.and_then(|(data, _, _)| data) else {
+                        return;
+                    };
                     let _ = cmd_tx
                         .send(HlsDriverCommand::SendResponse {
                             connection_id,

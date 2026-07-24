@@ -805,7 +805,7 @@ impl RtspModuleConfig {
     ///
     /// 返回默认配置的 JSON 值，用于配置 schema。
     pub fn default_json() -> serde_json::Value {
-        serde_json::to_value(Self::default()).expect("serialize default rtsp config")
+        serde_json::to_value(Self::default()).unwrap_or_default()
     }
 
     fn validate_rtsp_url(value: &str, field: &str) -> Result<(), SdkError> {

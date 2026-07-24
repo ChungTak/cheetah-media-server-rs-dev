@@ -104,10 +104,10 @@ impl HlsPlaybackPacer {
         let force_drain = buffer_span_ms > self.max_buffer_ms;
 
         let mut out = Vec::with_capacity(self.buffer.len());
-        while let Some(front) = self.buffer.front() {
+        while let Some(front) = self.buffer.pop_front() {
             let frame_offset_ms = front.dts_ms.saturating_sub(first_dts);
             if frame_offset_ms <= elapsed_ms || force_drain {
-                out.push(self.buffer.pop_front().unwrap());
+                out.push(front);
                 // In force-drain mode, only drain down to half max buffer
                 if force_drain && !out.is_empty() {
                     let remaining_span = self
@@ -120,6 +120,7 @@ impl HlsPlaybackPacer {
                     }
                 }
             } else {
+                self.buffer.push_front(front);
                 break;
             }
         }

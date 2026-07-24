@@ -114,7 +114,24 @@ pub fn generate_request_id() -> String {
 /// 为基于 cookie 的认证生成随机 session token。
 pub fn generate_session_token() -> String {
     let mut buf = [0u8; 32];
-    getrandom::getrandom(&mut buf).expect("session token random source");
+    if getrandom::getrandom(&mut buf).is_err() {
+        // Fallback if the OS random source is unavailable: use timestamp + counter.
+        // This is predictable and must be replaced with a proper entropy source
+        // in production deployments.
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .to_le_bytes();
+        let counter = REQUEST_ID_COUNTER
+            .fetch_add(1, Ordering::Relaxed)
+            .to_le_bytes();
+        for (i, &b) in seed.iter().chain(counter.iter()).enumerate() {
+            if i < buf.len() {
+                buf[i] = b;
+            }
+        }
+    }
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(64);
     for b in buf {

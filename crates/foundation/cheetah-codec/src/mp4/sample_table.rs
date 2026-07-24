@@ -159,8 +159,8 @@ impl TrackBuilder {
         if self.samples.is_empty() {
             return 0;
         }
-        let last = self.samples.last().unwrap();
-        let first = self.samples.first().unwrap();
+        let last = &self.samples[self.samples.len() - 1];
+        let first = &self.samples[0];
         last.dts_us
             .saturating_sub(first.dts_us)
             .saturating_add(last.duration_us.max(0))

@@ -5,7 +5,9 @@
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use cheetah_runtime_api::{OneShotRecvError, RuntimeApi, SpawnError};
 
@@ -37,7 +39,7 @@ where
         let outcome = catch_unwind(AssertUnwindSafe(|| AssertUnwindSafe(task())));
         match outcome {
             Ok(AssertUnwindSafe(value)) => {
-                *result_clone.lock().expect("blocking result mutex poisoned") = Some(value);
+                *result_clone.lock() = Some(value);
             }
             Err(_) => {
                 panicked_clone.store(true, Ordering::SeqCst);
@@ -68,11 +70,9 @@ where
         ));
     }
 
-    let mut guard = result.lock().expect("blocking result mutex poisoned");
-    let value = guard.take().ok_or_else(|| {
+    let value = result.lock().take().ok_or_else(|| {
         ControlPlaneError::Internal("blocking task did not set result".to_string())
     })?;
-    drop(guard);
     Ok(value)
 }
 

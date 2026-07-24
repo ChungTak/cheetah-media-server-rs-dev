@@ -202,7 +202,12 @@ impl RtpPacket {
                 });
             }
 
-            let padding_size = *remaining.last().unwrap();
+            let Some(&padding_size) = remaining.last() else {
+                return Err(RtpError::InvalidPadding {
+                    padding_size: 0,
+                    available: 0,
+                });
+            };
             if padding_size == 0 || padding_size as usize > remaining.len() {
                 return Err(RtpError::InvalidPadding {
                     padding_size,

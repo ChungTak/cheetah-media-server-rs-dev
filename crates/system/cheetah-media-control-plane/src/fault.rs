@@ -3,7 +3,9 @@
 //! 控制面变更测试的确定性故障注入点。
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 /// The points in a mutation pipeline where a fault can be injected.
 ///
@@ -103,18 +105,18 @@ pub struct DeterministicFaultInjector {
 impl DeterministicFaultInjector {
     /// Register a fault rule.
     pub fn set(&self, point: FaultPoint, action: FaultAction) {
-        self.rules.lock().unwrap().insert(point, action);
+        self.rules.lock().insert(point, action);
     }
 
     /// Remove a fault rule.
     pub fn clear(&self, point: FaultPoint) {
-        self.rules.lock().unwrap().remove(&point);
+        self.rules.lock().remove(&point);
     }
 }
 
 impl FaultInjector for DeterministicFaultInjector {
     fn inject(&self, point: FaultPoint) -> Option<FaultAction> {
-        let mut rules = self.rules.lock().unwrap();
+        let mut rules = self.rules.lock();
         rules.get(&point).copied().map(|action| match action {
             FaultAction::FailOnce => {
                 rules.remove(&point);
@@ -125,7 +127,7 @@ impl FaultInjector for DeterministicFaultInjector {
     }
 
     fn reset(&self) {
-        let mut rules = self.rules.lock().unwrap();
+        let mut rules = self.rules.lock();
         rules.retain(|_, action| action.is_persistent());
     }
 }

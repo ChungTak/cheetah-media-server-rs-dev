@@ -71,10 +71,9 @@ impl RtmpCore {
             let Some(idx) = removable_idx else {
                 break;
             };
-            let removed = self
-                .pending_media
-                .remove(idx)
-                .expect("idx from rposition is valid");
+            let Some(removed) = self.pending_media.remove(idx) else {
+                break;
+            };
             self.pending_media_bytes = self
                 .pending_media_bytes
                 .saturating_sub(removed.payload.len());

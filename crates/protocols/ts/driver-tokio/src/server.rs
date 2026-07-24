@@ -209,7 +209,9 @@ async fn run_server(
                 let (conn_tx, conn_rx) = mpsc::channel(wq_cap.max(1));
                 conn_map.lock().insert(conn_id.0, conn_tx);
                 let conn_map2 = conn_map.clone();
-                let (_, acceptor, timeout_ms) = tls_listener.as_ref().unwrap();
+                let Some((_, acceptor, timeout_ms)) = tls_listener.as_ref() else {
+                    continue;
+                };
                 let acceptor = acceptor.clone();
                 let timeout_ms = *timeout_ms;
                 tokio::spawn(async move {
