@@ -7,6 +7,7 @@
 //! 本模块包含兼容 serde 的结构体、校验逻辑与默认值辅助函数。
 
 use std::collections::HashSet;
+use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
 
 use cheetah_sdk::{BackpressurePolicy, SdkError};
@@ -89,13 +90,22 @@ pub struct RtspAuthConfig {
     pub nonce_ttl_secs: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 /// A single username/password pair for Basic/Digest authentication.
 ///
 /// Basic/Digest 认证的一组用户名与密码。
 pub struct RtspAuthUserConfig {
     pub username: String,
     pub password: String,
+}
+
+impl fmt::Debug for RtspAuthUserConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RtspAuthUserConfig")
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1383,5 +1393,16 @@ mod tests {
             .validate()
             .expect_err("must reject duplicated names across job types");
         assert!(err.to_string().contains("duplicated rtsp job name"));
+    }
+
+    #[test]
+    fn auth_user_config_debug_redacts_password() {
+        let user = RtspAuthUserConfig {
+            username: "alice".to_string(),
+            password: "wonderland".to_string(),
+        };
+        let out = format!("{user:?}");
+        assert!(out.contains("alice"), "username missing: {out}");
+        assert!(!out.contains("wonderland"), "password leaked: {out}");
     }
 }
