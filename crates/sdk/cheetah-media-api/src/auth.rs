@@ -219,9 +219,50 @@ impl Principal {
 /// Raw credentials extracted from an incoming HTTP request.
 ///
 /// 从传入 HTTP 请求中提取的原始凭证。
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq)]
 pub struct AuthCredentials {
     pub authorization_header: Option<String>,
     pub mtls_identity: Option<String>,
     pub deployment_token: Option<String>,
+}
+
+impl std::fmt::Debug for AuthCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthCredentials")
+            .field(
+                "authorization_header",
+                &self.authorization_header.as_ref().map(|_| "<redacted>"),
+            )
+            .field("mtls_identity", &self.mtls_identity)
+            .field(
+                "deployment_token",
+                &self.deployment_token.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_credentials_debug_redacts_secrets() {
+        let creds = AuthCredentials {
+            authorization_header: Some("Bearer secret-token".to_string()),
+            mtls_identity: Some("cn=alice".to_string()),
+            deployment_token: Some("deploy-secret".to_string()),
+        };
+        let out = format!("{creds:?}");
+        assert!(
+            !out.contains("secret-token"),
+            "authorization must be redacted"
+        );
+        assert!(
+            !out.contains("deploy-secret"),
+            "deployment token must be redacted"
+        );
+        assert!(out.contains("cn=alice"), "mtls identity is not secret");
+        assert!(out.contains("<redacted>"), "redaction marker present");
+    }
 }
