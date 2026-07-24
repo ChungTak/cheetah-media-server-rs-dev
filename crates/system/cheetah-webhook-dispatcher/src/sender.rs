@@ -3,6 +3,7 @@ use cheetah_runtime_api::RuntimeApi;
 use futures::future::FutureExt;
 use futures::select_biased;
 use std::collections::HashMap;
+use std::fmt;
 use std::io;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,7 +13,7 @@ use crate::security::{ParsedUrl, WebhookUrlVerdict};
 /// HTTP request to be sent by a `WebhookSender`.
 ///
 /// `WebhookSender` 要发送的 HTTP 请求。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WebhookHttpRequest {
     pub verdict: WebhookUrlVerdict,
     pub headers: HashMap<String, String>,
@@ -20,14 +21,49 @@ pub struct WebhookHttpRequest {
     pub timeout: Duration,
 }
 
+impl fmt::Debug for WebhookHttpRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted_headers: HashMap<String, String> = self
+            .headers
+            .iter()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    if crate::util::is_secret_header(k) {
+                        "<redacted>".to_string()
+                    } else {
+                        v.clone()
+                    },
+                )
+            })
+            .collect();
+        f.debug_struct("WebhookHttpRequest")
+            .field("verdict", &self.verdict)
+            .field("headers", &redacted_headers)
+            .field("body", &format!("<{} bytes>", self.body.len()))
+            .field("timeout", &self.timeout)
+            .finish()
+    }
+}
+
 /// Result of a webhook HTTP POST.
 ///
 /// webhook HTTP POST 结果。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct WebhookResponse {
     pub status: u16,
     pub body: String,
     pub duration_ms: u64,
+}
+
+impl fmt::Debug for WebhookResponse {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebhookResponse")
+            .field("status", &self.status)
+            .field("body", &format!("<{} bytes>", self.body.len()))
+            .field("duration_ms", &self.duration_ms)
+            .finish()
+    }
 }
 
 /// HTTP transport abstraction used by the dispatcher.
@@ -277,4 +313,70 @@ impl HttpParser {
 
 fn find_substring(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|w| w == needle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::security::ParsedUrl;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    fn parsed_url() -> ParsedUrl {
+        ParsedUrl {
+            scheme: "https".to_string(),
+            host: "example.com".to_string(),
+            port: 443,
+            path_and_query: "/hook".to_string(),
+        }
+    }
+
+    #[test]
+    fn webhook_request_debug_redacts_secret_headers_and_omits_body() {
+        let mut headers = HashMap::new();
+        headers.insert("Content-Type".to_string(), "application/json".to_string());
+        headers.insert("Authorization".to_string(), "Bearer secret".to_string());
+
+        let request = WebhookHttpRequest {
+            verdict: WebhookUrlVerdict::Allow(
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 443),
+                parsed_url(),
+            ),
+            headers,
+            body: b"sensitive payload".to_vec(),
+            timeout: Duration::from_secs(5),
+        };
+
+        let out = format!("{request:?}");
+        assert!(
+            !out.contains("Bearer secret"),
+            "authorization must be redacted: {out}"
+        );
+        assert!(
+            !out.contains("sensitive payload"),
+            "body must not be printed: {out}"
+        );
+        assert!(out.contains("<17 bytes>"), "body length shown: {out}");
+        assert!(
+            out.contains("application/json"),
+            "non-secret header kept: {out}"
+        );
+    }
+
+    #[test]
+    fn webhook_response_debug_omits_body() {
+        let response = WebhookResponse {
+            status: 200,
+            body: "secret response".to_string(),
+            duration_ms: 12,
+        };
+        let out = format!("{response:?}");
+        assert!(
+            !out.contains("secret response"),
+            "response body must not be printed: {out}"
+        );
+        assert!(
+            out.contains("<15 bytes>"),
+            "response body length shown: {out}"
+        );
+    }
 }

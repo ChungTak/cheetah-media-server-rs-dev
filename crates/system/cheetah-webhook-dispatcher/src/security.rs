@@ -1,3 +1,4 @@
+use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
 use std::str::FromStr;
 use std::time::Duration;
@@ -36,21 +37,44 @@ impl Default for WebhookUrlPolicy {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum WebhookUrlVerdict {
     Allow(SocketAddr, ParsedUrl),
     Deny(String),
 }
 
+impl fmt::Debug for WebhookUrlVerdict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Allow(addr, parsed) => f.debug_tuple("Allow").field(addr).field(parsed).finish(),
+            Self::Deny(reason) => f.debug_tuple("Deny").field(reason).finish(),
+        }
+    }
+}
+
 /// URL parts that the HTTP client needs.
 ///
 /// HTTP 客户端需要的 URL 部件。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct ParsedUrl {
     pub scheme: String,
     pub host: String,
     pub port: u16,
     pub path_and_query: String,
+}
+
+impl fmt::Debug for ParsedUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ParsedUrl")
+            .field("scheme", &self.scheme)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field(
+                "path_and_query",
+                &crate::util::redact_path_and_query(&self.path_and_query),
+            )
+            .finish()
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -225,6 +249,26 @@ mod tests {
         let policy = WebhookUrlPolicy::default();
         let verdict = policy.evaluate("http://[::ffff:8.8.8.8]/hook");
         assert!(verdict.is_ok(), "{verdict:?}");
+    }
+
+    #[test]
+    fn parsed_url_debug_redacts_secret_query() {
+        let parsed = ParsedUrl {
+            scheme: "https".to_string(),
+            host: "example.com".to_string(),
+            port: 443,
+            path_and_query: "/hook?token=secret&foo=bar".to_string(),
+        };
+        let out = format!("{parsed:?}");
+        assert!(
+            !out.contains("secret"),
+            "token value must be redacted: {out}"
+        );
+        assert!(
+            out.contains("token=<redacted>"),
+            "token key preserved: {out}"
+        );
+        assert!(out.contains("foo=bar"), "non-secret param kept: {out}");
     }
 }
 

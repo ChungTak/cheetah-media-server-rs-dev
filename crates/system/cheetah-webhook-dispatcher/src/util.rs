@@ -32,3 +32,51 @@ pub fn webhook_headers(event_id: &str) -> HashMap<String, String> {
     headers.insert("X-Event-Id".to_string(), event_id.to_string());
     headers
 }
+
+/// True if an HTTP header commonly carries credentials or session secrets.
+pub fn is_secret_header(name: &str) -> bool {
+    matches!(
+        name.to_lowercase().as_str(),
+        "authorization" | "x-zlm-secret" | "cookie" | "proxy-authorization"
+    )
+}
+
+/// True if a URL query parameter key commonly carries secrets.
+pub fn is_secret_query_key(name: &str) -> bool {
+    matches!(
+        name.to_lowercase().as_str(),
+        "authorization"
+            | "token"
+            | "api_key"
+            | "apikey"
+            | "secret"
+            | "password"
+            | "passwd"
+            | "x-zlm-secret"
+    )
+}
+
+/// Redact secret values from a raw query string (without the leading `?`).
+pub fn redact_query(query: &str) -> String {
+    query
+        .split('&')
+        .map(|part| {
+            if let Some((key, _value)) = part.split_once('=') {
+                if is_secret_query_key(key) {
+                    return format!("{key}=<redacted>");
+                }
+            }
+            part.to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+/// Redact a `path?query` string so secrets in the query are not logged.
+pub fn redact_path_and_query(path_and_query: &str) -> String {
+    if let Some((path, query)) = path_and_query.split_once('?') {
+        format!("{}?{}", path, redact_query(query))
+    } else {
+        path_and_query.to_string()
+    }
+}
