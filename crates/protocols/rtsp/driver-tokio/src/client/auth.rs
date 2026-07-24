@@ -1,8 +1,10 @@
+use std::collections::{HashMap, VecDeque};
+use std::fmt;
+
 use base64::Engine;
 use cheetah_rtsp_core::{RtspMethod, RtspResponseMessage};
 use parking_lot::Mutex;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 
@@ -36,10 +38,19 @@ static DIGEST_NONCE_COUNT: OnceLock<Mutex<DigestNonceCountState>> = OnceLock::ne
 /// Credentials used by the RTSP client for Basic or Digest authentication.
 ///
 /// RTSP 客户端用于 Basic 或 Digest 认证的凭据。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RtspClientCredentials {
     pub username: String,
     pub password: String,
+}
+
+impl fmt::Debug for RtspClientCredentials {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RtspClientCredentials")
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .finish()
+    }
 }
 
 /// Inspect a 401 response and build an `Authorization` header if a supported scheme is found.
@@ -563,5 +574,16 @@ mod tests {
         let ha2 = sha256_hex("DESCRIBE:rtsp://127.0.0.1/live/test");
         let expected_response = sha256_hex(&format!("{ha1}:sha256nonce:{ha2}"));
         assert!(header.contains(&format!("response=\"{expected_response}\"")));
+    }
+
+    #[test]
+    fn client_credentials_debug_redacts_password() {
+        let creds = RtspClientCredentials {
+            username: "alice".to_string(),
+            password: "wonderland".to_string(),
+        };
+        let out = format!("{creds:?}");
+        assert!(out.contains("alice"), "username missing: {out}");
+        assert!(!out.contains("wonderland"), "password leaked: {out}");
     }
 }
