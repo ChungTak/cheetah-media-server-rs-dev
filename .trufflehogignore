@@ -1,0 +1,17 @@
+# Build artifacts
+^target/.*
+# Lockfiles
+^Cargo\.lock$
+^.*\.lock$
+# Documentation
+^docs/.*
+^dev-docs/.*
+^.*\.md$
+# Example and generated configs
+^config\.example\.yaml$
+^config\.yaml$
+^\.github/.*
+# Test fixtures and generated test data
+^crates/.*/tests/.*
+^crates/.*/testing/.*
+^.*_test\.rs$
