@@ -7,10 +7,66 @@
 //! 本模块包含兼容 serde 的结构体、校验逻辑与默认值辅助函数。
 
 use std::collections::HashSet;
+use std::fmt;
 use std::net::{Ipv4Addr, SocketAddr};
 
 use cheetah_sdk::{BackpressurePolicy, SdkError};
 use serde::{Deserialize, Serialize};
+
+fn is_secret_query_key(key: &str) -> bool {
+    matches!(
+        key.to_lowercase().as_str(),
+        "authorization"
+            | "token"
+            | "access_token"
+            | "refresh_token"
+            | "api_key"
+            | "apikey"
+            | "key"
+            | "secret"
+            | "signature"
+            | "sign"
+            | "auth"
+            | "ticket"
+            | "password"
+            | "passwd"
+            | "x-api-key"
+            | "x_zlm_secret"
+            | "x-zlm-secret"
+            | "cookie"
+            | "proxy-authorization"
+            | "passphrase"
+    )
+}
+
+/// Best-effort URL redactor: strips `user:pass@` and redacts secret query keys.
+fn redact_url_for_debug(url: &str) -> String {
+    let mut s = url.to_string();
+    if let Some(scheme_end) = s.find("://") {
+        let after = &s[scheme_end + 3..];
+        if let Some(at) = after.find('@') {
+            s = format!("{}://{}", &s[..scheme_end], &after[at + 1..]);
+        }
+    }
+
+    if let Some((path, query)) = s.split_once('?') {
+        let redacted = query
+            .split('&')
+            .map(|part| {
+                if let Some((key, _)) = part.split_once('=') {
+                    if is_secret_query_key(key) {
+                        return format!("{key}=<redacted>");
+                    }
+                }
+                part.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        format!("{path}?{redacted}")
+    } else {
+        s
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
@@ -236,7 +292,7 @@ pub enum RtspPullTransport {
     Multicast,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 /// Background job that pulls an RTSP stream into the engine.
 ///
@@ -264,6 +320,23 @@ pub struct RtspPullJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+impl fmt::Debug for RtspPullJobConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RtspPullJobConfig")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("source_url", &redact_url_for_debug(&self.source_url))
+            .field("target_stream_key", &self.target_stream_key)
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .field("transport_preference", &self.transport_preference)
+            .field("heartbeat_mode", &self.heartbeat_mode)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_retry_backoff_ms", &self.max_retry_backoff_ms)
+            .finish()
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 /// Transport preference order for RTSP push jobs.
@@ -275,7 +348,7 @@ pub enum RtspPushTransport {
     HttpTunnel,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 /// Background job that pushes a local stream to a remote RTSP server.
 ///
@@ -301,7 +374,23 @@ pub struct RtspPushJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+impl fmt::Debug for RtspPushJobConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RtspPushJobConfig")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("source_stream_key", &self.source_stream_key)
+            .field("target_url", &redact_url_for_debug(&self.target_url))
+            .field("username", &self.username)
+            .field("password", &"<redacted>")
+            .field("transport_preference", &self.transport_preference)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_retry_backoff_ms", &self.max_retry_backoff_ms)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 /// Background job that relays an RTSP stream between two RTSP servers.
 ///
@@ -323,6 +412,21 @@ pub struct RtspRelayJobConfig {
     pub retry_backoff_ms: u64,
     /// 重试退避上限（毫秒）。
     pub max_retry_backoff_ms: u64,
+}
+
+impl fmt::Debug for RtspRelayJobConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RtspRelayJobConfig")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("source_url", &redact_url_for_debug(&self.source_url))
+            .field("target_url", &redact_url_for_debug(&self.target_url))
+            .field("local_stream_key", &self.local_stream_key)
+            .field("transport_preference", &self.transport_preference)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_retry_backoff_ms", &self.max_retry_backoff_ms)
+            .finish()
+    }
 }
 
 impl Default for RtspModuleConfig {
@@ -1383,5 +1487,60 @@ mod tests {
             .validate()
             .expect_err("must reject duplicated names across job types");
         assert!(err.to_string().contains("duplicated rtsp job name"));
+    }
+
+    #[test]
+    fn debug_redacts_url_secrets_userinfo_and_password() {
+        let pull = RtspPullJobConfig {
+            name: "pull".to_string(),
+            source_url: "rtsp://user:pass@host/live/stream?token=secret&other=ok".to_string(),
+            username: Some("user".to_string()),
+            password: Some("p4ss".to_string()),
+            ..RtspPullJobConfig::default()
+        };
+        let push = RtspPushJobConfig {
+            name: "push".to_string(),
+            target_url: "rtsp://host/live/stream?secret=leak".to_string(),
+            username: Some("user".to_string()),
+            password: Some("p4ss".to_string()),
+            ..RtspPushJobConfig::default()
+        };
+        let relay = RtspRelayJobConfig {
+            name: "relay".to_string(),
+            source_url: "rtsp://src/live/stream?api_key=sk".to_string(),
+            target_url: "rtsp://user:pw@dst/live/stream".to_string(),
+            ..RtspRelayJobConfig::default()
+        };
+
+        let pull_out = format!("{pull:?}");
+        assert!(
+            !pull_out.contains("user:pass"),
+            "userinfo leaked: {pull_out}"
+        );
+        assert!(
+            !pull_out.contains("token=secret"),
+            "token leaked: {pull_out}"
+        );
+        assert!(!pull_out.contains("p4ss"), "password leaked: {pull_out}");
+        assert!(
+            pull_out.contains("other=ok"),
+            "non-secret query dropped: {pull_out}"
+        );
+
+        let push_out = format!("{push:?}");
+        assert!(
+            !push_out.contains("secret=leak"),
+            "secret leaked: {push_out}"
+        );
+
+        let relay_out = format!("{relay:?}");
+        assert!(
+            !relay_out.contains("api_key=sk"),
+            "api_key leaked: {relay_out}"
+        );
+        assert!(
+            !relay_out.contains("user:pw"),
+            "target userinfo leaked: {relay_out}"
+        );
     }
 }
