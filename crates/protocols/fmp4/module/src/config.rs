@@ -4,6 +4,18 @@
 
 use serde::{Deserialize, Serialize};
 
+const MAX_WRITE_QUEUE_CAPACITY: usize = 1_000_000;
+const MAX_SUBSCRIBER_QUEUE_CAPACITY: usize = 1_000_000;
+const MAX_READ_BUFFER_SIZE: usize = 4 * 1024 * 1024;
+const MAX_BOOTSTRAP_MAX_FRAMES: usize = 100_000;
+const MAX_MAX_TRACKS: usize = 256;
+const MAX_MAX_BOX_BYTES: usize = 64 * 1024 * 1024;
+const MAX_MAX_FRAGMENT_DURATION_MS: u64 = 60_000;
+const MAX_PLAY_WAIT_SOURCE_TIMEOUT_MS: u64 = 300_000;
+const MAX_HANDSHAKE_TIMEOUT_MS: u64 = 60_000;
+const MAX_RETRY_BACKOFF_MS: u64 = 300_000;
+const MAX_PULL_JOBS: usize = 10_000;
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 /// Top-level configuration for the fMP4 module.
 ///
@@ -135,26 +147,87 @@ impl Fmp4ModuleConfig {
                 if tls.listen.parse::<std::net::SocketAddr>().is_err() {
                     errors.push(format!("invalid tls.listen address: {}", tls.listen));
                 }
+                if tls.handshake_timeout_ms == 0
+                    || tls.handshake_timeout_ms > MAX_HANDSHAKE_TIMEOUT_MS
+                {
+                    errors.push(format!(
+                        "tls.handshake_timeout_ms ({}) must be in [1, {}]",
+                        tls.handshake_timeout_ms, MAX_HANDSHAKE_TIMEOUT_MS
+                    ));
+                }
             }
         }
-        if self.write_queue_capacity < 1 {
-            errors.push("write_queue_capacity must be >= 1".to_string());
-        }
-        let min_sub_queue = self.bootstrap_max_frames.max(1);
-        if self.subscriber_queue_capacity < min_sub_queue {
+        if self.write_queue_capacity < 1 || self.write_queue_capacity > MAX_WRITE_QUEUE_CAPACITY {
             errors.push(format!(
-                "subscriber_queue_capacity ({}) must be >= bootstrap_max_frames.max(1) ({})",
-                self.subscriber_queue_capacity, min_sub_queue
+                "write_queue_capacity ({}) must be in [1, {}]",
+                self.write_queue_capacity, MAX_WRITE_QUEUE_CAPACITY
             ));
         }
-        if self.max_tracks < 1 {
-            errors.push("max_tracks must be >= 1".to_string());
+        let min_sub_queue = self.bootstrap_max_frames.max(1);
+        if self.subscriber_queue_capacity < min_sub_queue
+            || self.subscriber_queue_capacity > MAX_SUBSCRIBER_QUEUE_CAPACITY
+        {
+            errors.push(format!(
+                "subscriber_queue_capacity ({}) must be in [bootstrap_max_frames.max(1), {}]",
+                self.subscriber_queue_capacity, MAX_SUBSCRIBER_QUEUE_CAPACITY
+            ));
+        }
+        if self.read_buffer_size < 1 || self.read_buffer_size > MAX_READ_BUFFER_SIZE {
+            errors.push(format!(
+                "read_buffer_size ({}) must be in [1, {}]",
+                self.read_buffer_size, MAX_READ_BUFFER_SIZE
+            ));
+        }
+        if self.bootstrap_max_frames < 1 || self.bootstrap_max_frames > MAX_BOOTSTRAP_MAX_FRAMES {
+            errors.push(format!(
+                "bootstrap_max_frames ({}) must be in [1, {}]",
+                self.bootstrap_max_frames, MAX_BOOTSTRAP_MAX_FRAMES
+            ));
+        }
+        if self.max_tracks < 1 || self.max_tracks > MAX_MAX_TRACKS {
+            errors.push(format!(
+                "max_tracks ({}) must be in [1, {}]",
+                self.max_tracks, MAX_MAX_TRACKS
+            ));
+        }
+        if self.max_box_bytes < 1 || self.max_box_bytes > MAX_MAX_BOX_BYTES {
+            errors.push(format!(
+                "max_box_bytes ({}) must be in [1, {}]",
+                self.max_box_bytes, MAX_MAX_BOX_BYTES
+            ));
+        }
+        if self.max_fragment_duration_ms < 1
+            || self.max_fragment_duration_ms > MAX_MAX_FRAGMENT_DURATION_MS
+        {
+            errors.push(format!(
+                "max_fragment_duration_ms ({}) must be in [1, {}]",
+                self.max_fragment_duration_ms, MAX_MAX_FRAGMENT_DURATION_MS
+            ));
+        }
+        if self.play_wait_source_timeout_ms > MAX_PLAY_WAIT_SOURCE_TIMEOUT_MS {
+            errors.push(format!(
+                "play_wait_source_timeout_ms ({}) must be <= {}",
+                self.play_wait_source_timeout_ms, MAX_PLAY_WAIT_SOURCE_TIMEOUT_MS
+            ));
+        }
+        if self.pull_jobs.len() > MAX_PULL_JOBS {
+            errors.push(format!(
+                "pull_jobs count ({}) must be <= {}",
+                self.pull_jobs.len(),
+                MAX_PULL_JOBS
+            ));
         }
         for job in &self.pull_jobs {
             if job.retry_backoff_ms > job.max_retry_backoff_ms {
                 errors.push(format!(
                     "pull job '{}': retry_backoff_ms ({}) > max_retry_backoff_ms ({})",
                     job.name, job.retry_backoff_ms, job.max_retry_backoff_ms
+                ));
+            }
+            if job.max_retry_backoff_ms > MAX_RETRY_BACKOFF_MS {
+                errors.push(format!(
+                    "pull job '{}': max_retry_backoff_ms ({}) must be <= {}",
+                    job.name, job.max_retry_backoff_ms, MAX_RETRY_BACKOFF_MS
                 ));
             }
             let url = &job.source_url;
@@ -251,6 +324,39 @@ mod tests {
             .validate()
             .unwrap_err()
             .contains("cert_path must not be empty"));
+    }
+
+    #[test]
+    fn oversized_config_fields_rejected() {
+        let config = Fmp4ModuleConfig {
+            write_queue_capacity: MAX_WRITE_QUEUE_CAPACITY + 1,
+            ..Default::default()
+        };
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .contains("write_queue_capacity"));
+
+        let config = Fmp4ModuleConfig {
+            read_buffer_size: MAX_READ_BUFFER_SIZE + 1,
+            ..Default::default()
+        };
+        assert!(config.validate().unwrap_err().contains("read_buffer_size"));
+
+        let config = Fmp4ModuleConfig {
+            max_box_bytes: MAX_MAX_BOX_BYTES + 1,
+            ..Default::default()
+        };
+        assert!(config.validate().unwrap_err().contains("max_box_bytes"));
+
+        let config = Fmp4ModuleConfig {
+            bootstrap_max_frames: MAX_BOOTSTRAP_MAX_FRAMES + 1,
+            ..Default::default()
+        };
+        assert!(config
+            .validate()
+            .unwrap_err()
+            .contains("bootstrap_max_frames"));
     }
 
     #[test]
