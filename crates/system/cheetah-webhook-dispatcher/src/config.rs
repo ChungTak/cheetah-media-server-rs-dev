@@ -113,7 +113,7 @@ impl fmt::Debug for WebhookProfile {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("WebhookProfile")
             .field("name", &self.name)
-            .field("url", &self.url)
+            .field("url", &crate::util::redact_url(&self.url))
             .field("mode", &self.mode)
             .field("events", &self.events)
             .field("secret", &self.secret.as_deref().map(|_| "***"))
@@ -189,4 +189,35 @@ fn default_decision_timeout_ms() -> u64 {
 
 fn default_decision_failure_policy() -> FailurePolicy {
     FailurePolicy::Deny
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn webhook_profile_debug_redacts_url_userinfo_and_secret_query() {
+        let profile = WebhookProfile {
+            name: "hook-1".to_string(),
+            url: "http://user:pass@example.com:8080/hook?token=secret&x=1".to_string(),
+            mode: WebhookProfileMode::NativeDomain,
+            events: vec!["on_publish".to_string()],
+            secret: Some("hmac-secret".to_string()),
+            timeout_ms: default_timeout_ms(),
+            max_body_bytes: default_max_body_bytes(),
+            max_retries: default_max_retries(),
+            retry_interval_ms: default_retry_interval_ms(),
+            max_retry_duration_ms: default_max_retry_duration_ms(),
+            circuit_failure_threshold: default_circuit_failure_threshold(),
+            circuit_open_ms: default_circuit_open_ms(),
+            allowed_cidrs: Vec::new(),
+            decision_events: Vec::new(),
+            decision_timeout_ms: default_decision_timeout_ms(),
+            decision_failure_policy: default_decision_failure_policy(),
+        };
+        let out = format!("{profile:?}");
+        assert!(!out.contains("user:pass"), "url userinfo leaked: {out}");
+        assert!(!out.contains("token=secret"), "url secret leaked: {out}");
+        assert!(!out.contains("hmac-secret"), "secret field leaked: {out}");
+    }
 }
