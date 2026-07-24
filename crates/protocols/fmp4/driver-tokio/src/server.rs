@@ -14,6 +14,9 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tracing::{debug, warn};
 
+/// Bounded capacity for connection-closed notifications.
+const CLOSED_CHANNEL_CAPACITY: usize = 1024;
+
 /// Unique connection identifier.
 ///
 /// 唯一连接标识符。
@@ -115,7 +118,7 @@ pub fn start_server(
 ) -> (Fmp4CommandSender, Fmp4DriverHandle) {
     let (event_tx, event_rx) = mpsc::channel(256);
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<Fmp4DriverCommand>(256);
-    let (closed_tx, mut closed_rx) = mpsc::unbounded_channel::<Fmp4ConnectionId>();
+    let (closed_tx, mut closed_rx) = mpsc::channel::<Fmp4ConnectionId>(CLOSED_CHANNEL_CAPACITY);
 
     let handle = Fmp4DriverHandle { event_rx };
     let sender = Fmp4CommandSender { cmd_tx };
@@ -217,7 +220,7 @@ pub fn start_server(
                             }
                             _ => {
                                 debug!("fMP4 TLS handshake failed/timeout");
-                                let _ = closed_tx2.send(conn_id);
+                                let _ = closed_tx2.try_send(conn_id);
                             }
                         }
                     });
@@ -262,7 +265,7 @@ enum ConnCmd {
 /// 连接任务结束时报告连接已关闭的 Drop 守卫。
 struct ConnectionCloseGuard {
     conn_id: Fmp4ConnectionId,
-    closed_tx: mpsc::UnboundedSender<Fmp4ConnectionId>,
+    closed_tx: mpsc::Sender<Fmp4ConnectionId>,
 }
 
 /// Drop guard implementation: notify the driver that the connection has closed.
@@ -270,7 +273,7 @@ struct ConnectionCloseGuard {
 /// Drop 守卫实现：通知驱动连接已关闭。
 impl Drop for ConnectionCloseGuard {
     fn drop(&mut self) {
-        let _ = self.closed_tx.send(self.conn_id);
+        let _ = self.closed_tx.try_send(self.conn_id);
     }
 }
 
@@ -282,7 +285,7 @@ async fn handle_connection(
     conn_id: Fmp4ConnectionId,
     conn_rx: mpsc::Receiver<ConnCmd>,
     event_tx: mpsc::Sender<Fmp4DriverEvent>,
-    closed_tx: mpsc::UnboundedSender<Fmp4ConnectionId>,
+    closed_tx: mpsc::Sender<Fmp4ConnectionId>,
     cancel: CancellationToken,
 ) {
     let (reader, writer) = tokio::io::split(stream);
@@ -301,7 +304,7 @@ async fn handle_generic_connection<R, W>(
     conn_id: Fmp4ConnectionId,
     mut conn_rx: mpsc::Receiver<ConnCmd>,
     event_tx: mpsc::Sender<Fmp4DriverEvent>,
-    closed_tx: mpsc::UnboundedSender<Fmp4ConnectionId>,
+    closed_tx: mpsc::Sender<Fmp4ConnectionId>,
     cancel: CancellationToken,
 ) where
     R: tokio::io::AsyncRead + Unpin,
@@ -504,7 +507,7 @@ async fn handle_tls_connection(
     conn_id: Fmp4ConnectionId,
     conn_rx: mpsc::Receiver<ConnCmd>,
     event_tx: mpsc::Sender<Fmp4DriverEvent>,
-    closed_tx: mpsc::UnboundedSender<Fmp4ConnectionId>,
+    closed_tx: mpsc::Sender<Fmp4ConnectionId>,
     cancel: CancellationToken,
 ) {
     let (reader, writer) = tokio::io::split(stream);

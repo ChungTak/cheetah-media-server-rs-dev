@@ -24,6 +24,9 @@ use tracing::warn;
 /// consumer does not stall the driver every tick.
 const EVENT_CHANNEL_CAPACITY: usize = 128;
 
+/// Maximum queued control commands per VOD driver task.
+const CMD_CHANNEL_CAPACITY: usize = 1024;
+
 /// Outbound events emitted by the driver to the protocol/module layer.
 ///
 /// 驱动向协议/模块层发出的事件。
@@ -100,7 +103,7 @@ impl Stream for VodEventStream {
 /// 暴露给模块/协议层的命令通道句柄。
 #[derive(Clone)]
 pub struct VodDriverHandle {
-    cmd_tx: mpsc::UnboundedSender<VodControlCommand>,
+    cmd_tx: mpsc::Sender<VodControlCommand>,
     event_rx: Arc<Mutex<Option<mpsc::Receiver<VodDriverEvent>>>>,
 }
 
@@ -112,7 +115,10 @@ impl VodDriverHandle {
     ///
     /// 向驱动任务发送控制命令。
     pub fn send_control(&self, cmd: VodControlCommand) -> Result<(), VodDriverError> {
-        self.cmd_tx.send(cmd).map_err(|_| VodDriverError::Closed)
+        self.cmd_tx.try_send(cmd).map_err(|e| match e {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => VodDriverError::Backpressure,
+            _ => VodDriverError::Closed,
+        })
     }
 
     /// Take ownership of the event stream. Only the first caller succeeds.
@@ -130,6 +136,8 @@ impl VodDriverHandle {
 pub enum VodDriverError {
     #[error("driver channel closed")]
     Closed,
+    #[error("driver backpressure")]
+    Backpressure,
     #[error("file io error: {0}")]
     Io(String),
     #[error("file not found: {0}")]
@@ -168,7 +176,7 @@ pub async fn open_files(
             return Err(VodDriverError::NotFound(format!("{}", p.display())));
         }
     }
-    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+    let (cmd_tx, cmd_rx) = mpsc::channel(CMD_CHANNEL_CAPACITY);
     // Bounded events channel: gives natural backpressure when no consumer
     // reads events promptly. The driver task awaits on `send`, so a slow
     // or absent consumer pauses frame emission instead of letting the
@@ -188,7 +196,7 @@ pub async fn open_files(
 async fn run_multi_driver(
     paths: Vec<PathBuf>,
     config: VodDriverConfig,
-    mut cmd_rx: mpsc::UnboundedReceiver<VodControlCommand>,
+    mut cmd_rx: mpsc::Receiver<VodControlCommand>,
     event_tx: mpsc::Sender<VodDriverEvent>,
 ) {
     let mut tracks_emitted = false;
@@ -273,7 +281,7 @@ async fn run_single(
     file: File,
     file_size: u64,
     config: VodDriverConfig,
-    cmd_rx: &mut mpsc::UnboundedReceiver<VodControlCommand>,
+    cmd_rx: &mut mpsc::Receiver<VodControlCommand>,
     event_tx: &mpsc::Sender<VodDriverEvent>,
     tracks_emitted: &mut bool,
 ) -> bool {
