@@ -25,6 +25,28 @@ use super::sample_entry::{codec_id_from_sample_entry, extradata_from_sample_entr
 use super::sample_table::{SampleIndex, SampleTable};
 use super::Mp4Error;
 
+/// Hard cap on sample-table entry counts so a hostile box cannot force a huge
+/// `Vec` allocation before the loop discovers it has run out of bytes.
+///
+/// 4 million entries is enough for ~37 hours of 30fps video and is well below
+/// typical `max_box_bytes` enforcement limits.
+const MAX_SAMPLE_TABLE_ENTRIES: usize = 4 * 1024 * 1024;
+
+/// Clamp a declared entry count to the number of entries that can actually fit
+/// in `payload` given its header size and per-entry size.
+fn clamp_table_count(
+    count: usize,
+    payload_len: usize,
+    header_size: usize,
+    entry_size: usize,
+) -> usize {
+    if entry_size == 0 {
+        return 0;
+    }
+    let max_by_len = payload_len.saturating_sub(header_size) / entry_size;
+    count.min(max_by_len).min(MAX_SAMPLE_TABLE_ENTRIES)
+}
+
 /// Configuration for the MP4 reader.
 ///
 /// MP4 读取器配置。
@@ -698,7 +720,7 @@ fn parse_stts(payload: &[u8]) -> Result<Vec<(u32, u32)>, Mp4Error> {
         return Err(Mp4Error::InvalidSampleTable("stts truncated"));
     }
     let count = read_u32(payload, 4)? as usize;
-    let mut runs = Vec::with_capacity(count);
+    let mut runs = Vec::with_capacity(clamp_table_count(count, payload.len(), 8, 8));
     for i in 0..count {
         let off = 8 + i * 8;
         if off + 8 > payload.len() {
@@ -717,7 +739,7 @@ fn parse_ctts(payload: &[u8]) -> Result<Vec<(u32, i32)>, Mp4Error> {
     }
     let version = payload[0];
     let count = read_u32(payload, 4)? as usize;
-    let mut runs = Vec::with_capacity(count);
+    let mut runs = Vec::with_capacity(clamp_table_count(count, payload.len(), 8, 8));
     for i in 0..count {
         let off = 8 + i * 8;
         if off + 8 > payload.len() {
@@ -745,7 +767,7 @@ fn parse_stss(payload: &[u8]) -> Result<Vec<u32>, Mp4Error> {
         return Ok(Vec::new());
     }
     let count = read_u32(payload, 4)? as usize;
-    let mut entries = Vec::with_capacity(count);
+    let mut entries = Vec::with_capacity(clamp_table_count(count, payload.len(), 8, 4));
     for i in 0..count {
         let off = 8 + i * 4;
         if off + 4 > payload.len() {
@@ -761,7 +783,7 @@ fn parse_stsc(payload: &[u8]) -> Result<Vec<(u32, u32, u32)>, Mp4Error> {
         return Err(Mp4Error::InvalidSampleTable("stsc truncated"));
     }
     let count = read_u32(payload, 4)? as usize;
-    let mut entries = Vec::with_capacity(count);
+    let mut entries = Vec::with_capacity(clamp_table_count(count, payload.len(), 8, 12));
     for i in 0..count {
         let off = 8 + i * 12;
         if off + 12 > payload.len() {
@@ -785,7 +807,7 @@ fn parse_stsz(payload: &[u8]) -> Result<(u32, Vec<u32>), Mp4Error> {
     if default != 0 {
         return Ok((default, Vec::new()));
     }
-    let mut sizes = Vec::with_capacity(count);
+    let mut sizes = Vec::with_capacity(clamp_table_count(count, payload.len(), 12, 4));
     for i in 0..count {
         let off = 12 + i * 4;
         if off + 4 > payload.len() {
@@ -801,7 +823,7 @@ fn parse_stco(payload: &[u8]) -> Result<Vec<u64>, Mp4Error> {
         return Err(Mp4Error::InvalidSampleTable("stco truncated"));
     }
     let count = read_u32(payload, 4)? as usize;
-    let mut entries = Vec::with_capacity(count);
+    let mut entries = Vec::with_capacity(clamp_table_count(count, payload.len(), 8, 4));
     for i in 0..count {
         let off = 8 + i * 4;
         if off + 4 > payload.len() {
@@ -817,7 +839,7 @@ fn parse_co64(payload: &[u8]) -> Result<Vec<u64>, Mp4Error> {
         return Err(Mp4Error::InvalidSampleTable("co64 truncated"));
     }
     let count = read_u32(payload, 4)? as usize;
-    let mut entries = Vec::with_capacity(count);
+    let mut entries = Vec::with_capacity(clamp_table_count(count, payload.len(), 8, 8));
     for i in 0..count {
         let off = 8 + i * 8;
         if off + 8 > payload.len() {
@@ -924,5 +946,29 @@ mod tests {
         }
         assert!(got_tracks);
         assert_eq!(frames, 3);
+    }
+
+    #[test]
+    fn parse_sample_table_boxes_ignore_hostile_count_fields() {
+        // Small boxes that claim u32::MAX entries. The parser must not try to
+        // allocate that many entries and should return an empty or truncated
+        // vector without panicking.
+        let mut stts = vec![0u8; 4];
+        stts.extend_from_slice(&u32::MAX.to_be_bytes());
+        assert!(parse_stts(&stts).unwrap().is_empty());
+
+        let mut stsc = vec![0u8; 4];
+        stsc.extend_from_slice(&u32::MAX.to_be_bytes());
+        assert!(parse_stsc(&stsc).unwrap().is_empty());
+
+        let mut stsz = vec![0u8; 4];
+        stsz.extend_from_slice(&0u32.to_be_bytes()); // default
+        stsz.extend_from_slice(&u32::MAX.to_be_bytes()); // count
+        assert_eq!(parse_stsz(&stsz).unwrap().0, 0);
+        assert!(parse_stsz(&stsz).unwrap().1.is_empty());
+
+        let mut stco = vec![0u8; 4];
+        stco.extend_from_slice(&u32::MAX.to_be_bytes());
+        assert!(parse_stco(&stco).unwrap().is_empty());
     }
 }

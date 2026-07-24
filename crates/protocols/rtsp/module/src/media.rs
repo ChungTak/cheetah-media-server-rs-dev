@@ -1218,6 +1218,10 @@ impl<'a> BitReader<'a> {
     }
 
     fn read_bytes(&mut self, len: usize) -> Option<Vec<u8>> {
+        let bits_needed = len.checked_mul(8)?;
+        if self.remaining_bits() < bits_needed {
+            return None;
+        }
         let mut out = Vec::with_capacity(len);
         for _ in 0..len {
             out.push(self.read_bits(8)? as u8);
@@ -3915,5 +3919,15 @@ mod tests {
         let latm = [0x81, 0x88, 0x91, 0x19, 0x80];
         assert!(depacketize_aac(&latm, AacRtpPacketization::Mpeg4Generic, false).is_none());
         assert!(depacketize_aac(&latm, AacRtpPacketization::Latm, false).is_some());
+    }
+
+    #[test]
+    fn depacketize_aac_latm_bitpacked_rejects_oversized_length_field() {
+        // use_same_stream_mux=1 followed by a string of 0xFF length chunks and a
+        // terminating zero chunk. The declared payload length is far larger than
+        // the remaining bits, so the parser must fail without allocating.
+        let mut payload = vec![0xffu8; 16];
+        payload.push(0x00);
+        assert!(depacketize_aac_latm_bitpacked(&payload).is_none());
     }
 }
