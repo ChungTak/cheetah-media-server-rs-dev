@@ -1,6 +1,63 @@
+use std::fmt;
+
 use cheetah_sdk::BackpressurePolicy;
 use cheetah_srt_core::parse_srt_version;
 use serde::{Deserialize, Serialize};
+
+fn is_secret_query_key(key: &str) -> bool {
+    matches!(
+        key.to_lowercase().as_str(),
+        "authorization"
+            | "token"
+            | "access_token"
+            | "refresh_token"
+            | "api_key"
+            | "apikey"
+            | "key"
+            | "secret"
+            | "signature"
+            | "sign"
+            | "auth"
+            | "ticket"
+            | "password"
+            | "passwd"
+            | "x-api-key"
+            | "x_zlm_secret"
+            | "x-zlm-secret"
+            | "cookie"
+            | "proxy-authorization"
+            | "passphrase"
+    )
+}
+
+/// Best-effort URL redactor: strips `user:pass@` and redacts secret query keys.
+fn redact_url_for_debug(url: &str) -> String {
+    let mut s = url.to_string();
+    if let Some(scheme_end) = s.find("://") {
+        let after = &s[scheme_end + 3..];
+        if let Some(at) = after.find('@') {
+            s = format!("{}://{}", &s[..scheme_end], &after[at + 1..]);
+        }
+    }
+
+    if let Some((path, query)) = s.split_once('?') {
+        let redacted = query
+            .split('&')
+            .map(|part| {
+                if let Some((key, _)) = part.split_once('=') {
+                    if is_secret_query_key(key) {
+                        return format!("{key}=<redacted>");
+                    }
+                }
+                part.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        format!("{path}?{redacted}")
+    } else {
+        s
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -42,7 +99,7 @@ pub struct SrtPayloadModuleConfig {
     pub kind: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 /// Encryption passphrase/key length for the SRT module.
 ///
@@ -53,7 +110,17 @@ pub struct SrtEncryptionModuleConfig {
     pub key_length: u16,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+impl fmt::Debug for SrtEncryptionModuleConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SrtEncryptionModuleConfig")
+            .field("enabled", &self.enabled)
+            .field("passphrase", &"<redacted>")
+            .field("key_length", &self.key_length)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(default)]
 /// Token/user based publish/request authorization.
 ///
@@ -65,13 +132,33 @@ pub struct SrtAuthConfig {
     pub users: Vec<SrtAuthUserConfig>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl fmt::Debug for SrtAuthConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SrtAuthConfig")
+            .field("enabled", &self.enabled)
+            .field("publish_token", &"<redacted>")
+            .field("request_token", &"<redacted>")
+            .field("users", &self.users)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 /// Per-user username/token pair for SRT authorization.
 ///
 /// SRT 授权的每个用户名/token 对。
 pub struct SrtAuthUserConfig {
     pub username: String,
     pub token: String,
+}
+
+impl fmt::Debug for SrtAuthUserConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SrtAuthUserConfig")
+            .field("username", &self.username)
+            .field("token", &"<redacted>")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,7 +217,7 @@ pub struct SrtFecModuleConfig {
     pub rows: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 /// Pull SRT ingress job: source URL to local stream key.
 ///
@@ -144,7 +231,20 @@ pub struct SrtIngressJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl fmt::Debug for SrtIngressJobConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SrtIngressJobConfig")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("source_url", &redact_url_for_debug(&self.source_url))
+            .field("target_stream_key", &self.target_stream_key)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_retry_backoff_ms", &self.max_retry_backoff_ms)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 /// Push SRT egress job: local stream key to target URL.
 ///
@@ -160,7 +260,22 @@ pub struct SrtEgressJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+impl fmt::Debug for SrtEgressJobConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SrtEgressJobConfig")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("source_stream_key", &self.source_stream_key)
+            .field("target_url", &redact_url_for_debug(&self.target_url))
+            .field("disable_video", &self.disable_video)
+            .field("disable_audio", &self.disable_audio)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_retry_backoff_ms", &self.max_retry_backoff_ms)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 /// SRT relay job: source URL to target URL through a local stream key.
 ///
@@ -173,6 +288,20 @@ pub struct SrtRelayJobConfig {
     pub stream_key: String,
     pub retry_backoff_ms: u64,
     pub max_retry_backoff_ms: u64,
+}
+
+impl fmt::Debug for SrtRelayJobConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SrtRelayJobConfig")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("source_url", &redact_url_for_debug(&self.source_url))
+            .field("target_url", &redact_url_for_debug(&self.target_url))
+            .field("stream_key", &self.stream_key)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_retry_backoff_ms", &self.max_retry_backoff_ms)
+            .finish()
+    }
 }
 
 impl Default for SrtModuleConfig {
@@ -387,5 +516,62 @@ impl SrtFecModuleConfig {
             return Err("srt.fec matrix is too large".to_string());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_redacts_encryption_passphrase() {
+        let cfg = SrtEncryptionModuleConfig {
+            enabled: true,
+            passphrase: "super-secret".to_string(),
+            key_length: 32,
+        };
+        let out = format!("{cfg:?}");
+        assert!(out.contains("enabled: true"), "enabled missing: {out}");
+        assert!(!out.contains("super-secret"), "passphrase leaked: {out}");
+    }
+
+    #[test]
+    fn debug_redacts_auth_tokens() {
+        let cfg = SrtAuthConfig {
+            enabled: true,
+            publish_token: "pub-token".to_string(),
+            request_token: "req-token".to_string(),
+            users: vec![SrtAuthUserConfig {
+                username: "alice".to_string(),
+                token: "user-token".to_string(),
+            }],
+        };
+        let out = format!("{cfg:?}");
+        assert!(out.contains("alice"), "username missing: {out}");
+        assert!(!out.contains("pub-token"), "publish_token leaked: {out}");
+        assert!(!out.contains("req-token"), "request_token leaked: {out}");
+        assert!(!out.contains("user-token"), "user token leaked: {out}");
+    }
+
+    #[test]
+    fn debug_redacts_url_query_secrets_and_userinfo() {
+        let job = SrtIngressJobConfig {
+            name: "in".to_string(),
+            enabled: true,
+            source_url: "srt://user:pass@host:9000?passphrase=secret&streamid=live/app".to_string(),
+            target_stream_key: "live/app".to_string(),
+            retry_backoff_ms: 1_000,
+            max_retry_backoff_ms: 30_000,
+        };
+        let out = format!("{job:?}");
+        assert!(!out.contains("user:pass"), "userinfo leaked: {out}");
+        assert!(
+            !out.contains("passphrase=secret"),
+            "passphrase leaked: {out}"
+        );
+        assert!(
+            out.contains("streamid=live/app"),
+            "non-secret query dropped: {out}"
+        );
     }
 }
