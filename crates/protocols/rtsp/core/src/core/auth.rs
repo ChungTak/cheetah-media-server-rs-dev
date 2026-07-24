@@ -1,3 +1,5 @@
+use std::fmt;
+
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
@@ -10,10 +12,23 @@ use super::method::RtspMethod;
 /// 解析后的 RTSP `Authorization` 头。
 ///
 /// 支持 Basic（base64 `user:pass`）和 Digest（RFC 7616 / RFC 2617）方案。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum RtspAuthorization {
     Basic { username: String, password: String },
     Digest(RtspDigestAuthorization),
+}
+
+impl fmt::Debug for RtspAuthorization {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RtspAuthorization::Basic { username, .. } => f
+                .debug_struct("Basic")
+                .field("username", username)
+                .field("password", &"<redacted>")
+                .finish(),
+            RtspAuthorization::Digest(auth) => auth.fmt(f),
+        }
+    }
 }
 
 /// Digest authorization parameters extracted from an `Authorization` header.
@@ -23,7 +38,7 @@ pub enum RtspAuthorization {
 /// 从 `Authorization` 头提取的 Digest 认证参数。
 ///
 /// 包含计算或校验摘要响应所需的值。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct RtspDigestAuthorization {
     pub username: String,
     pub realm: String,
@@ -34,6 +49,22 @@ pub struct RtspDigestAuthorization {
     pub qop: Option<String>,
     pub nc: Option<String>,
     pub cnonce: Option<String>,
+}
+
+impl fmt::Debug for RtspDigestAuthorization {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RtspDigestAuthorization")
+            .field("username", &self.username)
+            .field("realm", &self.realm)
+            .field("nonce", &self.nonce)
+            .field("uri", &self.uri)
+            .field("response", &"<redacted>")
+            .field("algorithm", &self.algorithm)
+            .field("qop", &self.qop)
+            .field("nc", &self.nc)
+            .field("cnonce", &self.cnonce)
+            .finish()
+    }
 }
 
 /// Server `WWW-Authenticate` Digest challenge.
@@ -765,5 +796,34 @@ mod tests {
     fn algorithm_as_str() {
         assert_eq!(RtspDigestAlgorithm::Md5.as_str(), "MD5");
         assert_eq!(RtspDigestAlgorithm::Sha256.as_str(), "SHA-256");
+    }
+
+    #[test]
+    fn debug_redacts_basic_password_and_digest_response() {
+        let basic = RtspAuthorization::Basic {
+            username: "alice".to_string(),
+            password: "wonderland".to_string(),
+        };
+        let out = format!("{basic:?}");
+        assert!(out.contains("alice"), "username missing: {out}");
+        assert!(!out.contains("wonderland"), "password leaked: {out}");
+
+        let digest = RtspDigestAuthorization {
+            username: "alice".to_string(),
+            realm: "cheetah".to_string(),
+            nonce: "abc".to_string(),
+            uri: "rtsp://127.0.0.1/live/test".to_string(),
+            response: "wonderland-hash".to_string(),
+            algorithm: RtspDigestAlgorithm::Md5,
+            qop: None,
+            nc: None,
+            cnonce: None,
+        };
+        let out = format!("{digest:?}");
+        assert!(
+            out.contains("rtsp://127.0.0.1/live/test"),
+            "uri missing: {out}"
+        );
+        assert!(!out.contains("wonderland-hash"), "response leaked: {out}");
     }
 }
