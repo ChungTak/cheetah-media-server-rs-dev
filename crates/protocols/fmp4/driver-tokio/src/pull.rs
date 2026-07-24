@@ -307,12 +307,15 @@ async fn read_chunked_body(
 /// Read the HTTP body as a stream of fixed-size buffers.
 ///
 /// 以固定大小缓冲区流式读取 HTTP 体。
+const MAX_READ_BUFFER_SIZE: usize = 4 * 1024 * 1024;
+
 async fn read_raw_body(
     stream: &mut Box<dyn AsyncStream>,
     tx: &tokio::sync::mpsc::Sender<Fmp4PullEvent>,
     read_buffer_size: usize,
 ) -> Result<(), String> {
-    let mut buf = vec![0u8; read_buffer_size.max(4096)];
+    let buf_size = read_buffer_size.clamp(4096, MAX_READ_BUFFER_SIZE);
+    let mut buf = vec![0u8; buf_size];
     loop {
         let n = stream
             .read(&mut buf)
