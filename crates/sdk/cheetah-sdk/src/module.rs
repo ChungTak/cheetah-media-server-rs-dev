@@ -1,3 +1,4 @@
+use std::fmt;
 use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
@@ -92,16 +93,47 @@ pub struct HttpRouteDescriptor {
     pub path: String,
 }
 
+fn is_secret_header(name: &str) -> bool {
+    matches!(
+        name.to_lowercase().as_str(),
+        "authorization" | "x-zlm-secret" | "cookie" | "proxy-authorization"
+    )
+}
+
 /// HTTP request delivered to a module's `ModuleHttpService`.
 ///
 /// 传递给模块 `ModuleHttpService` 的 HTTP 请求。
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct HttpRequest {
     pub method: HttpMethod,
     pub path: String,
     pub query: Option<String>,
     pub headers: Vec<HttpHeader>,
     pub body: Bytes,
+}
+
+impl fmt::Debug for HttpRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted_headers: Vec<HttpHeader> = self
+            .headers
+            .iter()
+            .map(|h| HttpHeader {
+                name: h.name.clone(),
+                value: if is_secret_header(&h.name) {
+                    "<redacted>".to_string()
+                } else {
+                    h.value.clone()
+                },
+            })
+            .collect();
+        f.debug_struct("HttpRequest")
+            .field("method", &self.method)
+            .field("path", &self.path)
+            .field("query", &self.query)
+            .field("headers", &redacted_headers)
+            .field("body", &format!("<{} bytes>", self.body.len()))
+            .finish()
+    }
 }
 
 /// HTTP response returned by a module's `ModuleHttpService`.
@@ -326,5 +358,42 @@ pub trait ModuleFactory: Send + Sync {
     /// 返回配置 schema 注册（如有）。
     fn config_schema(&self) -> Option<ModuleSchemaRegistration> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_request_debug_redacts_secret_headers() {
+        let req = HttpRequest {
+            method: HttpMethod::Post,
+            path: "/api/test".to_string(),
+            query: None,
+            headers: vec![
+                HttpHeader {
+                    name: "authorization".to_string(),
+                    value: "Bearer super-secret".to_string(),
+                },
+                HttpHeader {
+                    name: "X-ZLM-Secret".to_string(),
+                    value: "zlm-key".to_string(),
+                },
+                HttpHeader {
+                    name: "content-type".to_string(),
+                    value: "application/json".to_string(),
+                },
+            ],
+            body: Bytes::from_static(b"{\"x\":1}"),
+        };
+        let out = format!("{req:?}");
+        assert!(
+            !out.contains("super-secret"),
+            "authorization must be redacted"
+        );
+        assert!(!out.contains("zlm-key"), "x-zlm-secret must be redacted");
+        assert!(out.contains("application/json"), "non-secret header kept");
+        assert!(out.contains("<7 bytes>"), "body shown as length");
     }
 }
