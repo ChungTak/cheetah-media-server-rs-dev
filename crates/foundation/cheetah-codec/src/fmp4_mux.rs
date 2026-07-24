@@ -722,11 +722,11 @@ fn compute_fragment_duration(samples: &[Fmp4MuxSample], tracks: &[MuxTrack]) -> 
         return 0;
     }
     let timescale = tracks.first().map(|t| t.timescale).unwrap_or(90_000);
-    let first_dts = samples.first().unwrap().dts_us;
-    let last_dts = samples.last().unwrap().dts_us;
+    let first_dts = samples[0].dts_us;
+    let last_dts = samples[samples.len() - 1].dts_us;
     // Estimate last sample duration from second-to-last gap or default
     let last_dur = if samples.len() >= 2 {
-        samples.last().unwrap().dts_us - samples[samples.len() - 2].dts_us
+        samples[samples.len() - 1].dts_us - samples[samples.len() - 2].dts_us
     } else {
         33_333 // ~30fps default
     };

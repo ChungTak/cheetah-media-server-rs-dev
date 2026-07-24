@@ -387,7 +387,9 @@ impl NodeSupervisor {
         if replaced {
             let (node_id, instance_id) = {
                 let g = self.inner.lock();
-                let rt = g.runtime.as_ref().unwrap();
+                let Some(rt) = g.runtime.as_ref() else {
+                    return Ok(());
+                };
                 (rt.node_id.clone(), rt.instance_id.clone())
             };
             let _ = self
@@ -424,7 +426,9 @@ impl NodeSupervisor {
         if let Some(reason) = action {
             let (node_id, instance_id) = {
                 let g = self.inner.lock();
-                let rt = g.runtime.as_ref().unwrap();
+                let Some(rt) = g.runtime.as_ref() else {
+                    return Ok(());
+                };
                 (rt.node_id.clone(), rt.instance_id.clone())
             };
             let _ = self

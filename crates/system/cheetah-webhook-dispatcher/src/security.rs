@@ -99,8 +99,8 @@ impl WebhookUrlPolicy {
             return Err(WebhookSecurityError::BlockedAddress(addr.ip().to_string()));
         }
 
-        let path_and_query = if parsed.query().is_some() {
-            format!("{}?{}", parsed.path(), parsed.query().unwrap())
+        let path_and_query = if let Some(query) = parsed.query() {
+            format!("{}?{}", parsed.path(), query)
         } else {
             parsed.path().to_string()
         };

@@ -145,7 +145,11 @@ impl Module for TsModule {
             return Ok(());
         }
 
-        let ctx = self.ctx.clone().unwrap();
+        let Some(ctx) = self.ctx.clone() else {
+            return Err(SdkError::InvalidArgument(
+                "module not initialized".to_string(),
+            ));
+        };
         let config = self.config.clone();
 
         self.state = ModuleState::Running;

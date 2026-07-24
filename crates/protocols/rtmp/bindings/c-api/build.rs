@@ -1,7 +1,7 @@
 fn main() {
     println!("cargo::rerun-if-changed=src/lib.rs");
 
-    cbindgen::Builder::new()
+    let bindings = match cbindgen::Builder::new()
         .with_crate(env!("CARGO_MANIFEST_DIR"))
         .with_language(cbindgen::Language::C)
         .with_cpp_compat(true)
@@ -12,6 +12,12 @@ fn main() {
         .with_sys_include("stddef.h")
         .with_sys_include("stdint.h")
         .generate()
-        .expect("failed to generate C bindings")
-        .write_to_file("include/cheetah_rtmp.h");
+    {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("failed to generate C bindings: {e}");
+            std::process::exit(1);
+        }
+    };
+    bindings.write_to_file("include/cheetah_rtmp.h");
 }

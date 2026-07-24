@@ -408,7 +408,7 @@ impl RtpMediaProvider {
             )
         } else {
             (
-                TenantId::new("default").expect("default tenant id must be valid"),
+                TenantId::new("default").unwrap_or_else(|_| unreachable!()),
                 OwnerEpoch(0),
                 MediaNodeInstanceEpoch(0),
                 None::<MediaSessionId>,

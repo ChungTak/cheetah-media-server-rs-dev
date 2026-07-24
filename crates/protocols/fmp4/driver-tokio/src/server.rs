@@ -201,7 +201,9 @@ pub fn start_server(
                     let event_tx2 = event_tx.clone();
                     let cancel2 = cancel.clone();
                     let closed_tx2 = closed_tx.clone();
-                    let (_, ref acceptor, timeout_ms) = tls_listener.as_ref().unwrap();
+                    let Some((_, acceptor, timeout_ms)) = tls_listener.as_ref() else {
+                        continue;
+                    };
                     let acceptor = acceptor.clone();
                     let timeout_ms = *timeout_ms;
                     tokio::spawn(async move {

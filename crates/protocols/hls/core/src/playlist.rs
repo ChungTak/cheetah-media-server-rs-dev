@@ -592,10 +592,10 @@ impl DemuxedMasterPlaylist {
             out.push_str(&format!(
                 "{stream_name}/chunklist_video.m3u8{uid_suffix}{key_suffix}\n"
             ));
-        } else if let Some(_audio_info) = audio {
+        } else if let Some(audio_info) = audio {
             // Audio-only stream: variant points to audio chunklist
-            let codecs = &audio.unwrap().codecs;
-            let bandwidth = audio.unwrap().bandwidth;
+            let codecs = &audio_info.codecs;
+            let bandwidth = audio_info.bandwidth;
             let mut attrs = format!("BANDWIDTH={bandwidth}");
             if !codecs.is_empty() {
                 attrs.push_str(&format!(",CODECS=\"{codecs}\""));

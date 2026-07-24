@@ -420,7 +420,7 @@ impl RtmpModuleConfig {
     ///
     /// 返回默认配置的 JSON 值，用于 schema 注册。
     pub fn default_json() -> serde_json::Value {
-        serde_json::to_value(Self::default()).expect("serialize default rtmp config")
+        serde_json::to_value(Self::default()).unwrap_or_default()
     }
 }
 

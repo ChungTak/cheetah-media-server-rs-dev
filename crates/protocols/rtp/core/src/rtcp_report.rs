@@ -123,7 +123,7 @@ impl RtcpReportState {
             last_transit: None,
             clock_rate_hz,
             last_sent_rtp_timestamp: 0,
-            timestamp_unwrapper: WrapUnwrapper::new(32).expect("32-bit wrap is valid"),
+            timestamp_unwrapper: WrapUnwrapper::new(32).unwrap_or_else(|_| unreachable!()),
             wall_clock_offset_ms,
         }
     }

@@ -83,8 +83,9 @@ struct FuState {
 impl EsDemuxer {
     pub fn new(config: EsDemuxerConfig) -> Self {
         let clock_rate = config.clock_rate_hz.max(1);
-        let timestamp_normalizer = RtpTimestampNormalizer::new(clock_rate)
-            .unwrap_or_else(|_| RtpTimestampNormalizer::new(90_000).expect("90kHz is valid"));
+        let timestamp_normalizer = RtpTimestampNormalizer::new(clock_rate).unwrap_or_else(|_| {
+            RtpTimestampNormalizer::new(90_000).unwrap_or_else(|_| unreachable!())
+        });
         Self {
             config,
             parameter_sets: ParameterSetCache::default(),
@@ -98,7 +99,7 @@ impl EsDemuxer {
             au_size: 0,
             locked_codec: config.codec,
             timestamp_normalizer,
-            timestamp_unwrapper: WrapUnwrapper::new(32).expect("32-bit wrap is valid"),
+            timestamp_unwrapper: WrapUnwrapper::new(32).unwrap_or_else(|_| unreachable!()),
         }
     }
 

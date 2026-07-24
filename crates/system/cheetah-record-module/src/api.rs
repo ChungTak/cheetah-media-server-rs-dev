@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use cheetah_codec::RecordFormat;
 use cheetah_media_api::event::{EventHeader, MediaEvent, MediaEventBusApi, RecordStarted};
-use cheetah_media_api::ids::{MediaKey, RecordTaskId};
+use cheetah_media_api::ids::{AppName, MediaKey, RecordTaskId, StreamName, VhostName};
 use serde::{Deserialize, Serialize};
 
 use crate::metadata::{RecordFileQuery, RecordFormatStr, RecordTaskState};
@@ -322,8 +322,13 @@ impl RecordApi {
         self.registry
             .update_task_state(&task_id, RecordTaskState::Running)?;
 
-        let media_key = MediaKey::new(&vhost, &req.app, &req.stream, None)
-            .unwrap_or_else(|_| MediaKey::with_default_vhost(&req.app, &req.stream, None).unwrap());
+        let media_key =
+            MediaKey::new(&vhost, &req.app, &req.stream, None).unwrap_or_else(|_| MediaKey {
+                vhost: VhostName::default_value(),
+                app: AppName(req.app.clone()),
+                stream: StreamName(req.stream.clone()),
+                schema: None,
+            });
         let started_at = now_ms();
         let _ = self
             .media_event_bus

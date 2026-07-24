@@ -10,7 +10,7 @@ use bytes::Bytes;
 use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
-use crate::ids::{FileHandle, MediaKey};
+use crate::ids::{AppName, FileHandle, MediaKey, StreamName, VhostName};
 use crate::port::MediaRequestContext;
 
 /// Entry describing a managed file.
@@ -33,8 +33,12 @@ pub struct FileStoreEntry {
 impl Default for FileStoreEntry {
     fn default() -> Self {
         Self {
-            media_key: MediaKey::with_default_vhost("live", "default", None)
-                .expect("default media key is valid"),
+            media_key: MediaKey {
+                vhost: VhostName::default_value(),
+                app: AppName("live".to_string()),
+                stream: StreamName("default".to_string()),
+                schema: None,
+            },
             file_type: String::new(),
             content_type: String::new(),
             size_bytes: 0,

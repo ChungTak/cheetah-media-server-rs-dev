@@ -200,10 +200,12 @@ impl RtmpChunkDecoder {
             id_bits as u32
         };
 
-        // RtmpChunkStreamId::new() 允许的范围是 2..=65599，
-        // 但根据上面 if 分支的条件，chunk_stream_id 的最小值是 2，且
-        // 最大值是 0xFFFF + 64 = 65599，因此下面的 new() 总是会成功
-        let chunk_stream_id = RtmpChunkStreamId::new(chunk_stream_id).expect("bug");
+        let chunk_stream_id = RtmpChunkStreamId::new(chunk_stream_id).ok_or_else(|| {
+            Error::with_reason(
+                crate::error::ErrorKind::InvalidData,
+                "invalid chunk stream id",
+            )
+        })?;
 
         Ok((format, chunk_stream_id))
     }

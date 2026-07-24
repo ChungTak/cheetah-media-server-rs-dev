@@ -287,7 +287,12 @@ impl RtcpPacket {
                     available: 0,
                 });
             }
-            let padding_size = *payload.last().unwrap();
+            let Some(&padding_size) = payload.last() else {
+                return Err(RtcpError::InvalidPadding {
+                    padding_size: 0,
+                    available: 0,
+                });
+            };
             if padding_size == 0 || padding_size as usize > payload.len() {
                 return Err(RtcpError::InvalidPadding {
                     padding_size,

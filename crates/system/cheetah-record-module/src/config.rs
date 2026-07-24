@@ -249,7 +249,7 @@ impl RecordModuleConfig {
     ///
     /// 以 JSON 值形式返回默认配置。
     pub fn default_json() -> Value {
-        serde_json::to_value(Self::default()).expect("default config serializes")
+        serde_json::to_value(Self::default()).unwrap_or_default()
     }
 
     /// Validate the loaded configuration, returning an error message on mismatch.

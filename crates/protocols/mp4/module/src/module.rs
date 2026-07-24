@@ -11,6 +11,7 @@ use cheetah_sdk::{
     ModuleHttpService, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
     ModuleSchemaRegistration, ModuleState, ProviderRegistration, SdkError,
 };
+use serde::Serialize;
 
 use crate::api::{ControlVodRequest, StartVodRequest, StopVodRequest, VodApi};
 use crate::config::Mp4ModuleConfig;
@@ -250,7 +251,7 @@ impl ModuleHttpService for VodHttpService {
                     .start(body)
                     .await
                     .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
-                HttpResponse::ok_json(serde_json::to_vec(&resp).unwrap())
+                json_response(&resp)?
             }
             (HttpMethod::Post, "/control") => {
                 let body: ControlVodRequest = serde_json::from_slice(&req.body)
@@ -259,7 +260,7 @@ impl ModuleHttpService for VodHttpService {
                     .api
                     .control(body)
                     .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
-                HttpResponse::ok_json(serde_json::to_vec(&resp).unwrap())
+                json_response(&resp)?
             }
             (HttpMethod::Post, "/stop") => {
                 let body: StopVodRequest = serde_json::from_slice(&req.body)
@@ -268,7 +269,7 @@ impl ModuleHttpService for VodHttpService {
                     .api
                     .stop(body)
                     .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
-                HttpResponse::ok_json(serde_json::to_vec(&resp).unwrap())
+                json_response(&resp)?
             }
             (HttpMethod::Post, "/zlm/loadMP4File") => {
                 let body: ZlmLoadMp4 = serde_json::from_slice(&req.body)
@@ -278,7 +279,7 @@ impl ModuleHttpService for VodHttpService {
                     .load_mp4(body)
                     .await
                     .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
-                HttpResponse::ok_json(serde_json::to_vec(&value).unwrap())
+                json_response(&value)?
             }
             (HttpMethod::Post, "/zlm/seekRecordStamp") => {
                 let body: ZlmSeekRecord = serde_json::from_slice(&req.body)
@@ -287,7 +288,7 @@ impl ModuleHttpService for VodHttpService {
                     .zlm
                     .seek_record(body)
                     .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
-                HttpResponse::ok_json(serde_json::to_vec(&value).unwrap())
+                json_response(&value)?
             }
             (HttpMethod::Post, "/zlm/setRecordSpeed") => {
                 let body: ZlmSetSpeed = serde_json::from_slice(&req.body)
@@ -296,7 +297,7 @@ impl ModuleHttpService for VodHttpService {
                     .zlm
                     .set_speed(body)
                     .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
-                HttpResponse::ok_json(serde_json::to_vec(&value).unwrap())
+                json_response(&value)?
             }
             _ => HttpResponse {
                 status: 404,
@@ -306,4 +307,10 @@ impl ModuleHttpService for VodHttpService {
         };
         Ok(response)
     }
+}
+
+fn json_response<T: Serialize>(value: &T) -> Result<HttpResponse, SdkError> {
+    let body = serde_json::to_vec(value)
+        .map_err(|e| SdkError::Internal(format!("failed to serialize response: {e}")))?;
+    Ok(HttpResponse::ok_json(body))
 }

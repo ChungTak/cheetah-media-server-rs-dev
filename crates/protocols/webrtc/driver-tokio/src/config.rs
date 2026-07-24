@@ -241,7 +241,7 @@ pub struct WebRtcDriverConfig {
 impl Default for WebRtcDriverConfig {
     fn default() -> Self {
         Self {
-            listen_udp: "0.0.0.0:8000".parse().expect("default listen addr"),
+            listen_udp: SocketAddr::from(([0, 0, 0, 0], 8000)),
             udp_port_range: None,
             listen_tcp: None,
             public_ips: Vec::new(),

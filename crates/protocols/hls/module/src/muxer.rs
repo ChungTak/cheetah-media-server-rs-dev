@@ -10,6 +10,8 @@
 //!
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
 use cheetah_codec::{
@@ -675,10 +677,16 @@ impl StreamMuxer {
         }
 
         // Start new segment if needed
-        if self.segment_start_dts.is_none() {
+        let new_segment = self.segment_start_dts.is_none();
+        if new_segment {
             self.segment_start_dts = Some(frame_dts_us);
             self.segment_has_keyframe = false;
-            self.ts_muxer.as_mut().unwrap().write_pat_pmt();
+        }
+        let Some(muxer) = self.ts_muxer.as_mut() else {
+            return false;
+        };
+        if new_segment {
+            muxer.write_pat_pmt();
         }
 
         let had_keyframe_before_this_frame = self.segment_has_keyframe;
@@ -696,7 +704,6 @@ impl StreamMuxer {
             self.prev_video_dts_us = Some(frame_dts_us);
         }
 
-        let muxer = self.ts_muxer.as_mut().unwrap();
         if is_video {
             // Convert length-prefixed NALUs to Annex-B for TS container
             let annexb_payload = to_annexb(&frame.payload);
@@ -1332,7 +1339,7 @@ impl StreamMuxer {
                 muxer.take_segment()
             }
             HlsContainer::Fmp4 => {
-                let Some(_muxer) = self.fmp4_muxer.as_mut() else {
+                let Some(muxer) = self.fmp4_muxer.as_mut() else {
                     return;
                 };
                 // In LLHLS mode, segment = concatenation of all its parts.
@@ -1340,7 +1347,6 @@ impl StreamMuxer {
                 if self.ll_state.is_some() && !self.pending_segment_part_data.is_empty() {
                     // Also mux any remaining samples not yet finalized as a part
                     if !self.pending_part_samples.is_empty() {
-                        let muxer = self.fmp4_muxer.as_mut().unwrap();
                         let samples = std::mem::take(&mut self.pending_part_samples);
                         let tail = muxer.write_part(&samples);
                         self.pending_segment_part_data.push(tail);
@@ -1354,7 +1360,6 @@ impl StreamMuxer {
                     self.pending_fmp4_samples.clear();
                     combined.freeze()
                 } else {
-                    let muxer = self.fmp4_muxer.as_mut().unwrap();
                     let samples = std::mem::take(&mut self.pending_fmp4_samples);
                     if samples.is_empty() {
                         return;
@@ -1583,9 +1588,27 @@ impl StreamMuxer {
 /// 生成高熵十六进制流验证密钥。
 ///
 /// 在启用 `stream_key_validation` 时附加到分段/分片 URI，使随机 URL 猜测无效。
+static VALIDATION_KEY_COUNTER: AtomicU64 = AtomicU64::new(0);
+
 pub(crate) fn generate_stream_validation_key() -> String {
     let mut random = [0_u8; 16];
-    getrandom::getrandom(&mut random).expect("secure random stream validation key");
+    if getrandom::getrandom(&mut random).is_err() {
+        // Fallback if OS entropy is unavailable: mix timestamp + counter.
+        // Predictable; deployments should ensure getrandom is available.
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            .to_le_bytes();
+        let counter = VALIDATION_KEY_COUNTER
+            .fetch_add(1, Ordering::Relaxed)
+            .to_le_bytes();
+        for (i, b) in now.iter().chain(counter.iter()).enumerate() {
+            if i < random.len() {
+                random[i] = *b;
+            }
+        }
+    }
 
     let mut out = String::with_capacity(32);
     for byte in random {

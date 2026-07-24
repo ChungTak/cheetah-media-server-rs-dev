@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::command::PlaybackControl;
 use crate::error::EffectOutcome;
 use crate::fencing::ControlledResourceRef;
-use crate::ids::{MediaKey, RtpSessionId};
+use crate::ids::{AppName, MediaKey, RtpSessionId, StreamName, VhostName};
 
 /// Monotonic generation of an RTP session.
 ///
@@ -622,8 +622,12 @@ impl RtpSessionParamsBuilder {
 impl Default for RtpSessionParams {
     fn default() -> Self {
         Self {
-            media_key: MediaKey::with_default_vhost("live", "default", None)
-                .expect("default media key is valid"),
+            media_key: MediaKey {
+                vhost: VhostName::default_value(),
+                app: AppName("live".to_string()),
+                stream: StreamName("default".to_string()),
+                schema: None,
+            },
             direction: RtpDirection::default(),
             transport: RtpTransport::default(),
             tcp_role: None,

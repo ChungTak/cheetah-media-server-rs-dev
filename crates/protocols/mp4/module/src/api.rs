@@ -225,7 +225,11 @@ impl VodApi {
             ..Default::default()
         };
         let driver = if paths.len() == 1 {
-            open_file(paths.into_iter().next().unwrap(), driver_config)
+            let path = paths
+                .into_iter()
+                .next()
+                .ok_or_else(|| VodApiError::InvalidRequest("missing vod path".to_string()))?;
+            open_file(path, driver_config)
                 .await
                 .map_err(|e| VodApiError::Driver(e.to_string()))?
         } else {

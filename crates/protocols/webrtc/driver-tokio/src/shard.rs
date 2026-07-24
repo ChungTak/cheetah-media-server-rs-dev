@@ -279,11 +279,8 @@ impl ShardSelectorStrategy for StickyHashShardStrategy {
         let chosen = self.inner.pick(session_id, shard_count, loads);
         let mut cache = self.cache.lock();
         // Avoid reinserting if another caller raced us to it.
-        if cache.map.contains_key(&session_id) {
-            return *cache
-                .map
-                .get(&session_id)
-                .expect("checked contains_key above");
+        if let Some(&shard) = cache.map.get(&session_id) {
+            return shard;
         }
         if cache.map.len() >= self.cache_capacity {
             if let Some(oldest) = cache.order.pop_front() {

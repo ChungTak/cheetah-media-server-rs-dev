@@ -326,7 +326,7 @@ impl SortingWindowDtsGenerator {
         if self.window.len() < self.window_size {
             return None;
         }
-        let min_pts = *self.window.iter().min().unwrap();
+        let min_pts = self.window.iter().copied().min()?;
         let dts = if self.initialized {
             min_pts.max(self.last_output_dts + 1)
         } else {
@@ -345,7 +345,9 @@ impl SortingWindowDtsGenerator {
     pub fn flush(&mut self) -> Vec<i64> {
         let mut out = Vec::with_capacity(self.window.len());
         while !self.window.is_empty() {
-            let min_pts = *self.window.iter().min().unwrap();
+            let Some(min_pts) = self.window.iter().copied().min() else {
+                break;
+            };
             let dts = if self.initialized {
                 min_pts.max(self.last_output_dts + 1)
             } else {

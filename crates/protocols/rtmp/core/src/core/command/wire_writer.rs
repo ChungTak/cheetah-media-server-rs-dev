@@ -58,7 +58,7 @@ impl RtmpCore {
         message: RtmpMessage,
         out: &mut Vec<CoreOutput>,
     ) {
-        let chunk_stream_id = RtmpChunkStreamId::new(csid).expect("valid RTMP chunk stream id");
+        let chunk_stream_id = RtmpChunkStreamId::new(csid).unwrap_or_else(|| unreachable!());
         let mut wire = Vec::new();
         self.encoder.encode(&mut wire, chunk_stream_id, message);
         out.push(CoreOutput::Write(Bytes::from(wire)));

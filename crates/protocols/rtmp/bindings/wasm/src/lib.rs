@@ -151,8 +151,9 @@ pub extern "C" fn rtmp_alloc(size: u32) -> *mut u8 {
     if size == 0 {
         return std::ptr::null_mut();
     }
-    let layout = Layout::from_size_align(size as usize, 1)
-        .expect("layout creation with alignment 1 should never fail");
+    let Ok(layout) = Layout::from_size_align(size as usize, 1) else {
+        return std::ptr::null_mut();
+    };
     unsafe { std::alloc::alloc(layout) }
 }
 
@@ -164,8 +165,9 @@ pub unsafe extern "C" fn rtmp_free(ptr: *mut u8, size: u32) {
     if ptr.is_null() || size == 0 {
         return;
     }
-    let layout = Layout::from_size_align(size as usize, 1)
-        .expect("layout creation with alignment 1 should never fail");
+    let Ok(layout) = Layout::from_size_align(size as usize, 1) else {
+        return;
+    };
     unsafe { std::alloc::dealloc(ptr, layout) };
 }
 

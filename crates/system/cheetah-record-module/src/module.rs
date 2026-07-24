@@ -17,6 +17,7 @@ use cheetah_sdk::{
     ModuleHttpService, ModuleId, ModuleInfo, ModuleInitContext, ModuleManifest,
     ModuleSchemaRegistration, ModuleState, ProviderRegistration, SdkError,
 };
+use serde::Serialize;
 
 use crate::api::{
     FileDeleteRequest, FileQueryRequest, RecordApi, StartRecordRequest, StopRecordRequest,
@@ -307,7 +308,7 @@ impl ModuleHttpService for RecordHttpService {
                     .start(body)
                     .await
                     .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
-                HttpResponse::ok_json(serde_json::to_vec(&resp).unwrap())
+                json_response(&resp)?
             }
             (HttpMethod::Post, "/stop") => {
                 let body: StopRecordRequest = serde_json::from_slice(&req.body)
@@ -317,11 +318,11 @@ impl ModuleHttpService for RecordHttpService {
                     .stop(body)
                     .await
                     .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
-                HttpResponse::ok_json(serde_json::to_vec(&resp).unwrap())
+                json_response(&resp)?
             }
             (HttpMethod::Get, "/list") | (HttpMethod::Get, "/query") => {
                 let resp = self.api.list();
-                HttpResponse::ok_json(serde_json::to_vec(&resp).unwrap())
+                json_response(&resp)?
             }
             (HttpMethod::Get, "/file/query") => {
                 let q: FileQueryRequest = if req.body.is_empty() {
@@ -338,7 +339,7 @@ impl ModuleHttpService for RecordHttpService {
                     msg: "success".to_string(),
                     data: result.files,
                 };
-                HttpResponse::ok_json(serde_json::to_vec(&resp).unwrap())
+                json_response(&resp)?
             }
             (HttpMethod::Post, "/file/delete") => {
                 let body: FileDeleteRequest = serde_json::from_slice(&req.body)
@@ -347,7 +348,7 @@ impl ModuleHttpService for RecordHttpService {
                     .delete_file(body)
                     .map_err(|e| SdkError::InvalidArgument(e.to_string()))?;
                 let body = serde_json::json!({"code": 200, "msg": "success"});
-                HttpResponse::ok_json(serde_json::to_vec(&body).unwrap())
+                json_response(&body)?
             }
             _ => HttpResponse {
                 status: 404,
@@ -357,4 +358,10 @@ impl ModuleHttpService for RecordHttpService {
         };
         Ok(response)
     }
+}
+
+fn json_response<T: Serialize>(value: &T) -> Result<HttpResponse, SdkError> {
+    let body = serde_json::to_vec(value)
+        .map_err(|e| SdkError::Internal(format!("failed to serialize response: {e}")))?;
+    Ok(HttpResponse::ok_json(body))
 }
