@@ -1,8 +1,9 @@
 use bytes::Bytes;
 use cheetah_codec::{
     AVFrame, CodecId, FrameFormat, MediaKind, MpegTsDemuxer, MpegTsDemuxerConfig, MpegTsMuxEvent,
-    MpegTsMuxer, MpegTsMuxerConfig, Timebase, TimestampNormalizeInput, TimestampNormalizeMode,
-    TimestampNormalizer, TimestampNormalizerConfig, TimestampValue, TrackId, TrackInfo,
+    MpegTsMuxer, MpegTsMuxerConfig, RtpReorderBuffer, RtpReorderSettings, RtpSequenceUnwrapper,
+    Timebase, TimestampNormalizeInput, TimestampNormalizeMode, TimestampNormalizer,
+    TimestampNormalizerConfig, TimestampValue, TrackId, TrackInfo,
 };
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
@@ -116,5 +117,53 @@ fn bench_normalize(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_mux_demux, bench_normalize);
+fn bench_sequence_unwrapper(c: &mut Criterion) {
+    let mut group = c.benchmark_group("rtp_sequence_unwrapper");
+    for size in [100, 1_000, 10_000] {
+        let seqs: Vec<u16> = (0..size).map(|i| i as u16).collect();
+        group.bench_with_input(BenchmarkId::new("monotonic", size), &seqs, |b, seqs| {
+            b.iter(|| {
+                let mut unwrapper = RtpSequenceUnwrapper::new();
+                for &raw in black_box(seqs) {
+                    black_box(unwrapper.extend(raw));
+                }
+            });
+        });
+    }
+    group.finish();
+}
+
+fn bench_reorder_buffer(c: &mut Criterion) {
+    let settings = RtpReorderSettings {
+        max_packets: 32,
+        max_delay_ms: 100,
+    };
+    let mut group = c.benchmark_group("rtp_reorder_buffer");
+    for size in [100, 1_000, 10_000] {
+        let packets: Vec<(u16, u64, u64)> = (0..size)
+            .map(|i| (i as u16, i as u64, i as u64 * 30))
+            .collect();
+        group.bench_with_input(
+            BenchmarkId::new("in_order", size),
+            &packets,
+            |b, packets| {
+                b.iter(|| {
+                    let mut buf = RtpReorderBuffer::new(settings);
+                    for &(seq, payload, arrival) in black_box(packets) {
+                        black_box(buf.push(seq, arrival, payload));
+                    }
+                });
+            },
+        );
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_mux_demux,
+    bench_normalize,
+    bench_sequence_unwrapper,
+    bench_reorder_buffer
+);
 criterion_main!(benches);
