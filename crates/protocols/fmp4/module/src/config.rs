@@ -2,6 +2,9 @@
 //!
 //! fMP4 模块配置。
 
+use std::fmt;
+
+use cheetah_sdk::redact_url_secrets_for_debug;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -54,7 +57,7 @@ pub struct Fmp4TlsConfig {
     pub handshake_timeout_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 /// Pull job that ingests a remote fMP4 source into a local stream key.
 ///
 /// 将远程 fMP4 源拉取到本地流密钥的拉取任务。
@@ -70,6 +73,23 @@ pub struct Fmp4PullJobConfig {
     pub max_retry_backoff_ms: u64,
     #[serde(default)]
     pub insecure_tls: bool,
+}
+
+impl fmt::Debug for Fmp4PullJobConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Fmp4PullJobConfig")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field(
+                "source_url",
+                &redact_url_secrets_for_debug(&self.source_url),
+            )
+            .field("target_stream_key", &self.target_stream_key)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_retry_backoff_ms", &self.max_retry_backoff_ms)
+            .field("insecure_tls", &self.insecure_tls)
+            .finish()
+    }
 }
 
 /// Default values for `Fmp4ModuleConfig`.
@@ -269,5 +289,22 @@ mod tests {
             .validate()
             .unwrap_err()
             .contains("http/https/ws/wss scheme"));
+    }
+
+    #[test]
+    fn debug_redacts_url_secrets_and_userinfo() {
+        let job = Fmp4PullJobConfig {
+            name: "test".to_string(),
+            enabled: true,
+            source_url: "http://user:pass@host/live/test.mp4?token=secret&other=ok".to_string(),
+            target_stream_key: "live/test".to_string(),
+            retry_backoff_ms: 500,
+            max_retry_backoff_ms: 5_000,
+            insecure_tls: false,
+        };
+        let out = format!("{job:?}");
+        assert!(!out.contains("user:pass"), "{out}");
+        assert!(!out.contains("token=secret"), "{out}");
+        assert!(out.contains("other=ok"), "{out}");
     }
 }

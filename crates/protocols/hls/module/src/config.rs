@@ -8,6 +8,9 @@
 //! 定义引擎用于初始化与校验 HLS 模块的可 serde 解码配置树、默认值和辅助方法。
 //!
 
+use std::fmt;
+
+use cheetah_sdk::redact_url_secrets_for_debug;
 use serde::{Deserialize, Serialize};
 
 /// Top-level HLS module configuration.
@@ -203,7 +206,7 @@ impl Default for HlsFileOutputConfig {
 /// 单个 HLS 拉流任务的配置。
 ///
 /// 拉流任务将远程 HLS 源作为本地流中继到引擎。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HlsPullJobConfig {
     pub name: String,
@@ -212,6 +215,22 @@ pub struct HlsPullJobConfig {
     pub target_stream_key: String,
     pub retry_backoff_ms: u64,
     pub max_retry_backoff_ms: u64,
+}
+
+impl fmt::Debug for HlsPullJobConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HlsPullJobConfig")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field(
+                "source_url",
+                &redact_url_secrets_for_debug(&self.source_url),
+            )
+            .field("target_stream_key", &self.target_stream_key)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_retry_backoff_ms", &self.max_retry_backoff_ms)
+            .finish()
+    }
 }
 
 /// Default pull job: disabled, with 1 s initial backoff and 10 s max backoff.
@@ -316,5 +335,23 @@ impl HlsModuleConfig {
     /// 为控制面和配置编辑器提供默认 schema。
     pub fn default_json() -> serde_json::Value {
         serde_json::to_value(Self::default()).unwrap_or_default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_redacts_url_secrets_and_userinfo() {
+        let job = HlsPullJobConfig {
+            name: "job".to_string(),
+            source_url: "http://user:pass@host/playlist.m3u8?token=secret&other=ok".to_string(),
+            ..HlsPullJobConfig::default()
+        };
+        let out = format!("{job:?}");
+        assert!(!out.contains("user:pass"), "{out}");
+        assert!(!out.contains("token=secret"), "{out}");
+        assert!(out.contains("other=ok"), "{out}");
     }
 }

@@ -28,6 +28,7 @@ pub mod media_provider;
 pub mod media_session;
 pub mod module;
 pub mod output;
+pub mod redaction;
 pub mod service;
 pub mod stream;
 pub mod task;
@@ -86,6 +87,7 @@ pub use module::{
     ModuleInfo, ModuleInitContext, ModuleManifest, ModuleState, ProviderRegistration,
 };
 pub use output::{InMemoryMediaOutputRegistry, MediaOutputEndpoint, OutputRegistryRegistration};
+pub use redaction::redact_url_secrets_for_debug;
 pub use service::{
     ClusterApi, ClusterNode, DatabaseApi, HealthApi, MetricLabel, MetricRecord, MetricValue,
     MetricsApi, ModuleConfigApplyReport, ModuleManagerApi, ProxyManager, ProxyRoute,

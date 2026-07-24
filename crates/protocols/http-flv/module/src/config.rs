@@ -1,6 +1,7 @@
+use std::fmt;
 use std::net::SocketAddr;
 
-use cheetah_sdk::{BackpressurePolicy, SdkError};
+use cheetah_sdk::{redact_url_secrets_for_debug, BackpressurePolicy, SdkError};
 use serde::{Deserialize, Serialize};
 
 use crate::route::{parse_stream_key_spec, validate_pull_source_url};
@@ -72,7 +73,7 @@ impl Default for HttpFlvTlsConfig {
 ///
 /// 模块会反复从 HTTP 或 WebSocket FLV 源拉流，并将得到的流注入到
 /// 引擎中的 `target_stream_key` 下。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct HttpFlvPullJobConfig {
     pub name: String,
@@ -81,6 +82,22 @@ pub struct HttpFlvPullJobConfig {
     pub target_stream_key: String,
     pub retry_backoff_ms: u64,
     pub max_retry_backoff_ms: u64,
+}
+
+impl fmt::Debug for HttpFlvPullJobConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("HttpFlvPullJobConfig")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field(
+                "source_url",
+                &redact_url_secrets_for_debug(&self.source_url),
+            )
+            .field("target_stream_key", &self.target_stream_key)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_retry_backoff_ms", &self.max_retry_backoff_ms)
+            .finish()
+    }
 }
 
 /// Operational thresholds used to diagnose startup stalls and queue drops.
@@ -377,5 +394,18 @@ mod tests {
         };
         let err = cfg.validate().expect_err("must reject zero retry backoff");
         assert!(err.to_string().contains("pull_jobs[0] backoff"));
+    }
+
+    #[test]
+    fn debug_redacts_url_secrets_and_userinfo() {
+        let job = HttpFlvPullJobConfig {
+            name: "job".to_string(),
+            source_url: "http://user:pass@host/live/stream.flv?token=secret&other=ok".to_string(),
+            ..enabled_pull_job()
+        };
+        let out = format!("{job:?}");
+        assert!(!out.contains("user:pass"), "{out}");
+        assert!(!out.contains("token=secret"), "{out}");
+        assert!(out.contains("other=ok"), "{out}");
     }
 }
