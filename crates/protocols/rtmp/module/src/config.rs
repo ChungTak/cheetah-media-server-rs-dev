@@ -1,3 +1,4 @@
+use std::fmt;
 use std::net::SocketAddr;
 
 use cheetah_rtmp_core::RtmpUrl;
@@ -5,6 +6,61 @@ use cheetah_sdk::{BackpressurePolicy, ProcessingPolicy, SdkError, TrackSelection
 use serde::{Deserialize, Serialize};
 
 use crate::route::parse_stream_key_spec;
+
+fn is_secret_query_key(key: &str) -> bool {
+    matches!(
+        key.to_lowercase().as_str(),
+        "authorization"
+            | "token"
+            | "access_token"
+            | "refresh_token"
+            | "api_key"
+            | "apikey"
+            | "key"
+            | "secret"
+            | "signature"
+            | "sign"
+            | "auth"
+            | "ticket"
+            | "password"
+            | "passwd"
+            | "x-api-key"
+            | "x_zlm_secret"
+            | "x-zlm-secret"
+            | "cookie"
+            | "proxy-authorization"
+            | "passphrase"
+    )
+}
+
+/// Best-effort URL redactor: strips `user:pass@` and redacts secret query keys.
+fn redact_url_for_debug(url: &str) -> String {
+    let mut s = url.to_string();
+    if let Some(scheme_end) = s.find("://") {
+        let after = &s[scheme_end + 3..];
+        if let Some(at) = after.find('@') {
+            s = format!("{}://{}", &s[..scheme_end], &after[at + 1..]);
+        }
+    }
+
+    if let Some((path, query)) = s.split_once('?') {
+        let redacted = query
+            .split('&')
+            .map(|part| {
+                if let Some((key, _)) = part.split_once('=') {
+                    if is_secret_query_key(key) {
+                        return format!("{key}=<redacted>");
+                    }
+                }
+                part.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        format!("{path}?{redacted}")
+    } else {
+        s
+    }
+}
 
 /// RTMP module configuration, including listen endpoints, jobs, and thresholds.
 ///
@@ -57,7 +113,7 @@ pub struct RtmpModuleConfig {
 /// Configuration for an RTMP pull job (remote RTMP -> local stream).
 ///
 /// RTMP 拉流任务配置（远程 RTMP -> 本地流）。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpPullJobConfig {
     /// 任务名称，必须唯一且非空。
@@ -78,10 +134,25 @@ pub struct RtmpPullJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+impl fmt::Debug for RtmpPullJobConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RtmpPullJobConfig")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("source_url", &redact_url_for_debug(&self.source_url))
+            .field("target_stream_key", &self.target_stream_key)
+            .field("track_selection", &self.track_selection)
+            .field("processing_policy", &self.processing_policy)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_retry_backoff_ms", &self.max_retry_backoff_ms)
+            .finish()
+    }
+}
+
 /// Configuration for an RTMP push job (local stream -> remote RTMP).
 ///
 /// RTMP 推流任务配置（本地流 -> 远程 RTMP）。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpPushJobConfig {
     /// 任务名称，必须唯一且非空。
@@ -102,10 +173,25 @@ pub struct RtmpPushJobConfig {
     pub max_retry_backoff_ms: u64,
 }
 
+impl fmt::Debug for RtmpPushJobConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RtmpPushJobConfig")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("source_stream_key", &self.source_stream_key)
+            .field("target_url", &redact_url_for_debug(&self.target_url))
+            .field("track_selection", &self.track_selection)
+            .field("processing_policy", &self.processing_policy)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_retry_backoff_ms", &self.max_retry_backoff_ms)
+            .finish()
+    }
+}
+
 /// Configuration for an RTMP relay job (remote -> local -> remote).
 ///
 /// RTMP 转发任务配置（远程 -> 本地 -> 远程）。
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(default)]
 pub struct RtmpRelayJobConfig {
     /// 任务名称，必须唯一且非空。
@@ -122,6 +208,20 @@ pub struct RtmpRelayJobConfig {
     pub retry_backoff_ms: u64,
     /// 最大重试退避时间（毫秒）。
     pub max_retry_backoff_ms: u64,
+}
+
+impl fmt::Debug for RtmpRelayJobConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("RtmpRelayJobConfig")
+            .field("name", &self.name)
+            .field("enabled", &self.enabled)
+            .field("source_url", &redact_url_for_debug(&self.source_url))
+            .field("target_url", &redact_url_for_debug(&self.target_url))
+            .field("stream_key", &self.stream_key)
+            .field("retry_backoff_ms", &self.retry_backoff_ms)
+            .field("max_retry_backoff_ms", &self.max_retry_backoff_ms)
+            .finish()
+    }
 }
 
 /// Observability alert thresholds for the RTMP module.
@@ -491,5 +591,55 @@ mod tests {
         let de: RtmpPushJobConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(de.track_selection, TrackSelection::AudioOnly);
         assert_eq!(de.processing_policy, push.processing_policy);
+    }
+
+    #[test]
+    fn debug_redacts_url_secrets_and_userinfo() {
+        let pull = RtmpPullJobConfig {
+            name: "pull".to_string(),
+            source_url: "rtmp://user:pass@host/app/stream?token=secret&other=ok".to_string(),
+            ..RtmpPullJobConfig::default()
+        };
+        let push = RtmpPushJobConfig {
+            name: "push".to_string(),
+            target_url: "rtmp://host/app/stream?secret=leak".to_string(),
+            ..RtmpPushJobConfig::default()
+        };
+        let relay = RtmpRelayJobConfig {
+            name: "relay".to_string(),
+            source_url: "rtmp://src/app/stream?api_key=sk".to_string(),
+            target_url: "rtmp://user:pw@dst/app/stream".to_string(),
+            ..RtmpRelayJobConfig::default()
+        };
+
+        let pull_out = format!("{pull:?}");
+        assert!(
+            !pull_out.contains("user:pass"),
+            "userinfo leaked: {pull_out}"
+        );
+        assert!(
+            !pull_out.contains("token=secret"),
+            "token leaked: {pull_out}"
+        );
+        assert!(
+            pull_out.contains("other=ok"),
+            "non-secret query dropped: {pull_out}"
+        );
+
+        let push_out = format!("{push:?}");
+        assert!(
+            !push_out.contains("secret=leak"),
+            "secret leaked: {push_out}"
+        );
+
+        let relay_out = format!("{relay:?}");
+        assert!(
+            !relay_out.contains("api_key=sk"),
+            "api_key leaked: {relay_out}"
+        );
+        assert!(
+            !relay_out.contains("user:pw"),
+            "target userinfo leaked: {relay_out}"
+        );
     }
 }
