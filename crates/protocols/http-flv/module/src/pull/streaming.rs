@@ -10,7 +10,9 @@
 
 use std::fmt;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use async_trait::async_trait;
 use cheetah_codec::{AVFrame, FlvDemuxer, FlvIngress, FlvIngressOutput, MonoTime, TrackInfo};
@@ -128,7 +130,7 @@ impl HttpFlvSubscriber {
     ///
     /// 当前已发现的轨道快照。
     pub fn tracks(&self) -> Vec<TrackInfo> {
-        let guard = self.ingress.lock().unwrap();
+        let guard = self.ingress.lock();
         guard.tracks().to_vec()
     }
 }
@@ -158,7 +160,7 @@ impl SubscriberSource for HttpFlvSubscriber {
 
     fn tracks(&self) -> Vec<TrackInfo> {
         // Call the inherent `tracks` method on `HttpFlvSubscriber`.
-        let guard = self.ingress.lock().unwrap();
+        let guard = self.ingress.lock();
         guard.tracks().to_vec()
     }
 }
@@ -267,7 +269,7 @@ async fn streaming_pull_once(
     ingress: &Arc<Mutex<FlvIngress>>,
     tx: &mut mpsc::Sender<Result<Arc<AVFrame>, SdkError>>,
 ) -> Result<(), HttpFlvPullError> {
-    ingress.lock().unwrap().reset();
+    ingress.lock().reset();
 
     let mut stream = connect_stream(runtime_api.clone(), parsed)?;
     let request = format!(
@@ -386,7 +388,7 @@ async fn push_demux_events(
     let events = demuxer.push(bytes).map_err(HttpFlvPullError::FlvDemux)?;
     for event in events {
         let output = {
-            let mut guard = ingress.lock().unwrap();
+            let mut guard = ingress.lock();
             guard
                 .process_event(event)
                 .map_err(|err| HttpFlvPullError::Ingress(err.to_string()))?

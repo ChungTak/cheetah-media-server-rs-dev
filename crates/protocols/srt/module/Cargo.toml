@@ -12,6 +12,7 @@ cheetah-sdk = { path = "../../../sdk/cheetah-sdk" }
 cheetah-srt-core = { path = "../core" }
 cheetah-srt-driver-tokio = { path = "../driver-tokio" }
 futures.workspace = true
+parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true

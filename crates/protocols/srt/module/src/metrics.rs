@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use cheetah_srt_core::SrtStreamMode;
 use cheetah_srt_driver_tokio::SrtDriverStats;
@@ -111,9 +113,7 @@ impl SrtModuleMetrics {
     pub fn inc_handshake_reject(&self, reason: &str) {
         self.handshake_reject_total.fetch_add(1, Ordering::Relaxed);
         let key = handshake_reject_reason_key(reason).to_string();
-        if let Ok(mut reasons) = self.handshake_reject_reasons.lock() {
-            *reasons.entry(key).or_default() += 1;
-        }
+        *self.handshake_reject_reasons.lock().entry(key).or_default() += 1;
     }
 
     pub fn inc_fec_negotiated(&self) {
@@ -188,11 +188,7 @@ impl SrtModuleMetrics {
     }
 
     pub fn snapshot(&self) -> SrtModuleMetricsSnapshot {
-        let handshake_reject_reasons = self
-            .handshake_reject_reasons
-            .lock()
-            .map(|m| m.clone())
-            .unwrap_or_default();
+        let handshake_reject_reasons = self.handshake_reject_reasons.lock().clone();
         SrtModuleMetricsSnapshot {
             connections_active: self.connections_active.load(Ordering::Relaxed),
             connections_total: self.connections_total.load(Ordering::Relaxed),
