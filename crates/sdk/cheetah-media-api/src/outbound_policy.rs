@@ -9,10 +9,39 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::MediaError;
 
+/// Query parameter keys that commonly carry credentials or session secrets.
+/// Used by `redact_url_secrets_for_debug` to avoid leaking tokens in logs.
+const DEBUG_SECRET_QUERY_KEYS: &[&str] = &[
+    "authorization",
+    "token",
+    "access_token",
+    "refresh_token",
+    "api_key",
+    "apikey",
+    "key",
+    "secret",
+    "signature",
+    "sign",
+    "auth",
+    "ticket",
+    "password",
+    "passwd",
+    "x-api-key",
+    "x_zlm_secret",
+    "x-zlm-secret",
+    "cookie",
+    "proxy-authorization",
+];
+
+fn is_secret_query_key(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    DEBUG_SECRET_QUERY_KEYS.iter().any(|k| lower == *k)
+}
+
 /// A resolved and policy-checked outbound endpoint.
 ///
 /// 已通过策略校验的出站端点。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedEndpoint {
     /// Original URL supplied by the caller.
     pub original_url: String,
@@ -23,6 +52,25 @@ pub struct ResolvedEndpoint {
     pub host: String,
     pub port: u16,
     pub is_tls: bool,
+}
+
+impl std::fmt::Debug for ResolvedEndpoint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ResolvedEndpoint")
+            .field(
+                "original_url",
+                &redact_url_secrets_for_debug(&self.original_url),
+            )
+            .field(
+                "canonical_url",
+                &redact_url_secrets_for_debug(&self.canonical_url),
+            )
+            .field("resolved_ips", &self.resolved_ips)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("is_tls", &self.is_tls)
+            .finish()
+    }
 }
 
 /// A single allow-list entry for an outbound host or CIDR.
@@ -128,6 +176,64 @@ impl OutboundUrlPolicy {
     }
 }
 
+/// Best-effort redaction of userinfo and known secret query keys in a URL.
+///
+/// Intended for `Debug` implementations so that request types containing
+/// caller-supplied URLs do not leak credentials or session tokens in logs.
+/// Falls back to string heuristics when the URL cannot be parsed.
+pub fn redact_url_secrets_for_debug(url: &str) -> String {
+    if let Ok(parsed) = url::Url::parse(url) {
+        let mut cleaned = parsed.clone();
+        let _ = cleaned.set_username("");
+        let _ = cleaned.set_password(None);
+        cleaned.set_fragment(None);
+
+        let pairs: Vec<_> = parsed.query_pairs().collect();
+        if pairs.is_empty() {
+            cleaned.set_query(None);
+        } else {
+            let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+            for (k, v) in pairs {
+                let v_redacted = if is_secret_query_key(k.as_ref()) {
+                    "<redacted>"
+                } else {
+                    v.as_ref()
+                };
+                serializer.append_pair(k.as_ref(), v_redacted);
+            }
+            cleaned.set_query(Some(&serializer.finish()));
+        }
+        return cleaned.to_string();
+    }
+    redact_raw_url_string(url)
+}
+
+fn redact_raw_url_string(url: &str) -> String {
+    let without_userinfo = if let Some(at) = url.find('@') {
+        let scheme_host_end = url[..at].find("://").map(|i| i + 3).unwrap_or(0);
+        format!("{}<userinfo>@{}", &url[..scheme_host_end], &url[at + 1..])
+    } else {
+        url.to_string()
+    };
+
+    if let Some((path, query)) = without_userinfo.split_once('?') {
+        let redacted_query = query
+            .split('&')
+            .map(|part| {
+                if let Some((key, _value)) = part.split_once('=') {
+                    if is_secret_query_key(key) {
+                        return format!("{key}=<redacted>");
+                    }
+                }
+                part.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("&");
+        return format!("{path}?{redacted_query}");
+    }
+    without_userinfo
+}
+
 /// Static check result returned by `OutboundUrlPolicyApi::check_static`.
 ///
 /// `OutboundUrlPolicyApi::check_static` 返回的静态检查结果。
@@ -190,5 +296,27 @@ mod tests {
         let policy = OutboundUrlPolicy::default();
         let result = policy.sanitize_url("https://user:pass@example.com/path");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn redact_url_secrets_for_debug_strips_userinfo_and_secret_query_keys() {
+        let url = "https://user:pass@Example.COM:8443/path?token=abc&keep=1&secret=xyz#frag";
+        let redacted = redact_url_secrets_for_debug(url);
+        assert!(redacted.contains("example.com:8443"), "{redacted}");
+        assert!(redacted.contains("/path"), "{redacted}");
+        assert!(redacted.contains("keep=1"), "{redacted}");
+        assert!(!redacted.contains("user:pass"), "{redacted}");
+        assert!(!redacted.contains("abc"), "{redacted}");
+        assert!(!redacted.contains("xyz"), "{redacted}");
+        assert!(!redacted.contains("#frag"), "{redacted}");
+    }
+
+    #[test]
+    fn redact_url_secrets_for_debug_handles_unparseable_url() {
+        let raw = "rtmp://user:pass@host/app?token=secret&keep=1";
+        let redacted = redact_url_secrets_for_debug(raw);
+        assert!(!redacted.contains("user:pass"), "{redacted}");
+        assert!(!redacted.contains("secret"), "{redacted}");
+        assert!(redacted.contains("keep=1"), "{redacted}");
     }
 }

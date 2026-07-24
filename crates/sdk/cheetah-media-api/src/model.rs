@@ -1,10 +1,11 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{MediaError, MediaErrorCode};
 use crate::ids::*;
-use crate::outbound_policy::OutboundUrlPolicy;
+use crate::outbound_policy::{redact_url_secrets_for_debug, OutboundUrlPolicy};
 
 /// Codec kind for a track.
 ///
@@ -73,12 +74,23 @@ pub struct TrackSummary {
 /// A playable URL for a media resource.
 ///
 /// 媒体资源的可播放 URL。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MediaUrl {
     pub schema: MediaSchema,
     pub url: String,
     pub available: bool,
     pub expires_at: Option<i64>,
+}
+
+impl fmt::Debug for MediaUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MediaUrl")
+            .field("schema", &self.schema)
+            .field("url", &redact_url_secrets_for_debug(&self.url))
+            .field("available", &self.available)
+            .field("expires_at", &self.expires_at)
+            .finish()
+    }
 }
 
 /// Online state of a media resource.
@@ -287,7 +299,7 @@ pub enum ProxyState {
 /// Proxy information.
 ///
 /// 代理信息。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct ProxyInfo {
     pub proxy_id: ProxyId,
     pub kind: ProxyKind,
@@ -299,6 +311,23 @@ pub struct ProxyInfo {
     pub created_at: i64,
     pub updated_at: i64,
     pub output_urls: Vec<MediaUrl>,
+}
+
+impl fmt::Debug for ProxyInfo {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ProxyInfo")
+            .field("proxy_id", &self.proxy_id)
+            .field("kind", &self.kind)
+            .field("source", &redact_url_secrets_for_debug(&self.source))
+            .field("destination", &self.destination)
+            .field("state", &self.state)
+            .field("retry_count", &self.retry_count)
+            .field("last_error", &self.last_error)
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .field("output_urls", &self.output_urls)
+            .finish()
+    }
 }
 
 impl ProxyInfo {
@@ -532,7 +561,7 @@ pub enum AdmissionAction {
 /// operation is allowed to proceed.
 ///
 /// 副作用媒体操作执行前请求同步准入决策。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AdmissionRequest {
     pub action: AdmissionAction,
     pub principal: Option<crate::auth::Principal>,
@@ -540,6 +569,68 @@ pub struct AdmissionRequest {
     pub protocol: String,
     pub source_address: Option<String>,
     pub params: HashMap<String, String>,
+}
+
+impl fmt::Debug for AdmissionRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AdmissionRequest")
+            .field("action", &self.action)
+            .field("principal", &self.principal)
+            .field("resource", &self.resource)
+            .field("protocol", &self.protocol)
+            .field("source_address", &self.source_address)
+            .field("params", &ParamsDebug(redacted_params(&self.params)))
+            .finish()
+    }
+}
+
+fn is_secret_param_key(key: &str) -> bool {
+    let lower = key.to_lowercase();
+    matches!(
+        lower.as_str(),
+        "authorization"
+            | "token"
+            | "api_key"
+            | "apikey"
+            | "secret"
+            | "password"
+            | "passwd"
+            | "cookie"
+            | "x-api-key"
+            | "x_zlm_secret"
+            | "x-zlm-secret"
+            | "proxy-authorization"
+    )
+}
+
+fn looks_like_url(value: &str) -> bool {
+    value.contains("://") || value.contains('@') || (value.contains('?') && value.contains('='))
+}
+
+struct ParamsDebug(HashMap<String, String>);
+
+impl fmt::Debug for ParamsDebug {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut map = f.debug_map();
+        for (k, v) in &self.0 {
+            map.entry(&k, &v);
+        }
+        map.finish()
+    }
+}
+
+fn redacted_params(params: &HashMap<String, String>) -> HashMap<String, String> {
+    params
+        .iter()
+        .map(|(k, v)| {
+            let redacted = if is_secret_param_key(k) || looks_like_url(v) {
+                redact_url_secrets_for_debug(v)
+            } else {
+                v.clone()
+            };
+            (k.clone(), redacted)
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -638,5 +729,53 @@ mod tests {
             let de: AdmissionAction = serde_json::from_str(&json).unwrap();
             assert_eq!(de, action);
         }
+    }
+
+    #[test]
+    fn request_types_debug_redact_url_secrets() {
+        let url = MediaUrl {
+            schema: MediaSchema::Hls,
+            url: "https://user:pass@example.com/playlist.m3u8?token=secret".to_string(),
+            available: true,
+            expires_at: None,
+        };
+        let debug = format!("{url:?}");
+        assert!(!debug.contains("user:pass"), "{debug}");
+        assert!(!debug.contains("secret"), "{debug}");
+
+        let info = ProxyInfo {
+            proxy_id: ProxyId("proxy-1".to_string()),
+            kind: ProxyKind::Pull,
+            source: "https://user:pass@example.com/path?token=secret".to_string(),
+            destination: MediaKey::new("default", "live", "test", None).unwrap(),
+            state: ProxyState::Created,
+            retry_count: 0,
+            last_error: None,
+            created_at: 0,
+            updated_at: 0,
+            output_urls: vec![url],
+        };
+        let debug = format!("{info:?}");
+        assert!(!debug.contains("user:pass"), "{debug}");
+        assert!(!debug.contains("secret"), "{debug}");
+
+        let mut params = HashMap::new();
+        params.insert(
+            "source_url".to_string(),
+            "https://user:pass@example.com/path?token=secret".to_string(),
+        );
+        params.insert("safe".to_string(), "plain-value".to_string());
+        let admission = AdmissionRequest {
+            action: AdmissionAction::CreatePullProxy,
+            principal: None,
+            resource: MediaKey::new("default", "live", "test", None).unwrap(),
+            protocol: "rtsp".to_string(),
+            source_address: None,
+            params,
+        };
+        let debug = format!("{admission:?}");
+        assert!(!debug.contains("user:pass"), "{debug}");
+        assert!(!debug.contains("secret"), "{debug}");
+        assert!(debug.contains("plain-value"), "{debug}");
     }
 }

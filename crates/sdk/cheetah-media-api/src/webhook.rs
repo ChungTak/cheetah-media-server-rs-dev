@@ -7,10 +7,13 @@
 //! Webhook 管理类型。`WebhookAdminApi` 定义在 `crate::port` 中，本模块保存
 //! 管理 provider 与 HTTP 路由共享的请求/响应模型。
 
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{MediaKey, RequestId};
 use crate::model::{AdmissionAction, Decision};
+use crate::outbound_policy::redact_url_secrets_for_debug;
 
 /// Stable identifier for a webhook profile.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -36,7 +39,7 @@ pub enum WebhookFailurePolicy {
 }
 
 /// Webhook profile managed by `WebhookAdminApi`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebhookProfile {
     pub id: WebhookProfileId,
     #[serde(default = "default_true")]
@@ -83,7 +86,7 @@ impl WebhookProfile {
 }
 
 /// Public, secret-free view of a `WebhookProfile`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct WebhookProfileView {
     pub id: WebhookProfileId,
     pub enabled: bool,
@@ -101,7 +104,7 @@ pub struct WebhookProfileView {
 }
 
 /// Request to create a webhook profile.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Clone, PartialEq, Deserialize)]
 pub struct CreateWebhookProfileRequest {
     #[serde(default)]
     pub id: Option<WebhookProfileId>,
@@ -166,7 +169,7 @@ pub struct WebhookTest {
 }
 
 /// Body of a test request accepted by native routes.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Clone, PartialEq, Deserialize)]
 pub struct WebhookTestRequest {
     /// Optional explicit target URL to test without modifying the profile.
     #[serde(default)]
@@ -197,4 +200,131 @@ pub struct WebhookProfileListResponse {
 /// Translate a `Decision` into the report body-valid flag.
 pub fn decision_body_valid(decision: &Decision) -> bool {
     matches!(decision, Decision::Allow)
+}
+
+impl fmt::Debug for WebhookProfile {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebhookProfile")
+            .field("id", &self.id)
+            .field("enabled", &self.enabled)
+            .field("mode", &self.mode)
+            .field(
+                "target_url",
+                &redact_url_secrets_for_debug(&self.target_url),
+            )
+            .field("event_filter", &self.event_filter)
+            .field("admission_actions", &self.admission_actions)
+            .field("failure_policy", &self.failure_policy)
+            .field("timeout_ms", &self.timeout_ms)
+            .field("secret", &"<redacted>")
+            .field("generation", &self.generation)
+            .finish()
+    }
+}
+
+impl fmt::Debug for WebhookProfileView {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebhookProfileView")
+            .field("id", &self.id)
+            .field("enabled", &self.enabled)
+            .field("mode", &self.mode)
+            .field(
+                "target_url",
+                &redact_url_secrets_for_debug(&self.target_url),
+            )
+            .field("event_filter", &self.event_filter)
+            .field("admission_actions", &self.admission_actions)
+            .field("failure_policy", &self.failure_policy)
+            .field("timeout_ms", &self.timeout_ms)
+            .field("generation", &self.generation)
+            .finish()
+    }
+}
+
+impl fmt::Debug for CreateWebhookProfileRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CreateWebhookProfileRequest")
+            .field("id", &self.id)
+            .field("enabled", &self.enabled)
+            .field("mode", &self.mode)
+            .field(
+                "target_url",
+                &redact_url_secrets_for_debug(&self.target_url),
+            )
+            .field("event_filter", &self.event_filter)
+            .field("admission_actions", &self.admission_actions)
+            .field("failure_policy", &self.failure_policy)
+            .field("timeout_ms", &self.timeout_ms)
+            .field("secret", &"<redacted>")
+            .finish()
+    }
+}
+
+impl fmt::Debug for WebhookTestRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("WebhookTestRequest")
+            .field(
+                "target_url",
+                &self.target_url.as_deref().map(redact_url_secrets_for_debug),
+            )
+            .field("secret", &self.secret.as_deref().map(|_| "<redacted>"))
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn webhook_profile_debug_redacts_secret_and_url_credentials() {
+        let profile = WebhookProfile {
+            id: WebhookProfileId("profile-1".to_string()),
+            enabled: true,
+            mode: WebhookProfileMode::NativeDomain,
+            target_url: "http://user:pass@example.com/hook?key=secret".to_string(),
+            event_filter: vec!["on_publish".to_string()],
+            admission_actions: vec![],
+            failure_policy: WebhookFailurePolicy::FailClosed,
+            timeout_ms: 5_000,
+            secret: "hmac-secret".to_string(),
+            generation: 7,
+        };
+        let out = format!("{profile:?}");
+        assert!(
+            !out.contains("hmac-secret"),
+            "secret leaked in Debug: {out}"
+        );
+        assert!(
+            !out.contains("user:pass"),
+            "userinfo leaked in Debug: {out}"
+        );
+        assert!(
+            !out.contains("key=secret"),
+            "query secret leaked in Debug: {out}"
+        );
+        assert!(
+            out.contains("http://example.com/hook"),
+            "host/path missing in Debug: {out}"
+        );
+    }
+
+    #[test]
+    fn create_request_debug_redacts_secret_and_url_credentials() {
+        let req = CreateWebhookProfileRequest {
+            id: None,
+            enabled: true,
+            mode: WebhookProfileMode::ZlmCompatible,
+            target_url: "http://token:bar@example.com/hook?api_key=abc".to_string(),
+            event_filter: vec![],
+            admission_actions: vec![],
+            failure_policy: WebhookFailurePolicy::FailOpen,
+            timeout_ms: 3_000,
+            secret: "my-secret".to_string(),
+        };
+        let out = format!("{req:?}");
+        assert!(!out.contains("my-secret"));
+        assert!(!out.contains("token:bar"));
+        assert!(!out.contains("api_key=abc"));
+    }
 }
