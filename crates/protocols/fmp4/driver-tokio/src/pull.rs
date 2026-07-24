@@ -560,33 +560,28 @@ fn compute_ws_accept_key(client_key: &str) -> String {
 ///
 /// 将 http/https/ws/wss URL 解析为 (host, port, path)。
 fn parse_url(url: &str) -> Result<(String, u16, String), String> {
-    // Strip scheme
-    let without_scheme = url
-        .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))
-        .or_else(|| url.strip_prefix("ws://"))
-        .or_else(|| url.strip_prefix("wss://"))
-        .ok_or_else(|| format!("invalid url: {url}"))?;
+    let parsed = url::Url::parse(url).map_err(|e| format!("invalid url: {e}"))?;
 
-    let (host_port, path) = match without_scheme.find('/') {
-        Some(i) => (&without_scheme[..i], &without_scheme[i..]),
-        None => (without_scheme, "/"),
+    let scheme = parsed.scheme();
+    let default_port = match scheme {
+        "http" | "ws" => 80,
+        "https" | "wss" => 443,
+        other => return Err(format!("unsupported url scheme: {other}")),
     };
 
-    let (host, port) = if let Some(i) = host_port.rfind(':') {
-        let h = &host_port[..i];
-        let p = host_port[i + 1..].parse::<u16>().unwrap_or(80);
-        (h.to_string(), p)
+    let port = parsed.port().unwrap_or(default_port);
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "missing host".to_string())?
+        .to_string();
+
+    let path = if let Some(query) = parsed.query() {
+        format!("{}?{}", parsed.path(), query)
     } else {
-        let default_port = if url.starts_with("https://") || url.starts_with("wss://") {
-            443
-        } else {
-            80
-        };
-        (host_port.to_string(), default_port)
+        parsed.path().to_string()
     };
 
-    Ok((host, port, path.to_string()))
+    Ok((host, port, path))
 }
 
 /// Insecure TLS certificate verifier that accepts any server certificate.
@@ -658,6 +653,41 @@ mod tests {
         assert_eq!(host, "127.0.0.1");
         assert_eq!(port, 8083);
         assert_eq!(path, "/live/cam.mp4");
+    }
+
+    #[test]
+    fn parse_url_ipv6_host_and_port() {
+        let (host, port, path) = parse_url("http://[::1]:8083/live/test.mp4").unwrap();
+        assert_eq!(host, "[::1]");
+        assert_eq!(port, 8083);
+        assert_eq!(path, "/live/test.mp4");
+    }
+
+    #[test]
+    fn parse_url_ipv6_default_port() {
+        let (host, port, path) = parse_url("https://[::1]/live/test.mp4").unwrap();
+        assert_eq!(host, "[::1]");
+        assert_eq!(port, 443);
+        assert_eq!(path, "/live/test.mp4");
+    }
+
+    #[test]
+    fn parse_url_preserves_query_and_ignores_userinfo() {
+        let (host, port, path) =
+            parse_url("http://user:pass@example.com:8083/live/test.mp4?token=secret").unwrap();
+        assert_eq!(host, "example.com");
+        assert_eq!(port, 8083);
+        assert_eq!(path, "/live/test.mp4?token=secret");
+    }
+
+    #[test]
+    fn parse_url_rejects_invalid_port() {
+        assert!(parse_url("http://example.com:abc/live.mp4").is_err());
+    }
+
+    #[test]
+    fn parse_url_rejects_unsupported_scheme() {
+        assert!(parse_url("ftp://example.com/live.mp4").is_err());
     }
 
     #[test]
