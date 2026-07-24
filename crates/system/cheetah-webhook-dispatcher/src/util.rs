@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use url::Url;
+
 /// Sign a webhook body with HMAC-SHA256 and return the base64 signature.
 ///
 /// 使用 HMAC-SHA256 对 webhook body 签名并返回 base64 签名值。
@@ -78,5 +80,83 @@ pub fn redact_path_and_query(path_and_query: &str) -> String {
         format!("{}?{}", path, redact_query(query))
     } else {
         path_and_query.to_string()
+    }
+}
+
+/// Redact a full URL so userinfo, fragments and secret query values are not logged.
+pub fn redact_url(url: &str) -> String {
+    if let Ok(parsed) = Url::parse(url) {
+        let host = parsed.host_str().unwrap_or("");
+        let port = parsed.port().map(|p| format!(":{p}")).unwrap_or_default();
+        let query = parsed
+            .query()
+            .map(|q| format!("?{}", redact_query(q)))
+            .unwrap_or_default();
+        return format!(
+            "{}://{}{}{}{}",
+            parsed.scheme(),
+            host,
+            port,
+            parsed.path(),
+            query
+        );
+    }
+
+    // Fallback for malformed strings: strip a `user:pass@` prefix if present.
+    if let Some(pos) = url.find("://") {
+        let after_scheme = &url[pos + 3..];
+        if let Some(at) = after_scheme.find('@') {
+            let path_and_query = &after_scheme[at + 1..];
+            let redacted = if let Some((path, query)) = path_and_query.split_once('?') {
+                format!("{}?{}", path, redact_query(query))
+            } else {
+                path_and_query.to_string()
+            };
+            return format!("{}://{}", &url[..pos], redacted);
+        }
+    }
+
+    url.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redact_url_strips_userinfo_and_fragment_and_secret_query() {
+        let url = "http://user:pass@example.com:8080/hook?token=secret&x=1#frag";
+        let out = redact_url(url);
+        assert!(!out.contains("user:pass"), "userinfo leaked: {out}");
+        assert!(!out.contains("token=secret"), "secret query leaked: {out}");
+        assert!(!out.contains("#frag"), "fragment not stripped: {out}");
+        assert!(
+            out.contains("http://example.com:8080/hook"),
+            "host/path missing: {out}"
+        );
+        assert!(out.contains("x=1"), "non-secret query dropped: {out}");
+    }
+
+    #[test]
+    fn redact_url_ipv6() {
+        let out = redact_url("https://[::1]:8080/hook?api_key=abc");
+        assert!(
+            out.contains("https://[::1]:8080/hook"),
+            "IPv6 host missing: {out}"
+        );
+        assert!(!out.contains("api_key=abc"), "secret query leaked: {out}");
+    }
+
+    #[test]
+    fn redact_url_fallback_strips_userinfo() {
+        let out = redact_url("http://user:pass@example.com/hook");
+        assert!(
+            !out.contains("user:pass"),
+            "fallback userinfo leaked: {out}"
+        );
+        assert!(
+            out.starts_with("http://example.com/hook"),
+            "fallback host missing: {out}"
+        );
     }
 }
