@@ -2,7 +2,9 @@
 //!
 //! 控制面 facade 与运行时无关 API。
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use async_trait::async_trait;
 use cheetah_media_api::admin::TlsComponent;
@@ -99,9 +101,7 @@ impl ControlPlane {
     /// Attach the node supervisor and mirror its runtime state into `node`.
     pub fn with_node_supervisor(mut self, supervisor: Arc<NodeSupervisor>) -> Self {
         if let Some(rt) = supervisor.runtime_state() {
-            if let Ok(mut guard) = self.node.lock() {
-                *guard = Some(rt);
-            }
+            *self.node.lock() = Some(rt);
         }
         self.node_supervisor = Some(supervisor);
         self
@@ -112,20 +112,16 @@ impl ControlPlane {
         let Some(sup) = &self.node_supervisor else {
             return;
         };
-        if let Ok(mut guard) = self.node.lock() {
-            *guard = sup.runtime_state();
-        }
+        *self.node.lock() = sup.runtime_state();
     }
 
     /// Replace the cached node runtime state.
     pub fn set_node_runtime(&self, state: Option<NodeRuntimeState>) {
-        if let Ok(mut guard) = self.node.lock() {
-            *guard = state;
-        }
+        *self.node.lock() = state;
     }
 
     /// Snapshot the cached node runtime state.
     pub fn node_runtime(&self) -> Option<NodeRuntimeState> {
-        self.node.lock().ok().and_then(|g| g.clone())
+        self.node.lock().clone()
     }
 }

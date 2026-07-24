@@ -1059,6 +1059,7 @@ dependencies = [
  "cheetah-media-api",
  "cheetah-runtime-api",
  "cheetah-runtime-tokio",
+ "parking_lot",
  "rusqlite",
  "serde",
  "serde_json",
