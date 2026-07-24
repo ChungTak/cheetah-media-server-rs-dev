@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -7,7 +8,7 @@ use crate::error::MediaError;
 use crate::ids::*;
 use crate::image::ImageFormat;
 use crate::model::*;
-use crate::outbound_policy::OutboundUrlPolicy;
+use crate::outbound_policy::{redact_url_secrets_for_debug, OutboundUrlPolicy};
 use crate::rtp_session::SourceBindingPolicy;
 
 /// Query for media list.
@@ -354,7 +355,7 @@ pub enum SnapshotDestination {
 /// Request to fetch a snapshot from an external URL.
 ///
 /// 从外部 URL 抓取快照的请求。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FetchSnapshotRequest {
     /// Sanitized source URL. Must not contain userinfo.
     pub source_url: String,
@@ -370,6 +371,25 @@ pub struct FetchSnapshotRequest {
     pub max_bytes: u64,
     pub max_width: Option<u32>,
     pub max_height: Option<u32>,
+}
+
+impl fmt::Debug for FetchSnapshotRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FetchSnapshotRequest")
+            .field(
+                "source_url",
+                &redact_url_secrets_for_debug(&self.source_url),
+            )
+            .field("credential_handle", &self.credential_handle)
+            .field("destination", &self.destination)
+            .field("expected_media_type", &self.expected_media_type)
+            .field("expected_format", &self.expected_format)
+            .field("timeout_ms", &self.timeout_ms)
+            .field("max_bytes", &self.max_bytes)
+            .field("max_width", &self.max_width)
+            .field("max_height", &self.max_height)
+            .finish()
+    }
 }
 
 impl FetchSnapshotRequest {
@@ -536,7 +556,7 @@ impl PlaybackQuery {
 /// Pull proxy request.
 ///
 /// 拉流代理请求。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct PullProxyRequest {
     pub source_url: String,
     pub destination: MediaKey,
@@ -556,6 +576,24 @@ pub struct PullProxyRequest {
     pub record_policy: Option<StartRecordRequest>,
 }
 
+impl fmt::Debug for PullProxyRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PullProxyRequest")
+            .field(
+                "source_url",
+                &redact_url_secrets_for_debug(&self.source_url),
+            )
+            .field("destination", &self.destination)
+            .field("retry_policy", &self.retry_policy)
+            .field("heartbeat_ms", &self.heartbeat_ms)
+            .field("timeout_ms", &self.timeout_ms)
+            .field("processing_policy", &self.processing_policy)
+            .field("output_policy", &self.output_policy)
+            .field("record_policy", &self.record_policy)
+            .finish()
+    }
+}
+
 impl PullProxyRequest {
     /// Return the sanitized source URL suitable for storage, audit and events.
     ///
@@ -569,7 +607,7 @@ impl PullProxyRequest {
 /// Push proxy request.
 ///
 /// 推流代理请求。
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct PushProxyRequest {
     pub source_media_key: MediaKey,
     pub destination_url: String,
@@ -578,6 +616,21 @@ pub struct PushProxyRequest {
     pub retry_policy: RetryPolicy,
     #[serde(default)]
     pub protocol_options: HashMap<String, String>,
+}
+
+impl fmt::Debug for PushProxyRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PushProxyRequest")
+            .field("source_media_key", &self.source_media_key)
+            .field(
+                "destination_url",
+                &redact_url_secrets_for_debug(&self.destination_url),
+            )
+            .field("protocol", &self.protocol)
+            .field("retry_policy", &self.retry_policy)
+            .field("protocol_options", &self.protocol_options)
+            .finish()
+    }
 }
 
 impl PushProxyRequest {
@@ -1028,5 +1081,49 @@ mod tests {
         assert!(sanitized.contains("host.example:1935"), "{sanitized}");
         assert!(sanitized.contains("/app/stream"), "{sanitized}");
         assert!(!sanitized.contains("key"), "{sanitized}");
+    }
+
+    #[test]
+    fn request_debug_redacts_url_credentials_and_secret_query_keys() {
+        let pull = PullProxyRequest {
+            source_url: "https://user:pass@example.com/path?token=secret&keep=1".to_string(),
+            destination: MediaKey::new("default", "live", "test", None).unwrap(),
+            retry_policy: RetryPolicy::default(),
+            heartbeat_ms: None,
+            timeout_ms: 10_000,
+            processing_policy: Default::default(),
+            output_policy: Default::default(),
+            record_policy: None,
+        };
+        let pull_debug = format!("{pull:?}");
+        assert!(!pull_debug.contains("user:pass"), "{pull_debug}");
+        assert!(!pull_debug.contains("secret"), "{pull_debug}");
+        assert!(pull_debug.contains("keep=1"), "{pull_debug}");
+
+        let push = PushProxyRequest {
+            source_media_key: MediaKey::new("default", "live", "test", None).unwrap(),
+            destination_url: "rtsps://host.example:1935/app/stream?key=secret".to_string(),
+            protocol: "rtsp".to_string(),
+            retry_policy: RetryPolicy::default(),
+            protocol_options: HashMap::new(),
+        };
+        let push_debug = format!("{push:?}");
+        assert!(!push_debug.contains("secret"), "{push_debug}");
+        assert!(push_debug.contains("host.example:1935"), "{push_debug}");
+
+        let fetch = FetchSnapshotRequest {
+            source_url: "https://user:pass@example.com/s.jpg?token=abc".to_string(),
+            credential_handle: None,
+            destination: SnapshotDestination::Namespace("snapshots".to_string()),
+            expected_media_type: "image/jpeg".to_string(),
+            expected_format: "jpg".to_string(),
+            timeout_ms: 1_000,
+            max_bytes: 1024,
+            max_width: None,
+            max_height: None,
+        };
+        let fetch_debug = format!("{fetch:?}");
+        assert!(!fetch_debug.contains("user:pass"), "{fetch_debug}");
+        assert!(!fetch_debug.contains("abc"), "{fetch_debug}");
     }
 }
